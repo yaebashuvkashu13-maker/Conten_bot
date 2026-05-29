@@ -1,0 +1,15 @@
+telegram:
+  bot_token: "PASTE_TELEGRAM_BOT_TOKEN"
+  channel_id: "@your_channel_or_chat_id"
+
+instagram_sources:
+  - name: "Example Blogger"
+    url: "https://www.instagram.com/example_account/"
+    max_entries: 3
+  - name: "Example Post"
+    url: "https://www.instagram.com/p/POST_ID/"
+    max_entries: 1
+
+state_path: ".content-bot-state.json"
+dry_run: true
+
