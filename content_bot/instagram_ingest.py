@@ -43,6 +43,15 @@ def _entry_to_post(source: InstagramSource, entry: dict) -> InstagramPost:
 
 
 def fetch_source_posts(source: InstagramSource) -> list[InstagramPost]:
+    return fetch_source_posts_with_options(source)
+
+
+def fetch_source_posts_with_options(
+    source: InstagramSource,
+    *,
+    cookiefile: str | None = None,
+    proxy_url: str | None = None,
+) -> list[InstagramPost]:
     options = {
         "extract_flat": False,
         "skip_download": True,
@@ -50,6 +59,10 @@ def fetch_source_posts(source: InstagramSource) -> list[InstagramPost]:
         "no_warnings": True,
         "playlistend": source.max_entries,
     }
+    if cookiefile:
+        options["cookiefile"] = cookiefile
+    if proxy_url:
+        options["proxy"] = proxy_url
 
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(source.url, download=False)

@@ -11,5 +11,7 @@ instagram_sources:
     max_entries: 1
 
 state_path: ".content-bot-state.json"
+instagram_cookies_path: null
+proxy_url: null
 dry_run: true
 

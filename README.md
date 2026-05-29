@@ -28,6 +28,8 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
    - Telegram bot token
    - Telegram channel ID / `@channel_name`
    - Instagram bloggers or post URLs
+   - optional `instagram_cookies_path` if Instagram blocks public scraping
+   - optional `proxy_url` if access should go through a proxy
 
 3. Install dependencies:
 
@@ -44,6 +46,8 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
 ### Notes
 
 - The current implementation is intentionally simple and public-source oriented.
+- Instagram profile extraction may require an authenticated cookies file depending
+  on the source account and current anti-bot behavior.
 - It is a foundation for later additions:
   - Russian rewriting / translation
   - media cleanup / redesign

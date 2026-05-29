@@ -25,6 +25,8 @@ class AppConfig:
     telegram: TelegramConfig
     instagram_sources: list[InstagramSource]
     state_path: Path
+    instagram_cookies_path: Path | None = None
+    proxy_url: str | None = None
     dry_run: bool = False
 
 
@@ -56,12 +58,17 @@ def load_config(path: str | Path) -> AppConfig:
     ]
 
     state_path = Path(raw.get("state_path", ".content-bot-state.json"))
+    cookies_raw = raw.get("instagram_cookies_path")
+    instagram_cookies_path = Path(cookies_raw) if cookies_raw else None
+    proxy_url = str(raw["proxy_url"]) if raw.get("proxy_url") else None
     dry_run = bool(raw.get("dry_run", False))
 
     return AppConfig(
         telegram=telegram,
         instagram_sources=instagram_sources,
         state_path=state_path,
+        instagram_cookies_path=instagram_cookies_path,
+        proxy_url=proxy_url,
         dry_run=dry_run,
     )
 

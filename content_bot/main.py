@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .config import load_config
-from .instagram_ingest import fetch_source_posts
+from .instagram_ingest import fetch_source_posts_with_options
 from .state import StateStore
 from .telegram_publisher import TelegramPublisher
 
@@ -15,7 +15,11 @@ def run(config_path: str) -> int:
 
     published = 0
     for source in config.instagram_sources:
-        posts = fetch_source_posts(source)
+        posts = fetch_source_posts_with_options(
+            source,
+            cookiefile=str(config.instagram_cookies_path) if config.instagram_cookies_path else None,
+            proxy_url=config.proxy_url,
+        )
         for post in posts:
             if post.post_id in state.published_ids:
                 continue

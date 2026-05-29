@@ -1,0 +1,47 @@
+telegram:
+  bot_token: "PASTE_TELEGRAM_BOT_TOKEN"
+  channel_id: "@your_channel_or_chat_id"
+
+instagram_sources:
+  - name: "ml_date"
+    url: "https://www.instagram.com/ml_date/"
+    max_entries: 5
+  - name: "godofmlbb"
+    url: "https://www.instagram.com/godofmlbb/"
+    max_entries: 5
+  - name: "leakersilvanna"
+    url: "https://www.instagram.com/leakersilvanna/"
+    max_entries: 5
+  - name: "mobilelegendsforlife"
+    url: "https://www.instagram.com/mobilelegendsforlife/"
+    max_entries: 5
+  - name: "imchan_mlb"
+    url: "https://www.instagram.com/imchan_mlb/"
+    max_entries: 5
+  - name: "skylastore1"
+    url: "https://www.instagram.com/skylastore1/"
+    max_entries: 5
+  - name: "zhuxin__mlbb"
+    url: "https://www.instagram.com/zhuxin__mlbb/"
+    max_entries: 5
+  - name: "borneogaming"
+    url: "https://www.instagram.com/borneogaming/"
+    max_entries: 5
+  - name: "eidurachannell"
+    url: "https://www.instagram.com/eidurachannell/"
+    max_entries: 5
+  - name: "andikaputramlbb19"
+    url: "https://www.instagram.com/andikaputramlbb19/"
+    max_entries: 5
+  - name: "otepgaming_official"
+    url: "https://www.instagram.com/otepgaming_official/"
+    max_entries: 5
+  - name: "jornalmlbb"
+    url: "https://www.instagram.com/jornalmlbb/"
+    max_entries: 5
+
+state_path: ".content-bot-state.instagram-mlbb.json"
+instagram_cookies_path: null
+proxy_url: null
+dry_run: true
+
