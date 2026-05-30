@@ -177,3 +177,22 @@ python3 -m content_bot.hero_classifier train-multiclass \
 Phase 4 (original content) will need a separate video composition module on top of
 classification — the current ML stack only understands and scores footage.
 
+## Montage builder (33–57s gameplay edits)
+
+Build a 3–4 scene montage for one hero from your local TikTok library:
+
+```bash
+cp config.montage.example.yaml config.montage.yaml
+python3 -m content_bot.montage_builder --hero gusion --dry-run
+python3 -m content_bot.montage_builder --hero gusion
+```
+
+Defaults:
+- video root: `datasets/tiktok/mlbb` (~1900+ `.mp4` files)
+- picks scenes by manifest views/likes + motion peaks (combo/outplay moments)
+- skips promo/event keywords
+- crossfade transitions + hook title (drawtext)
+
+Requires `ffmpeg` and JSONL manifests under `datasets/tiktok/*_manifest.jsonl` for
+best hero matching via TikTok descriptions.
+

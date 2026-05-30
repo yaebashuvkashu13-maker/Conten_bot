@@ -1,5 +1,7 @@
 # Copy to config.collect.yaml and set proxy before it expires.
-# export PROXY_URL="http://user:pass@host:port"
+# SOCKS5 (recommended for TikTok):
+#   export PROXY_URL="socks5://user:pass@host:5495"
+# HTTP often returns 502 on some providers — prefer SOCKS5.
 
 proxy_url: null
 output_dir: datasets/tiktok

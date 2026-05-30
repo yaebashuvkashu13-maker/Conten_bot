@@ -8,4 +8,6 @@ datasets/*
 !datasets/labeled/
 !datasets/labeled/README.md
 config.collect.yaml
+config.montage.yaml
+output/
 
