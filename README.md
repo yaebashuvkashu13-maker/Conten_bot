@@ -118,3 +118,20 @@ python3 -m content_bot.hero_classifier score \
   --output-csv reports/hayabusa_scores.csv
 ```
 
+### Build a gameplay montage
+
+After collecting videos and running the gameplay filter, build a vertical
+33-57 second montage from 3-4 gameplay-only scenes for one hero:
+
+```bash
+python3 -m content_bot.montage_builder \
+  --hero gusion \
+  --report-csv datasets/tiktok/reports/gameplay_filter_full.csv \
+  --target-duration 45 \
+  --scenes 4 \
+  --output-dir datasets/outputs/montages
+```
+
+The builder skips known promo/official/event sources, keeps game audio, normalizes
+volume, and uses video/audio crossfades so scenes do not cut off abruptly.
+
