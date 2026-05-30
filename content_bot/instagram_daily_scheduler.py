@@ -30,6 +30,7 @@ def run_scheduler(
     profile_cache_dir: str,
     max_posts: int,
     page_size: int,
+    skip_ads: bool,
     once: bool,
 ) -> None:
     timezone = ZoneInfo(timezone_name)
@@ -50,9 +51,10 @@ def run_scheduler(
                 page_size=page_size,
                 max_posts=max_posts,
                 profile_cache_dir=profile_cache_dir,
+                skip_ads=skip_ads,
                 dry_run=False,
             )
-            print(f"Instagram daily run sent {sent} reels.", flush=True)
+            print(f"Instagram daily run sent {sent} media posts.", flush=True)
         except Exception as exc:
             print(f"Instagram daily run failed: {exc}", flush=True)
 
@@ -71,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-cache-dir", default="datasets/instagram")
     parser.add_argument("--max-posts", type=int, default=3)
     parser.add_argument("--page-size", type=int, default=12)
+    parser.add_argument("--include-ads", action="store_true", help="Allow ad-like posts; by default they are skipped.")
     parser.add_argument("--once", action="store_true", help="Run the next scheduled execution only, then exit.")
     return parser
 
@@ -89,6 +92,7 @@ def main() -> int:
         profile_cache_dir=args.profile_cache_dir,
         max_posts=args.max_posts,
         page_size=args.page_size,
+        skip_ads=not args.include_ads,
         once=args.once,
     )
     return 0

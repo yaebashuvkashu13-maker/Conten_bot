@@ -18,6 +18,45 @@ from .config import InstagramSource, load_config
 
 INSTAGRAM_APP_ID = "936619743392459"
 DEFAULT_STATE_PATH = Path("datasets/instagram/reels_state.json")
+AD_KEYWORDS = (
+    "anti losstreak",
+    "available",
+    "bca",
+    "contact admin",
+    "dana",
+    "diamond via login",
+    "dm admin",
+    "gopay",
+    "gift card",
+    "harga transparan",
+    "jasa joki",
+    "legal & aman",
+    "monthly",
+    "open gift",
+    "open order",
+    "order sekarang",
+    "ovo",
+    "paket border",
+    "pembayaran",
+    "price list",
+    "pricelist",
+    "proses cepat",
+    "qris",
+    "shopeepay",
+    "skin impian",
+    "stok aman",
+    "termurah",
+    "top up",
+    "topup",
+    "via gift",
+    "whatsapp",
+    "wdp",
+)
+AD_REGEXES = (
+    re.compile(r"\brp\.?\s?\d", re.IGNORECASE),
+    re.compile(r"\bwa[:\s+]", re.IGNORECASE),
+    re.compile(r"\b08\d{6,}\b"),
+)
 
 
 @dataclass(slots=True)
@@ -42,6 +81,23 @@ def _username_from_url(url: str) -> str:
     if not match:
         raise ValueError(f"Cannot parse Instagram username from URL: {url}")
     return match.group(1)
+
+
+def advertising_reason(media: InstagramMedia) -> str | None:
+    text = " ".join(
+        (
+            media.caption,
+            media.source_name,
+            media.username,
+        )
+    ).lower()
+    for keyword in AD_KEYWORDS:
+        if keyword in text:
+            return f"keyword:{keyword}"
+    for pattern in AD_REGEXES:
+        if pattern.search(text):
+            return f"pattern:{pattern.pattern}"
+    return None
 
 
 def _load_state(path: Path) -> set[str]:
@@ -361,6 +417,7 @@ def run_once(
     page_size: int,
     max_posts: int,
     profile_cache_dir: str | Path | None,
+    skip_ads: bool,
     dry_run: bool,
 ) -> int:
     config = load_config(config_path)
@@ -382,6 +439,9 @@ def run_once(
             continue
         for media in feed_media:
             if media.code in sent_codes:
+                continue
+            if skip_ads and (reason := advertising_reason(media)):
+                print(f"Skipping ad-like Instagram media {media.code}: {reason}")
                 continue
             if not dry_run and (not bot_token or not chat_id):
                 raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
@@ -415,6 +475,9 @@ def run_once(
         for media in reels:
             if media.code in sent_codes:
                 continue
+            if skip_ads and (reason := advertising_reason(media)):
+                print(f"Skipping ad-like Instagram media {media.code}: {reason}")
+                continue
             if not dry_run and (not bot_token or not chat_id):
                 raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
             send_media_to_telegram(
@@ -445,6 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--telegram-chat-id-env", default="TELEGRAM_CHAT_ID")
     parser.add_argument("--page-size", type=int, default=12)
     parser.add_argument("--max-posts", type=int, default=3)
+    parser.add_argument("--include-ads", action="store_true", help="Allow ad-like posts; by default they are skipped.")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -461,6 +525,7 @@ def main() -> int:
         page_size=args.page_size,
         max_posts=args.max_posts,
         profile_cache_dir=args.profile_cache_dir,
+        skip_ads=not args.include_ads,
         dry_run=args.dry_run,
     )
     print(f"Sent {sent} Instagram media posts.")
