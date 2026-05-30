@@ -319,26 +319,9 @@ def send_media_to_telegram(
         print(caption)
         return
 
-    if len(media.image_urls) > 1:
-        media_group = [
-            {
-                "type": "photo",
-                "media": image_url,
-                **({"caption": caption} if index == 0 else {}),
-            }
-            for index, image_url in enumerate(media.image_urls[:10])
-        ]
-        try:
-            _telegram_request(
-                bot_token,
-                "sendMediaGroup",
-                data={"chat_id": chat_id, "media": json.dumps(media_group, ensure_ascii=False)},
-            )
-            return
-        except Exception as exc:
-            print(f"Telegram media group failed, falling back to first photo: {exc}")
-
     if media.image_urls:
+        # Telegram can hang on large remote media groups; one image plus source link is more reliable
+        # for a daily review queue, and the caption keeps the original carousel URL.
         _telegram_request(
             bot_token,
             "sendPhoto",
