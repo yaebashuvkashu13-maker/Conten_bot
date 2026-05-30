@@ -135,11 +135,12 @@ python3 -m content_bot.montage_builder \
 The builder skips known promo/official/event sources, keeps game audio, normalizes
 volume, and uses video/audio crossfades so scenes do not cut off abruptly.
 
-### Send Instagram Reels to Telegram daily
+### Send Instagram posts/Reels to Telegram daily
 
 The Instagram profile extractor in `yt-dlp` may fail, so this project also has a
-cookie-based Reels pipeline that uses Instagram's web API and a local state file
-to avoid duplicate Telegram posts.
+cookie-based Instagram pipeline that uses Instagram's web API and a local state
+file to avoid duplicate Telegram posts. It prioritizes photo posts and carousels,
+then falls back to Reels/videos.
 
 Required runtime secrets should be provided through environment variables, not
 committed files:

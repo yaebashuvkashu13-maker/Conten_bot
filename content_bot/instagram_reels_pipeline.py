@@ -21,13 +21,15 @@ DEFAULT_STATE_PATH = Path("datasets/instagram/reels_state.json")
 
 
 @dataclass(slots=True)
-class InstagramReel:
+class InstagramMedia:
     media_id: str
     code: str
     username: str
     source_name: str
+    media_kind: str
     caption: str
     permalink: str
+    image_urls: list[str]
     video_url: str | None
     thumbnail_url: str | None
     play_count: int | None
@@ -128,13 +130,96 @@ def fetch_user_id(
     return str(user_id)
 
 
+def _best_image_url(media: dict) -> str | None:
+    candidates = media.get("image_versions2", {}).get("candidates") or []
+    if not candidates:
+        return None
+    return candidates[0].get("url")
+
+
+def _media_from_item(media: dict, *, username: str, source_name: str) -> InstagramMedia | None:
+    code = str(media.get("code") or "")
+    if not code:
+        return None
+    caption = ""
+    if media.get("caption"):
+        caption = str(media["caption"].get("text") or "")
+
+    media_type = int(media.get("media_type") or 0)
+    video_versions = media.get("video_versions") or []
+    image_urls: list[str] = []
+    media_kind = "post"
+    if media_type == 1:
+        media_kind = "photo"
+        image_url = _best_image_url(media)
+        if image_url:
+            image_urls.append(image_url)
+    elif media_type == 8:
+        media_kind = "carousel"
+        for child in media.get("carousel_media") or []:
+            if int(child.get("media_type") or 0) == 1:
+                image_url = _best_image_url(child)
+                if image_url:
+                    image_urls.append(image_url)
+        if not image_urls:
+            image_url = _best_image_url(media)
+            if image_url:
+                image_urls.append(image_url)
+    elif media_type == 2:
+        media_kind = "video"
+
+    return InstagramMedia(
+        media_id=str(media.get("id") or media.get("strong_id__") or code),
+        code=code,
+        username=username,
+        source_name=source_name,
+        media_kind=media_kind,
+        caption=caption,
+        permalink=f"https://www.instagram.com/p/{code}/",
+        image_urls=image_urls,
+        video_url=video_versions[0].get("url") if video_versions else None,
+        thumbnail_url=_best_image_url(media),
+        play_count=media.get("play_count") or media.get("view_count"),
+        like_count=media.get("like_count"),
+        comment_count=media.get("comment_count"),
+    )
+
+
+def fetch_feed_media(
+    session: requests.Session,
+    source: InstagramSource,
+    *,
+    page_size: int,
+    profile_cache_dir: Path | None = None,
+) -> list[InstagramMedia]:
+    username = _username_from_url(source.url)
+    user_id = fetch_user_id(session, username, profile_cache_dir=profile_cache_dir)
+    response = session.get(
+        f"https://www.instagram.com/api/v1/feed/user/{user_id}/",
+        params={"count": str(page_size)},
+        headers={"Referer": f"https://www.instagram.com/{username}/"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    items = response.json().get("items") or []
+    media_items = [
+        parsed
+        for item in items
+        if (parsed := _media_from_item(item, username=username, source_name=source.name)) is not None
+    ]
+    # Pictures are the SMM priority: photos/carousels first, then videos.
+    priority = {"photo": 0, "carousel": 1, "video": 2}
+    media_items.sort(key=lambda item: priority.get(item.media_kind, 9))
+    return media_items
+
+
 def fetch_reels(
     session: requests.Session,
     source: InstagramSource,
     *,
     page_size: int,
     profile_cache_dir: Path | None = None,
-) -> list[InstagramReel]:
+) -> list[InstagramMedia]:
     username = _username_from_url(source.url)
     user_id = fetch_user_id(session, username, profile_cache_dir=profile_cache_dir)
     response = session.post(
@@ -150,51 +235,38 @@ def fetch_reels(
     response.raise_for_status()
     items = response.json().get("items") or []
 
-    reels: list[InstagramReel] = []
+    reels: list[InstagramMedia] = []
     for item in items:
         media = item.get("media") if isinstance(item, dict) else None
         if not media:
             continue
-        code = str(media.get("code") or "")
-        if not code:
-            continue
-        caption = ""
-        if media.get("caption"):
-            caption = str(media["caption"].get("text") or "")
-        video_versions = media.get("video_versions") or []
-        image_versions = media.get("image_versions2", {}).get("candidates") or []
-        reels.append(
-            InstagramReel(
-                media_id=str(media.get("id") or media.get("strong_id__") or code),
-                code=code,
-                username=username,
-                source_name=source.name,
-                caption=caption,
-                permalink=f"https://www.instagram.com/reel/{code}/",
-                video_url=video_versions[0].get("url") if video_versions else None,
-                thumbnail_url=image_versions[0].get("url") if image_versions else None,
-                play_count=media.get("play_count") or media.get("view_count"),
-                like_count=media.get("like_count"),
-                comment_count=media.get("comment_count"),
-            )
-        )
+        parsed = _media_from_item(media, username=username, source_name=source.name)
+        if parsed:
+            parsed.media_kind = "video"
+            parsed.permalink = f"https://www.instagram.com/reel/{parsed.code}/"
+            reels.append(parsed)
     return reels
 
 
-def build_ready_caption(reel: InstagramReel) -> str:
+def build_ready_caption(media: InstagramMedia) -> str:
     stats: list[str] = []
-    if reel.play_count is not None:
-        stats.append(f"{reel.play_count:,} просмотров".replace(",", " "))
-    if reel.like_count is not None:
-        stats.append(f"{reel.like_count:,} лайков".replace(",", " "))
-    if reel.comment_count is not None:
-        stats.append(f"{reel.comment_count:,} комментариев".replace(",", " "))
+    if media.play_count is not None:
+        stats.append(f"{media.play_count:,} просмотров".replace(",", " "))
+    if media.like_count is not None:
+        stats.append(f"{media.like_count:,} лайков".replace(",", " "))
+    if media.comment_count is not None:
+        stats.append(f"{media.comment_count:,} комментариев".replace(",", " "))
 
-    original = reel.caption.strip() or "Без подписи."
+    original = media.caption.strip() or "Без подписи."
+    kind_text = {
+        "photo": "Новый пост-картинка по Mobile Legends.",
+        "carousel": "Новая карусель по Mobile Legends.",
+        "video": "Новый Reels/видео по Mobile Legends.",
+    }.get(media.media_kind, "Новый Instagram-пост по Mobile Legends.")
     lines = [
-        f"🎮 MLBB | {reel.source_name}",
+        f"🎮 MLBB | {media.source_name}",
         "",
-        "Новый Reels по Mobile Legends.",
+        kind_text,
         "",
         "Оригинальный текст:",
         original[:900],
@@ -202,7 +274,7 @@ def build_ready_caption(reel: InstagramReel) -> str:
         "Готовая подача для Telegram:",
         "Посмотрите свежий MLBB-ролик. Что думаете: это полезный инсайд или просто хайп?",
         "",
-        f"Источник: {reel.permalink}",
+        f"Источник: {media.permalink}",
     ]
     if stats:
         lines.append("Статистика: " + " | ".join(stats))
@@ -233,21 +305,49 @@ def _download_temp_video(session: requests.Session, url: str) -> Path:
     return path
 
 
-def send_reel_to_telegram(
+def send_media_to_telegram(
     session: requests.Session,
-    reel: InstagramReel,
+    media: InstagramMedia,
     *,
     bot_token: str,
     chat_id: str,
     dry_run: bool,
 ) -> None:
-    caption = build_ready_caption(reel)
+    caption = build_ready_caption(media)
     if dry_run:
+        print(f"[{media.media_kind.upper()}] {media.permalink}")
         print(caption)
         return
 
-    if reel.video_url:
-        temp_path = _download_temp_video(session, reel.video_url)
+    if len(media.image_urls) > 1:
+        media_group = [
+            {
+                "type": "photo",
+                "media": image_url,
+                **({"caption": caption} if index == 0 else {}),
+            }
+            for index, image_url in enumerate(media.image_urls[:10])
+        ]
+        try:
+            _telegram_request(
+                bot_token,
+                "sendMediaGroup",
+                data={"chat_id": chat_id, "media": json.dumps(media_group, ensure_ascii=False)},
+            )
+            return
+        except Exception as exc:
+            print(f"Telegram media group failed, falling back to first photo: {exc}")
+
+    if media.image_urls:
+        _telegram_request(
+            bot_token,
+            "sendPhoto",
+            data={"chat_id": chat_id, "photo": media.image_urls[0], "caption": caption},
+        )
+        return
+
+    if media.video_url:
+        temp_path = _download_temp_video(session, media.video_url)
         try:
             with temp_path.open("rb") as handle:
                 _telegram_request(
@@ -288,7 +388,7 @@ def run_once(
     sent = 0
     for source in config.instagram_sources:
         try:
-            reels = fetch_reels(
+            feed_media = fetch_feed_media(
                 session,
                 source,
                 page_size=min(page_size, max(source.max_entries, 1)),
@@ -297,20 +397,52 @@ def run_once(
         except Exception as exc:
             print(f"Skipping Instagram source {source.name}: {exc}")
             continue
-        for reel in reels:
-            if reel.code in sent_codes:
+        for media in feed_media:
+            if media.code in sent_codes:
                 continue
             if not dry_run and (not bot_token or not chat_id):
                 raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
-            send_reel_to_telegram(
+            send_media_to_telegram(
                 session,
-                reel,
+                media,
                 bot_token=bot_token or "",
                 chat_id=chat_id or "",
                 dry_run=dry_run,
             )
             if not dry_run:
-                sent_codes.add(reel.code)
+                sent_codes.add(media.code)
+                _save_state(state_file, sent_codes)
+            sent += 1
+            if sent >= max_posts:
+                return sent
+            time.sleep(1)
+
+    # Fallback for accounts where regular feed returns no new items but Reels still work.
+    for source in config.instagram_sources:
+        try:
+            reels = fetch_reels(
+                session,
+                source,
+                page_size=min(page_size, max(source.max_entries, 1)),
+                profile_cache_dir=Path(profile_cache_dir) if profile_cache_dir else None,
+            )
+        except Exception as exc:
+            print(f"Skipping Instagram Reels fallback {source.name}: {exc}")
+            continue
+        for media in reels:
+            if media.code in sent_codes:
+                continue
+            if not dry_run and (not bot_token or not chat_id):
+                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
+            send_media_to_telegram(
+                session,
+                media,
+                bot_token=bot_token or "",
+                chat_id=chat_id or "",
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                sent_codes.add(media.code)
                 _save_state(state_file, sent_codes)
             sent += 1
             if sent >= max_posts:
@@ -320,7 +452,7 @@ def run_once(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Collect Instagram Reels via cookies and send them to Telegram.")
+    parser = argparse.ArgumentParser(description="Collect Instagram posts/Reels via cookies and send them to Telegram.")
     parser.add_argument("--config", default="config.instagram-mlbb.yaml")
     parser.add_argument("--cookies-path", default=os.environ.get("INSTAGRAM_COOKIES_PATH", "instagram_cookies.cookies"))
     parser.add_argument("--proxy-url", default=os.environ.get("INSTAGRAM_PROXY_URL") or os.environ.get("PROXY_URL"))
@@ -348,7 +480,7 @@ def main() -> int:
         profile_cache_dir=args.profile_cache_dir,
         dry_run=args.dry_run,
     )
-    print(f"Sent {sent} Instagram reels.")
+    print(f"Sent {sent} Instagram media posts.")
     return 0
 
 
