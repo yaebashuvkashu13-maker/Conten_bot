@@ -183,9 +183,17 @@ Build a 3–4 scene montage for one hero from your local TikTok library:
 
 ```bash
 cp config.montage.example.yaml config.montage.yaml
-python3 -m content_bot.montage_builder --hero gusion --dry-run
-python3 -m content_bot.montage_builder --hero gusion
+
+# Gameplay-only sources from filter report (recommended on VM with dataset)
+python3 -m content_bot.montage_builder --hero gusion \
+  --video-root /workspace/datasets/tiktok/mlbb \
+  --gameplay-csv /workspace/datasets/tiktok/reports/gameplay_filter_full.csv
+
+# Or one-liner script:
+bash scripts/build_hero_montage.sh gusion
 ```
+
+Output: `/workspace/datasets/outputs/<hero>/<hero>_gameplay_4scenes_smooth.mp4`
 
 Defaults:
 - video root: `datasets/tiktok/mlbb` (~1900+ `.mp4` files)
@@ -195,4 +203,17 @@ Defaults:
 
 Requires `ffmpeg` and JSONL manifests under `datasets/tiktok/*_manifest.jsonl` for
 best hero matching via TikTok descriptions.
+
+Send the rendered file to your Telegram (personal chat):
+
+```bash
+export TELEGRAM_BOT_TOKEN="your_new_token_from_botfather"
+export TELEGRAM_CHAT_ID="1006141589"
+
+python3 -m content_bot.montage_builder --hero gusion \
+  --video-root datasets/tiktok/mlbb \
+  --send-telegram
+```
+
+Or put the same values into local `config.yaml` (gitignored) under `telegram:`.
 

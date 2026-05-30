@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import glob
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,8 +11,16 @@ def _escape_drawtext(text: str) -> str:
     return text.replace(":", r"\:").replace("'", r"\'")
 
 
-def extract_segment(segment: SceneSegment, output_path: Path) -> None:
+def extract_segment(segment: SceneSegment, output_path: Path, *, fade_sec: float = 0.35) -> None:
+    """Extract clip with short fade in/out so scenes do not cut abruptly."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = segment.duration_sec
+    fade = min(fade_sec, max(duration / 4.0, 0.1))
+    fade_out_start = max(duration - fade, 0.01)
+
+    vf = f"fade=t=in:st=0:d={fade:.3f},fade=t=out:st={fade_out_start:.3f}:d={fade:.3f}"
+    af = f"afade=t=in:st=0:d={fade:.3f},afade=t=out:st={fade_out_start:.3f}:d={fade:.3f}"
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -22,7 +29,11 @@ def extract_segment(segment: SceneSegment, output_path: Path) -> None:
         "-i",
         str(segment.path),
         "-t",
-        f"{segment.duration_sec:.3f}",
+        f"{duration:.3f}",
+        "-vf",
+        vf,
+        "-af",
+        af,
         "-c:v",
         "libx264",
         "-preset",
@@ -46,6 +57,7 @@ def assemble_montage(
     *,
     transition_duration: float,
     hook_text: str | None = None,
+    clip_fade_sec: float = 0.35,
 ) -> None:
     if not segments:
         raise RuntimeError("No segments to assemble.")
@@ -58,7 +70,7 @@ def assemble_montage(
 
         for index, segment in enumerate(segments):
             clip_path = temp / f"clip_{index:02d}.mp4"
-            extract_segment(segment, clip_path)
+            extract_segment(segment, clip_path, fade_sec=clip_fade_sec)
             clip_paths.append(clip_path)
             durations.append(segment.duration_sec)
 

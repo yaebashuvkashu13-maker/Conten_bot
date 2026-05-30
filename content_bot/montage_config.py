@@ -34,6 +34,8 @@ class MontageConfig:
     montage: MontageSettings
     exclude_keywords: list[str]
     heroes: dict[str, HeroMontageProfile]
+    gameplay_csv: Path | None = None
+    clip_fade_sec: float = 0.35
 
 
 def _hero_profiles(raw: dict[str, Any]) -> dict[str, HeroMontageProfile]:
@@ -63,13 +65,16 @@ def load_montage_config(path: str | Path) -> MontageConfig:
         min_source_duration=float(montage_raw.get("min_source_duration", 12)),
     )
 
+    gameplay_csv_raw = raw.get("gameplay_csv")
     return MontageConfig(
         video_root=Path(raw.get("video_root", "datasets/tiktok/mlbb")),
         manifest_glob=str(raw.get("manifest_glob", "datasets/tiktok/*_manifest.jsonl")),
-        output_dir=Path(raw.get("output_dir", "output/montage")),
+        output_dir=Path(raw.get("output_dir", "datasets/outputs")),
         montage=montage,
         exclude_keywords=[str(k).lower() for k in raw.get("exclude_keywords") or []],
         heroes=_hero_profiles(raw.get("heroes")),
+        gameplay_csv=Path(gameplay_csv_raw) if gameplay_csv_raw else None,
+        clip_fade_sec=float(raw.get("clip_fade_sec", 0.35)),
     )
 
 
@@ -86,8 +91,10 @@ def default_config() -> MontageConfig:
     return MontageConfig(
         video_root=Path("datasets/tiktok/mlbb"),
         manifest_glob="datasets/tiktok/*_manifest.jsonl",
-        output_dir=Path("output/montage"),
+        output_dir=Path("datasets/outputs"),
         montage=MontageSettings(),
-        exclude_keywords=["giveaway", "event", "promo", "collab", "redeem", "skin release"],
+        exclude_keywords=["giveaway", "event", "promo", "collab", "redeem", "skin release", "cinematic"],
         heroes=DEFAULT_HEROES,
+        gameplay_csv=Path("datasets/tiktok/reports/gameplay_filter_full.csv"),
+        clip_fade_sec=0.35,
     )

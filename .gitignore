@@ -10,4 +10,7 @@ datasets/*
 config.collect.yaml
 config.montage.yaml
 output/
+datasets/tiktok/mlbb/
+datasets/tiktok/reports/
+datasets/outputs/
 
