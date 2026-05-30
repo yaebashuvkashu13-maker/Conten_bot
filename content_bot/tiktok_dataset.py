@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -193,16 +194,20 @@ def collect_from_config(config_path: str | Path) -> list[TikTokVideoRecord]:
     all_records: list[TikTokVideoRecord] = []
 
     for source in config.sources:
-        records = collect_profile(
-            profile_url=source.profile_url,
-            output_dir=config.output_dir,
-            proxy_url=proxy_url,
-            max_entries=source.max_entries,
-            source_label=source.label,
-            download_media=config.download_media,
-            cookiefile=str(config.cookies_path) if config.cookies_path else None,
-            skip_existing_records=config.skip_existing_records,
-        )
+        try:
+            records = collect_profile(
+                profile_url=source.profile_url,
+                output_dir=config.output_dir,
+                proxy_url=proxy_url,
+                max_entries=source.max_entries,
+                source_label=source.label,
+                download_media=config.download_media,
+                cookiefile=str(config.cookies_path) if config.cookies_path else None,
+                skip_existing_records=config.skip_existing_records,
+            )
+        except Exception as exc:
+            print(f"Skipping TikTok source {source.label}: {exc}", file=sys.stderr)
+            continue
         all_records.extend(records)
 
     return all_records
