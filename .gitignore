@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 .content-bot-state.json
 config.yaml
+config.tiktok-mlbb.yaml
 datasets/
 

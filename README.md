@@ -16,6 +16,7 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
 - `content_bot/tiktok_dataset.py` - collects TikTok profile datasets via `yt-dlp`
 - `content_bot/video_features.py` - extracts simple motion/visual features for ML
 - `content_bot/hero_classifier.py` - trains a weak baseline classifier from extracted video features
+- `config.tiktok-mlbb.example.yaml` - proxy-safe TikTok dataset config for MLBB sources
 
 ### Quick start
 
@@ -69,6 +70,20 @@ python3 -m content_bot.tiktok_dataset \
   --label "mlbb-official" \
   --download-media
 ```
+
+For a larger MLBB dataset, copy the example config and keep proxy credentials in
+an environment variable instead of committing them:
+
+```bash
+cp config.tiktok-mlbb.example.yaml config.tiktok-mlbb.yaml
+export TIKTOK_PROXY_URL="http://user:pass@host:port"
+python3 -m content_bot.tiktok_dataset --config config.tiktok-mlbb.yaml
+```
+
+Set `max_entries` per source so the total collected set reaches the target size
+(for example 5 sources x 100 entries = 500 videos). The manifest files are stored
+as JSONL next to the downloaded media, and repeated runs skip duplicate manifest
+records by default.
 
 ### Extract simple ML features from videos
 
