@@ -22,6 +22,10 @@ def extract_video_features(video_path: str | Path, sample_fps: float = 4.0) -> d
     brightness_values: list[float] = []
     saturation_values: list[float] = []
     sharpness_values: list[float] = []
+    center_h_hist_acc = np.zeros(8, dtype=np.float64)
+    center_s_hist_acc = np.zeros(8, dtype=np.float64)
+    center_v_hist_acc = np.zeros(8, dtype=np.float64)
+    hist_frames = 0
 
     prev_gray = None
     frame_idx = 0
@@ -37,17 +41,22 @@ def extract_video_features(video_path: str | Path, sample_fps: float = 4.0) -> d
         frame_small = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(frame_small, cv2.COLOR_BGR2HSV)
+        h, w = gray.shape
+        y0, y1 = int(h * 0.22), int(h * 0.78)
+        x0, x1 = int(w * 0.18), int(w * 0.82)
+        center_hsv = hsv[y0:y1, x0:x1]
 
         brightness_values.append(float(gray.mean() / 255.0))
         saturation_values.append(float(hsv[..., 1].mean() / 255.0))
         sharpness_values.append(float(cv2.Laplacian(gray, cv2.CV_32F).var()))
+        center_h_hist_acc += cv2.calcHist([center_hsv], [0], None, [8], [0, 180]).flatten()
+        center_s_hist_acc += cv2.calcHist([center_hsv], [1], None, [8], [0, 256]).flatten()
+        center_v_hist_acc += cv2.calcHist([center_hsv], [2], None, [8], [0, 256]).flatten()
+        hist_frames += 1
 
         if prev_gray is not None:
             diff = cv2.absdiff(gray, prev_gray)
             motion_values.append(float(diff.mean() / 255.0))
-            h, w = gray.shape
-            y0, y1 = int(h * 0.22), int(h * 0.78)
-            x0, x1 = int(w * 0.18), int(w * 0.82)
             center_motion_values.append(float(diff[y0:y1, x0:x1].mean() / 255.0))
 
         prev_gray = gray
@@ -76,6 +85,17 @@ def extract_video_features(video_path: str | Path, sample_fps: float = 4.0) -> d
         ("sharpness", sharpness_values),
     ):
         features.update(stats(values, prefix))
+
+    if hist_frames:
+        h_hist = center_h_hist_acc / center_h_hist_acc.sum()
+        s_hist = center_s_hist_acc / center_s_hist_acc.sum()
+        v_hist = center_v_hist_acc / center_v_hist_acc.sum()
+        for idx, value in enumerate(h_hist):
+            features[f"center_h_hist_{idx}"] = float(value)
+        for idx, value in enumerate(s_hist):
+            features[f"center_s_hist_{idx}"] = float(value)
+        for idx, value in enumerate(v_hist):
+            features[f"center_v_hist_{idx}"] = float(value)
     return features
 
 

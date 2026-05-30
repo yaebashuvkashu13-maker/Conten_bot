@@ -15,6 +15,7 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
 - `content_bot/main.py` - CLI entrypoint
 - `content_bot/tiktok_dataset.py` - collects TikTok profile datasets via `yt-dlp`
 - `content_bot/video_features.py` - extracts simple motion/visual features for ML
+- `content_bot/hero_classifier.py` - trains a weak baseline classifier from extracted video features
 
 ### Quick start
 
@@ -83,4 +84,22 @@ This is the first layer for:
 - skin classification
 - ranking clips by engagement and content pattern
 - scaling to PUBG / Genshin / WoT / Standoff 2
+
+### Train weak hero classifier
+
+```bash
+python3 -m content_bot.hero_classifier train \
+  --positive-dir /path/to/hayabusa_videos \
+  --negative-dir /path/to/non_hayabusa_videos \
+  --output-dir models/hayabusa_v1
+```
+
+### Score new videos with the trained model
+
+```bash
+python3 -m content_bot.hero_classifier score \
+  --model-dir models/hayabusa_v1 \
+  --input-dir /path/to/unlabeled_videos \
+  --output-csv reports/hayabusa_scores.csv
+```
 
