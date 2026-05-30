@@ -148,6 +148,8 @@ committed files:
 ```bash
 export TELEGRAM_BOT_TOKEN="..."
 export TELEGRAM_CHAT_ID="1006141589"
+# Optional: send the same posts to multiple chats.
+export TELEGRAM_CHAT_IDS="1006141589,SECOND_CHAT_ID"
 export INSTAGRAM_COOKIES_PATH="instagram_cookies.cookies"
 export INSTAGRAM_PROXY_URL="socks5://user:pass@host:port"
 ```

@@ -348,6 +348,12 @@ def _telegram_request(token: str, method: str, **kwargs: Any) -> dict[str, Any]:
     return result
 
 
+def parse_chat_ids(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [chat_id.strip() for chat_id in re.split(r"[,;\s]+", value) if chat_id.strip()]
+
+
 def _download_temp_video(session: requests.Session, url: str) -> Path:
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
     path = Path(handle.name)
@@ -366,7 +372,7 @@ def send_media_to_telegram(
     media: InstagramMedia,
     *,
     bot_token: str,
-    chat_id: str,
+    chat_ids: list[str],
     dry_run: bool,
 ) -> None:
     caption = build_ready_caption(media)
@@ -374,36 +380,41 @@ def send_media_to_telegram(
         print(f"[{media.media_kind.upper()}] {media.permalink}")
         print(caption)
         return
+    if not chat_ids:
+        raise RuntimeError("At least one Telegram chat id is required.")
 
     if media.image_urls:
         # Telegram can hang on large remote media groups; one image plus source link is more reliable
         # for a daily review queue, and the caption keeps the original carousel URL.
-        _telegram_request(
-            bot_token,
-            "sendPhoto",
-            data={"chat_id": chat_id, "photo": media.image_urls[0], "caption": caption},
-        )
+        for chat_id in chat_ids:
+            _telegram_request(
+                bot_token,
+                "sendPhoto",
+                data={"chat_id": chat_id, "photo": media.image_urls[0], "caption": caption},
+            )
         return
 
     if media.video_url:
         temp_path = _download_temp_video(session, media.video_url)
         try:
-            with temp_path.open("rb") as handle:
-                _telegram_request(
-                    bot_token,
-                    "sendVideo",
-                    data={"chat_id": chat_id, "caption": caption},
-                    files={"video": handle},
-                )
+            for chat_id in chat_ids:
+                with temp_path.open("rb") as handle:
+                    _telegram_request(
+                        bot_token,
+                        "sendVideo",
+                        data={"chat_id": chat_id, "caption": caption},
+                        files={"video": handle},
+                    )
         finally:
             temp_path.unlink(missing_ok=True)
         return
 
-    _telegram_request(
-        bot_token,
-        "sendMessage",
-        data={"chat_id": chat_id, "text": caption, "disable_web_page_preview": False},
-    )
+    for chat_id in chat_ids:
+        _telegram_request(
+            bot_token,
+            "sendMessage",
+            data={"chat_id": chat_id, "text": caption, "disable_web_page_preview": False},
+        )
 
 
 def run_once(
@@ -413,7 +424,7 @@ def run_once(
     proxy_url: str | None,
     state_path: str | Path,
     bot_token: str | None,
-    chat_id: str | None,
+    chat_ids: list[str],
     page_size: int,
     max_posts: int,
     profile_cache_dir: str | Path | None,
@@ -443,13 +454,13 @@ def run_once(
             if skip_ads and (reason := advertising_reason(media)):
                 print(f"Skipping ad-like Instagram media {media.code}: {reason}")
                 continue
-            if not dry_run and (not bot_token or not chat_id):
-                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
+            if not dry_run and (not bot_token or not chat_ids):
+                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS/TELEGRAM_CHAT_ID are required unless --dry-run is used.")
             send_media_to_telegram(
                 session,
                 media,
                 bot_token=bot_token or "",
-                chat_id=chat_id or "",
+                chat_ids=chat_ids,
                 dry_run=dry_run,
             )
             if not dry_run:
@@ -478,13 +489,13 @@ def run_once(
             if skip_ads and (reason := advertising_reason(media)):
                 print(f"Skipping ad-like Instagram media {media.code}: {reason}")
                 continue
-            if not dry_run and (not bot_token or not chat_id):
-                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
+            if not dry_run and (not bot_token or not chat_ids):
+                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS/TELEGRAM_CHAT_ID are required unless --dry-run is used.")
             send_media_to_telegram(
                 session,
                 media,
                 bot_token=bot_token or "",
-                chat_id=chat_id or "",
+                chat_ids=chat_ids,
                 dry_run=dry_run,
             )
             if not dry_run:
@@ -505,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-path", default=str(DEFAULT_STATE_PATH))
     parser.add_argument("--profile-cache-dir", default="datasets/instagram")
     parser.add_argument("--telegram-token-env", default="TELEGRAM_BOT_TOKEN")
+    parser.add_argument("--telegram-chat-ids-env", default="TELEGRAM_CHAT_IDS")
     parser.add_argument("--telegram-chat-id-env", default="TELEGRAM_CHAT_ID")
     parser.add_argument("--page-size", type=int, default=12)
     parser.add_argument("--max-posts", type=int, default=3)
@@ -521,7 +533,11 @@ def main() -> int:
         proxy_url=args.proxy_url,
         state_path=args.state_path,
         bot_token=os.environ.get(args.telegram_token_env),
-        chat_id=os.environ.get(args.telegram_chat_id_env) or os.environ.get("TELEGRAM_CHANNEL_ID"),
+        chat_ids=parse_chat_ids(
+            os.environ.get(args.telegram_chat_ids_env)
+            or os.environ.get(args.telegram_chat_id_env)
+            or os.environ.get("TELEGRAM_CHANNEL_ID")
+        ),
         page_size=args.page_size,
         max_posts=args.max_posts,
         profile_cache_dir=args.profile_cache_dir,

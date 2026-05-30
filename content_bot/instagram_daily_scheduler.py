@@ -4,10 +4,9 @@ import argparse
 import os
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .instagram_reels_pipeline import run_once
+from .instagram_reels_pipeline import parse_chat_ids, run_once
 
 
 def _next_run_at(hour: int, minute: int, timezone: ZoneInfo) -> datetime:
@@ -47,7 +46,11 @@ def run_scheduler(
                 proxy_url=proxy_url,
                 state_path=state_path,
                 bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
-                chat_id=os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHANNEL_ID"),
+                chat_ids=parse_chat_ids(
+                    os.environ.get("TELEGRAM_CHAT_IDS")
+                    or os.environ.get("TELEGRAM_CHAT_ID")
+                    or os.environ.get("TELEGRAM_CHANNEL_ID")
+                ),
                 page_size=page_size,
                 max_posts=max_posts,
                 profile_cache_dir=profile_cache_dir,
