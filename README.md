@@ -166,6 +166,6 @@ python3 -m content_bot.instagram_daily_scheduler \
   --time 18:00 \
   --timezone Europe/Moscow \
   --config config.instagram-mlbb.yaml \
-  --max-posts 3
+  --max-posts 7
 ```
 

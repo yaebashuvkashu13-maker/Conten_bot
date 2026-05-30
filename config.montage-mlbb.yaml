@@ -1,0 +1,21 @@
+montage:
+  game: "mobile-legends"
+  report_csv: "datasets/tiktok/reports/gameplay_filter_latest.csv"
+  output_dir: "datasets/outputs/montages"
+  target_duration: 45
+  scenes: 4
+  transition_duration: 0.65
+  min_gameplay_score: 0.55
+
+  priority_heroes:
+    - hayabusa
+    - gusion
+    - chou
+    - lancelot
+
+  rules:
+    - "Use only gameplay-only clips."
+    - "Prefer one hero per video."
+    - "Use 3-4 longer scenes, not rapid 3-second cuts."
+    - "Keep game sound and smooth video/audio crossfades."
+    - "Skip official, promo, event, skin, trailer, and cinematic clips."
