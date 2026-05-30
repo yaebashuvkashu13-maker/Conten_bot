@@ -135,6 +135,32 @@ python3 -m content_bot.montage_builder \
 The builder skips known promo/official/event sources, keeps game audio, normalizes
 volume, and uses video/audio crossfades so scenes do not cut off abruptly.
 
+### Reduce music while keeping game sounds
+
+For downloaded TikTok clips where music is mixed with gameplay sounds, use the
+fast local audio cleaner. It cannot perfectly split sources, but it reduces common
+music-bed ranges and preserves high-mid game SFX/transients:
+
+```bash
+python3 -m content_bot.audio_game_cleaner \
+  --input datasets/outputs/montages/gusion_4scenes_45s.mp4 \
+  --output datasets/outputs/montages/gusion_4scenes_45s_sfx.mp4 \
+  --strength 0.85
+```
+
+There is also an optional heavier mode:
+
+```bash
+python3 -m pip install demucs
+python3 -m content_bot.audio_game_cleaner \
+  --method demucs \
+  --input input.mp4 \
+  --output output_sfx.mp4
+```
+
+Demucs is best-effort here: it separates music stems, not "game audio" directly,
+so final quality still needs manual listening checks.
+
 ### Send Instagram posts/Reels to Telegram daily
 
 The Instagram profile extractor in `yt-dlp` may fail, so this project also has a
