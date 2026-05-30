@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,8 +47,8 @@ def load_config(path: str | Path) -> AppConfig:
     sources_raw = _require(raw, "instagram_sources")
 
     telegram = TelegramConfig(
-        bot_token=str(_require(telegram_raw, "bot_token")),
-        channel_id=str(_require(telegram_raw, "channel_id")),
+        bot_token=str(os.environ.get("TELEGRAM_BOT_TOKEN") or _require(telegram_raw, "bot_token")),
+        channel_id=str(os.environ.get("TELEGRAM_CHAT_ID") or _require(telegram_raw, "channel_id")),
     )
 
     instagram_sources = [

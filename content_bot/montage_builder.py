@@ -52,12 +52,23 @@ def pick_scenes(
     return chosen
 
 
+def _send_to_telegram(output_path: Path, caption: str, telegram_config_path: str) -> dict:
+    from .config import load_config
+    from .telegram_publisher import TelegramPublisher
+
+    app_config = load_config(telegram_config_path)
+    publisher = TelegramPublisher(app_config.telegram)
+    return publisher.send_video_file(output_path, caption=caption)
+
+
 def build_montage(
     hero: str,
     config: MontageConfig,
     *,
     dry_run: bool = False,
     output_name: str | None = None,
+    send_telegram: bool = False,
+    telegram_config_path: str = "config.yaml",
 ) -> dict:
     hero_key = hero.lower()
     profile = config.heroes.get(hero_key)
@@ -131,6 +142,11 @@ def build_montage(
         hook_text=profile.hook or None,
     )
     plan["rendered"] = True
+
+    if send_telegram:
+        caption = f"{profile.hook}\n{profile.name} montage · {round(total_duration)}s"
+        tg_result = _send_to_telegram(output_path, caption, telegram_config_path)
+        plan["telegram"] = {"ok": tg_result.get("ok"), "chat_id": tg_result.get("result", {}).get("chat", {}).get("id")}
     return plan
 
 
@@ -146,6 +162,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-name", help="Output filename.")
     parser.add_argument("--dry-run", action="store_true", help="Print scene plan without rendering.")
+    parser.add_argument("--scene-count", type=int, help="Override number of scenes (3 or 4).")
+    parser.add_argument(
+        "--send-telegram",
+        action="store_true",
+        help="Upload rendered montage to Telegram (requires config.yaml).",
+    )
+    parser.add_argument(
+        "--telegram-config",
+        default="config.yaml",
+        help="YAML with telegram.bot_token and telegram.channel_id (your chat id).",
+    )
     return parser
 
 
@@ -155,12 +182,16 @@ def main() -> int:
     config = load_montage_config(config_path) if config_path.exists() else default_config()
     if args.video_root:
         config.video_root = Path(args.video_root)
+    if args.scene_count:
+        config.montage.scene_count = args.scene_count
 
     plan = build_montage(
         args.hero,
         config,
         dry_run=args.dry_run,
         output_name=args.output_name,
+        send_telegram=args.send_telegram,
+        telegram_config_path=args.telegram_config,
     )
     print(json.dumps(plan, ensure_ascii=False, indent=2))
     return 0
