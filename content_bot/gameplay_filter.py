@@ -30,20 +30,27 @@ class GameplayScore:
     comment_count: int | None = None
 
 
-def _circle_score(gray: np.ndarray) -> float:
-    circles = cv2.HoughCircles(
-        gray,
-        cv2.HOUGH_GRADIENT,
-        dp=1.25,
-        minDist=max(gray.shape) / 4,
-        param1=70,
-        param2=14,
-        minRadius=max(6, min(gray.shape) // 10),
-        maxRadius=max(10, min(gray.shape) // 2),
-    )
-    if circles is None:
-        return 0.0
-    return min(float(circles.shape[1]) / 3.0, 1.0)
+def _hud_control_score(gray: np.ndarray) -> float:
+    edges = cv2.Canny(gray, 60, 130)
+    edge_density = float((edges > 0).mean())
+
+    _, bright = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    roundish = 0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 45:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            continue
+        circularity = 4.0 * np.pi * area / (perimeter * perimeter)
+        if circularity >= 0.35:
+            roundish += 1
+
+    contour_score = min(roundish / 6.0, 1.0)
+    density_score = min(edge_density / 0.12, 1.0)
+    return max(contour_score, density_score * 0.75)
 
 
 def _frame_gameplay_signals(frame: np.ndarray) -> tuple[float, float, float, float]:
@@ -62,8 +69,8 @@ def _frame_gameplay_signals(frame: np.ndarray) -> tuple[float, float, float, flo
 
     minimap_edges = float((cv2.Canny(top_left, 60, 130) > 0).mean())
     top_edges = float((cv2.Canny(top_center, 60, 130) > 0).mean())
-    joystick_score = _circle_score(lower_left)
-    skill_score = _circle_score(lower_right)
+    joystick_score = _hud_control_score(lower_left)
+    skill_score = _hud_control_score(lower_right)
 
     minimap_score = min(minimap_edges / 0.11, 1.0)
     top_hud_score = min(top_edges / 0.10, 1.0)
