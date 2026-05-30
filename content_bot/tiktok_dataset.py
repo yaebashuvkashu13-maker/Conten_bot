@@ -136,7 +136,12 @@ def collect_profile(
         "proxy": proxy_url,
         "skip_download": not download_media,
         "outtmpl": str(output_path / "%(uploader)s" / "%(id)s.%(ext)s"),
+        "continuedl": True,
+        "fragment_retries": 10,
+        "ignoreerrors": True,
         "overwrites": False,
+        "retries": 10,
+        "socket_timeout": 30,
         "writesubtitles": False,
         "writeautomaticsub": False,
     }
