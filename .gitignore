@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
+*.egg-info/
+conten_bot.egg-info/
 .content-bot-state.json
 config.yaml
-datasets/
+datasets/*
+!datasets/labeled/
+!datasets/labeled/README.md
+config.collect.yaml
 

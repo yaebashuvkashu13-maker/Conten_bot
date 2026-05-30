@@ -7,6 +7,8 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
+from .proxy_config import resolve_proxy_url
+
 
 @dataclass(slots=True)
 class TikTokVideoRecord:
@@ -35,11 +37,12 @@ def collect_profile(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    resolved_proxy = resolve_proxy_url(proxy_url)
     options = {
         "quiet": True,
         "no_warnings": True,
         "playlistend": max_entries,
-        "proxy": proxy_url,
+        "proxy": resolved_proxy,
         "skip_download": not download_media,
         "outtmpl": str(output_path / "%(uploader)s" / "%(id)s.%(ext)s"),
         "writesubtitles": False,

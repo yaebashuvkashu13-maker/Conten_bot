@@ -6,6 +6,7 @@ from typing import Iterable
 from yt_dlp import YoutubeDL
 
 from .config import InstagramSource
+from .proxy_config import resolve_proxy_url
 
 
 @dataclass(slots=True)
@@ -61,8 +62,9 @@ def fetch_source_posts_with_options(
     }
     if cookiefile:
         options["cookiefile"] = cookiefile
-    if proxy_url:
-        options["proxy"] = proxy_url
+    resolved_proxy = resolve_proxy_url(proxy_url)
+    if resolved_proxy:
+        options["proxy"] = resolved_proxy
 
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(source.url, download=False)
