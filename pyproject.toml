@@ -9,6 +9,7 @@ dependencies = [
   "opencv-python-headless",
   "PyYAML",
   "pandas",
+  "requests[socks]",
   "scikit-learn",
   "yt-dlp",
 ]

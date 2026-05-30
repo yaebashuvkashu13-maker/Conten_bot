@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import tempfile
+import time
+from dataclasses import dataclass
+from http.cookiejar import MozillaCookieJar
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from .config import InstagramSource, load_config
+
+
+INSTAGRAM_APP_ID = "936619743392459"
+DEFAULT_STATE_PATH = Path("datasets/instagram/reels_state.json")
+
+
+@dataclass(slots=True)
+class InstagramReel:
+    media_id: str
+    code: str
+    username: str
+    source_name: str
+    caption: str
+    permalink: str
+    video_url: str | None
+    thumbnail_url: str | None
+    play_count: int | None
+    like_count: int | None
+    comment_count: int | None
+
+
+def _username_from_url(url: str) -> str:
+    match = re.search(r"instagram\.com/([^/?#]+)/?", url)
+    if not match:
+        raise ValueError(f"Cannot parse Instagram username from URL: {url}")
+    return match.group(1)
+
+
+def _load_state(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+    return set(str(value) for value in raw.get("sent_codes", []))
+
+
+def _save_state(path: Path, sent_codes: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"sent_codes": sorted(sent_codes)}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _csrf_from_cookiejar(cookiejar: MozillaCookieJar) -> str:
+    for cookie in cookiejar:
+        if cookie.name == "csrftoken":
+            return cookie.value
+    return ""
+
+
+def build_session(cookies_path: str | Path, proxy_url: str | None = None) -> requests.Session:
+    cookiejar = MozillaCookieJar(str(cookies_path))
+    cookiejar.load(ignore_discard=True, ignore_expires=True)
+
+    session = requests.Session()
+    session.cookies.update(cookiejar)
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+            "X-IG-App-ID": INSTAGRAM_APP_ID,
+            "X-CSRFToken": _csrf_from_cookiejar(cookiejar),
+            "X-Requested-With": "XMLHttpRequest",
+        }
+    )
+    if proxy_url:
+        session.proxies.update({"http": proxy_url, "https": proxy_url})
+    return session
+
+
+def _cached_user_id(username: str, profile_cache_dir: Path | None) -> str | None:
+    if not profile_cache_dir:
+        return None
+    profile_path = profile_cache_dir / f"{username}_profile.json"
+    if not profile_path.exists():
+        return None
+    try:
+        data = json.loads(profile_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    user_id = data.get("data", {}).get("user", {}).get("id")
+    return str(user_id) if user_id else None
+
+
+def fetch_user_id(
+    session: requests.Session,
+    username: str,
+    *,
+    profile_cache_dir: Path | None = None,
+) -> str:
+    cached = _cached_user_id(username, profile_cache_dir)
+    if cached:
+        return cached
+
+    response = session.get(
+        "https://www.instagram.com/api/v1/users/web_profile_info/",
+        params={"username": username},
+        headers={"Referer": f"https://www.instagram.com/{username}/"},
+        timeout=45,
+    )
+    response.raise_for_status()
+    user = response.json().get("data", {}).get("user") or {}
+    user_id = user.get("id")
+    if not user_id:
+        raise RuntimeError(f"Instagram profile did not return user id for {username}")
+    return str(user_id)
+
+
+def fetch_reels(
+    session: requests.Session,
+    source: InstagramSource,
+    *,
+    page_size: int,
+    profile_cache_dir: Path | None = None,
+) -> list[InstagramReel]:
+    username = _username_from_url(source.url)
+    user_id = fetch_user_id(session, username, profile_cache_dir=profile_cache_dir)
+    response = session.post(
+        "https://www.instagram.com/api/v1/clips/user/",
+        data={
+            "target_user_id": user_id,
+            "page_size": str(page_size),
+            "include_feed_video": "true",
+        },
+        headers={"Referer": f"https://www.instagram.com/{username}/reels/"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    items = response.json().get("items") or []
+
+    reels: list[InstagramReel] = []
+    for item in items:
+        media = item.get("media") if isinstance(item, dict) else None
+        if not media:
+            continue
+        code = str(media.get("code") or "")
+        if not code:
+            continue
+        caption = ""
+        if media.get("caption"):
+            caption = str(media["caption"].get("text") or "")
+        video_versions = media.get("video_versions") or []
+        image_versions = media.get("image_versions2", {}).get("candidates") or []
+        reels.append(
+            InstagramReel(
+                media_id=str(media.get("id") or media.get("strong_id__") or code),
+                code=code,
+                username=username,
+                source_name=source.name,
+                caption=caption,
+                permalink=f"https://www.instagram.com/reel/{code}/",
+                video_url=video_versions[0].get("url") if video_versions else None,
+                thumbnail_url=image_versions[0].get("url") if image_versions else None,
+                play_count=media.get("play_count") or media.get("view_count"),
+                like_count=media.get("like_count"),
+                comment_count=media.get("comment_count"),
+            )
+        )
+    return reels
+
+
+def build_ready_caption(reel: InstagramReel) -> str:
+    stats: list[str] = []
+    if reel.play_count is not None:
+        stats.append(f"{reel.play_count:,} просмотров".replace(",", " "))
+    if reel.like_count is not None:
+        stats.append(f"{reel.like_count:,} лайков".replace(",", " "))
+    if reel.comment_count is not None:
+        stats.append(f"{reel.comment_count:,} комментариев".replace(",", " "))
+
+    original = reel.caption.strip() or "Без подписи."
+    lines = [
+        f"🎮 MLBB | {reel.source_name}",
+        "",
+        "Новый Reels по Mobile Legends.",
+        "",
+        "Оригинальный текст:",
+        original[:900],
+        "",
+        "Готовая подача для Telegram:",
+        "Посмотрите свежий MLBB-ролик. Что думаете: это полезный инсайд или просто хайп?",
+        "",
+        f"Источник: {reel.permalink}",
+    ]
+    if stats:
+        lines.append("Статистика: " + " | ".join(stats))
+    lines.append("")
+    lines.append("#MLBB #MobileLegends")
+    return "\n".join(lines)[:1024]
+
+
+def _telegram_request(token: str, method: str, **kwargs: Any) -> dict[str, Any]:
+    response = requests.post(f"https://api.telegram.org/bot{token}/{method}", timeout=180, **kwargs)
+    response.raise_for_status()
+    result = response.json()
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram API error: {result}")
+    return result
+
+
+def _download_temp_video(session: requests.Session, url: str) -> Path:
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    path = Path(handle.name)
+    handle.close()
+    with session.get(url, stream=True, timeout=180) as response:
+        response.raise_for_status()
+        with path.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    output.write(chunk)
+    return path
+
+
+def send_reel_to_telegram(
+    session: requests.Session,
+    reel: InstagramReel,
+    *,
+    bot_token: str,
+    chat_id: str,
+    dry_run: bool,
+) -> None:
+    caption = build_ready_caption(reel)
+    if dry_run:
+        print(caption)
+        return
+
+    if reel.video_url:
+        temp_path = _download_temp_video(session, reel.video_url)
+        try:
+            with temp_path.open("rb") as handle:
+                _telegram_request(
+                    bot_token,
+                    "sendVideo",
+                    data={"chat_id": chat_id, "caption": caption},
+                    files={"video": handle},
+                )
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return
+
+    _telegram_request(
+        bot_token,
+        "sendMessage",
+        data={"chat_id": chat_id, "text": caption, "disable_web_page_preview": False},
+    )
+
+
+def run_once(
+    *,
+    config_path: str | Path,
+    cookies_path: str | Path,
+    proxy_url: str | None,
+    state_path: str | Path,
+    bot_token: str | None,
+    chat_id: str | None,
+    page_size: int,
+    max_posts: int,
+    profile_cache_dir: str | Path | None,
+    dry_run: bool,
+) -> int:
+    config = load_config(config_path)
+    session = build_session(cookies_path, proxy_url)
+    state_file = Path(state_path)
+    sent_codes = _load_state(state_file)
+
+    sent = 0
+    for source in config.instagram_sources:
+        try:
+            reels = fetch_reels(
+                session,
+                source,
+                page_size=min(page_size, max(source.max_entries, 1)),
+                profile_cache_dir=Path(profile_cache_dir) if profile_cache_dir else None,
+            )
+        except Exception as exc:
+            print(f"Skipping Instagram source {source.name}: {exc}")
+            continue
+        for reel in reels:
+            if reel.code in sent_codes:
+                continue
+            if not dry_run and (not bot_token or not chat_id):
+                raise RuntimeError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run is used.")
+            send_reel_to_telegram(
+                session,
+                reel,
+                bot_token=bot_token or "",
+                chat_id=chat_id or "",
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                sent_codes.add(reel.code)
+                _save_state(state_file, sent_codes)
+            sent += 1
+            if sent >= max_posts:
+                return sent
+            time.sleep(1)
+    return sent
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Collect Instagram Reels via cookies and send them to Telegram.")
+    parser.add_argument("--config", default="config.instagram-mlbb.yaml")
+    parser.add_argument("--cookies-path", default=os.environ.get("INSTAGRAM_COOKIES_PATH", "instagram_cookies.cookies"))
+    parser.add_argument("--proxy-url", default=os.environ.get("INSTAGRAM_PROXY_URL") or os.environ.get("PROXY_URL"))
+    parser.add_argument("--state-path", default=str(DEFAULT_STATE_PATH))
+    parser.add_argument("--profile-cache-dir", default="datasets/instagram")
+    parser.add_argument("--telegram-token-env", default="TELEGRAM_BOT_TOKEN")
+    parser.add_argument("--telegram-chat-id-env", default="TELEGRAM_CHAT_ID")
+    parser.add_argument("--page-size", type=int, default=12)
+    parser.add_argument("--max-posts", type=int, default=3)
+    parser.add_argument("--dry-run", action="store_true")
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    sent = run_once(
+        config_path=args.config,
+        cookies_path=args.cookies_path,
+        proxy_url=args.proxy_url,
+        state_path=args.state_path,
+        bot_token=os.environ.get(args.telegram_token_env),
+        chat_id=os.environ.get(args.telegram_chat_id_env) or os.environ.get("TELEGRAM_CHANNEL_ID"),
+        page_size=args.page_size,
+        max_posts=args.max_posts,
+        profile_cache_dir=args.profile_cache_dir,
+        dry_run=args.dry_run,
+    )
+    print(f"Sent {sent} Instagram reels.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
