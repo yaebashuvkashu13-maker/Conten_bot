@@ -188,6 +188,8 @@ bash /usr/local/bin/run_parallel_stack.sh
 
 Параллельно: Instagram worker (тик), audio wav extract, индекс скринов рекламы `/root/data/mlbb/ad_examples/`.
 
+**Скрины рекламы в Telegram:** `/ad` → фото → `/ad_done` (алиас `/реклама`). Без `/ad` фото не путаются с видео для нарезки.
+
 Подробно: `docs/mlbb_parallel_burst.md`. Пока идёт mass download, почасовой `tiktok_download_batch` **пропускается** (см. `mlbb_hourly_cycle.sh`).
 
 Без прокси докачка с VPS часто падает; Hayabusa-датасет на диске **уже есть** (~1.9 GB в `/root/videos` и hero_datasets).
