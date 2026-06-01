@@ -10,6 +10,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+try:
+    from source_freshness import filter_new_sources, mark_used
+except ImportError:
+    import sys
+
+    sys.path.insert(0, '/usr/local/bin')
+    from source_freshness import filter_new_sources, mark_used
+
 ENV_FILE = Path('/root/.video_bot.env')
 LOG_FILE = Path('/root/telegram_upload_bot.log')
 STATE_FILE = Path('/root/.telegram_upload_bot_state.json')
@@ -221,11 +229,23 @@ def extract_media(message: dict):
     return None
 
 
-def process_chat_batch(chat_id: str):
-    queue_path = queue_file_for(chat_id)
+def _lines_from_paths(chat_id: str, paths: list[Path], labels: dict[Path, str] | None = None) -> list[str]:
+    labels = labels or {}
+    return [f"{path}|{labels.get(path, 'Telegram upload')}|{chat_id}" for path in paths]
+
+
+def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
     limited = is_limited_notify(chat_id)
     try:
-        lines = [line.strip() for line in queue_path.read_text().splitlines() if line.strip()]
+        if only_paths is not None:
+            fresh_paths = filter_new_sources(only_paths)
+            lines = _lines_from_paths(chat_id, fresh_paths)
+        else:
+            queue_path = queue_file_for(chat_id)
+            lines = [line.strip() for line in queue_path.read_text().splitlines() if line.strip()]
+            paths = [Path(line.split('|', 1)[0]) for line in lines]
+            fresh_paths = filter_new_sources(paths)
+            lines = [line for line in lines if Path(line.split('|', 1)[0]) in fresh_paths]
         if not lines:
             if limited:
                 return
@@ -249,6 +269,7 @@ def process_chat_batch(chat_id: str):
         Path(tmp_queue_path).unlink(missing_ok=True)
 
         if completed.returncode == 0:
+            mark_used([Path(line.split('|', 1)[0]) for line in lines])
             archive_processed(chat_id, lines)
             if limited:
                 # Готовый ролик приходит отдельным sendVideo из smart_video_editor.py
@@ -282,14 +303,14 @@ def process_chat_batch(chat_id: str):
             PROCESSING_CHATS.discard(chat_id)
 
 
-def start_processing(chat_id: str):
+def start_processing(chat_id: str, only_paths: list[Path] | None = None):
     with PROCESSING_LOCK:
         if chat_id in PROCESSING_CHATS:
             if not is_limited_notify(chat_id):
                 send_message(chat_id, 'Обработка уже запущена. Дождись результата или сообщения об ошибке.')
             return
         PROCESSING_CHATS.add(chat_id)
-    thread = threading.Thread(target=process_chat_batch, args=(chat_id,), daemon=True)
+    thread = threading.Thread(target=process_chat_batch, args=(chat_id, only_paths), daemon=True)
     thread.start()
 
 
@@ -351,7 +372,7 @@ def handle_message(message: dict):
     pending_count = count_pending(chat_id)
     if chat_id in AUTO_MAKE_CHAT_IDS:
         send_upload_status(chat_id, pending_count)
-        start_processing(chat_id)
+        start_processing(chat_id, only_paths=[destination])
         return
     send_upload_status(chat_id, pending_count)
 

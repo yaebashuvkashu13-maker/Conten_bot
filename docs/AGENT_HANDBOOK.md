@@ -261,9 +261,17 @@ conten_bot/
 
 `mlbb_hourly_cycle.sh` каждый час в **:12 UTC** (~:15 МСК):
 
-1. `tiktok_download_batch.py --limit 45`
-2. `hourly_hayabusa_progress.sh`
+1. `tiktok_download_batch.py --limit 45` → файлы на VPS `/root/datasets/tiktok/mlbb/`
+2. `hourly_new_sources_montage.py` — нарезка **только из новых** (не старый `hero_datasets`)
 3. `mlbb_progress_report.py --attach-latest-video`
+
+**Источники нарезок (с июня 2026):**
+
+| Откуда | Правило |
+|--------|---------|
+| Бот Telegram | Только **только что загруженное** видео (коллега) или свежие из очереди (`source_freshness.py`) |
+| Почасовой цикл | TikTok, скачанные за последние ~36 ч + свежие upload, **не** использованные ранее |
+| ~~Старый датасет~~ | `/root/hero_datasets/hayabusa` — **только для обучения ML**, не для нарезок в Telegram |
 
 Отчёт: сколько скачано/отброшено, размер датасета, история сцен, место на диске.
 

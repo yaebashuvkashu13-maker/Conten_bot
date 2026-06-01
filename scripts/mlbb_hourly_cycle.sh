@@ -15,7 +15,7 @@ if [[ -f /root/.video_bot.env ]]; then
 fi
 
 /usr/bin/python3 /usr/local/bin/tiktok_download_batch.py --limit 45 || true
-/usr/local/bin/hourly_hayabusa_progress.sh || true
+/usr/bin/python3 /usr/local/bin/hourly_new_sources_montage.py || true
 /usr/bin/python3 /usr/local/bin/mlbb_progress_report.py --attach-latest-video || true
 
 printf '[%s] hourly cycle done\n' "$(date '+%Y-%m-%d %H:%M:%S')"
