@@ -17,6 +17,19 @@ INDEX = Path("/root/data/mlbb/ad_examples_index.json")
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp"}
 
 
+def _meta_note(path: Path) -> str:
+    meta = path.with_suffix(".meta.json")
+    if not meta.exists():
+        meta = path.parent / f"{path.stem}.meta.json"
+    if meta.exists():
+        try:
+            payload = json.loads(meta.read_text(encoding="utf-8"))
+            return f"telegram:{payload.get('chat_id', '?')}"
+        except json.JSONDecodeError:
+            pass
+    return "manual_tg_forward"
+
+
 def file_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -43,7 +56,7 @@ def main() -> int:
             "name": path.name,
             "size": path.stat().st_size,
             "indexed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "note": "manual_tg_forward",
+            "note": _meta_note(path),
         }
         added += 1
 

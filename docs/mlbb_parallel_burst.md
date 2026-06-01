@@ -42,9 +42,11 @@ cat /root/data/mlbb/download_state.json | jq '.mass_last_stats,.mass_on_disk'
 
 ## Скрины рекламы из Telegram
 
-1. Перешлите боту скрины промо/розыгрышей/«зайди в почту».
-2. Сохраните файлы на VPS: `/root/data/mlbb/ad_examples/`
-3. `ad_screenshot_ingest.py` обновит `ad_examples_index.json` — позже подключим фильтр в дайджест и монтаж.
+1. В боте: **`/ad`** (или **`/реклама`**) — включить режим.
+2. Пришлите **фото** скринов (можно пачкой).
+3. **`/ad_done`** — выключить режим и проиндексировать.
+
+Файлы: `/root/data/mlbb/ad_examples/`, индекс: `ad_examples_index.json`.
 
 ## Перевод текста на картинке на русский
 

@@ -25,7 +25,10 @@ UPLOAD_ROOT = Path('/root/telegram_uploads')
 PENDING_ROOT = UPLOAD_ROOT / 'pending'
 ARCHIVE_ROOT = UPLOAD_ROOT / 'archive'
 PROCESSOR = '/usr/local/bin/smart_video_editor.py'
+AD_INGEST = '/usr/local/bin/ad_screenshot_ingest.py'
+AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
 POLL_TIMEOUT = 25
+AD_MODE_TIMEOUT_SEC = 3600
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 PENDING_ROOT.mkdir(parents=True, exist_ok=True)
@@ -116,11 +119,57 @@ def send_upload_status(chat_id: str, pending_count: int):
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
-        return {'last_update_id': 0}
+        return {'last_update_id': 0, 'ad_mode_until': {}}
     try:
-        return json.loads(STATE_FILE.read_text())
+        state = json.loads(STATE_FILE.read_text())
     except Exception:
-        return {'last_update_id': 0}
+        return {'last_update_id': 0, 'ad_mode_until': {}}
+    state.setdefault('ad_mode_until', {})
+    return state
+
+
+def _bot_state() -> dict:
+    """Mutable bot state persisted across polls (ad mode, offset)."""
+    if not hasattr(_bot_state, 'data'):
+        _bot_state.data = load_state()
+    return _bot_state.data
+
+
+def is_ad_mode(chat_id: str) -> bool:
+    until = _bot_state().get('ad_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['ad_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_ad_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('ad_mode_until', {})
+    if enabled:
+        state['ad_mode_until'][chat_id] = time.time() + AD_MODE_TIMEOUT_SEC
+    else:
+        state['ad_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def count_ad_examples() -> int:
+    if not AD_EXAMPLES_DIR.exists():
+        return 0
+    exts = {'.jpg', '.jpeg', '.png', '.webp'}
+    return sum(1 for p in AD_EXAMPLES_DIR.iterdir() if p.suffix.lower() in exts)
+
+
+def run_ad_index():
+    if not Path(AD_INGEST).exists():
+        return
+    try:
+        subprocess.run(['python3', AD_INGEST], check=False, capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        logging.warning('ad index failed: %s', exc)
 
 
 def save_state(state: dict):
@@ -205,6 +254,57 @@ def get_file_url(file_id: str) -> str:
 def download_file(file_url: str, destination: Path):
     with urllib.request.urlopen(file_url, timeout=120) as response, destination.open('wb') as handle:
         shutil.copyfileobj(response, handle)
+
+
+def extract_photo(message: dict):
+    photos = message.get('photo')
+    if photos:
+        best = max(photos, key=lambda item: item.get('file_size', 0))
+        return {
+            'file_id': best['file_id'],
+            'file_unique_id': best.get('file_unique_id', best['file_id']),
+            'ext': '.jpg',
+        }
+    document = message.get('document')
+    if document:
+        mime = (document.get('mime_type') or '').lower()
+        name = (document.get('file_name') or '').lower()
+        if mime.startswith('image/') or name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            ext = Path(name).suffix or '.jpg'
+            return {
+                'file_id': document['file_id'],
+                'file_unique_id': document.get('file_unique_id', document['file_id']),
+                'ext': ext if ext else '.jpg',
+            }
+    return None
+
+
+def save_ad_photo(chat_id: str, message: dict) -> Path | None:
+    photo = extract_photo(message)
+    if not photo:
+        return None
+    AD_EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    caption = safe_label(message.get('caption'))[:40]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    name = f'ad_{chat_id}_{stamp}_{photo["file_unique_id"]}{photo["ext"]}'
+    destination = AD_EXAMPLES_DIR / name
+    file_url = get_file_url(photo['file_id'])
+    download_file(file_url, destination)
+    meta = AD_EXAMPLES_DIR / f'{destination.stem}.meta.json'
+    meta.write_text(
+        json.dumps(
+            {
+                'chat_id': chat_id,
+                'caption': caption,
+                'message_id': message.get('message_id'),
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    return destination
 
 
 def extract_media(message: dict):
@@ -338,8 +438,38 @@ def handle_message(message: dict):
         else:
             send_message(
                 chat_id,
-                'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.',
+                'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
+                'Примеры рекламы (скрины): команда /ad — затем фото, завершить /ad_done.',
             )
+        return
+    if text.split()[0] in ('/ad', '/реклама', '/ads'):
+        set_ad_mode(chat_id, True)
+        send_message(
+            chat_id,
+            'Режим примеров рекламы включён на 1 час.\n'
+            'Пришли скрины (фото) — сохраню для обучения фильтра «не слать такое».\n'
+            'Когда закончишь: /ad_done\n'
+            f'Сейчас в базе: {count_ad_examples()} шт.',
+        )
+        return
+    if text.split()[0] in ('/ad_done', '/ad_stop', '/реклама_готово'):
+        was = is_ad_mode(chat_id)
+        set_ad_mode(chat_id, False)
+        run_ad_index()
+        total = count_ad_examples()
+        send_message(
+            chat_id,
+            f'Режим рекламы выключен. Всего примеров: {total}.\n'
+            + ('Последние фото проиндексированы.' if was else 'Новых фото в этом режиме не было.'),
+        )
+        notify_owner(f'Ad examples updated: {total} files (chat {chat_id}).')
+        return
+    if text.split()[0] in ('/ad_status',):
+        send_message(
+            chat_id,
+            f'Режим /ad: {"включён" if is_ad_mode(chat_id) else "выключен"}. '
+            f'Примеров в базе: {count_ad_examples()}.',
+        )
         return
     if text.startswith('/status'):
         if limited:
@@ -358,6 +488,28 @@ def handle_message(message: dict):
             send_message(chat_id, 'Сначала пришли хотя бы одно видео.')
             return
         start_processing(chat_id)
+        return
+
+    photo = extract_photo(message)
+    if photo:
+        if is_ad_mode(chat_id):
+            saved = save_ad_photo(chat_id, message)
+            if saved:
+                run_ad_index()
+                send_message(
+                    chat_id,
+                    f'Сохранил пример рекламы ({saved.name}). Всего: {count_ad_examples()}. '
+                    'Ещё фото или /ad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+        if not limited:
+            send_message(
+                chat_id,
+                'Чтобы отправить скрины рекламы для обучения бота, сначала напиши /ad (или /реклама), '
+                'потом пришли фото. Завершить — /ad_done.',
+            )
         return
 
     media = extract_media(message)
@@ -379,7 +531,7 @@ def handle_message(message: dict):
 
 def main():
     api_call('deleteWebhook', {'drop_pending_updates': False}, timeout=30)
-    state = load_state()
+    state = _bot_state()
     logging.info('telegram upload bot started')
     while True:
         try:

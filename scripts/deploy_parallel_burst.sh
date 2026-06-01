@@ -12,6 +12,7 @@ for f in \
   instagram_background_worker.py \
   audio_game_extract_worker.py \
   ad_screenshot_ingest.py \
+  telegram_upload_bot.py \
   tiktok_download_batch.py \
   mlbb_hourly_cycle.sh; do
   install -m 755 "$SRC/$f" "$DEST/$f"
