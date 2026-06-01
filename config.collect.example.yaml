@@ -1,0 +1,21 @@
+# Copy to config.collect.yaml and set proxy before it expires.
+# SOCKS5 (recommended for TikTok):
+#   export PROXY_URL="socks5://user:pass@host:5495"
+# HTTP often returns 502 on some providers — prefer SOCKS5.
+
+proxy_url: null
+output_dir: datasets/tiktok
+download_media: true
+delay_between_profiles_seconds: 8
+
+tiktok_profiles:
+  - label: mlbb-official
+    url: https://www.tiktok.com/@mlbbttofficial
+    max_entries: 100
+  - label: mlbb-esports
+    url: https://www.tiktok.com/@mobilelegendsgame
+    max_entries: 100
+
+# Optional: snapshot Instagram metadata while proxy still works.
+instagram_config_path: config.instagram-mlbb.yaml
+instagram_snapshot_dir: datasets/instagram/snapshots

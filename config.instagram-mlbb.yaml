@@ -44,4 +44,6 @@ state_path: ".content-bot-state.instagram-mlbb.json"
 instagram_cookies_path: null
 proxy_url: null
 dry_run: true
+publish_delay_seconds: 2.0
+request_max_retries: 5
 

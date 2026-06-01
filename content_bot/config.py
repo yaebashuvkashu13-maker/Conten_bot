@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ class AppConfig:
     instagram_cookies_path: Path | None = None
     proxy_url: str | None = None
     dry_run: bool = False
+    publish_delay_seconds: float = 1.0
+    request_max_retries: int = 5
 
 
 def _require(mapping: dict[str, Any], key: str) -> Any:
@@ -44,8 +47,8 @@ def load_config(path: str | Path) -> AppConfig:
     sources_raw = _require(raw, "instagram_sources")
 
     telegram = TelegramConfig(
-        bot_token=str(_require(telegram_raw, "bot_token")),
-        channel_id=str(_require(telegram_raw, "channel_id")),
+        bot_token=str(os.environ.get("TELEGRAM_BOT_TOKEN") or _require(telegram_raw, "bot_token")),
+        channel_id=str(os.environ.get("TELEGRAM_CHAT_ID") or _require(telegram_raw, "channel_id")),
     )
 
     instagram_sources = [
@@ -62,6 +65,8 @@ def load_config(path: str | Path) -> AppConfig:
     instagram_cookies_path = Path(cookies_raw) if cookies_raw else None
     proxy_url = str(raw["proxy_url"]) if raw.get("proxy_url") else None
     dry_run = bool(raw.get("dry_run", False))
+    publish_delay_seconds = float(raw.get("publish_delay_seconds", 1.0))
+    request_max_retries = int(raw.get("request_max_retries", 5))
 
     return AppConfig(
         telegram=telegram,
@@ -70,5 +75,7 @@ def load_config(path: str | Path) -> AppConfig:
         instagram_cookies_path=instagram_cookies_path,
         proxy_url=proxy_url,
         dry_run=dry_run,
+        publish_delay_seconds=publish_delay_seconds,
+        request_max_retries=request_max_retries,
     )
 

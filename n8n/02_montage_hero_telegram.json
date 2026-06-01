@@ -1,0 +1,75 @@
+{
+  "name": "Conten_bot — Montage hero + Telegram (HTTP)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "montage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000001",
+      "name": "Webhook montage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "conten-bot-montage"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hero-field",
+              "name": "hero",
+              "value": "={{ $json.body.hero || $json.hero || 'gusion' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000002",
+      "name": "Parse hero",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONTEN_BOT_API_URL || 'http://127.0.0.1:8765' }}/montage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={ \"hero\": \"{{ $json.hero }}\" }",
+        "options": {"timeout": 3600000}
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000003",
+      "name": "API build montage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000004",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Webhook montage": {"main": [[{"node": "Parse hero", "type": "main", "index": 0}]]},
+    "Parse hero": {"main": [[{"node": "API build montage", "type": "main", "index": 0}]]},
+    "API build montage": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": [{"name": "conten_bot"}]
+}

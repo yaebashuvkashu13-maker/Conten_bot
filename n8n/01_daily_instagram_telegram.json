@@ -1,0 +1,53 @@
+{
+  "name": "Conten_bot — Daily Instagram → Telegram (HTTP)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "days", "daysInterval": 1, "triggerAtHour": 10, "triggerAtMinute": 0}]
+        }
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000001",
+      "name": "Every day 10:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONTEN_BOT_API_URL || 'http://127.0.0.1:8765' }}/instagram",
+        "options": {"timeout": 1800000}
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000002",
+      "name": "API Instagram sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📬 Instagram sync\\n\\n{{ ($json.stdout || $json.stderr || JSON.stringify($json)).slice(0, 4000) }}\"\n}"
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000003",
+      "name": "Notify Telegram summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Every day 10:00": {"main": [[{"node": "API Instagram sync", "type": "main", "index": 0}]]},
+    "API Instagram sync": {"main": [[{"node": "Notify Telegram summary", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": [{"name": "conten_bot"}]
+}

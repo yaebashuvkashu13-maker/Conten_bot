@@ -1,0 +1,41 @@
+video_root: datasets/tiktok/mlbb
+manifest_glob: datasets/tiktok/*_manifest.jsonl
+gameplay_csv: datasets/tiktok/reports/gameplay_filter_full.csv
+output_dir: datasets/outputs
+clip_fade_sec: 0.35
+
+montage:
+  min_total_duration: 33
+  max_total_duration: 57
+  scene_count: 4
+  transition_duration: 0.5
+  min_scene_duration: 8
+  max_scene_duration: 16
+  sample_candidates: 50
+  min_source_duration: 12
+
+exclude_keywords:
+  - giveaway
+  - event
+  - promo
+  - collab
+  - redeem
+  - skin release
+  - #ad
+
+heroes:
+  gusion:
+    keywords: [gusion, гусион]
+    hook: "GUSION OUTPLAY"
+  lancelot:
+    keywords: [lancelot, ланселот]
+    hook: "LANCELOT COMBO"
+  chou:
+    keywords: [chou, чоу, "kung fu"]
+    hook: "CHOU OUTPLAY"
+  fanny:
+    keywords: [fanny, фанни, cable]
+    hook: "FANNY MECHANICS"
+  hayabusa:
+    keywords: [hayabusa, хаябуса, haya]
+    hook: "HAYABUSA KILL"
