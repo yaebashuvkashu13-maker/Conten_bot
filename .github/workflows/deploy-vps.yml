@@ -1,0 +1,35 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - cursor/mlbb-video-pipeline-e712
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy scripts and restart bot
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -Eeuo pipefail
+            REPO="${{ secrets.VPS_REPO_PATH || '/root/content_bot_ml' }}"
+            cd "$REPO"
+            git fetch origin
+            git checkout cursor/mlbb-video-pipeline-e712 || git checkout main
+            git pull --ff-only
+            bash scripts/burst.sh
+            systemctl restart telegram-upload-bot
+            echo "=== deploy done ==="
+            find /root/datasets/tiktok/mlbb -name '*.mp4' 2>/dev/null | wc -l
+            tail -5 /root/data/mlbb/mass_download.log 2>/dev/null || true
