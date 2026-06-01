@@ -1,6 +1,14 @@
 __pycache__/
 *.pyc
+*.egg-info/
+.runtime_secrets
+.env
+.env.*
 .content-bot-state.json
 config.yaml
+config.tiktok-mlbb.yaml
+instagram_cookies*.json
+instagram_cookies*.txt
+instagram_cookies*.cookies
 datasets/
 

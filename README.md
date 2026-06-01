@@ -16,6 +16,7 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
 - `content_bot/tiktok_dataset.py` - collects TikTok profile datasets via `yt-dlp`
 - `content_bot/video_features.py` - extracts simple motion/visual features for ML
 - `content_bot/hero_classifier.py` - trains a weak baseline classifier from extracted video features
+- `config.tiktok-mlbb.example.yaml` - proxy-safe TikTok dataset config for MLBB sources
 
 ### Quick start
 
@@ -70,6 +71,20 @@ python3 -m content_bot.tiktok_dataset \
   --download-media
 ```
 
+For a larger MLBB dataset, copy the example config and keep proxy credentials in
+an environment variable instead of committing them:
+
+```bash
+cp config.tiktok-mlbb.example.yaml config.tiktok-mlbb.yaml
+export TIKTOK_PROXY_URL="http://user:pass@host:port"
+python3 -m content_bot.tiktok_dataset --config config.tiktok-mlbb.yaml
+```
+
+Set `max_entries` per source so the total collected set reaches the target size
+(for example 5 sources x 100 entries = 500 videos). The manifest files are stored
+as JSONL next to the downloaded media, and repeated runs skip duplicate manifest
+records by default.
+
 ### Extract simple ML features from videos
 
 ```bash
@@ -101,5 +116,104 @@ python3 -m content_bot.hero_classifier score \
   --model-dir models/hayabusa_v1 \
   --input-dir /path/to/unlabeled_videos \
   --output-csv reports/hayabusa_scores.csv
+```
+
+### Build a gameplay montage
+
+After collecting videos and running the gameplay filter, build a vertical
+33-57 second montage from 3-4 gameplay-only scenes for one hero:
+
+```bash
+python3 -m content_bot.montage_builder \
+  --hero gusion \
+  --report-csv datasets/tiktok/reports/gameplay_filter_full.csv \
+  --target-duration 45 \
+  --scenes 4 \
+  --output-dir datasets/outputs/montages
+```
+
+The builder skips known promo/official/event sources, keeps game audio, normalizes
+volume, and uses video/audio crossfades so scenes do not cut off abruptly.
+
+### Reduce music while keeping game sounds
+
+For downloaded TikTok clips where music is mixed with gameplay sounds, use the
+fast local audio cleaner. It cannot perfectly split sources, but it reduces common
+music-bed ranges and preserves high-mid game SFX/transients:
+
+```bash
+python3 -m content_bot.audio_game_cleaner \
+  --input datasets/outputs/montages/gusion_4scenes_45s.mp4 \
+  --output datasets/outputs/montages/gusion_4scenes_45s_sfx.mp4 \
+  --strength 0.85
+```
+
+There is also an optional heavier mode:
+
+```bash
+python3 -m pip install demucs
+python3 -m content_bot.audio_game_cleaner \
+  --method demucs \
+  --input input.mp4 \
+  --output output_sfx.mp4
+```
+
+Demucs is best-effort here: it separates music stems, not "game audio" directly,
+so final quality still needs manual listening checks.
+
+### Split long videos/streams into several Shorts
+
+For long user-submitted videos or streams, create multiple 33-57 second vertical
+shorts. The number of outputs grows with the input duration. With the defaults,
+a 4 hour stream produces about 8 shorts (one per 30 minutes).
+
+```bash
+python3 -m content_bot.long_video_shorts \
+  --input /path/to/stream.mp4 \
+  --output-dir datasets/outputs/long_video_shorts \
+  --target-duration 45 \
+  --scenes 4 \
+  --minutes-per-short 30 \
+  --max-shorts 20
+```
+
+Each output uses 3-4 longer scenes, vertical 1080x1920 formatting, normalized game
+audio, and video/audio crossfades so scenes do not cut abruptly.
+
+### Send Instagram posts/Reels to Telegram daily
+
+The Instagram profile extractor in `yt-dlp` may fail, so this project also has a
+cookie-based Instagram pipeline that uses Instagram's web API and a local state
+file to avoid duplicate Telegram posts. It prioritizes photo posts and carousels,
+then falls back to Reels/videos.
+
+Required runtime secrets should be provided through environment variables, not
+committed files:
+
+```bash
+export TELEGRAM_BOT_TOKEN="..."
+export TELEGRAM_CHAT_ID="1006141589"
+# Optional: send the same posts to multiple chats.
+export TELEGRAM_CHAT_IDS="1006141589,SECOND_CHAT_ID"
+export INSTAGRAM_COOKIES_PATH="instagram_cookies.cookies"
+export INSTAGRAM_PROXY_URL="socks5://user:pass@host:port"
+```
+
+Run once:
+
+```bash
+python3 -m content_bot.instagram_reels_pipeline \
+  --config config.instagram-mlbb.yaml \
+  --max-posts 3
+```
+
+Run daily at 18:00 Moscow time:
+
+```bash
+python3 -m content_bot.instagram_daily_scheduler \
+  --time 18:00 \
+  --timezone Europe/Moscow \
+  --config config.instagram-mlbb.yaml \
+  --max-posts 7
 ```
 
