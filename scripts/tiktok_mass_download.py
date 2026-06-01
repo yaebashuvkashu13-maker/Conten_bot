@@ -255,9 +255,13 @@ def discover_items(
     def add(item: dict) -> None:
         url = item["url"]
         vid = item.get("video_id") or ""
-        if url in seen_urls:
+        if vid:
+            existing = list(DEFAULT_OUT.rglob(f"{vid}.mp4"))
+            if any(p.stat().st_size > 80_000 for p in existing):
+                return
+        if vid and vid in rejected:
             return
-        if vid and (vid in downloaded or vid in rejected):
+        if url in seen_urls and vid in downloaded:
             return
         seen_urls.add(url)
         queue_items.append(item)
