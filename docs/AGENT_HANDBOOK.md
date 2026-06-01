@@ -177,6 +177,19 @@
 - **Не коммитить.** Владелец выдавал CyberYozh (HTTP + SOCKS5); срок обычно **24 ч**.
 - Проверка: `yt-dlp --proxy "$YTDLP_PROXY" --print title '<tiktok url>'`
 
+### 7.1 Burst: 4000–5000 роликов за окно прокси
+
+Не только 805 URL из CSV — **`tiktok_mass_download.py`** качает каналы, хештеги и поиск MLBB (8 потоков).
+
+```bash
+bash scripts/deploy_parallel_burst.sh   # на VPS после git pull
+bash /usr/local/bin/run_parallel_stack.sh
+```
+
+Параллельно: Instagram worker (тик), audio wav extract, индекс скринов рекламы `/root/data/mlbb/ad_examples/`.
+
+Подробно: `docs/mlbb_parallel_burst.md`. Пока идёт mass download, почасовой `tiktok_download_batch` **пропускается** (см. `mlbb_hourly_cycle.sh`).
+
 Без прокси докачка с VPS часто падает; Hayabusa-датасет на диске **уже есть** (~1.9 GB в `/root/videos` и hero_datasets).
 
 ---
@@ -241,6 +254,8 @@ conten_bot/
 │   ├── smart_video_editor.py
 │   ├── telegram_upload_bot.py
 │   ├── tiktok_download_batch.py
+│   ├── tiktok_mass_download.py
+│   ├── run_parallel_stack.sh
 │   ├── gameplay_gate.py
 │   ├── mlbb_hourly_cycle.sh
 │   └── mlbb_progress_report.py

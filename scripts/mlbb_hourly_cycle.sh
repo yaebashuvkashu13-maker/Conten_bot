@@ -14,7 +14,12 @@ if [[ -f /root/.video_bot.env ]]; then
   set +a
 fi
 
-/usr/bin/python3 /usr/local/bin/tiktok_download_batch.py --limit 45 || true
+# During paid-proxy burst, skip small hourly batch if mass downloader is running
+if pgrep -f tiktok_mass_download.py >/dev/null; then
+  echo "mass download active — skip tiktok_download_batch"
+else
+  /usr/bin/python3 /usr/local/bin/tiktok_download_batch.py --limit 45 || true
+fi
 /usr/bin/python3 /usr/local/bin/hourly_new_sources_montage.py || true
 /usr/bin/python3 /usr/local/bin/mlbb_progress_report.py --attach-latest-video || true
 

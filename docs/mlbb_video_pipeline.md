@@ -7,6 +7,9 @@
 3. Duration **33–57** seconds (`MIN_FINAL_DURATION`, `MAX_FINAL_DURATION`)
 4. Scenes end on quiet boundaries (Smart Edit peak/sustain detection)
 5. Training downloads: **gameplay only** (`gameplay_gate.py` + CSV)
+6. Montage segments: reject **non-gameplay** (cartoon/low HUD) and **on-screen text** (`segment_is_valid_for_montage` in Smart Edit)
+
+**TikTok downloads** go to the **VPS only**: `/root/datasets/tiktok/mlbb/` (not the agent PC).
 6. Goal: clips suitable for real viewers (engagement-weighted TikTok CSV)
 
 ## VPS paths
@@ -19,6 +22,14 @@
 | `/usr/local/bin/mlbb_hourly_cycle.sh` | Cron entrypoint |
 | `/root/data/mlbb/*.csv` | Training tables |
 | `/root/datasets/tiktok/mlbb/` | Downloaded gameplay |
+
+## Burst download (paid proxy window)
+
+See **[mlbb_parallel_burst.md](./mlbb_parallel_burst.md)** — mass harvest 4000–5000 clips + parallel Instagram/audio workers:
+
+```bash
+bash /usr/local/bin/run_parallel_stack.sh
+```
 
 ## Cron
 
