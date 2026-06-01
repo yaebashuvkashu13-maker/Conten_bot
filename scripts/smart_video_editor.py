@@ -22,12 +22,23 @@ import numpy as np
 try:
     from gameplay_gate import segment_is_valid_for_montage
     from source_freshness import mark_used
+    from mlbb_popularity import popularity_boost
+    from mlbb_popularity import extract_video_id as pop_video_id
 except ImportError:
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
     from gameplay_gate import segment_is_valid_for_montage
     from source_freshness import mark_used
+    try:
+        from mlbb_popularity import popularity_boost
+        from mlbb_popularity import extract_video_id as pop_video_id
+    except ImportError:
+        def popularity_boost(_video_id: str) -> float:
+            return 0.0
+
+        def pop_video_id(text: str) -> str | None:
+            return None
 
 ENV_FILE = Path(os.environ.get('ENV_FILE', '/root/.video_bot.env'))
 DEFAULT_LOG_FILE = Path(os.environ.get('LOG_FILE', '/root/smart_video_editor.log'))
@@ -489,6 +500,10 @@ def build_candidates(
         if profile in ('mobile_legends', 'pubg'):
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
+
+        vid_pop = pop_video_id(f"{source_path} {game_name}")
+        if vid_pop:
+            combo_score += popularity_boost(vid_pop)
 
         candidates.append({
             'source_index': source_index,

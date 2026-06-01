@@ -397,6 +397,12 @@ def process_item(
             _stats["saved_gameplay"] += 1
         saved_path = dest
         log(f"kept gameplay {vid} ({reason})")
+        try:
+            pop = record_popularity(saved_path, item.get("description", ""))
+            if pop and pop.get("popularity_score"):
+                log(f"popularity vid={vid} score={pop.get('popularity_score')} views={pop.get('views')}")
+        except Exception:
+            pass
 
     with state_lock:
         if vid:
