@@ -55,6 +55,11 @@ BOT_TOKEN = env['TG_BOT_TOKEN']
 DEFAULT_CHAT_ID = env.get('TG_CHAT_ID', '')
 ALLOWED_CHAT_IDS = {item.strip() for item in env.get('TG_ALLOWED_CHAT_IDS', '').split(',') if item.strip()}
 AUTO_MAKE_CHAT_IDS = {item.strip() for item in env.get('AUTO_MAKE_CHAT_IDS', '').split(',') if item.strip()}
+LIMITED_NOTIFY_CHAT_IDS = {
+    item.strip()
+    for item in env.get('LIMITED_NOTIFY_CHAT_IDS', env.get('AUTO_MAKE_CHAT_IDS', '')).split(',')
+    if item.strip()
+}
 API_BASE = f'https://api.telegram.org/bot{BOT_TOKEN}'
 FILE_BASE = f'https://api.telegram.org/file/bot{BOT_TOKEN}'
 PROCESSING_CHATS: set[str] = set()
@@ -75,11 +80,30 @@ def api_call(method: str, payload: dict | None = None, timeout: int = 60):
     return result['result']
 
 
+def is_limited_notify(chat_id: str | int) -> bool:
+    return str(chat_id) in LIMITED_NOTIFY_CHAT_IDS
+
+
 def send_message(chat_id: str | int, text: str):
     try:
         api_call('sendMessage', {'chat_id': str(chat_id), 'text': text}, timeout=30)
     except Exception as exc:
         logging.error('failed to send message to %s: %s', chat_id, exc)
+
+
+def notify_owner(text: str):
+    if DEFAULT_CHAT_ID:
+        send_message(DEFAULT_CHAT_ID, text)
+
+
+def send_upload_status(chat_id: str, pending_count: int):
+    if is_limited_notify(chat_id):
+        send_message(chat_id, 'Видео получено. Идёт нарезка…')
+        return
+    send_message(
+        chat_id,
+        f'Видео сохранено. Сейчас в очереди {pending_count} шт. Можешь прислать еще или дать /make.',
+    )
 
 
 def load_state() -> dict:
@@ -199,13 +223,20 @@ def extract_media(message: dict):
 
 def process_chat_batch(chat_id: str):
     queue_path = queue_file_for(chat_id)
+    limited = is_limited_notify(chat_id)
     try:
         lines = [line.strip() for line in queue_path.read_text().splitlines() if line.strip()]
         if not lines:
+            if limited:
+                return
             send_message(chat_id, 'У тебя пока нет загруженных видео. Сначала пришли файлы, потом команду /make.')
             return
 
-        send_message(chat_id, f'Принял задачу. Запускаю Smart Edit v1.1: выберу 3-4 хайлайта и соберу ролик примерно на 33-57 секунд.')
+        if not limited:
+            send_message(
+                chat_id,
+                'Принял задачу. Запускаю Smart Edit v1.1: выберу 3-4 хайлайта и соберу ролик примерно на 33-57 секунд.',
+            )
         with tempfile.NamedTemporaryFile('w', delete=False, prefix=f'tg-batch-{chat_id}-', suffix='.txt') as tmp_queue:
             tmp_queue.write('\n'.join(lines) + '\n')
             tmp_queue_path = tmp_queue.name
@@ -219,14 +250,33 @@ def process_chat_batch(chat_id: str):
 
         if completed.returncode == 0:
             archive_processed(chat_id, lines)
-            send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
+            if limited:
+                # Готовый ролик приходит отдельным sendVideo из smart_video_editor.py
+                pass
+            else:
+                send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
         else:
-            send_message(chat_id, 'Не удалось обработать видео. Исходники сохранены, можно повторить /make позже.')
+            if limited:
+                send_message(chat_id, 'Не удалось сделать нарезку.')
+                notify_owner(f'Ошибка нарезки для chat {chat_id}. Код {completed.returncode}.')
+            else:
+                send_message(chat_id, 'Не удалось обработать видео. Исходники сохранены, можно повторить /make позже.')
     except subprocess.TimeoutExpired:
-        send_message(chat_id, 'Обработка заняла слишком много времени. Попробуй отправить более короткие видео или меньше файлов за раз.')
+        if limited:
+            send_message(chat_id, 'Не удалось сделать нарезку.')
+            notify_owner(f'Таймаут нарезки для chat {chat_id}.')
+        else:
+            send_message(
+                chat_id,
+                'Обработка заняла слишком много времени. Попробуй отправить более короткие видео или меньше файлов за раз.',
+            )
     except Exception as exc:
         logging.exception('failed to process chat batch %s', chat_id)
-        send_message(chat_id, f'Ошибка обработки: {exc}')
+        if limited:
+            send_message(chat_id, 'Не удалось сделать нарезку.')
+            notify_owner(f'Ошибка нарезки для chat {chat_id}: {exc}')
+        else:
+            send_message(chat_id, f'Ошибка обработки: {exc}')
     finally:
         with PROCESSING_LOCK:
             PROCESSING_CHATS.discard(chat_id)
@@ -235,7 +285,8 @@ def process_chat_batch(chat_id: str):
 def start_processing(chat_id: str):
     with PROCESSING_LOCK:
         if chat_id in PROCESSING_CHATS:
-            send_message(chat_id, 'Обработка уже запущена. Дождись результата или сообщения об ошибке.')
+            if not is_limited_notify(chat_id):
+                send_message(chat_id, 'Обработка уже запущена. Дождись результата или сообщения об ошибке.')
             return
         PROCESSING_CHATS.add(chat_id)
     thread = threading.Thread(target=process_chat_batch, args=(chat_id,), daemon=True)
@@ -253,21 +304,35 @@ def handle_message(message: dict):
 
     text = (message.get('text') or '').strip()
     caption = safe_label(message.get('caption'))
+    limited = is_limited_notify(chat_id)
 
     if text.startswith('/start'):
-        if chat_id in AUTO_MAKE_CHAT_IDS:
-            send_message(chat_id, 'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически (3-4 сцены, 33-57 сек).')
+        if limited:
+            send_message(chat_id, 'Отправьте видео — в ответ придёт нарезка.')
+        elif chat_id in AUTO_MAKE_CHAT_IDS:
+            send_message(
+                chat_id,
+                'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически (3-4 сцены, 33-57 сек).',
+            )
         else:
-            send_message(chat_id, 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.')
+            send_message(
+                chat_id,
+                'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.',
+            )
         return
     if text.startswith('/status'):
+        if limited:
+            return
         send_message(chat_id, f'В очереди сейчас {count_pending(chat_id)} видео. Можно отправлять еще файлы или запускать /make.')
         return
     if text.startswith('/clear'):
         clear_pending(chat_id)
-        send_message(chat_id, 'Очередь очищена. Можешь присылать новые видео.')
+        if not limited:
+            send_message(chat_id, 'Очередь очищена. Можешь присылать новые видео.')
         return
     if text.startswith('/make'):
+        if limited:
+            return
         if count_pending(chat_id) == 0:
             send_message(chat_id, 'Сначала пришли хотя бы одно видео.')
             return
@@ -285,10 +350,10 @@ def handle_message(message: dict):
     append_pending(chat_id, destination, caption)
     pending_count = count_pending(chat_id)
     if chat_id in AUTO_MAKE_CHAT_IDS:
-        send_message(chat_id, f'Видео сохранено ({pending_count} в очереди). Запускаю нарезку Smart Edit v1.1…')
+        send_upload_status(chat_id, pending_count)
         start_processing(chat_id)
         return
-    send_message(chat_id, f'Видео сохранено. Сейчас в очереди {pending_count} шт. Можешь прислать еще или дать /make.')
+    send_upload_status(chat_id, pending_count)
 
 
 def main():
