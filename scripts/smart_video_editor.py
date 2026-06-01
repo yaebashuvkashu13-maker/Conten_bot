@@ -176,6 +176,8 @@ def detect_profile(game_names: list[str], env: dict[str, str]) -> str:
     default_profile = env.get('DEFAULT_GAME_PROFILE', 'generic').lower()
     if 'mobile legends' in joined or 'mlbb' in joined or default_profile == 'mobile_legends':
         return 'mobile_legends'
+    if 'pubg' in joined or 'playerunknown' in joined or default_profile == 'pubg':
+        return 'pubg'
     return 'generic'
 
 
@@ -361,6 +363,18 @@ def build_candidates(
             # For MLBB, central screen chaos plus fast bursts often means skill trades, dodges, ults.
             base += 0.09 * max(0.0, center - motion * 0.55)
             base += 0.05 * max(0.0, scene - 0.35)
+        elif profile == 'pubg':
+            # PUBG stream: emphasize motion bursts and gunfire audio spikes.
+            base = (
+                0.30 * motion +
+                0.14 * center +
+                0.20 * audio +
+                0.14 * scene +
+                0.10 * sharp +
+                0.07 * bright +
+                0.05 * sat
+            )
+            base += 0.08 * max(0.0, audio - 0.4)
         else:
             base = (
                 0.28 * motion +
@@ -472,7 +486,7 @@ def build_candidates(
 
         output_duration = input_duration / speed
         combo_score = score * 0.70 + mean_region * 0.25 + float(bursts[idx]) * 0.12
-        if profile == 'mobile_legends':
+        if profile in ('mobile_legends', 'pubg'):
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
 

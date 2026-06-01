@@ -13,6 +13,7 @@ for f in \
   audio_game_extract_worker.py \
   ad_screenshot_ingest.py \
   telegram_upload_bot.py \
+  pubg_stream_learn_worker.py \
   tiktok_download_batch.py \
   mlbb_hourly_cycle.sh; do
   install -m 755 "$SRC/$f" "$DEST/$f"

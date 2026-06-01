@@ -26,9 +26,15 @@ PENDING_ROOT = UPLOAD_ROOT / 'pending'
 ARCHIVE_ROOT = UPLOAD_ROOT / 'archive'
 PROCESSOR = '/usr/local/bin/smart_video_editor.py'
 AD_INGEST = '/usr/local/bin/ad_screenshot_ingest.py'
+PUBG_LEARN = '/usr/local/bin/pubg_stream_learn_worker.py'
 AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
+PROFILE_LABELS = {
+    'pubg': 'PUBG Mobile',
+    'mobile_legends': 'Mobile Legends',
+    'mlbb': 'Mobile Legends',
+}
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 PENDING_ROOT.mkdir(parents=True, exist_ok=True)
@@ -73,6 +79,64 @@ def tail_smart_edit_log(max_lines: int = 8) -> str:
     pick = interesting[-max_lines:] if interesting else lines[-max_lines:]
     snippet = '\n'.join(pick).strip()
     return snippet[:600]
+
+
+def parse_chat_game_profiles() -> dict[str, str]:
+    """CHAT_GAME_PROFILES=6366727522:pubg or PUBG_CHAT_IDS=6366727522"""
+    mapping: dict[str, str] = {}
+    raw = env.get('CHAT_GAME_PROFILES', '')
+    for part in raw.split(','):
+        part = part.strip()
+        if ':' not in part:
+            continue
+        chat_id, profile = part.split(':', 1)
+        mapping[chat_id.strip()] = profile.strip().lower()
+    for chat_id in env.get('PUBG_CHAT_IDS', '').split(','):
+        chat_id = chat_id.strip()
+        if chat_id:
+            mapping.setdefault(chat_id, 'pubg')
+    return mapping
+
+
+def game_profile_for_chat(chat_id: str) -> str | None:
+    return parse_chat_game_profiles().get(str(chat_id))
+
+
+def game_label_for_chat(chat_id: str, caption: str | None = None) -> str:
+    profile = game_profile_for_chat(chat_id)
+    if not profile:
+        return safe_label(caption)
+    base = PROFILE_LABELS.get(profile, profile.replace('_', ' ').title())
+    cap = safe_label(caption)
+    if cap and cap != 'Telegram upload':
+        return f'{base} | {cap}'
+    return base
+
+
+def is_owner(chat_id: str) -> bool:
+    return bool(DEFAULT_CHAT_ID) and str(chat_id) == str(DEFAULT_CHAT_ID)
+
+
+def is_pubg_chat(chat_id: str) -> bool:
+    return game_profile_for_chat(chat_id) == 'pubg'
+
+
+def spawn_pubg_learning(video_path: Path, chat_id: str) -> None:
+    if not is_pubg_chat(chat_id) or not Path(PUBG_LEARN).exists():
+        return
+
+    def _run():
+        try:
+            subprocess.run(
+                ['python3', PUBG_LEARN, '--video', str(video_path), '--chat-id', chat_id],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except Exception as exc:
+            logging.warning('pubg learn failed for %s: %s', video_path, exc)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def safe_label(text: str | None) -> str:
@@ -404,6 +468,9 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         run_env['QUEUE_FILE'] = tmp_queue_path
         run_env['MAX_SOURCES'] = str(len(lines))
         run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
+        profile = game_profile_for_chat(chat_id)
+        if profile:
+            run_env['DEFAULT_GAME_PROFILE'] = profile
         if only_paths is not None and len(only_paths) == 1:
             run_env['SINGLE_SOURCE_MODE'] = '1'
         completed = subprocess.run(
@@ -481,6 +548,13 @@ def handle_message(message: dict):
     limited = is_limited_notify(chat_id)
 
     if cmd == '/start' or text.startswith('/start'):
+        if is_pubg_chat(chat_id):
+            send_message(
+                chat_id,
+                'Режим PUBG: отправляйте видео со стрима — получите нарезку Smart Edit. '
+                'Параллельно ролики сохраняются для обучения по PUBG.',
+            )
+            return
         if limited:
             send_message(chat_id, 'Отправьте видео — в ответ придёт нарезка.')
         elif chat_id in AUTO_MAKE_CHAT_IDS:
@@ -496,6 +570,9 @@ def handle_message(message: dict):
             )
         return
     if cmd in ('/ad', '/реклама', '/ads'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /ad только для владельца (скрины рекламы MLBB).')
+            return
         set_ad_mode(chat_id, True)
         send_message(
             chat_id,
@@ -506,6 +583,9 @@ def handle_message(message: dict):
         )
         return
     if cmd in ('/ad_done', '/ad_stop', '/реклама_готово'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /ad_done только для владельца.')
+            return
         was = is_ad_mode(chat_id)
         set_ad_mode(chat_id, False)
         run_ad_index()
@@ -573,7 +653,9 @@ def handle_message(message: dict):
     file_url = get_file_url(media['file_id'])
     destination = pending_dir / f"{int(time.time())}_{media['file_unique_id']}{media['ext']}"
     download_file(file_url, destination)
-    append_pending(chat_id, destination, caption)
+    label = game_label_for_chat(chat_id, caption)
+    append_pending(chat_id, destination, label)
+    spawn_pubg_learning(destination, chat_id)
     pending_count = count_pending(chat_id)
     if chat_id in AUTO_MAKE_CHAT_IDS:
         send_upload_status(chat_id, pending_count)

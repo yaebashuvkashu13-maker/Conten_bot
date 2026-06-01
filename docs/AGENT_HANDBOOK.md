@@ -105,7 +105,7 @@
 | Chat ID | Роль | Поведение |
 |---------|------|-----------|
 | `TG_CHAT_ID` в env | Владелец (Антон) | Загрузка видео + команда **`/make`** для сборки; почасовые **отчёты** |
-| `6366727522` | Коллега | `TG_ALLOWED_CHAT_IDS` + `AUTO_MAKE_CHAT_IDS` + **`LIMITED_NOTIFY_CHAT_IDS`** |
+| `6366727522` | Коллега (PUBG стрим) | `TG_ALLOWED_CHAT_IDS` + `AUTO_MAKE_CHAT_IDS` + **`LIMITED_NOTIFY_CHAT_IDS`** + **`PUBG_CHAT_IDS`** |
 
 **Сообщения коллеге (`LIMITED_NOTIFY_CHAT_IDS`, по умолчанию = `AUTO_MAKE_CHAT_IDS`):**
 
@@ -188,7 +188,12 @@ bash /usr/local/bin/run_parallel_stack.sh
 
 Параллельно: Instagram worker (тик), audio wav extract, индекс скринов рекламы `/root/data/mlbb/ad_examples/`.
 
-**Скрины рекламы в Telegram:** `/ad` → фото → `/ad_done` (алиас `/реклама`). Без `/ad` фото не путаются с видео для нарезки.
+**Скрины рекламы в Telegram (только владелец):** `/ad` → фото → `/ad_done` (алиас `/реклама`). Без `/ad` фото не путаются с видео для нарезки.
+
+**PUBG для коллеги** (`PUBG_CHAT_IDS=6366727522` в `.video_bot.env`):
+
+- Видео → нарезка с профилем `pubg` (без жёсткого MLBB HUD-фильтра).
+- Параллельно: `pubg_stream_learn_worker.py` копирует в `/root/datasets/telegram/pubg/stream/` и пишет фичи в `/root/data/pubg/stream_features.csv`.
 
 Подробно: `docs/mlbb_parallel_burst.md`. Пока идёт mass download, почасовой `tiktok_download_batch` **пропускается** (см. `mlbb_hourly_cycle.sh`).
 
@@ -226,6 +231,8 @@ TG_CHAT_ID=...
 TG_ALLOWED_CHAT_IDS=...,6366727522
 AUTO_MAKE_CHAT_IDS=6366727522
 LIMITED_NOTIFY_CHAT_IDS=6366727522
+PUBG_CHAT_IDS=6366727522
+# или: CHAT_GAME_PROFILES=6366727522:pubg
 
 PROXY_URL=http://user:pass@host:port
 YTDLP_PROXY=...
