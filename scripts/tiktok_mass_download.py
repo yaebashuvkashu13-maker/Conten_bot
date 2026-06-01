@@ -22,6 +22,16 @@ from urllib.parse import urlparse
 
 from gameplay_gate import extract_video_id, is_gameplay_video, load_csv_lookup
 
+try:
+    from mlbb_popularity import record_download as record_popularity
+except ImportError:
+    sys.path.insert(0, "/usr/local/bin")
+    try:
+        from mlbb_popularity import record_download as record_popularity
+    except ImportError:
+        def record_popularity(path, description=""):  # type: ignore
+            return None
+
 STATE_PATH = Path("/root/data/mlbb/download_state.json")
 QUEUE_PATH = Path("/root/data/mlbb/mass_download_queue.jsonl")
 RANKED_CSV = Path("/root/data/mlbb/current_mlbb_ranked_videos.csv")

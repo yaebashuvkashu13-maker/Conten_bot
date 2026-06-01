@@ -11,6 +11,10 @@ for f in \
   tiktok_download_batch.py \
   run_parallel_stack.sh \
   tiktok_night_loop.sh \
+  overnight_orchestrator.sh \
+  mlbb_feature_batch.py \
+  mlbb_hero_dataset_builder.py \
+  pubg_tiktok_gentle.py \
   pubg_stream_learn_worker.py \
   telegram_upload_bot.py \
   smart_video_editor.py \
@@ -28,6 +32,9 @@ if [[ -f /root/.video_bot.env ]]; then
 fi
 
 bash "$BIN/run_parallel_stack.sh" 2>/dev/null || bash "$ROOT/scripts/run_parallel_stack.sh"
+if ! pgrep -f overnight_orchestrator.sh >/dev/null; then
+  nohup bash "$BIN/overnight_orchestrator.sh" >>/root/data/mlbb/overnight_orchestrator.log 2>&1 &
+fi
 
 echo "OK burst deploy"
 echo -n "mp4 count: "
