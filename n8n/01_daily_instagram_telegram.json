@@ -1,0 +1,86 @@
+{
+  "name": "Conten_bot — Daily Instagram → Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 10,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000001",
+      "name": "Every day 10:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $env.PROJECT_DIR || '/workspace/Conten_bot' }} && python3 -m pip install -e . -q && python3 -m content_bot.main --config config.yaml 2>&1"
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000002",
+      "name": "Publish Instagram posts",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📬 Instagram sync done\\n\\n{{ $json.stdout || $json.stderr || 'no output' }}\".slice(0, 4000)\n}"
+      },
+      "id": "a1b2c3d4-1111-4000-8000-000000000003",
+      "name": "Notify Telegram summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Every day 10:00": {
+      "main": [
+        [
+          {
+            "node": "Publish Instagram posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Instagram posts": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "conten_bot"
+    }
+  ]
+}

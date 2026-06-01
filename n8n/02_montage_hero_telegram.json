@@ -1,0 +1,107 @@
+{
+  "name": "Conten_bot — Montage hero + Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "montage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000001",
+      "name": "Webhook montage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "conten-bot-montage"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hero-field",
+              "name": "hero",
+              "value": "={{ $json.body.hero || $json.hero || 'gusion' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000002",
+      "name": "Parse hero",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $env.PROJECT_DIR || '/workspace/Conten_bot' }} && export TELEGRAM_BOT_TOKEN=\"{{ $env.TELEGRAM_BOT_TOKEN }}\" && export TELEGRAM_CHAT_ID=\"{{ $env.TELEGRAM_CHAT_ID }}\" && python3 -m pip install -e . -q && python3 -m content_bot.montage_builder --hero {{ $json.hero }} --video-root /workspace/datasets/tiktok/mlbb --gameplay-csv /workspace/datasets/tiktok/reports/gameplay_filter_latest.csv --send-telegram 2>&1"
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000003",
+      "name": "Build montage and send",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, hero: $('Parse hero').item.json.hero, output: $json.stdout } }}"
+      },
+      "id": "b1b2c3d4-2222-4000-8000-000000000004",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Webhook montage": {
+      "main": [
+        [
+          {
+            "node": "Parse hero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse hero": {
+      "main": [
+        [
+          {
+            "node": "Build montage and send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build montage and send": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "conten_bot"
+    }
+  ]
+}

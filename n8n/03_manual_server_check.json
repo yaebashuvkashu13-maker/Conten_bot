@@ -1,0 +1,75 @@
+{
+  "name": "Conten_bot — Server check",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c1b2c3d4-3333-4000-8000-000000000001",
+      "name": "Manual trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "command": "echo '=== mp4 count ===' && find /workspace/datasets/tiktok/mlbb -name '*.mp4' 2>/dev/null | wc -l && echo '=== reports ===' && ls -lh /workspace/datasets/tiktok/reports/ 2>/dev/null && echo '=== project ===' && ls -d /workspace/Conten_bot /workspace/content_bot 2>/dev/null && echo '=== docker ===' && docker ps --format '{{.Names}}' 2>/dev/null | head -5"
+      },
+      "id": "c1b2c3d4-3333-4000-8000-000000000002",
+      "name": "Check datasets",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"🖥 Server check\\n\\n```\\n{{ ($json.stdout || '').slice(0, 3500) }}\\n```\"\n}"
+      },
+      "id": "c1b2c3d4-3333-4000-8000-000000000003",
+      "name": "Send report to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Manual trigger": {
+      "main": [
+        [
+          {
+            "node": "Check datasets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check datasets": {
+      "main": [
+        [
+          {
+            "node": "Send report to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "conten_bot"
+    }
+  ]
+}
