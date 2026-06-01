@@ -1,5 +1,8 @@
 # Conten_bot
 
+> **Для AI-агентов и новых разработчиков:** вся архитектура, VPS, Telegram, Smart Edit, данные и типичные ошибки — в **[docs/AGENT_HANDBOOK.md](docs/AGENT_HANDBOOK.md)**.  
+> Прочитайте его перед работой; после этого не нужно заново объяснять проект устно.
+
 ## Instagram -> Telegram skeleton
 
 This repository now contains a minimal Python skeleton for pulling Instagram
