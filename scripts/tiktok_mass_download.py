@@ -417,7 +417,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env = load_env(args.env)
-    proxy = env.get("YTDLP_PROXY") or env.get("PROXY_URL")
+    proxy = env.get("YTDLP_PROXY") or env.get("SOCKS5_PROXY") or env.get("PROXY_URL")
     if not proxy:
         log("ERROR: no YTDLP_PROXY / PROXY_URL in env")
         return 1

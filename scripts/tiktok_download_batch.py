@@ -99,7 +99,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env = load_env(args.env)
-    proxy = env.get("YTDLP_PROXY") or env.get("PROXY_URL")
+    proxy = env.get("YTDLP_PROXY") or env.get("SOCKS5_PROXY") or env.get("PROXY_URL")
     if not proxy:
         print("ERROR: PROXY_URL missing in env", file=sys.stderr)
         return 1
