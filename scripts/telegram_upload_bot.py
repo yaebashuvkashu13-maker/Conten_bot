@@ -54,6 +54,27 @@ def load_env(path: Path):
     return env
 
 
+def command_token(text: str) -> str:
+    """Telegram sends /ad@BotName — normalize to /ad."""
+    if not text:
+        return ''
+    return text.split()[0].split('@')[0].lower()
+
+
+def tail_smart_edit_log(max_lines: int = 8) -> str:
+    log_path = Path('/root/smart_video_editor.log')
+    if not log_path.exists():
+        return ''
+    try:
+        lines = log_path.read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return ''
+    interesting = [line for line in lines[-80:] if 'ERROR' in line or 'error' in line.lower() or 'no ' in line.lower()]
+    pick = interesting[-max_lines:] if interesting else lines[-max_lines:]
+    snippet = '\n'.join(pick).strip()
+    return snippet[:600]
+
+
 def safe_label(text: str | None) -> str:
     if not text:
         return 'Telegram upload'
@@ -334,6 +355,16 @@ def _lines_from_paths(chat_id: str, paths: list[Path], labels: dict[Path, str] |
     return [f"{path}|{labels.get(path, 'Telegram upload')}|{chat_id}" for path in paths]
 
 
+def _smart_edit_failure_hint(code: int, log_tail: str) -> str:
+    if 'no usable sources' in log_tail:
+        return 'Файл не прочитался (битый или не видео).'
+    if 'no candidates' in log_tail or 'produced no candidates' in log_tail:
+        return 'В ролике не нашлось 3–4 игровых сцен (меню, мем или нет HUD MLBB).'
+    if code == 1:
+        return 'Smart Edit не собрал монтаж — см. лог на VPS.'
+    return ''
+
+
 def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
     limited = is_limited_notify(chat_id)
     try:
@@ -348,6 +379,14 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             lines = [line for line in lines if Path(line.split('|', 1)[0]) in fresh_paths]
         if not lines:
             if limited:
+                send_message(
+                    chat_id,
+                    'Не могу сделать нарезку: это видео уже использовали или файл слишком старый. '
+                    'Пришлите другой ролик.',
+                )
+                notify_owner(
+                    f'Нарезка пропущена для chat {chat_id}: видео уже в used_source или старше 36 ч.',
+                )
                 return
             send_message(chat_id, 'У тебя пока нет загруженных видео. Сначала пришли файлы, потом команду /make.')
             return
@@ -365,7 +404,15 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         run_env['QUEUE_FILE'] = tmp_queue_path
         run_env['MAX_SOURCES'] = str(len(lines))
         run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
-        completed = subprocess.run([PROCESSOR], env=run_env, timeout=2400)
+        if only_paths is not None and len(only_paths) == 1:
+            run_env['SINGLE_SOURCE_MODE'] = '1'
+        completed = subprocess.run(
+            [PROCESSOR],
+            env=run_env,
+            timeout=2400,
+            capture_output=True,
+            text=True,
+        )
         Path(tmp_queue_path).unlink(missing_ok=True)
 
         if completed.returncode == 0:
@@ -377,9 +424,14 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             else:
                 send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
         else:
+            log_tail = tail_smart_edit_log()
+            err_hint = _smart_edit_failure_hint(completed.returncode, log_tail)
             if limited:
-                send_message(chat_id, 'Не удалось сделать нарезку.')
-                notify_owner(f'Ошибка нарезки для chat {chat_id}. Код {completed.returncode}.')
+                send_message(chat_id, f'Не удалось сделать нарезку. {err_hint}')
+                notify_owner(
+                    f'Ошибка нарезки для chat {chat_id}. Код {completed.returncode}.\n'
+                    f'{err_hint}\n{log_tail}',
+                )
             else:
                 send_message(chat_id, 'Не удалось обработать видео. Исходники сохранены, можно повторить /make позже.')
     except subprocess.TimeoutExpired:
@@ -424,10 +476,11 @@ def handle_message(message: dict):
         return
 
     text = (message.get('text') or '').strip()
+    cmd = command_token(text)
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
-    if text.startswith('/start'):
+    if cmd == '/start' or text.startswith('/start'):
         if limited:
             send_message(chat_id, 'Отправьте видео — в ответ придёт нарезка.')
         elif chat_id in AUTO_MAKE_CHAT_IDS:
@@ -442,7 +495,7 @@ def handle_message(message: dict):
                 'Примеры рекламы (скрины): команда /ad — затем фото, завершить /ad_done.',
             )
         return
-    if text.split()[0] in ('/ad', '/реклама', '/ads'):
+    if cmd in ('/ad', '/реклама', '/ads'):
         set_ad_mode(chat_id, True)
         send_message(
             chat_id,
@@ -452,7 +505,7 @@ def handle_message(message: dict):
             f'Сейчас в базе: {count_ad_examples()} шт.',
         )
         return
-    if text.split()[0] in ('/ad_done', '/ad_stop', '/реклама_готово'):
+    if cmd in ('/ad_done', '/ad_stop', '/реклама_готово'):
         was = is_ad_mode(chat_id)
         set_ad_mode(chat_id, False)
         run_ad_index()
@@ -464,7 +517,7 @@ def handle_message(message: dict):
         )
         notify_owner(f'Ad examples updated: {total} files (chat {chat_id}).')
         return
-    if text.split()[0] in ('/ad_status',):
+    if cmd in ('/ad_status',):
         send_message(
             chat_id,
             f'Режим /ad: {"включён" if is_ad_mode(chat_id) else "выключен"}. '

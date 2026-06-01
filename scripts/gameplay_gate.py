@@ -150,6 +150,7 @@ def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
             continue
         mini, skill, top = _frame_hud_metrics(frame)
         hud_scores.append(mini + skill + top * 0.5)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if prev_gray is not None:
             motion_scores.append(float(cv2.absdiff(gray, prev_gray).mean() / 255.0))
         prev_gray = gray

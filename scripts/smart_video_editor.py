@@ -21,11 +21,13 @@ import numpy as np
 
 try:
     from gameplay_gate import segment_is_valid_for_montage
+    from source_freshness import mark_used
 except ImportError:
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
     from gameplay_gate import segment_is_valid_for_montage
+    from source_freshness import mark_used
 
 ENV_FILE = Path(os.environ.get('ENV_FILE', '/root/.video_bot.env'))
 DEFAULT_LOG_FILE = Path(os.environ.get('LOG_FILE', '/root/smart_video_editor.log'))
@@ -323,7 +325,17 @@ def moving_average(values: np.ndarray) -> np.ndarray:
     return np.convolve(values, kernel, mode='same')
 
 
-def build_candidates(source_index: int, source_path: Path, game_name: str, analysis: dict, global_values: dict[str, list[float]], profile: str, source_signature: str) -> list[dict]:
+def build_candidates(
+    source_index: int,
+    source_path: Path,
+    game_name: str,
+    analysis: dict,
+    global_values: dict[str, list[float]],
+    profile: str,
+    source_signature: str,
+    *,
+    relax_segment_gate: bool = False,
+) -> list[dict]:
     bins = analysis['bins']
     raw_scores = np.zeros(bins, dtype=np.float32)
     bursts = np.zeros(bins, dtype=np.float32)
@@ -484,11 +496,15 @@ def build_candidates(source_index: int, source_path: Path, game_name: str, analy
     for candidate in candidates:
         if any(candidate_overlap_seconds(candidate, existing) > min(candidate['input_duration'], existing['input_duration']) * 0.45 for existing in pruned):
             continue
+        gate_kwargs = {}
+        if relax_segment_gate:
+            gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
         ok_segment, reason = segment_is_valid_for_montage(
             Path(candidate['source_path']),
             float(candidate['start']),
             float(candidate['input_duration']),
             profile=profile,
+            **gate_kwargs,
         )
         if not ok_segment:
             logging.info(
@@ -895,6 +911,9 @@ def main() -> int:
     EXCLUDED_SEGMENT_KEYS |= hist_segments
     NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '1') == '1'
     SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
+    if os.environ.get('SINGLE_SOURCE_MODE') == '1':
+        MIN_HIGHLIGHTS = max(2, min(MIN_HIGHLIGHTS, 2))
+        MIN_FINAL_DURATION = max(22.0, MIN_FINAL_DURATION - 11.0)
 
     setup_logging(DEFAULT_LOG_FILE)
     acquire_lock(DEFAULT_LOCK_FILE)
@@ -969,6 +988,7 @@ def main() -> int:
                 global_values[key].extend(float(value) for value in analysis[key])
 
         all_candidates: list[dict] = []
+        single_source = len(sources) == 1 and os.environ.get('SINGLE_SOURCE_MODE') == '1'
         for source in sources:
             candidates = build_candidates(
                 source['source_index'],
@@ -981,6 +1001,20 @@ def main() -> int:
             )
             logging.info('source=%s yielded %s candidates', source['source_path'].name, len(candidates))
             all_candidates.extend(candidates)
+
+        if not all_candidates and single_source:
+            logging.warning('single-source retry with relaxed segment gate')
+            source = sources[0]
+            all_candidates = build_candidates(
+                source['source_index'],
+                source['source_path'],
+                source['game_name'],
+                source['analysis'],
+                global_values,
+                profile,
+                source['source_signature'],
+                relax_segment_gate=True,
+            )
 
         all_candidates.sort(key=lambda item: item['score'], reverse=True)
         if not all_candidates:
@@ -1025,6 +1059,7 @@ def main() -> int:
             'selected_segments': arranged,
         })
         register_segment_history(arranged)
+        mark_used([Path(item['source_path']) for item in sources])
         drop_first_queue_lines(queue_file, len(batch_lines))
         logging.info('smart edit completed successfully: %s', output_path)
         return 0
