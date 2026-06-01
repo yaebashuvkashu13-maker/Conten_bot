@@ -1,5 +1,5 @@
 {
-  "name": "Conten_bot — Montage hero + Telegram",
+  "name": "Conten_bot — Montage hero + Telegram (HTTP)",
   "nodes": [
     {
       "parameters": {
@@ -37,18 +37,24 @@
     },
     {
       "parameters": {
-        "command": "=cd {{ $env.PROJECT_DIR || '/workspace/Conten_bot' }} && export TELEGRAM_BOT_TOKEN=\"{{ $env.TELEGRAM_BOT_TOKEN }}\" && export TELEGRAM_CHAT_ID=\"{{ $env.TELEGRAM_CHAT_ID }}\" && python3 -m pip install -e . -q && python3 -m content_bot.montage_builder --hero {{ $json.hero }} --video-root /workspace/datasets/tiktok/mlbb --gameplay-csv /workspace/datasets/tiktok/reports/gameplay_filter_latest.csv --send-telegram 2>&1"
+        "method": "POST",
+        "url": "={{ $env.CONTEN_BOT_API_URL || 'http://127.0.0.1:8765' }}/montage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={ \"hero\": \"{{ $json.hero }}\" }",
+        "options": {"timeout": 3600000}
       },
       "id": "b1b2c3d4-2222-4000-8000-000000000003",
-      "name": "Build montage and send",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "name": "API build montage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [480, 0]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { ok: true, hero: $('Parse hero').item.json.hero, output: $json.stdout } }}"
+        "responseBody": "={{ $json }}"
       },
       "id": "b1b2c3d4-2222-4000-8000-000000000004",
       "name": "Respond to Webhook",
@@ -58,50 +64,12 @@
     }
   ],
   "connections": {
-    "Webhook montage": {
-      "main": [
-        [
-          {
-            "node": "Parse hero",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse hero": {
-      "main": [
-        [
-          {
-            "node": "Build montage and send",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build montage and send": {
-      "main": [
-        [
-          {
-            "node": "Respond to Webhook",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "Webhook montage": {"main": [[{"node": "Parse hero", "type": "main", "index": 0}]]},
+    "Parse hero": {"main": [[{"node": "API build montage", "type": "main", "index": 0}]]},
+    "API build montage": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]}
   },
   "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "meta": {
-    "templateCredsSetupCompleted": false
-  },
-  "tags": [
-    {
-      "name": "conten_bot"
-    }
-  ]
+  "settings": {"executionOrder": "v1"},
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": [{"name": "conten_bot"}]
 }

@@ -1,17 +1,10 @@
 {
-  "name": "Conten_bot — Daily Instagram → Telegram",
+  "name": "Conten_bot — Daily Instagram → Telegram (HTTP)",
   "nodes": [
     {
       "parameters": {
         "rule": {
-          "interval": [
-            {
-              "field": "days",
-              "daysInterval": 1,
-              "triggerAtHour": 10,
-              "triggerAtMinute": 0
-            }
-          ]
+          "interval": [{"field": "days", "daysInterval": 1, "triggerAtHour": 10, "triggerAtMinute": 0}]
         }
       },
       "id": "a1b2c3d4-1111-4000-8000-000000000001",
@@ -22,12 +15,14 @@
     },
     {
       "parameters": {
-        "command": "=cd {{ $env.PROJECT_DIR || '/workspace/Conten_bot' }} && python3 -m pip install -e . -q && python3 -m content_bot.main --config config.yaml 2>&1"
+        "method": "POST",
+        "url": "={{ $env.CONTEN_BOT_API_URL || 'http://127.0.0.1:8765' }}/instagram",
+        "options": {"timeout": 1800000}
       },
       "id": "a1b2c3d4-1111-4000-8000-000000000002",
-      "name": "Publish Instagram posts",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "name": "API Instagram sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [260, 0]
     },
     {
@@ -37,7 +32,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📬 Instagram sync done\\n\\n{{ $json.stdout || $json.stderr || 'no output' }}\".slice(0, 4000)\n}"
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📬 Instagram sync\\n\\n{{ ($json.stdout || $json.stderr || JSON.stringify($json)).slice(0, 4000) }}\"\n}"
       },
       "id": "a1b2c3d4-1111-4000-8000-000000000003",
       "name": "Notify Telegram summary",
@@ -48,39 +43,11 @@
     }
   ],
   "connections": {
-    "Every day 10:00": {
-      "main": [
-        [
-          {
-            "node": "Publish Instagram posts",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Publish Instagram posts": {
-      "main": [
-        [
-          {
-            "node": "Notify Telegram summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "Every day 10:00": {"main": [[{"node": "API Instagram sync", "type": "main", "index": 0}]]},
+    "API Instagram sync": {"main": [[{"node": "Notify Telegram summary", "type": "main", "index": 0}]]}
   },
   "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "meta": {
-    "templateCredsSetupCompleted": false
-  },
-  "tags": [
-    {
-      "name": "conten_bot"
-    }
-  ]
+  "settings": {"executionOrder": "v1"},
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": [{"name": "conten_bot"}]
 }
