@@ -305,38 +305,44 @@ def fetch_reels(
 
 
 def build_ready_caption(media: InstagramMedia) -> str:
-    stats: list[str] = []
-    if media.play_count is not None:
-        stats.append(f"{media.play_count:,} просмотров".replace(",", " "))
-    if media.like_count is not None:
-        stats.append(f"{media.like_count:,} лайков".replace(",", " "))
-    if media.comment_count is not None:
-        stats.append(f"{media.comment_count:,} комментариев".replace(",", " "))
-
     original = media.caption.strip() or "Без подписи."
     kind_text = {
-        "photo": "Новый пост-картинка по Mobile Legends.",
-        "carousel": "Новая карусель по Mobile Legends.",
-        "video": "Новый Reels/видео по Mobile Legends.",
-    }.get(media.media_kind, "Новый Instagram-пост по Mobile Legends.")
+        "photo": "картинка",
+        "carousel": "карусель",
+        "video": "видео",
+    }.get(media.media_kind, "пост")
+    summary = _short_russian_summary(original)
     lines = [
         f"🎮 MLBB | {media.source_name}",
-        "",
-        kind_text,
-        "",
-        "Оригинальный текст:",
-        original[:900],
-        "",
-        "Готовая подача для Telegram:",
-        "Посмотрите свежий MLBB-ролик. Что думаете: это полезный инсайд или просто хайп?",
-        "",
+        f"{summary} ({kind_text})",
         f"Источник: {media.permalink}",
+        "#MLBB #MobileLegends",
     ]
-    if stats:
-        lines.append("Статистика: " + " | ".join(stats))
-    lines.append("")
-    lines.append("#MLBB #MobileLegends")
-    return "\n".join(lines)[:1024]
+    return "\n\n".join(lines)[:450]
+
+
+def _short_russian_summary(caption: str) -> str:
+    text = re.sub(r"#\S+", "", caption)
+    text = re.sub(r"@\S+", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" -–—|•")
+    lower = text.lower()
+    if "wallpaper" in lower or "artwork" in lower:
+        return "Свежие арты/обои по новым скинам MLBB."
+    if "survival mode" in lower:
+        return "В MLBB возвращается Survival Mode: тест летом, релиз позже."
+    if "revamp" in lower:
+        return "Появилась информация о ревампе/обновлении скина в MLBB."
+    if "collector" in lower:
+        return "Инфопост про Collector-скин и ближайшие обновления MLBB."
+    if "starlight" in lower:
+        return "Инфопост про Starlight-скин и ближайшие награды MLBB."
+    if "gameplay" in lower:
+        return "Показали свежий gameplay-фрагмент по MLBB."
+    if "update" in lower or "new" in lower:
+        return "Короткий апдейт по новым скинам/событиям MLBB."
+    if text:
+        return text[:150].rstrip()
+    return "Новый пост по Mobile Legends."
 
 
 def _telegram_request(token: str, method: str, **kwargs: Any) -> dict[str, Any]:

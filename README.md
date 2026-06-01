@@ -161,6 +161,25 @@ python3 -m content_bot.audio_game_cleaner \
 Demucs is best-effort here: it separates music stems, not "game audio" directly,
 so final quality still needs manual listening checks.
 
+### Split long videos/streams into several Shorts
+
+For long user-submitted videos or streams, create multiple 33-57 second vertical
+shorts. The number of outputs grows with the input duration. With the defaults,
+a 4 hour stream produces about 8 shorts (one per 30 minutes).
+
+```bash
+python3 -m content_bot.long_video_shorts \
+  --input /path/to/stream.mp4 \
+  --output-dir datasets/outputs/long_video_shorts \
+  --target-duration 45 \
+  --scenes 4 \
+  --minutes-per-short 30 \
+  --max-shorts 20
+```
+
+Each output uses 3-4 longer scenes, vertical 1080x1920 formatting, normalized game
+audio, and video/audio crossfades so scenes do not cut abruptly.
+
 ### Send Instagram posts/Reels to Telegram daily
 
 The Instagram profile extractor in `yt-dlp` may fail, so this project also has a
