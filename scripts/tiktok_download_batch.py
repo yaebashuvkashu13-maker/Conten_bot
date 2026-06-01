@@ -132,6 +132,7 @@ def main() -> int:
             dest,
             csv_lookup=lookup,
             description=row.get("description", ""),
+            min_score=0.78,
         )
         if not ok:
             dest.unlink(missing_ok=True)

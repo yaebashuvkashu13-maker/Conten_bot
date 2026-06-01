@@ -19,6 +19,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+try:
+    from gameplay_gate import segment_is_valid_for_montage
+except ImportError:
+    import sys
+
+    sys.path.insert(0, '/usr/local/bin')
+    from gameplay_gate import segment_is_valid_for_montage
+
 ENV_FILE = Path(os.environ.get('ENV_FILE', '/root/.video_bot.env'))
 DEFAULT_LOG_FILE = Path(os.environ.get('LOG_FILE', '/root/smart_video_editor.log'))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/root/videos'))
@@ -475,6 +483,20 @@ def build_candidates(source_index: int, source_path: Path, game_name: str, analy
     pruned: list[dict] = []
     for candidate in candidates:
         if any(candidate_overlap_seconds(candidate, existing) > min(candidate['input_duration'], existing['input_duration']) * 0.45 for existing in pruned):
+            continue
+        ok_segment, reason = segment_is_valid_for_montage(
+            Path(candidate['source_path']),
+            float(candidate['start']),
+            float(candidate['input_duration']),
+            profile=profile,
+        )
+        if not ok_segment:
+            logging.info(
+                'skip segment source=%s start=%.2f reason=%s',
+                candidate['source_path'],
+                candidate['start'],
+                reason,
+            )
             continue
         pruned.append(candidate)
         if len(pruned) >= 4:

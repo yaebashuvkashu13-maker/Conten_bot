@@ -46,6 +46,91 @@ def extract_video_id(path: Path, description: str = "") -> str | None:
     return match.group(1) if match else None
 
 
+def _frame_hud_metrics(frame: np.ndarray) -> tuple[float, float, float]:
+    small = cv2.resize(frame, (160, 90))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    minimap = gray[int(h * 0.72) : h, 0 : int(w * 0.28)]
+    skill_bar = gray[int(h * 0.72) : h, int(w * 0.55) : w]
+    top_hud = gray[0 : int(h * 0.16), :]
+    return float(np.std(minimap)), float(np.std(skill_bar)), float(np.std(top_hud))
+
+
+def _frame_overlay_text_score(frame: np.ndarray) -> float:
+    """Higher = more likely subtitles / meme text in the center of the frame."""
+    small = cv2.resize(frame, (320, 180))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    band = gray[int(h * 0.32) : int(h * 0.70), int(w * 0.08) : int(w * 0.92)]
+    if band.size == 0:
+        return 0.0
+    edges = cv2.Canny(band, 70, 170)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 10, 11), 3))
+    merged = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    edge_ratio = float(np.count_nonzero(merged)) / float(merged.size)
+    _, bright = cv2.threshold(band, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright_ratio = float(np.count_nonzero(bright)) / float(bright.size)
+    return edge_ratio * 0.7 + min(bright_ratio, 0.35) * 0.3
+
+
+def score_segment_window(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    sample_frames: int = 5,
+) -> tuple[float, float, float]:
+    """Returns (hud_score, text_score, cartoon_penalty). Higher hud = more like MLBB UI."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0, 1.0, 1.0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    hud_vals: list[float] = []
+    text_vals: list[float] = []
+    low_hud_frames = 0
+    for t in times:
+        cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        mini, skill, top = _frame_hud_metrics(frame)
+        hud_vals.append(mini + skill + top * 0.6)
+        text_vals.append(_frame_overlay_text_score(frame))
+        if mini < 6.0 and skill < 5.5:
+            low_hud_frames += 1
+    cap.release()
+    if not hud_vals:
+        return 0.0, 1.0, 1.0
+    hud = float(np.mean(hud_vals))
+    text = float(np.mean(text_vals))
+    cartoon_penalty = low_hud_frames / max(len(hud_vals), 1)
+    return hud, text, cartoon_penalty
+
+
+def segment_is_valid_for_montage(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    profile: str = "mobile_legends",
+    min_hud: float = 14.0,
+    max_text: float = 0.075,
+    max_cartoon_ratio: float = 0.55,
+) -> tuple[bool, str]:
+    if profile != "mobile_legends":
+        return True, "skip_profile"
+    hud, text, cartoon = score_segment_window(video_path, start_sec, duration_sec)
+    if cartoon >= max_cartoon_ratio and hud < min_hud * 1.05:
+        return False, f"non_gameplay_hud={hud:.1f}"
+    if hud < min_hud:
+        return False, f"low_hud={hud:.1f}"
+    if text > max_text:
+        return False, f"overlay_text={text:.3f}"
+    return True, "ok"
+
+
 def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -63,13 +148,8 @@ def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
         ok, frame = cap.read()
         if not ok:
             continue
-        small = cv2.resize(frame, (160, 90))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape
-        minimap = gray[int(h * 0.72) : h, 0 : int(w * 0.28)]
-        skill_bar = gray[int(h * 0.72) : h, int(w * 0.55) : w]
-        top_hud = gray[0 : int(h * 0.16), :]
-        hud_scores.append(float(np.std(minimap) + np.std(skill_bar) + np.std(top_hud) * 0.5))
+        mini, skill, top = _frame_hud_metrics(frame)
+        hud_scores.append(mini + skill + top * 0.5)
         if prev_gray is not None:
             motion_scores.append(float(cv2.absdiff(gray, prev_gray).mean() / 255.0))
         prev_gray = gray
