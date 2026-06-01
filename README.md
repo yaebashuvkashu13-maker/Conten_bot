@@ -44,6 +44,13 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
    python3 -m content_bot.main --config config.yaml
    ```
 
+### Rate limits (HTTP 429 / Telegram flood control)
+
+When publishing many posts in a row, Telegram may return **429** (flood control).
+The bot retries automatically using `retry_after` from the API response and sleeps
+between publishes (`publish_delay_seconds` in config). Tune both values in
+`config.yaml` if you still hit limits with large source lists.
+
 ### Notes
 
 - The current implementation is intentionally simple and public-source oriented.
