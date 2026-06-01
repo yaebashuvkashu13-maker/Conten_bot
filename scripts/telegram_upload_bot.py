@@ -30,6 +30,7 @@ PUBG_LEARN = '/usr/local/bin/pubg_stream_learn_worker.py'
 AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
+BOT_VERSION = '2026-06-02-pubg-ad'
 PROFILE_LABELS = {
     'pubg': 'PUBG Mobile',
     'mobile_legends': 'Mobile Legends',
@@ -114,7 +115,23 @@ def game_label_for_chat(chat_id: str, caption: str | None = None) -> str:
 
 
 def is_owner(chat_id: str) -> bool:
-    return bool(DEFAULT_CHAT_ID) and str(chat_id) == str(DEFAULT_CHAT_ID)
+    cid = str(chat_id)
+    owners = {str(DEFAULT_CHAT_ID)} if DEFAULT_CHAT_ID else set()
+    for item in env.get('AD_OWNER_CHAT_IDS', env.get('OWNER_CHAT_IDS', '')).split(','):
+        item = item.strip()
+        if item:
+            owners.add(item)
+    return cid in owners
+
+
+def chat_is_allowed(chat_id: str) -> bool:
+    """Owner (TG_CHAT_ID) is always allowed even if missing from TG_ALLOWED_CHAT_IDS."""
+    cid = str(chat_id)
+    if is_owner(cid):
+        return True
+    if not ALLOWED_CHAT_IDS:
+        return True
+    return cid in ALLOWED_CHAT_IDS
 
 
 def is_pubg_chat(chat_id: str) -> bool:
@@ -533,17 +550,37 @@ def start_processing(chat_id: str, only_paths: list[Path] | None = None):
     thread.start()
 
 
+def register_bot_commands() -> None:
+    try:
+        api_call(
+            'setMyCommands',
+            {
+                'commands': [
+                    {'command': 'start', 'description': 'Начало работы'},
+                    {'command': 'ping', 'description': 'Проверка, что бот жив'},
+                    {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
+                    {'command': 'ad_done', 'description': 'Закончить приём скринов'},
+                    {'command': 'make', 'description': 'Собрать нарезку из видео'},
+                ],
+            },
+            timeout=30,
+        )
+    except Exception as exc:
+        logging.warning('setMyCommands failed: %s', exc)
+
+
 def handle_message(message: dict):
     chat = message.get('chat', {})
     chat_id = str(chat.get('id', ''))
     if not chat_id:
         return
-    if ALLOWED_CHAT_IDS and chat_id not in ALLOWED_CHAT_IDS:
-        logging.warning('ignoring unauthorized chat %s', chat_id)
+    if not chat_is_allowed(chat_id):
+        logging.warning('ignoring unauthorized chat %s (not in ALLOWED, not owner)', chat_id)
         return
 
     text = (message.get('text') or '').strip()
     cmd = command_token(text)
+    logging.info('message chat=%s cmd=%r text=%r', chat_id, cmd, text[:80] if text else '')
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
@@ -598,10 +635,22 @@ def handle_message(message: dict):
         notify_owner(f'Ad examples updated: {total} files (chat {chat_id}).')
         return
     if cmd in ('/ad_status',):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Статус /ad — только для владельца.')
+            return
         send_message(
             chat_id,
             f'Режим /ad: {"включён" if is_ad_mode(chat_id) else "выключен"}. '
             f'Примеров в базе: {count_ad_examples()}.',
+        )
+        return
+    if cmd == '/ping':
+        send_message(
+            chat_id,
+            f'Бот на связи ({BOT_VERSION}).\n'
+            f'chat_id={chat_id}\n'
+            f'владелец={"да" if is_owner(chat_id) else "нет"} '
+            f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}',
         )
         return
     if text.startswith('/status'):
@@ -647,6 +696,12 @@ def handle_message(message: dict):
 
     media = extract_media(message)
     if not media:
+        if text and cmd not in ('/start',):
+            send_message(
+                chat_id,
+                'Команды: /ping — проверка, /ad — скрины рекламы (владелец), /start — справка. '
+                'Видео — просто отправьте файлом.',
+            )
         return
 
     pending_dir = chat_pending_dir(chat_id)
@@ -666,8 +721,16 @@ def handle_message(message: dict):
 
 def main():
     api_call('deleteWebhook', {'drop_pending_updates': False}, timeout=30)
+    register_bot_commands()
     state = _bot_state()
-    logging.info('telegram upload bot started')
+    me = api_call('getMe', timeout=30)
+    logging.info(
+        'telegram upload bot started %s as @%s owner_chat=%s allowed=%s',
+        BOT_VERSION,
+        me.get('username'),
+        DEFAULT_CHAT_ID or '(empty)',
+        sorted(ALLOWED_CHAT_IDS),
+    )
     while True:
         try:
             updates = api_call(

@@ -228,7 +228,8 @@ bash /usr/local/bin/run_parallel_stack.sh
 ```bash
 TG_BOT_TOKEN=...
 TG_CHAT_ID=...
-TG_ALLOWED_CHAT_IDS=...,6366727522
+TG_ALLOWED_CHAT_IDS=ВАШ_CHAT_ID,6366727522
+# ВАЖНО: владелец (TG_CHAT_ID) пускается всегда, но лучше явно добавить в ALLOWED
 AUTO_MAKE_CHAT_IDS=6366727522
 LIMITED_NOTIFY_CHAT_IDS=6366727522
 PUBG_CHAT_IDS=6366727522
