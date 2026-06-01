@@ -10,6 +10,7 @@ for f in \
   gameplay_gate.py \
   tiktok_download_batch.py \
   run_parallel_stack.sh \
+  tiktok_night_loop.sh \
   pubg_stream_learn_worker.py \
   telegram_upload_bot.py \
   smart_video_editor.py \

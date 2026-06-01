@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import queue
+import random
 import subprocess
 import sys
 import threading
@@ -70,6 +71,22 @@ _stats = {
     "rejected": 0,
     "skipped_exists": 0,
 }
+
+
+def human_pause(env: dict[str, str]) -> None:
+    if env.get("MASS_HUMAN_MODE", "1") != "1":
+        return
+    lo = float(env.get("MASS_DELAY_MIN", "10"))
+    hi = float(env.get("MASS_DELAY_MAX", "28"))
+    time.sleep(random.uniform(lo, hi))
+
+
+def session_limit_reached(env: dict[str, str]) -> bool:
+    cap = int(env.get("MASS_SESSION_LIMIT", "0"))
+    if cap <= 0:
+        return False
+    with _stats_lock:
+        return _stats["attempted"] >= cap
 
 
 def log(msg: str) -> None:
@@ -228,6 +245,8 @@ def discover_items(
     state: dict,
     target: int,
     seen_urls: set[str],
+    *,
+    csv_only: bool = False,
 ) -> list[dict]:
     downloaded = set(state.get("downloaded_ids", []))
     rejected = set(state.get("rejected_ids", []))
@@ -254,21 +273,25 @@ def discover_items(
         if len(queue_items) >= target:
             return queue_items[:target]
 
+    if csv_only:
+        state["seen_urls"] = list(set(state.get("seen_urls", [])) | seen_urls)[-80000:]
+        return queue_items[:target]
+
     for query in MLBB_SEARCHES:
         if len(queue_items) >= target * 2:
             break
         log(f"search {query!r}")
-        for item in urls_from_search(query, proxy, max_entries=250):
+        for item in urls_from_search(query, proxy, max_entries=80):
             add(item)
-        time.sleep(1)
+        time.sleep(random.uniform(3, 8))
 
     for seed in MLBB_SEEDS:
         if len(queue_items) >= target * 2:
             break
         log(f"scanning seed {seed}")
-        for item in urls_from_seed(seed, proxy, max_entries=450):
+        for item in urls_from_seed(seed, proxy, max_entries=120):
             add(item)
-        time.sleep(2)
+        time.sleep(random.uniform(5, 12))
 
     state["seen_urls"] = list(set(state.get("seen_urls", [])) | seen_urls)[-80000:]
     return queue_items[:target]
@@ -308,7 +331,12 @@ def process_item(
     strict_csv: bool,
     state: dict,
     state_lock: threading.Lock,
+    env: dict[str, str],
+    stop_event: threading.Event,
 ) -> None:
+    if session_limit_reached(env):
+        stop_event.set()
+        return
     url = item["url"]
     dest = dest_for(url, out_root)
     vid = item.get("video_id") or extract_video_id(dest, "") or ""
@@ -324,6 +352,7 @@ def process_item(
     if not download_file(url, dest, proxy):
         with _stats_lock:
             _stats["failed"] += 1
+        human_pause(env)
         return
 
     ok, _score, reason = is_gameplay_video(
@@ -364,6 +393,9 @@ def process_item(
         if url not in urls:
             urls.append(url)
         state["last_saved"] = str(saved_path)
+    human_pause(env)
+    if session_limit_reached(env):
+        stop_event.set()
 
 
 def producer_loop(
@@ -372,6 +404,7 @@ def producer_loop(
     state: dict,
     target: int,
     stop_event: threading.Event,
+    csv_only: bool = False,
 ) -> None:
     seen = set(state.get("seen_urls", []))
     while not stop_event.is_set():
@@ -379,8 +412,8 @@ def producer_loop(
         if on_disk >= target and work_q.empty():
             log(f"producer: on_disk={on_disk} >= target={target}, stopping discovery")
             break
-        batch_target = max(target - on_disk, 200)
-        items = discover_items(proxy, state, batch_target, seen)
+        batch_target = min(max(target - on_disk, 20), 80)
+        items = discover_items(proxy, state, batch_target, seen, csv_only=csv_only)
         save_state(state)
         if not items:
             log("producer: no new URLs discovered, sleep 60s")
@@ -395,13 +428,15 @@ def producer_loop(
         log(f"producer: queued {len(items)} urls (on_disk={on_disk})")
         if on_disk >= target:
             break
-        time.sleep(5)
+        time.sleep(random.uniform(30, 90))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", type=int, default=5000, help="URLs to try / files on disk goal")
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--human", action="store_true", help="Slow mode: pauses, session cap, csv-first")
+    parser.add_argument("--csv-only", action="store_true", help="Only queue URLs from CSV tables")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--env", type=Path, default=Path("/root/.video_bot.env"))
     parser.add_argument(
@@ -417,6 +452,14 @@ def main() -> int:
     args = parser.parse_args()
 
     env = load_env(args.env)
+    if args.human or env.get("MASS_HUMAN_MODE") == "1":
+        args.human = True
+        if args.workers == 8:
+            args.workers = int(env.get("MASS_DOWNLOAD_WORKERS", "2"))
+        if args.target >= 5000:
+            args.target = int(env.get("MASS_DOWNLOAD_TARGET", "200"))
+    if args.csv_only or env.get("MASS_CSV_ONLY") == "1":
+        args.csv_only = True
     proxy = env.get("YTDLP_PROXY") or env.get("SOCKS5_PROXY") or env.get("PROXY_URL")
     if not proxy:
         log("ERROR: no YTDLP_PROXY / PROXY_URL in env")
@@ -424,7 +467,11 @@ def main() -> int:
 
     state = load_state()
     on_disk = count_mp4_on_disk(args.out)
-    log(f"start on_disk={on_disk} target={args.target} workers={args.workers}")
+    mode = "human" if args.human else "fast"
+    log(
+        f"start on_disk={on_disk} target={args.target} workers={args.workers} "
+        f"mode={mode} session_limit={env.get('MASS_SESSION_LIMIT', '0')} csv_only={args.csv_only}"
+    )
 
     lookup = load_csv_lookup(GAMEPLAY_CSV)
     state_lock = threading.Lock()
@@ -432,7 +479,9 @@ def main() -> int:
     stop_event = threading.Event()
 
     if args.no_producer:
-        queue_items = discover_items(proxy, state, args.target, set(state.get("seen_urls", [])))
+        queue_items = discover_items(
+            proxy, state, args.target, set(state.get("seen_urls", [])), csv_only=args.csv_only
+        )
         save_state(state)
         with _stats_lock:
             _stats["queued"] = len(queue_items)
@@ -441,7 +490,7 @@ def main() -> int:
     else:
         prod = threading.Thread(
             target=producer_loop,
-            args=(work_q, proxy, state, args.target, stop_event),
+            args=(work_q, proxy, state, args.target, stop_event, args.csv_only),
             daemon=True,
         )
         prod.start()
@@ -453,7 +502,15 @@ def main() -> int:
                 if item is None:
                     return
                 process_item(
-                    item, args.out, proxy, lookup, args.strict_csv_reject, state, state_lock
+                    item,
+                    args.out,
+                    proxy,
+                    lookup,
+                    args.strict_csv_reject,
+                    state,
+                    state_lock,
+                    env,
+                    stop_event,
                 )
                 if count_mp4_on_disk(args.out) >= args.target:
                     stop_event.set()

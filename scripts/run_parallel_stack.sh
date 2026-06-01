@@ -20,18 +20,23 @@ count_mp4() {
   find /root/datasets/tiktok/mlbb -name '*.mp4' 2>/dev/null | wc -l
 }
 
-TARGET="${MASS_DOWNLOAD_TARGET:-5000}"
-WORKERS="${MASS_DOWNLOAD_WORKERS:-8}"
+TARGET="${MASS_DOWNLOAD_TARGET:-250}"
+WORKERS="${MASS_DOWNLOAD_WORKERS:-2}"
+HUMAN="${MASS_HUMAN_MODE:-1}"
 
-# 1) Mass TikTok — any MLBB (CSV + channels + search), 8 parallel yt-dlp
-if ! is_running "tiktok_mass_download.py"; then
+# 1) Mass TikTok — gentle by default (human pauses, csv-first)
+if ! is_running "tiktok_mass_download.py" && ! is_running "tiktok_night_loop.sh"; then
   ON_DISK="$(count_mp4)"
-  echo "mass download: on_disk=$ON_DISK target=$TARGET workers=$WORKERS"
-  nohup python3 /usr/local/bin/tiktok_mass_download.py \
-    --target "$TARGET" \
-    --workers "$WORKERS" \
-    >>/root/data/mlbb/mass_download.log 2>&1 &
-  echo "started tiktok_mass_download pid=$!"
+  echo "mass download: on_disk=$ON_DISK target=$TARGET workers=$WORKERS human=$HUMAN"
+  if [[ "$HUMAN" == "1" ]]; then
+    nohup bash /usr/local/bin/tiktok_night_loop.sh >>/root/data/mlbb/night_loop.log 2>&1 &
+    echo "started tiktok_night_loop pid=$!"
+  else
+    nohup python3 /usr/local/bin/tiktok_mass_download.py \
+      --target "$TARGET" --workers "$WORKERS" \
+      >>/root/data/mlbb/mass_download.log 2>&1 &
+    echo "started tiktok_mass_download pid=$!"
+  fi
 fi
 
 # 2) Instagram background (config check; full ingest needs cookies)
