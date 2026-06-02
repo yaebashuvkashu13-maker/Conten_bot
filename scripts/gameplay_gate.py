@@ -290,6 +290,8 @@ def segment_is_valid_for_montage(
 ) -> tuple[bool, str]:
     if profile != "mobile_legends":
         return True, "skip_profile"
+    if profile_looks_like_mlbb_edit(video_path, sample_frames=4):
+        return False, "promo_layout"
     if crop_box is None:
         crop_box = detect_vertical_content_crop(video_path, start_sec, duration_sec)
     hud, text, cartoon = score_segment_window(
@@ -312,6 +314,43 @@ def segment_is_valid_for_montage(
     if frame_rate < min_hud_frame_rate:
         return False, f"low_hud_frames={frame_rate:.2f}"
     return True, "ok"
+
+
+def source_has_valid_gameplay_window(
+    video_path: Path,
+    *,
+    profile: str = "mobile_legends",
+    windows: int = 5,
+    window_sec: float = 10.0,
+    **segment_kwargs,
+) -> tuple[bool, str]:
+    """True if at least one segment window passes the montage gate."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return False, "unreadable"
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    cap.release()
+    duration = frame_count / fps if frame_count > 0 else 0.0
+    if duration < window_sec + 1.0:
+        starts = [0.0]
+    else:
+        margin = min(2.0, duration * 0.05)
+        starts = [
+            float(x)
+            for x in np.linspace(margin, max(margin, duration - window_sec - margin), num=windows)
+        ]
+    for start in starts:
+        ok, reason = segment_is_valid_for_montage(
+            video_path,
+            start,
+            min(window_sec, max(1.0, duration - start)),
+            profile=profile,
+            **segment_kwargs,
+        )
+        if ok:
+            return True, f"window@{start:.1f}s"
+    return False, "no_valid_window"
 
 
 def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
@@ -342,7 +381,47 @@ def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
         return 0.0
     hud = float(np.mean(hud_scores))
     motion = float(np.mean(motion_scores)) if motion_scores else 0.0
-    return min(1.0, hud / 28.0 * 0.75 + motion * 0.25)
+    # Whole-file heuristic is noisy on TikTok edits (cinematic/skin ads score too high).
+    score = min(1.0, hud / 32.0 * 0.55 + motion * 0.45)
+    if profile_looks_like_mlbb_edit(video_path, sample_frames=min(sample_frames, 6)):
+        score = min(score, 0.55)
+    return score
+
+
+def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bool:
+    """Detect skin promo / letterboxed edits (animated borders, not match HUD)."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return False
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if frame_count <= 0:
+        cap.release()
+        return False
+    indices = np.linspace(0, max(frame_count - 1, 0), num=min(sample_frames, frame_count), dtype=int)
+    top_bottom_edges: list[float] = []
+    center_edges: list[float] = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        small = cv2.resize(frame, (320, 180))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        top = gray[0 : int(h * 0.18), :]
+        bottom = gray[int(h * 0.82) : h, :]
+        center = gray[int(h * 0.30) : int(h * 0.70), int(w * 0.15) : int(w * 0.85)]
+        for band in (top, bottom):
+            edges = cv2.Canny(band, 60, 150)
+            top_bottom_edges.append(float(np.count_nonzero(edges)) / max(edges.size, 1))
+        edges = cv2.Canny(center, 60, 150)
+        center_edges.append(float(np.count_nonzero(edges)) / max(edges.size, 1))
+    cap.release()
+    if not top_bottom_edges or not center_edges:
+        return False
+    tb = float(np.mean(top_bottom_edges))
+    ce = float(np.mean(center_edges))
+    return tb > 0.055 and ce < tb * 0.72
 
 
 def is_gameplay_video(
@@ -358,10 +437,18 @@ def is_gameplay_video(
     video_id = extract_video_id(video_path, description)
     if video_id and video_id in csv_lookup:
         known = csv_lookup[video_id]
-        return known, 1.0 if known else 0.0, "csv_lookup"
+        if known:
+            ok_window, win_reason = source_has_valid_gameplay_window(video_path)
+            if not ok_window:
+                return False, 0.0, f"csv_overridden:{win_reason}"
+            return True, 1.0, f"csv_lookup+{win_reason}"
+        return False, 0.0, "csv_lookup"
 
     score = heuristic_gameplay_score(video_path)
-    return score >= min_score, score, "heuristic"
+    if score >= min_score:
+        ok_window, win_reason = source_has_valid_gameplay_window(video_path)
+        return ok_window, score, win_reason if ok_window else "no_valid_window"
+    return False, score, "heuristic"
 
 
 def main() -> int:

@@ -70,6 +70,7 @@ def run_one(hero_id: str, chat_id: str, theme: str) -> int:
             "SMART_ADD_MUSIC": "0",
             "BLUR_NICKNAME": "0",
             "STRICT_GAMEPLAY": "1",
+            "EXCLUDED_SOURCE_SIGNATURES": os.environ.get("EXCLUDED_SOURCE_SIGNATURES", ""),
             "SMART_MIN_HUD": os.environ.get("SMART_MIN_HUD", "16"),
             "SMART_MAX_OVERLAY_TEXT": os.environ.get("SMART_MAX_OVERLAY_TEXT", "0.28"),
             "SMART_MAX_REJECT_SIM": os.environ.get("SMART_MAX_REJECT_SIM", "0.76"),

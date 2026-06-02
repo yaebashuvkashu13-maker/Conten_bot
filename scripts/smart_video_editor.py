@@ -20,7 +20,13 @@ import cv2
 import numpy as np
 
 try:
-    from gameplay_gate import detect_vertical_content_crop, segment_is_valid_for_montage
+    from gameplay_gate import (
+        detect_vertical_content_crop,
+        is_gameplay_video,
+        load_csv_lookup,
+        segment_is_valid_for_montage,
+        source_has_valid_gameplay_window,
+    )
     from source_freshness import mark_used
     from mlbb_popularity import popularity_boost
     from mlbb_popularity import extract_video_id as pop_video_id
@@ -28,7 +34,13 @@ except ImportError:
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
-    from gameplay_gate import detect_vertical_content_crop, segment_is_valid_for_montage
+    from gameplay_gate import (
+        detect_vertical_content_crop,
+        is_gameplay_video,
+        load_csv_lookup,
+        segment_is_valid_for_montage,
+        source_has_valid_gameplay_window,
+    )
     from source_freshness import mark_used
     try:
         from mlbb_popularity import popularity_boost
@@ -1060,6 +1072,18 @@ def main() -> int:
             except Exception as exc:
                 logging.warning('failed to prepare source %s: %s', source_ref, exc)
                 continue
+            if os.environ.get('STRICT_GAMEPLAY', '0') == '1':
+                csv_path = Path(os.environ.get('GAMEPLAY_CSV', '/root/data/mlbb/gameplay_filter_latest.csv'))
+                lookup = load_csv_lookup(csv_path)
+                ok_src, src_score, src_reason = is_gameplay_video(source_path, csv_lookup=lookup)
+                if not ok_src:
+                    logging.warning(
+                        'skip non-gameplay source=%s score=%.2f reason=%s',
+                        source_path.name,
+                        src_score,
+                        src_reason,
+                    )
+                    continue
             analysis = analyze_video(source_path)
             source_signature = file_sha256(source_path)
             logging.info('analyzed source=%s duration=%.2fs bins=%s sha=%s', source_path, analysis['duration'], analysis['bins'], source_signature[:12])
@@ -1127,7 +1151,15 @@ def main() -> int:
 
         selected = select_candidates(all_candidates, len(sources))
         arranged = arrange_candidates(selected)
-        logging.info('selected %s clips, effective duration %.2fs', len(arranged), effective_duration(arranged))
+        eff_duration = effective_duration(arranged)
+        logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)
+        if eff_duration < MIN_FINAL_DURATION:
+            logging.error(
+                'montage too short (%.1fs < %.1fs) — not enough real gameplay segments',
+                eff_duration,
+                MIN_FINAL_DURATION,
+            )
+            return 1
 
         segment_paths: list[Path] = []
         segment_durations: list[float] = []
