@@ -1078,8 +1078,6 @@ def main() -> int:
         run_command(final_command)
         final_duration = ffprobe_duration(output_path)
         caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()} | {round(final_duration)}s'
-        if SEND_TELEGRAM:
-            send_telegram_video(bot_token, batch_chat_id or default_chat_id, output_path, caption)
         save_analysis(output_path, {
             'profile': profile,
             'target_duration': TARGET_DURATION,
@@ -1096,6 +1094,11 @@ def main() -> int:
             ],
             'selected_segments': arranged,
         })
+        if SEND_TELEGRAM:
+            try:
+                send_telegram_video(bot_token, batch_chat_id or default_chat_id, output_path, caption)
+            except Exception as exc:
+                logging.warning('telegram send failed for %s: %s', output_path.name, exc)
         register_segment_history(arranged)
         mark_used([Path(item['source_path']) for item in sources])
         drop_first_queue_lines(queue_file, len(batch_lines))
