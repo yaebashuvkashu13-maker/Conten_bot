@@ -506,8 +506,6 @@ def segment_is_valid_for_montage(
 ) -> tuple[bool, str]:
     if profile != "mobile_legends":
         return True, "skip_profile"
-    if profile_looks_like_mlbb_edit(video_path, sample_frames=4):
-        return False, "promo_layout"
     if crop_box is None:
         crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     hud, text, cartoon = score_segment_window(

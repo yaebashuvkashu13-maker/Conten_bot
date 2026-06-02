@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from gameplay_gate import source_has_valid_gameplay_window
 from source_freshness import filter_new_sources
 
 TIKTOK_ROOT = Path("/root/datasets/tiktok/mlbb")
@@ -18,6 +19,7 @@ STATE_PATH = Path("/root/data/mlbb/last_etalon_montage.json")
 MAX_AGE_HOURS = float(os.environ.get("SOURCE_MAX_AGE_HOURS", "72"))
 MIN_SOURCES = int(os.environ.get("ETALON_MIN_SOURCES", "4"))
 MAX_SOURCES = int(os.environ.get("ETALON_MAX_SOURCES", "8"))
+SCAN_LIMIT = int(os.environ.get("ETALON_SCAN_LIMIT", "80"))
 
 
 def gather_paths() -> list[Path]:
@@ -48,7 +50,17 @@ def main() -> int:
     if len(fresh) < MIN_SOURCES:
         print(f"[etalon] only {len(fresh)} fresh sources, need {MIN_SOURCES}")
         return 1
-    picked = fresh[:MAX_SOURCES]
+    picked: list[Path] = []
+    for path in fresh[:SCAN_LIMIT]:
+        ok, reason = source_has_valid_gameplay_window(path)
+        if ok:
+            picked.append(path)
+        if len(picked) >= MAX_SOURCES:
+            break
+    if len(picked) < MIN_SOURCES:
+        print(f"[etalon] only {len(picked)} playable sources in {SCAN_LIMIT} scanned")
+        return 1
+    print(f"[etalon] queue {len(picked)} sources (scanned {min(SCAN_LIMIT, len(fresh))})")
     queue_path = build_queue(picked, chat_id)
 
     env = os.environ.copy()
