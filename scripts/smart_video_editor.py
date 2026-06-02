@@ -936,6 +936,14 @@ def save_analysis(output_path: Path, payload: dict) -> None:
     analysis_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def short_file_id(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()[:8]
+
+
 def main() -> int:
     global TARGET_DURATION, MIN_FINAL_DURATION, MAX_FINAL_DURATION, MIN_HIGHLIGHTS, MAX_HIGHLIGHTS, TRANSITION_DURATION, SELECTION_VARIANT, EXCLUDED_SOURCE_SIGNATURES, EXCLUDED_SEGMENT_KEYS, NICK_BLUR_ENABLED, SEND_TELEGRAM
 
@@ -1085,13 +1093,15 @@ def main() -> int:
         final_command = build_xfade_command(segment_paths, segment_durations, output_path)
         run_command(final_command)
         final_duration = ffprobe_duration(output_path)
-        caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()} | {round(final_duration)}s'
+        file_id = short_file_id(output_path)
+        caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()} | {round(final_duration)}s | id={file_id}'
         save_analysis(output_path, {
             'profile': profile,
             'target_duration': TARGET_DURATION,
             'min_final_duration': MIN_FINAL_DURATION,
             'max_final_duration': MAX_FINAL_DURATION,
             'final_duration': final_duration,
+            'output_id': file_id,
             'sources': [
                 {
                     'path': str(item['source_path']),
