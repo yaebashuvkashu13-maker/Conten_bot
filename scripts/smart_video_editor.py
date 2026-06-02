@@ -486,6 +486,8 @@ def build_candidates(
         region_slice = slice(max(0, left), min(bins, right + 1))
         mean_region = float(np.mean(smooth_scores[region_slice]))
         mean_motion = float(np.mean(analysis['motion'][region_slice]))
+        if profile == 'mobile_legends' and mean_motion < float(os.environ.get('SMART_MIN_BIN_MOTION', '0.012')):
+            continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
         desired_duration = max(9.5, min(15.0, (right - left + 1) * WINDOW_SECONDS + 3.2))
         desired_pre = min(5.2, max(3.6, desired_duration * 0.34))
@@ -548,9 +550,9 @@ def build_candidates(
                 # letting non-gameplay/promo segments slip into montages.
                 # TikTok gameplay often has subtitles/overlays; too-low max_text
                 # makes montage fail even when HUD is present and gameplay is real.
-                default_min_hud = 16.0
-                default_max_text = 0.32
-                default_max_cartoon = 0.50
+                default_min_hud = 17.0
+                default_max_text = 0.28
+                default_max_cartoon = 0.45
                 env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
                 env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
                 env_max_cartoon = float(os.environ.get('SMART_MAX_CARTOON_RATIO', str(default_max_cartoon)))
@@ -563,13 +565,13 @@ def build_candidates(
                         float(os.environ.get('SMART_MAX_REJECT_SIM', '0.78')),
                     ),
                     'min_hud_frame_rate': max(
-                        0.55,
-                        float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.55')),
+                        0.60,
+                        float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.60')),
                     ),
                 }
             except ValueError:
                 gate_kwargs = {}
-        if relax_segment_gate:
+        if relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
         ok_segment, reason = segment_is_valid_for_montage(
             Path(candidate['source_path']),

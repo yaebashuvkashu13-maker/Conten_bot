@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 from pathlib import Path
 
@@ -260,6 +261,64 @@ def reject_example_similarity(
     return best
 
 
+def score_segment_combat(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 6,
+) -> tuple[float, float, float, float]:
+    """
+    Returns (center_motion, minimap_delta, skill_delta, center_text).
+    Real teamfight clips have motion in the arena + minimap/skill bar changes.
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0, 0.0, 0.0, 1.0
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    center_motions: list[float] = []
+    mini_deltas: list[float] = []
+    skill_deltas: list[float] = []
+    center_texts: list[float] = []
+    prev_center: np.ndarray | None = None
+    prev_mini: np.ndarray | None = None
+    prev_skill: np.ndarray | None = None
+
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        small = cv2.resize(frame, (320, 180))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        center = gray[int(h * 0.22) : int(h * 0.68), int(w * 0.12) : int(w * 0.88)]
+        mini = gray[int(h * 0.72) : h, 0 : int(w * 0.28)]
+        skill = gray[int(h * 0.72) : h, int(w * 0.55) : w]
+        center_texts.append(_band_overlay_text_score(frame, 0.25, 0.72))
+        if prev_center is not None and center.size and prev_center.shape == center.shape:
+            center_motions.append(float(cv2.absdiff(center, prev_center).mean()) / 255.0)
+        if prev_mini is not None and mini.size and prev_mini.shape == mini.shape:
+            mini_deltas.append(float(cv2.absdiff(mini, prev_mini).mean()) / 255.0)
+        if prev_skill is not None and skill.size and prev_skill.shape == skill.shape:
+            skill_deltas.append(float(cv2.absdiff(skill, prev_skill).mean()) / 255.0)
+        prev_center, prev_mini, prev_skill = center, mini, skill
+
+    cap.release()
+    if not center_motions:
+        return 0.0, 0.0, 0.0, float(np.mean(center_texts) if center_texts else 1.0)
+    return (
+        float(np.mean(center_motions)),
+        float(np.mean(mini_deltas)) if mini_deltas else 0.0,
+        float(np.mean(skill_deltas)) if skill_deltas else 0.0,
+        float(np.mean(center_texts)) if center_texts else 0.0,
+    )
+
+
 def segment_hud_frame_pass_rate(
     video_path: Path,
     start_sec: float,
@@ -330,6 +389,23 @@ def segment_is_valid_for_montage(
     )
     if frame_rate < min_hud_frame_rate:
         return False, f"low_hud_frames={frame_rate:.2f}"
+
+    min_center_motion = float(os.environ.get("SMART_MIN_CENTER_MOTION", "0.016"))
+    min_minimap_delta = float(os.environ.get("SMART_MIN_MINIMAP_DELTA", "0.009"))
+    max_center_text = float(os.environ.get("SMART_MAX_CENTER_TEXT", "0.11"))
+
+    center_motion, mini_delta, skill_delta, center_text = score_segment_combat(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
+    if center_text > max_center_text and center_motion < min_center_motion * 1.6:
+        return False, f"tutorial_ui=text={center_text:.2f}"
+    if center_motion < min_center_motion:
+        return False, f"no_combat_motion={center_motion:.3f}"
+    if mini_delta < min_minimap_delta and center_motion < min_center_motion * 1.35:
+        return False, f"static_scene=mini{mini_delta:.3f}"
+    if skill_delta < 0.006 and center_motion < min_center_motion * 1.2 and mini_delta < min_minimap_delta * 1.5:
+        return False, f"no_fight_activity=skill{skill_delta:.3f}"
+
     return True, "ok"
 
 

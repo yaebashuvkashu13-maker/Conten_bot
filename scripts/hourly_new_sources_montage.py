@@ -71,6 +71,12 @@ def main() -> int:
             "MAX_SOURCES": str(len(new_paths)),
             "SEND_TELEGRAM": "1",
             "OUTPUT_DIR": str(OUTPUT_DIR),
+            "STRICT_GAMEPLAY": "1",
+            "SMART_MIN_HUD": "17",
+            "SMART_MIN_HUD_FRAME_RATE": "0.65",
+            "SMART_MIN_CENTER_MOTION": "0.018",
+            "SMART_MIN_BIN_MOTION": "0.014",
+            "BLUR_NICKNAME": "0",
         }
     )
     try:
