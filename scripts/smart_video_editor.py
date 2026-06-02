@@ -501,10 +501,6 @@ def build_candidates(
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
 
-        vid_pop = pop_video_id(f"{source_path} {game_name}")
-        if vid_pop:
-            combo_score += popularity_boost(vid_pop)
-
         candidates.append({
             'source_index': source_index,
             'source_signature': source_signature,
@@ -533,8 +529,9 @@ def build_candidates(
                 default_min_hud = 14.0
                 # TikTok gameplay often has subtitles/overlays; too-low max_text
                 # makes montage fail even when HUD is present and gameplay is real.
-                default_max_text = 0.35
-                default_max_cartoon = 0.55
+                default_max_text = 0.32
+                default_max_cartoon = 0.50
+                default_min_hud = 16.0
                 env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
                 env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
                 env_max_cartoon = float(os.environ.get('SMART_MAX_CARTOON_RATIO', str(default_max_cartoon)))
@@ -562,6 +559,9 @@ def build_candidates(
                 reason,
             )
             continue
+        vid_pop = pop_video_id(f"{candidate['source_path']} {game_name}")
+        if vid_pop:
+            candidate['score'] = round(float(candidate['score']) + popularity_boost(vid_pop), 4)
         pruned.append(candidate)
         if len(pruned) >= 4:
             break

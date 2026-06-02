@@ -11,6 +11,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+REJECT_EXAMPLES_DIR = Path("/root/data/mlbb/reject_examples")
+_REJECT_REF_HISTS: list[np.ndarray] | None = None
+
 PROMO_PATTERNS = re.compile(
     r"(#ad\b|sponsored|giveaway|promo\b|free\s+diamond|skin\s+gratis|"
     r"log\s*in\s+mlbb|mailbox|click\s+link|download\s+now|official\s+event)",
@@ -109,6 +112,58 @@ def score_segment_window(
     return hud, text, cartoon_penalty
 
 
+def _reject_reference_histograms() -> list[np.ndarray]:
+    global _REJECT_REF_HISTS
+    if _REJECT_REF_HISTS is not None:
+        return _REJECT_REF_HISTS
+    hists: list[np.ndarray] = []
+    if REJECT_EXAMPLES_DIR.exists():
+        for path in sorted(REJECT_EXAMPLES_DIR.glob("reject_*.*")):
+            if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+                continue
+            img = cv2.imread(str(path))
+            if img is None:
+                continue
+            hists.append(_center_band_hist(img))
+    _REJECT_REF_HISTS = hists
+    return hists
+
+
+def _center_band_hist(frame: np.ndarray) -> np.ndarray:
+    small = cv2.resize(frame, (320, 180))
+    band = small[int(180 * 0.28) : int(180 * 0.72), int(320 * 0.08) : int(320 * 0.92)]
+    if band.size == 0:
+        return np.zeros((1, 1), dtype=np.float32)
+    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [24, 16], [0, 180, 0, 256])
+    cv2.normalize(hist, hist)
+    return hist.astype(np.float32)
+
+
+def reject_example_similarity(video_path: Path, start_sec: float, duration_sec: float) -> float:
+    """0..1 — higher means frame looks like owner /bad examples."""
+    refs = _reject_reference_histograms()
+    if not refs:
+        return 0.0
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=3)
+    best = 0.0
+    for t in times:
+        cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        hist = _center_band_hist(frame)
+        for ref in refs:
+            score = float(cv2.compareHist(hist, ref, cv2.HISTCMP_CORREL))
+            best = max(best, score)
+    cap.release()
+    return best
+
+
 def segment_is_valid_for_montage(
     video_path: Path,
     start_sec: float,
@@ -118,10 +173,14 @@ def segment_is_valid_for_montage(
     min_hud: float = 14.0,
     max_text: float = 0.075,
     max_cartoon_ratio: float = 0.55,
+    max_reject_similarity: float = 0.82,
 ) -> tuple[bool, str]:
     if profile != "mobile_legends":
         return True, "skip_profile"
     hud, text, cartoon = score_segment_window(video_path, start_sec, duration_sec)
+    reject_sim = reject_example_similarity(video_path, start_sec, duration_sec)
+    if reject_sim >= max_reject_similarity:
+        return False, f"reject_example_sim={reject_sim:.2f}"
     if cartoon >= max_cartoon_ratio and hud < min_hud * 1.05:
         return False, f"non_gameplay_hud={hud:.1f}"
     if hud < min_hud:

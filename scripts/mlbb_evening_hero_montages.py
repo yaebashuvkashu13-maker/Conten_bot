@@ -68,8 +68,9 @@ def run_one(hero_id: str, chat_id: str, theme: str) -> int:
             "MIN_HIGHLIGHTS": "3",
             "MAX_HIGHLIGHTS": "4",
             "SMART_ADD_MUSIC": "0",
-            "BLUR_NICKNAME": "1",
-            "SMART_MAX_OVERLAY_TEXT": os.environ.get("SMART_MAX_OVERLAY_TEXT", "0.68"),
+            "BLUR_NICKNAME": "0",
+            "SMART_MIN_HUD": os.environ.get("SMART_MIN_HUD", "16"),
+            "SMART_MAX_OVERLAY_TEXT": os.environ.get("SMART_MAX_OVERLAY_TEXT", "0.32"),
             "OUTPUT_BASENAME": f"mlbb_{hero_id}_{theme.replace(' ', '_').lower()[:24]}",
         }
     )
