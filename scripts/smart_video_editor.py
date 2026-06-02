@@ -21,7 +21,7 @@ import numpy as np
 
 try:
     from gameplay_gate import (
-        detect_vertical_content_crop,
+        detect_game_viewport_crop,
         is_gameplay_video,
         load_csv_lookup,
         segment_is_valid_for_montage,
@@ -35,7 +35,7 @@ except ImportError:
 
     sys.path.insert(0, '/usr/local/bin')
     from gameplay_gate import (
-        detect_vertical_content_crop,
+        detect_game_viewport_crop,
         is_gameplay_video,
         load_csv_lookup,
         segment_is_valid_for_montage,
@@ -600,7 +600,7 @@ def build_candidates(
                 reason,
             )
             continue
-        crop_box = detect_vertical_content_crop(
+        crop_box = detect_game_viewport_crop(
             Path(candidate['source_path']),
             float(candidate['start']),
             float(candidate['input_duration']),
@@ -638,6 +638,61 @@ def effective_duration(selected: list[dict]) -> float:
     return total
 
 
+def game_audio_filter_chain(speed: float) -> str:
+    """Keep in-game SFX; attenuate typical TikTok music bed (no added background track)."""
+    return (
+        f'aresample=44100,atempo={speed:.3f},'
+        'highpass=f=220,lowpass=f=11500,'
+        'acompressor=threshold=-24dB:ratio=2.8:attack=8:release=120:makeup=1.5,'
+        'volume=1.06'
+    )
+
+
+def extend_selected_to_min_duration(selected: list[dict], profile: str = 'mobile_legends') -> list[dict]:
+    """Stretch segment windows until montage meets MIN_FINAL_DURATION when possible."""
+    items = [dict(item) for item in selected]
+    guard = 0
+    while effective_duration(items) < MIN_FINAL_DURATION and guard < 24:
+        guard += 1
+        changed = False
+        for item in sorted(items, key=lambda entry: entry.get('score', 0.0)):
+            source_path = Path(item['source_path'])
+            src_duration = ffprobe_duration(source_path)
+            speed = float(item.get('speed', 1.0) or 1.0)
+            start = float(item['start'])
+            input_duration = float(item['input_duration'])
+            extra = min(2.0, MIN_FINAL_DURATION - effective_duration(items) + 0.5)
+            new_input = min(15.8, input_duration + extra)
+            new_start = max(0.0, start - extra * 0.35)
+            if new_start + new_input > src_duration - 0.2:
+                new_input = max(input_duration, src_duration - new_start - 0.2)
+            if new_input <= input_duration + 0.15:
+                continue
+            item['start'] = round(new_start, 3)
+            item['input_duration'] = round(new_input, 3)
+            item['output_duration'] = round(new_input / speed, 3)
+            crop_box = detect_game_viewport_crop(source_path, new_start, new_input)
+            if crop_box:
+                item['crop_box'] = crop_box
+            ok_segment, _reason = segment_is_valid_for_montage(
+                source_path,
+                new_start,
+                new_input,
+                profile=profile,
+            )
+            if not ok_segment:
+                item['start'] = round(start, 3)
+                item['input_duration'] = round(input_duration, 3)
+                item['output_duration'] = round(input_duration / speed, 3)
+                continue
+            changed = True
+            if effective_duration(items) >= MIN_FINAL_DURATION:
+                break
+        if not changed:
+            break
+    return items
+
+
 def combo_is_valid(combo: tuple[dict, ...]) -> bool:
     selected = list(combo)
     for idx, candidate in enumerate(selected):
@@ -653,7 +708,7 @@ def combo_rank(combo: tuple[dict, ...]) -> float:
     distance_penalty = abs(duration - TARGET_DURATION) * 0.07
     range_penalty = 0.0
     if duration < MIN_FINAL_DURATION:
-        range_penalty += (MIN_FINAL_DURATION - duration) * 0.35
+        range_penalty += (MIN_FINAL_DURATION - duration) * 0.9
     if duration > MAX_FINAL_DURATION:
         range_penalty += (duration - MAX_FINAL_DURATION) * 0.35
     count_penalty = 0.05 if len(combo) == 4 and duration >= TARGET_DURATION - 6 else 0.0
@@ -768,6 +823,14 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
         and ('mobile legends' in game_hint or 'hayabusa' in game_hint)
     )
     crop = candidate.get('crop_box')
+    if not crop:
+        crop = detect_game_viewport_crop(
+            source_path,
+            float(candidate['start']),
+            float(candidate['input_duration']),
+        )
+        if crop:
+            candidate['crop_box'] = crop
     crop_prefix = ''
     if crop and len(crop) == 4:
         x, y, w, h = crop
@@ -782,7 +845,12 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
         'unsharp=5:5:0.18:5:5:0.0,'
         f'setpts=PTS/{speed:.3f},format=yuv420p'
     )
-    audio_filter = f'aresample=44100,atempo={speed:.3f},highpass=f=80,lowpass=f=14000,volume=1.02'
+    game_audio_only = os.environ.get('SMART_GAME_AUDIO_ONLY', '1') == '1'
+    audio_filter = (
+        game_audio_filter_chain(speed)
+        if game_audio_only
+        else f'aresample=44100,atempo={speed:.3f},highpass=f=80,lowpass=f=14000,volume=1.02'
+    )
     command = ['ffmpeg', '-y', '-ss', f"{candidate['start']:.3f}", '-t', f"{candidate['input_duration']:.3f}", '-i', str(source_path)]
 
     if logo_path.exists():
@@ -1040,7 +1108,7 @@ def main() -> int:
     EXCLUDED_SEGMENT_KEYS |= hist_segments
     NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '0') == '1'
     SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
-    if os.environ.get('SINGLE_SOURCE_MODE') == '1':
+    if os.environ.get('SINGLE_SOURCE_MODE') == '1' and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
         MIN_HIGHLIGHTS = max(2, min(MIN_HIGHLIGHTS, 2))
         MIN_FINAL_DURATION = max(22.0, MIN_FINAL_DURATION - 11.0)
 
@@ -1181,6 +1249,8 @@ def main() -> int:
 
         selected = select_candidates(all_candidates, len(sources))
         arranged = arrange_candidates(selected)
+        if profile == 'mobile_legends':
+            arranged = extend_selected_to_min_duration(arranged, profile)
         eff_duration = effective_duration(arranged)
         logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)
         if eff_duration < MIN_FINAL_DURATION:
@@ -1210,6 +1280,9 @@ def main() -> int:
         final_command = build_xfade_command(segment_paths, segment_durations, output_path)
         run_command(final_command)
         final_duration = ffprobe_duration(output_path)
+        if os.environ.get('SMART_ADD_MUSIC', '0') == '1' and music_path.exists():
+            mix_background_music(output_path, music_path, final_duration)
+            final_duration = ffprobe_duration(output_path)
         file_id = short_file_id(output_path)
         # `game_name` in the queue is a user-provided label (caption/folder/tag), not a guaranteed hero in-frame.
         hints = [item.get('game_name', '').strip() for item in sources if item.get('game_name')]
@@ -1221,7 +1294,17 @@ def main() -> int:
         if unique_hints:
             joined_hint = ', '.join(unique_hints[:3])
             hint_text = f' | hint={joined_hint[:60]}'
-        caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()}{hint_text} | {round(final_duration)}s | id={file_id}'
+        duration_label = f'{final_duration:.1f}s'
+        if os.environ.get('ETALON_MONTAGE', '0') == '1':
+            caption = (
+                f'Etalon MLBB | {len(arranged)} clips | {duration_label} '
+                f'(цель {int(MIN_FINAL_DURATION)}–{int(MAX_FINAL_DURATION)} с) | id={file_id}{hint_text}'
+            )
+        else:
+            caption = (
+                f'Smart Edit v1.1 | {profile.replace("_", " ").title()}{hint_text} | '
+                f'{duration_label} | id={file_id}'
+            )
         save_analysis(output_path, {
             'profile': profile,
             'target_duration': TARGET_DURATION,

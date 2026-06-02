@@ -150,6 +150,146 @@ def detect_vertical_content_crop(
     return 0, top_px, width, crop_h
 
 
+def detect_horizontal_content_crop(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    sample_frames: int = 6,
+    vertical_crop: tuple[int, int, int, int] | None = None,
+) -> tuple[int, int, int, int] | None:
+    """Crop static TikTok left/right pillarbox; return (x, y, w, h) in source pixels."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if width < 200 or height < 200:
+        cap.release()
+        return None
+    y0, crop_h = 0, height
+    if vertical_crop is not None:
+        _vx, vy, _vw, vh = vertical_crop
+        y0, crop_h = vy, vh
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    frames: list[np.ndarray] = []
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is not None:
+            if vertical_crop is not None:
+                _vx, vy, vw, vh = vertical_crop
+                frame = frame[vy : vy + vh, :]
+            frames.append(frame)
+    cap.release()
+    if len(frames) < 2:
+        return None
+
+    small_h = min(180, max(72, crop_h))
+    small_w = max(96, int(width * small_h / max(crop_h, 1)))
+    col_activity = np.zeros(small_w, dtype=np.float32)
+    for idx in range(1, len(frames)):
+        prev = cv2.resize(frames[idx - 1], (small_w, small_h))
+        curr = cv2.resize(frames[idx], (small_w, small_h))
+        diff = cv2.absdiff(cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY), cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY))
+        col_activity += diff.mean(axis=0)
+
+    col_activity /= max(len(frames) - 1, 1)
+    peak = float(np.percentile(col_activity, 90))
+    if peak < 1.0:
+        return None
+    threshold = max(1.5, peak * 0.20)
+    active = col_activity >= threshold
+    if not np.any(active):
+        return None
+    indices = np.where(active)[0]
+    left = int(indices[0])
+    right = int(indices[-1])
+    span = right - left + 1
+    if span < int(small_w * 0.55):
+        return None
+    left_px = int(left * width / small_w)
+    right_px = int((right + 1) * width / small_w)
+    crop_w = right_px - left_px
+    if crop_w < int(width * 0.62):
+        return None
+    trim_left = left_px / width
+    trim_right = (width - right_px) / width
+    if trim_left < 0.07 and trim_right < 0.07:
+        return None
+    return left_px, y0, crop_w, crop_h
+
+
+def detect_game_viewport_crop(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+) -> tuple[int, int, int, int] | None:
+    """Merge vertical + horizontal crop so letterbox becomes black bars in render."""
+    vertical = detect_vertical_content_crop(video_path, start_sec, duration_sec)
+    horizontal = detect_horizontal_content_crop(
+        video_path, start_sec, duration_sec, vertical_crop=vertical
+    )
+    if vertical is None and horizontal is None:
+        return None
+    if vertical is None:
+        return horizontal
+    if horizontal is None:
+        return vertical
+    vx, vy, vw, vh = vertical
+    hx, hy, hw, hh = horizontal
+    x = max(vx, hx)
+    y = max(vy, hy)
+    w = min(vx + vw, hx + hw) - x
+    h = min(vy + vh, hy + hh) - y
+    if w <= 0 or h <= 0:
+        return vertical
+    cap = cv2.VideoCapture(str(video_path))
+    full_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    full_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    cap.release()
+    if w < int(full_w * 0.50) or h < int(full_h * 0.45):
+        return vertical
+    return x, y, w, h
+
+
+def score_left_chat_panel(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 5,
+) -> float:
+    """Higher = more likely MLBB lobby/chat (text column on the left)."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    scores: list[float] = []
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        small = cv2.resize(frame, (320, 180))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        left_band = gray[int(h * 0.10) : int(h * 0.88), 0 : int(w * 0.38)]
+        if left_band.size == 0:
+            continue
+        edges = cv2.Canny(left_band, 60, 150)
+        edge_ratio = float(np.count_nonzero(edges)) / float(edges.size)
+        _, bright = cv2.threshold(left_band, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bright_ratio = float(np.count_nonzero(bright)) / float(bright.size)
+        scores.append(edge_ratio * 0.75 + min(bright_ratio, 0.40) * 0.25)
+    cap.release()
+    return float(np.mean(scores)) if scores else 0.0
+
+
 def score_segment_window(
     video_path: Path,
     start_sec: float,
@@ -369,7 +509,7 @@ def segment_is_valid_for_montage(
     if profile_looks_like_mlbb_edit(video_path, sample_frames=4):
         return False, "promo_layout"
     if crop_box is None:
-        crop_box = detect_vertical_content_crop(video_path, start_sec, duration_sec)
+        crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     hud, text, cartoon = score_segment_window(
         video_path, start_sec, duration_sec, crop_box=crop_box
     )
@@ -397,6 +537,12 @@ def segment_is_valid_for_montage(
     center_motion, mini_delta, skill_delta, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box
     )
+    max_chat_panel = float(os.environ.get("SMART_MAX_CHAT_PANEL", "0.17"))
+    chat_panel = score_left_chat_panel(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
+    if chat_panel > max_chat_panel and center_motion < min_center_motion * 1.45:
+        return False, f"chat_lobby=panel{chat_panel:.2f}"
     if center_text > max_center_text and center_motion < min_center_motion * 1.6:
         return False, f"tutorial_ui=text={center_text:.2f}"
     if center_motion < min_center_motion:
