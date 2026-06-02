@@ -15,6 +15,14 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from instagram_digest_filters import build_telegram_caption, is_ad_post
+except ImportError:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from instagram_digest_filters import build_telegram_caption, is_ad_post
+
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
 
 COOKIES = Path(os.environ.get("INSTAGRAM_COOKIES_PATH", "/root/instagram_cookies.txt"))
@@ -106,8 +114,7 @@ def tg_send(token: str, chat_id: str, method: str, payload: dict) -> None:
 
 
 def publish(token: str, chat_id: str, source_name: str, post: dict) -> None:
-    caption = (post.get("caption") or "Новый пост из Instagram").strip()
-    text = f"📌 {source_name}\n{caption}\n\n{post.get('permalink', '')}"[:1024]
+    text = build_telegram_caption(source_name, post)
     thumb = post.get("thumbnail")
     if thumb:
         tg_send(token, chat_id, "sendPhoto", {"chat_id": chat_id, "photo": thumb, "caption": text})
@@ -123,17 +130,18 @@ def main() -> int:
     token = cfg["telegram"]["bot_token"]
     chat_id = str(cfg["telegram"]["channel_id"])
     max_posts = int(cfg.get("max_posts_per_run", 7))
+    scan_per_source = int(os.environ.get("IG_DIGEST_SCAN_PER_SOURCE", "6"))
     published = load_state()
     sent = 0
+    skipped_ads = 0
     errors = 0
     for source in cfg.get("instagram_sources") or []:
         if sent >= max_posts:
             break
         name = source.get("name") or source.get("url")
         username = str(source.get("url", "")).rstrip("/").split("/")[-1]
-        per_source = min(int(source.get("max_entries", 1)), max_posts - sent)
         try:
-            posts = fetch_posts(username, per_source)
+            posts = fetch_posts(username, scan_per_source)
         except Exception as exc:
             logging.warning("fetch %s failed: %s", name, exc)
             errors += 1
@@ -144,6 +152,11 @@ def main() -> int:
                 break
             pid = post["post_id"]
             if pid in published:
+                continue
+            is_ad, ad_reason = is_ad_post(post.get("caption", ""), post.get("thumbnail"))
+            if is_ad:
+                skipped_ads += 1
+                logging.info("skip ad %s %s reason=%s", name, pid, ad_reason)
                 continue
             try:
                 publish(token, chat_id, str(name), post)
@@ -156,7 +169,7 @@ def main() -> int:
                 errors += 1
         time.sleep(3)
     save_state(published)
-    logging.info("done sent=%s errors=%s", sent, errors)
+    logging.info("done sent=%s skipped_ads=%s errors=%s", sent, skipped_ads, errors)
     print(f"Published {sent} new posts.")
     return 0 if sent > 0 else (1 if errors else 0)
 
