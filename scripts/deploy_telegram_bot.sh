@@ -12,7 +12,7 @@ git pull --ff-only 2>/dev/null || true
 
 apt-get update -qq
 apt-get install -y -qq tesseract-ocr curl >/dev/null
-python3 -m pip install -q pytesseract opencv-python-headless numpy PyYAML 2>/dev/null || true
+python3 -m pip install -q --break-system-packages pytesseract opencv-python-headless numpy PyYAML 2>/dev/null || true
 
 mkdir -p /root/data/mlbb/watermark_examples
 install -m 755 "$REPO/scripts/telegram_upload_bot.py" "$DEST/telegram_upload_bot.py"
