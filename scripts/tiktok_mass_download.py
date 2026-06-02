@@ -237,6 +237,8 @@ def _bump_fail_reason(reason: str) -> None:
 
 def classify_ytdlp_error(stderr: str) -> str:
     s = (stderr or "").lower()
+    if "ip address is blocked" in s or "your ip address is blocked" in s:
+        return "ip_blocked"
     if "http error 429" in s or "status code: 429" in s:
         return "http_429"
     if "http error 403" in s or "status code: 403" in s or "forbidden" in s:
@@ -416,6 +418,9 @@ def download_file(url: str, dest: Path, proxy: str, env: dict[str, str]) -> bool
         err = (exc.stderr or "")[-800:]
         reason = classify_ytdlp_error(err)
         _bump_fail_reason(reason)
+        if reason == "ip_blocked":
+            # Hard stop: continuing will just burn proxy/IP.
+            log(f"IP BLOCKED by TikTok for current proxy. Stopping workers. url={url}")
         # Log small sample to understand what's killing throughput.
         log(f"download failed ({reason}) url={url} err={(err or '')[:240].replace('\\n',' ')}")
         partial.unlink(missing_ok=True)
@@ -458,6 +463,11 @@ def process_item(
         _stats["attempted"] += 1
 
     if not download_file(url, dest, proxy, env):
+        # If proxy is blocked, exit this batch early.
+        with _stats_lock:
+            blocked = _fail_reasons.get("ip_blocked", 0) >= 3
+        if blocked:
+            stop_event.set()
         with _stats_lock:
             _stats["failed"] += 1
         with state_lock:
