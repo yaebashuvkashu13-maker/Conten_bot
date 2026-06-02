@@ -160,7 +160,8 @@ def analyze_file(path: Path) -> dict:
         if cte is not None and cte > 0:
             cte_values.append(cte)
 
-        times = [parse_dt(row[i]) if len(row) > i else None for i in range(2, 9)]
+        # cols 3–11 (даты этапов)
+        times = [parse_dt(row[i]) if len(row) > i else None for i in range(2, 11)]
 
         for name, col_a, col_b in STAGE_SPECS:
             ia, ib = col_a - 3, col_b - 3
@@ -169,10 +170,10 @@ def analyze_file(path: Path) -> dict:
                 if dm is not None:
                     stage_durations[name].append(dm)
 
-        search_m = delta_minutes(times[4], times[5]) if len(times) >= 6 else None
-        assembled_wait = delta_minutes(times[3], times[7]) if len(times) >= 8 else None
-        pick_m = delta_minutes(times[1], times[3]) if len(times) >= 4 else None
-        arrive_m = delta_minutes(times[7], times[8]) if len(times) >= 9 else None
+        search_m = delta_minutes(times[4], times[5]) if len(times) > 5 else None
+        assembled_wait = delta_minutes(times[3], times[7]) if len(times) > 7 else None
+        pick_m = delta_minutes(times[1], times[3]) if len(times) > 3 else None
+        arrive_m = delta_minutes(times[7], times[8]) if len(times) > 8 else None
 
         if search_m is not None and search_m > 15:
             problems["поиск_курьера_>15м"].append(search_m)
