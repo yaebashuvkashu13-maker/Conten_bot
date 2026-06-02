@@ -109,8 +109,13 @@ def log(msg: str) -> None:
 
 
 def load_env(path: Path) -> dict[str, str]:
+    # Load defaults from file, but allow process env to override (useful for loop scripts).
     env: dict[str, str] = {}
     if not path.exists():
+        # still allow overrides from current process env
+        for k, v in os.environ.items():
+            if k.startswith("MASS_") or k in {"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"}:
+                env[k] = v
         return env
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -118,6 +123,10 @@ def load_env(path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         env[key.strip()] = value.strip()
+    # Process env wins.
+    for k, v in os.environ.items():
+        if k.startswith("MASS_") or k in {"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"}:
+            env[k] = v
     return env
 
 
