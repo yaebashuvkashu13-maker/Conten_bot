@@ -249,7 +249,16 @@ SMART_TARGET_DURATION=45
 TRANSITION_DURATION=0.28
 BLUR_NICKNAME=1
 YTDLP_IMPERSONATE=chrome-131
+
+# YouTube upload (OAuth, только на VPS — не коммитить)
+GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REFRESH_TOKEN=...
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8080/
+YOUTUBE_CHANNEL_ID=...   # optional, UC...
 ```
+
+Один раз: `python3 /usr/local/bin/youtube_oauth_setup.py` (нужен client secret + браузер/SSH tunnel на :8080).
 
 При **401 Unauthorized** в Telegram — проверить, что `TG_BOT_TOKEN` не испорчен (только `cut -d= -f2-`, без лишних кавычек).
 
