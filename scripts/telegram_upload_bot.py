@@ -238,15 +238,25 @@ def send_photo_file(chat_id: str | int, image_path: Path, caption: str = '') -> 
         raise RuntimeError(result)
 
 
-def run_watermark_clean(source: Path) -> tuple[Path, bool]:
+def run_watermark_clean(source: Path) -> tuple[Path, bool, str]:
     import sys
 
     scripts_dir = WATERMARK_REMOVE_SCRIPT.parent
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
-    from image_watermark_remove import clean_image_file
+    import cv2
+    from image_watermark_remove import clean_image_file, detect_watermark_source, remove_watermarks
 
-    return clean_image_file(source)
+    img = cv2.imread(str(source))
+    if img is None:
+        return source, False, 'none'
+    source_kind, boxes = detect_watermark_source(img)
+    if not boxes:
+        return source, False, source_kind
+    cleaned, changed = remove_watermarks(img)
+    out = source.parent / f'{source.stem}_clean{source.suffix}'
+    cv2.imwrite(str(out), cleaned, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    return out, changed, source_kind
 
 
 def save_wm_photo(chat_id: str, message: dict) -> Path | None:
@@ -283,20 +293,23 @@ def process_wm_photo(chat_id: str, message: dict) -> None:
         send_message(chat_id, 'Не удалось сохранить фото.')
         return
     try:
-        cleaned_path, changed = run_watermark_clean(saved)
+        cleaned_path, changed, source_kind = run_watermark_clean(saved)
         if changed:
+            how = 'по красной обводке' if source_kind == 'red_markup' else 'по тексту OCR'
             send_photo_file(
                 chat_id,
                 cleaned_path,
-                f'Готово: надпись убрана ({saved.name}). Всего примеров: {count_wm_examples()}.',
+                f'Готово ({how}). Примеров: {count_wm_examples()}.',
             )
         else:
             send_message(
                 chat_id,
-                f'Фразу «god of mlbb» на скрине не нашёл — отправил бы оригинал. '
-                f'Пример сохранён ({saved.name}). Всего: {count_wm_examples()}.',
+                'Не нашёл зону знака.\n'
+                '• Обведите **только** надпись «god of mlbb» внизу кадра (ярко-красным).\n'
+                '• Не обводите весь экран — в игре много красного UI.\n'
+                '• Или пришлите без обводки — попробую OCR.',
             )
-            send_photo_file(chat_id, saved, 'Оригинал (водяной знак не найден OCR).')
+            send_photo_file(chat_id, saved, 'Оригинал (зона не найдена).')
     except Exception as exc:
         logging.exception('watermark clean failed')
         send_message(chat_id, f'Ошибка обработки: {exc}')

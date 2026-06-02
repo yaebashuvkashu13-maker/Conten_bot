@@ -148,7 +148,7 @@ def _ocr_data_pytesseract(image_bgr: np.ndarray, y_offset: int = 0) -> list[dict
             conf = float(data["conf"][i])
         except (TypeError, ValueError):
             conf = -1
-        if conf >= 0 and conf < 40:
+        if conf >= 0 and conf < 25:
             continue
         rows.append(
             {
@@ -265,47 +265,99 @@ def _regex_fallback_boxes(
     return [(x, y + y_offset, min(bw, rw - x), min(bh, rh - y))]
 
 
-def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
-    """Training hint: owner draws a red box around the watermark — use it as exact mask."""
-    h, w = image_bgr.shape[:2]
+def _red_mask(image_bgr: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, (0, 120, 120), (12, 255, 255)) | cv2.inRange(hsv, (165, 120, 120), (180, 255, 255))
+    mask = cv2.inRange(hsv, (0, 60, 60), (22, 255, 255)) | cv2.inRange(hsv, (160, 60, 60), (180, 255, 255))
     b, g, r = cv2.split(image_bgr)
-    mask |= ((r.astype(np.int16) > 150) & (g < 110) & (b < 110)).astype(np.uint8) * 255
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    mask = cv2.dilate(mask, kernel, iterations=2)
+    mask |= ((r.astype(np.int16) > 105) & (r > g + 35) & (r > b + 35)).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.dilate(mask, kernel, iterations=1)
+
+
+def _box_from_red_strip(mask: np.ndarray, y0: int, width: int, height: int) -> tuple[int, int, int, int] | None:
+    strip = mask[y0:, :]
+    ys, xs = np.where(strip > 0)
+    if len(xs) < 120:
+        return None
+    img_area = width * height
+    pad = 8
+    x1, x2 = max(0, int(xs.min()) - pad), min(width, int(xs.max()) + pad)
+    y1, y2 = y0 + max(0, int(ys.min()) - pad), min(height, y0 + int(ys.max()) + pad)
+    bw, bh = x2 - x1, y2 - y1
+    area = bw * bh
+    if area < img_area * 0.002 or area > img_area * 0.22:
+        return None
+    return (x1, y1, bw, bh)
+
+
+def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Red outline around watermark — ignore full-screen game reds via bottom strip + size limits."""
+    h, w = image_bgr.shape[:2]
+    img_area = w * h
+    mask = _red_mask(image_bgr)
+
+    for start_frac in (0.50, 0.40, 0.58):
+        strip_box = _box_from_red_strip(mask, int(h * start_frac), w, h)
+        if strip_box:
+            return [strip_box]
+
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes: list[tuple[int, int, int, int]] = []
-    min_area = max(400, int(w * h * 0.0015))
+    scored: list[tuple[float, tuple[int, int, int, int]]] = []
     for cnt in contours:
         x, y, bw, bh = cv2.boundingRect(cnt)
-        if bw * bh < min_area:
+        area = bw * bh
+        if area < img_area * 0.001 or area > img_area * 0.16:
             continue
-        pad = max(2, int(min(bw, bh) * 0.05))
-        boxes.append((max(0, x - pad), max(0, y - pad), bw + 2 * pad, bh + 2 * pad))
-    return _filter_boxes(_merge_boxes(boxes), w, h)
+        cy = y + bh / 2
+        if cy < h * 0.38:
+            continue
+        pad = max(6, int(min(bw, bh) * 0.12))
+        box = (max(0, x - pad), max(0, y - pad), min(bw + 2 * pad, w), min(bh + 2 * pad, h))
+        score = area * (1.0 + (cy / h) * 1.5)
+        if cy >= h * 0.55:
+            score *= 2.5
+        scored.append((score, box))
+
+    if not scored:
+        return []
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best = scored[0][1]
+    merged = [best]
+    for _, box in scored[1:4]:
+        x, y, bw, bh = box
+        mx, my, mw, mh = merged[0]
+        if abs((y + bh / 2) - (my + mh / 2)) < h * 0.12:
+            x2 = max(mx + mw, x + bw)
+            y2 = max(my + mh, y + bh)
+            merged[0] = (min(mx, x), min(my, y), x2 - min(mx, x), y2 - min(my, y))
+    return merged
 
 
-def find_watermark_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
-    h, w = image_bgr.shape[:2]
+def detect_watermark_source(image_bgr: np.ndarray) -> tuple[str, list[tuple[int, int, int, int]]]:
     red_boxes = _find_red_markup_boxes(image_bgr)
     if red_boxes:
-        logging.debug("watermark boxes from red markup: %s", red_boxes)
-        return red_boxes
-
+        return "red_markup", red_boxes
+    h, w = image_bgr.shape[:2]
     frac = _bottom_frac()
     crop_y = int(h * (1.0 - frac))
     roi = image_bgr[crop_y:, :]
     words = _dedupe_words(_ocr_data(roi, y_offset=crop_y))
-
     all_boxes: list[tuple[int, int, int, int]] = []
     for phrase in load_phrases():
         phrase_boxes = _phrase_in_ocr(phrase, words, w, h)
         all_boxes.extend(phrase_boxes)
         if not phrase_boxes:
             all_boxes.extend(_regex_fallback_boxes(roi, crop_y, phrase))
+    ocr_boxes = _filter_boxes(_merge_boxes(all_boxes), w, h)
+    if ocr_boxes:
+        return "ocr", ocr_boxes
+    return "none", []
 
-    return _filter_boxes(_merge_boxes(all_boxes), w, h)
+
+def find_watermark_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    _source, boxes = detect_watermark_source(image_bgr)
+    return boxes
 
 
 def _fill_from_above(image_bgr: np.ndarray, x: int, y: int, bw: int, bh: int) -> None:
