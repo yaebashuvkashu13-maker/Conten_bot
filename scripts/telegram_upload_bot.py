@@ -28,6 +28,7 @@ PROCESSOR = '/usr/local/bin/smart_video_editor.py'
 AD_INGEST = '/usr/local/bin/ad_screenshot_ingest.py'
 PUBG_LEARN = '/usr/local/bin/pubg_stream_learn_worker.py'
 AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
+RESEARCH_INBOX_DIR = Path('/root/research/inbox')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 BOT_VERSION = '2026-06-02-pubg-ad'
@@ -409,6 +410,52 @@ def save_ad_photo(chat_id: str, message: dict) -> Path | None:
     return destination
 
 
+def extract_document_file(message: dict):
+    document = message.get('document')
+    if not document:
+        return None
+    file_name = (document.get('file_name') or '').strip()
+    if not file_name:
+        return None
+    ext = Path(file_name).suffix.lower()
+    return {
+        'file_id': document['file_id'],
+        'file_unique_id': document.get('file_unique_id', document['file_id']),
+        'file_name': file_name,
+        'ext': ext or '',
+        'mime_type': (document.get('mime_type') or '').lower(),
+    }
+
+
+def save_research_file(chat_id: str, message: dict) -> Path | None:
+    doc = extract_document_file(message)
+    if not doc:
+        return None
+    file_name = doc.get('file_name') or f"upload_{doc.get('file_unique_id')}"
+    RESEARCH_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    safe = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '_' for ch in file_name)[:120]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    destination = RESEARCH_INBOX_DIR / f"{stamp}_{safe}"
+    file_url = get_file_url(doc['file_id'])
+    download_file(file_url, destination)
+    meta = destination.with_suffix(destination.suffix + '.meta.json')
+    meta.write_text(
+        json.dumps(
+            {
+                'chat_id': chat_id,
+                'message_id': message.get('message_id'),
+                'original_name': file_name,
+                'mime_type': doc.get('mime_type'),
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    return destination
+
+
 def extract_media(message: dict):
     if 'video' in message:
         video = message['video']
@@ -692,6 +739,17 @@ def handle_message(message: dict):
                 'Чтобы отправить скрины рекламы для обучения бота, сначала напиши /ad (или /реклама), '
                 'потом пришли фото. Завершить — /ad_done.',
             )
+        return
+
+    # Owner can send research files (e.g. big .xlsx) directly to the bot.
+    doc = extract_document_file(message)
+    if doc and is_owner(chat_id) and (doc.get('ext') == '.xlsx' or 'spreadsheet' in (doc.get('mime_type') or '')):
+        saved = save_research_file(chat_id, message)
+        if saved and saved.exists():
+            send_message(chat_id, f'Файл сохранён на сервере: {saved.name}. Напиши цель/вопросы — сделаю анализ.')
+            notify_owner(f'Research file saved: {saved}')
+        else:
+            send_message(chat_id, 'Не удалось сохранить файл. Попробуй ещё раз.')
         return
 
     media = extract_media(message)
