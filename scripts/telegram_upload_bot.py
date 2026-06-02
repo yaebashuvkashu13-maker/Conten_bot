@@ -956,6 +956,8 @@ def register_bot_commands() -> None:
                     {'command': 'research', 'description': 'Большой Excel: ссылка transfer.sh'},
                     {'command': 'ig_digest', 'description': 'Дайджест Instagram блогеров (владелец)'},
                     {'command': 'ig_cookies', 'description': 'Как загрузить cookies Instagram'},
+                    {'command': 'wm', 'description': 'Убрать «god of mlbb» со скрина (владелец)'},
+                    {'command': 'wm_done', 'description': 'Выйти из режима водяного знака'},
                 ],
             },
             timeout=30,
@@ -1262,8 +1264,8 @@ def handle_message(message: dict):
         if text and cmd not in ('/start',):
             send_message(
                 chat_id,
-                'Команды: /ping — проверка, /ad — скрины рекламы (владелец), /start — справка. '
-                'Видео — просто отправьте файлом.',
+                'Команды: /ping, /ad, /wm (убрать god of mlbb), /ig_digest, /start. '
+                'Видео — файлом. Если /wm не находится — на VPS нужен деплой бота (см. scripts/deploy_telegram_bot.sh).',
             )
         return
 

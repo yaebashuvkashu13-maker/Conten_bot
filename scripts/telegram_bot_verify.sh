@@ -35,5 +35,6 @@ echo "=== last log lines ==="
 tail -15 /root/telegram_upload_bot.log 2>/dev/null || echo "no log"
 
 echo "=== deploy hint ==="
-echo "cd /root/content_bot_ml && git pull && install -m 755 scripts/telegram_upload_bot.py /usr/local/bin/ && systemctl restart telegram-upload-bot"
+echo "bash /root/content_bot_ml/scripts/deploy_telegram_bot.sh"
+echo "# or: cd /root/content_bot_ml && git pull && install -m 755 scripts/{telegram_upload_bot,image_watermark_remove}.py /usr/local/bin/ && systemctl restart telegram-upload-bot"
 echo "Then send /ping to the bot from YOUR chat (TG_CHAT_ID=$TG_CHAT_ID)"

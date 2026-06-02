@@ -13,6 +13,9 @@ for f in \
   audio_game_extract_worker.py \
   ad_screenshot_ingest.py \
   telegram_upload_bot.py \
+  image_watermark_remove.py \
+  instagram_digest_gallery_dl.py \
+  instagram_digest_filters.py \
   research_delivery_analysis.py \
   pubg_stream_learn_worker.py \
   tiktok_download_batch.py \
