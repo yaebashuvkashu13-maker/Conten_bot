@@ -28,6 +28,7 @@ class AppConfig:
     instagram_cookies_path: Path | None = None
     proxy_url: str | None = None
     dry_run: bool = False
+    max_posts_per_run: int = 7
 
 
 def _require(mapping: dict[str, Any], key: str) -> Any:
@@ -62,6 +63,7 @@ def load_config(path: str | Path) -> AppConfig:
     instagram_cookies_path = Path(cookies_raw) if cookies_raw else None
     proxy_url = str(raw["proxy_url"]) if raw.get("proxy_url") else None
     dry_run = bool(raw.get("dry_run", False))
+    max_posts_per_run = int(raw.get("max_posts_per_run", 7))
 
     return AppConfig(
         telegram=telegram,
@@ -70,5 +72,6 @@ def load_config(path: str | Path) -> AppConfig:
         instagram_cookies_path=instagram_cookies_path,
         proxy_url=proxy_url,
         dry_run=dry_run,
+        max_posts_per_run=max_posts_per_run,
     )
 
