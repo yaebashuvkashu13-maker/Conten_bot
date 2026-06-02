@@ -18,7 +18,7 @@ python3 /usr/local/bin/mlbb_hero_dataset_builder.py || true
 export SMART_ADD_MUSIC=0
 export MLBB_EVENING_COUNT="${MLBB_EVENING_COUNT:-2}"
 export MLBB_EVENING_THEME="${MLBB_EVENING_THEME:-Hero Highlights}"
-export SMART_MAX_OVERLAY_TEXT="${SMART_MAX_OVERLAY_TEXT:-0.58}"
+export SMART_MAX_OVERLAY_TEXT="${SMART_MAX_OVERLAY_TEXT:-0.32}"
 
 python3 /usr/local/bin/mlbb_evening_hero_montages.py
 echo "[$(date)] evening stack done"

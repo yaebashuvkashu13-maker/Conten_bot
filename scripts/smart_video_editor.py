@@ -201,11 +201,19 @@ def saturation_score(saturation: float) -> float:
 
 
 def parse_queue_line(line: str, default_chat_id: str) -> tuple[str, str, str]:
+    """path|label|chat_id — label may contain '|' (e.g. 'Hero Highlights | Yu Zhong')."""
+    line = line.strip()
+    if not line:
+        return '', 'Telegram upload', default_chat_id
     parts = line.split('|')
-    source = parts[0].strip() if parts else ''
-    game = parts[1].strip() if len(parts) > 1 and parts[1].strip() else 'Telegram upload'
-    chat_id = parts[2].strip() if len(parts) > 2 and parts[2].strip() else default_chat_id
-    return source, game, chat_id
+    if len(parts) >= 3:
+        source = parts[0].strip()
+        chat_id = parts[-1].strip() or default_chat_id
+        game = '|'.join(parts[1:-1]).strip() or 'Telegram upload'
+        return source, game, chat_id
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip() or 'Telegram upload', default_chat_id
+    return parts[0].strip(), 'Telegram upload', default_chat_id
 
 
 def maybe_download_source(source: str, temp_dir: Path, impersonate: str) -> Path:
@@ -526,12 +534,11 @@ def build_candidates(
             try:
                 # Allow env overrides only to be stricter (never looser), to avoid
                 # letting non-gameplay/promo segments slip into montages.
-                default_min_hud = 14.0
                 # TikTok gameplay often has subtitles/overlays; too-low max_text
                 # makes montage fail even when HUD is present and gameplay is real.
+                default_min_hud = 16.0
                 default_max_text = 0.32
                 default_max_cartoon = 0.50
-                default_min_hud = 16.0
                 env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
                 env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
                 env_max_cartoon = float(os.environ.get('SMART_MAX_CARTOON_RATIO', str(default_max_cartoon)))

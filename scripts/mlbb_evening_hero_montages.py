@@ -89,6 +89,11 @@ def main() -> int:
     count = int(os.environ.get("MLBB_EVENING_COUNT", "2"))
     min_clips = int(os.environ.get("MLBB_EVENING_MIN_CLIPS", "8"))
     theme = os.environ.get("MLBB_EVENING_THEME", "Hero Highlights")
+    only_heroes = [
+        h.strip().lower().replace(" ", "_")
+        for h in os.environ.get("MLBB_EVENING_HEROES", "").split(",")
+        if h.strip()
+    ]
 
     ranked = heroes_by_count(min_clips=min_clips)
     if not ranked:
@@ -109,6 +114,8 @@ def main() -> int:
     results = []
 
     for hero_id, clip_count in ranked:
+        if only_heroes and hero_id not in only_heroes:
+            continue
         if len(results) >= count:
             break
         if hero_id in done_today:
