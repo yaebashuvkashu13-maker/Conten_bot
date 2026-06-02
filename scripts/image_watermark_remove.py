@@ -371,20 +371,40 @@ def find_watermark_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int
     return boxes
 
 
+def _expand_box(
+    box: tuple[int, int, int, int], width: int, height: int, scale: float = 1.35
+) -> tuple[int, int, int, int]:
+    x, y, bw, bh = box
+    cx, cy = x + bw / 2, y + bh / 2
+    nbw = min(width, int(bw * scale))
+    nbh = min(height, int(bh * scale))
+    nx = max(0, int(cx - nbw / 2))
+    ny = max(0, int(cy - nbh / 2))
+    if nx + nbw > width:
+        nbw = width - nx
+    if ny + nbh > height:
+        nbh = height - ny
+    return nx, ny, nbw, nbh
+
+
 def _text_pixels_mask(region_bgr: np.ndarray) -> np.ndarray:
-    """Bright / high-contrast pixels typical of god-of-mlbb style overlay text."""
+    """Bright / gold / white watermark letters."""
     gray = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2GRAY)
-    bright = cv2.inRange(gray, 165, 255)
-    edges = cv2.Canny(gray, 80, 160)
-    mask = cv2.bitwise_or(bright, edges)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
+    bright = cv2.inRange(gray, 140, 255)
+    gold = cv2.inRange(hsv, (8, 80, 120), (45, 255, 255))
+    edges = cv2.Canny(gray, 60, 140)
+    mask = cv2.bitwise_or(bright, gold)
+    mask = cv2.bitwise_or(mask, edges)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     return cv2.dilate(mask, kernel, iterations=1)
 
 
 def _repair_mask(
     image_bgr: np.ndarray, box: tuple[int, int, int, int], source: str
 ) -> np.ndarray:
-    """Pixel-tight mask — only watermark strokes, not the whole bounding rectangle."""
+    """Mask for removal: red outline = fill whole interior; OCR = text blob + padding."""
     h, w = image_bgr.shape[:2]
     x, y, bw, bh = box
     x2, y2 = min(w, x + bw), min(h, y + bh)
@@ -393,42 +413,37 @@ def _repair_mask(
 
     full = np.zeros((h, w), dtype=np.uint8)
     region = image_bgr[y:y2, x:x2]
+    rh, rw = region.shape[:2]
 
     if source == "red_markup":
-        red = _red_mask(image_bgr)[y:y2, x:x2]
-        if red.sum() > 80:
-            patch = red
-        else:
-            patch = _text_pixels_mask(region)
+        # User drew around the phrase — remove everything inside (not only red pixels).
+        margin_x = max(3, int(rw * 0.06))
+        margin_y = max(3, int(rh * 0.10))
+        patch = np.zeros((rh, rw), dtype=np.uint8)
+        patch[margin_y : rh - margin_y, margin_x : rw - margin_x] = 255
+        patch = cv2.bitwise_or(patch, _text_pixels_mask(region))
     else:
         patch = _text_pixels_mask(region)
+        if float(np.count_nonzero(patch)) / max(patch.size, 1) < 0.08:
+            patch = np.zeros((rh, rw), dtype=np.uint8)
+            patch[int(rh * 0.15) : int(rh * 0.85), int(rw * 0.05) : int(rw * 0.95)] = 255
 
-    if patch.sum() < 40:
-        patch = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
-        patch[2 : patch.shape[0] - 2, 2 : patch.shape[1] - 2] = 255
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    patch = cv2.dilate(patch, kernel, iterations=1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 5))
+    patch = cv2.morphologyEx(patch, cv2.MORPH_CLOSE, kernel, iterations=2)
     full[y:y2, x:x2] = patch
     return full
 
 
-def _blend_patch_from_above(
-    out: np.ndarray, mask: np.ndarray, x: int, y: int, x2: int, y2: int
-) -> None:
-    """Fill masked pixels from a few scanlines above (no wide stretch blur)."""
+def _fill_box_from_above(out: np.ndarray, x: int, y: int, x2: int, y2: int) -> None:
+    """Replace watermark band with pixels from just above the box."""
     band_h = y2 - y
-    src_h = min(max(6, band_h + 4), y, int(band_h * 1.5))
-    y0 = y - src_h
-    src = out[y0:y, x:x2].astype(np.float32)
-    if src.size == 0:
+    src_h = min(max(8, band_h + 6), y, int(band_h * 2))
+    y0 = max(0, y - src_h)
+    src = out[y0:y, x:x2]
+    if src.size == 0 or src.shape[0] < 2:
         return
     patch = cv2.resize(src, (x2 - x, band_h), interpolation=cv2.INTER_LINEAR)
-    m = mask[y:y2, x:x2].astype(np.float32) / 255.0
-    if m.ndim == 2:
-        m = cv2.merge([m, m, m])
-    roi = out[y:y2, x:x2].astype(np.float32)
-    out[y:y2, x:x2] = np.clip(patch * m + roi * (1.0 - m), 0, 255).astype(np.uint8)
+    out[y:y2, x:x2] = patch
 
 
 def remove_watermarks(image_bgr: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -438,25 +453,24 @@ def remove_watermarks(image_bgr: np.ndarray) -> tuple[np.ndarray, bool]:
 
     h, w = image_bgr.shape[:2]
     out = image_bgr.copy()
-    combined = np.zeros((h, w), dtype=np.uint8)
 
     for box in boxes:
-        combined = cv2.bitwise_or(combined, _repair_mask(out, box, source))
-
-    if not combined.any():
-        return image_bgr, False
-
-    for x, y, bw, bh in boxes:
+        if source == "red_markup":
+            box = _expand_box(box, w, h, scale=1.4)
+        x, y, bw, bh = box
         x2, y2 = min(w, x + bw), min(h, y + bh)
-        sub = combined[y:y2, x:x2]
-        if sub.size and float(np.count_nonzero(sub)) / sub.size > 0.55:
-            _blend_patch_from_above(out, combined, x, y, x2, y2)
-            combined[y:y2, x:x2] = 0
+        mask = _repair_mask(out, box, source)
+        if not mask.any():
+            continue
+        # Bottom watermarks: copy background from above (cleanest for god of mlbb bar).
+        if (y + bh / 2) >= h * 0.52:
+            _fill_box_from_above(out, x, y, x2, y2)
+            continue
+        submask = mask[y:y2, x:x2]
+        out = cv2.inpaint(out, mask, 5, cv2.INPAINT_TELEA)
 
-    if combined.any():
-        out = cv2.inpaint(out, combined, 2, cv2.INPAINT_NS)
-
-    return out, True
+    changed = not np.array_equal(out, image_bgr)
+    return out, changed
 
 
 def clean_image_file(path: Path) -> tuple[Path, bool]:
