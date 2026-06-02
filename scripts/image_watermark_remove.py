@@ -230,8 +230,8 @@ def _phrase_in_ocr(
             y1 = max(c["top"] + c["height"] for c in chunk)
             if (y1 - y0) > max_h_span or (x1 - x0) > max_w_span:
                 continue
-            pad = max(8, int((y1 - y0) * 0.15))
-            boxes.append((max(0, x0 - pad), max(0, y0 - pad), (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad))
+        pad = max(4, int((y1 - y0) * 0.08))
+        boxes.append((max(0, x0 - pad), max(0, y0 - pad), (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad))
     return boxes
 
 
@@ -275,19 +275,39 @@ def _red_mask(image_bgr: np.ndarray) -> np.ndarray:
 
 
 def _box_from_red_strip(mask: np.ndarray, y0: int, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """Pick a compact red stroke cluster (user outline), not the whole bottom HUD."""
     strip = mask[y0:, :]
-    ys, xs = np.where(strip > 0)
-    if len(xs) < 120:
-        return None
+    contours, _ = cv2.findContours(strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     img_area = width * height
-    pad = 8
-    x1, x2 = max(0, int(xs.min()) - pad), min(width, int(xs.max()) + pad)
-    y1, y2 = y0 + max(0, int(ys.min()) - pad), min(height, y0 + int(ys.max()) + pad)
-    bw, bh = x2 - x1, y2 - y1
-    area = bw * bh
-    if area < img_area * 0.002 or area > img_area * 0.22:
-        return None
-    return (x1, y1, bw, bh)
+    best: tuple[float, tuple[int, int, int, int]] | None = None
+    for cnt in contours:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        area = bw * bh
+        if area < img_area * 0.0008 or area > img_area * 0.08:
+            continue
+        if bh > height * 0.14 or bw > width * 0.75:
+            continue
+        cy = y0 + y + bh / 2
+        if cy < height * 0.45:
+            continue
+        aspect = bw / max(bh, 1)
+        if aspect < 1.2 and area > img_area * 0.02:
+            continue
+        score = area * (1.0 + cy / height)
+        if aspect >= 2.0:
+            score *= 1.4
+        if best is None or score > best[0]:
+            pad = max(3, int(min(bw, bh) * 0.06))
+            best = (
+                score,
+                (
+                    max(0, x - pad),
+                    y0 + max(0, y - pad),
+                    min(bw + 2 * pad, width - x),
+                    min(bh + 2 * pad, height - y0 - y),
+                ),
+            )
+    return best[1] if best else None
 
 
 def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -311,7 +331,7 @@ def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, i
         cy = y + bh / 2
         if cy < h * 0.38:
             continue
-        pad = max(6, int(min(bw, bh) * 0.12))
+        pad = max(3, int(min(bw, bh) * 0.06))
         box = (max(0, x - pad), max(0, y - pad), min(bw + 2 * pad, w), min(bh + 2 * pad, h))
         score = area * (1.0 + (cy / h) * 1.5)
         if cy >= h * 0.55:
@@ -322,16 +342,7 @@ def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, i
         return []
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    best = scored[0][1]
-    merged = [best]
-    for _, box in scored[1:4]:
-        x, y, bw, bh = box
-        mx, my, mw, mh = merged[0]
-        if abs((y + bh / 2) - (my + mh / 2)) < h * 0.12:
-            x2 = max(mx + mw, x + bw)
-            y2 = max(my + mh, y + bh)
-            merged[0] = (min(mx, x), min(my, y), x2 - min(mx, x), y2 - min(my, y))
-    return merged
+    return [scored[0][1]]
 
 
 def detect_watermark_source(image_bgr: np.ndarray) -> tuple[str, list[tuple[int, int, int, int]]]:
@@ -360,41 +371,90 @@ def find_watermark_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int
     return boxes
 
 
-def _fill_from_above(image_bgr: np.ndarray, x: int, y: int, bw: int, bh: int) -> None:
-    """Replace bottom overlay by stretching pixels from just above (keeps game frame)."""
+def _text_pixels_mask(region_bgr: np.ndarray) -> np.ndarray:
+    """Bright / high-contrast pixels typical of god-of-mlbb style overlay text."""
+    gray = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2GRAY)
+    bright = cv2.inRange(gray, 165, 255)
+    edges = cv2.Canny(gray, 80, 160)
+    mask = cv2.bitwise_or(bright, edges)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    return cv2.dilate(mask, kernel, iterations=1)
+
+
+def _repair_mask(
+    image_bgr: np.ndarray, box: tuple[int, int, int, int], source: str
+) -> np.ndarray:
+    """Pixel-tight mask — only watermark strokes, not the whole bounding rectangle."""
     h, w = image_bgr.shape[:2]
-    x2 = min(w, x + bw)
-    src_h = min(bh, y, max(4, bh))
+    x, y, bw, bh = box
+    x2, y2 = min(w, x + bw), min(h, y + bh)
+    if x2 <= x or y2 <= y:
+        return np.zeros((h, w), dtype=np.uint8)
+
+    full = np.zeros((h, w), dtype=np.uint8)
+    region = image_bgr[y:y2, x:x2]
+
+    if source == "red_markup":
+        red = _red_mask(image_bgr)[y:y2, x:x2]
+        if red.sum() > 80:
+            patch = red
+        else:
+            patch = _text_pixels_mask(region)
+    else:
+        patch = _text_pixels_mask(region)
+
+    if patch.sum() < 40:
+        patch = np.zeros((y2 - y, x2 - x), dtype=np.uint8)
+        patch[2 : patch.shape[0] - 2, 2 : patch.shape[1] - 2] = 255
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    patch = cv2.dilate(patch, kernel, iterations=1)
+    full[y:y2, x:x2] = patch
+    return full
+
+
+def _blend_patch_from_above(
+    out: np.ndarray, mask: np.ndarray, x: int, y: int, x2: int, y2: int
+) -> None:
+    """Fill masked pixels from a few scanlines above (no wide stretch blur)."""
+    band_h = y2 - y
+    src_h = min(max(6, band_h + 4), y, int(band_h * 1.5))
     y0 = y - src_h
-    src = image_bgr[y0:y, x:x2]
+    src = out[y0:y, x:x2].astype(np.float32)
     if src.size == 0:
         return
-    patch = cv2.resize(src, (x2 - x, bh), interpolation=cv2.INTER_LINEAR)
-    image_bgr[y : y + bh, x:x2] = patch
+    patch = cv2.resize(src, (x2 - x, band_h), interpolation=cv2.INTER_LINEAR)
+    m = mask[y:y2, x:x2].astype(np.float32) / 255.0
+    if m.ndim == 2:
+        m = cv2.merge([m, m, m])
+    roi = out[y:y2, x:x2].astype(np.float32)
+    out[y:y2, x:x2] = np.clip(patch * m + roi * (1.0 - m), 0, 255).astype(np.uint8)
 
 
 def remove_watermarks(image_bgr: np.ndarray) -> tuple[np.ndarray, bool]:
-    boxes = find_watermark_boxes(image_bgr)
+    source, boxes = detect_watermark_source(image_bgr)
     if not boxes:
         return image_bgr, False
 
     h, w = image_bgr.shape[:2]
     out = image_bgr.copy()
-    inpaint_mask = np.zeros((h, w), dtype=np.uint8)
+    combined = np.zeros((h, w), dtype=np.uint8)
+
+    for box in boxes:
+        combined = cv2.bitwise_or(combined, _repair_mask(out, box, source))
+
+    if not combined.any():
+        return image_bgr, False
 
     for x, y, bw, bh in boxes:
-        cy = y + bh // 2
-        if cy >= int(h * 0.72) and bw >= int(w * 0.35):
-            _fill_from_above(out, x, y, bw, bh)
-        else:
-            x2 = min(w, x + bw)
-            y2 = min(h, y + bh)
-            inpaint_mask[y:y2, x:x2] = 255
+        x2, y2 = min(w, x + bw), min(h, y + bh)
+        sub = combined[y:y2, x:x2]
+        if sub.size and float(np.count_nonzero(sub)) / sub.size > 0.55:
+            _blend_patch_from_above(out, combined, x, y, x2, y2)
+            combined[y:y2, x:x2] = 0
 
-    if inpaint_mask.any():
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        inpaint_mask = cv2.dilate(inpaint_mask, kernel, iterations=1)
-        out = cv2.inpaint(out, inpaint_mask, 3, cv2.INPAINT_TELEA)
+    if combined.any():
+        out = cv2.inpaint(out, combined, 2, cv2.INPAINT_NS)
 
     return out, True
 
