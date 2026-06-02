@@ -28,8 +28,9 @@ export IG_CONFIG_TEMPLATE="$REPO/config.instagram-mlbb.yaml"
 export IG_DIGEST_MAX_POSTS="${IG_DIGEST_MAX_POSTS:-7}"
 export IG_DIGEST_MAX_PER_SOURCE="${IG_DIGEST_MAX_PER_SOURCE:-2}"
 export IG_DIGEST_DRY_RUN="${IG_DIGEST_DRY_RUN:-0}"
+export IG_REMOVE_WATERMARK="${IG_REMOVE_WATERMARK:-1}"
 
-export PYTHONPATH="$REPO:${PYTHONPATH:-}"
+export PYTHONPATH="$REPO/scripts:$REPO:${PYTHONPATH:-}"
 python3 "$REPO/scripts/build_instagram_config.py" || exit 1
 
 if [[ -n "${INSTAGRAM_COOKIES_PATH:-}" && ! -f "${INSTAGRAM_COOKIES_PATH}" ]]; then

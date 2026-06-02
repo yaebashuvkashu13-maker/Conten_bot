@@ -13,6 +13,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+try:
+    from image_watermark_remove import clean_image_url
+except ImportError:
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from image_watermark_remove import clean_image_url
+
 import yaml
 
 try:
@@ -113,11 +121,44 @@ def tg_send(token: str, chat_id: str, method: str, payload: dict) -> None:
         raise RuntimeError(result)
 
 
+def tg_send_photo_file(token: str, chat_id: str, image_path: Path, caption: str) -> None:
+    cmd = [
+        "curl",
+        "-sS",
+        "-m",
+        "120",
+        "-F",
+        f"chat_id={chat_id}",
+        "-F",
+        f"caption={caption}",
+        "-F",
+        f"photo=@{image_path}",
+        f"https://api.telegram.org/bot{token}/sendPhoto",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout or "sendPhoto failed")
+    result = json.loads(proc.stdout or "{}")
+    if not result.get("ok"):
+        raise RuntimeError(result)
+
+
 def publish(token: str, chat_id: str, source_name: str, post: dict) -> None:
     text = build_telegram_caption(source_name, post)
     thumb = post.get("thumbnail")
+    temp_path: Path | None = None
     if thumb:
-        tg_send(token, chat_id, "sendPhoto", {"chat_id": chat_id, "photo": thumb, "caption": text})
+        try:
+            if os.environ.get("IG_REMOVE_WATERMARK", "1") == "1":
+                temp_path, cleaned = clean_image_url(thumb)
+                if cleaned:
+                    logging.info("watermark removed for %s", source_name)
+                tg_send_photo_file(token, chat_id, temp_path, text)
+            else:
+                tg_send(token, chat_id, "sendPhoto", {"chat_id": chat_id, "photo": thumb, "caption": text})
+        finally:
+            if temp_path and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
     else:
         tg_send(token, chat_id, "sendMessage", {"chat_id": chat_id, "text": text})
 

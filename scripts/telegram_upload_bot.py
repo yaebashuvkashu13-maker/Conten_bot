@@ -32,11 +32,14 @@ AD_INGEST = '/usr/local/bin/ad_screenshot_ingest.py'
 PUBG_LEARN = '/usr/local/bin/pubg_stream_learn_worker.py'
 AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
 REJECT_EXAMPLES_DIR = Path('/root/data/mlbb/reject_examples')
+WATERMARK_EXAMPLES_DIR = Path('/root/data/mlbb/watermark_examples')
+WATERMARK_REMOVE_SCRIPT = Path(__file__).resolve().parent / 'image_watermark_remove.py'
 RESEARCH_INBOX_DIR = Path('/root/research/inbox')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-02-research-url'
+WM_MODE_TIMEOUT_SEC = 3600
+BOT_VERSION = '2026-06-02-wm-ocr'
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
 INSTAGRAM_DIGEST_RUN = Path('/usr/local/bin/instagram_digest_run.sh')
@@ -213,6 +216,92 @@ def send_message(chat_id: str | int, text: str):
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
+def send_photo_file(chat_id: str | int, image_path: Path, caption: str = '') -> None:
+    cmd = [
+        'curl',
+        '-sS',
+        '-m',
+        '120',
+        '-F',
+        f'chat_id={chat_id}',
+        '-F',
+        f'caption={caption}',
+        '-F',
+        f'photo=@{image_path}',
+        f'{API_BASE}/sendPhoto',
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout or 'sendPhoto failed')
+    result = json.loads(proc.stdout or '{}')
+    if not result.get('ok'):
+        raise RuntimeError(result)
+
+
+def run_watermark_clean(source: Path) -> tuple[Path, bool]:
+    import sys
+
+    scripts_dir = WATERMARK_REMOVE_SCRIPT.parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from image_watermark_remove import clean_image_file
+
+    return clean_image_file(source)
+
+
+def save_wm_photo(chat_id: str, message: dict) -> Path | None:
+    photo = extract_photo(message)
+    if not photo:
+        return None
+    WATERMARK_EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    caption = safe_label(message.get('caption'))[:80]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    name = f'wm_{chat_id}_{stamp}_{photo["file_unique_id"]}{photo["ext"]}'
+    destination = WATERMARK_EXAMPLES_DIR / name
+    file_url = get_file_url(photo['file_id'])
+    download_file(file_url, destination)
+    meta = WATERMARK_EXAMPLES_DIR / f'{destination.stem}.meta.json'
+    meta.write_text(
+        json.dumps(
+            {
+                'chat_id': chat_id,
+                'caption': caption,
+                'message_id': message.get('message_id'),
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    return destination
+
+
+def process_wm_photo(chat_id: str, message: dict) -> None:
+    saved = save_wm_photo(chat_id, message)
+    if not saved:
+        send_message(chat_id, 'Не удалось сохранить фото.')
+        return
+    try:
+        cleaned_path, changed = run_watermark_clean(saved)
+        if changed:
+            send_photo_file(
+                chat_id,
+                cleaned_path,
+                f'Готово: надпись убрана ({saved.name}). Всего примеров: {count_wm_examples()}.',
+            )
+        else:
+            send_message(
+                chat_id,
+                f'Фразу «god of mlbb» на скрине не нашёл — отправил бы оригинал. '
+                f'Пример сохранён ({saved.name}). Всего: {count_wm_examples()}.',
+            )
+            send_photo_file(chat_id, saved, 'Оригинал (водяной знак не найден OCR).')
+    except Exception as exc:
+        logging.exception('watermark clean failed')
+        send_message(chat_id, f'Ошибка обработки: {exc}')
+
+
 def notify_owner(text: str):
     if DEFAULT_CHAT_ID:
         send_message(DEFAULT_CHAT_ID, text)
@@ -230,13 +319,14 @@ def send_upload_status(chat_id: str, pending_count: int):
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
-        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}}
+        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}, 'wm_mode_until': {}}
     try:
         state = json.loads(STATE_FILE.read_text())
     except Exception:
-        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}}
+        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}, 'wm_mode_until': {}}
     state.setdefault('ad_mode_until', {})
     state.setdefault('reject_mode_until', {})
+    state.setdefault('wm_mode_until', {})
     return state
 
 
@@ -287,6 +377,34 @@ def set_reject_mode(chat_id: str, enabled: bool):
     else:
         state['reject_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_wm_mode(chat_id: str) -> bool:
+    until = _bot_state().get('wm_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['wm_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_wm_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('wm_mode_until', {})
+    if enabled:
+        state['wm_mode_until'][chat_id] = time.time() + WM_MODE_TIMEOUT_SEC
+    else:
+        state['wm_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def count_wm_examples() -> int:
+    if not WATERMARK_EXAMPLES_DIR.exists():
+        return 0
+    exts = {'.jpg', '.jpeg', '.png', '.webp'}
+    return sum(1 for p in WATERMARK_EXAMPLES_DIR.iterdir() if p.suffix.lower() in exts)
 
 
 def count_reject_examples() -> int:
@@ -880,7 +998,8 @@ def handle_message(message: dict):
             send_message(
                 chat_id,
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
-                'Примеры рекламы (скрины): команда /ad — затем фото, завершить /ad_done.',
+                'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
+                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
             )
         return
     if cmd in ('/ad', '/реклама', '/ads'):
@@ -894,6 +1013,32 @@ def handle_message(message: dict):
             'Пришли скрины (фото) — сохраню для обучения фильтра «не слать такое».\n'
             'Когда закончишь: /ad_done\n'
             f'Сейчас в базе: {count_ad_examples()} шт.',
+        )
+        return
+    if cmd in ('/wm', '/watermark', '/водяной'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /wm только для владельца (примеры «god of mlbb»).')
+            return
+        set_wm_mode(chat_id, True)
+        send_message(
+            chat_id,
+            'Режим водяного знака включён на 1 час.\n'
+            'Пришли скрин с надписью — уберу её и пришлю результат. Примеры сохраняются.\n'
+            'Завершить: /wm_done\n'
+            f'Сейчас примеров: {count_wm_examples()} шт.\n'
+            'В дайджесте Instagram очистка включена автоматически (IG_REMOVE_WATERMARK=1).',
+        )
+        return
+    if cmd in ('/wm_done', '/wm_stop'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /wm_done только для владельца.')
+            return
+        was = is_wm_mode(chat_id)
+        set_wm_mode(chat_id, False)
+        send_message(
+            chat_id,
+            f'Режим /wm выключен. Примеров: {count_wm_examples()}.\n'
+            + ('Последние скрины обработаны.' if was else ''),
         )
         return
     if cmd in ('/bad', '/плохо', '/badframe', '/reject'):
@@ -1023,6 +1168,12 @@ def handle_message(message: dict):
 
     photo = extract_photo(message)
     if photo:
+        cap_cmd = command_token(safe_label(message.get('caption')))
+        if is_wm_mode(chat_id) or (
+            is_owner(chat_id) and cap_cmd in ('/wm_test', '/test_wm', '/wm')
+        ):
+            process_wm_photo(chat_id, message)
+            return
         if is_ad_mode(chat_id):
             saved = save_ad_photo(chat_id, message)
             if saved:
