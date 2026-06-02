@@ -888,71 +888,62 @@ def register_segment_history(selected: list[dict], path: Path = SEGMENT_HISTORY_
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _telegram_multipart_upload(
-    bot_token: str,
-    method: str,
-    chat_id: str,
-    file_path: Path,
-    field_name: str,
-    caption: str,
-) -> dict:
-    import mimetypes
-
-    boundary = f'----mlbb{int(time.time() * 1000)}'
-    body = bytearray()
-    fields = {
-        'chat_id': str(chat_id),
-        'caption': caption[:1024],
-    }
-    if method == 'sendVideo':
-        fields['supports_streaming'] = 'true'
-    for name, value in fields.items():
-        body.extend(f'--{boundary}\r\n'.encode())
-        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        body.extend(f'{value}\r\n'.encode())
-    mime = mimetypes.guess_type(file_path.name)[0] or 'video/mp4'
-    safe_name = ''.join(ch if ch.isalnum() or ch in '._-' else '_' for ch in file_path.name)[:80]
-    body.extend(f'--{boundary}\r\n'.encode())
-    body.extend(
-        f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
-        f'Content-Type: {mime}\r\n\r\n'.encode()
-    )
-    body.extend(file_path.read_bytes())
-    body.extend(f'\r\n--{boundary}--\r\n'.encode())
-    url = f'https://api.telegram.org/bot{bot_token}/{method}'
-    request = urllib.request.Request(
-        url,
-        data=bytes(body),
-        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
-        method='POST',
-    )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        payload = json.loads(response.read().decode('utf-8'))
-    if not payload.get('ok'):
-        raise RuntimeError(f'Telegram {method} failed: {payload}')
-    return payload
-
-
 def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
+    """Upload via curl - manual multipart often triggers Telegram HTTP 400."""
     short_cap = caption[:900]
+    url = f'https://api.telegram.org/bot{bot_token}/sendVideo'
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
-            _telegram_multipart_upload(bot_token, 'sendVideo', chat_id, video_path, 'video', short_cap)
+            result = run_command(
+                [
+                    'curl',
+                    '-sS',
+                    '-m',
+                    '600',
+                    '-F',
+                    f'chat_id={chat_id}',
+                    '-F',
+                    'supports_streaming=true',
+                    '-F',
+                    f'caption={short_cap}',
+                    '-F',
+                    f'video=@{video_path}',
+                    url,
+                ],
+                capture_output=True,
+                check=True,
+            )
+            payload = json.loads(result.stdout)
+            if not payload.get('ok'):
+                raise RuntimeError(f'Telegram sendVideo failed: {payload}')
             return
         except Exception as exc:
             last_error = exc
             logging.warning('telegram sendVideo attempt %s failed: %s', attempt, exc)
             time.sleep(3 * attempt)
+    doc_url = f'https://api.telegram.org/bot{bot_token}/sendDocument'
     try:
-        _telegram_multipart_upload(
-            bot_token,
-            'sendDocument',
-            chat_id,
-            video_path,
-            'document',
-            short_cap + ' (document)',
+        result = run_command(
+            [
+                'curl',
+                '-sS',
+                '-m',
+                '600',
+                '-F',
+                f'chat_id={chat_id}',
+                '-F',
+                f'caption={short_cap}',
+                '-F',
+                f'document=@{video_path}',
+                doc_url,
+            ],
+            capture_output=True,
+            check=True,
         )
+        payload = json.loads(result.stdout)
+        if not payload.get('ok'):
+            raise RuntimeError(f'Telegram sendDocument failed: {payload}')
         return
     except Exception as doc_exc:
         logging.warning('telegram sendDocument fallback failed: %s', doc_exc)
