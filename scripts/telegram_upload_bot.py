@@ -300,7 +300,7 @@ def save_reject_photo(chat_id: str, message: dict) -> Path | None:
     REJECT_EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
     caption = safe_label(message.get('caption'))[:80]
     stamp = time.strftime('%Y%m%d_%H%M%S')
-    name = f'reject_{chat_id}_{stamp}_{photo[\"file_unique_id\"]}{photo[\"ext\"]}'
+    name = f"reject_{chat_id}_{stamp}_{photo['file_unique_id']}{photo['ext']}"
     destination = REJECT_EXAMPLES_DIR / name
     file_url = get_file_url(photo['file_id'])
     download_file(file_url, destination)
