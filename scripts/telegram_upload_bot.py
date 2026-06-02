@@ -436,8 +436,13 @@ def save_research_file(chat_id: str, message: dict) -> Path | None:
     safe = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '_' for ch in file_name)[:120]
     stamp = time.strftime('%Y%m%d_%H%M%S')
     destination = RESEARCH_INBOX_DIR / f"{stamp}_{safe}"
-    file_url = get_file_url(doc['file_id'])
-    download_file(file_url, destination)
+    try:
+        file_url = get_file_url(doc['file_id'])
+        download_file(file_url, destination)
+    except Exception as exc:
+        # Telegram Bot API cannot download very large files (>~20MB) via getFile.
+        logging.warning('failed to download research file: %s', exc)
+        return None
     meta = destination.with_suffix(destination.suffix + '.meta.json')
     meta.write_text(
         json.dumps(
@@ -749,7 +754,14 @@ def handle_message(message: dict):
             send_message(chat_id, f'Файл сохранён на сервере: {saved.name}. Напиши цель/вопросы — сделаю анализ.')
             notify_owner(f'Research file saved: {saved}')
         else:
-            send_message(chat_id, 'Не удалось сохранить файл. Попробуй ещё раз.')
+            send_message(
+                chat_id,
+                'Не удалось сохранить файл: Telegram Bot API не даёт скачать большие файлы (обычно >20MB).\n'
+                'Самый простой вариант: упакуй Excel в ZIP (правой кнопкой → “Отправить → Сжатая ZIP‑папка”) '
+                'и пришли ZIP сюда как документ.\n'
+                'Или сохрани копию, где оставлены только нужные колонки (A: order_id, B: courier_id, G+: статусы) '
+                'за нужный период — тогда файл станет меньше.',
+            )
         return
 
     media = extract_media(message)
