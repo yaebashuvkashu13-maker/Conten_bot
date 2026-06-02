@@ -13,6 +13,7 @@ import numpy as np
 
 REJECT_EXAMPLES_DIR = Path("/root/data/mlbb/reject_examples")
 _REJECT_REF_HISTS: list[np.ndarray] | None = None
+_REJECT_REF_MTIME: float = 0.0
 
 PROMO_PATTERNS = re.compile(
     r"(#ad\b|sponsored|giveaway|promo\b|free\s+diamond|skin\s+gratis|"
@@ -59,12 +60,11 @@ def _frame_hud_metrics(frame: np.ndarray) -> tuple[float, float, float]:
     return float(np.std(minimap)), float(np.std(skill_bar)), float(np.std(top_hud))
 
 
-def _frame_overlay_text_score(frame: np.ndarray) -> float:
-    """Higher = more likely subtitles / meme text in the center of the frame."""
+def _band_overlay_text_score(frame: np.ndarray, y0: float, y1: float) -> float:
     small = cv2.resize(frame, (320, 180))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
-    band = gray[int(h * 0.32) : int(h * 0.70), int(w * 0.08) : int(w * 0.92)]
+    band = gray[int(h * y0) : int(h * y1), int(w * 0.05) : int(w * 0.95)]
     if band.size == 0:
         return 0.0
     edges = cv2.Canny(band, 70, 170)
@@ -74,6 +74,11 @@ def _frame_overlay_text_score(frame: np.ndarray) -> float:
     _, bright = cv2.threshold(band, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     bright_ratio = float(np.count_nonzero(bright)) / float(bright.size)
     return edge_ratio * 0.7 + min(bright_ratio, 0.35) * 0.3
+
+
+def _frame_overlay_text_score(frame: np.ndarray) -> float:
+    """Higher = more likely subtitles / meme text in the center of the frame."""
+    return _band_overlay_text_score(frame, 0.32, 0.70)
 
 
 def _read_frame_at(cap: cv2.VideoCapture, t_sec: float) -> np.ndarray | None:
@@ -183,9 +188,20 @@ def score_segment_window(
     return hud, text, cartoon_penalty
 
 
+def _reject_examples_mtime() -> float:
+    if not REJECT_EXAMPLES_DIR.exists():
+        return 0.0
+    latest = 0.0
+    for path in REJECT_EXAMPLES_DIR.glob("reject_*.*"):
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+            latest = max(latest, path.stat().st_mtime)
+    return latest
+
+
 def _reject_reference_histograms() -> list[np.ndarray]:
-    global _REJECT_REF_HISTS
-    if _REJECT_REF_HISTS is not None:
+    global _REJECT_REF_HISTS, _REJECT_REF_MTIME
+    mtime = _reject_examples_mtime()
+    if _REJECT_REF_HISTS is not None and mtime == _REJECT_REF_MTIME:
         return _REJECT_REF_HISTS
     hists: list[np.ndarray] = []
     if REJECT_EXAMPLES_DIR.exists():
@@ -197,6 +213,7 @@ def _reject_reference_histograms() -> list[np.ndarray]:
                 continue
             hists.append(_center_band_hist(img))
     _REJECT_REF_HISTS = hists
+    _REJECT_REF_MTIME = mtime
     return hists
 
 
@@ -389,7 +406,7 @@ def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
 
 
 def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bool:
-    """Detect skin promo / letterboxed edits (animated borders, not match HUD)."""
+    """Detect skin promo / stacked TikTok templates (header+footer, not match HUD)."""
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return False
@@ -400,11 +417,15 @@ def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bo
     indices = np.linspace(0, max(frame_count - 1, 0), num=min(sample_frames, frame_count), dtype=int)
     top_bottom_edges: list[float] = []
     center_edges: list[float] = []
+    top_text: list[float] = []
+    bottom_text: list[float] = []
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
         if not ok:
             continue
+        top_text.append(_band_overlay_text_score(frame, 0.0, 0.22))
+        bottom_text.append(_band_overlay_text_score(frame, 0.76, 1.0))
         small = cv2.resize(frame, (320, 180))
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
@@ -421,6 +442,13 @@ def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bo
         return False
     tb = float(np.mean(top_bottom_edges))
     ce = float(np.mean(center_edges))
+    tt = float(np.mean(top_text)) if top_text else 0.0
+    bt = float(np.mean(bottom_text)) if bottom_text else 0.0
+    # Template like "MIYA ... GAMEPLAY" with @handle header.
+    if tt >= 0.10 and bt >= 0.14:
+        return True
+    if bt >= 0.20 and ce < bt * 1.1:
+        return True
     return tb > 0.055 and ce < tb * 0.72
 
 
