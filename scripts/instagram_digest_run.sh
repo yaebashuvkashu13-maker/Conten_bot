@@ -38,7 +38,14 @@ fi
 
 cd "$REPO"
 export PYTHONPATH="$REPO:${PYTHONPATH:-}"
-python3 -m content_bot.main --config /root/config.instagram-mlbb.yaml
+export INSTAGRAM_COOKIES_PATH="${INSTAGRAM_COOKIES_PATH:-/root/instagram_cookies.txt}"
+if [[ -f "$INSTAGRAM_COOKIES_PATH" ]] && [[ -f "$REPO/scripts/instagram_digest_gallery_dl.py" ]]; then
+  python3 "$REPO/scripts/instagram_digest_gallery_dl.py"
+elif [[ -f "$INSTAGRAM_COOKIES_PATH" ]] && [[ -f "$REPO/scripts/instagram_digest_instaloader.py" ]]; then
+  python3 "$REPO/scripts/instagram_digest_instaloader.py" || true
+else
+  python3 -m content_bot.main --config /root/config.instagram-mlbb.yaml
+fi
 rc=$?
 echo "[$(date -Is)] instagram digest done rc=$rc"
 exit "$rc"
