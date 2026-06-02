@@ -689,9 +689,15 @@ def is_gameplay_video(
         known = csv_lookup[video_id]
         if known:
             ok_window, win_reason = source_has_valid_gameplay_window(video_path)
-            if not ok_window:
-                return False, 0.0, f"csv_overridden:{win_reason}"
-            return True, 1.0, f"csv_lookup+{win_reason}"
+            if ok_window:
+                return True, 1.0, f"csv_lookup+{win_reason}"
+            # Stale CSV tag — re-check with heuristics instead of blocking montage.
+            score = heuristic_gameplay_score(video_path)
+            if score >= min_score:
+                ok_retry, win_reason = source_has_valid_gameplay_window(video_path)
+                if ok_retry:
+                    return True, score, f"csv_stale+{win_reason}"
+            return False, score, f"csv_no_window:{win_reason}"
         return False, 0.0, "csv_lookup"
 
     score = heuristic_gameplay_score(video_path)

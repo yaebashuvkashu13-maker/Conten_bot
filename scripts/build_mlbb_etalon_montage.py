@@ -60,7 +60,8 @@ def main() -> int:
             "OUTPUT_BASENAME": "mlbb_etalon",
             "ETALON_MONTAGE": "1",
             "SEND_TELEGRAM": "1",
-            "STRICT_GAMEPLAY": "1",
+            # Segment gates in smart_video_editor are strict; file-level CSV can be stale.
+            "STRICT_GAMEPLAY": "0",
             "TARGET_DURATION": "45",
             "MIN_FINAL_DURATION": "33",
             "MAX_FINAL_DURATION": "57",
