@@ -92,7 +92,8 @@ def run(theme: str) -> int:
 
     random.shuffle(sources)
     sources = sources[: min(len(sources), 12)]
-    label = f"{theme} | {hero}"
+    # Keep hero out of the public label to avoid mismatches and reduce attention.
+    label = theme
     queue = build_queue(sources, chat_id, label)
 
     env = os.environ.copy()
