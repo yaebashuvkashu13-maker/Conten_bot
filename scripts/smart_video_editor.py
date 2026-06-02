@@ -558,29 +558,38 @@ def build_candidates(
         gate_kwargs: dict[str, float] = {}
         if profile == 'mobile_legends':
             try:
-                # Allow env overrides only to be stricter (never looser), to avoid
-                # letting non-gameplay/promo segments slip into montages.
-                # TikTok gameplay often has subtitles/overlays; too-low max_text
-                # makes montage fail even when HUD is present and gameplay is real.
-                default_min_hud = 17.0
-                default_max_text = 0.28
-                default_max_cartoon = 0.45
+                # Normal montages: env can only tighten gates. Etalon builds may loosen
+                # subtitle/reject thresholds while keeping combat + chat checks.
+                etalon = os.environ.get('ETALON_MONTAGE', '0') == '1'
+                default_min_hud = 16.5 if etalon else 17.0
+                default_max_text = 0.52 if etalon else 0.28
+                default_max_cartoon = 0.50 if etalon else 0.45
+                default_max_reject = 0.99 if etalon else 0.78
                 env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
                 env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
                 env_max_cartoon = float(os.environ.get('SMART_MAX_CARTOON_RATIO', str(default_max_cartoon)))
-                gate_kwargs = {
-                    'min_hud': max(default_min_hud, env_min_hud),
-                    'max_text': min(default_max_text, env_max_text),
-                    'max_cartoon_ratio': min(default_max_cartoon, env_max_cartoon),
-                    'max_reject_similarity': min(
-                        0.78,
-                        float(os.environ.get('SMART_MAX_REJECT_SIM', '0.78')),
-                    ),
-                    'min_hud_frame_rate': max(
-                        0.60,
-                        float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.60')),
-                    ),
-                }
+                env_max_reject = float(os.environ.get('SMART_MAX_REJECT_SIM', str(default_max_reject)))
+                if etalon:
+                    gate_kwargs = {
+                        'min_hud': env_min_hud,
+                        'max_text': env_max_text,
+                        'max_cartoon_ratio': env_max_cartoon,
+                        'max_reject_similarity': env_max_reject,
+                        'min_hud_frame_rate': float(
+                            os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.62')
+                        ),
+                    }
+                else:
+                    gate_kwargs = {
+                        'min_hud': max(default_min_hud, env_min_hud),
+                        'max_text': min(default_max_text, env_max_text),
+                        'max_cartoon_ratio': min(default_max_cartoon, env_max_cartoon),
+                        'max_reject_similarity': min(default_max_reject, env_max_reject),
+                        'min_hud_frame_rate': max(
+                            0.60,
+                            float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.60')),
+                        ),
+                    }
             except ValueError:
                 gate_kwargs = {}
         if relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':

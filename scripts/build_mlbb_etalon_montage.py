@@ -74,7 +74,7 @@ def main() -> int:
         print("[etalon] TG_CHAT_ID missing")
         return 1
 
-    hero_count = min(MAX_SOURCES, max(MIN_SOURCES, int(os.environ.get("ETALON_HERO_COUNT", "6"))))
+    hero_count = min(12, max(MIN_SOURCES, int(os.environ.get("ETALON_HERO_COUNT", "10"))))
     picked = gather_hero_paths(hero_count)
     tiktok_extra = max(0, MAX_SOURCES - len(picked))
     if tiktok_extra:
@@ -114,12 +114,14 @@ def main() -> int:
             "SMART_ADD_MUSIC": "0",
             "SMART_GAME_AUDIO_ONLY": "1",
             "BLUR_NICKNAME": "0",
-            "SMART_MIN_HUD": "16.5",
-            "SMART_MIN_HUD_FRAME_RATE": "0.62",
-            "SMART_MIN_CENTER_MOTION": "0.017",
-            "SMART_MAX_CHAT_PANEL": "0.15",
-            "SMART_MAX_CENTER_TEXT": "0.11",
-            "SMART_MIN_BIN_MOTION": "0.013",
+            "SMART_MIN_HUD": "16",
+            "SMART_MIN_HUD_FRAME_RATE": "0.58",
+            "SMART_MIN_CENTER_MOTION": "0.016",
+            "SMART_MAX_CHAT_PANEL": "0.16",
+            "SMART_MAX_CENTER_TEXT": "0.13",
+            "SMART_MAX_OVERLAY_TEXT": "0.55",
+            "SMART_MAX_REJECT_SIM": "0.995",
+            "SMART_MIN_BIN_MOTION": "0.012",
             "SELECTION_VARIANT": str(int(time.time()) % 5),
         }
     )
