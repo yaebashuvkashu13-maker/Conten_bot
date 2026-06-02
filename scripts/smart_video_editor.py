@@ -528,10 +528,18 @@ def build_candidates(
         gate_kwargs: dict[str, float] = {}
         if profile == 'mobile_legends':
             try:
+                # Allow env overrides only to be stricter (never looser), to avoid
+                # letting non-gameplay/promo segments slip into montages.
+                default_min_hud = 14.0
+                default_max_text = 0.075
+                default_max_cartoon = 0.55
+                env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
+                env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
+                env_max_cartoon = float(os.environ.get('SMART_MAX_CARTOON_RATIO', str(default_max_cartoon)))
                 gate_kwargs = {
-                    'min_hud': float(os.environ.get('SMART_MIN_HUD', '14.0')),
-                    'max_text': float(os.environ.get('SMART_MAX_OVERLAY_TEXT', '0.075')),
-                    'max_cartoon_ratio': float(os.environ.get('SMART_MAX_CARTOON_RATIO', '0.55')),
+                    'min_hud': max(default_min_hud, env_min_hud),
+                    'max_text': min(default_max_text, env_max_text),
+                    'max_cartoon_ratio': min(default_max_cartoon, env_max_cartoon),
                 }
             except ValueError:
                 gate_kwargs = {}
