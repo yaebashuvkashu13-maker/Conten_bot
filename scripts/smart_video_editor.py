@@ -888,49 +888,75 @@ def register_segment_history(selected: list[dict], path: Path = SEGMENT_HISTORY_
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
+def _telegram_multipart_upload(
+    bot_token: str,
+    method: str,
+    chat_id: str,
+    file_path: Path,
+    field_name: str,
+    caption: str,
+) -> dict:
     import mimetypes
 
     boundary = f'----mlbb{int(time.time() * 1000)}'
     body = bytearray()
     fields = {
         'chat_id': str(chat_id),
-        'supports_streaming': 'true',
         'caption': caption[:1024],
     }
+    if method == 'sendVideo':
+        fields['supports_streaming'] = 'true'
     for name, value in fields.items():
         body.extend(f'--{boundary}\r\n'.encode())
         body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
         body.extend(f'{value}\r\n'.encode())
-    mime = mimetypes.guess_type(video_path.name)[0] or 'video/mp4'
+    mime = mimetypes.guess_type(file_path.name)[0] or 'video/mp4'
+    safe_name = ''.join(ch if ch.isalnum() or ch in '._-' else '_' for ch in file_path.name)[:80]
     body.extend(f'--{boundary}\r\n'.encode())
     body.extend(
-        f'Content-Disposition: form-data; name="video"; filename="{video_path.name}"\r\n'
+        f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
         f'Content-Type: {mime}\r\n\r\n'.encode()
     )
-    body.extend(video_path.read_bytes())
+    body.extend(file_path.read_bytes())
     body.extend(f'\r\n--{boundary}--\r\n'.encode())
+    url = f'https://api.telegram.org/bot{bot_token}/{method}'
+    request = urllib.request.Request(
+        url,
+        data=bytes(body),
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+        method='POST',
+    )
+    with urllib.request.urlopen(request, timeout=600) as response:
+        payload = json.loads(response.read().decode('utf-8'))
+    if not payload.get('ok'):
+        raise RuntimeError(f'Telegram {method} failed: {payload}')
+    return payload
 
-    url = f'https://api.telegram.org/bot{bot_token}/sendVideo'
+
+def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
+    short_cap = caption[:900]
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
-            request = urllib.request.Request(
-                url,
-                data=bytes(body),
-                headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
-                method='POST',
-            )
-            with urllib.request.urlopen(request, timeout=600) as response:
-                payload = json.loads(response.read().decode('utf-8'))
-            if not payload.get('ok'):
-                raise RuntimeError(f'Telegram sendVideo failed: {payload}')
+            _telegram_multipart_upload(bot_token, 'sendVideo', chat_id, video_path, 'video', short_cap)
             return
         except Exception as exc:
             last_error = exc
-            logging.warning('telegram upload attempt %s failed: %s', attempt, exc)
-            time.sleep(4 * attempt)
-    raise RuntimeError(f'Telegram sendVideo failed after retries: {last_error}')
+            logging.warning('telegram sendVideo attempt %s failed: %s', attempt, exc)
+            time.sleep(3 * attempt)
+    try:
+        _telegram_multipart_upload(
+            bot_token,
+            'sendDocument',
+            chat_id,
+            video_path,
+            'document',
+            short_cap + ' (document)',
+        )
+        return
+    except Exception as doc_exc:
+        logging.warning('telegram sendDocument fallback failed: %s', doc_exc)
+    raise RuntimeError(f'Telegram send failed after retries: {last_error}')
 
 
 def save_analysis(output_path: Path, payload: dict) -> None:
@@ -1090,7 +1116,12 @@ def main() -> int:
             segment_durations.append(actual_duration)
             candidate['rendered_duration'] = round(actual_duration, 3)
 
-        game_slug = sanitize_slug([item['game_name'] for item in sources[:3]])
+        basename = os.environ.get('OUTPUT_BASENAME', '').strip()
+        if basename:
+            game_slug = sanitize_slug([basename])
+        else:
+            unique_names = list(dict.fromkeys(item['game_name'] for item in sources if item.get('game_name')))
+            game_slug = sanitize_slug(unique_names[:1] or ['smart_edit'])
         output_path = output_dir / f'{game_slug}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
         final_command = build_xfade_command(segment_paths, segment_durations, output_path)
         run_command(final_command)
