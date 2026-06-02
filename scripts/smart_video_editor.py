@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 
 try:
-    from gameplay_gate import segment_is_valid_for_montage
+    from gameplay_gate import detect_vertical_content_crop, segment_is_valid_for_montage
     from source_freshness import mark_used
     from mlbb_popularity import popularity_boost
     from mlbb_popularity import extract_video_id as pop_video_id
@@ -28,7 +28,7 @@ except ImportError:
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
-    from gameplay_gate import segment_is_valid_for_montage
+    from gameplay_gate import detect_vertical_content_crop, segment_is_valid_for_montage
     from source_freshness import mark_used
     try:
         from mlbb_popularity import popularity_boost
@@ -57,7 +57,7 @@ TRANSITION_DURATION = float(os.environ.get('TRANSITION_DURATION', '0.28'))
 SELECTION_VARIANT = int(os.environ.get('SELECTION_VARIANT', '0'))
 EXCLUDED_SOURCE_SIGNATURES = {sig for sig in os.environ.get('EXCLUDED_SOURCE_SIGNATURES', '').split(',') if sig}
 EXCLUDED_SEGMENT_KEYS = {sig for sig in os.environ.get('EXCLUDED_SEGMENT_KEYS', '').split(',') if sig}
-NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '1') == '1'
+NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '0') == '1'
 SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
 WINDOW_SECONDS = 1.0
 SAMPLE_FPS = float(os.environ.get('SMART_SAMPLE_FPS', '4.0'))
@@ -546,6 +546,14 @@ def build_candidates(
                     'min_hud': max(default_min_hud, env_min_hud),
                     'max_text': min(default_max_text, env_max_text),
                     'max_cartoon_ratio': min(default_max_cartoon, env_max_cartoon),
+                    'max_reject_similarity': min(
+                        0.78,
+                        float(os.environ.get('SMART_MAX_REJECT_SIM', '0.78')),
+                    ),
+                    'min_hud_frame_rate': max(
+                        0.55,
+                        float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.55')),
+                    ),
                 }
             except ValueError:
                 gate_kwargs = {}
@@ -566,6 +574,13 @@ def build_candidates(
                 reason,
             )
             continue
+        crop_box = detect_vertical_content_crop(
+            Path(candidate['source_path']),
+            float(candidate['start']),
+            float(candidate['input_duration']),
+        )
+        if crop_box:
+            candidate['crop_box'] = crop_box
         vid_pop = pop_video_id(f"{candidate['source_path']} {game_name}")
         if vid_pop:
             candidate['score'] = round(float(candidate['score']) + popularity_boost(vid_pop), 4)
@@ -723,9 +738,17 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
     profile_hint = os.environ.get('DEFAULT_GAME_PROFILE', '').lower()
     game_hint = str(candidate.get('game_name', '')).lower()
     blur_nickname = NICK_BLUR_ENABLED and (
-        'mobile legends' in game_hint or 'hayabusa' in game_hint or profile_hint == 'mobile_legends'
+        os.environ.get('BLUR_NICKNAME', '0') == '1'
+        and ('mobile legends' in game_hint or 'hayabusa' in game_hint)
     )
+    crop = candidate.get('crop_box')
+    crop_prefix = ''
+    if crop and len(crop) == 4:
+        x, y, w, h = crop
+        if w > 0 and h > 0:
+            crop_prefix = f'crop={w}:{h}:{x}:{y},'
     base_video_filter = (
+        f'{crop_prefix}'
         f'scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,'
         f'pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,'
         f'fps={OUTPUT_FPS},'
@@ -989,7 +1012,7 @@ def main() -> int:
     hist_sources, hist_segments = load_segment_history()
     EXCLUDED_SOURCE_SIGNATURES |= hist_sources
     EXCLUDED_SEGMENT_KEYS |= hist_segments
-    NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '1') == '1'
+    NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '0') == '1'
     SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
     if os.environ.get('SINGLE_SOURCE_MODE') == '1':
         MIN_HIGHLIGHTS = max(2, min(MIN_HIGHLIGHTS, 2))
@@ -1082,7 +1105,8 @@ def main() -> int:
             logging.info('source=%s yielded %s candidates', source['source_path'].name, len(candidates))
             all_candidates.extend(candidates)
 
-        if not all_candidates and single_source:
+        strict_gameplay = os.environ.get('STRICT_GAMEPLAY', '0') == '1'
+        if not all_candidates and single_source and not strict_gameplay:
             logging.warning('single-source retry with relaxed segment gate')
             source = sources[0]
             all_candidates = build_candidates(

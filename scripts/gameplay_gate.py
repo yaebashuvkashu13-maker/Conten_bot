@@ -76,12 +76,81 @@ def _frame_overlay_text_score(frame: np.ndarray) -> float:
     return edge_ratio * 0.7 + min(bright_ratio, 0.35) * 0.3
 
 
+def _read_frame_at(cap: cv2.VideoCapture, t_sec: float) -> np.ndarray | None:
+    cap.set(cv2.CAP_PROP_POS_MSEC, float(t_sec) * 1000.0)
+    ok, frame = cap.read()
+    return frame if ok else None
+
+
+def detect_vertical_content_crop(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    sample_frames: int = 6,
+) -> tuple[int, int, int, int] | None:
+    """Crop static TikTok header/footer bands; return (x, y, w, h) in source pixels."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if width < 120 or height < 200:
+        cap.release()
+        return None
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    frames: list[np.ndarray] = []
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is not None:
+            frames.append(frame)
+    cap.release()
+    if len(frames) < 2:
+        return None
+
+    small_h = 180
+    small_w = max(72, int(width * small_h / height))
+    row_activity = np.zeros(small_h, dtype=np.float32)
+    for idx in range(1, len(frames)):
+        prev = cv2.resize(frames[idx - 1], (small_w, small_h))
+        curr = cv2.resize(frames[idx], (small_w, small_h))
+        diff = cv2.absdiff(cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY), cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY))
+        row_activity += diff.mean(axis=1)
+
+    row_activity /= max(len(frames) - 1, 1)
+    peak = float(np.percentile(row_activity, 90))
+    if peak < 1.2:
+        return None
+    threshold = max(1.8, peak * 0.22)
+    active = row_activity >= threshold
+    if not np.any(active):
+        return None
+    indices = np.where(active)[0]
+    top = int(indices[0])
+    bottom = int(indices[-1])
+    span = bottom - top + 1
+    if span < int(small_h * 0.45):
+        return None
+    top_px = int(top * height / small_h)
+    bottom_px = int((bottom + 1) * height / small_h)
+    crop_h = bottom_px - top_px
+    if crop_h < int(height * 0.50):
+        return None
+    trim_top = top_px / height
+    trim_bottom = (height - bottom_px) / height
+    if trim_top < 0.06 and trim_bottom < 0.06:
+        return None
+    return 0, top_px, width, crop_h
+
+
 def score_segment_window(
     video_path: Path,
     start_sec: float,
     duration_sec: float,
     *,
     sample_frames: int = 5,
+    crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[float, float, float]:
     """Returns (hud_score, text_score, cartoon_penalty). Higher hud = more like MLBB UI."""
     cap = cv2.VideoCapture(str(video_path))
@@ -94,10 +163,12 @@ def score_segment_window(
     text_vals: list[float] = []
     low_hud_frames = 0
     for t in times:
-        cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
-        ok, frame = cap.read()
-        if not ok:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
             continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
         mini, skill, top = _frame_hud_metrics(frame)
         hud_vals.append(mini + skill + top * 0.6)
         text_vals.append(_frame_overlay_text_score(frame))
@@ -140,7 +211,13 @@ def _center_band_hist(frame: np.ndarray) -> np.ndarray:
     return hist.astype(np.float32)
 
 
-def reject_example_similarity(video_path: Path, start_sec: float, duration_sec: float) -> float:
+def reject_example_similarity(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> float:
     """0..1 — higher means frame looks like owner /bad examples."""
     refs = _reject_reference_histograms()
     if not refs:
@@ -152,16 +229,50 @@ def reject_example_similarity(video_path: Path, start_sec: float, duration_sec: 
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=3)
     best = 0.0
     for t in times:
-        cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
-        ok, frame = cap.read()
-        if not ok:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
             continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
         hist = _center_band_hist(frame)
         for ref in refs:
             score = float(cv2.compareHist(hist, ref, cv2.HISTCMP_CORREL))
             best = max(best, score)
     cap.release()
     return best
+
+
+def segment_hud_frame_pass_rate(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 5,
+    min_minimap: float = 7.5,
+    min_skill: float = 6.5,
+) -> float:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    passed = 0
+    total = 0
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        mini, skill, _top = _frame_hud_metrics(frame)
+        total += 1
+        if mini >= min_minimap and skill >= min_skill:
+            passed += 1
+    cap.release()
+    return passed / max(total, 1)
 
 
 def segment_is_valid_for_montage(
@@ -173,12 +284,20 @@ def segment_is_valid_for_montage(
     min_hud: float = 14.0,
     max_text: float = 0.075,
     max_cartoon_ratio: float = 0.55,
-    max_reject_similarity: float = 0.82,
+    max_reject_similarity: float = 0.78,
+    min_hud_frame_rate: float = 0.55,
+    crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
     if profile != "mobile_legends":
         return True, "skip_profile"
-    hud, text, cartoon = score_segment_window(video_path, start_sec, duration_sec)
-    reject_sim = reject_example_similarity(video_path, start_sec, duration_sec)
+    if crop_box is None:
+        crop_box = detect_vertical_content_crop(video_path, start_sec, duration_sec)
+    hud, text, cartoon = score_segment_window(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
+    reject_sim = reject_example_similarity(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
     if reject_sim >= max_reject_similarity:
         return False, f"reject_example_sim={reject_sim:.2f}"
     if cartoon >= max_cartoon_ratio and hud < min_hud * 1.05:
@@ -187,6 +306,11 @@ def segment_is_valid_for_montage(
         return False, f"low_hud={hud:.1f}"
     if text > max_text:
         return False, f"overlay_text={text:.3f}"
+    frame_rate = segment_hud_frame_pass_rate(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
+    if frame_rate < min_hud_frame_rate:
+        return False, f"low_hud_frames={frame_rate:.2f}"
     return True, "ok"
 
 
