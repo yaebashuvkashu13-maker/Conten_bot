@@ -84,22 +84,40 @@ def find_header_row(ws, max_scan: int = 30) -> tuple[int, dict[str, int]]:
     return best_row, best_map
 
 
-def stage_minutes(row: dict, stage_map: dict[str, str]) -> float | None:
-    total = 0.0
-    for key, col in stage_map.items():
-        v = row.get(col)
-        if v is None:
+def cell_to_seconds(v) -> float | None:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        # Excel time fraction or minutes heuristic: small floats are often days
+        if 0 < float(v) < 1:
+            return float(v) * 86400
+        return float(v) * 60 if float(v) < 1000 else float(v)
+    if isinstance(v, str):
+        s = v.strip().replace(",", ".")
+        if not s:
+            return None
+        if s.count(":") >= 2:
+            parts = [int(x) for x in s.split(":")[:3]]
+            while len(parts) < 3:
+                parts.append(0)
+            h, m, sec = parts[0], parts[1], parts[2]
+            return h * 3600 + m * 60 + sec
+        if s.replace(".", "", 1).isdigit():
+            return float(s) * 60
+    return None
+
+
+def duration_from_columns(values: dict[int, object], col_indices: list[int]) -> float | None:
+    """Sum interpretable durations in stage columns (seconds), return minutes."""
+    total_sec = 0.0
+    found = False
+    for col in col_indices:
+        sec = cell_to_seconds(values.get(col))
+        if sec is None:
             continue
-        if isinstance(v, (int, float)):
-            total += float(v)
-        elif isinstance(v, str):
-            s = v.strip().replace(",", ".")
-            if s.replace(":", "").isdigit() or (s.count(":") == 1 and s.replace(":", "").replace(".", "").isdigit()):
-                parts = s.split(":")
-                if len(parts) >= 2:
-                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
-                    total += h * 3600 + m * 60 + sec
-    return total if total > 0 else None
+        total_sec += sec
+        found = True
+    return (total_sec / 60.0) if found else None
 
 
 def analyze_file(path: Path) -> dict:
@@ -132,33 +150,43 @@ def analyze_file(path: Path) -> dict:
     for stage in durations:
         durations[stage] = []
 
-    order_col = cols.get(norm_col("order_id")) or cols.get(norm_col("заказ")) or cols.get(norm_col("order"))
-    courier_col = None
-    for key in ("courier_id", "курьер", "courier"):
-        if key in cols:
-            courier_col = cols[key]
+    order_col = None
+    for key in ("order_id", "заказ", "order", "id_заказа"):
+        if key in header:
+            order_col = header[key]
             break
+    if not order_col and header:
+        order_col = next(iter(header.values()))
+
+    max_rows = int(os.environ.get("RESEARCH_MAX_ROWS", "0"))
+    last_row = ws.max_row or header_row
+    if max_rows > 0:
+        last_row = min(last_row, header_row + max_rows)
+
+    needed: set[int] = set(status_cols)
+    if order_col:
+        needed.add(order_col)
+    for indices in stage_cols.values():
+        needed.update(indices)
+    needed_sorted = sorted(needed)
 
     rows_analyzed = 0
-    for r in range(header_row + 1, min(ws.max_row, header_row + 200000) + 1):
+    for r in range(header_row + 1, last_row + 1):
         oid = ws.cell(r, order_col).value if order_col else None
-        if oid is None:
+        if oid is None or str(oid).strip() == "":
             continue
-        row = {cols.get(c, c): ws.cell(r, c).value for c in range(1, ws.max_column + 1)}
-        row["order_id"] = oid
+        values = {c: ws.cell(r, c).value for c in needed_sorted}
 
-        for stage, cols in stage_cols.items():
-            m = stage_minutes(row, stage_cols)
+        for stage, indices in stage_cols.items():
+            if not indices:
+                continue
+            m = duration_from_columns(values, indices)
             if m is not None:
                 durations[stage].append(m)
 
-        for c in status_cols:
-            key = cols[c]
-            m = stage_minutes(row, {key: key})
-            if m is not None:
-                durations.setdefault("status_unknown", []).append(m)
-
         rows_analyzed += 1
+        if rows_analyzed % 50000 == 0:
+            print(f"  … {rows_analyzed} rows", file=sys.stderr)
 
     def minutes_list(vals: list[float]) -> dict[str, float]:
         if not vals:
