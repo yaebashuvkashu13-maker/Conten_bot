@@ -36,7 +36,8 @@ def build_queue(paths: list[Path], chat_id: str) -> Path:
     fd, queue_path = tempfile.mkstemp(prefix="new-sources-", suffix=".txt", dir="/tmp")
     with os.fdopen(fd, "w") as handle:
         for path in paths:
-            handle.write(f"{path}|Hayabusa|{chat_id}\n")
+            # This is a freshness montage across mixed sources; do not label as a specific hero.
+            handle.write(f"{path}|MLBB new sources|{chat_id}\n")
     return Path(queue_path)
 
 

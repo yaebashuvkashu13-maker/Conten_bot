@@ -1096,7 +1096,17 @@ def main() -> int:
         run_command(final_command)
         final_duration = ffprobe_duration(output_path)
         file_id = short_file_id(output_path)
-        caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()} | {round(final_duration)}s | id={file_id}'
+        # `game_name` in the queue is a user-provided label (caption/folder/tag), not a guaranteed hero in-frame.
+        hints = [item.get('game_name', '').strip() for item in sources if item.get('game_name')]
+        unique_hints = []
+        for h in hints:
+            if h and h not in unique_hints:
+                unique_hints.append(h)
+        hint_text = ''
+        if unique_hints:
+            joined_hint = ', '.join(unique_hints[:3])
+            hint_text = f' | hint={joined_hint[:60]}'
+        caption = f'Smart Edit v1.1 | {profile.replace("_", " ").title()}{hint_text} | {round(final_duration)}s | id={file_id}'
         save_analysis(output_path, {
             'profile': profile,
             'target_duration': TARGET_DURATION,
