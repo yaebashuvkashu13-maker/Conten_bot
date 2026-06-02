@@ -8,8 +8,6 @@ install -m 755 "$REPO/scripts/build_instagram_config.py" "$DEST/build_instagram_
 install -m 755 "$REPO/scripts/instagram_digest_run.sh" "$DEST/instagram_digest_run.sh"
 install -m 755 "$REPO/scripts/instagram_background_worker.py" "$DEST/instagram_background_worker.py"
 
-python3 -m pip install -q -e "$REPO" 2>/dev/null || python3 -m pip install -q "$REPO"
-
 mkdir -p /root/data/mlbb /var/lock
 touch /root/data/mlbb/instagram_digest.log
 

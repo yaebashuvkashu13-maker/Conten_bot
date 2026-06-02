@@ -29,6 +29,7 @@ export IG_DIGEST_MAX_POSTS="${IG_DIGEST_MAX_POSTS:-7}"
 export IG_DIGEST_MAX_PER_SOURCE="${IG_DIGEST_MAX_PER_SOURCE:-2}"
 export IG_DIGEST_DRY_RUN="${IG_DIGEST_DRY_RUN:-0}"
 
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 python3 "$REPO/scripts/build_instagram_config.py" || exit 1
 
 if [[ -n "${INSTAGRAM_COOKIES_PATH:-}" && ! -f "${INSTAGRAM_COOKIES_PATH}" ]]; then
@@ -36,6 +37,7 @@ if [[ -n "${INSTAGRAM_COOKIES_PATH:-}" && ! -f "${INSTAGRAM_COOKIES_PATH}" ]]; t
 fi
 
 cd "$REPO"
+export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 python3 -m content_bot.main --config /root/config.instagram-mlbb.yaml
 rc=$?
 echo "[$(date -Is)] instagram digest done rc=$rc"
