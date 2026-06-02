@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot exemplary MLBB montage from fresh unused gameplay sources."""
+"""One-shot exemplary MLBB montage from hero dataset + fresh TikTok gameplay."""
 
 from __future__ import annotations
 
@@ -10,32 +10,61 @@ import tempfile
 import time
 from pathlib import Path
 
-from gameplay_gate import source_has_valid_gameplay_window
-from source_freshness import filter_new_sources
+from source_freshness import filter_new_sources, is_used
 
+HERO_ROOT = Path("/root/hero_datasets")
 TIKTOK_ROOT = Path("/root/datasets/tiktok/mlbb")
 OUTPUT_DIR = Path("/root/videos")
 STATE_PATH = Path("/root/data/mlbb/last_etalon_montage.json")
-MAX_AGE_HOURS = float(os.environ.get("SOURCE_MAX_AGE_HOURS", "72"))
 MIN_SOURCES = int(os.environ.get("ETALON_MIN_SOURCES", "4"))
 MAX_SOURCES = int(os.environ.get("ETALON_MAX_SOURCES", "8"))
-SCAN_LIMIT = int(os.environ.get("ETALON_SCAN_LIMIT", "80"))
+TIKTOK_SCAN = int(os.environ.get("ETALON_TIKTOK_SCAN", "30"))
 
 
-def gather_paths() -> list[Path]:
-    paths: list[Path] = []
-    if TIKTOK_ROOT.exists():
-        paths.extend(
-            sorted(TIKTOK_ROOT.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-        )
-    return paths
+def gather_hero_paths(limit: int) -> list[Path]:
+    """Curated hero clips — prefer unused files from different heroes."""
+    per_hero: dict[str, list[Path]] = {}
+    if not HERO_ROOT.exists():
+        return []
+    for hero_dir in sorted(HERO_ROOT.iterdir()):
+        if not hero_dir.is_dir():
+            continue
+        files = sorted(hero_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        fresh = [p for p in files if not is_used(p)]
+        if fresh:
+            per_hero[hero_dir.name] = fresh
+    picked: list[Path] = []
+    while len(picked) < limit and per_hero:
+        for name in sorted(per_hero.keys()):
+            bucket = per_hero.get(name) or []
+            if not bucket:
+                continue
+            picked.append(bucket.pop(0))
+            if not bucket:
+                per_hero.pop(name, None)
+            if len(picked) >= limit:
+                break
+    return picked
+
+
+def gather_tiktok_paths(limit: int) -> list[Path]:
+    if not TIKTOK_ROOT.exists() or limit <= 0:
+        return []
+    paths = [
+        p
+        for p in sorted(TIKTOK_ROOT.rglob("*.mp4"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if "non_gameplay" not in p.parts
+    ]
+    fresh = filter_new_sources(paths, max_age_hours=float(os.environ.get("SOURCE_MAX_AGE_HOURS", "72")))
+    return fresh[:limit]
 
 
 def build_queue(paths: list[Path], chat_id: str) -> Path:
     fd, queue_path = tempfile.mkstemp(prefix="etalon-mlbb-", suffix=".txt", dir="/tmp")
     with os.fdopen(fd, "w") as handle:
         for path in paths:
-            handle.write(f"{path}|MLBB etalon|{chat_id}\n")
+            hero = path.parent.name if path.parent.parent == HERO_ROOT else "MLBB"
+            handle.write(f"{path}|MLBB etalon {hero}|{chat_id}\n")
     return Path(queue_path)
 
 
@@ -45,24 +74,28 @@ def main() -> int:
         print("[etalon] TG_CHAT_ID missing")
         return 1
 
-    all_paths = gather_paths()
-    fresh = filter_new_sources(all_paths, max_age_hours=MAX_AGE_HOURS)
-    if len(fresh) < MIN_SOURCES:
-        print(f"[etalon] only {len(fresh)} fresh sources, need {MIN_SOURCES}")
-        return 1
-    picked: list[Path] = []
-    for path in fresh[:SCAN_LIMIT]:
-        ok, reason = source_has_valid_gameplay_window(path)
-        if ok:
-            picked.append(path)
-        if len(picked) >= MAX_SOURCES:
-            break
-    if len(picked) < MIN_SOURCES:
-        print(f"[etalon] only {len(picked)} playable sources in {SCAN_LIMIT} scanned")
-        return 1
-    print(f"[etalon] queue {len(picked)} sources (scanned {min(SCAN_LIMIT, len(fresh))})")
-    queue_path = build_queue(picked, chat_id)
+    hero_count = min(MAX_SOURCES, max(MIN_SOURCES, int(os.environ.get("ETALON_HERO_COUNT", "6"))))
+    picked = gather_hero_paths(hero_count)
+    tiktok_extra = max(0, MAX_SOURCES - len(picked))
+    if tiktok_extra:
+        picked.extend(gather_tiktok_paths(min(tiktok_extra, TIKTOK_SCAN)))
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in picked:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    picked = unique[:MAX_SOURCES]
 
+    if len(picked) < MIN_SOURCES:
+        print(f"[etalon] only {len(picked)} sources (need {MIN_SOURCES})")
+        return 1
+    print(f"[etalon] queue {len(picked)} sources ({sum(1 for p in picked if HERO_ROOT in p.parents)} hero)")
+
+    queue_path = build_queue(picked, chat_id)
     env = os.environ.copy()
     env.update(
         {
@@ -72,7 +105,6 @@ def main() -> int:
             "OUTPUT_BASENAME": "mlbb_etalon",
             "ETALON_MONTAGE": "1",
             "SEND_TELEGRAM": "1",
-            # Segment gates in smart_video_editor are strict; file-level CSV can be stale.
             "STRICT_GAMEPLAY": "0",
             "TARGET_DURATION": "45",
             "MIN_FINAL_DURATION": "33",
@@ -82,12 +114,12 @@ def main() -> int:
             "SMART_ADD_MUSIC": "0",
             "SMART_GAME_AUDIO_ONLY": "1",
             "BLUR_NICKNAME": "0",
-            "SMART_MIN_HUD": "17.5",
-            "SMART_MIN_HUD_FRAME_RATE": "0.68",
-            "SMART_MIN_CENTER_MOTION": "0.019",
-            "SMART_MAX_CHAT_PANEL": "0.14",
-            "SMART_MAX_CENTER_TEXT": "0.10",
-            "SMART_MIN_BIN_MOTION": "0.015",
+            "SMART_MIN_HUD": "16.5",
+            "SMART_MIN_HUD_FRAME_RATE": "0.62",
+            "SMART_MIN_CENTER_MOTION": "0.017",
+            "SMART_MAX_CHAT_PANEL": "0.15",
+            "SMART_MAX_CENTER_TEXT": "0.11",
+            "SMART_MIN_BIN_MOTION": "0.013",
             "SELECTION_VARIANT": str(int(time.time()) % 5),
         }
     )
@@ -104,7 +136,7 @@ def main() -> int:
                 indent=2,
             )
         )
-        print(f"[etalon] done rc={result.returncode} sources={len(picked)}")
+        print(f"[etalon] done rc={result.returncode}")
         return result.returncode
     finally:
         queue_path.unlink(missing_ok=True)
