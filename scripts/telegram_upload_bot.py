@@ -31,9 +31,11 @@ PROCESSOR = '/usr/local/bin/smart_video_editor.py'
 AD_INGEST = '/usr/local/bin/ad_screenshot_ingest.py'
 PUBG_LEARN = '/usr/local/bin/pubg_stream_learn_worker.py'
 AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
+REJECT_EXAMPLES_DIR = Path('/root/data/mlbb/reject_examples')
 RESEARCH_INBOX_DIR = Path('/root/research/inbox')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
+REJECT_MODE_TIMEOUT_SEC = 3600
 BOT_VERSION = '2026-06-02-research-url'
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 PROFILE_LABELS = {
@@ -226,12 +228,13 @@ def send_upload_status(chat_id: str, pending_count: int):
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
-        return {'last_update_id': 0, 'ad_mode_until': {}}
+        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}}
     try:
         state = json.loads(STATE_FILE.read_text())
     except Exception:
-        return {'last_update_id': 0, 'ad_mode_until': {}}
+        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}}
     state.setdefault('ad_mode_until', {})
+    state.setdefault('reject_mode_until', {})
     return state
 
 
@@ -261,6 +264,61 @@ def set_ad_mode(chat_id: str, enabled: bool):
     else:
         state['ad_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_reject_mode(chat_id: str) -> bool:
+    until = _bot_state().get('reject_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['reject_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_reject_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('reject_mode_until', {})
+    if enabled:
+        state['reject_mode_until'][chat_id] = time.time() + REJECT_MODE_TIMEOUT_SEC
+    else:
+        state['reject_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def count_reject_examples() -> int:
+    if not REJECT_EXAMPLES_DIR.exists():
+        return 0
+    return len(list(REJECT_EXAMPLES_DIR.glob('reject_*.*')))
+
+
+def save_reject_photo(chat_id: str, message: dict) -> Path | None:
+    photo = extract_photo(message)
+    if not photo:
+        return None
+    REJECT_EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    caption = safe_label(message.get('caption'))[:80]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    name = f'reject_{chat_id}_{stamp}_{photo[\"file_unique_id\"]}{photo[\"ext\"]}'
+    destination = REJECT_EXAMPLES_DIR / name
+    file_url = get_file_url(photo['file_id'])
+    download_file(file_url, destination)
+    meta = REJECT_EXAMPLES_DIR / f'{destination.stem}.meta.json'
+    meta.write_text(
+        json.dumps(
+            {
+                'chat_id': chat_id,
+                'caption': caption,
+                'message_id': message.get('message_id'),
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    return destination
 
 
 def count_ad_examples() -> int:
@@ -727,6 +785,8 @@ def register_bot_commands() -> None:
                     {'command': 'ping', 'description': 'Проверка, что бот жив'},
                     {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
                     {'command': 'ad_done', 'description': 'Закончить приём скринов'},
+                    {'command': 'bad', 'description': 'Плохие кадры/примеры (владелец)'},
+                    {'command': 'bad_done', 'description': 'Закончить приём плохих кадров'},
                     {'command': 'make', 'description': 'Собрать нарезку из видео'},
                     {'command': 'research', 'description': 'Большой Excel: ссылка transfer.sh'},
                 ],
@@ -786,6 +846,33 @@ def handle_message(message: dict):
             'Когда закончишь: /ad_done\n'
             f'Сейчас в базе: {count_ad_examples()} шт.',
         )
+        return
+    if cmd in ('/bad', '/плохо', '/badframe', '/reject'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /bad только для владельца (примеры неуместных кадров/вставок).')
+            return
+        set_reject_mode(chat_id, True)
+        send_message(
+            chat_id,
+            'Режим примеров «не слать такое» включён на 1 час.\n'
+            'Пришли кадры/скрины (фото) и в подписи коротко почему плохо (мем/меню/донат/реклама/чат и т.д.).\n'
+            'Завершить: /bad_done\n'
+            f'Сейчас в базе: {count_reject_examples()} шт.',
+        )
+        return
+    if cmd in ('/bad_done', '/bad_stop', '/плохо_готово'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /bad_done только для владельца.')
+            return
+        was = is_reject_mode(chat_id)
+        set_reject_mode(chat_id, False)
+        total = count_reject_examples()
+        send_message(
+            chat_id,
+            f'Режим «плохие кадры» выключен. Всего примеров: {total}.\n'
+            + ('Последние фото сохранены.' if was else 'Новых фото в этом режиме не было.'),
+        )
+        notify_owner(f'Reject examples updated: {total} files (chat {chat_id}).')
         return
     if cmd in ('/ad_done', '/ad_stop', '/реклама_готово'):
         if not is_owner(chat_id):
@@ -871,6 +958,17 @@ def handle_message(message: dict):
                     chat_id,
                     f'Сохранил пример рекламы ({saved.name}). Всего: {count_ad_examples()}. '
                     'Ещё фото или /ad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+        if is_reject_mode(chat_id):
+            saved = save_reject_photo(chat_id, message)
+            if saved:
+                send_message(
+                    chat_id,
+                    f'Сохранил плохой пример ({saved.name}). Всего: {count_reject_examples()}. '
+                    'Ещё фото или /bad_done',
                 )
             else:
                 send_message(chat_id, 'Не удалось сохранить фото.')
