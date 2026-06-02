@@ -95,6 +95,12 @@ def build_report() -> str:
     download = {}
     if STATE_PATH.exists():
         download = json.loads(STATE_PATH.read_text())
+    previous: dict = {}
+    if REPORT_STATE.exists():
+        try:
+            previous = json.loads(REPORT_STATE.read_text())
+        except Exception:
+            previous = {}
     hist_segments = 0
     if HISTORY_PATH.exists():
         try:
@@ -103,6 +109,18 @@ def build_report() -> str:
             pass
 
     stats = download.get("last_stats") or {}
+    mass_stats = download.get("mass_last_stats") or {}
+    dataset_count = count_mp4(DATASET_DIR)
+    prev_dataset_count = int(previous.get("dataset_mp4", 0) or 0)
+    delta_dataset = dataset_count - prev_dataset_count
+    mass_delta = int(mass_stats.get("saved_gameplay", 0) or 0)
+    mass_failed = int(mass_stats.get("failed", 0) or 0)
+    mass_attempted = int(mass_stats.get("attempted", 0) or 0)
+    mass_other = int(mass_stats.get("saved_other", 0) or 0)
+    mass_mode = download.get("mass_mode") or "mass"
+    mass_note = ""
+    if delta_dataset <= 0 and mass_attempted > 0 and mass_failed >= max(10, mass_attempted * 0.6):
+        mass_note = "⚠️ Похоже, TikTok/прокси режет скачивание (много фейлов). Возможно, нужен refresh IP."
     lines = [
         "📊 MLBB — отчёт за час",
         "",
@@ -111,12 +129,15 @@ def build_report() -> str:
         "• без повторов сцен",
         "• только геймплей",
         "",
-        f"⬇️ TikTok за последний цикл: +{stats.get('gameplay_kept', 0)} геймплей "
+        f"⬇️ TikTok (массовая загрузка): +{mass_delta} геймплей, +{mass_other} другое "
+        f"(attempted {mass_attempted}, failed {mass_failed})",
+        f"⬇️ TikTok (почасовой batch): +{stats.get('gameplay_kept', 0)} геймплей "
         f"(скачано {stats.get('downloaded', 0)}, отбраковано {stats.get('rejected', 0)})",
-        f"📁 Датасет на сервере: {count_mp4(DATASET_DIR)} mp4",
+        f"📁 Датасет на сервере: {dataset_count} mp4 (Δ {delta_dataset:+d} с прошлого отчёта)",
         f"🧠 Hayabusa датасет: {count_mp4(Path('/root/hero_datasets/hayabusa'))} mp4",
         f"🔁 Уже использовано сцен: {hist_segments}",
         f"💾 Свободно на диске: {disk_free_gb():.1f} GB",
+        *(["", mass_note] if mass_note else []),
         "",
         "🎯 Сейчас учим: Hayabusa → потом 10 героев",
     ]
@@ -149,7 +170,15 @@ def main() -> int:
             tg_send_video(token, chat_id, clip, f"Новый клип: {clip.name}")
 
     REPORT_STATE.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_STATE.write_text(json.dumps({"sent_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+    REPORT_STATE.write_text(
+        json.dumps(
+            {
+                "sent_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "dataset_mp4": count_mp4(DATASET_DIR),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
