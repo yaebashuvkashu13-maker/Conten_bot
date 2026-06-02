@@ -525,7 +525,16 @@ def build_candidates(
     for candidate in candidates:
         if any(candidate_overlap_seconds(candidate, existing) > min(candidate['input_duration'], existing['input_duration']) * 0.45 for existing in pruned):
             continue
-        gate_kwargs = {}
+        gate_kwargs: dict[str, float] = {}
+        if profile == 'mobile_legends':
+            try:
+                gate_kwargs = {
+                    'min_hud': float(os.environ.get('SMART_MIN_HUD', '14.0')),
+                    'max_text': float(os.environ.get('SMART_MAX_OVERLAY_TEXT', '0.075')),
+                    'max_cartoon_ratio': float(os.environ.get('SMART_MAX_CARTOON_RATIO', '0.55')),
+                }
+            except ValueError:
+                gate_kwargs = {}
         if relax_segment_gate:
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
         ok_segment, reason = segment_is_valid_for_montage(
