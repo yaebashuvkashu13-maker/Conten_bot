@@ -82,6 +82,7 @@ _stats = {
     "rejected": 0,
     "skipped_exists": 0,
 }
+_fail_reasons: dict[str, int] = {}
 
 
 def human_pause(env: dict[str, str]) -> None:
@@ -106,6 +107,18 @@ def log(msg: str) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
+
+
+def log_fail_reason_summary() -> None:
+    with _stats_lock:
+        if not _fail_reasons:
+            return
+        top = sorted(_fail_reasons.items(), key=lambda kv: -kv[1])[:6]
+        summary = ", ".join(f"{k}={v}" for k, v in top)
+        line = f"fail_reasons: {summary}"
+        print(line, flush=True)
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {line}\n")
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -184,12 +197,59 @@ def urls_from_csv(path: Path) -> list[dict]:
     return items
 
 
-def _ytdlp_base(proxy: str) -> list[str]:
-    return ["yt-dlp", "--proxy", proxy, "--no-warnings"]
+def _ytdlp_base(proxy: str, env: dict[str, str] | None = None) -> list[str]:
+    env = env or {}
+    cmd = ["yt-dlp", "--proxy", proxy, "--no-warnings", "--no-progress"]
+    impersonate = (env.get("YTDLP_IMPERSONATE") or "").strip()
+    if impersonate:
+        cmd += ["--impersonate", impersonate]
+    cookies = (env.get("YTDLP_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
+    if cookies and Path(cookies).exists():
+        cmd += ["--cookies", cookies]
+    # Resilience knobs: many TikTok URLs are removed/geo/temporary blocked.
+    cmd += [
+        "--retries",
+        str(int(float(env.get("MASS_YTDLP_RETRIES", "6")))),
+        "--fragment-retries",
+        str(int(float(env.get("MASS_YTDLP_FRAGMENT_RETRIES", "6")))),
+        "--extractor-retries",
+        str(int(float(env.get("MASS_YTDLP_EXTRACTOR_RETRIES", "3")))),
+        "--socket-timeout",
+        str(int(float(env.get("MASS_YTDLP_SOCKET_TIMEOUT", "25")))),
+        "--retry-sleep",
+        env.get("MASS_YTDLP_RETRY_SLEEP", "1:10"),
+    ]
+    # Mild speed-up without exploding request rate.
+    cmd += ["--concurrent-fragments", str(int(float(env.get("MASS_YTDLP_CONCURRENT_FRAG", "2"))))]
+    return cmd
+
+
+def _bump_fail_reason(reason: str) -> None:
+    with _stats_lock:
+        _fail_reasons[reason] = _fail_reasons.get(reason, 0) + 1
+
+
+def classify_ytdlp_error(stderr: str) -> str:
+    s = (stderr or "").lower()
+    if "http error 429" in s or "status code: 429" in s:
+        return "http_429"
+    if "http error 403" in s or "status code: 403" in s or "forbidden" in s:
+        return "http_403"
+    if "timed out" in s or "timeout" in s:
+        return "timeout"
+    if "this video is unavailable" in s or "video unavailable" in s or "not available" in s:
+        return "unavailable"
+    if "unable to extract" in s or "extractor" in s:
+        return "extract"
+    if "sign in" in s or "login" in s:
+        return "login_required"
+    if "proxy" in s and ("refused" in s or "failed" in s):
+        return "proxy_error"
+    return "other"
 
 
 def urls_from_seed(seed: str, proxy: str, max_entries: int = 500) -> list[dict]:
-    cmd = _ytdlp_base(proxy) + [
+    cmd = _ytdlp_base(proxy, load_env(Path("/root/.video_bot.env"))) + [
         "--flat-playlist",
         "--dump-single-json",
         "--playlist-end",
@@ -213,7 +273,7 @@ def urls_from_seed(seed: str, proxy: str, max_entries: int = 500) -> list[dict]:
 def urls_from_search(query: str, proxy: str, max_entries: int = 200) -> list[dict]:
     # TikTok search via yt-dlp prefix (falls back gracefully if unsupported)
     target = f"tiktoksearch{max_entries}:{query}"
-    cmd = _ytdlp_base(proxy) + ["--flat-playlist", "--dump-single-json", target]
+    cmd = _ytdlp_base(proxy, load_env(Path("/root/.video_bot.env"))) + ["--flat-playlist", "--dump-single-json", target]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -321,12 +381,12 @@ def discover_items(
     return queue_items[:target]
 
 
-def download_file(url: str, dest: Path, proxy: str) -> bool:
+def download_file(url: str, dest: Path, proxy: str, env: dict[str, str]) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 80_000:
         return True
     partial = dest.with_suffix(".mp4.part")
-    cmd = _ytdlp_base(proxy) + [
+    cmd = _ytdlp_base(proxy, env) + [
         "--no-playlist",
         "--no-write-thumbnail",
         "--merge-output-format",
@@ -339,7 +399,16 @@ def download_file(url: str, dest: Path, proxy: str) -> bool:
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        _bump_fail_reason("timeout")
+        partial.unlink(missing_ok=True)
+        return False
+    except subprocess.CalledProcessError as exc:
+        err = (exc.stderr or "")[-800:]
+        reason = classify_ytdlp_error(err)
+        _bump_fail_reason(reason)
+        # Log small sample to understand what's killing throughput.
+        log(f"download failed ({reason}) url={url} err={(err or '')[:240].replace('\\n',' ')}")
         partial.unlink(missing_ok=True)
         return False
     if partial.exists():
@@ -373,7 +442,7 @@ def process_item(
     with _stats_lock:
         _stats["attempted"] += 1
 
-    if not download_file(url, dest, proxy):
+    if not download_file(url, dest, proxy, env):
         with _stats_lock:
             _stats["failed"] += 1
         human_pause(env)
@@ -566,6 +635,7 @@ def main() -> int:
     state["mass_on_disk"] = count_mp4_on_disk(args.out)
     save_state(state)
     log(json.dumps(_stats, ensure_ascii=False) + f" on_disk={state['mass_on_disk']}")
+    log_fail_reason_summary()
     return 0
 
 
