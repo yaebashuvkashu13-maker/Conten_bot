@@ -194,14 +194,26 @@ def sanitize_slug(parts: list[str]) -> str:
     return slug.strip('_') or 'smart_edit'
 
 
-def detect_profile(game_names: list[str], env: dict[str, str]) -> str:
+def resolve_profile(game_names: list[str], env: dict[str, str]) -> str:
+    """Queue/chat profile wins over global DEFAULT_GAME_PROFILE in .video_bot.env."""
+    forced = (os.environ.get('QUEUE_GAME_PROFILE') or env.get('QUEUE_GAME_PROFILE') or '').strip().lower()
+    if forced in ('pubg', 'mobile_legends', 'generic'):
+        return forced
+
     joined = ' '.join(game_names).lower()
-    default_profile = env.get('DEFAULT_GAME_PROFILE', 'generic').lower()
-    if 'mobile legends' in joined or 'mlbb' in joined or default_profile == 'mobile_legends':
-        return 'mobile_legends'
-    if 'pubg' in joined or 'playerunknown' in joined or default_profile == 'pubg':
+    if 'pubg' in joined or 'playerunknown' in joined or 'пабг' in joined:
         return 'pubg'
+    if 'mobile legends' in joined or 'mlbb' in joined:
+        return 'mobile_legends'
+
+    default_profile = env.get('DEFAULT_GAME_PROFILE', 'generic').lower()
+    if default_profile in ('pubg', 'mobile_legends'):
+        return default_profile
     return 'generic'
+
+
+def detect_profile(game_names: list[str], env: dict[str, str]) -> str:
+    return resolve_profile(game_names, env)
 
 
 def brightness_score(brightness: float) -> float:
@@ -1074,18 +1086,6 @@ def main() -> int:
             except Exception as exc:
                 logging.warning('failed to prepare source %s: %s', source_ref, exc)
                 continue
-            if os.environ.get('STRICT_GAMEPLAY', '0') == '1':
-                csv_path = Path(os.environ.get('GAMEPLAY_CSV', '/root/data/mlbb/gameplay_filter_latest.csv'))
-                lookup = load_csv_lookup(csv_path)
-                ok_src, src_score, src_reason = is_gameplay_video(source_path, csv_lookup=lookup)
-                if not ok_src:
-                    logging.warning(
-                        'skip non-gameplay source=%s score=%.2f reason=%s',
-                        source_path.name,
-                        src_score,
-                        src_reason,
-                    )
-                    continue
             analysis = analyze_video(source_path)
             source_signature = file_sha256(source_path)
             logging.info('analyzed source=%s duration=%.2fs bins=%s sha=%s', source_path, analysis['duration'], analysis['bins'], source_signature[:12])
@@ -1102,8 +1102,36 @@ def main() -> int:
             logging.error('no usable sources available in current batch')
             return 1
 
-        profile = detect_profile([item['game_name'] for item in sources], env)
-        logging.info('using profile=%s', profile)
+        profile = resolve_profile([item['game_name'] for item in sources], env)
+        logging.info(
+            'using profile=%s (queue_game_profile=%s default=%s labels=%s)',
+            profile,
+            os.environ.get('QUEUE_GAME_PROFILE', ''),
+            env.get('DEFAULT_GAME_PROFILE', ''),
+            [item['game_name'] for item in sources],
+        )
+        if profile == 'mobile_legends' and os.environ.get('STRICT_GAMEPLAY', '0') == '1':
+            csv_path = Path(os.environ.get('GAMEPLAY_CSV', '/root/data/mlbb/gameplay_filter_latest.csv'))
+            lookup = load_csv_lookup(csv_path)
+            filtered_sources: list[dict] = []
+            for source in sources:
+                ok_src, src_score, src_reason = is_gameplay_video(
+                    source['source_path'], csv_lookup=lookup
+                )
+                if ok_src:
+                    filtered_sources.append(source)
+                else:
+                    logging.warning(
+                        'skip non-gameplay source=%s score=%.2f reason=%s',
+                        source['source_path'].name,
+                        src_score,
+                        src_reason,
+                    )
+            sources = filtered_sources
+            if not sources:
+                logging.error('no usable MLBB gameplay sources after STRICT_GAMEPLAY filter')
+                return 1
+
         global_values = {
             'motion': [],
             'center_motion': [],

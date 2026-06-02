@@ -836,13 +836,33 @@ def extract_media(message: dict):
 
 def _lines_from_paths(chat_id: str, paths: list[Path], labels: dict[Path, str] | None = None) -> list[str]:
     labels = labels or {}
-    return [f"{path}|{labels.get(path, 'Telegram upload')}|{chat_id}" for path in paths]
+    default_label = game_label_for_chat(chat_id)
+    return [f"{path}|{labels.get(path, default_label)}|{chat_id}" for path in paths]
 
 
-def _smart_edit_failure_hint(code: int, log_tail: str) -> str:
+def _fix_queue_line(line: str, chat_id: str) -> str:
+    """Ensure queue label reflects PUBG/MLBB chat profile (not generic Telegram upload)."""
+    line = line.strip()
+    if not line:
+        return line
+    parts = line.split('|')
+    if len(parts) < 2:
+        return line
+    path = parts[0]
+    cid = parts[-1] if len(parts) >= 3 else chat_id
+    label = '|'.join(parts[1:-1]) if len(parts) >= 3 else parts[1]
+    if label.strip().lower() in ('telegram upload', 'telegram', ''):
+        label = game_label_for_chat(chat_id)
+    return f'{path}|{label}|{cid}'
+
+
+def _smart_edit_failure_hint(code: int, log_tail: str, chat_id: str = '') -> str:
+    pubg = is_pubg_chat(chat_id) if chat_id else False
     if 'no usable sources' in log_tail:
         return 'Файл не прочитался (битый или не видео).'
     if 'no candidates' in log_tail or 'produced no candidates' in log_tail:
+        if pubg:
+            return 'В стриме не нашлось 3–4 боевых моментов PUBG (меню, лобби, кат-сцены отфильтрованы).'
         return 'В ролике не нашлось 3–4 игровых сцен (меню, мем или нет HUD MLBB).'
     if code == 1:
         return 'Smart Edit не собрал монтаж — см. лог на VPS.'
@@ -857,7 +877,11 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             lines = _lines_from_paths(chat_id, fresh_paths)
         else:
             queue_path = queue_file_for(chat_id)
-            lines = [line.strip() for line in queue_path.read_text().splitlines() if line.strip()]
+            lines = [
+                _fix_queue_line(line, chat_id)
+                for line in queue_path.read_text().splitlines()
+                if line.strip()
+            ]
             paths = [Path(line.split('|', 1)[0]) for line in lines]
             fresh_paths = filter_new_sources(paths)
             lines = [line for line in lines if Path(line.split('|', 1)[0]) in fresh_paths]
@@ -876,9 +900,10 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             return
 
         if not limited:
+            game_hint = 'PUBG' if is_pubg_chat(chat_id) else 'MLBB'
             send_message(
                 chat_id,
-                'Принял задачу. Запускаю Smart Edit v1.1: выберу 3-4 хайлайта и соберу ролик примерно на 33-57 секунд.',
+                f'Принял задачу ({game_hint}). Запускаю Smart Edit: 3-4 хайлайта, ~33-57 сек.',
             )
         with tempfile.NamedTemporaryFile('w', delete=False, prefix=f'tg-batch-{chat_id}-', suffix='.txt') as tmp_queue:
             tmp_queue.write('\n'.join(lines) + '\n')
@@ -891,6 +916,7 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         profile = game_profile_for_chat(chat_id)
         if profile:
             run_env['DEFAULT_GAME_PROFILE'] = profile
+            run_env['QUEUE_GAME_PROFILE'] = profile
         if only_paths is not None and len(only_paths) == 1:
             run_env['SINGLE_SOURCE_MODE'] = '1'
         completed = subprocess.run(
@@ -912,7 +938,7 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
                 send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
         else:
             log_tail = tail_smart_edit_log()
-            err_hint = _smart_edit_failure_hint(completed.returncode, log_tail)
+            err_hint = _smart_edit_failure_hint(completed.returncode, log_tail, chat_id)
             if limited:
                 send_message(chat_id, f'Не удалось сделать нарезку. {err_hint}')
                 notify_owner(
