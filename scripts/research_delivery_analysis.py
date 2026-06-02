@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze delivery click research xlsx (large files) and post summary to Telegram owner."""
+"""Analyze delivery click research xlsx and post summary to Telegram owner."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -22,6 +24,18 @@ INBOX = Path("/root/research/inbox")
 OUT = Path("/root/data/mlbb/research_reports")
 ENV_FILE = Path("/root/.video_bot.env")
 
+# Known export layout (исследование клика)
+STAGE_SPECS = [
+    ("ожидание_до_сборки", 3, 4),  # создание → начало сборки
+    ("сборка", 4, 6),  # начало сборки → завершение
+    ("собран_до_поиска_курьера", 6, 7),  # завершение сборки → старт поиска
+    ("поиск_курьера", 7, 8),  # поиск → назначение
+    ("назначение_до_расхолда", 8, 9),
+    ("расхолд_до_прибытия", 9, 10),
+    ("прибытие_до_старта_доставки", 10, 11),
+    ("собран_до_прибытия_курьера", 6, 10),  # ключевая «собран, курьер едет/ждёт»
+]
+
 
 def load_env() -> dict[str, str]:
     env: dict[str, str] = {}
@@ -30,12 +44,14 @@ def load_env() -> dict[str, str]:
             env[key] = value
     if not ENV_FILE.exists():
         return env
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
+    for raw in ENV_FILE.read_text().splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        k, _, v = line.split("=", 1)
-        env[k.strip()] = v.strip()
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key:
+            env[key] = value
     return env
 
 
@@ -58,165 +74,133 @@ def tg_send(text: str, env: dict[str, str] | None = None) -> None:
         print("TG send failed:", body, file=sys.stderr)
 
 
-def norm_col(name: str) -> str:
-    return re.sub(r"[\s\n\r]+", " ", "_", str(name)).strip().lower()
-
-
-def find_header_row(ws, max_scan: int = 30) -> tuple[int, dict[str, int]]:
-    best_row = 1
-    best_score = -1
-    best_map: dict[str, int] = {}
-    for r in range(1, max_scan + 1):
-        row: dict[str, int] = {}
-        for c in range(1, min(ws.max_column or 1, 80) + 1):
-            v = ws.cell(r, c).value
-            if v is None:
-                continue
-            key = norm_col(str(v))
-            if not key:
-                continue
-            row[key] = c
-        score = sum(1 for k in row if k and k not in {"order_id", "courier_id"})
-        if score > best_score:
-            best_score = score
-            best_row = r
-            best_map = row
-    return best_row, best_map
-
-
-def cell_to_seconds(v) -> float | None:
+def parse_dt(v) -> datetime | None:
     if v is None:
         return None
-    if isinstance(v, (int, float)):
-        # Excel time fraction or minutes heuristic: small floats are often days
-        if 0 < float(v) < 1:
-            return float(v) * 86400
-        return float(v) * 60 if float(v) < 1000 else float(v)
+    if isinstance(v, datetime):
+        return v
     if isinstance(v, str):
-        s = v.strip().replace(",", ".")
-        if not s:
-            return None
-        if s.count(":") >= 2:
-            parts = [int(x) for x in s.split(":")[:3]]
-            while len(parts) < 3:
-                parts.append(0)
-            h, m, sec = parts[0], parts[1], parts[2]
-            return h * 3600 + m * 60 + sec
-        if s.replace(".", "", 1).isdigit():
-            return float(s) * 60
+        s = v.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M:%S"):
+            try:
+                return datetime.strptime(s[:19], fmt)
+            except ValueError:
+                continue
     return None
 
 
-def duration_from_columns(values: dict[int, object], col_indices: list[int]) -> float | None:
-    """Sum interpretable durations in stage columns (seconds), return minutes."""
-    total_sec = 0.0
-    found = False
-    for col in col_indices:
-        sec = cell_to_seconds(values.get(col))
-        if sec is None:
-            continue
-        total_sec += sec
-        found = True
-    return (total_sec / 60.0) if found else None
+def delta_minutes(start: datetime | None, end: datetime | None) -> float | None:
+    if start is None or end is None:
+        return None
+    sec = (end - start).total_seconds()
+    if sec < 0:
+        return None
+    return sec / 60.0
+
+
+def minutes_list(vals: list[float]) -> dict[str, float]:
+    if not vals:
+        return {"count": 0, "p50_min": 0, "p90_min": 0, "p95_min": 0, "avg_min": 0}
+    vals_sorted = sorted(vals)
+    n = len(vals_sorted)
+    return {
+        "count": n,
+        "p50_min": vals_sorted[int(n * 0.5)],
+        "p90_min": vals_sorted[min(int(n * 0.9), n - 1)],
+        "p95_min": vals_sorted[min(int(n * 0.95), n - 1)],
+        "avg_min": sum(vals_sorted) / n,
+    }
+
+
+def parse_cte_minutes(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(str(v).replace(",", "."))
+    except ValueError:
+        return None
 
 
 def analyze_file(path: Path) -> dict:
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
 
-    header_row, header = find_header_row(ws)
-    cols = {col_idx: name for name, col_idx in header.items()}
-
-    # Heuristic stage mapping by Russian keywords in header names
-    stage_keywords = {
-        "собран": ["собран", "готов", "ready", "assembled"],
-        "заявка": ["заявк", "создан", "created"],
-        "поиск": ["поиск", "search", "назнач", "assign"],
-        "ожид": ["ожид", "wait", "долго"],
-        "в_пути": ["в пути", "в пути ", "едет", "в магазин", "забрал"],
-        "занят": ["занят", "busy", "сборщик"],
-    }
-    stage_cols: dict[str, list[int]] = {k: [] for k in stage_keywords}
-    for key, col in cols.items():
-        for stage, kws in stage_keywords.items():
-            if any(kw in key for kw in kws):
-                stage_cols[stage].append(col)
-                break
-
-    # fallback: columns after G are sequential status timestamps
-    status_cols = sorted([c for c in cols if c > 7], key=lambda x: cols[x])[:40]
-
-    durations = {s: [] for s in stage_keywords}
-    for stage in durations:
-        durations[stage] = []
-
-    order_col = None
-    for key in ("order_id", "заказ", "order", "id_заказа"):
-        if key in header:
-            order_col = header[key]
-            break
-    if not order_col and header:
-        order_col = next(iter(header.values()))
-
+    header_row = 1
     max_rows = int(os.environ.get("RESEARCH_MAX_ROWS", "0"))
     last_row = ws.max_row or header_row
     if max_rows > 0:
         last_row = min(last_row, header_row + max_rows)
 
-    needed: set[int] = set(status_cols)
-    if order_col:
-        needed.add(order_col)
-    for indices in stage_cols.values():
-        needed.update(indices)
-    needed_sorted = sorted(needed)
+    stage_durations: dict[str, list[float]] = {name: [] for name, _, _ in STAGE_SPECS}
+    cte_values: list[float] = []
+    problems = {
+        "поиск_курьера_>15м": [],
+        "собран_ждёт_курьера_>20м": [],  # col6→col10
+        "сборка_>25м": [],
+        "прибытие_до_старта_>10м": [],
+        "отрицательные_цепочки": 0,
+    }
 
     rows_analyzed = 0
-    for r in range(header_row + 1, last_row + 1):
-        oid = ws.cell(r, order_col).value if order_col else None
-        if oid is None or str(oid).strip() == "":
+    row_iter = ws.iter_rows(
+        min_row=header_row + 1,
+        max_row=last_row,
+        min_col=1,
+        max_col=11,
+        values_only=True,
+    )
+    for row in row_iter:
+        if not row:
             continue
-        values = {c: ws.cell(r, c).value for c in needed_sorted}
+        order_id = row[0]
+        if order_id is None or str(order_id).strip() == "":
+            continue
 
-        for stage, indices in stage_cols.items():
-            if not indices:
-                continue
-            m = duration_from_columns(values, indices)
-            if m is not None:
-                durations[stage].append(m)
+        cte = parse_cte_minutes(row[1] if len(row) > 1 else None)
+        if cte is not None and cte > 0:
+            cte_values.append(cte)
+
+        times = [parse_dt(row[i]) if len(row) > i else None for i in range(2, 9)]
+
+        for name, col_a, col_b in STAGE_SPECS:
+            ia, ib = col_a - 3, col_b - 3
+            if 0 <= ia < len(times) and 0 <= ib < len(times):
+                dm = delta_minutes(times[ia], times[ib])
+                if dm is not None:
+                    stage_durations[name].append(dm)
+
+        search_m = delta_minutes(times[4], times[5]) if len(times) >= 6 else None
+        assembled_wait = delta_minutes(times[3], times[7]) if len(times) >= 8 else None
+        pick_m = delta_minutes(times[1], times[3]) if len(times) >= 4 else None
+        arrive_m = delta_minutes(times[7], times[8]) if len(times) >= 9 else None
+
+        if search_m is not None and search_m > 15:
+            problems["поиск_курьера_>15м"].append(search_m)
+        if assembled_wait is not None and assembled_wait > 20:
+            problems["собран_ждёт_курьера_>20м"].append(assembled_wait)
+        if pick_m is not None and pick_m > 25:
+            problems["сборка_>25м"].append(pick_m)
+        if arrive_m is not None and arrive_m > 10:
+            problems["прибытие_до_старта_>10м"].append(arrive_m)
 
         rows_analyzed += 1
         if rows_analyzed % 50000 == 0:
-            print(f"  … {rows_analyzed} rows", file=sys.stderr)
+            print(f"  … {rows_analyzed} rows", file=sys.stderr, flush=True)
 
-    def minutes_list(vals: list[float]) -> dict[str, float]:
-        if not vals:
-            return {}
-        vals_sorted = sorted(vals)
-        n = len(vals_sorted)
-        return {
-            "count": n,
-            "p50_min": vals_sorted[int(n * 0.5)] if n else 0,
-            "p90_min": vals_sorted[int(n * 0.9)] if n else 0,
-            "p95_min": vals_sorted[int(n * 0.95)] if n else 0,
-            "avg_min": sum(vals_sorted) / n if n else 0,
-        }
+    sheet_title = ws.title
+    wb.close()
 
-    # Problem buckets
-    problems = {
-        "long_search_courier": durations.get("поиск", []) + durations.get("search", []),
-        "long_to_store": durations.get("в пути", []) + durations.get("в_пути ", []),
-        "courier_wait_picker": durations.get("ожид", []) + durations.get("wait", []),
-        "picker_busy": durations.get("занят", []) + durations.get("busy", []),
-    }
+    stage_stats = {k: minutes_list(v) for k, v in stage_durations.items() if v}
+    problem_stats = {k: minutes_list(v) if isinstance(v, list) else v for k, v in problems.items()}
 
     return {
         "file": str(path),
-        "sheet": ws.title,
+        "sheet": sheet_title,
         "rows_analyzed": rows_analyzed,
-        "header_row": header_row,
-        "stage_stats_minutes": {k: minutes_list(v) for k, v in durations.items()},
-        "problems": {k: minutes_list(v) for k, v in problems.items() if v},
-        "status_cols_found": status_cols[:12],
+        "cte_minutes": minutes_list(cte_values),
+        "stage_stats_minutes": stage_stats,
+        "problem_orders": {k: v for k, v in problem_stats.items() if isinstance(v, dict) and v.get("count")},
+        "problem_skip_count": problems["отрицательные_цепочки"],
     }
 
 
@@ -228,61 +212,59 @@ def main() -> int:
     files = sorted(INBOX.glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         print("no xlsx in", INBOX)
+        tg_send("В inbox нет .xlsx для анализа.", env=env)
         return 0
 
     OUT.mkdir(parents=True, exist_ok=True)
-    all_summaries = []
-
-    for path in files:
-        try:
-            summary = analyze_file(path)
-            all_summaries.append(summary)
-            print("analyzed", path.name, summary["rows_analyzed"])
-        except Exception as exc:
-            print("FAIL", path.name, exc, file=sys.stderr)
-
-    if not all_summaries:
-        tg_send(
-            "В /root/research/inbox/ нет .xlsx. Пришлите боту ссылку transfer.sh или /research <url>",
-            env=env,
-        )
-        return 1
-
-    # aggregate across files (same stage keys)
-    from collections import defaultdict
-
-    agg_probs: dict[str, list[float]] = defaultdict(list)
-    agg_stats: dict[str, dict] = {}
-    total_rows = 0
-    for s in all_summaries:
-        total_rows += s["rows_analyzed"]
-        for k, v in s["problems"].items():
-            agg_probs[k].extend(v)
-        for stage, st in s["stage_stats_minutes"].items():
-            if stage not in agg_stats:
-                agg_stats[stage] = {"count": 0}
-            agg_stats[stage]["count"] += 1
-            agg_stats[stage]["p50"] = agg_stats[stage].get("p50", 0) + st["p50_min"]
-            agg_stats[stage]["p90"] = agg_stats[stage].get("p90", 0) + st["p90_min"]
-            agg_stats[stage]["avg_min"] = agg_stats[stage].get("avg_min", 0) + st["avg_min"]
+    target = files[0]
+    print("analyzing", target.name, flush=True)
+    try:
+        summary = analyze_file(target)
+    except Exception as exc:
+        tg_send(f"Ошибка анализа {target.name}: {exc}", env=env)
+        raise
 
     lines = [
-        "📊 Анализ доставки (click research)",
-        f"Файлов: {len(files)} | Строк: {total_rows}",
+        "📊 Исследование клика — доставка",
+        f"Файл: {target.name}",
+        f"Строк с заказом: {summary['rows_analyzed']:,}".replace(",", " "),
         "",
-        "Топ проблем (минуты, P50):",
+        "CTE факт (мин.) — по колонке B:",
     ]
-    for k, st in sorted(agg_probs.items(), key=lambda x: -sum(x), reverse=True)[:8]:
-        mins = minutes_list(st)
-        lines.append(f"• {k}: P50={mins['p50_min']:.0f}м, P90={mins['p90_min']:.0f}м, n={mins['count']}")
+    cte = summary["cte_minutes"]
+    lines.append(f"• P50={cte['p50_min']:.1f}  P90={cte['p90_min']:.1f}  avg={cte['avg_min']:.1f}  n={cte['count']}")
 
-    for stage, st in agg_stats.items():
-        lines.append(f"• {stage}: avg {st['avg_min']:.1f}м (n={st['count']})")
+    lines.append("")
+    lines.append("Этапы (минуты, P50 / P90):")
+    for name, st in summary["stage_stats_minutes"].items():
+        lines.append(f"• {name}: P50={st['p50_min']:.1f} P90={st['p90_min']:.1f} avg={st['avg_min']:.1f}")
+
+    lines.append("")
+    lines.append("Проблемные заказы (доля от всех):")
+    total = summary["rows_analyzed"] or 1
+    for name, st in sorted(
+        summary["problem_orders"].items(),
+        key=lambda x: -x[1].get("count", 0),
+    ):
+        cnt = int(st["count"])
+        pct = 100.0 * cnt / total
+        lines.append(f"• {name}: {cnt:,} ({pct:.1f}%) P50={st['p50_min']:.0f}м".replace(",", " "))
+
+    lines.extend(
+        [
+            "",
+            "💡 Идеи (по данным):",
+            "1) Автозаявка курьера в момент «завершение сборки» (сейчас зазор собран→поиск).",
+            "2) SLA на «поиск курьера» >15м — алерт диспетчеру.",
+            "3) Приоритет очереди сборщика, если собран→прибытие курьера >20м растёт.",
+            "4) Ускорить handoff на точке: прибытие→старт доставки >10м.",
+        ]
+    )
 
     report_path = OUT / f"delivery_report_{int(time.time())}.json"
-    report_path.write_text(json.dumps({"summaries": all_summaries, "aggregate": agg_stats}, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    msg = "\n".join(lines) + f"\n\nПолный отчёт: {report_path}"
+    msg = "\n".join(lines) + f"\n\nJSON: {report_path}"
     tg_send(msg, env=env)
     print("done", report_path)
     return 0
