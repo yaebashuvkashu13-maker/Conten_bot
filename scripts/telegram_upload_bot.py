@@ -2,13 +2,16 @@
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 try:
     from source_freshness import filter_new_sources, mark_used
@@ -31,7 +34,8 @@ AD_EXAMPLES_DIR = Path('/root/data/mlbb/ad_examples')
 RESEARCH_INBOX_DIR = Path('/root/research/inbox')
 POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-02-pubg-ad'
+BOT_VERSION = '2026-06-02-research-url'
+RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 PROFILE_LABELS = {
     'pubg': 'PUBG Mobile',
     'mobile_legends': 'Mobile Legends',
@@ -427,6 +431,117 @@ def extract_document_file(message: dict):
     }
 
 
+def research_help_text() -> str:
+    return (
+        'Excel больше ~20 МБ бот из Telegram не получит — это лимит Bot API, не архиватора.\n'
+        'Файл .xlsx уже внутри ZIP: WinRAR/7-Zip почти не ужимают.\n\n'
+        'Вариант 1 — ссылка (любой размер):\n'
+        'На ПК в PowerShell:\n'
+        'curl.exe -T "E:\\путь\\исследование клика.xlsx" https://transfer.sh/\n'
+        'Скопируйте выданную https://… ссылку и пришлите боту одной строкой или:\n'
+        '/research https://…\n\n'
+        'Вариант 2 — уменьшить файл в Excel:\n'
+        'Сохранить копию только с order_id, courier_id и колонками G+ за нужный период.\n\n'
+        'После загрузки на сервер запускается анализ доставки — отчёт придёт в этот чат.'
+    )
+
+
+def safe_research_filename(name: str) -> str:
+    safe = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '_' for ch in name)[:120]
+    return safe or 'upload.xlsx'
+
+
+def parse_research_url(text: str) -> str | None:
+    if not text or 'http' not in text:
+        return None
+    match = re.search(r'https?://[^\s<>"\']+', text)
+    if not match:
+        return None
+    return match.group(0).rstrip('.,);')
+
+
+def looks_like_research_url(url: str) -> bool:
+    u = url.lower()
+    return any(
+        marker in u
+        for marker in (
+            'transfer.sh',
+            'file.io',
+            'tmpfiles.org',
+            '0x0.st',
+            'catbox.moe',
+            '.xlsx',
+            'research',
+        )
+    )
+
+
+def save_research_from_url(url: str, chat_id: str) -> Path | None:
+    RESEARCH_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    parsed = urlparse(url)
+    name = unquote(Path(parsed.path).name) or 'research.xlsx'
+    if not name.lower().endswith(('.xlsx', '.xlsm', '.xls')):
+        if '.' not in name or name.endswith('/'):
+            name = 'research.xlsx'
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    destination = RESEARCH_INBOX_DIR / f'{stamp}_{safe_research_filename(name)}'
+    req = urllib.request.Request(url, headers={'User-Agent': 'ContenBot-research/1.0'})
+    with urllib.request.urlopen(req, timeout=600) as response, destination.open('wb') as handle:
+        shutil.copyfileobj(response, handle)
+    meta = destination.with_suffix(destination.suffix + '.meta.json')
+    meta.write_text(
+        json.dumps(
+            {
+                'chat_id': chat_id,
+                'source_url': url,
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    return destination
+
+
+def extract_xlsx_from_zip(zip_path: Path, chat_id: str) -> Path | None:
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in sorted(zf.namelist()):
+            if not name.lower().endswith('.xlsx') or Path(name).name.startswith('~'):
+                continue
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            destination = RESEARCH_INBOX_DIR / f'{stamp}_{safe_research_filename(Path(name).name)}'
+            destination.write_bytes(zf.read(name))
+            meta = destination.with_suffix(destination.suffix + '.meta.json')
+            meta.write_text(
+                json.dumps(
+                    {'chat_id': chat_id, 'from_zip': str(zip_path), 'saved_at': time.strftime('%Y-%m-%d %H:%M:%S')},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding='utf-8',
+            )
+            return destination
+    return None
+
+
+def start_research_analysis() -> None:
+    script = RESEARCH_ANALYSIS
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'research_delivery_analysis.py'
+    if not script.exists():
+        logging.warning('research_delivery_analysis.py not found')
+        return
+
+    def _run():
+        try:
+            subprocess.run(['python3', str(script)], check=False, timeout=3600)
+        except Exception as exc:
+            logging.exception('research analysis failed: %s', exc)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def save_research_file(chat_id: str, message: dict) -> Path | None:
     doc = extract_document_file(message)
     if not doc:
@@ -613,6 +728,7 @@ def register_bot_commands() -> None:
                     {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
                     {'command': 'ad_done', 'description': 'Закончить приём скринов'},
                     {'command': 'make', 'description': 'Собрать нарезку из видео'},
+                    {'command': 'research', 'description': 'Большой Excel: ссылка transfer.sh'},
                 ],
             },
             timeout=30,
@@ -705,6 +821,27 @@ def handle_message(message: dict):
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}',
         )
         return
+    if cmd in ('/research', '/исследование', '/delivery'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /research только для владельца.')
+            return
+        url = parse_research_url(text)
+        if not url:
+            send_message(chat_id, research_help_text())
+            return
+        send_message(chat_id, 'Скачиваю файл по ссылке на сервер (может занять несколько минут)…')
+        try:
+            saved = save_research_from_url(url, chat_id)
+            send_message(
+                chat_id,
+                f'Файл на сервере: {saved.name}. Запускаю анализ доставки — отчёт пришлю сюда.',
+            )
+            notify_owner(f'Research URL saved: {saved}')
+            start_research_analysis()
+        except Exception as exc:
+            logging.exception('research url download failed')
+            send_message(chat_id, f'Не удалось скачать по ссылке: {exc}\n\n{research_help_text()}')
+        return
     if text.startswith('/status'):
         if limited:
             return
@@ -746,22 +883,44 @@ def handle_message(message: dict):
             )
         return
 
-    # Owner can send research files (e.g. big .xlsx) directly to the bot.
+    # Owner: research xlsx / zip, or plain https link (transfer.sh etc.)
+    if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
+        url = parse_research_url(text)
+        if url and looks_like_research_url(url):
+            send_message(chat_id, 'Вижу ссылку — качаю на сервер…')
+            try:
+                saved = save_research_from_url(url, chat_id)
+                send_message(chat_id, f'Сохранено: {saved.name}. Запускаю анализ…')
+                start_research_analysis()
+            except Exception as exc:
+                send_message(chat_id, f'Ошибка загрузки: {exc}\n\n{research_help_text()}')
+            return
+
     doc = extract_document_file(message)
+    if doc and is_owner(chat_id) and doc.get('ext') == '.zip':
+        RESEARCH_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        zip_dest = RESEARCH_INBOX_DIR / f'{stamp}_upload.zip'
+        try:
+            download_file(get_file_url(doc['file_id']), zip_dest)
+            saved = extract_xlsx_from_zip(zip_dest, chat_id)
+            if saved:
+                send_message(chat_id, f'Из ZIP извлечён: {saved.name}. Запускаю анализ…')
+                start_research_analysis()
+            else:
+                send_message(chat_id, 'В ZIP нет .xlsx. Пришлите ссылку transfer.sh — см. /research')
+        except Exception as exc:
+            send_message(chat_id, f'ZIP не скачался (часто >20 МБ): {exc}\n\n{research_help_text()}')
+        return
+
     if doc and is_owner(chat_id) and (doc.get('ext') == '.xlsx' or 'spreadsheet' in (doc.get('mime_type') or '')):
         saved = save_research_file(chat_id, message)
         if saved and saved.exists():
-            send_message(chat_id, f'Файл сохранён на сервере: {saved.name}. Напиши цель/вопросы — сделаю анализ.')
+            send_message(chat_id, f'Файл сохранён: {saved.name}. Запускаю анализ доставки…')
             notify_owner(f'Research file saved: {saved}')
+            start_research_analysis()
         else:
-            send_message(
-                chat_id,
-                'Не удалось сохранить файл: Telegram Bot API не даёт скачать большие файлы (обычно >20MB).\n'
-                'Самый простой вариант: упакуй Excel в ZIP (правой кнопкой → “Отправить → Сжатая ZIP‑папка”) '
-                'и пришли ZIP сюда как документ.\n'
-                'Или сохрани копию, где оставлены только нужные колонки (A: order_id, B: courier_id, G+: статусы) '
-                'за нужный период — тогда файл станет меньше.',
-            )
+            send_message(chat_id, research_help_text())
         return
 
     media = extract_media(message)
