@@ -184,12 +184,26 @@ def dest_for(url: str, out_root: Path) -> Path:
     return out_root / slug_from_url(url) / f"{vid}.mp4"
 
 
-def urls_from_csv(path: Path) -> list[dict]:
+def _csv_row_is_gameplay(row: dict) -> bool:
+    raw = str(row.get("is_gameplay", row.get("gameplay_score", ""))).strip().lower()
+    if raw in {"true", "1", "yes"}:
+        return True
+    if raw in {"false", "0", "no"}:
+        return False
+    try:
+        return float(raw) >= 0.85
+    except ValueError:
+        return False
+
+
+def urls_from_csv(path: Path, *, gameplay_only: bool = False) -> list[dict]:
     if not path.exists():
         return []
     items: list[dict] = []
     with path.open(encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
+            if gameplay_only and not _csv_row_is_gameplay(row):
+                continue
             url = (row.get("webpage_url") or "").strip()
             if "tiktok.com" in url and "/video/" in url:
                 items.append(
@@ -358,15 +372,18 @@ def discover_items(
         queue_items.append(item)
         append_queue_line(item)
 
-    for item in urls_from_csv(RANKED_CSV):
+    gameplay_only = os.environ.get("MASS_GAMEPLAY_ONLY", "1") == "1"
+
+    for item in urls_from_csv(GAMEPLAY_CSV, gameplay_only=gameplay_only):
         add(item)
         if len(queue_items) >= target:
             return queue_items[:target]
 
-    for item in urls_from_csv(GAMEPLAY_CSV):
-        add(item)
-        if len(queue_items) >= target:
-            return queue_items[:target]
+    if not gameplay_only:
+        for item in urls_from_csv(RANKED_CSV):
+            add(item)
+            if len(queue_items) >= target:
+                return queue_items[:target]
 
     if csv_only:
         state["seen_urls"] = list(set(state.get("seen_urls", [])) | seen_urls)[-80000:]
@@ -496,13 +513,20 @@ def process_item(
         return
 
     if not ok:
-        other = out_root / "non_gameplay" / dest.parent.name / dest.name
-        other.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
-            dest.replace(other)
+            dest.unlink(missing_ok=True)
         with _stats_lock:
-            _stats["saved_other"] += 1
-        saved_path = other
+            _stats["rejected"] += 1
+        if os.environ.get("MASS_KEEP_NON_GAMEPLAY", "0") == "1":
+            other = out_root / "non_gameplay" / dest.parent.name / dest.name
+            other.parent.mkdir(parents=True, exist_ok=True)
+            # Re-download not kept; only for legacy mode when file still exists
+        with state_lock:
+            if vid:
+                state.setdefault("rejected_ids", []).append(vid)
+        log(f"reject non-gameplay {vid} ({reason})")
+        human_pause(env)
+        return
     else:
         with _stats_lock:
             _stats["saved_gameplay"] += 1
