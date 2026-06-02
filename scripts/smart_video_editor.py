@@ -531,7 +531,9 @@ def build_candidates(
                 # Allow env overrides only to be stricter (never looser), to avoid
                 # letting non-gameplay/promo segments slip into montages.
                 default_min_hud = 14.0
-                default_max_text = 0.075
+                # TikTok gameplay often has subtitles/overlays; too-low max_text
+                # makes montage fail even when HUD is present and gameplay is real.
+                default_max_text = 0.14
                 default_max_cartoon = 0.55
                 env_min_hud = float(os.environ.get('SMART_MIN_HUD', str(default_min_hud)))
                 env_max_text = float(os.environ.get('SMART_MAX_OVERLAY_TEXT', str(default_max_text)))
