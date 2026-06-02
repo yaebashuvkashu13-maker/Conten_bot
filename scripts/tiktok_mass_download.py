@@ -145,7 +145,7 @@ def load_env(path: Path) -> dict[str, str]:
 
 def load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"downloaded_ids": [], "rejected_ids": [], "seen_urls": []}
+        return {"downloaded_ids": [], "rejected_ids": [], "seen_urls": [], "failed_ids": {}}
     return json.loads(STATE_PATH.read_text())
 
 
@@ -154,6 +154,12 @@ def save_state(state: dict) -> None:
     state["downloaded_ids"] = list(state.get("downloaded_ids", []))[-30000:]
     state["rejected_ids"] = list(state.get("rejected_ids", []))[-30000:]
     state["seen_urls"] = list(state.get("seen_urls", []))[-80000:]
+    # keep only a bounded number of failure counters
+    failed_ids = state.get("failed_ids") or {}
+    if isinstance(failed_ids, dict) and len(failed_ids) > 60000:
+        # drop low counts first
+        items = sorted(failed_ids.items(), key=lambda kv: kv[1], reverse=True)[:40000]
+        state["failed_ids"] = {k: int(v) for k, v in items}
     state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2))
 
@@ -330,6 +336,7 @@ def discover_items(
 ) -> list[dict]:
     downloaded = set(state.get("downloaded_ids", []))
     rejected = set(state.get("rejected_ids", []))
+    failed_ids = state.get("failed_ids") or {}
     queue_items: list[dict] = []
 
     def add(item: dict) -> None:
@@ -340,6 +347,8 @@ def discover_items(
             if any(p.stat().st_size > 80_000 for p in existing):
                 return
         if vid and vid in rejected:
+            return
+        if vid and int(failed_ids.get(str(vid), 0) or 0) >= 2:
             return
         if url in seen_urls and vid in downloaded:
             return
@@ -413,7 +422,13 @@ def download_file(url: str, dest: Path, proxy: str, env: dict[str, str]) -> bool
         return False
     if partial.exists():
         partial.replace(dest)
-    return dest.exists() and dest.stat().st_size > 80_000
+    if not dest.exists():
+        _bump_fail_reason("no_file")
+        return False
+    if dest.stat().st_size <= 80_000:
+        _bump_fail_reason("too_small")
+        return False
+    return True
 
 
 def process_item(
@@ -445,6 +460,13 @@ def process_item(
     if not download_file(url, dest, proxy, env):
         with _stats_lock:
             _stats["failed"] += 1
+        with state_lock:
+            if vid:
+                failed_ids = state.setdefault("failed_ids", {})
+                failed_ids[str(vid)] = int(failed_ids.get(str(vid), 0) or 0) + 1
+                # after repeated failures, stop re-trying this id to improve throughput
+                if int(failed_ids[str(vid)]) >= 3:
+                    state.setdefault("rejected_ids", []).append(str(vid))
         human_pause(env)
         return
 
