@@ -265,8 +265,34 @@ def _regex_fallback_boxes(
     return [(x, y + y_offset, min(bw, rw - x), min(bh, rh - y))]
 
 
+def _find_red_markup_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Training hint: owner draws a red box around the watermark — use it as exact mask."""
+    h, w = image_bgr.shape[:2]
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 120, 120), (12, 255, 255)) | cv2.inRange(hsv, (165, 120, 120), (180, 255, 255))
+    b, g, r = cv2.split(image_bgr)
+    mask |= ((r.astype(np.int16) > 150) & (g < 110) & (b < 110)).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    mask = cv2.dilate(mask, kernel, iterations=2)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    boxes: list[tuple[int, int, int, int]] = []
+    min_area = max(400, int(w * h * 0.0015))
+    for cnt in contours:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        if bw * bh < min_area:
+            continue
+        pad = max(2, int(min(bw, bh) * 0.05))
+        boxes.append((max(0, x - pad), max(0, y - pad), bw + 2 * pad, bh + 2 * pad))
+    return _filter_boxes(_merge_boxes(boxes), w, h)
+
+
 def find_watermark_boxes(image_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     h, w = image_bgr.shape[:2]
+    red_boxes = _find_red_markup_boxes(image_bgr)
+    if red_boxes:
+        logging.debug("watermark boxes from red markup: %s", red_boxes)
+        return red_boxes
+
     frac = _bottom_frac()
     crop_y = int(h * (1.0 - frac))
     roi = image_bgr[crop_y:, :]
