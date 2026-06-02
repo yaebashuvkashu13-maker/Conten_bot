@@ -432,7 +432,8 @@ def producer_loop(
         if on_disk >= target and work_q.empty():
             log(f"producer: on_disk={on_disk} >= target={target}, stopping discovery")
             break
-        batch_target = min(max(target - on_disk, 20), 80)
+        cap = int(os.environ.get("MASS_QUEUE_BATCH", "120"))
+        batch_target = min(max(target - on_disk, 30), cap)
         items = discover_items(proxy, state, batch_target, seen, csv_only=csv_only)
         save_state(state)
         if not items:

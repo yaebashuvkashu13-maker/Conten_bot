@@ -11,7 +11,9 @@ for f in \
   tiktok_download_batch.py \
   run_parallel_stack.sh \
   tiktok_night_loop.sh \
+  tiktok_fast_loop.sh \
   overnight_orchestrator.sh \
+  mlbb_popularity.py \
   mlbb_feature_batch.py \
   mlbb_hero_dataset_builder.py \
   pubg_tiktok_gentle.py \
