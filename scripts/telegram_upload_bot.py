@@ -38,6 +38,8 @@ AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 BOT_VERSION = '2026-06-02-research-url'
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
+INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
+INSTAGRAM_DIGEST_RUN = Path('/usr/local/bin/instagram_digest_run.sh')
 PROFILE_LABELS = {
     'pubg': 'PUBG Mobile',
     'mobile_legends': 'Mobile Legends',
@@ -600,6 +602,51 @@ def start_research_analysis() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def start_instagram_digest(notify_chat_id: str | None = None) -> None:
+    script = INSTAGRAM_DIGEST_RUN
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'instagram_digest_run.sh'
+    if not INSTAGRAM_COOKIES_PATH.exists():
+        if notify_chat_id:
+            send_message(
+                notify_chat_id,
+                'Instagram cookies нет. Пришлите файл cookies.txt (Netscape) как документ — '
+                'или положите на сервер /root/instagram_cookies.txt',
+            )
+        return
+
+    def _run():
+        try:
+            subprocess.run(['bash', str(script)], check=False, timeout=1800)
+            if notify_chat_id:
+                log_tail = ''
+                log_path = Path('/root/data/mlbb/instagram_digest.log')
+                if log_path.exists():
+                    log_tail = '\n'.join(log_path.read_text(encoding='utf-8', errors='replace').splitlines()[-4:])
+                send_message(
+                    notify_chat_id,
+                    'Instagram-дайджест завершён. Смотрите посты выше.\n'
+                    + (f'Лог:\n{log_tail}' if log_tail else ''),
+                )
+        except Exception as exc:
+            logging.exception('instagram digest failed: %s', exc)
+            if notify_chat_id:
+                send_message(notify_chat_id, f'Ошибка дайджеста Instagram: {exc}')
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def save_instagram_cookies(message: dict) -> Path:
+    doc = extract_document_file(message)
+    if not doc:
+        raise ValueError('нет файла')
+    download_file(get_file_url(doc['file_id']), INSTAGRAM_COOKIES_PATH)
+    text = INSTAGRAM_COOKIES_PATH.read_text(encoding='utf-8', errors='replace')
+    if 'instagram.com' not in text.lower():
+        raise ValueError('файл не похож на cookies Instagram')
+    return INSTAGRAM_COOKIES_PATH
+
+
 def save_research_file(chat_id: str, message: dict) -> Path | None:
     doc = extract_document_file(message)
     if not doc:
@@ -789,6 +836,8 @@ def register_bot_commands() -> None:
                     {'command': 'bad_done', 'description': 'Закончить приём плохих кадров'},
                     {'command': 'make', 'description': 'Собрать нарезку из видео'},
                     {'command': 'research', 'description': 'Большой Excel: ссылка transfer.sh'},
+                    {'command': 'ig_digest', 'description': 'Дайджест Instagram блогеров (владелец)'},
+                    {'command': 'ig_cookies', 'description': 'Как загрузить cookies Instagram'},
                 ],
             },
             timeout=30,
@@ -908,6 +957,30 @@ def handle_message(message: dict):
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}',
         )
         return
+    if cmd in ('/ig_cookies', '/ig_cookie', '/instagram_cookies'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        send_message(
+            chat_id,
+            'Чтобы дайджест 12 MLBB-блогеров работал:\n'
+            '1) В браузере зайдите в instagram.com\n'
+            '2) Экспорт cookies (расширение Get cookies.txt LOCALLY / аналог) — формат Netscape\n'
+            '3) Пришлите файл сюда как **документ** (cookies.txt)\n'
+            '4) Напишите /ig_digest — запущу рассылку сразу\n\n'
+            f'Сейчас на сервере: {"есть" if INSTAGRAM_COOKIES_PATH.exists() else "нет"} cookies.',
+        )
+        return
+    if cmd in ('/ig_digest', '/instagram', '/digest'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        if not INSTAGRAM_COOKIES_PATH.exists():
+            send_message(chat_id, 'Сначала пришлите cookies.txt (см. /ig_cookies).')
+            return
+        send_message(chat_id, 'Запускаю Instagram-дайджест (~7 постов, 2–5 мин)…')
+        start_instagram_digest(chat_id)
+        return
     if cmd in ('/research', '/исследование', '/delivery'):
         if not is_owner(chat_id):
             send_message(chat_id, 'Команда /research только для владельца.')
@@ -995,6 +1068,18 @@ def handle_message(message: dict):
             return
 
     doc = extract_document_file(message)
+    if doc and is_owner(chat_id) and (
+        doc.get('ext') == '.txt' and 'cookie' in (doc.get('file_name') or '').lower()
+        or doc.get('file_name', '').lower() in ('cookies.txt', 'instagram_cookies.txt')
+    ):
+        try:
+            save_instagram_cookies(message)
+            send_message(chat_id, 'Cookies сохранены. Запускаю дайджест…')
+            start_instagram_digest(chat_id)
+        except Exception as exc:
+            send_message(chat_id, f'Не удалось сохранить cookies: {exc}')
+        return
+
     if doc and is_owner(chat_id) and doc.get('ext') == '.zip':
         RESEARCH_INBOX_DIR.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime('%Y%m%d_%H%M%S')
