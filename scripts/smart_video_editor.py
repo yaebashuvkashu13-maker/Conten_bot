@@ -111,9 +111,24 @@ def acquire_lock(lock_path: Path):
     return handle
 
 
-def run_command(args: list[str], *, capture_output: bool = False, check: bool = True, text: bool = True, input_data=None):
+def run_command(
+    args: list[str],
+    *,
+    capture_output: bool = False,
+    check: bool = True,
+    text: bool = True,
+    input_data=None,
+    env: dict[str, str] | None = None,
+):
     logging.debug('running command: %s', ' '.join(shlex.quote(arg) for arg in args))
-    return subprocess.run(args, capture_output=capture_output, check=check, text=text, input=input_data)
+    return subprocess.run(
+        args,
+        capture_output=capture_output,
+        check=check,
+        text=text,
+        input=input_data,
+        env=env,
+    )
 
 
 def ffprobe_json(path: Path) -> dict:
@@ -1021,10 +1036,26 @@ def register_segment_history(selected: list[dict], path: Path = SEGMENT_HISTORY_
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def telegram_curl_env() -> dict[str, str]:
+    """Telegram API must not go through dead HTTP proxies from .video_bot.env."""
+    env = os.environ.copy()
+    for key in (
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'http_proxy',
+        'https_proxy',
+        'ALL_PROXY',
+        'all_proxy',
+    ):
+        env.pop(key, None)
+    return env
+
+
 def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
     """Upload via curl - manual multipart often triggers Telegram HTTP 400."""
     short_cap = caption[:900]
     url = f'https://api.telegram.org/bot{bot_token}/sendVideo'
+    curl_env = telegram_curl_env()
     last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
@@ -1046,6 +1077,7 @@ def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption:
                 ],
                 capture_output=True,
                 check=True,
+                env=curl_env,
             )
             payload = json.loads(result.stdout)
             if not payload.get('ok'):
@@ -1073,6 +1105,7 @@ def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption:
             ],
             capture_output=True,
             check=True,
+            env=curl_env,
         )
         payload = json.loads(result.stdout)
         if not payload.get('ok'):
