@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from gameplay_gate import profile_looks_like_mlbb_edit, source_has_valid_gameplay_window
 from source_freshness import is_used
 
 HERO_ROOT = Path("/root/hero_datasets")
@@ -23,20 +24,38 @@ def pick_hero() -> str | None:
     forced = (os.environ.get("ETALON_HERO") or os.environ.get("SINGLE_HERO_ID") or "").strip().lower()
     if forced:
         folder = HERO_ROOT / forced
-        if folder.is_dir() and any(folder.glob("*.mp4")):
+        if folder.is_dir() and any(source_is_real_gameplay(p) for p in folder.glob("*.mp4")):
             return forced
+    prefer = [
+        h.strip().lower()
+        for h in os.environ.get(
+            "ETALON_HERO_PREFERENCE",
+            "hayabusa,miya,chou,franco,fanny,moskov,benedetta,gusion",
+        ).split(",")
+        if h.strip()
+    ]
     best_id: str | None = None
     best_count = 0
     if not HERO_ROOT.exists():
         return None
-    for hero_dir in HERO_ROOT.iterdir():
-        if not hero_dir.is_dir():
-            continue
-        unused = sum(1 for path in hero_dir.glob("*.mp4") if not is_used(path))
-        if unused > best_count:
-            best_count = unused
+    hero_dirs = sorted(HERO_ROOT.iterdir(), key=lambda p: p.name)
+    ordered = [HERO_ROOT / h for h in prefer if (HERO_ROOT / h).is_dir()]
+    ordered += [d for d in hero_dirs if d.is_dir() and d not in ordered]
+    for hero_dir in ordered:
+        playable = sum(
+            1 for p in hero_dir.glob("*.mp4") if not is_used(p) and source_is_real_gameplay(p)
+        )
+        if playable > best_count:
+            best_count = playable
             best_id = hero_dir.name
     return best_id
+
+
+def source_is_real_gameplay(path: Path) -> bool:
+    if profile_looks_like_mlbb_edit(path):
+        return False
+    ok, _reason = source_has_valid_gameplay_window(path, windows=3, window_sec=9.0)
+    return ok
 
 
 def gather_hero_sources(hero_id: str, limit: int) -> list[Path]:
@@ -46,7 +65,8 @@ def gather_hero_sources(hero_id: str, limit: int) -> list[Path]:
     files = sorted(folder.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     fresh = [path for path in files if not is_used(path)]
     pool = fresh if len(fresh) >= MIN_SOURCES else files
-    return pool[:limit]
+    gameplay = [path for path in pool if source_is_real_gameplay(path)]
+    return gameplay[:limit]
 
 
 def build_queue(paths: list[Path], chat_id: str, hero_id: str) -> Path:
@@ -109,6 +129,7 @@ def main() -> int:
             "SMART_MAX_CENTER_TEXT": "0.12",
             "SMART_MAX_OVERLAY_TEXT": "0.55",
             "SMART_MAX_REJECT_SIM": "0.995",
+            "SMART_REJECT_PROMO": "1",
             "SMART_MIN_BIN_MOTION": "0.013",
             "SELECTION_VARIANT": str(int(time.time()) % 5),
         }

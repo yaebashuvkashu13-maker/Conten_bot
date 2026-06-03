@@ -587,6 +587,7 @@ def build_candidates(
                 # Normal montages: env can only tighten gates. Etalon builds may loosen
                 # subtitle/reject thresholds while keeping combat + chat checks.
                 etalon = os.environ.get('ETALON_MONTAGE', '0') == '1'
+                reject_promo = os.environ.get('SMART_REJECT_PROMO', '1') == '1'
                 default_min_hud = 16.5 if etalon else 17.0
                 default_max_text = 0.52 if etalon else 0.28
                 default_max_cartoon = 0.50 if etalon else 0.45

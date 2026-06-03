@@ -635,6 +635,10 @@ def segment_is_valid_for_montage(
         return True, "skip_profile"
     if crop_box is None:
         crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    if os.environ.get("SMART_REJECT_PROMO", "1") == "1" and segment_looks_like_promo_or_cinematic(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    ):
+        return False, "promo_layout"
     hud, text, cartoon = score_segment_window(
         video_path, start_sec, duration_sec, crop_box=crop_box
     )
@@ -761,6 +765,74 @@ def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
     return score
 
 
+def _frame_looks_like_promo_template(frame: np.ndarray) -> bool:
+    """Single frame: TikTok skin promo / stacked template, not live match HUD."""
+    top_text = _band_overlay_text_score(frame, 0.0, 0.22)
+    bottom_text = _band_overlay_text_score(frame, 0.76, 1.0)
+    small = cv2.resize(frame, (320, 180))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    top = gray[0 : int(h * 0.18), :]
+    bottom = gray[int(h * 0.82) : h, :]
+    center = gray[int(h * 0.30) : int(h * 0.70), int(w * 0.15) : int(w * 0.85)]
+    top_bottom_edges: list[float] = []
+    for band in (top, bottom):
+        edges = cv2.Canny(band, 60, 150)
+        top_bottom_edges.append(float(np.count_nonzero(edges)) / max(edges.size, 1))
+    edges = cv2.Canny(center, 60, 150)
+    center_edge = float(np.count_nonzero(edges)) / max(edges.size, 1)
+    tb = float(np.mean(top_bottom_edges)) if top_bottom_edges else 0.0
+    mini, skill, _top = _frame_hud_metrics(frame)
+    hud_weak = mini < 8.0 or skill < 7.0
+    if top_text >= 0.10 and bottom_text >= 0.14:
+        return True
+    if bottom_text >= 0.20 and center_edge < bottom_text * 0.55:
+        return True
+    if tb > 0.055 and center_edge < tb * 0.72:
+        return True
+    if hud_weak and top_text >= 0.09 and bottom_text >= 0.11:
+        return True
+    return False
+
+
+def segment_looks_like_promo_or_cinematic(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 4,
+) -> bool:
+    """True when the segment window is a promo/cinematic edit, not real gameplay."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return True
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    promo_hits = 0
+    hud_weak = 0
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if _frame_looks_like_promo_template(frame):
+            promo_hits += 1
+        check = frame
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            check = frame[y : y + h, x : x + w]
+        mini, skill, _top = _frame_hud_metrics(check)
+        if mini + skill < 13.5:
+            hud_weak += 1
+    cap.release()
+    total = max(len(times), 1)
+    if promo_hits >= max(2, sample_frames - 1):
+        return True
+    if hud_weak >= max(2, sample_frames - 1) and promo_hits >= 1:
+        return True
+    return False
+
+
 def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bool:
     """Detect skin promo / stacked TikTok templates (header+footer, not match HUD)."""
     cap = cv2.VideoCapture(str(video_path))
@@ -771,41 +843,16 @@ def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bo
         cap.release()
         return False
     indices = np.linspace(0, max(frame_count - 1, 0), num=min(sample_frames, frame_count), dtype=int)
-    top_bottom_edges: list[float] = []
-    center_edges: list[float] = []
-    top_text: list[float] = []
-    bottom_text: list[float] = []
+    promo_hits = 0
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
         if not ok:
             continue
-        top_text.append(_band_overlay_text_score(frame, 0.0, 0.22))
-        bottom_text.append(_band_overlay_text_score(frame, 0.76, 1.0))
-        small = cv2.resize(frame, (320, 180))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape
-        top = gray[0 : int(h * 0.18), :]
-        bottom = gray[int(h * 0.82) : h, :]
-        center = gray[int(h * 0.30) : int(h * 0.70), int(w * 0.15) : int(w * 0.85)]
-        for band in (top, bottom):
-            edges = cv2.Canny(band, 60, 150)
-            top_bottom_edges.append(float(np.count_nonzero(edges)) / max(edges.size, 1))
-        edges = cv2.Canny(center, 60, 150)
-        center_edges.append(float(np.count_nonzero(edges)) / max(edges.size, 1))
+        if _frame_looks_like_promo_template(frame):
+            promo_hits += 1
     cap.release()
-    if not top_bottom_edges or not center_edges:
-        return False
-    tb = float(np.mean(top_bottom_edges))
-    ce = float(np.mean(center_edges))
-    tt = float(np.mean(top_text)) if top_text else 0.0
-    bt = float(np.mean(bottom_text)) if bottom_text else 0.0
-    # Template like "MIYA ... GAMEPLAY" with @handle header.
-    if tt >= 0.10 and bt >= 0.14:
-        return True
-    if bt >= 0.20 and ce < bt * 1.1:
-        return True
-    return tb > 0.055 and ce < tb * 0.72
+    return promo_hits >= max(2, min(sample_frames, 3))
 
 
 def is_gameplay_video(
