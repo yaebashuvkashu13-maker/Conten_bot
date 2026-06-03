@@ -110,6 +110,9 @@ def main() -> int:
                 "SMART_MAX_OVERLAY_TEXT": "0.62" if owner_trusted else "0.32",
                 "SMART_MAX_REJECT_SIM": "0.995" if owner_trusted else "0.80",
                 "SELECTION_VARIANT": str(idx % 7),
+                "SMART_CROP_MIN_SIDE_TRIM": "0.04",
+                "SMART_CROP_MIN_W_RATIO": "0.58",
+                "SMART_CROP_MIN_H_SPAN": "0.50",
             }
         )
         print(f"[batch] montage {idx + 1}/{count} sources={len(batch)} variant={env['SELECTION_VARIANT']}", flush=True)

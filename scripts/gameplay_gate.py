@@ -245,16 +245,19 @@ def detect_horizontal_content_crop(
     left = int(indices[0])
     right = int(indices[-1])
     span = right - left + 1
-    if span < int(small_w * 0.55):
+    min_span = float(os.environ.get("SMART_CROP_MIN_H_SPAN", "0.50"))
+    if span < int(small_w * min_span):
         return None
     left_px = int(left * width / small_w)
     right_px = int((right + 1) * width / small_w)
     crop_w = right_px - left_px
-    if crop_w < int(width * 0.62):
+    min_w_ratio = float(os.environ.get("SMART_CROP_MIN_W_RATIO", "0.58"))
+    if crop_w < int(width * min_w_ratio):
         return None
     trim_left = left_px / width
     trim_right = (width - right_px) / width
-    if trim_left < 0.07 and trim_right < 0.07:
+    min_side_trim = float(os.environ.get("SMART_CROP_MIN_SIDE_TRIM", "0.04"))
+    if trim_left < min_side_trim and trim_right < min_side_trim:
         return None
     return left_px, y0, crop_w, crop_h
 
