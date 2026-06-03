@@ -690,6 +690,19 @@ def segment_is_valid_for_montage(
     if skill_delta < 0.006 and center_motion < min_center_motion * 1.2 and mini_delta < min_minimap_delta * 1.5:
         return False, f"no_fight_activity=skill{skill_delta:.3f}"
 
+    if os.environ.get("SMART_REJECT_HERO_SHOWCASE", "1") == "1" and segment_looks_like_hero_showcase(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    ):
+        return False, "hero_showcase"
+
+    require_uniform = os.environ.get("SMART_REQUIRE_UNIFORM_GAMEPLAY", "1") == "1"
+    if require_uniform:
+        ok_uniform, uniform_reason = segment_uniform_gameplay_ok(
+            video_path, start_sec, duration_sec, crop_box=crop_box, profile=profile
+        )
+        if not ok_uniform:
+            return False, uniform_reason
+
     return True, "ok"
 
 
@@ -800,6 +813,116 @@ def _frame_looks_like_promo_template(frame: np.ndarray) -> bool:
     return False
 
 
+def _frame_looks_like_hero_showcase(frame: np.ndarray) -> bool:
+    """Skin reveal / spawn cinematic: big character art, weak or dead match HUD."""
+    if _frame_looks_like_promo_template(frame):
+        return False
+    mini, skill, _top = _frame_hud_metrics(frame)
+    if mini >= 9.2 and skill >= 8.2:
+        return False
+    small = cv2.resize(frame, (320, 180))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    center = gray[int(h * 0.14) : int(h * 0.86), int(w * 0.06) : int(w * 0.94)]
+    mini_band = gray[int(h * 0.70) : h, 0 : int(w * 0.30)]
+    if center.size == 0:
+        return False
+    center_edge = float(np.count_nonzero(cv2.Canny(center, 55, 145))) / max(center.size, 1)
+    mini_edge = (
+        float(np.count_nonzero(cv2.Canny(mini_band, 55, 145))) / max(mini_band.size, 1)
+        if mini_band.size
+        else 0.0
+    )
+    hud_sum = mini + skill
+    if hud_sum < 13.0 and center_edge >= 0.040 and mini_edge < 0.030 and mini < 8.0:
+        return True
+    if hud_sum < 11.0 and center_edge >= 0.048:
+        return True
+    return False
+
+
+def segment_looks_like_hero_showcase(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 4,
+) -> bool:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return True
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    showcase_hits = 0
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        check = frame
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            check = frame[y : y + h, x : x + w]
+        if _frame_looks_like_hero_showcase(check):
+            showcase_hits += 1
+    cap.release()
+    need = max(2, (sample_frames + 1) // 2)
+    return showcase_hits >= need
+
+
+def segment_uniform_gameplay_ok(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    profile: str = "mobile_legends",
+) -> tuple[bool, str]:
+    """
+    Reject montage windows that are only half gameplay (common TikTok: fight then hero splash).
+    Each temporal slice must keep HUD + combat; no promo/showcase block.
+    """
+    if profile != "mobile_legends" or duration_sec < 6.0:
+        return True, "ok"
+    parts = 3 if duration_sec >= 9.0 else 2
+    part_dur = max(duration_sec / parts, 2.0)
+    min_hud_rate = float(os.environ.get("SMART_UNIFORM_MIN_HUD_RATE", "0.70"))
+    min_center_motion = float(os.environ.get("SMART_MIN_CENTER_MOTION", "0.016"))
+    min_minimap_delta = float(os.environ.get("SMART_MIN_MINIMAP_DELTA", "0.009"))
+    for idx in range(parts):
+        sub_start = start_sec + idx * part_dur
+        if sub_start + part_dur > start_sec + duration_sec + 0.05:
+            break
+        sub_dur = min(part_dur, start_sec + duration_sec - sub_start)
+        if segment_looks_like_promo_or_cinematic(
+            video_path, sub_start, sub_dur, crop_box=crop_box, sample_frames=5
+        ):
+            return False, f"promo_in_part_{idx}"
+        if segment_looks_like_hero_showcase(
+            video_path, sub_start, sub_dur, crop_box=crop_box, sample_frames=5
+        ):
+            return False, f"hero_showcase_part_{idx}"
+        hud_rate = segment_hud_frame_pass_rate(
+            video_path,
+            sub_start,
+            sub_dur,
+            crop_box=crop_box,
+            sample_frames=4,
+            min_minimap=8.0,
+            min_skill=7.0,
+        )
+        if hud_rate < min_hud_rate:
+            return False, f"weak_hud_part_{idx}={hud_rate:.2f}"
+        center_motion, mini_delta, skill_delta, _center_text = score_segment_combat(
+            video_path, sub_start, sub_dur, crop_box=crop_box, sample_frames=5
+        )
+        if center_motion < min_center_motion * 0.88 and mini_delta < min_minimap_delta * 0.82:
+            return False, f"static_part_{idx}"
+        if skill_delta < 0.005 and mini_delta < min_minimap_delta and center_motion < min_center_motion:
+            return False, f"no_fight_part_{idx}"
+    return True, "ok"
+
+
 def segment_looks_like_promo_or_cinematic(
     video_path: Path,
     start_sec: float,
@@ -815,25 +938,33 @@ def segment_looks_like_promo_or_cinematic(
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     promo_hits = 0
+    showcase_hits = 0
     hud_weak = 0
     for t in times:
         frame = _read_frame_at(cap, float(t))
         if frame is None:
             continue
-        if _frame_looks_like_promo_template(frame):
-            promo_hits += 1
         check = frame
         if crop_box is not None:
             x, y, w, h = crop_box
             check = frame[y : y + h, x : x + w]
+        if _frame_looks_like_promo_template(check):
+            promo_hits += 1
+        if _frame_looks_like_hero_showcase(check):
+            showcase_hits += 1
         mini, skill, _top = _frame_hud_metrics(check)
         if mini + skill < 13.5:
             hud_weak += 1
     cap.release()
-    total = max(len(times), 1)
+    bad_hits = promo_hits + showcase_hits
+    need_bad = max(2, (sample_frames + 1) // 2)
+    if bad_hits >= need_bad:
+        return True
     if promo_hits >= max(2, sample_frames - 1):
         return True
-    if hud_weak >= max(2, sample_frames - 1) and promo_hits >= 1:
+    if showcase_hits >= max(2, sample_frames - 1):
+        return True
+    if hud_weak >= max(2, sample_frames - 1) and bad_hits >= 1:
         return True
     return False
 
@@ -849,6 +980,7 @@ def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bo
         return False
     indices = np.linspace(0, max(frame_count - 1, 0), num=min(sample_frames, frame_count), dtype=int)
     promo_hits = 0
+    showcase_hits = 0
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
@@ -856,8 +988,11 @@ def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bo
             continue
         if _frame_looks_like_promo_template(frame):
             promo_hits += 1
+        if _frame_looks_like_hero_showcase(frame):
+            showcase_hits += 1
     cap.release()
-    return promo_hits >= max(2, min(sample_frames, 3))
+    bad = promo_hits + showcase_hits
+    return bad >= max(2, min(sample_frames, 3))
 
 
 def is_gameplay_video(
