@@ -364,7 +364,7 @@ def score_training_intro(
     start_sec: float,
     *,
     crop_box: tuple[int, int, int, int] | None = None,
-    probe_sec: float = 3.5,
+    probe_sec: float = 2.5,
 ) -> float:
     """Higher = MLBB tutorial / training intro (top banners, guide popups, weak HUD)."""
     cap = cv2.VideoCapture(str(video_path))
@@ -373,6 +373,7 @@ def score_training_intro(
     times = np.linspace(start_sec, start_sec + max(probe_sec, 0.8), num=4)
     top_scores: list[float] = []
     center_scores: list[float] = []
+    hud_strength: list[float] = []
     weak_hud = 0
     total = 0
     for t in times:
@@ -386,6 +387,7 @@ def score_training_intro(
         top_scores.append(_band_overlay_text_score(frame, 0.0, 0.28))
         center_scores.append(_band_overlay_text_score(frame, 0.30, 0.74))
         mini, skill, _top = _frame_hud_metrics(frame)
+        hud_strength.append(mini + skill)
         if mini < 7.8 or skill < 6.6:
             weak_hud += 1
     cap.release()
@@ -393,8 +395,16 @@ def score_training_intro(
         return 0.0
     top_mean = float(np.mean(top_scores))
     center_mean = float(np.mean(center_scores))
+    hud_mean = float(np.mean(hud_strength))
+    # Real matches keep a strong minimap + skill bar even with TikTok headers.
+    if hud_mean >= 15.0:
+        return 0.0
+    if top_mean < 0.10:
+        return 0.0
     hud_ratio = weak_hud / max(total, 1)
-    return top_mean * 0.52 + center_mean * 0.28 + hud_ratio * 0.20
+    if hud_ratio < 0.5:
+        return 0.0
+    return top_mean * 0.50 + center_mean * 0.22 + hud_ratio * 0.28
 
 
 def segment_opens_with_training(
