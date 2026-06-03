@@ -189,6 +189,12 @@ API_BASE = f'https://api.telegram.org/bot{BOT_TOKEN}'
 FILE_BASE = f'https://api.telegram.org/file/bot{BOT_TOKEN}'
 PROCESSING_CHATS: set[str] = set()
 PROCESSING_LOCK = threading.Lock()
+_TELEGRAM_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def telegram_urlopen(request: urllib.request.Request, timeout: int = 60):
+    """Telegram API must not use HTTP_PROXY from .video_bot.env (dead CyberYozh IP)."""
+    return _TELEGRAM_OPENER.open(request, timeout=timeout)
 
 
 def api_call(method: str, payload: dict | None = None, timeout: int = 60):
@@ -198,7 +204,7 @@ def api_call(method: str, payload: dict | None = None, timeout: int = 60):
         data=data,
         headers={'Content-Type': 'application/json'},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with telegram_urlopen(request, timeout=timeout) as response:
         result = json.loads(response.read().decode('utf-8'))
     if not result.get('ok'):
         raise RuntimeError(f'Telegram API error for {method}: {result}')
@@ -550,7 +556,12 @@ def get_file_url(file_id: str) -> str:
 
 
 def download_file(file_url: str, destination: Path):
-    with urllib.request.urlopen(file_url, timeout=120) as response, destination.open('wb') as handle:
+    request = urllib.request.Request(file_url)
+    if 'api.telegram.org' in file_url:
+        response = telegram_urlopen(request, timeout=120)
+    else:
+        response = urllib.request.urlopen(request, timeout=120)
+    with response, destination.open('wb') as handle:
         shutil.copyfileobj(response, handle)
 
 
