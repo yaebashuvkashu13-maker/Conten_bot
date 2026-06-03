@@ -13,7 +13,17 @@ from pathlib import Path
 HERO_ROOT = Path("/root/hero_datasets")
 ENV_PATH = Path("/root/.video_bot.env")
 BATCH_SIZE = int(os.environ.get("CALIBRATION_BATCH_SIZE", "15"))
+BATCH_NUM = int(os.environ.get("CALIBRATION_BATCH_NUM", "2"))
 STATE_PATH = Path("/root/data/mlbb/calibration_batch_sent.json")
+# Heroes that passed owner review in batch 1 — prefer similar sources.
+PREFERRED_HEROES = {
+    h.strip().lower()
+    for h in os.environ.get(
+        "CALIBRATION_PREFERRED_HEROES",
+        "moskov,franco,miya,chou,valentina",
+    ).split(",")
+    if h.strip()
+}
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -93,6 +103,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from gameplay_gate import (  # noqa: WPS433
         path_blocked_by_calibration,
+        path_whitelisted_by_calibration,
         _band_overlay_text_score,
         _read_frame_at,
         heuristic_gameplay_score,
@@ -121,14 +132,16 @@ def main() -> int:
     candidates: list[tuple[float, Path, str]] = []
     heroes_seen: set[str] = set()
 
+    preferred_dirs = [HERO_ROOT / h for h in PREFERRED_HEROES if (HERO_ROOT / h).is_dir()]
+    other_dirs = [d for d in sorted(HERO_ROOT.iterdir()) if d.is_dir() and d not in preferred_dirs]
+    hero_dirs = preferred_dirs + other_dirs
+
     checked = 0
-    for hero_dir in sorted(HERO_ROOT.iterdir()):
-        if not hero_dir.is_dir():
-            continue
+    for hero_dir in hero_dirs:
         hero = hero_dir.name
         per_hero = 0
         for path in sorted(hero_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
-            if per_hero >= 8:
+            if per_hero >= (25 if hero in PREFERRED_HEROES else 12):
                 break
             per_hero += 1
             checked += 1
@@ -142,7 +155,7 @@ def main() -> int:
             if profile_looks_like_mlbb_edit(path, sample_frames=5):
                 continue
             score = heuristic_gameplay_score(path, sample_frames=4)
-            if score < 0.55:
+            if score < 0.58 and not path_whitelisted_by_calibration(path):
                 continue
             mid = max(1.0, dur * 0.28)
             win = min(11.0, max(8.0, dur - mid - 0.5))
@@ -151,9 +164,8 @@ def main() -> int:
             if segment_looks_like_hero_showcase(path, mid, win, sample_frames=4):
                 continue
             hud_rate = segment_hud_frame_pass_rate(path, mid, win, sample_frames=4)
-            if hud_rate < 0.50:
+            if hud_rate < 0.55:
                 continue
-            # Center-band text (comics / memes) — penalize in rank; hard-drop only obvious overlays.
             cap = cv2.VideoCapture(str(path))
             center_texts: list[float] = []
             if cap.isOpened():
@@ -163,10 +175,12 @@ def main() -> int:
                         center_texts.append(_band_overlay_text_score(frame, 0.28, 0.72))
             cap.release()
             comics = float(np.mean(center_texts)) if center_texts else 1.0
-            if comics > 0.38:
+            if comics > 0.32:
                 continue
             diversity = 0.12 if hero not in heroes_seen else 0.0
-            rank = score + hud_rate * 0.35 - comics * 0.35 + diversity
+            hero_bonus = 0.18 if hero in PREFERRED_HEROES else 0.0
+            whitelist_bonus = 0.25 if path_whitelisted_by_calibration(path) else 0.0
+            rank = score + hud_rate * 0.35 - comics * 0.35 + diversity + hero_bonus + whitelist_bonus
             candidates.append((rank, path, hero))
             heroes_seen.add(hero)
 
@@ -228,9 +242,10 @@ def main() -> int:
             "-F",
             "text="
             + (
-                f"Калибровка: {len(picked)} сырых TikTok без нарезки — то, что алгоритм считает геймплеем "
-                "(активная миникарта/HUD, центр без явных комиксов, не промо). "
-                "Ответьте номерами, где НЕ геймплей: например «2, 5, 11 — удалить»."
+                f"Калибровка партия {BATCH_NUM}: {len(picked)} сырых TikTok (без нарезки). "
+                "После вашей разметки №1 — фильтры ужесточены. "
+                "Ответьте номерами, где НЕ геймплей: «2, 5 — удалить». "
+                "Нумерация с 1 в этой партии."
             ),
             f"https://api.telegram.org/bot{token}/sendMessage",
         ],
@@ -241,7 +256,7 @@ def main() -> int:
     sent_paths: list[str] = []
     for idx, (path, hero) in enumerate(picked, start=1):
         caption = (
-            f"{idx}/{len(picked)} | калибровка геймплея\n"
+            f"партия{BATCH_NUM} · {idx}/{len(picked)} | калибровка\n"
             f"герой: {hero}\n"
             f"сырой TikTok, без нарезки\n"
             f"id: {path.stem}"
