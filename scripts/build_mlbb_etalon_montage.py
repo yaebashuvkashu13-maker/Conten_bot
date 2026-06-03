@@ -97,9 +97,10 @@ def main() -> int:
             "SMART_GAME_AUDIO_ONLY": "1",
             "SMART_STRIP_MUSIC_BED": "1",
             "SMART_REJECT_TRAINING": "1",
+            # TikTok clips almost always have a music bed — strip in ffmpeg, filter only extreme cases.
             "SMART_REJECT_MUSIC_BED": "1",
             "SMART_MAX_TRAINING_INTRO": "0.13",
-            "SMART_MAX_MUSIC_BED": "0.48",
+            "SMART_MAX_MUSIC_BED": "0.72",
             "BLUR_NICKNAME": "0",
             "SMART_MIN_HUD": "16",
             "SMART_MIN_HUD_FRAME_RATE": "0.60",
