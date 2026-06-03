@@ -39,7 +39,8 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-02-wm-ocr'
+BOT_VERSION = '2026-06-03-video-large-hint'
+TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
 INSTAGRAM_DIGEST_RUN = Path('/usr/local/bin/instagram_digest_run.sh')
@@ -558,9 +559,9 @@ def get_file_url(file_id: str) -> str:
 def download_file(file_url: str, destination: Path):
     request = urllib.request.Request(file_url)
     if 'api.telegram.org' in file_url:
-        response = telegram_urlopen(request, timeout=120)
+        response = telegram_urlopen(request, timeout=300)
     else:
-        response = urllib.request.urlopen(request, timeout=120)
+        response = urllib.request.urlopen(request, timeout=300)
     with response, destination.open('wb') as handle:
         shutil.copyfileobj(response, handle)
 
@@ -633,6 +634,28 @@ def extract_document_file(message: dict):
     }
 
 
+def video_upload_help_text(for_owner: bool = False) -> str:
+    lines = [
+        'Видео не попало в очередь — /make не видит файлов.',
+        'Лимит Telegram Bot API: бот скачивает только файлы до ~20 МБ.',
+        'Ролик на 15 минут почти всегда больше — Telegram показывает превью, но бот файл не получает.',
+        '',
+        'Что сделать:',
+        '1) Сжать или экспортировать короче (3–5 мин, до ~20 МБ) и отправить снова.',
+        '2) Разбить на 2–4 части, потом /make.',
+        '3) Отправить как «файл» (документ), не «видео» — лимит тот же.',
+    ]
+    if for_owner:
+        lines.extend(
+            [
+                '',
+                '4) Владельцу: ссылка на .mp4 (transfer.sh, catbox, прямой URL) — '
+                'пришлите одной строкой, скачаем на сервер без лимита 20 МБ.',
+            ]
+        )
+    return '\n'.join(lines)
+
+
 def research_help_text() -> str:
     return (
         'Excel больше ~20 МБ бот из Telegram не получит — это лимит Bot API, не архиватора.\n'
@@ -660,6 +683,43 @@ def parse_research_url(text: str) -> str | None:
     if not match:
         return None
     return match.group(0).rstrip('.,);')
+
+
+def looks_like_video_url(url: str) -> bool:
+    u = url.lower().rstrip('.,);')
+    if looks_like_research_url(url):
+        return False
+    return any(
+        marker in u
+        for marker in (
+            '.mp4',
+            '.mov',
+            '.mkv',
+            '.webm',
+            'transfer.sh',
+            '0x0.st',
+            'catbox.moe',
+            'tmpfiles.org',
+            'file.io',
+        )
+    )
+
+
+def save_video_from_url(url: str, chat_id: str, label: str = '') -> Path:
+    parsed = urlparse(url)
+    name = unquote(Path(parsed.path).name) or 'upload.mp4'
+    if not name.lower().endswith(('.mp4', '.mov', '.mkv', '.webm')):
+        name = f'{name}.mp4' if '.' not in name else name
+    pending_dir = chat_pending_dir(chat_id)
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    safe = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '_' for ch in name)[:80]
+    destination = pending_dir / f'{stamp}_url_{safe}'
+    req = urllib.request.Request(url, headers={'User-Agent': 'ContenBot-video/1.0'})
+    with urllib.request.urlopen(req, timeout=900) as response, destination.open('wb') as handle:
+        shutil.copyfileobj(response, handle)
+    game_label = label.strip() or game_label_for_chat(chat_id)
+    append_pending(chat_id, destination, game_label)
+    return destination
 
 
 def looks_like_research_url(url: str) -> bool:
@@ -830,6 +890,8 @@ def extract_media(message: dict):
             'file_id': video['file_id'],
             'file_unique_id': video.get('file_unique_id', video['file_id']),
             'ext': '.mp4',
+            'file_size': int(video.get('file_size') or 0),
+            'duration': int(video.get('duration') or 0),
         }
     document = message.get('document')
     if document:
@@ -841,8 +903,15 @@ def extract_media(message: dict):
                 'file_id': document['file_id'],
                 'file_unique_id': document.get('file_unique_id', document['file_id']),
                 'ext': ext,
+                'file_size': int(document.get('file_size') or 0),
+                'duration': 0,
             }
     return None
+
+
+def media_too_large_for_bot(media: dict) -> bool:
+    size = int(media.get('file_size') or 0)
+    return size > TELEGRAM_BOT_MAX_BYTES
 
 
 def _lines_from_paths(chat_id: str, paths: list[Path], labels: dict[Path, str] | None = None) -> list[str]:
@@ -1215,7 +1284,12 @@ def handle_message(message: dict):
         if limited:
             return
         if count_pending(chat_id) == 0:
-            send_message(chat_id, 'Сначала пришли хотя бы одно видео.')
+            send_message(
+                chat_id,
+                'В очереди 0 видео. Сначала пришли файл (до ~20 МБ). '
+                'Длинный ролик (15 мин) Telegram боту не отдаёт — сожми или пришли ссылку на .mp4 '
+                '(владельцу). /status — проверить очередь.',
+            )
             return
         start_processing(chat_id)
         return
@@ -1262,6 +1336,19 @@ def handle_message(message: dict):
     # Owner: research xlsx / zip, or plain https link (transfer.sh etc.)
     if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
         url = parse_research_url(text)
+        if url and looks_like_video_url(url):
+            send_message(chat_id, 'Качаю видео по ссылке на сервер (может занять несколько минут)…')
+            try:
+                saved = save_video_from_url(url, chat_id)
+                pending_count = count_pending(chat_id)
+                send_message(
+                    chat_id,
+                    f'Видео в очереди: {saved.name} ({pending_count} шт.). Можно /make.',
+                )
+            except Exception as exc:
+                logging.exception('video url download failed')
+                send_message(chat_id, f'Не скачалось по ссылке: {exc}\n\n{video_upload_help_text(True)}')
+            return
         if url and looks_like_research_url(url):
             send_message(chat_id, 'Вижу ссылку — качаю на сервер…')
             try:
@@ -1321,10 +1408,30 @@ def handle_message(message: dict):
             )
         return
 
+    if media_too_large_for_bot(media):
+        dur = int(media.get('duration') or 0)
+        size_mb = int(media.get('file_size') or 0) / (1024 * 1024)
+        logging.warning(
+            'skip huge upload chat=%s size_mb=%.1f duration_sec=%s',
+            chat_id,
+            size_mb,
+            dur,
+        )
+        send_message(chat_id, video_upload_help_text(is_owner(chat_id)))
+        return
+
     pending_dir = chat_pending_dir(chat_id)
-    file_url = get_file_url(media['file_id'])
-    destination = pending_dir / f"{int(time.time())}_{media['file_unique_id']}{media['ext']}"
-    download_file(file_url, destination)
+    try:
+        file_url = get_file_url(media['file_id'])
+        destination = pending_dir / f"{int(time.time())}_{media['file_unique_id']}{media['ext']}"
+        download_file(file_url, destination)
+    except Exception as exc:
+        logging.exception('video download failed chat=%s', chat_id)
+        send_message(
+            chat_id,
+            video_upload_help_text(is_owner(chat_id)) + f'\n\nОшибка Telegram: {exc}',
+        )
+        return
     label = game_label_for_chat(chat_id, caption)
     append_pending(chat_id, destination, label)
     spawn_pubg_learning(destination, chat_id)
