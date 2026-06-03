@@ -42,9 +42,11 @@ def pick_hero() -> str | None:
     ordered = [HERO_ROOT / h for h in prefer if (HERO_ROOT / h).is_dir()]
     ordered += [d for d in hero_dirs if d.is_dir() and d not in ordered]
     for hero_dir in ordered:
-        playable = sum(
-            1 for p in hero_dir.glob("*.mp4") if not is_used(p) and source_is_real_gameplay(p)
-        )
+        candidates = list(hero_dir.glob("*.mp4"))
+        non_promo = [p for p in candidates if not profile_looks_like_mlbb_edit(p)]
+        if len(non_promo) < 2:
+            continue
+        playable = sum(1 for p in non_promo[:8] if source_is_real_gameplay(p))
         if playable > best_count:
             best_count = playable
             best_id = hero_dir.name
