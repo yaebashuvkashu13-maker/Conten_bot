@@ -783,14 +783,19 @@ def _frame_looks_like_promo_template(frame: np.ndarray) -> bool:
     center_edge = float(np.count_nonzero(edges)) / max(edges.size, 1)
     tb = float(np.mean(top_bottom_edges)) if top_bottom_edges else 0.0
     mini, skill, _top = _frame_hud_metrics(frame)
+    hud_strong = mini >= 9.0 and skill >= 8.0
     hud_weak = mini < 8.0 or skill < 7.0
-    if top_text >= 0.10 and bottom_text >= 0.14:
+    # Live match with TikTok header/footer is OK; promo = weak HUD + heavy template text.
+    if hud_strong and center_edge >= 0.04:
+        if not (top_text >= 0.16 and bottom_text >= 0.22):
+            return False
+    if top_text >= 0.12 and bottom_text >= 0.16 and hud_weak:
         return True
-    if bottom_text >= 0.20 and center_edge < bottom_text * 0.55:
+    if bottom_text >= 0.22 and center_edge < bottom_text * 0.50 and hud_weak:
         return True
-    if tb > 0.055 and center_edge < tb * 0.72:
+    if tb > 0.065 and center_edge < tb * 0.65 and hud_weak:
         return True
-    if hud_weak and top_text >= 0.09 and bottom_text >= 0.11:
+    if hud_weak and top_text >= 0.11 and bottom_text >= 0.13 and center_edge < 0.035:
         return True
     return False
 

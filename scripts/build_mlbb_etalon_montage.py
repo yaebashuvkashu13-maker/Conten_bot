@@ -63,8 +63,12 @@ def gather_hero_sources(hero_id: str, limit: int) -> list[Path]:
     if not folder.is_dir():
         return []
     files = sorted(folder.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-    fresh = [path for path in files if not is_used(path)]
-    pool = fresh if len(fresh) >= MIN_SOURCES else files
+    allow_used = os.environ.get("ETALON_ALLOW_USED", "1") == "1"
+    if allow_used:
+        pool = list(files)
+    else:
+        fresh = [path for path in files if not is_used(path)]
+        pool = fresh if len(fresh) >= MIN_SOURCES else files
     gameplay = [path for path in pool if source_is_real_gameplay(path)]
     return gameplay[:limit]
 
