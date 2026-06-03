@@ -105,6 +105,13 @@ def run(theme: str) -> int:
             "MAX_SOURCES": str(len(sources)),
             "MIN_HIGHLIGHTS": "3",
             "MAX_HIGHLIGHTS": "3",
+            "SINGLE_HERO_MODE": "1",
+            "SINGLE_HERO_ID": hero,
+            "SMART_ADD_MUSIC": "0",
+            "SMART_GAME_AUDIO_ONLY": "1",
+            "SMART_STRIP_MUSIC_BED": "1",
+            "SMART_REJECT_TRAINING": "1",
+            "SMART_REJECT_MUSIC_BED": "1",
         }
     )
     try:

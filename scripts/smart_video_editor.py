@@ -25,6 +25,7 @@ try:
         is_gameplay_video,
         load_csv_lookup,
         segment_is_valid_for_montage,
+        segment_opens_with_training,
         source_has_valid_gameplay_window,
     )
     from source_freshness import mark_used
@@ -39,6 +40,7 @@ except ImportError:
         is_gameplay_video,
         load_csv_lookup,
         segment_is_valid_for_montage,
+        segment_opens_with_training,
         source_has_valid_gameplay_window,
     )
     from source_freshness import mark_used
@@ -537,6 +539,15 @@ def build_candidates(
         end = min(analysis['duration'], start + input_duration)
         start = max(0.0, end - input_duration)
 
+        if profile == 'mobile_legends' and os.environ.get('SMART_REJECT_TRAINING', '1') == '1':
+            crop_probe = detect_game_viewport_crop(source_path, start, input_duration)
+            for _ in range(6):
+                if not segment_opens_with_training(source_path, start, crop_box=crop_probe):
+                    break
+                start = min(start + 2.2, max(0.0, analysis['duration'] - 9.0))
+                end = min(analysis['duration'], start + input_duration)
+                crop_probe = detect_game_viewport_crop(source_path, start, input_duration)
+
         if input_duration > 12.5 and mean_motion < motion_threshold and mean_audio < audio_threshold:
             speed = 1.03
         elif input_duration > 11.0 and mean_motion < motion_threshold * 1.03:
@@ -663,12 +674,23 @@ def effective_duration(selected: list[dict]) -> float:
 
 
 def game_audio_filter_chain(speed: float) -> str:
-    """Keep in-game SFX; attenuate typical TikTok music bed (no added background track)."""
+    """Suppress TikTok music bed; keep combat SFX transients (no added background track)."""
+    base = f'aresample=44100,atempo={speed:.3f},'
+    if os.environ.get('SMART_STRIP_MUSIC_BED', '1') != '1':
+        return (
+            f'{base}'
+            'highpass=f=220,lowpass=f=11500,'
+            'acompressor=threshold=-24dB:ratio=2.8:attack=8:release=120:makeup=1.5,'
+            'volume=1.06'
+        )
     return (
-        f'aresample=44100,atempo={speed:.3f},'
-        'highpass=f=220,lowpass=f=11500,'
-        'acompressor=threshold=-24dB:ratio=2.8:attack=8:release=120:makeup=1.5,'
-        'volume=1.06'
+        f'{base}'
+        'highpass=f=480,lowpass=f=8800,'
+        'afftdn=nr=14:nf=-21,'
+        'agate=threshold=0.010:ratio=5:attack=25:release=220:makeup=4,'
+        'acompressor=threshold=-30dB:ratio=4:attack=5:release=85:makeup=2,'
+        'compand=attacks=0.02:points=-80/-900|-45/-30|-25/-15|-10/-8|0/-6|20/-6:soft-knee=6,'
+        'volume=1.14'
     )
 
 
@@ -758,9 +780,35 @@ def best_combo_for_size(pool: list[dict], size: int, require_range: bool, unique
     return list(ranked_combos[chosen_idx][1])
 
 
+def candidate_hero_id(candidate: dict) -> str:
+    path = Path(candidate.get('source_path', ''))
+    parts = path.parts
+    if 'hero_datasets' in parts:
+        idx = parts.index('hero_datasets')
+        if idx + 1 < len(parts):
+            return parts[idx + 1].lower()
+    label = str(candidate.get('game_name', '')).lower()
+    for prefix in ('mlbb etalon ', 'hero highlights | ', 'hero highlights '):
+        if prefix in label:
+            return label.split(prefix, 1)[-1].strip().split()[0] if label else ''
+    return ''
+
+
 def select_candidates(all_candidates: list[dict], source_count: int) -> list[dict]:
     if not all_candidates:
         return []
+    if os.environ.get('SINGLE_HERO_MODE', '0') == '1':
+        forced = (os.environ.get('SINGLE_HERO_ID') or '').strip().lower()
+        if not forced:
+            heroes = [candidate_hero_id(item) for item in all_candidates if candidate_hero_id(item)]
+            if heroes:
+                from collections import Counter
+
+                forced = Counter(heroes).most_common(1)[0][0]
+        if forced:
+            filtered = [item for item in all_candidates if candidate_hero_id(item) == forced]
+            if len(filtered) >= MIN_HIGHLIGHTS:
+                all_candidates = filtered
     per_source_count: dict[str, int] = {}
     pool: list[dict] = []
     fallback_pool: list[dict] = []
@@ -1338,8 +1386,12 @@ def main() -> int:
             hint_text = f' | hint={joined_hint[:60]}'
         duration_label = f'{final_duration:.1f}s'
         if os.environ.get('ETALON_MONTAGE', '0') == '1':
+            hero_slug = (os.environ.get('SINGLE_HERO_ID') or '').strip()
+            if not hero_slug and arranged:
+                hero_slug = candidate_hero_id(arranged[0])
+            hero_part = f' | {hero_slug.replace("_", " ").title()}' if hero_slug else ''
             caption = (
-                f'Etalon MLBB | {len(arranged)} clips | {duration_label} '
+                f'Etalon MLBB{hero_part} | {len(arranged)} clips | {duration_label} '
                 f'(цель {int(MIN_FINAL_DURATION)}–{int(MAX_FINAL_DURATION)} с) | id={file_id}{hint_text}'
             )
         else:

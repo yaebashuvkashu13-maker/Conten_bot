@@ -7,6 +7,7 @@ import argparse
 import csv
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -290,6 +291,122 @@ def score_left_chat_panel(
     return float(np.mean(scores)) if scores else 0.0
 
 
+def _extract_audio_samples(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    sample_rate: int = 11025,
+) -> np.ndarray:
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                f"{start_sec:.3f}",
+                "-t",
+                f"{max(duration_sec, 0.35):.3f}",
+                "-i",
+                str(video_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate),
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=45,
+        )
+        samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32)
+        return samples / 32768.0
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return np.array([], dtype=np.float32)
+
+
+def segment_music_bed_score(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+) -> float:
+    """
+    0..1 — higher means steady TikTok/music bed (low RMS variance).
+    Combat clips have spiky gun/skill audio (higher variance).
+    """
+    window = min(max(duration_sec, 1.0), 9.0)
+    samples = _extract_audio_samples(video_path, start_sec, window)
+    if samples.size < 3000:
+        return 0.0
+    chunk = max(2048, samples.size // 28)
+    rms_vals: list[float] = []
+    for offset in range(0, len(samples) - chunk, chunk):
+        block = samples[offset : offset + chunk]
+        rms_vals.append(float(np.sqrt(np.mean(block * block))))
+    if not rms_vals:
+        return 0.0
+    rms_arr = np.asarray(rms_vals, dtype=np.float32)
+    mean = float(rms_arr.mean())
+    if mean < 0.006:
+        return 0.0
+    cv = float(rms_arr.std() / mean)
+    if cv >= 0.44:
+        return 0.0
+    return float(min(1.0, max(0.0, (0.46 - cv) * 2.0)))
+
+
+def score_training_intro(
+    video_path: Path,
+    start_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    probe_sec: float = 3.5,
+) -> float:
+    """Higher = MLBB tutorial / training intro (top banners, guide popups, weak HUD)."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 0.0
+    times = np.linspace(start_sec, start_sec + max(probe_sec, 0.8), num=4)
+    top_scores: list[float] = []
+    center_scores: list[float] = []
+    weak_hud = 0
+    total = 0
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        total += 1
+        top_scores.append(_band_overlay_text_score(frame, 0.0, 0.28))
+        center_scores.append(_band_overlay_text_score(frame, 0.30, 0.74))
+        mini, skill, _top = _frame_hud_metrics(frame)
+        if mini < 7.8 or skill < 6.6:
+            weak_hud += 1
+    cap.release()
+    if not top_scores:
+        return 0.0
+    top_mean = float(np.mean(top_scores))
+    center_mean = float(np.mean(center_scores))
+    hud_ratio = weak_hud / max(total, 1)
+    return top_mean * 0.52 + center_mean * 0.28 + hud_ratio * 0.20
+
+
+def segment_opens_with_training(
+    video_path: Path,
+    start_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> bool:
+    threshold = float(os.environ.get("SMART_MAX_TRAINING_INTRO", "0.14"))
+    return score_training_intro(video_path, start_sec, crop_box=crop_box) >= threshold
+
+
 def score_segment_window(
     video_path: Path,
     start_sec: float,
@@ -541,8 +658,17 @@ def segment_is_valid_for_montage(
     )
     if chat_panel > max_chat_panel and center_motion < min_center_motion * 1.45:
         return False, f"chat_lobby=panel{chat_panel:.2f}"
+    if os.environ.get("SMART_REJECT_TRAINING", "1") == "1" and segment_opens_with_training(
+        video_path, start_sec, crop_box=crop_box
+    ):
+        return False, "training_intro"
     if center_text > max_center_text and center_motion < min_center_motion * 1.6:
         return False, f"tutorial_ui=text={center_text:.2f}"
+    if os.environ.get("SMART_REJECT_MUSIC_BED", "1") == "1":
+        bed = segment_music_bed_score(video_path, start_sec, duration_sec)
+        max_bed = float(os.environ.get("SMART_MAX_MUSIC_BED", "0.50"))
+        if bed >= max_bed:
+            return False, f"music_bed={bed:.2f}"
     if center_motion < min_center_motion:
         return False, f"no_combat_motion={center_motion:.3f}"
     if mini_delta < min_minimap_delta and center_motion < min_center_motion * 1.35:
