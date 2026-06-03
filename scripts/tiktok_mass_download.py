@@ -620,6 +620,19 @@ def main() -> int:
     if not proxy:
         log("ERROR: no YTDLP_PROXY / PROXY_URL in env")
         return 1
+    if env.get("SKIP_PROXY_CHECK", "0") != "1":
+        try:
+            from proxy_health_check import check_proxy
+
+            ok, reason = check_proxy(proxy)
+        except ImportError:
+            sys.path.insert(0, "/usr/local/bin")
+            from proxy_health_check import check_proxy
+
+            ok, reason = check_proxy(proxy)
+        if not ok:
+            log(f"ERROR: proxy not usable ({reason}). Update /root/.video_bot.env and retry.")
+            return 2
 
     state = load_state()
     on_disk = count_mp4_on_disk(args.out)

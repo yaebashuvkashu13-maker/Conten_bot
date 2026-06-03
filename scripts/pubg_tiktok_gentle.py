@@ -45,6 +45,19 @@ def main() -> int:
     if not proxy:
         log("no proxy")
         return 1
+    try:
+        import sys
+
+        sys.path.insert(0, "/usr/local/bin")
+        from proxy_health_check import check_proxy
+
+        ok, reason = check_proxy(proxy)
+        if not ok:
+            log(f"proxy dead ({reason}), skip PUBG TikTok batch")
+            return 2
+    except Exception as exc:
+        log(f"proxy check failed: {exc}")
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
     downloaded = 0
     for query in SEARCHES:

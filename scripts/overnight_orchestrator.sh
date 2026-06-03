@@ -21,7 +21,14 @@ run_step() {
 }
 
 while true; do
+  if ! "$PY" "$BIN/proxy_health_check.py"; then
+    echo "[$(date)] proxy offline — skip TikTok downloads; local training only"
+  else
+    run_step "$PY" "$BIN/pubg_tiktok_gentle.py"
+  fi
   # MLBB: features + hero folders (download via tiktok_night_loop separately)
+  run_step "$PY" "$BIN/mlbb_popularity.py" --rebuild
+  run_step "$PY" "$BIN/mlbb_popularity.py" --sync-downloads
   run_step "$PY" "$BIN/mlbb_feature_batch.py"
   run_step "$PY" "$BIN/mlbb_hero_dataset_builder.py"
   # Hayabusa / multi-hero ML if content_bot_ml package exists
