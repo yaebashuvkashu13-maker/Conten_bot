@@ -92,6 +92,7 @@ def main() -> int:
     sys.path.insert(0, "/usr/local/bin")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from gameplay_gate import (  # noqa: WPS433
+        path_blocked_by_calibration,
         _band_overlay_text_score,
         _read_frame_at,
         heuristic_gameplay_score,
@@ -133,7 +134,7 @@ def main() -> int:
             checked += 1
             if checked % 10 == 0:
                 print(f"[calibration] checked {checked} files, pool={len(candidates)}", flush=True)
-            if str(path) in sent_before:
+            if str(path) in sent_before or path_blocked_by_calibration(path):
                 continue
             dur = ffprobe_duration(path)
             if dur < 18.0 or dur > 75.0:

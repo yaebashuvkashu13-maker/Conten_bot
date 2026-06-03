@@ -10,7 +10,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from gameplay_gate import profile_looks_like_mlbb_edit, source_has_valid_gameplay_window
+from gameplay_gate import (
+    path_blocked_by_calibration,
+    path_whitelisted_by_calibration,
+    profile_looks_like_mlbb_edit,
+    source_has_valid_gameplay_window,
+)
 from source_freshness import is_used
 
 HERO_ROOT = Path("/root/hero_datasets")
@@ -54,6 +59,8 @@ def pick_hero() -> str | None:
 
 
 def source_is_real_gameplay(path: Path) -> bool:
+    if path_blocked_by_calibration(path):
+        return False
     if profile_looks_like_mlbb_edit(path):
         return False
     ok, _reason = source_has_valid_gameplay_window(path, windows=3, window_sec=9.0)
@@ -65,6 +72,10 @@ def gather_hero_sources(hero_id: str, limit: int) -> list[Path]:
     if not folder.is_dir():
         return []
     files = sorted(folder.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = [p for p in files if not path_blocked_by_calibration(p)]
+    whitelisted = [p for p in files if path_whitelisted_by_calibration(p)]
+    if whitelisted:
+        files = whitelisted + [p for p in files if p not in whitelisted]
     allow_used = os.environ.get("ETALON_ALLOW_USED", "1") == "1"
     if allow_used:
         pool = list(files)

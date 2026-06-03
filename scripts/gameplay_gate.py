@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import re
 import subprocess
@@ -14,6 +15,9 @@ import cv2
 import numpy as np
 
 REJECT_EXAMPLES_DIR = Path("/root/data/mlbb/reject_examples")
+CALIBRATION_LABELS_PATH = Path("/root/data/mlbb/calibration_labels.json")
+_CALIBRATION_CACHE: dict | None = None
+_CALIBRATION_MTIME: float = 0.0
 _REJECT_REF_HISTS: list[np.ndarray] | None = None
 _REJECT_REF_MTIME: float = 0.0
 
@@ -22,6 +26,40 @@ PROMO_PATTERNS = re.compile(
     r"log\s*in\s+mlbb|mailbox|click\s+link|download\s+now|official\s+event)",
     re.I,
 )
+
+
+def _load_calibration_state() -> dict:
+    global _CALIBRATION_CACHE, _CALIBRATION_MTIME
+    mtime = CALIBRATION_LABELS_PATH.stat().st_mtime if CALIBRATION_LABELS_PATH.exists() else 0.0
+    if _CALIBRATION_CACHE is not None and mtime == _CALIBRATION_MTIME:
+        return _CALIBRATION_CACHE
+    state: dict = {"good_stems": set(), "bad_stems": set(), "bad_paths": set()}
+    if CALIBRATION_LABELS_PATH.exists():
+        try:
+            data = json.loads(CALIBRATION_LABELS_PATH.read_text(encoding="utf-8"))
+            for row in data.get("good", []):
+                state["good_stems"].add(Path(row.get("path", "")).stem)
+            for row in data.get("bad", []):
+                p = Path(row.get("path", ""))
+                state["bad_stems"].add(p.stem)
+                state["bad_paths"].add(str(p))
+        except (json.JSONDecodeError, OSError):
+            pass
+    _CALIBRATION_CACHE = state
+    _CALIBRATION_MTIME = mtime
+    return state
+
+
+def path_blocked_by_calibration(video_path: Path) -> bool:
+    state = _load_calibration_state()
+    stem = video_path.stem
+    resolved = str(video_path.resolve())
+    return stem in state["bad_stems"] or resolved in state["bad_paths"]
+
+
+def path_whitelisted_by_calibration(video_path: Path) -> bool:
+    state = _load_calibration_state()
+    return video_path.stem in state["good_stems"]
 
 
 def load_csv_lookup(csv_path: Path) -> dict[str, bool]:
@@ -618,6 +656,60 @@ def segment_hud_frame_pass_rate(
     return passed / max(total, 1)
 
 
+def segment_looks_like_interview_or_talk(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> bool:
+    """Podcast / face-cam / interview — weak HUD, heavy top or center captions."""
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return False
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=4)
+    weak_hud = 0
+    top_heavy = 0
+    center_heavy = 0
+    for t in times:
+        frame = _read_frame_at(cap, float(t))
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        mini, skill, _top = _frame_hud_metrics(frame)
+        if mini + skill < 14.0:
+            weak_hud += 1
+        if _band_overlay_text_score(frame, 0.0, 0.26) >= 0.12:
+            top_heavy += 1
+        if _band_overlay_text_score(frame, 0.30, 0.78) >= 0.13:
+            center_heavy += 1
+    cap.release()
+    if weak_hud >= 3 and (top_heavy >= 2 or center_heavy >= 3):
+        return True
+    return False
+
+
+def segment_looks_like_meme_comic(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> bool:
+    """Meme / comic strips in the center — dense text, little real match HUD motion."""
+    center_motion, mini_delta, _skill, center_text = score_segment_combat(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+    )
+    if center_text >= 0.13 and center_motion < 0.022:
+        return True
+    if center_text >= 0.11 and mini_delta < 0.007 and center_motion < 0.028:
+        return True
+    return False
+
+
 def segment_is_valid_for_montage(
     video_path: Path,
     start_sec: float,
@@ -626,13 +718,15 @@ def segment_is_valid_for_montage(
     profile: str = "mobile_legends",
     min_hud: float = 14.0,
     max_text: float = 0.075,
-    max_cartoon_ratio: float = 0.55,
-    max_reject_similarity: float = 0.78,
+    max_cartoon_ratio: float = 0.50,
+    max_reject_similarity: float = 0.72,
     min_hud_frame_rate: float = 0.55,
     crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
     if profile != "mobile_legends":
         return True, "skip_profile"
+    if path_blocked_by_calibration(video_path):
+        return False, "calibration_bad"
     if crop_box is None:
         crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     if os.environ.get("SMART_REJECT_PROMO", "1") == "1" and segment_looks_like_promo_or_cinematic(
@@ -648,7 +742,17 @@ def segment_is_valid_for_montage(
     if reject_sim >= max_reject_similarity:
         return False, f"reject_example_sim={reject_sim:.2f}"
     if cartoon >= max_cartoon_ratio and hud < min_hud * 1.05:
-        return False, f"non_gameplay_hud={hud:.1f}"
+        return False, f"cartoon_or_non_match={hud:.1f}"
+    if cartoon >= 0.45 and hud < min_hud * 1.15:
+        return False, f"cartoon_ratio={cartoon:.2f}"
+    if os.environ.get("SMART_REJECT_INTERVIEW", "1") == "1" and segment_looks_like_interview_or_talk(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    ):
+        return False, "interview_talk"
+    if os.environ.get("SMART_REJECT_MEME", "1") == "1" and segment_looks_like_meme_comic(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    ):
+        return False, "meme_comic"
     if hud < min_hud:
         return False, f"low_hud={hud:.1f}"
     if text > max_text:
