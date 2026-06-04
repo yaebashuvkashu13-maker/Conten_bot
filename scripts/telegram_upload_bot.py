@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-04-youtube-live'
+BOT_VERSION = '2026-06-06-youtube-shorts'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -649,8 +649,9 @@ def video_upload_help_text(for_owner: bool = False) -> str:
         lines.extend(
             [
                 '',
-                '4) Владельцу: ссылка на .mp4 (transfer.sh, catbox, прямой URL) — '
-                'пришлите одной строкой, скачаем на сервер без лимита 20 МБ.',
+                '4) Владельцу: YouTube / Shorts / youtu.be — одной строкой (скачаем на сервер).',
+                '5) Или прямая ссылка на .mp4 (transfer.sh, catbox).',
+                '6) Команда /yt <ссылка> — то же, что просто ссылка.',
             ]
         )
     return '\n'.join(lines)
@@ -677,28 +678,84 @@ def safe_research_filename(name: str) -> str:
 
 
 def parse_research_url(text: str) -> str | None:
+    urls = extract_http_urls(text)
+    return urls[0] if urls else None
+
+
+def extract_http_urls(text: str) -> list[str]:
     if not text or 'http' not in text:
-        return None
-    match = re.search(r'https?://[^\s<>"\']+', text)
-    if not match:
-        return None
-    return match.group(0).rstrip('.,);')
+        return []
+    found = re.findall(r'https?://[^\s<>"\']+', text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in found:
+        url = raw.rstrip('.,);')
+        if url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def extract_urls_from_message(message: dict) -> list[str]:
+    """URLs from message text, caption, and Telegram entities (text_link)."""
+    chunks: list[str] = []
+    for key in ('text', 'caption'):
+        val = (message.get(key) or '').strip()
+        if val:
+            chunks.append(val)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        for url in extract_http_urls(chunk):
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+    text = (message.get('text') or message.get('caption') or '')
+    for ent in message.get('entities') or []:
+        if ent.get('type') == 'text_link' and ent.get('url'):
+            url = str(ent['url']).rstrip('.,);')
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+        elif ent.get('type') == 'url' and text:
+            try:
+                snippet = text[ent['offset'] : ent['offset'] + ent['length']]
+            except (KeyError, TypeError):
+                continue
+            for url in extract_http_urls(snippet):
+                if url not in seen:
+                    seen.add(url)
+                    urls.append(url)
+    return urls
+
+
+def _youtube_host(host: str) -> str:
+    host = host.lower().split(':', 1)[0]
+    if host.startswith('www.'):
+        host = host[4:]
+    return host
 
 
 def looks_like_youtube_url(url: str) -> bool:
-    u = url.lower().rstrip('.,);')
-    return any(
-        host in u
-        for host in (
-            'youtube.com/watch',
-            'youtube.com/live/',
-            'youtu.be/',
-            'youtube.com/shorts/',
-            'youtube.com/@',
-            'youtube.com/channel/',
-            'youtube.com/playlist',
-        )
-    )
+    try:
+        parsed = urlparse(url.strip().rstrip('.,);'))
+    except ValueError:
+        return False
+    host = _youtube_host(parsed.netloc or '')
+    if host not in {'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com'}:
+        return False
+    path = (parsed.path or '/').lower()
+    if host == 'youtu.be':
+        return len(path) > 1 and path != '/'
+    if path.startswith('/shorts/') or path.startswith('/live/'):
+        return True
+    if path.startswith('/watch') or path == '/watch':
+        return bool(parsed.query and 'v=' in parsed.query)
+    if path.startswith(('/embed/', '/v/')):
+        return True
+    if path.startswith(('/@', '/channel/', '/c/', '/user/', '/playlist')):
+        return True
+    return 'list=' in (parsed.query or '').lower()
 
 
 def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
@@ -746,6 +803,49 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
         copy_dest = hero_dir / f'yt_{destination.name}'
         shutil.copy2(destination, copy_dest)
     return destination
+
+
+def youtube_ingest_allowed(chat_id: str) -> bool:
+    if is_owner(chat_id):
+        return True
+    if env.get('YOUTUBE_INGEST_ALL', '').strip().lower() in ('1', 'true', 'yes', 'all'):
+        return chat_is_allowed(chat_id)
+    extra = {
+        item.strip()
+        for item in env.get('YOUTUBE_CHAT_IDS', '').split(',')
+        if item.strip()
+    }
+    return str(chat_id) in extra
+
+
+def try_youtube_ingest(chat_id: str, message: dict) -> bool:
+    """Handle YouTube URLs in text/caption/entities. Returns True if handled."""
+    yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
+    if not yt_urls:
+        return False
+    url = yt_urls[0]
+    if not youtube_ingest_allowed(chat_id):
+        send_message(
+            chat_id,
+            f'YouTube принимает владелец бота (ваш chat_id={chat_id}). '
+            f'Напишите /ping — там «владелец=да/нет».',
+        )
+        return True
+    send_message(
+        chat_id,
+        'Качаю с YouTube на сервер (без лимита 20 МБ Telegram). Может занять 1–3 мин…',
+    )
+    try:
+        saved = save_youtube_from_url(url, chat_id)
+        pending_count = count_pending(chat_id)
+        send_message(
+            chat_id,
+            f'YouTube в очереди: {saved.name} ({pending_count} шт.). Дальше /make.',
+        )
+    except Exception as exc:
+        logging.exception('youtube download failed')
+        send_message(chat_id, f'YouTube не скачался: {exc}')
+    return True
 
 
 def looks_like_video_url(url: str) -> bool:
@@ -1182,6 +1282,7 @@ def handle_message(message: dict):
             send_message(
                 chat_id,
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
+                'YouTube / Shorts: пришли ссылку одной строкой (или /yt <url>) → /make.\n'
                 'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
                 'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
             )
@@ -1285,8 +1386,24 @@ def handle_message(message: dict):
             f'Бот на связи ({BOT_VERSION}).\n'
             f'chat_id={chat_id}\n'
             f'владелец={"да" if is_owner(chat_id) else "нет"} '
+            f'youtube={"да" if youtube_ingest_allowed(chat_id) else "нет"} '
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}',
         )
+        return
+    if cmd in ('/yt', '/youtube'):
+        if not youtube_ingest_allowed(chat_id):
+            send_message(chat_id, f'YouTube только для владельца. chat_id={chat_id}')
+            return
+        urls = extract_urls_from_message(message)
+        yt_urls = [u for u in urls if looks_like_youtube_url(u)]
+        if not yt_urls:
+            send_message(
+                chat_id,
+                'Пришлите ссылку: /yt https://youtube.com/shorts/… или youtu.be/…',
+            )
+            return
+        fake_msg = {'text': yt_urls[0]}
+        try_youtube_ingest(chat_id, fake_msg)
         return
     if cmd in ('/ig_cookies', '/ig_cookie', '/instagram_cookies'):
         if not is_owner(chat_id):
@@ -1396,25 +1513,13 @@ def handle_message(message: dict):
             )
         return
 
+    # YouTube / Shorts / youtu.be (text, caption, or link entity)
+    if not (text.startswith('/') or caption.startswith('/')) and try_youtube_ingest(chat_id, message):
+        return
+
     # Owner: research xlsx / zip, or plain https link (transfer.sh etc.)
     if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
         url = parse_research_url(text)
-        if url and looks_like_youtube_url(url):
-            send_message(
-                chat_id,
-                'Качаю с YouTube на сервер (без лимита 20 МБ Telegram). Может занять несколько минут…',
-            )
-            try:
-                saved = save_youtube_from_url(url, chat_id)
-                pending_count = count_pending(chat_id)
-                send_message(
-                    chat_id,
-                    f'YouTube в очереди: {saved.name} ({pending_count} шт.). Дальше /make.',
-                )
-            except Exception as exc:
-                logging.exception('youtube download failed')
-                send_message(chat_id, f'YouTube не скачался: {exc}')
-            return
         if url and looks_like_video_url(url):
             send_message(chat_id, 'Качаю видео по ссылке на сервер (может занять несколько минут)…')
             try:
@@ -1479,12 +1584,15 @@ def handle_message(message: dict):
 
     media = extract_media(message)
     if not media:
+        if try_youtube_ingest(chat_id, message):
+            return
         if text and cmd not in ('/start',):
-            send_message(
-                chat_id,
-                'Команды: /ping, /ad, /wm (убрать god of mlbb), /ig_digest, /start. '
-                'Видео — файлом. Если /wm не находится — на VPS нужен деплой бота (см. scripts/deploy_telegram_bot.sh).',
-            )
+            hint = 'Команды: /ping, /yt, /ad, /wm, /ig_digest, /start. Видео — файлом.'
+            if extract_urls_from_message(message):
+                hint += ' Ссылка YouTube? Нужен деплой бота (scripts/deploy_telegram_bot.sh) и /ping с youtube=да.'
+            else:
+                hint += ' Если /wm не находится — деплой бота на VPS.'
+            send_message(chat_id, hint)
         return
 
     if media_too_large_for_bot(media):

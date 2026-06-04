@@ -26,8 +26,21 @@ def load_env(path: Path = ENV_FILE) -> dict[str, str]:
 
 
 def is_youtube_url(url: str) -> bool:
-    host = urlparse(url).netloc.lower().replace("www.", "")
-    return host in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower().split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}:
+        return False
+    path = (parsed.path or "/").lower()
+    if host == "youtu.be":
+        return len(path) > 1
+    return bool(
+        path.startswith("/shorts/")
+        or path.startswith("/live/")
+        or path.startswith("/watch")
+        or path.startswith(("/@", "/channel/", "/playlist"))
+    )
 
 
 def is_playlist_or_channel(url: str) -> bool:

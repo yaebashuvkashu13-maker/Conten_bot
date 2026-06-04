@@ -63,7 +63,8 @@
 
 - **Прокси для YouTube не нужен** — на VPS `yt-dlp` качает напрямую.
 - **Прокси нужен для массового TikTok** (LTE/datacenter в `.video_bot.env`).
-- Владелец в Telegram: кидаете ссылку `youtube.com` / `youtu.be` → бот качает на сервер → `/make`.
+- Владелец в Telegram: ссылка `youtube.com` / **Shorts** / `youtu.be` / `/live` (или `/yt <url>`) → бот качает → `/make`.
+- `/ping` — поле `youtube=да` и версия `2026-06-06-youtube-shorts` после деплоя.
 - Опционально в `/root/.video_bot.env`: `YOUTUBE_DEFAULT_HERO=chou` — копия в `hero_datasets/chou/`.
 - Проверка: `python3 /usr/local/bin/youtube_health_check.py`
 - CLI: `python3 /usr/local/bin/youtube_download.py 'https://youtu.be/...' --out /root/datasets/youtube/inbox`
