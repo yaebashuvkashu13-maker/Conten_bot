@@ -60,6 +60,15 @@ def is_playlist_or_channel(url: str) -> bool:
     )
 
 
+def subprocess_env_no_proxy(base: dict[str, str] | None = None) -> dict[str, str]:
+    """yt-dlp inherits HTTP_PROXY from os.environ — strip for direct YouTube."""
+    out = (base or os.environ).copy()
+    for key in list(out):
+        if "proxy" in key.lower():
+            out.pop(key, None)
+    return out
+
+
 def ytdlp_cmd(env: dict[str, str], *, use_proxy: bool = False) -> list[str]:
     impersonate = (env.get("YTDLP_IMPERSONATE") or "chrome-131").strip()
     cmd = ["yt-dlp", "--impersonate", impersonate, "--no-warnings", "--no-progress"]
@@ -90,7 +99,12 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         str(template),
         url,
     ]
-    subprocess.run(cmd, check=True, timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")))
+    subprocess.run(
+        cmd,
+        check=True,
+        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+        env=subprocess_env_no_proxy(),
+    )
     files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
@@ -124,7 +138,12 @@ def download_feed(
         str(template),
         url,
     ]
-    subprocess.run(cmd, check=True, timeout=int(env.get("YOUTUBE_FEED_TIMEOUT", "7200")))
+    subprocess.run(
+        cmd,
+        check=True,
+        timeout=int(env.get("YOUTUBE_FEED_TIMEOUT", "7200")),
+        env=subprocess_env_no_proxy(),
+    )
     return sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)[
         :max_videos
     ]
