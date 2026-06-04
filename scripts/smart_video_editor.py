@@ -1616,7 +1616,8 @@ def _run_smart_edit(
                 f'(цель {int(MIN_FINAL_DURATION)}–{int(MAX_FINAL_DURATION)} с) | id={file_id}{hint_text}'
             )
         else:
-            caption = (
+            custom = os.environ.get('MONTAGE_CAPTION', '').strip()
+            caption = custom or (
                 f'Smart Edit v1.1 | {profile.replace("_", " ").title()}{hint_text} | '
                 f'{duration_label} | id={file_id}'
             )
