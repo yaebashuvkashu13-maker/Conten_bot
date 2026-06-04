@@ -15,7 +15,9 @@ from pathlib import Path
 
 ENV_FILE = Path("/root/.video_bot.env")
 PROCESSOR = Path("/usr/local/bin/smart_video_editor.py")
-DEFAULT_SOURCE = Path("/root/data/mlbb/youtube_nightly/inbox/yt_559CEnq-8-o.mp4")
+# Owner Metro Royale VOD (not classic ranked)
+DEFAULT_SOURCE = Path("/root/data/mlbb/youtube_nightly/inbox/yt_FpMs48XOnq0.mp4")
+FALLBACK_URL = "https://www.youtube.com/live/FpMs48XOnq0"
 HISTORY = Path("/tmp/pubg_harshness_demo_history.json")
 LOG = Path("/root/data/mlbb/pubg_harshness_demo.log")
 
@@ -144,11 +146,23 @@ def main() -> int:
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     args = parser.parse_args()
 
-    if not args.source.exists():
-        log(f"source missing: {args.source}")
-        return 1
-
     env = load_env()
+    if not args.source.exists():
+        log("downloading Metro Royale source…")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from youtube_download import download_one
+
+        args.source.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            args.source = download_one(
+                FALLBACK_URL,
+                args.source.parent,
+                env,
+            )
+            log(f"downloaded {args.source}")
+        except Exception as exc:
+            log(f"source missing and download failed: {exc}")
+            return 1
     chat_id = env.get("TG_CHAT_ID", "")
     if not env.get("TG_BOT_TOKEN") or not chat_id:
         log("TG_BOT_TOKEN / TG_CHAT_ID missing")
