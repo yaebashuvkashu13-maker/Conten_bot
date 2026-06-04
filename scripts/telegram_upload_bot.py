@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-04-youtube-ingest'
+BOT_VERSION = '2026-06-04-youtube-live'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -691,6 +691,7 @@ def looks_like_youtube_url(url: str) -> bool:
         host in u
         for host in (
             'youtube.com/watch',
+            'youtube.com/live/',
             'youtu.be/',
             'youtube.com/shorts/',
             'youtube.com/@',

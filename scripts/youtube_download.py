@@ -42,6 +42,7 @@ def is_playlist_or_channel(url: str) -> bool:
             "/c/",
             "/user/",
             "/playlist",
+            "/live/",
         )
     )
 
