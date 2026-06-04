@@ -51,6 +51,7 @@ PROFILE_LABELS = {
     'genshin': 'Genshin Impact',
     'standoff': 'Standoff 2',
     'wot': 'WoT Blitz',
+    'world_of_tanks': 'World of Tanks',
 }
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)

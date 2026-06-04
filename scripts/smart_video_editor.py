@@ -223,6 +223,7 @@ def resolve_profile(game_names: list[str], env: dict[str, str]) -> str:
         'genshin',
         'standoff',
         'wot',
+        'world_of_tanks',
         'generic',
     )
     if forced in known:
@@ -237,8 +238,15 @@ def resolve_profile(game_names: list[str], env: dict[str, str]) -> str:
         return 'genshin'
     if 'standoff' in joined or 'стандофф' in joined:
         return 'standoff'
-    if 'wot' in joined or 'tanks blitz' in joined or 'world of tanks' in joined:
+    if 'blitz' in joined or 'wot blitz' in joined or 'tanks blitz' in joined:
         return 'wot'
+    if (
+        'world of tanks' in joined
+        or 'modern armor' in joined
+        or joined.strip() in ('wot', 'world_of_tanks')
+        or 'танки' in joined
+    ):
+        return 'world_of_tanks'
 
     default_profile = env.get('DEFAULT_GAME_PROFILE', 'generic').lower()
     if default_profile in known:
@@ -588,18 +596,24 @@ def build_candidates(
                 0.03 * sat
             )
             base += 0.10 * max(0.0, audio - 0.42)
-        elif profile == 'wot':
-            # Tank battles: sustained motion + scene stability + hit audio.
+        elif profile in ('wot', 'world_of_tanks'):
+            # Tank battles (Blitz / PC): sustained motion + hits + map pans.
+            motion_w, scene_w, audio_w = (0.26, 0.20, 0.18)
+            if profile == 'world_of_tanks':
+                # PC WoT: slower pace, more wide shots and impact audio.
+                motion_w, scene_w, audio_w = 0.22, 0.24, 0.20
             base = (
-                0.26 * motion +
+                motion_w * motion +
                 0.12 * center +
-                0.18 * audio +
-                0.20 * scene +
+                audio_w * audio +
+                scene_w * scene +
                 0.12 * sharp +
                 0.07 * bright +
                 0.05 * sat
             )
             base += 0.05 * max(0.0, motion - 0.22)
+            if profile == 'world_of_tanks':
+                base += 0.06 * max(0.0, audio - 0.40)
         else:
             base = (
                 0.28 * motion +

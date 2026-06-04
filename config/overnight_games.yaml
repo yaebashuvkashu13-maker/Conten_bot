@@ -57,8 +57,8 @@ games:
       - "Standoff 2 ranked gameplay stream"
 
   - id: wot
-    profile: wot
-    queue_label: WoT Blitz
+    profile: world_of_tanks
+    queue_label: WoT
     montages: 2
     min_duration_sec: 7200
     max_duration_sec: 10800
@@ -67,5 +67,5 @@ games:
       - "https://www.youtube.com/live/-055vzCY-qk"
     search_limit: 12
     queries:
-      - "World of Tanks Blitz live stream full"
-      - "WoT Blitz gameplay stream replay"
+      - "World of Tanks live stream full gameplay"
+      - "World of Tanks Modern Armor gameplay stream replay"

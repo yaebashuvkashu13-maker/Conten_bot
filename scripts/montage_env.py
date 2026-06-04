@@ -15,6 +15,14 @@ def passthrough_audio_env() -> dict[str, str]:
 
 def profile_montage_env(profile: str) -> dict[str, str]:
     """MLBB/PUBG: user prefers source audio without the combat-DSP filter chain."""
-    if profile in ("mobile_legends", "pubg", "mlbb", "genshin", "standoff", "wot"):
+    if profile in (
+        "mobile_legends",
+        "pubg",
+        "mlbb",
+        "genshin",
+        "standoff",
+        "wot",
+        "world_of_tanks",
+    ):
         return passthrough_audio_env()
     return {}
