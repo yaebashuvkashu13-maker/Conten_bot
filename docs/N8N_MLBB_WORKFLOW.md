@@ -27,6 +27,29 @@ flowchart LR
 
 ---
 
+## Может ли агент зайти в n8n по логину/паролю?
+
+**Нет** — у n8n REST API **не принимает** email/пароль (с версии 1.0). Нужен заголовок **`X-N8N-API-KEY`**.
+
+| Ваш n8n | API ключ |
+|---------|----------|
+| **Cloud бесплатный / trial** | Часто **нет** раздела API → только ручной Import workflow |
+| **Cloud платный** | Settings → **n8n API** → Create API Key |
+| **Self-hosted** | То же в UI или админка |
+
+**Логин + пароль в секретах** агенту **не помогут** автоматически настроить n8n (только вы в браузере).
+
+**Секреты для агента (если появится API):**
+
+- `N8N_BASE_URL` — например `https://ваш-поддомен.app.n8n.cloud/api/v1`
+- `N8N_API_KEY` — ключ из Settings
+
+Скрипт: `python3 scripts/n8n_deploy_from_secrets.py`
+
+**Без API** — достаточно один раз Import JSON + переменные `VPS_HOST` и `N8N_WEBHOOK_SECRET` (с VPS). Сервер уже ждёт webhook на `:8787`.
+
+---
+
 ## 1. Один раз на VPS
 
 ```bash
