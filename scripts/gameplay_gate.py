@@ -14,6 +14,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+try:
+    from video_frame_io import prefer_ffmpeg_decode, video_pixel_size
+except ImportError:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from video_frame_io import prefer_ffmpeg_decode, video_pixel_size
+
 REJECT_EXAMPLES_DIR = Path("/root/data/mlbb/reject_examples")
 CALIBRATION_LABELS_PATH = Path("/root/data/mlbb/calibration_labels.json")
 _CALIBRATION_CACHE: dict | None = None
@@ -121,10 +129,20 @@ def _frame_overlay_text_score(frame: np.ndarray) -> float:
     return _band_overlay_text_score(frame, 0.32, 0.70)
 
 
-def _read_frame_at(cap: cv2.VideoCapture, t_sec: float) -> np.ndarray | None:
-    cap.set(cv2.CAP_PROP_POS_MSEC, float(t_sec) * 1000.0)
-    ok, frame = cap.read()
-    return frame if ok else None
+def _read_frame_at(
+    video_path: Path,
+    t_sec: float,
+    cap: cv2.VideoCapture | None = None,
+) -> np.ndarray | None:
+    try:
+        from video_frame_io import read_frame_at
+    except ImportError:
+        import sys
+        from pathlib import Path as _Path
+
+        sys.path.insert(0, str(_Path(__file__).resolve().parent))
+        from video_frame_io import read_frame_at
+    return read_frame_at(video_path, t_sec, cap)
 
 
 def detect_vertical_content_crop(
@@ -135,11 +153,19 @@ def detect_vertical_content_crop(
     sample_frames: int = 6,
 ) -> tuple[int, int, int, int] | None:
     """Crop static TikTok header/footer bands; return (x, y, w, h) in source pixels."""
+    try:
+        from video_frame_io import prefer_ffmpeg_decode, video_pixel_size
+    except ImportError:
+        prefer_ffmpeg_decode = lambda _p: False  # type: ignore
+        video_pixel_size = lambda _p: (0, 0)  # type: ignore
+
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return None
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    width, height = video_pixel_size(video_path)
+    if width < 120 or height < 200:
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) if cap.isOpened() else width
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) if cap.isOpened() else height
     if width < 120 or height < 200:
         cap.release()
         return None
@@ -147,7 +173,7 @@ def detect_vertical_content_crop(
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     frames: list[np.ndarray] = []
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap if cap.isOpened() else None)
         if frame is not None:
             frames.append(frame)
     cap.release()
@@ -199,10 +225,12 @@ def detect_horizontal_content_crop(
 ) -> tuple[int, int, int, int] | None:
     """Crop static TikTok left/right pillarbox; return (x, y, w, h) in source pixels."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return None
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    width, height = video_pixel_size(video_path)
+    if width < 200 or height < 200:
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) if cap.isOpened() else width
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) if cap.isOpened() else height
     if width < 200 or height < 200:
         cap.release()
         return None
@@ -214,7 +242,7 @@ def detect_horizontal_content_crop(
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     frames: list[np.ndarray] = []
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is not None:
             if vertical_crop is not None:
                 _vx, vy, vw, vh = vertical_crop
@@ -305,13 +333,13 @@ def score_left_chat_panel(
 ) -> float:
     """Higher = more likely MLBB lobby/chat (text column on the left)."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     scores: list[float] = []
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -409,7 +437,7 @@ def score_training_intro(
 ) -> float:
     """Higher = MLBB tutorial / training intro (top banners, guide popups, weak HUD)."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0
     times = np.linspace(start_sec, start_sec + max(probe_sec, 0.8), num=4)
     top_scores: list[float] = []
@@ -418,7 +446,7 @@ def score_training_intro(
     weak_hud = 0
     total = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -468,7 +496,7 @@ def score_segment_window(
 ) -> tuple[float, float, float]:
     """Returns (hud_score, text_score, cartoon_penalty). Higher hud = more like MLBB UI."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0, 1.0, 1.0
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     end_sec = start_sec + max(duration_sec, 0.5)
@@ -477,7 +505,7 @@ def score_segment_window(
     text_vals: list[float] = []
     low_hud_frames = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -549,13 +577,13 @@ def reject_example_similarity(
     if not refs:
         return 0.0
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=3)
     best = 0.0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -582,7 +610,7 @@ def score_segment_combat(
     Real teamfight clips have motion in the arena + minimap/skill bar changes.
     """
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0, 0.0, 0.0, 1.0
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
@@ -595,7 +623,7 @@ def score_segment_combat(
     prev_skill: np.ndarray | None = None
 
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -638,14 +666,14 @@ def segment_hud_frame_pass_rate(
     min_skill: float = 6.5,
 ) -> float:
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     passed = 0
     total = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -668,7 +696,7 @@ def segment_looks_like_interview_or_talk(
 ) -> bool:
     """Podcast / face-cam / interview — weak HUD, heavy top or center captions."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return False
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=4)
@@ -676,7 +704,7 @@ def segment_looks_like_interview_or_talk(
     top_heavy = 0
     center_heavy = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         if crop_box is not None:
@@ -823,7 +851,7 @@ def source_has_valid_gameplay_window(
 ) -> tuple[bool, str]:
     """True if at least one segment window passes the montage gate."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return False, "unreadable"
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -852,7 +880,7 @@ def source_has_valid_gameplay_window(
 
 def heuristic_gameplay_score(video_path: Path, sample_frames: int = 4) -> float:
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return 0.0
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if frame_count <= 0:
@@ -957,13 +985,13 @@ def segment_looks_like_hero_showcase(
     sample_frames: int = 4,
 ) -> bool:
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return True
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     showcase_hits = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         check = frame
@@ -1040,7 +1068,7 @@ def segment_looks_like_promo_or_cinematic(
 ) -> bool:
     """True when the segment window is a promo/cinematic edit, not real gameplay."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return True
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
@@ -1048,7 +1076,7 @@ def segment_looks_like_promo_or_cinematic(
     showcase_hits = 0
     hud_weak = 0
     for t in times:
-        frame = _read_frame_at(cap, float(t))
+        frame = _read_frame_at(video_path, float(t), cap)
         if frame is None:
             continue
         check = frame
@@ -1079,7 +1107,7 @@ def segment_looks_like_promo_or_cinematic(
 def profile_looks_like_mlbb_edit(video_path: Path, sample_frames: int = 4) -> bool:
     """Detect skin promo / stacked TikTok templates (header+footer, not match HUD)."""
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return False
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if frame_count <= 0:

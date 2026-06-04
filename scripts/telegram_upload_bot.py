@@ -827,7 +827,11 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
             '--no-progress',
             '--restrict-filenames',
             '--merge-output-format', 'mp4',
-            '-f', env.get('YOUTUBE_FORMAT', 'bv*[height<=1080]+ba/b[height<=1080]/b'),
+            '-f', env.get(
+                'YOUTUBE_FORMAT',
+                'bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/'
+                'bv*[height<=1080]+ba/b[height<=1080]/b',
+            ),
             '-o', str(template),
         ]
         if looks_like_youtube_url(url) and any(

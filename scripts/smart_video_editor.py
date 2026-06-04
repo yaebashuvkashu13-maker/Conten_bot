@@ -301,7 +301,7 @@ def analyze_audio(path: Path, duration: float, bins: int, window_sec: float = WI
     if not ffprobe_has_audio(path):
         return np.zeros(bins, dtype=np.float32)
     result = run_command([
-        'ffmpeg', '-v', 'error', '-i', str(path), '-vn', '-ac', '1', '-ar', '11025', '-f', 's16le', '-'
+        'ffmpeg', '-v', 'error', '-hwaccel', 'none', '-i', str(path), '-vn', '-ac', '1', '-ar', '11025', '-f', 's16le', '-'
     ], capture_output=True, text=False)
     samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32)
     if samples.size == 0:
@@ -386,19 +386,22 @@ def analyze_video(path: Path) -> dict:
     scene = np.zeros(bins, dtype=np.float32)
     counts = np.zeros(bins, dtype=np.float32)
 
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        raise RuntimeError(f'failed to open video with OpenCV: {path}')
-    native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    prev_gray = None
+    try:
+        from video_frame_io import ffmpeg_read_frame, prefer_ffmpeg_decode
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from video_frame_io import ffmpeg_read_frame, prefer_ffmpeg_decode
 
-    if seek_mode:
+    prev_gray = None
+    fw, fh = 160, 90
+    use_ffmpeg = prefer_ffmpeg_decode(path) or os.environ.get('SMART_FFMPEG_ANALYSIS', '1') == '1'
+
+    if use_ffmpeg and seek_mode:
         sample_count = max(2, int(math.ceil(duration * sample_fps)))
         for i in range(sample_count):
             timestamp = min(duration - 0.05, (i / max(sample_count - 1, 1)) * duration)
-            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000.0)
-            ok, frame = cap.read()
-            if not ok:
+            frame = ffmpeg_read_frame(path, timestamp, width=fw, height=fh)
+            if frame is None:
                 continue
             bin_idx = min(bins - 1, int(timestamp // window_sec))
             prev_gray = _accumulate_frame_stats(
@@ -413,17 +416,21 @@ def analyze_video(path: Path) -> dict:
                 scene,
                 counts,
             )
-    else:
-        sample_every = max(int(round(native_fps / sample_fps)), 1)
+    elif use_ffmpeg:
+        cmd = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none',
+            '-i', str(path), '-vf', f'fps={sample_fps},scale={fw}:{fh}',
+            '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-',
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        chunk = fw * fh * 3
         frame_idx = 0
         while True:
-            ok, frame = cap.read()
-            if not ok:
+            raw = proc.stdout.read(chunk) if proc.stdout else b''
+            if len(raw) < chunk:
                 break
-            if frame_idx % sample_every != 0:
-                frame_idx += 1
-                continue
-            timestamp = frame_idx / native_fps
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((fh, fw, 3))
+            timestamp = frame_idx / max(sample_fps, 0.1)
             bin_idx = min(bins - 1, int(timestamp // window_sec))
             prev_gray = _accumulate_frame_stats(
                 frame,
@@ -438,8 +445,59 @@ def analyze_video(path: Path) -> dict:
                 counts,
             )
             frame_idx += 1
-
-    cap.release()
+        proc.wait()
+    else:
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            raise RuntimeError(f'failed to open video with OpenCV: {path}')
+        native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        if seek_mode:
+            sample_count = max(2, int(math.ceil(duration * sample_fps)))
+            for i in range(sample_count):
+                timestamp = min(duration - 0.05, (i / max(sample_count - 1, 1)) * duration)
+                cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000.0)
+                ok, frame = cap.read()
+                if not ok:
+                    continue
+                bin_idx = min(bins - 1, int(timestamp // window_sec))
+                prev_gray = _accumulate_frame_stats(
+                    frame,
+                    bin_idx,
+                    prev_gray,
+                    motion,
+                    center_motion,
+                    sharpness,
+                    brightness,
+                    saturation,
+                    scene,
+                    counts,
+                )
+        else:
+            sample_every = max(int(round(native_fps / sample_fps)), 1)
+            frame_idx = 0
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if frame_idx % sample_every != 0:
+                    frame_idx += 1
+                    continue
+                timestamp = frame_idx / native_fps
+                bin_idx = min(bins - 1, int(timestamp // window_sec))
+                prev_gray = _accumulate_frame_stats(
+                    frame,
+                    bin_idx,
+                    prev_gray,
+                    motion,
+                    center_motion,
+                    sharpness,
+                    brightness,
+                    saturation,
+                    scene,
+                    counts,
+                )
+                frame_idx += 1
+        cap.release()
     counts = np.where(counts > 0, counts, 1.0)
     motion /= counts
     center_motion /= counts
@@ -1045,7 +1103,7 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
         if game_audio_only
         else f'aresample=44100,atempo={speed:.3f},highpass=f=80,lowpass=f=14000,volume=1.02'
     )
-    command = ['ffmpeg', '-y', '-ss', f"{candidate['start']:.3f}", '-t', f"{candidate['input_duration']:.3f}", '-i', str(source_path)]
+    command = ['ffmpeg', '-y', '-hwaccel', 'none', '-ss', f"{candidate['start']:.3f}", '-t', f"{candidate['input_duration']:.3f}", '-i', str(source_path)]
 
     if logo_path.exists():
         command.extend(['-i', str(logo_path)])

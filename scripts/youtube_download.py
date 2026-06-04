@@ -81,7 +81,11 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         "--merge-output-format",
         "mp4",
         "-f",
-        env.get("YOUTUBE_FORMAT", "bv*[height<=1080]+ba/b[height<=1080]"),
+        env.get(
+            "YOUTUBE_FORMAT",
+            "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
+            "bv*[height<=1080]+ba/b[height<=1080]/b",
+        ),
         "-o",
         str(template),
         url,
@@ -109,7 +113,11 @@ def download_feed(
         "--merge-output-format",
         "mp4",
         "-f",
-        env.get("YOUTUBE_FORMAT", "bv*[height<=1080]+ba/b[height<=1080]"),
+        env.get(
+            "YOUTUBE_FORMAT",
+            "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
+            "bv*[height<=1080]+ba/b[height<=1080]/b",
+        ),
         "--playlist-end",
         str(max_videos),
         "-o",

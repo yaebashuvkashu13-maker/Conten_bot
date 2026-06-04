@@ -25,6 +25,8 @@ install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube
 install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
 install -m 755 "$REPO/scripts/youtube_triple_montage.py" "$DEST/youtube_triple_montage.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/montage_env.py" "$DEST/montage_env.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/video_frame_io.py" "$DEST/video_frame_io.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/gameplay_gate.py" "$DEST/gameplay_gate.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh" 2>/dev/null || true
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py" 2>/dev/null || true
