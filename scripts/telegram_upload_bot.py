@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-03-video-large-hint'
+BOT_VERSION = '2026-06-04-youtube-ingest'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -685,9 +685,71 @@ def parse_research_url(text: str) -> str | None:
     return match.group(0).rstrip('.,);')
 
 
+def looks_like_youtube_url(url: str) -> bool:
+    u = url.lower().rstrip('.,);')
+    return any(
+        host in u
+        for host in (
+            'youtube.com/watch',
+            'youtu.be/',
+            'youtube.com/shorts/',
+            'youtube.com/@',
+            'youtube.com/channel/',
+            'youtube.com/playlist',
+        )
+    )
+
+
+def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
+    """Download YouTube via yt-dlp into pending queue (no 20MB Telegram limit)."""
+    pending_dir = chat_pending_dir(chat_id)
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    work = pending_dir / f'_yt_tmp_{stamp}'
+    work.mkdir(parents=True, exist_ok=True)
+    env = load_env(ENV_FILE)
+    impersonate = env.get('YTDLP_IMPERSONATE', 'chrome-131')
+    template = work / 'yt_%(id)s.%(ext)s'
+    cmd = [
+        'yt-dlp',
+        '--impersonate', impersonate,
+        '--no-warnings',
+        '--no-progress',
+        '--restrict-filenames',
+        '--merge-output-format', 'mp4',
+        '-f', env.get('YOUTUBE_FORMAT', 'bv*[height<=1080]+ba/b[height<=1080]'),
+        '-o', str(template),
+    ]
+    if looks_like_youtube_url(url) and any(
+        x in url.lower() for x in ('/playlist', 'list=', '/@', '/channel/', '/c/')
+    ):
+        cmd += ['--playlist-end', env.get('YOUTUBE_PLAYLIST_END', '3')]
+    else:
+        cmd += ['--no-playlist']
+    cmd.append(url)
+    timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '3600')))
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
+    files = sorted(work.glob('yt_*.mp4'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        raise RuntimeError('yt-dlp did not produce mp4')
+    destination = pending_dir / f'{stamp}_youtube_{files[0].stem}.mp4'
+    shutil.move(str(files[0]), str(destination))
+    shutil.rmtree(work, ignore_errors=True)
+    game_label = label.strip() or game_label_for_chat(chat_id)
+    append_pending(chat_id, destination, game_label)
+    hero = (env.get('YOUTUBE_DEFAULT_HERO') or '').strip().lower()
+    if hero:
+        hero_dir = Path(f'/root/hero_datasets/{hero}')
+        hero_dir.mkdir(parents=True, exist_ok=True)
+        copy_dest = hero_dir / f'yt_{destination.name}'
+        shutil.copy2(destination, copy_dest)
+    return destination
+
+
 def looks_like_video_url(url: str) -> bool:
     u = url.lower().rstrip('.,);')
-    if looks_like_research_url(url):
+    if looks_like_research_url(url) or looks_like_youtube_url(url):
         return False
     return any(
         marker in u
@@ -1336,6 +1398,22 @@ def handle_message(message: dict):
     # Owner: research xlsx / zip, or plain https link (transfer.sh etc.)
     if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
         url = parse_research_url(text)
+        if url and looks_like_youtube_url(url):
+            send_message(
+                chat_id,
+                'Качаю с YouTube на сервер (без лимита 20 МБ Telegram). Может занять несколько минут…',
+            )
+            try:
+                saved = save_youtube_from_url(url, chat_id)
+                pending_count = count_pending(chat_id)
+                send_message(
+                    chat_id,
+                    f'YouTube в очереди: {saved.name} ({pending_count} шт.). Дальше /make.',
+                )
+            except Exception as exc:
+                logging.exception('youtube download failed')
+                send_message(chat_id, f'YouTube не скачался: {exc}')
+            return
         if url and looks_like_video_url(url):
             send_message(chat_id, 'Качаю видео по ссылке на сервер (может занять несколько минут)…')
             try:

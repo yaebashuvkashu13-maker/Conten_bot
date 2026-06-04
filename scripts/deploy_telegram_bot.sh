@@ -19,15 +19,12 @@ install -m 755 "$REPO/scripts/telegram_upload_bot.py" "$DEST/telegram_upload_bot
 install -m 755 "$REPO/scripts/image_watermark_remove.py" "$DEST/image_watermark_remove.py"
 install -m 755 "$REPO/scripts/instagram_digest_gallery_dl.py" "$DEST/instagram_digest_gallery_dl.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/instagram_digest_run.sh" /usr/local/bin/instagram_digest_run.sh 2>/dev/null || true
+install -m 755 "$REPO/scripts/youtube_download.py" "$DEST/youtube_download.py"
+install -m 755 "$REPO/scripts/youtube_health_check.py" "$DEST/youtube_health_check.py"
 
 if systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
   systemctl restart telegram-upload-bot
   echo "restarted telegram-upload-bot"
-elif pgrep -f telegram_upload_bot.py >/dev/null; then
-  pkill -f telegram_upload_bot.py || true
-  sleep 1
-  nohup python3 "$DEST/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
-  echo "restarted bot via nohup"
 else
   echo "WARN: start bot manually: python3 $DEST/telegram_upload_bot.py"
 fi

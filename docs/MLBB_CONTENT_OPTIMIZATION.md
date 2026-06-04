@@ -59,9 +59,21 @@
 - Cron: утро/вечер отчёт, PUBG коллега, health proxy.
 - Webhook: «новый пакет героя загружен» → вызов `build_hero_montage_batch.py`.
 
+## YouTube (без прокси)
+
+- **Прокси для YouTube не нужен** — на VPS `yt-dlp` качает напрямую.
+- **Прокси нужен для массового TikTok** (LTE/datacenter в `.video_bot.env`).
+- Владелец в Telegram: кидаете ссылку `youtube.com` / `youtu.be` → бот качает на сервер → `/make`.
+- Опционально в `/root/.video_bot.env`: `YOUTUBE_DEFAULT_HERO=chou` — копия в `hero_datasets/chou/`.
+- Проверка: `python3 /usr/local/bin/youtube_health_check.py`
+- CLI: `python3 /usr/local/bin/youtube_download.py 'https://youtu.be/...' --out /root/datasets/youtube/inbox`
+
 ## Команды на VPS
 
 ```bash
+# Деплой бота с YouTube
+bash /root/content_bot_ml/scripts/deploy_telegram_bot.sh
+
 # Загрузки из Telegram → датасет героя
 python3 /usr/local/bin/ingest_pending_to_hero.py <CHAT_ID> chou
 
