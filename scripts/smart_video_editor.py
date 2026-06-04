@@ -1340,6 +1340,14 @@ def main() -> int:
             return 1
 
         profile = resolve_profile([item['game_name'] for item in sources], env)
+        try:
+            from montage_env import profile_montage_env
+        except ImportError:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from montage_env import profile_montage_env
+        if os.environ.get('SMART_FORCE_PASSTHROUGH_AUDIO', '1') == '1':
+            for key, value in profile_montage_env(profile).items():
+                os.environ[key] = value
         logging.info(
             'using profile=%s (queue_game_profile=%s default=%s labels=%s)',
             profile,
@@ -1501,7 +1509,8 @@ def main() -> int:
             except Exception as exc:
                 logging.warning('telegram send failed for %s: %s', output_path.name, exc)
         register_segment_history(arranged)
-        mark_used([Path(item['source_path']) for item in sources])
+        if os.environ.get('SMART_SKIP_MARK_USED', '0') != '1':
+            mark_used([Path(item['source_path']) for item in sources])
         drop_first_queue_lines(queue_file, len(batch_lines))
         logging.info('smart edit completed successfully: %s', output_path)
         return 0

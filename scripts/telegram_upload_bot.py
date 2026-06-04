@@ -893,10 +893,23 @@ def smart_make_timeout_sec(source_paths: list[Path], env_map: dict[str, str]) ->
     return min(cap, max(base, scaled))
 
 
+def parse_youtube_allowed_chat_ids() -> set[str]:
+    ids: set[str] = set()
+    for key in ('YOUTUBE_ALLOWED_CHAT_IDS', 'TG_ALLOWED_CHAT_IDS'):
+        for part in env.get(key, '').split(','):
+            part = part.strip()
+            if part:
+                ids.add(part)
+    return ids
+
+
 def youtube_ingest_allowed(chat_id: str) -> bool:
-    """Any chat allowed to use the bot may ingest YouTube (owner always allowed)."""
+    """Owner + YOUTUBE_ALLOWED_CHAT_IDS / TG_ALLOWED_CHAT_IDS may ingest YouTube."""
     if is_owner(chat_id):
         return True
+    allowed = parse_youtube_allowed_chat_ids()
+    if allowed:
+        return str(chat_id) in allowed
     if env.get('YOUTUBE_OWNER_ONLY', '').strip().lower() in ('1', 'true', 'yes'):
         return False
     return chat_is_allowed(chat_id)
@@ -1335,10 +1348,18 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         run_env['QUEUE_FILE'] = tmp_queue_path
         run_env['MAX_SOURCES'] = str(len(lines))
         run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
-        profile = game_profile_for_chat(chat_id)
-        if profile:
-            run_env['DEFAULT_GAME_PROFILE'] = profile
-            run_env['QUEUE_GAME_PROFILE'] = profile
+        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
+        run_env['DEFAULT_GAME_PROFILE'] = profile
+        run_env['QUEUE_GAME_PROFILE'] = profile
+        try:
+            from montage_env import profile_montage_env
+
+            run_env.update(profile_montage_env(profile))
+        except ImportError:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from montage_env import profile_montage_env
+
+            run_env.update(profile_montage_env(profile))
         if len(lines) == 1:
             run_env['SINGLE_SOURCE_MODE'] = '1'
         completed = subprocess.run(

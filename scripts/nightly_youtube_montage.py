@@ -78,6 +78,14 @@ def save_report(payload: dict) -> None:
     REPORT_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def clean_proxy_env(env: dict[str, str]) -> dict[str, str]:
+    out = dict(env)
+    for key in list(out):
+        if "proxy" in key.lower():
+            out.pop(key, None)
+    return out
+
+
 def ytdlp_base(env: dict[str, str]) -> list[str]:
     return [
         "yt-dlp",
@@ -194,6 +202,11 @@ def run_montage(source: Path, env: dict[str, str], chat_id: str) -> tuple[int, s
     run_env = os.environ.copy()
     for key, value in env.items():
         run_env.setdefault(key, value)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from montage_env import profile_montage_env
+
+    run_env = clean_proxy_env(run_env)
+    run_env.update(profile_montage_env("mobile_legends"))
     run_env.update(
         {
             "QUEUE_FILE": queue_path,

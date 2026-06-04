@@ -14,6 +14,7 @@ if [[ -f /root/.video_bot.env ]]; then
   source /root/.video_bot.env
   set +a
 fi
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy YTDLP_PROXY
 
 exec 9>"$LOCK"
 if ! flock -n 9; then

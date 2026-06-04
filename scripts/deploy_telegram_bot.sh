@@ -23,6 +23,9 @@ install -m 755 "$REPO/scripts/youtube_download.py" "$DEST/youtube_download.py"
 install -m 755 "$REPO/scripts/youtube_health_check.py" "$DEST/youtube_health_check.py"
 install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py"
 install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
+install -m 755 "$REPO/scripts/youtube_triple_montage.py" "$DEST/youtube_triple_montage.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/montage_env.py" "$DEST/montage_env.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"
 
 # Only one poller — duplicate processes steal getUpdates (HTTP 409).
