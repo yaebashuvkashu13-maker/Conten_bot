@@ -1058,6 +1058,56 @@ def start_research_analysis() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def summarize_instagram_digest_log(log_path: Path) -> dict:
+    """Read the latest digest run from the shared log file."""
+    if not log_path.exists():
+        return {}
+    lines = log_path.read_text(encoding='utf-8', errors='replace').splitlines()
+    sent = 0
+    errors = 0
+    auth_expired = False
+    for line in reversed(lines[-200:]):
+        if 'done sent=' in line:
+            m = re.search(
+                r'sent=(\d+).*errors=(\d+)(?:.*auth_expired=(True|False))?',
+                line,
+            )
+            if m:
+                sent = int(m.group(1))
+                errors = int(m.group(2))
+                if m.lastindex and m.lastindex >= 3 and m.group(3):
+                    auth_expired = m.group(3) == 'True'
+            break
+        if '401' in line or 'instagram_auth_expired' in line or 'auth_expired=True' in line:
+            auth_expired = True
+    return {'sent': sent, 'errors': errors, 'auth_expired': auth_expired}
+
+
+def instagram_digest_completion_text(log_path: Path) -> str:
+    summary = summarize_instagram_digest_log(log_path)
+    sent = int(summary.get('sent', 0))
+    auth = bool(summary.get('auth_expired'))
+    errors = int(summary.get('errors', 0))
+    if auth:
+        return (
+            'Instagram-дайджест завершён без постов: сессия Instagram истекла (401).\n\n'
+            '1) Зайдите в instagram.com в браузере\n'
+            '2) Экспорт cookies (Netscape) — Get cookies.txt LOCALLY\n'
+            '3) Пришлите cookies.txt боту как документ\n'
+            '4) /ig_digest — повторить рассылку'
+        )
+    if sent > 0:
+        return f'Instagram-дайджест завершён: отправлено {sent} пост(ов).'
+    text = (
+        'Instagram-дайджест завершён: новых постов для отправки не было '
+        '(все уже в базе или отфильтрована реклама).'
+    )
+    if errors:
+        text += f'\nОшибок при загрузке: {errors}.'
+    text += '\nЕсли ожидали картинки — обновите cookies: /ig_cookies → файл → /ig_digest.'
+    return text
+
+
 def start_instagram_digest(notify_chat_id: str | None = None) -> None:
     script = INSTAGRAM_DIGEST_RUN
     if not script.exists():
@@ -1073,17 +1123,22 @@ def start_instagram_digest(notify_chat_id: str | None = None) -> None:
 
     def _run():
         try:
-            subprocess.run(['bash', str(script)], check=False, timeout=1800)
+            env = os.environ.copy()
             if notify_chat_id:
-                log_tail = ''
+                # Completion text is sent by the bot; avoid duplicate Telegram pings.
+                env['IG_NOTIFY_AUTH'] = '0'
+                env['IG_NOTIFY_EMPTY'] = '0'
+            subprocess.run(['bash', str(script)], check=False, timeout=1800, env=env)
+            if notify_chat_id:
                 log_path = Path('/root/data/mlbb/instagram_digest.log')
-                if log_path.exists():
-                    log_tail = '\n'.join(log_path.read_text(encoding='utf-8', errors='replace').splitlines()[-4:])
-                send_message(
-                    notify_chat_id,
-                    'Instagram-дайджест завершён. Смотрите посты выше.\n'
-                    + (f'Лог:\n{log_tail}' if log_tail else ''),
-                )
+                body = instagram_digest_completion_text(log_path)
+                summary = summarize_instagram_digest_log(log_path)
+                if int(summary.get('sent', 0)) == 0 and log_path.exists():
+                    log_tail = '\n'.join(
+                        log_path.read_text(encoding='utf-8', errors='replace').splitlines()[-6:]
+                    )
+                    body += f'\n\nЛог:\n{log_tail}'
+                send_message(notify_chat_id, body[:3900])
         except Exception as exc:
             logging.exception('instagram digest failed: %s', exc)
             if notify_chat_id:
