@@ -19,6 +19,8 @@ for f in \
   pubg_tiktok_gentle.py \
   pubg_stream_learn_worker.py \
   telegram_upload_bot.py \
+  youtube_download.py \
+  youtube_health_check.py \
   smart_video_editor.py \
   ad_screenshot_ingest.py; do
   if [[ -f "$ROOT/scripts/$f" ]]; then
