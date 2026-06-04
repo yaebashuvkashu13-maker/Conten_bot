@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-06-youtube-v2'
+BOT_VERSION = '2026-06-06-youtube-v3'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -1235,32 +1235,36 @@ def start_processing(chat_id: str, only_paths: list[Path] | None = None):
     thread.start()
 
 
+def _bot_command_list() -> list[dict[str, str]]:
+    return [
+        {'command': 'start', 'description': 'Начало работы'},
+        {'command': 'ping', 'description': 'Статус бота и chat_id'},
+        {'command': 'yt', 'description': 'Скачать YouTube / Shorts'},
+        {'command': 'whoami', 'description': 'Ваш chat_id (как в ping)'},
+        {'command': 'make', 'description': 'Собрать нарезку из видео'},
+        {'command': 'status', 'description': 'Сколько видео в очереди'},
+        {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
+        {'command': 'ad_done', 'description': 'Закончить приём скринов'},
+        {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
+    ]
+
+
 def register_bot_commands() -> None:
-    try:
-        api_call(
-            'setMyCommands',
-            {
-                'commands': [
-                    {'command': 'start', 'description': 'Начало работы'},
-                    {'command': 'ping', 'description': 'Проверка, что бот жив'},
-                    {'command': 'yt', 'description': 'Скачать YouTube / Shorts'},
-                    {'command': 'whoami', 'description': 'Ваш chat_id для .env'},
-                    {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
-                    {'command': 'ad_done', 'description': 'Закончить приём скринов'},
-                    {'command': 'bad', 'description': 'Плохие кадры/примеры (владелец)'},
-                    {'command': 'bad_done', 'description': 'Закончить приём плохих кадров'},
-                    {'command': 'make', 'description': 'Собрать нарезку из видео'},
-                    {'command': 'research', 'description': 'Большой Excel: ссылка transfer.sh'},
-                    {'command': 'ig_digest', 'description': 'Дайджест Instagram блогеров (владелец)'},
-                    {'command': 'ig_cookies', 'description': 'Как загрузить cookies Instagram'},
-                    {'command': 'wm', 'description': 'Убрать «god of mlbb» со скрина (владелец)'},
-                    {'command': 'wm_done', 'description': 'Выйти из режима водяного знака'},
-                ],
-            },
-            timeout=30,
-        )
-    except Exception as exc:
-        logging.warning('setMyCommands failed: %s', exc)
+    """Push command menu to Telegram (default + private chats)."""
+    commands = _bot_command_list()
+    scopes: list[dict | None] = [
+        None,
+        {'type': 'all_private_chats'},
+        {'type': 'all_group_chats'},
+    ]
+    for scope in scopes:
+        payload: dict = {'commands': commands}
+        if scope is not None:
+            payload['scope'] = scope
+        try:
+            api_call('setMyCommands', payload, timeout=30)
+        except Exception as exc:
+            logging.warning('setMyCommands scope=%s failed: %s', scope, exc)
 
 
 def handle_message(message: dict):
@@ -1406,25 +1410,30 @@ def handle_message(message: dict):
             f'Примеров в базе: {count_ad_examples()}.',
         )
         return
-    if cmd in ('/whoami', '/id', '/chatid'):
+    if cmd in ('/whoami', '/id', '/chatid', '/chat_id'):
+        register_bot_commands()
         send_message(
             chat_id,
             f'chat_id={chat_id}\n'
             f'владелец(TG_CHAT_ID)={"да" if is_owner(chat_id) else "нет"}\n'
             f'доступ={"да" if chat_is_allowed(chat_id) else "нет"}\n'
-            f'owner_env={DEFAULT_CHAT_ID or "(пусто)"}',
+            f'owner_env={DEFAULT_CHAT_ID or "(пусто)"}\n'
+            f'То же в /ping. Меню команд обновил — закройте чат и откройте снова.',
         )
         return
     if cmd == '/ping':
+        register_bot_commands()
         yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
         send_message(
             chat_id,
             f'Бот на связи ({BOT_VERSION}).\n'
             f'chat_id={chat_id}\n'
-            f'владелец={"да" if is_owner(chat_id) else "нет"} '
+            f'владелец(TG_CHAT_ID)={"да" if is_owner(chat_id) else "нет"} '
+            f'(в .env: {DEFAULT_CHAT_ID or "пусто"})\n'
             f'youtube={"да" if youtube_ingest_allowed(chat_id) else "нет"} '
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
-            f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}'
+            f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}\n'
+            f'YouTube: ссылка Shorts или /yt <url> → /make'
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
         )
         return
