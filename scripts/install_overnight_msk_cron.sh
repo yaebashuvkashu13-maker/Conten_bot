@@ -10,7 +10,7 @@ CRON_LINE="0 21 * * * root /usr/local/bin/overnight_msk.sh >>/root/data/mlbb/ove
 install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh"
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py"
 mkdir -p "$REPO/config"
-install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml"
+# Config lives in repo (git pull); no separate install path needed.
 
 mkdir -p /root/data/mlbb/overnight_msk
 
