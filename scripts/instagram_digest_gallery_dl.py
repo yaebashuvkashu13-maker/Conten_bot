@@ -52,11 +52,32 @@ def load_state() -> set[str]:
 
 
 def save_state(ids: set[str]) -> None:
+    max_ids = int(os.environ.get("IG_STATE_MAX_IDS", "400"))
+    trimmed = sorted(ids)
+    if len(trimmed) > max_ids:
+        trimmed = trimmed[-max_ids:]
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(
-        json.dumps({"published_ids": sorted(ids), "updated": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2),
+        json.dumps(
+            {"published_ids": trimmed, "updated": time.strftime("%Y-%m-%d %H:%M:%S")},
+            indent=2,
+        ),
         encoding="utf-8",
     )
+
+
+def notify_empty_digest(token: str, chat_id: str, published: set[str], errors: int) -> None:
+    if os.environ.get("IG_NOTIFY_EMPTY", "1") != "1":
+        return
+    text = (
+        "📷 Instagram-дайджест: новых постов для отправки нет.\n"
+        f"В базе уже {len(published)} постов. "
+        "Если давно не было картинок — обновите cookies (/ig_cookies) "
+        "или напишите /ig_digest после обновления."
+    )
+    if errors:
+        text += f"\n⚠️ Ошибок при загрузке: {errors}."
+    tg_send(token, chat_id, "sendMessage", {"chat_id": chat_id, "text": text[:3900]})
 
 
 def fetch_posts(username: str, limit: int) -> list[dict]:
@@ -183,11 +204,14 @@ def main() -> int:
         username = str(source.get("url", "")).rstrip("/").split("/")[-1]
         try:
             posts = fetch_posts(username, scan_per_source)
+            logging.info("fetch %s (%s): %d posts", name, username, len(posts))
         except Exception as exc:
             logging.warning("fetch %s failed: %s", name, exc)
             errors += 1
             time.sleep(4)
             continue
+        if not posts:
+            logging.warning("fetch %s: empty list", name)
         for post in posts:
             if sent >= max_posts:
                 break
@@ -212,6 +236,8 @@ def main() -> int:
     save_state(published)
     logging.info("done sent=%s skipped_ads=%s errors=%s", sent, skipped_ads, errors)
     print(f"Published {sent} new posts.")
+    if sent == 0 and os.environ.get("IG_DIGEST_DRY_RUN", "0") != "1":
+        notify_empty_digest(token, chat_id, published, errors)
     return 0 if sent > 0 else (1 if errors else 0)
 
 

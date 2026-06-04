@@ -11,7 +11,8 @@ install -m 755 "$REPO/scripts/instagram_background_worker.py" "$DEST/instagram_b
 mkdir -p /root/data/mlbb /var/lock
 touch /root/data/mlbb/instagram_digest.log
 
-CRON_LINE='0 16 * * * root /usr/local/bin/instagram_digest_run.sh'
+# 16:00 UTC = 19:00 MSK
+CRON_LINE='0 16 * * * root /usr/local/bin/instagram_digest_run.sh # ig-digest-19msk'
 if [[ -f /etc/cron.d/mlbb_video ]]; then
   if ! grep -q instagram_digest_run /etc/cron.d/mlbb_video; then
     echo "$CRON_LINE" >> /etc/cron.d/mlbb_video

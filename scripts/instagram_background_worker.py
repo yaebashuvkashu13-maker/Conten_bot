@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Legacy hook: run real Instagram digest (replaces no-op stub)."""
+"""Lightweight tick: only refresh IG config (full digest = cron 19:00 or /ig_digest)."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 
 def main() -> int:
-    script = "/usr/local/bin/instagram_digest_run.sh"
-    return subprocess.run(["bash", script], check=False).returncode
+    repo = Path("/root/content_bot_ml")
+    builder = repo / "scripts/build_instagram_config.py"
+    if not builder.exists():
+        builder = Path("/usr/local/bin/build_instagram_config.py")
+    return subprocess.run([sys.executable, str(builder)], check=False).returncode
 
 
 if __name__ == "__main__":

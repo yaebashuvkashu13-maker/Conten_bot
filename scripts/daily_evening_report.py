@@ -90,6 +90,19 @@ def log_errors_today(path: Path, needle: str, limit: int = 5) -> int:
     return count
 
 
+def instagram_digest_status() -> str:
+    log_path = Path("/root/data/mlbb/instagram_digest.log")
+    if not log_path.exists():
+        return "Instagram: лог не найден"
+    today = time.strftime("%Y-%m-%d")
+    for line in reversed(log_path.read_text(errors="replace").splitlines()):
+        if "done sent=" not in line or today not in line:
+            continue
+        tail = line.split("done sent=")[-1][:40]
+        return f"Instagram сегодня: sent={tail}"
+    return "Instagram: сегодня дайджест не завершался (cron 19:00 МСК)"
+
+
 def proxy_ok() -> tuple[bool, str]:
     try:
         result = subprocess.run(
@@ -111,6 +124,7 @@ def build_report() -> str:
     pubg_tiktok = count_mp4(Path("/root/datasets/tiktok/pubg"))
     vids = today_videos()
     ok_proxy, proxy_line = proxy_ok()
+    ig_line = instagram_digest_status()
     bot_err = log_errors_today(BOT_LOG, "ERROR")
     editor_err = log_errors_today(EDITOR_LOG, "ERROR")
     completed = log_errors_today(EDITOR_LOG, "completed successfully")
@@ -149,6 +163,7 @@ def build_report() -> str:
 • ошибки редактора: {editor_err}
 • tiktok mlbb mp4: {tiktok_mlbb} | pubg tiktok: {pubg_tiktok}
 • прокси: {proxy_line}
+• {ig_line}
 
 Нужна помощь
 {chr(10).join(help_lines)}
