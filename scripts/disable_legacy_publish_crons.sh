@@ -8,6 +8,9 @@ MARKS=(
   'youtube-nightly-mlbb'
   'morning-publish'
   'mlbb-evening'
+  'hourly_new_sources'
+  'mlbb_hourly'
+  'mlbb-hourly'
 )
 
 for f in /etc/cron.d/*; do
@@ -43,8 +46,11 @@ TMP=$(mktemp)
 if crontab -l 2>/dev/null | grep -v 'nightly_youtube.sh' \
   | grep -v 'morning_publish_reminder' \
   | grep -v 'hourly_new_sources' \
+  | grep -v 'mlbb_hourly' \
   | grep -v 'mlbb_evening' \
-  | grep -v 'youtube_triple_montage' >"$TMP"; then
+  | grep -v 'youtube_triple_montage' \
+  | grep -v 'overnight_orchestrator' \
+  | grep -v 'run_parallel_stack' >"$TMP"; then
   crontab "$TMP"
   echo "pruned root crontab"
 fi
@@ -61,4 +67,4 @@ else
   echo 'IG_NOTIFY_EMPTY=0' >>"$ENV"
 fi
 
-echo "Legacy auto-publish crons disabled. Active: overnight_msk (00:00 MSK)."
+echo "Legacy auto-publish crons disabled. Active: overnight_msk (~18:00 MSK, montages by 08:00)."

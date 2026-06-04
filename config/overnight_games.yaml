@@ -1,4 +1,4 @@
-# Daily batch: cron 18:00 MSK → Telegram montages by 08:00 MSK (5 games × 2 cuts).
+# Daily batch: cron 18:00 MSK → Telegram montages by 08:00 MSK (5 games × 1 cut, sequential CPU).
 # Fallback URLs (1.5h+) used when YouTube search finds no 2h+ VOD.
 # Scene logic: MLBB uses HUD gate; other games use motion/audio/scene scoring only.
 
@@ -6,7 +6,7 @@ games:
   - id: mlbb
     profile: mobile_legends
     queue_label: MLBB
-    montages: 2
+    montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
     search_limit: 12
@@ -17,7 +17,7 @@ games:
   - id: pubg
     profile: pubg
     queue_label: PUBG
-    montages: 2
+    montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
     # Owner VOD if search has no 2h+ stream (~90 min Metro Royale)
@@ -32,7 +32,7 @@ games:
   - id: genshin
     profile: genshin
     queue_label: Genshin
-    montages: 2
+    montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
     fallback_min_duration_sec: 5400
@@ -46,7 +46,7 @@ games:
   - id: standoff
     profile: standoff
     queue_label: Standoff
-    montages: 2
+    montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
     fallback_min_duration_sec: 5400
@@ -60,7 +60,7 @@ games:
   - id: wot
     profile: world_of_tanks
     queue_label: WoT
-    montages: 2
+    montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
     fallback_min_duration_sec: 5400

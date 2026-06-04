@@ -32,6 +32,7 @@ install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh" 2>/dev/
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/install_overnight_msk_cron.sh" "$DEST/install_overnight_msk_cron.sh" 2>/dev/null || true
 install -m 755 "$REPO/scripts/disable_legacy_publish_crons.sh" "$DEST/disable_legacy_publish_crons.sh" 2>/dev/null || true
+install -m 755 "$REPO/scripts/stop_competing_workers.sh" "$DEST/stop_competing_workers.sh" 2>/dev/null || true
 mkdir -p "$REPO/config"
 install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml" 2>/dev/null || true
 install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"

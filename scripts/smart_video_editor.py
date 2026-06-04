@@ -1382,15 +1382,29 @@ def main() -> int:
         MIN_FINAL_DURATION = max(22.0, MIN_FINAL_DURATION - 11.0)
 
     setup_logging(DEFAULT_LOG_FILE)
-    acquire_lock(DEFAULT_LOCK_FILE)
+    lock_handle = acquire_lock(DEFAULT_LOCK_FILE)
+    try:
+        return _run_smart_edit(
+            env,
+            bot_token=os.environ.get('TG_BOT_TOKEN', env.get('TG_BOT_TOKEN', '')),
+            default_chat_id=os.environ.get('TG_CHAT_ID', env.get('TG_CHAT_ID', '')),
+            impersonate=os.environ.get('YTDLP_IMPERSONATE', env.get('YTDLP_IMPERSONATE', 'chrome-131')),
+        )
+    finally:
+        lock_handle.close()
 
+
+def _run_smart_edit(
+    env: dict[str, str],
+    *,
+    bot_token: str,
+    default_chat_id: str,
+    impersonate: str,
+) -> int:
     queue_file = Path(os.environ.get('QUEUE_FILE', str(QUEUE_FILE)))
     output_dir = Path(os.environ.get('OUTPUT_DIR', str(DEFAULT_OUTPUT_DIR)))
     logo_path = Path(os.environ.get('LOGO_FILE', str(DEFAULT_LOGO_FILE)))
     music_path = Path(os.environ.get('BACKGROUND_MUSIC_FILE', env.get('BACKGROUND_MUSIC_FILE', '/root/background_music.mp3')))
-    impersonate = os.environ.get('YTDLP_IMPERSONATE', env.get('YTDLP_IMPERSONATE', 'chrome-131'))
-    bot_token = os.environ.get('TG_BOT_TOKEN', env.get('TG_BOT_TOKEN', ''))
-    default_chat_id = os.environ.get('TG_CHAT_ID', env.get('TG_CHAT_ID', ''))
 
     if not bot_token:
         logging.error('TG_BOT_TOKEN is not configured')
