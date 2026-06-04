@@ -34,6 +34,9 @@ games:
     montages: 2
     min_duration_sec: 7200
     max_duration_sec: 10800
+    fallback_min_duration_sec: 5400
+    fallback_urls:
+      - "https://youtu.be/i67K34fQa9I"
     search_limit: 12
     queries:
       - "Genshin Impact live stream full"
@@ -45,6 +48,9 @@ games:
     montages: 2
     min_duration_sec: 7200
     max_duration_sec: 10800
+    fallback_min_duration_sec: 5400
+    fallback_urls:
+      - "https://www.youtube.com/live/0pneRQba1rE"
     search_limit: 12
     queries:
       - "Standoff 2 live stream full gameplay"
@@ -56,6 +62,9 @@ games:
     montages: 2
     min_duration_sec: 7200
     max_duration_sec: 10800
+    fallback_min_duration_sec: 5400
+    fallback_urls:
+      - "https://www.youtube.com/live/-055vzCY-qk"
     search_limit: 12
     queries:
       - "World of Tanks Blitz live stream full"
