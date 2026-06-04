@@ -48,6 +48,9 @@ PROFILE_LABELS = {
     'pubg': 'PUBG Mobile',
     'mobile_legends': 'Mobile Legends',
     'mlbb': 'Mobile Legends',
+    'genshin': 'Genshin Impact',
+    'standoff': 'Standoff 2',
+    'wot': 'WoT Blitz',
 }
 
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)

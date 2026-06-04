@@ -217,7 +217,15 @@ def sanitize_slug(parts: list[str]) -> str:
 def resolve_profile(game_names: list[str], env: dict[str, str]) -> str:
     """Queue/chat profile wins over global DEFAULT_GAME_PROFILE in .video_bot.env."""
     forced = (os.environ.get('QUEUE_GAME_PROFILE') or env.get('QUEUE_GAME_PROFILE') or '').strip().lower()
-    if forced in ('pubg', 'mobile_legends', 'generic'):
+    known = (
+        'pubg',
+        'mobile_legends',
+        'genshin',
+        'standoff',
+        'wot',
+        'generic',
+    )
+    if forced in known:
         return forced
 
     joined = ' '.join(game_names).lower()
@@ -225,9 +233,15 @@ def resolve_profile(game_names: list[str], env: dict[str, str]) -> str:
         return 'pubg'
     if 'mobile legends' in joined or 'mlbb' in joined:
         return 'mobile_legends'
+    if 'genshin' in joined or '原神' in joined:
+        return 'genshin'
+    if 'standoff' in joined or 'стандофф' in joined:
+        return 'standoff'
+    if 'wot' in joined or 'tanks blitz' in joined or 'world of tanks' in joined:
+        return 'wot'
 
     default_profile = env.get('DEFAULT_GAME_PROFILE', 'generic').lower()
-    if default_profile in ('pubg', 'mobile_legends'):
+    if default_profile in known:
         return default_profile
     return 'generic'
 
@@ -507,6 +521,42 @@ def build_candidates(
                 0.05 * sat
             )
             base += 0.08 * max(0.0, audio - 0.4)
+        elif profile == 'genshin':
+            # Open-world combat: scene cuts + center action + ability bursts (no MLBB HUD).
+            base = (
+                0.22 * motion +
+                0.18 * center +
+                0.14 * audio +
+                0.22 * scene +
+                0.12 * sharp +
+                0.07 * bright +
+                0.05 * sat
+            )
+            base += 0.06 * max(0.0, scene - 0.38)
+        elif profile == 'standoff':
+            # FPS duels: sharp audio transients + fast center motion.
+            base = (
+                0.28 * motion +
+                0.20 * center +
+                0.22 * audio +
+                0.12 * scene +
+                0.10 * sharp +
+                0.05 * bright +
+                0.03 * sat
+            )
+            base += 0.10 * max(0.0, audio - 0.42)
+        elif profile == 'wot':
+            # Tank battles: sustained motion + scene stability + hit audio.
+            base = (
+                0.26 * motion +
+                0.12 * center +
+                0.18 * audio +
+                0.20 * scene +
+                0.12 * sharp +
+                0.07 * bright +
+                0.05 * sat
+            )
+            base += 0.05 * max(0.0, motion - 0.22)
         else:
             base = (
                 0.28 * motion +

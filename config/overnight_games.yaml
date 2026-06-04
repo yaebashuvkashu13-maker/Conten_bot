@@ -1,0 +1,58 @@
+# Midnight MSK batch: long YouTube streams → montages (one run until ~08:00 MSK).
+# Scene logic: MLBB uses HUD gate; other games use motion/audio/scene scoring only.
+
+games:
+  - id: mlbb
+    profile: mobile_legends
+    queue_label: MLBB
+    montages: 2
+    min_duration_sec: 7200
+    max_duration_sec: 10800
+    search_limit: 12
+    queries:
+      - "Mobile Legends Bang Bang live stream full gameplay"
+      - "MLBB ranked stream replay full match"
+
+  - id: pubg
+    profile: pubg
+    queue_label: PUBG
+    montages: 2
+    min_duration_sec: 7200
+    max_duration_sec: 10800
+    search_limit: 12
+    queries:
+      - "PUBG Mobile live stream full gameplay"
+      - "PUBG Mobile ranked stream replay"
+
+  - id: genshin
+    profile: genshin
+    queue_label: Genshin
+    montages: 2
+    min_duration_sec: 7200
+    max_duration_sec: 10800
+    search_limit: 12
+    queries:
+      - "Genshin Impact live stream full"
+      - "Genshin Impact gameplay stream replay"
+
+  - id: standoff
+    profile: standoff
+    queue_label: Standoff
+    montages: 2
+    min_duration_sec: 7200
+    max_duration_sec: 10800
+    search_limit: 12
+    queries:
+      - "Standoff 2 live stream full gameplay"
+      - "Standoff 2 ranked gameplay stream"
+
+  - id: wot
+    profile: wot
+    queue_label: WoT Blitz
+    montages: 2
+    min_duration_sec: 7200
+    max_duration_sec: 10800
+    search_limit: 12
+    queries:
+      - "World of Tanks Blitz live stream full"
+      - "WoT Blitz gameplay stream replay"

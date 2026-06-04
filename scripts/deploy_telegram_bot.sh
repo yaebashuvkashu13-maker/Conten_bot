@@ -26,6 +26,12 @@ install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
 install -m 755 "$REPO/scripts/youtube_triple_montage.py" "$DEST/youtube_triple_montage.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/montage_env.py" "$DEST/montage_env.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh" 2>/dev/null || true
+install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py" 2>/dev/null || true
+install -m 755 "$REPO/scripts/install_overnight_msk_cron.sh" "$DEST/install_overnight_msk_cron.sh" 2>/dev/null || true
+install -m 755 "$REPO/scripts/disable_legacy_publish_crons.sh" "$DEST/disable_legacy_publish_crons.sh" 2>/dev/null || true
+mkdir -p "$REPO/config"
+install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml" 2>/dev/null || true
 install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"
 
 # Only one poller — duplicate processes steal getUpdates (HTTP 409).

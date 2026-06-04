@@ -120,15 +120,23 @@ def fetch_video_meta(video_id: str, env: dict[str, str]) -> dict | None:
     }
 
 
-def discover_candidates(env: dict[str, str]) -> list[dict]:
-    queries = [
-        q.strip()
-        for q in env.get("YOUTUBE_NIGHTLY_QUERIES", ",".join(DEFAULT_QUERIES)).split(",")
-        if q.strip()
-    ]
-    search_limit = int(env.get("YOUTUBE_NIGHTLY_SEARCH_LIMIT", "15"))
-    min_sec = float(env.get("YOUTUBE_NIGHT_MIN_SEC", "5400"))   # 1.5 h
-    max_sec = float(env.get("YOUTUBE_NIGHT_MAX_SEC", "12600"))  # 3.5 h
+def discover_candidates(
+    env: dict[str, str],
+    *,
+    queries: list[str] | None = None,
+    min_sec: float | None = None,
+    max_sec: float | None = None,
+    search_limit: int | None = None,
+) -> list[dict]:
+    if queries is None:
+        queries = [
+            q.strip()
+            for q in env.get("YOUTUBE_NIGHTLY_QUERIES", ",".join(DEFAULT_QUERIES)).split(",")
+            if q.strip()
+        ]
+    search_limit = int(search_limit or env.get("YOUTUBE_NIGHTLY_SEARCH_LIMIT", "15"))
+    min_sec = float(min_sec if min_sec is not None else env.get("YOUTUBE_NIGHT_MIN_SEC", "5400"))
+    max_sec = float(max_sec if max_sec is not None else env.get("YOUTUBE_NIGHT_MAX_SEC", "12600"))
     seen: set[str] = set()
     out: list[dict] = []
 
