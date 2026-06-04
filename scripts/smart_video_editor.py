@@ -75,6 +75,9 @@ NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '0') == '1'
 SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
 WINDOW_SECONDS = 1.0
 SAMPLE_FPS = float(os.environ.get('SMART_SAMPLE_FPS', '4.0'))
+LONG_VIDEO_MIN_SEC = float(os.environ.get('SMART_LONG_VIDEO_MIN_SEC', '1200'))  # 20+ min
+LONG_WINDOW_SECONDS = float(os.environ.get('SMART_LONG_WINDOW_SEC', '2.0'))
+LONG_SAMPLE_FPS = float(os.environ.get('SMART_LONG_SAMPLE_FPS', '1.0'))
 TARGET_HEIGHT = 1280
 TARGET_WIDTH = 720
 OUTPUT_FPS = 30
@@ -280,7 +283,7 @@ def maybe_download_source(source: str, temp_dir: Path, impersonate: str) -> Path
     return path
 
 
-def analyze_audio(path: Path, duration: float, bins: int) -> np.ndarray:
+def analyze_audio(path: Path, duration: float, bins: int, window_sec: float = WINDOW_SECONDS) -> np.ndarray:
     if not ffprobe_has_audio(path):
         return np.zeros(bins, dtype=np.float32)
     result = run_command([
@@ -290,7 +293,7 @@ def analyze_audio(path: Path, duration: float, bins: int) -> np.ndarray:
     if samples.size == 0:
         return np.zeros(bins, dtype=np.float32)
     samples /= 32768.0
-    samples_per_bin = max(int(len(samples) / max(duration, 1e-3) * WINDOW_SECONDS), 1)
+    samples_per_bin = max(int(len(samples) / max(duration, 1e-3) * window_sec), 1)
     energy = np.zeros(bins, dtype=np.float32)
     for idx in range(bins):
         start = idx * samples_per_bin
@@ -302,11 +305,65 @@ def analyze_audio(path: Path, duration: float, bins: int) -> np.ndarray:
     return energy
 
 
+def analysis_sampling(duration: float) -> tuple[float, float, bool]:
+    """Return (window_sec, sample_fps, use_seek_mode)."""
+    if duration >= LONG_VIDEO_MIN_SEC:
+        return LONG_WINDOW_SECONDS, LONG_SAMPLE_FPS, True
+    return WINDOW_SECONDS, SAMPLE_FPS, False
+
+
+def max_candidates_for_duration(duration: float) -> int:
+    base = int(os.environ.get('SMART_MAX_CANDIDATES_PER_SOURCE', '4'))
+    cap_n = int(os.environ.get('SMART_LONG_MAX_CANDIDATES', '20'))
+    if duration < LONG_VIDEO_MIN_SEC:
+        return base
+    # +2 candidate slots per 10 minutes of source (more peaks to choose from on 2–3h VOD)
+    bonus = int(duration // 600) * 2
+    return min(cap_n, max(base + bonus, 8))
+
+
+def _accumulate_frame_stats(
+    frame,
+    bin_idx: int,
+    prev_gray,
+    motion,
+    center_motion,
+    sharpness,
+    brightness,
+    saturation,
+    scene,
+    counts,
+) -> object:
+    frame_small = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(frame_small, cv2.COLOR_BGR2HSV)
+    brightness[bin_idx] += float(gray.mean() / 255.0)
+    saturation[bin_idx] += float(hsv[..., 1].mean() / 255.0)
+    sharpness[bin_idx] += float(cv2.Laplacian(gray, cv2.CV_32F).var())
+    counts[bin_idx] += 1.0
+    if prev_gray is not None:
+        diff = cv2.absdiff(gray, prev_gray)
+        motion[bin_idx] += float(diff.mean() / 255.0)
+        h, w = gray.shape
+        y0, y1 = int(h * 0.22), int(h * 0.78)
+        x0, x1 = int(w * 0.18), int(w * 0.82)
+        center_motion[bin_idx] += float(diff[y0:y1, x0:x1].mean() / 255.0)
+        hist_prev = cv2.calcHist([prev_gray], [0], None, [32], [0, 256])
+        hist_now = cv2.calcHist([gray], [0], None, [32], [0, 256])
+        hist_prev = cv2.normalize(hist_prev, hist_prev).flatten()
+        hist_now = cv2.normalize(hist_now, hist_now).flatten()
+        scene_delta = 1.0 - float(cv2.compareHist(hist_prev, hist_now, cv2.HISTCMP_CORREL))
+        if scene_delta > 0.18:
+            scene[bin_idx] += scene_delta
+    return gray
+
+
 def analyze_video(path: Path) -> dict:
     duration = ffprobe_duration(path)
     if duration <= 0:
         raise RuntimeError(f'could not determine duration for {path}')
-    bins = max(1, int(math.ceil(duration / WINDOW_SECONDS)))
+    window_sec, sample_fps, seek_mode = analysis_sampling(duration)
+    bins = max(1, int(math.ceil(duration / window_sec)))
     motion = np.zeros(bins, dtype=np.float32)
     center_motion = np.zeros(bins, dtype=np.float32)
     sharpness = np.zeros(bins, dtype=np.float32)
@@ -319,43 +376,54 @@ def analyze_video(path: Path) -> dict:
     if not cap.isOpened():
         raise RuntimeError(f'failed to open video with OpenCV: {path}')
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    sample_every = max(int(round(native_fps / SAMPLE_FPS)), 1)
-    frame_idx = 0
     prev_gray = None
 
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        if frame_idx % sample_every != 0:
+    if seek_mode:
+        sample_count = max(2, int(math.ceil(duration * sample_fps)))
+        for i in range(sample_count):
+            timestamp = min(duration - 0.05, (i / max(sample_count - 1, 1)) * duration)
+            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000.0)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            bin_idx = min(bins - 1, int(timestamp // window_sec))
+            prev_gray = _accumulate_frame_stats(
+                frame,
+                bin_idx,
+                prev_gray,
+                motion,
+                center_motion,
+                sharpness,
+                brightness,
+                saturation,
+                scene,
+                counts,
+            )
+    else:
+        sample_every = max(int(round(native_fps / sample_fps)), 1)
+        frame_idx = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if frame_idx % sample_every != 0:
+                frame_idx += 1
+                continue
+            timestamp = frame_idx / native_fps
+            bin_idx = min(bins - 1, int(timestamp // window_sec))
+            prev_gray = _accumulate_frame_stats(
+                frame,
+                bin_idx,
+                prev_gray,
+                motion,
+                center_motion,
+                sharpness,
+                brightness,
+                saturation,
+                scene,
+                counts,
+            )
             frame_idx += 1
-            continue
-        timestamp = frame_idx / native_fps
-        bin_idx = min(bins - 1, int(timestamp // WINDOW_SECONDS))
-        frame_small = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
-        gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
-        hsv = cv2.cvtColor(frame_small, cv2.COLOR_BGR2HSV)
-        brightness[bin_idx] += float(gray.mean() / 255.0)
-        saturation[bin_idx] += float(hsv[..., 1].mean() / 255.0)
-        sharpness[bin_idx] += float(cv2.Laplacian(gray, cv2.CV_32F).var())
-        counts[bin_idx] += 1.0
-
-        if prev_gray is not None:
-            diff = cv2.absdiff(gray, prev_gray)
-            motion[bin_idx] += float(diff.mean() / 255.0)
-            h, w = gray.shape
-            y0, y1 = int(h * 0.22), int(h * 0.78)
-            x0, x1 = int(w * 0.18), int(w * 0.82)
-            center_motion[bin_idx] += float(diff[y0:y1, x0:x1].mean() / 255.0)
-            hist_prev = cv2.calcHist([prev_gray], [0], None, [32], [0, 256])
-            hist_now = cv2.calcHist([gray], [0], None, [32], [0, 256])
-            hist_prev = cv2.normalize(hist_prev, hist_prev).flatten()
-            hist_now = cv2.normalize(hist_now, hist_now).flatten()
-            scene_delta = 1.0 - float(cv2.compareHist(hist_prev, hist_now, cv2.HISTCMP_CORREL))
-            if scene_delta > 0.18:
-                scene[bin_idx] += scene_delta
-        prev_gray = gray
-        frame_idx += 1
 
     cap.release()
     counts = np.where(counts > 0, counts, 1.0)
@@ -365,11 +433,13 @@ def analyze_video(path: Path) -> dict:
     brightness /= counts
     saturation /= counts
     scene /= counts
-    audio = analyze_audio(path, duration, bins)
+    audio = analyze_audio(path, duration, bins, window_sec)
 
     return {
         'duration': duration,
         'bins': bins,
+        'window_seconds': window_sec,
+        'long_mode': seek_mode,
         'motion': motion,
         'center_motion': center_motion,
         'sharpness': sharpness,
@@ -399,6 +469,8 @@ def build_candidates(
     relax_segment_gate: bool = False,
 ) -> list[dict]:
     bins = analysis['bins']
+    win = float(analysis.get('window_seconds', WINDOW_SECONDS))
+    max_keep = max_candidates_for_duration(float(analysis.get('duration', 0.0)))
     raw_scores = np.zeros(bins, dtype=np.float32)
     bursts = np.zeros(bins, dtype=np.float32)
     for idx in range(bins):
@@ -518,10 +590,10 @@ def build_candidates(
         if profile == 'mobile_legends' and mean_motion < float(os.environ.get('SMART_MIN_BIN_MOTION', '0.012')):
             continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
-        desired_duration = max(9.5, min(15.0, (right - left + 1) * WINDOW_SECONDS + 3.2))
+        desired_duration = max(9.5, min(15.0, (right - left + 1) * win + 3.2))
         desired_pre = min(5.2, max(3.6, desired_duration * 0.34))
         desired_post = desired_duration - desired_pre
-        peak_time = idx * WINDOW_SECONDS
+        peak_time = idx * win
         start = max(0.0, peak_time - desired_pre)
         end = min(analysis['duration'], peak_time + desired_post)
         current_duration = end - start
@@ -587,8 +659,7 @@ def build_candidates(
                 # Normal montages: env can only tighten gates. Etalon builds may loosen
                 # subtitle/reject thresholds while keeping combat + chat checks.
                 etalon = os.environ.get('ETALON_MONTAGE', '0') == '1'
-                reject_promo = os.environ.get('SMART_REJECT_PROMO', '1') == '1'
-                default_min_hud = 16.5 if etalon else 17.0
+                default_min_hud = 17.0 if etalon else 17.0
                 default_max_text = 0.52 if etalon else 0.28
                 default_max_cartoon = 0.50 if etalon else 0.45
                 default_max_reject = 0.99 if etalon else 0.78
@@ -647,7 +718,7 @@ def build_candidates(
         if vid_pop:
             candidate['score'] = round(float(candidate['score']) + popularity_boost(vid_pop), 4)
         pruned.append(candidate)
-        if len(pruned) >= 4:
+        if len(pruned) >= max_keep:
             break
     return pruned
 
@@ -1247,7 +1318,14 @@ def main() -> int:
                 continue
             analysis = analyze_video(source_path)
             source_signature = file_sha256(source_path)
-            logging.info('analyzed source=%s duration=%.2fs bins=%s sha=%s', source_path, analysis['duration'], analysis['bins'], source_signature[:12])
+            logging.info(
+                'analyzed source=%s duration=%.2fs bins=%s long_mode=%s sha=%s',
+                source_path,
+                analysis['duration'],
+                analysis['bins'],
+                analysis.get('long_mode', False),
+                source_signature[:12],
+            )
             sources.append({
                 'source_index': idx,
                 'source_signature': source_signature,

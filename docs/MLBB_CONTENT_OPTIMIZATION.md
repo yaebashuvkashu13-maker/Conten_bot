@@ -69,6 +69,13 @@
 - Проверка: `python3 /usr/local/bin/youtube_health_check.py`
 - CLI: `python3 /usr/local/bin/youtube_download.py 'https://youtu.be/...' --out /root/datasets/youtube/inbox`
 
+### Длинные VOD (2–3 часа)
+
+- Скачивание: до **4 ч** (`YOUTUBE_DOWNLOAD_TIMEOUT=14400`)
+- `/make`: до **4 ч** на анализ (`SMART_MAKE_TIMEOUT_MAX_SEC=14400`)
+- С 20+ минут включается **быстрый проход** по всему ролику; до **20** лучших сегментов на источник, в монтаж — **3–4** (~33–57 с)
+- Один длинный VOD = **одна** нарезка за `/make` (для нескольких нарезок — несколько `/make` или пакет героя)
+
 ## Команды на VPS
 
 ```bash

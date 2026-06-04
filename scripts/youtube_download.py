@@ -86,7 +86,7 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         str(template),
         url,
     ]
-    subprocess.run(cmd, check=True, timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "3600")))
+    subprocess.run(cmd, check=True, timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")))
     files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")

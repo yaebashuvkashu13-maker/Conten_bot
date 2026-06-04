@@ -800,7 +800,7 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
     else:
         cmd += ['--no-playlist']
     cmd.append(url)
-    timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '3600')))
+    timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '14400')))
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
@@ -819,6 +819,43 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
         copy_dest = hero_dir / f'yt_{destination.name}'
         shutil.copy2(destination, copy_dest)
     return destination
+
+
+def ffprobe_duration_sec(path: Path) -> float:
+    try:
+        result = subprocess.run(
+            [
+                'ffprobe',
+                '-v',
+                'error',
+                '-show_entries',
+                'format=duration',
+                '-of',
+                'default=noprint_wrappers=1:nokey=1',
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (ValueError, subprocess.TimeoutExpired, OSError):
+        pass
+    return 0.0
+
+
+def smart_make_timeout_sec(source_paths: list[Path], env_map: dict[str, str]) -> int:
+    base = int(float(env_map.get('SMART_MAKE_TIMEOUT_SEC', '10800')))
+    cap = int(float(env_map.get('SMART_MAKE_TIMEOUT_MAX_SEC', '14400')))
+    max_dur = max((ffprobe_duration_sec(p) for p in source_paths), default=0.0)
+    if max_dur >= 3600:
+        scaled = int(max_dur * 0.35 + 1800)
+    elif max_dur >= 1200:
+        scaled = int(max_dur * 0.45 + 900)
+    else:
+        scaled = base
+    return min(cap, max(base, scaled))
 
 
 def youtube_ingest_allowed(chat_id: str) -> bool:
@@ -846,14 +883,20 @@ def try_youtube_ingest(chat_id: str, message: dict) -> bool:
         return True
     send_message(
         chat_id,
-        'Качаю с YouTube на сервер (без лимита 20 МБ Telegram). Может занять 1–3 мин…',
+        'Качаю с YouTube на сервер (Shorts ~1–3 мин, VOD 2–3 ч может занять до ~1 ч).',
     )
     try:
         saved = save_youtube_from_url(url, chat_id)
         pending_count = count_pending(chat_id)
+        dur = ffprobe_duration_sec(saved)
+        dur_hint = ''
+        if dur >= 3600:
+            dur_hint = f' Длительность ~{int(dur // 3600)} ч {int((dur % 3600) // 60)} мин — /make может идти 30–90 мин.'
+        elif dur >= 1200:
+            dur_hint = f' Длительность ~{int(dur // 60)} мин — /make может идти 15–45 мин.'
         send_message(
             chat_id,
-            f'YouTube в очереди: {saved.name} ({pending_count} шт.). Дальше /make.',
+            f'YouTube в очереди: {saved.name} ({pending_count} шт.).{dur_hint} Дальше /make.',
         )
     except Exception as exc:
         logging.exception('youtube download failed')
@@ -1155,11 +1198,20 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             send_message(chat_id, 'У тебя пока нет загруженных видео. Сначала пришли файлы, потом команду /make.')
             return
 
+        source_paths = [Path(line.split('|', 1)[0]) for line in lines]
+        make_timeout = smart_make_timeout_sec(source_paths, env)
+        max_dur = max((ffprobe_duration_sec(p) for p in source_paths), default=0.0)
         if not limited:
             game_hint = 'PUBG' if is_pubg_chat(chat_id) else 'MLBB'
+            long_note = ''
+            if max_dur >= 1200:
+                long_note = (
+                    f' Длинный исходник (~{int(max_dur // 60)} мин): '
+                    f'ищу лучшие моменты по всему ролику, ждите до ~{make_timeout // 60} мин.'
+                )
             send_message(
                 chat_id,
-                f'Принял задачу ({game_hint}). Запускаю Smart Edit: 3-4 хайлайта, ~33-57 сек.',
+                f'Принял задачу ({game_hint}). Smart Edit: 3–4 хайлайта, итог ~33–57 сек.{long_note}',
             )
         with tempfile.NamedTemporaryFile('w', delete=False, prefix=f'tg-batch-{chat_id}-', suffix='.txt') as tmp_queue:
             tmp_queue.write('\n'.join(lines) + '\n')
@@ -1173,12 +1225,12 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         if profile:
             run_env['DEFAULT_GAME_PROFILE'] = profile
             run_env['QUEUE_GAME_PROFILE'] = profile
-        if only_paths is not None and len(only_paths) == 1:
+        if len(lines) == 1:
             run_env['SINGLE_SOURCE_MODE'] = '1'
         completed = subprocess.run(
             [PROCESSOR],
             env=run_env,
-            timeout=2400,
+            timeout=make_timeout,
             capture_output=True,
             text=True,
         )
