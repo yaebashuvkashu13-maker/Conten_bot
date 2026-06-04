@@ -13,6 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from youtube_game_prefs import passes_game_filters, rank_candidate
+
 ENV_FILE = Path("/root/.video_bot.env")
 WORK_ROOT = Path("/root/data/mlbb/youtube_nightly")
 INBOX = WORK_ROOT / "inbox"
@@ -142,6 +144,7 @@ def discover_candidates(
     min_sec: float | None = None,
     max_sec: float | None = None,
     search_limit: int | None = None,
+    game_prefs: dict | None = None,
 ) -> list[dict]:
     if queries is None:
         queries = [
@@ -190,6 +193,13 @@ def discover_candidates(
                     meta["title"][:60],
                 )
                 continue
+            if game_prefs and not passes_game_filters(meta, game_prefs):
+                logging.info(
+                    "skip prefs id=%s title=%s",
+                    vid,
+                    meta["title"][:60],
+                )
+                continue
             out.append(meta)
             logging.info(
                 "candidate %.0f min id=%s %s",
@@ -197,7 +207,10 @@ def discover_candidates(
                 vid,
                 meta["title"][:70],
             )
-    out.sort(key=lambda item: abs(item["duration"] - 7200))  # prefer ~2h
+    if game_prefs:
+        out.sort(key=lambda item: rank_candidate(item, game_prefs), reverse=True)
+    else:
+        out.sort(key=lambda item: abs(item["duration"] - 7200))  # prefer ~2h
     return out
 
 
@@ -246,11 +259,17 @@ def candidates_from_urls(
     return out
 
 
-def pick_candidate(candidates: list[dict], used_ids: set[str]) -> dict | None:
-    for item in candidates:
-        if item["id"] not in used_ids:
-            return item
-    return None
+def pick_candidate(
+    candidates: list[dict],
+    used_ids: set[str],
+    game_prefs: dict | None = None,
+) -> dict | None:
+    pool = [c for c in candidates if c["id"] not in used_ids]
+    if not pool:
+        return None
+    if game_prefs:
+        pool.sort(key=lambda item: rank_candidate(item, game_prefs), reverse=True)
+    return pool[0]
 
 
 def download_video(meta: dict, env: dict[str, str]) -> Path:

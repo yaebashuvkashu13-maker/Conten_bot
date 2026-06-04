@@ -24,5 +24,16 @@ def profile_montage_env(profile: str) -> dict[str, str]:
         "wot",
         "world_of_tanks",
     ):
-        return passthrough_audio_env()
+        out = passthrough_audio_env()
+        if profile == "pubg":
+            # Long single VOD; more gunfight peaks, not multi-short TikTok glue.
+            out.update(
+                {
+                    "MIN_HIGHLIGHTS": "4",
+                    "MAX_HIGHLIGHTS": "5",
+                    "SMART_PUBG_PEAK_PERCENTILE": "60",
+                    "SMART_BURST_WEIGHT": "0.34",
+                }
+            )
+        return out
     return {}

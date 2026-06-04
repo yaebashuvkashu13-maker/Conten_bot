@@ -182,8 +182,9 @@ def process_game(
         min_sec=min_sec,
         max_sec=max_sec,
         search_limit=int(game.get("search_limit", 12)),
+        game_prefs=game,
     )
-    pick = pick_candidate(candidates, used)
+    pick = pick_candidate(candidates, used, game_prefs=game)
     if not pick:
         fallback_urls = game.get("fallback_urls") or []
         if fallback_urls:
@@ -196,7 +197,7 @@ def process_game(
                 max_sec=max_sec,
                 used_ids=used,
             )
-            pick = pick_candidate(fb, used)
+            pick = pick_candidate(fb, used, game_prefs=game)
             if pick:
                 report["source"] = "fallback_url"
     if not pick:
@@ -281,7 +282,7 @@ def main() -> int:
 
     if args.dry_run:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from nightly_youtube_montage import discover_candidates
+        from nightly_youtube_montage import discover_candidates, pick_candidate
 
         for game in games:
             min_sec = float(game["min_duration_sec"])
@@ -292,8 +293,9 @@ def main() -> int:
                 min_sec=min_sec,
                 max_sec=max_sec,
                 search_limit=5,
+                game_prefs=game,
             )
-            pick = c[0] if c else None
+            pick = pick_candidate(c, set(), game_prefs=game) if c else None
             if not pick and game.get("fallback_urls"):
                 fb_min = float(game.get("fallback_min_duration_sec", min_sec))
                 fb = candidates_from_urls(
@@ -302,7 +304,7 @@ def main() -> int:
                     min_sec=fb_min,
                     max_sec=max_sec,
                 )
-                pick = fb[0] if fb else None
+                pick = pick_candidate(fb, set(), game_prefs=game) if fb else None
             label = pick["title"][:60] if pick else "-"
             src = "fallback" if pick and not c else "search"
             print(game["id"], len(c), src, label)
@@ -313,8 +315,9 @@ def main() -> int:
     send_text(
         env,
         chat_id,
-        f"🌙 Ночной батч (5 игр): старт {started} МСК, дедлайн ~{args.deadline_hour_msk}:00. "
-        "Другие авто-рассылки отключены — только эти нарезки.",
+        f"🌙 Ночной батч (5 игр): старт {started} МСК.\n"
+        f"Цель — все нарезки в чат до {args.deadline_hour_msk}:00 МСК (расписание: старт ~18:00, "
+        f"окно ~14 ч). Другие авто-рассылки отключены.",
     )
 
     results: list[dict] = []
@@ -330,7 +333,9 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    lines = [f"🌅 Ночной батч завершён ({started} МСК):"]
+    lines = [
+        f"🌅 Ночной батч завершён ({started} МСК). К {args.deadline_hour_msk}:00 — заливайте готовые ролики:"
+    ]
     for row in results:
         gid = row.get("game", "?")
         if row.get("skipped"):
