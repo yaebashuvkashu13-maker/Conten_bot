@@ -37,6 +37,12 @@ COOKIES = Path(os.environ.get("INSTAGRAM_COOKIES_PATH", "/root/instagram_cookies
 CONFIG = Path(os.environ.get("IG_CONFIG_OUT", "/root/config.instagram-mlbb.yaml"))
 STATE = Path("/root/data/mlbb/instagram_digest_state.json")
 
+try:
+    from instagram_cookies_util import normalize_instagram_cookies_file
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from instagram_cookies_util import normalize_instagram_cookies_file
+
 
 def load_config() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
@@ -123,7 +129,7 @@ def fetch_posts(username: str, limit: int) -> list[dict]:
         "--cookies",
         str(COOKIES),
         "--range",
-        f"1-{max(limit * 4, 4)}",
+        f"1-{max(limit + 1, min(limit * 2, 6))}",
         url,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
@@ -242,11 +248,18 @@ def main() -> int:
     if not COOKIES.exists():
         logging.error("cookies missing: %s", COOKIES)
         return 1
+    try:
+        normalize_instagram_cookies_file(COOKIES)
+    except Exception as exc:
+        logging.error("cookies invalid: %s", exc)
+        return 1
     cfg = load_config()
     token = cfg["telegram"]["bot_token"]
     chat_id = str(cfg["telegram"]["channel_id"])
     max_posts = int(cfg.get("max_posts_per_run", 7))
-    scan_per_source = int(os.environ.get("IG_DIGEST_SCAN_PER_SOURCE", "6"))
+    source_delay = float(os.environ.get("IG_DIGEST_SOURCE_DELAY_SEC", "10"))
+    post_delay = float(os.environ.get("IG_DIGEST_POST_DELAY_SEC", "2.5"))
+    scan_per_source = int(os.environ.get("IG_DIGEST_SCAN_PER_SOURCE", "3"))
     published = load_state()
     sent = 0
     skipped_ads = 0
@@ -266,7 +279,7 @@ def main() -> int:
             if "instagram_auth_expired" in str(exc) or _is_auth_error(str(exc)):
                 auth_expired = True
                 break
-            time.sleep(4)
+            time.sleep(source_delay)
             continue
         if not posts:
             logging.warning("fetch %s: empty list", name)
@@ -286,11 +299,11 @@ def main() -> int:
                 published.add(pid)
                 sent += 1
                 logging.info("sent %s %s", name, pid)
-                time.sleep(1.4)
+                time.sleep(post_delay)
             except Exception as exc:
                 logging.warning("telegram %s: %s", name, exc)
                 errors += 1
-        time.sleep(3)
+        time.sleep(source_delay)
     save_state(published)
     logging.info(
         "done sent=%s skipped_ads=%s errors=%s auth_expired=%s",

@@ -1152,9 +1152,21 @@ def save_instagram_cookies(message: dict) -> Path:
     if not doc:
         raise ValueError('нет файла')
     download_file(get_file_url(doc['file_id']), INSTAGRAM_COOKIES_PATH)
-    text = INSTAGRAM_COOKIES_PATH.read_text(encoding='utf-8', errors='replace')
-    if 'instagram.com' not in text.lower():
-        raise ValueError('файл не похож на cookies Instagram')
+    try:
+        from instagram_cookies_util import normalize_instagram_cookies_file
+
+        normalize_instagram_cookies_file(INSTAGRAM_COOKIES_PATH)
+    except ImportError:
+        sys_path = Path(__file__).resolve().parent
+        import sys
+
+        sys.path.insert(0, str(sys_path))
+        from instagram_cookies_util import normalize_instagram_cookies_file
+
+        normalize_instagram_cookies_file(INSTAGRAM_COOKIES_PATH)
+    except ValueError as exc:
+        INSTAGRAM_COOKIES_PATH.unlink(missing_ok=True)
+        raise ValueError(str(exc)) from exc
     return INSTAGRAM_COOKIES_PATH
 
 
