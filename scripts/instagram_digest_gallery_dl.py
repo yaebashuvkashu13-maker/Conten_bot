@@ -97,10 +97,19 @@ def fetch_posts(username: str, limit: int) -> list[dict]:
     raw = json.loads(proc.stdout or "[]")
     by_id: dict[str, dict] = {}
     for entry in raw:
-        if not isinstance(entry, list) or len(entry) < 3:
+        if not isinstance(entry, list) or len(entry) < 2:
             continue
-        meta = entry[2]
-        if not isinstance(meta, dict):
+        meta = None
+        for item in entry:
+            if isinstance(item, dict) and (item.get("post_id") or item.get("post_shortcode")):
+                meta = item
+                break
+        if meta is None:
+            for item in reversed(entry):
+                if isinstance(item, dict):
+                    meta = item
+                    break
+        if not meta:
             continue
         post_id = str(meta.get("post_id") or meta.get("post_shortcode") or "")
         if not post_id:
