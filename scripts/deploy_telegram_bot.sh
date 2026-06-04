@@ -25,9 +25,10 @@ install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube
 install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
 install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"
 
-# Only one poller — duplicate processes steal getUpdates and ignore new code.
-pkill -f '[p]ython3 /usr/local/bin/telegram_upload_bot.py' 2>/dev/null || true
-pkill -f '[p]ython3.*telegram_upload_bot.py' 2>/dev/null || true
+# Only one poller — duplicate processes steal getUpdates (HTTP 409).
+pkill -f telegram_upload_bot.py 2>/dev/null || true
+sleep 2
+pgrep -f telegram_upload_bot.py && pkill -9 -f telegram_upload_bot.py 2>/dev/null || true
 sleep 1
 
 if ! command -v yt-dlp >/dev/null 2>&1; then

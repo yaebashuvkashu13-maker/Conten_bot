@@ -190,6 +190,8 @@ API_BASE = f'https://api.telegram.org/bot{BOT_TOKEN}'
 FILE_BASE = f'https://api.telegram.org/file/bot{BOT_TOKEN}'
 PROCESSING_CHATS: set[str] = set()
 PROCESSING_LOCK = threading.Lock()
+YOUTUBE_DOWNLOAD_CHATS: set[str] = set()
+YOUTUBE_DOWNLOAD_LOCK = threading.Lock()
 _TELEGRAM_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -774,42 +776,75 @@ def looks_like_youtube_url(url: str) -> bool:
     return 'list=' in (parsed.query or '').lower()
 
 
+def finalize_yt_work_file(work: Path) -> Path:
+    """Return merged mp4 from yt-dlp work dir (handles video-only .f399 etc.)."""
+    mp4s = sorted(work.glob('yt_*.mp4'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if mp4s:
+        return mp4s[0]
+    candidates = [
+        p
+        for p in work.iterdir()
+        if p.name.startswith('yt_') and not p.name.endswith('.part') and p.is_file()
+    ]
+    if not candidates:
+        raise RuntimeError('yt-dlp did not produce output file')
+    src = max(candidates, key=lambda p: p.stat().st_mtime)
+    if src.suffix.lower() == '.mp4':
+        return src
+    dest = work / f'{src.stem}.mp4'
+    proc = subprocess.run(
+        ['ffmpeg', '-y', '-i', str(src), '-c', 'copy', str(dest)],
+        capture_output=True,
+        text=True,
+        timeout=7200,
+    )
+    if proc.returncode != 0 or not dest.exists():
+        raise RuntimeError((proc.stderr or 'ffmpeg remux failed')[:500])
+    return dest
+
+
 def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
     """Download YouTube via yt-dlp into pending queue (no 20MB Telegram limit)."""
-    pending_dir = chat_pending_dir(chat_id)
-    stamp = time.strftime('%Y%m%d_%H%M%S')
-    work = pending_dir / f'_yt_tmp_{stamp}'
-    work.mkdir(parents=True, exist_ok=True)
-    env = load_env(ENV_FILE)
-    impersonate = env.get('YTDLP_IMPERSONATE', 'chrome-131')
-    template = work / 'yt_%(id)s.%(ext)s'
-    cmd = [
-        'yt-dlp',
-        '--impersonate', impersonate,
-        '--no-warnings',
-        '--no-progress',
-        '--restrict-filenames',
-        '--merge-output-format', 'mp4',
-        '-f', env.get('YOUTUBE_FORMAT', 'bv*[height<=1080]+ba/b[height<=1080]'),
-        '-o', str(template),
-    ]
-    if looks_like_youtube_url(url) and any(
-        x in url.lower() for x in ('/playlist', 'list=', '/@', '/channel/', '/c/')
-    ):
-        cmd += ['--playlist-end', env.get('YOUTUBE_PLAYLIST_END', '3')]
-    else:
-        cmd += ['--no-playlist']
-    cmd.append(url)
-    timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '14400')))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
-    files = sorted(work.glob('yt_*.mp4'), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not files:
-        raise RuntimeError('yt-dlp did not produce mp4')
-    destination = pending_dir / f'{stamp}_youtube_{files[0].stem}.mp4'
-    shutil.move(str(files[0]), str(destination))
-    shutil.rmtree(work, ignore_errors=True)
+    with YOUTUBE_DOWNLOAD_LOCK:
+        if chat_id in YOUTUBE_DOWNLOAD_CHATS:
+            raise RuntimeError('Уже качаю другой YouTube для этого чата — подождите.')
+        YOUTUBE_DOWNLOAD_CHATS.add(chat_id)
+    try:
+        pending_dir = chat_pending_dir(chat_id)
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        work = pending_dir / f'_yt_tmp_{stamp}'
+        work.mkdir(parents=True, exist_ok=True)
+        env = load_env(ENV_FILE)
+        impersonate = env.get('YTDLP_IMPERSONATE', 'chrome-131')
+        template = work / 'yt_%(id)s.%(ext)s'
+        cmd = [
+            'yt-dlp',
+            '--impersonate', impersonate,
+            '--no-warnings',
+            '--no-progress',
+            '--restrict-filenames',
+            '--merge-output-format', 'mp4',
+            '-f', env.get('YOUTUBE_FORMAT', 'bv*[height<=1080]+ba/b[height<=1080]/b'),
+            '-o', str(template),
+        ]
+        if looks_like_youtube_url(url) and any(
+            x in url.lower() for x in ('/playlist', 'list=', '/@', '/channel/', '/c/')
+        ):
+            cmd += ['--playlist-end', env.get('YOUTUBE_PLAYLIST_END', '3')]
+        else:
+            cmd += ['--no-playlist']
+        cmd.append(url)
+        timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '14400')))
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
+        outfile = finalize_yt_work_file(work)
+        destination = pending_dir / f'{stamp}_youtube_{outfile.stem.replace("yt_", "")}.mp4'
+        shutil.move(str(outfile), str(destination))
+        shutil.rmtree(work, ignore_errors=True)
+    finally:
+        with YOUTUBE_DOWNLOAD_LOCK:
+            YOUTUBE_DOWNLOAD_CHATS.discard(chat_id)
     game_label = label.strip() or game_label_for_chat(chat_id)
     append_pending(chat_id, destination, game_label)
     hero = (env.get('YOUTUBE_DEFAULT_HERO') or '').strip().lower()

@@ -27,6 +27,8 @@ for f in \
   mlbb_n8n_webhook.py \
   publish_ready_montage.py \
   install_n8n_webhook.sh \
+  morning_publish_reminder.py \
+  install_morning_publish_cron.sh \
   smart_video_editor.py \
   ad_screenshot_ingest.py; do
   if [[ -f "$ROOT/scripts/$f" ]]; then
