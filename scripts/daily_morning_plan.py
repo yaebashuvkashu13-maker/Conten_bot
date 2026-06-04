@@ -52,8 +52,29 @@ def send_text(token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def youtube_nightly_block() -> str:
+    report_path = Path("/root/data/mlbb/youtube_nightly/last_report.json")
+    if not report_path.exists():
+        return "• Ночной YouTube: отчёта ещё нет (cron 01:30 или ручной запуск)."
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "• Ночной YouTube: отчёт битый."
+    if data.get("phase") == "discover":
+        n = len(data.get("candidates") or [])
+        return f"• Ночной YouTube: поиск — {n} кандидатов (ждём нарезку)."
+    if data.get("ok"):
+        return (
+            f"• Ночной YouTube: ✅ нарезка готова (~{data.get('duration_min', '?')} мин источник).\n"
+            f"  {data.get('title', '')[:80]}"
+        )
+    err = data.get("error") or data.get("message") or f"код {data.get('montage_rc')}"
+    return f"• Ночной YouTube: ⚠️ {err}"
+
+
 def build_plan() -> str:
     day = time.strftime("%Y-%m-%d")
+    yt = youtube_nightly_block()
     return f"""🌅 План на {day}
 
 Цели дня
@@ -71,6 +92,8 @@ def build_plan() -> str:
 Нужно от тебя (если есть)
 • Новый прокси — только когда готовы к burst TikTok (gameplay-only).
 • 2–3 пункта по эталону Ling (звук / обучение / кусок N).
+
+{yt}
 
 Итог дня: хотя бы 1 эталон MLBB + подтверждённый цикл PUBG для коллеги."""
 

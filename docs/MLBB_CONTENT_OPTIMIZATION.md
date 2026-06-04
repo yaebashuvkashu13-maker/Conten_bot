@@ -76,6 +76,13 @@
 - С 20+ минут включается **быстрый проход** по всему ролику; до **20** лучших сегментов на источник, в монтаж — **3–4** (~33–57 с)
 - Один длинный VOD = **одна** нарезка за `/make` (для нескольких нарезок — несколько `/make` или пакет героя)
 
+## Ночной YouTube (авто)
+
+- **01:30** cron: поиск стримов **1.5–3.5 ч** → скачивание → Smart Edit → **ролик в Telegram** (и утром строка в плане 09:00).
+- Установка на VPS: `bash scripts/install_youtube_nightly_cron.sh`
+- Ручной тест: `python3 /usr/local/bin/nightly_youtube_montage.py --discover-only`
+- Env (опционально): `YOUTUBE_NIGHTLY_QUERIES`, `YOUTUBE_NIGHT_MIN_SEC=5400`, `YOUTUBE_NIGHT_MAX_SEC=12600`
+
 ## Команды на VPS
 
 ```bash

@@ -21,6 +21,9 @@ install -m 755 "$REPO/scripts/instagram_digest_gallery_dl.py" "$DEST/instagram_d
 install -m 755 "$REPO/scripts/instagram_digest_run.sh" /usr/local/bin/instagram_digest_run.sh 2>/dev/null || true
 install -m 755 "$REPO/scripts/youtube_download.py" "$DEST/youtube_download.py"
 install -m 755 "$REPO/scripts/youtube_health_check.py" "$DEST/youtube_health_check.py"
+install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py"
+install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
+install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"
 
 # Only one poller — duplicate processes steal getUpdates and ignore new code.
 pkill -f '[p]ython3 /usr/local/bin/telegram_upload_bot.py' 2>/dev/null || true
