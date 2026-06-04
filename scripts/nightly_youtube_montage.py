@@ -358,11 +358,26 @@ def main() -> int:
     save_report(report)
 
     if code == 0:
+        try:
+            sys.path.insert(0, "/usr/local/bin")
+            from publish_ready_montage import latest_in_output_dir, register  # noqa: WPS433
+
+            montage = latest_in_output_dir()
+            if montage:
+                manifest = register(
+                    montage,
+                    source_url=pick["url"],
+                    title=pick["title"],
+                )
+                report["montage_path"] = manifest.get("path")
+        except Exception as exc:
+            logging.warning("publish manifest: %s", exc)
         send_text(
             env,
             chat_id,
             f"🌅 Ночная нарезка готова (источник ~{report['duration_min']} мин).\n"
-            f"Ролик выше в чате. Источник: {pick['url']}",
+            f"Ролик выше в чате. Источник: {pick['url']}\n"
+            f"Для n8n/TikTok/IG: /root/data/mlbb/publish/latest_montage.json",
         )
         logging.info("montage ok")
         return 0

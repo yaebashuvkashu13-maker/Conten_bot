@@ -24,6 +24,9 @@ for f in \
   nightly_youtube_montage.py \
   nightly_youtube.sh \
   install_youtube_nightly_cron.sh \
+  mlbb_n8n_webhook.py \
+  publish_ready_montage.py \
+  install_n8n_webhook.sh \
   smart_video_editor.py \
   ad_screenshot_ingest.py; do
   if [[ -f "$ROOT/scripts/$f" ]]; then
