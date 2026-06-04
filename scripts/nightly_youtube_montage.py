@@ -96,6 +96,21 @@ def ytdlp_base(env: dict[str, str]) -> list[str]:
     ]
 
 
+def parse_youtube_id(url: str) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url.strip())
+    if parsed.netloc.endswith("youtu.be"):
+        return parsed.path.strip("/").split("/")[0][:11]
+    if "/live/" in parsed.path:
+        part = parsed.path.split("/live/", 1)[-1].split("/")[0].split("?")[0]
+        if part:
+            return part[:11]
+    if "/shorts/" in parsed.path:
+        return parsed.path.split("/shorts/", 1)[-1].split("/")[0][:11]
+    return (parse_qs(parsed.query).get("v") or [""])[0][:11]
+
+
 def fetch_video_meta(video_id: str, env: dict[str, str]) -> dict | None:
     url = f"https://www.youtube.com/watch?v={video_id}"
     cmd = ytdlp_base(env) + ["-j", "--no-playlist", url]
@@ -183,6 +198,50 @@ def discover_candidates(
                 meta["title"][:70],
             )
     out.sort(key=lambda item: abs(item["duration"] - 7200))  # prefer ~2h
+    return out
+
+
+def candidates_from_urls(
+    urls: list[str],
+    env: dict[str, str],
+    *,
+    min_sec: float,
+    max_sec: float,
+    used_ids: set[str] | None = None,
+) -> list[dict]:
+    """Pinned YouTube URLs when search finds nothing (or owner-provided VOD)."""
+    used_ids = used_ids or set()
+    out: list[dict] = []
+    for raw in urls:
+        url = str(raw).strip()
+        if not url:
+            continue
+        vid = parse_youtube_id(url)
+        if not vid:
+            logging.warning("bad youtube url: %s", url[:80])
+            continue
+        if vid in used_ids:
+            logging.info("skip fallback used id=%s", vid)
+            continue
+        meta = fetch_video_meta(vid, env)
+        if not meta:
+            logging.warning("fallback meta failed id=%s", vid)
+            continue
+        if SKIP_TITLE.search(meta["title"]):
+            logging.info("skip fallback title=%s", meta["title"][:80])
+            continue
+        dur = meta["duration"]
+        if dur < min_sec or dur > max_sec:
+            logging.info(
+                "skip fallback duration %.0fs id=%s title=%s",
+                dur,
+                vid,
+                meta["title"][:60],
+            )
+            continue
+        out.append(meta)
+        logging.info("fallback candidate %.0f min id=%s %s", dur / 60, vid, meta["title"][:70])
+    out.sort(key=lambda item: item["duration"], reverse=True)
     return out
 
 
@@ -288,14 +347,7 @@ def main() -> int:
     used = set(state.get("used_ids") or [])
 
     if args.url:
-        from urllib.parse import parse_qs, urlparse
-
-        parsed = urlparse(args.url.strip())
-        vid = ""
-        if parsed.netloc.endswith("youtu.be"):
-            vid = parsed.path.strip("/").split("/")[0][:11]
-        else:
-            vid = (parse_qs(parsed.query).get("v") or [""])[0][:11]
+        vid = parse_youtube_id(args.url)
         meta = fetch_video_meta(vid, env)
         if not meta:
             logging.error("could not fetch meta for %s", args.url)

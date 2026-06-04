@@ -19,6 +19,10 @@ games:
     montages: 2
     min_duration_sec: 7200
     max_duration_sec: 10800
+    # Owner VOD if search has no 2h+ stream (~90 min Metro Royale)
+    fallback_min_duration_sec: 5400
+    fallback_urls:
+      - "https://www.youtube.com/live/FpMs48XOnq0"
     search_limit: 12
     queries:
       - "PUBG Mobile live stream full gameplay"

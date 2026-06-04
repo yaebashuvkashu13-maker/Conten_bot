@@ -158,7 +158,12 @@ def process_game(
     stop_at: datetime,
 ) -> dict:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from nightly_youtube_montage import discover_candidates, download_video, pick_candidate
+    from nightly_youtube_montage import (
+        candidates_from_urls,
+        discover_candidates,
+        download_video,
+        pick_candidate,
+    )
 
     gid = game["id"]
     used = set((state.get("used_by_game") or {}).get(gid, []))
@@ -169,14 +174,31 @@ def process_game(
         return report
 
     logging.info("=== game %s ===", gid)
+    max_sec = float(game["max_duration_sec"])
+    min_sec = float(game["min_duration_sec"])
     candidates = discover_candidates(
         env,
         queries=game["queries"],
-        min_sec=float(game["min_duration_sec"]),
-        max_sec=float(game["max_duration_sec"]),
+        min_sec=min_sec,
+        max_sec=max_sec,
         search_limit=int(game.get("search_limit", 12)),
     )
     pick = pick_candidate(candidates, used)
+    if not pick:
+        fallback_urls = game.get("fallback_urls") or []
+        if fallback_urls:
+            fb_min = float(game.get("fallback_min_duration_sec", min_sec))
+            logging.info("%s: trying %s fallback url(s)", gid, len(fallback_urls))
+            fb = candidates_from_urls(
+                fallback_urls,
+                env,
+                min_sec=fb_min,
+                max_sec=max_sec,
+                used_ids=used,
+            )
+            pick = pick_candidate(fb, used)
+            if pick:
+                report["source"] = "fallback_url"
     if not pick:
         report["skipped"] = "no_candidate"
         logging.warning("no candidate for %s", gid)
@@ -258,14 +280,28 @@ def main() -> int:
         from nightly_youtube_montage import discover_candidates
 
         for game in games:
+            min_sec = float(game["min_duration_sec"])
+            max_sec = float(game["max_duration_sec"])
             c = discover_candidates(
                 env,
                 queries=game["queries"],
-                min_sec=float(game["min_duration_sec"]),
-                max_sec=float(game["max_duration_sec"]),
+                min_sec=min_sec,
+                max_sec=max_sec,
                 search_limit=5,
             )
-            print(game["id"], len(c), c[0]["title"][:60] if c else "-")
+            pick = c[0] if c else None
+            if not pick and game.get("fallback_urls"):
+                fb_min = float(game.get("fallback_min_duration_sec", min_sec))
+                fb = candidates_from_urls(
+                    game["fallback_urls"],
+                    env,
+                    min_sec=fb_min,
+                    max_sec=max_sec,
+                )
+                pick = fb[0] if fb else None
+            label = pick["title"][:60] if pick else "-"
+            src = "fallback" if pick and not c else "search"
+            print(game["id"], len(c), src, label)
         return 0
 
     state = load_state()
