@@ -208,6 +208,7 @@ def candidates_from_urls(
     min_sec: float,
     max_sec: float,
     used_ids: set[str] | None = None,
+    apply_title_filter: bool = False,
 ) -> list[dict]:
     """Pinned YouTube URLs when search finds nothing (or owner-provided VOD)."""
     used_ids = used_ids or set()
@@ -227,7 +228,7 @@ def candidates_from_urls(
         if not meta:
             logging.warning("fallback meta failed id=%s", vid)
             continue
-        if SKIP_TITLE.search(meta["title"]):
+        if apply_title_filter and SKIP_TITLE.search(meta["title"]):
             logging.info("skip fallback title=%s", meta["title"][:80])
             continue
         dur = meta["duration"]
