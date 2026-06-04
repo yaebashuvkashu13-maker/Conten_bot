@@ -121,6 +121,25 @@ def _is_auth_error(message: str) -> bool:
     )
 
 
+def _gallery_dl_env() -> dict[str, str]:
+    """Instagram must not use the TikTok LTE proxy from .video_bot.env (often dead)."""
+    env = os.environ.copy()
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ):
+        env.pop(key, None)
+    ig_proxy = (os.environ.get("INSTAGRAM_PROXY_URL") or "").strip()
+    if ig_proxy:
+        env["HTTP_PROXY"] = ig_proxy
+        env["HTTPS_PROXY"] = ig_proxy
+    return env
+
+
 def fetch_posts(username: str, limit: int) -> list[dict]:
     url = f"https://www.instagram.com/{username}/posts/"
     cmd = [
@@ -132,7 +151,14 @@ def fetch_posts(username: str, limit: int) -> list[dict]:
         f"1-{max(limit + 1, min(limit * 2, 6))}",
         url,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+        env=_gallery_dl_env(),
+    )
     if proc.returncode != 0 and not proc.stdout.strip():
         raise RuntimeError((proc.stderr or proc.stdout or "gallery-dl failed")[-500:])
     raw = json.loads(proc.stdout or "[]")

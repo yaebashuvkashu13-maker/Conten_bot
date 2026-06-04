@@ -43,6 +43,9 @@ fi
 cd "$REPO"
 export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 export INSTAGRAM_COOKIES_PATH="${INSTAGRAM_COOKIES_PATH:-/root/instagram_cookies.txt}"
+# TikTok/CyberYozh proxy breaks gallery-dl (Connection refused / fake "user not found").
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+export NO_PROXY="${NO_PROXY:-instagram.com,.instagram.com,cdninstagram.com}"
 if [[ -f "$INSTAGRAM_COOKIES_PATH" ]] && [[ -f "$REPO/scripts/instagram_digest_gallery_dl.py" ]]; then
   python3 "$REPO/scripts/instagram_digest_gallery_dl.py"
 elif [[ -f "$INSTAGRAM_COOKIES_PATH" ]] && [[ -f "$REPO/scripts/instagram_digest_instaloader.py" ]]; then

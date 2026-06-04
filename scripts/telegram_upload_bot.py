@@ -1088,6 +1088,9 @@ def instagram_digest_completion_text(log_path: Path) -> str:
     sent = int(summary.get('sent', 0))
     auth = bool(summary.get('auth_expired'))
     errors = int(summary.get('errors', 0))
+    log_tail = ''
+    if log_path.exists():
+        log_tail = log_path.read_text(encoding='utf-8', errors='replace')[-8000:]
     if auth:
         return (
             'Instagram-дайджест завершён без постов: сессия Instagram истекла (401).\n\n'
@@ -1098,14 +1101,23 @@ def instagram_digest_completion_text(log_path: Path) -> str:
         )
     if sent > 0:
         return f'Instagram-дайджест завершён: отправлено {sent} пост(ов).'
-    text = (
-        'Instagram-дайджест завершён: новых постов для отправки не было '
-        '(все уже в базе или отфильтрована реклама).'
-    )
+    if errors and ('ProxyError' in log_tail or 'Connection refused' in log_tail):
+        return (
+            'Instagram-дайджест: постов не отправлено — сработал мёртвый HTTP_PROXY '
+            '(прокси для TikTok, не для Instagram).\n'
+            'Прокси для дайджеста отключён на сервере. Подождите 10–15 мин и снова /ig_digest.'
+        )
     if errors:
-        text += f'\nОшибок при загрузке: {errors}.'
-    text += '\nЕсли ожидали картинки — обновите cookies: /ig_cookies → файл → /ig_digest.'
-    return text
+        return (
+            f'Instagram-дайджест: постов не отправлено, ошибок загрузки: {errors}.\n'
+            'Проверьте лог ниже. Если 401 — обновите cookies (/ig_cookies). '
+            'Иначе повторите /ig_digest через 15–30 мин.'
+        )
+    return (
+        'Instagram-дайджест завершён: новых постов для отправки не было '
+        '(все уже в базе или отфильтрована реклама).\n'
+        'Если ожидали картинки — /ig_cookies → файл → /ig_digest.'
+    )
 
 
 def start_instagram_digest(notify_chat_id: str | None = None) -> None:
@@ -1747,8 +1759,12 @@ def handle_message(message: dict):
     ):
         try:
             save_instagram_cookies(message)
-            send_message(chat_id, 'Cookies сохранены. Запускаю дайджест…')
-            start_instagram_digest(chat_id)
+            send_message(
+                chat_id,
+                'Cookies сохранены (формат Cookie-Editor исправлен).\n'
+                'Instagram уже мог ругаться на автоматизацию — дайджест сразу не запускаю.\n'
+                'Подождите 15–30 мин, затем /ig_digest (не чаще 1–2 раз в сутки).',
+            )
         except Exception as exc:
             send_message(chat_id, f'Не удалось сохранить cookies: {exc}')
         return
