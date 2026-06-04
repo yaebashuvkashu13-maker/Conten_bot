@@ -35,3 +35,13 @@ cd /root/b && git pull
 ```
 
 Потом снова `bash scripts/burst.sh`.
+
+## YouTube в Telegram-боте (обязательно после git pull)
+
+```bash
+cd /root/b && bash scripts/deploy_telegram_bot.sh
+```
+
+В боте: `/ping` — версия `youtube-v2`, `yt-dlp=ok`. Ссылка Shorts или `/yt https://youtube.com/shorts/...`
+
+Если бот молчит: `/whoami` — скопируйте `chat_id` в `/root/.video_bot.env` как `TG_CHAT_ID=...`, снова `deploy_telegram_bot.sh`.

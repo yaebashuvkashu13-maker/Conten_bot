@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-06-youtube-shorts'
+BOT_VERSION = '2026-06-06-youtube-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -682,14 +682,30 @@ def parse_research_url(text: str) -> str | None:
     return urls[0] if urls else None
 
 
+def normalize_http_url(url: str) -> str:
+    url = url.strip().rstrip('.,);')
+    if not url:
+        return url
+    if url.startswith('//'):
+        return 'https:' + url
+    if re.match(r'^(?:www\.)?(?:youtube\.com|youtu\.be|m\.youtube\.com)/', url, re.I):
+        return 'https://' + url
+    return url
+
+
 def extract_http_urls(text: str) -> list[str]:
-    if not text or 'http' not in text:
+    if not text:
         return []
-    found = re.findall(r'https?://[^\s<>"\']+', text)
+    found = list(re.findall(r'https?://[^\s<>"\']+', text))
+    found += re.findall(
+        r'(?:www\.)?(?:youtube\.com|youtu\.be|m\.youtube\.com)/[^\s<>"\']+',
+        text,
+        flags=re.I,
+    )
     out: list[str] = []
     seen: set[str] = set()
     for raw in found:
-        url = raw.rstrip('.,);')
+        url = normalize_http_url(raw)
         if url and url not in seen:
             seen.add(url)
             out.append(url)
@@ -806,16 +822,12 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
 
 
 def youtube_ingest_allowed(chat_id: str) -> bool:
+    """Any chat allowed to use the bot may ingest YouTube (owner always allowed)."""
     if is_owner(chat_id):
         return True
-    if env.get('YOUTUBE_INGEST_ALL', '').strip().lower() in ('1', 'true', 'yes', 'all'):
-        return chat_is_allowed(chat_id)
-    extra = {
-        item.strip()
-        for item in env.get('YOUTUBE_CHAT_IDS', '').split(',')
-        if item.strip()
-    }
-    return str(chat_id) in extra
+    if env.get('YOUTUBE_OWNER_ONLY', '').strip().lower() in ('1', 'true', 'yes'):
+        return False
+    return chat_is_allowed(chat_id)
 
 
 def try_youtube_ingest(chat_id: str, message: dict) -> bool:
@@ -824,6 +836,7 @@ def try_youtube_ingest(chat_id: str, message: dict) -> bool:
     if not yt_urls:
         return False
     url = yt_urls[0]
+    logging.info('youtube ingest chat=%s url=%s', chat_id, url[:120])
     if not youtube_ingest_allowed(chat_id):
         send_message(
             chat_id,
@@ -1230,6 +1243,8 @@ def register_bot_commands() -> None:
                 'commands': [
                     {'command': 'start', 'description': 'Начало работы'},
                     {'command': 'ping', 'description': 'Проверка, что бот жив'},
+                    {'command': 'yt', 'description': 'Скачать YouTube / Shorts'},
+                    {'command': 'whoami', 'description': 'Ваш chat_id для .env'},
                     {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
                     {'command': 'ad_done', 'description': 'Закончить приём скринов'},
                     {'command': 'bad', 'description': 'Плохие кадры/примеры (владелец)'},
@@ -1254,7 +1269,13 @@ def handle_message(message: dict):
     if not chat_id:
         return
     if not chat_is_allowed(chat_id):
-        logging.warning('ignoring unauthorized chat %s (not in ALLOWED, not owner)', chat_id)
+        logging.warning('unauthorized chat %s', chat_id)
+        send_message(
+            chat_id,
+            f'Этот chat_id={chat_id} не в списке бота. '
+            f'Добавьте в /root/.video_bot.env: TG_CHAT_ID={chat_id} '
+            f'или TG_ALLOWED_CHAT_IDS=… и перезапустите бота.',
+        )
         return
 
     text = (message.get('text') or '').strip()
@@ -1262,6 +1283,11 @@ def handle_message(message: dict):
     logging.info('message chat=%s cmd=%r text=%r', chat_id, cmd, text[:80] if text else '')
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
+
+    # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
+    if not (text.startswith('/') or caption.startswith('/')):
+        if try_youtube_ingest(chat_id, message):
+            return
 
     if cmd == '/start' or text.startswith('/start'):
         if is_pubg_chat(chat_id):
@@ -1380,14 +1406,26 @@ def handle_message(message: dict):
             f'Примеров в базе: {count_ad_examples()}.',
         )
         return
+    if cmd in ('/whoami', '/id', '/chatid'):
+        send_message(
+            chat_id,
+            f'chat_id={chat_id}\n'
+            f'владелец(TG_CHAT_ID)={"да" if is_owner(chat_id) else "нет"}\n'
+            f'доступ={"да" if chat_is_allowed(chat_id) else "нет"}\n'
+            f'owner_env={DEFAULT_CHAT_ID or "(пусто)"}',
+        )
+        return
     if cmd == '/ping':
+        yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
         send_message(
             chat_id,
             f'Бот на связи ({BOT_VERSION}).\n'
             f'chat_id={chat_id}\n'
             f'владелец={"да" if is_owner(chat_id) else "нет"} '
             f'youtube={"да" if youtube_ingest_allowed(chat_id) else "нет"} '
-            f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}',
+            f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
+            f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}'
+            + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
         )
         return
     if cmd in ('/yt', '/youtube'):
@@ -1513,10 +1551,6 @@ def handle_message(message: dict):
             )
         return
 
-    # YouTube / Shorts / youtu.be (text, caption, or link entity)
-    if not (text.startswith('/') or caption.startswith('/')) and try_youtube_ingest(chat_id, message):
-        return
-
     # Owner: research xlsx / zip, or plain https link (transfer.sh etc.)
     if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
         url = parse_research_url(text)
@@ -1584,8 +1618,6 @@ def handle_message(message: dict):
 
     media = extract_media(message)
     if not media:
-        if try_youtube_ingest(chat_id, message):
-            return
         if text and cmd not in ('/start',):
             hint = 'Команды: /ping, /yt, /ad, /wm, /ig_digest, /start. Видео — файлом.'
             if extract_urls_from_message(message):

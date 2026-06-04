@@ -35,6 +35,9 @@ if [[ -f /root/.video_bot.env ]]; then
   set +a
 fi
 
+if [[ -f "$ROOT/scripts/deploy_telegram_bot.sh" ]]; then
+  bash "$ROOT/scripts/deploy_telegram_bot.sh" 2>/dev/null || true
+fi
 bash "$BIN/run_parallel_stack.sh" 2>/dev/null || bash "$ROOT/scripts/run_parallel_stack.sh"
 if ! pgrep -f overnight_orchestrator.sh >/dev/null; then
   nohup bash "$BIN/overnight_orchestrator.sh" >>/root/data/mlbb/overnight_orchestrator.log 2>&1 &

@@ -22,12 +22,25 @@ install -m 755 "$REPO/scripts/instagram_digest_run.sh" /usr/local/bin/instagram_
 install -m 755 "$REPO/scripts/youtube_download.py" "$DEST/youtube_download.py"
 install -m 755 "$REPO/scripts/youtube_health_check.py" "$DEST/youtube_health_check.py"
 
+# Only one poller — duplicate processes steal getUpdates and ignore new code.
+pkill -f '[p]ython3 /usr/local/bin/telegram_upload_bot.py' 2>/dev/null || true
+pkill -f '[p]ython3.*telegram_upload_bot.py' 2>/dev/null || true
+sleep 1
+
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "WARN: yt-dlp not found — YouTube links will fail. Install: pip install -U yt-dlp"
+else
+  python3 "$DEST/youtube_health_check.py" || echo "WARN: youtube_health_check failed"
+fi
+
 if systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
   systemctl restart telegram-upload-bot
   echo "restarted telegram-upload-bot"
 else
-  echo "WARN: start bot manually: python3 $DEST/telegram_upload_bot.py"
+  nohup python3 "$DEST/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
+  echo "started bot via nohup (no systemd unit)"
 fi
 
 grep -m1 BOT_VERSION "$DEST/telegram_upload_bot.py" || true
-echo "OK. Send /ping then /wm to @programofloyalbot"
+pgrep -af telegram_upload_bot.py || true
+echo "OK. Telegram: /ping (version youtube-v2), /whoami, /yt <url>, or paste Shorts link"

@@ -12,5 +12,5 @@ git fetch origin
 git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git checkout main
 git pull --ff-only
 bash "$REPO/scripts/burst.sh"
-systemctl restart telegram-upload-bot
+bash "$REPO/scripts/deploy_telegram_bot.sh" 2>/dev/null || true
 echo "[$(date)] auto_update done"
