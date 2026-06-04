@@ -9,8 +9,8 @@ CRON_LINE="0 21 * * * root /usr/local/bin/overnight_msk.sh >>/root/data/mlbb/ove
 
 install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh"
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py"
-install -m 644 "$REPO/config/overnight_games.yaml" /root/content_bot_ml/config/overnight_games.yaml 2>/dev/null || \
-  install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml"
+mkdir -p "$REPO/config"
+install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml"
 
 mkdir -p /root/data/mlbb/overnight_msk
 
