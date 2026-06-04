@@ -396,30 +396,15 @@ def analyze_video(path: Path) -> dict:
     fw, fh = 160, 90
     use_ffmpeg = prefer_ffmpeg_decode(path) or os.environ.get('SMART_FFMPEG_ANALYSIS', '1') == '1'
 
-    if use_ffmpeg and seek_mode:
-        sample_count = max(2, int(math.ceil(duration * sample_fps)))
-        for i in range(sample_count):
-            timestamp = min(duration - 0.05, (i / max(sample_count - 1, 1)) * duration)
-            frame = ffmpeg_read_frame(path, timestamp, width=fw, height=fh)
-            if frame is None:
-                continue
-            bin_idx = min(bins - 1, int(timestamp // window_sec))
-            prev_gray = _accumulate_frame_stats(
-                frame,
-                bin_idx,
-                prev_gray,
-                motion,
-                center_motion,
-                sharpness,
-                brightness,
-                saturation,
-                scene,
-                counts,
-            )
-    elif use_ffmpeg:
+    if use_ffmpeg:
+        # Single ffmpeg pass (AV1-safe). Avoid per-timestamp ffmpeg spawns on 2–4h VOD.
+        eff_fps = sample_fps
+        if seek_mode and duration >= LONG_VIDEO_MIN_SEC:
+            cap_fps = float(os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS', '0.35'))
+            eff_fps = min(sample_fps, cap_fps)
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none',
-            '-i', str(path), '-vf', f'fps={sample_fps},scale={fw}:{fh}',
+            '-i', str(path), '-vf', f'fps={eff_fps},scale={fw}:{fh}',
             '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-',
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -430,7 +415,7 @@ def analyze_video(path: Path) -> dict:
             if len(raw) < chunk:
                 break
             frame = np.frombuffer(raw, dtype=np.uint8).reshape((fh, fw, 3))
-            timestamp = frame_idx / max(sample_fps, 0.1)
+            timestamp = frame_idx / max(eff_fps, 0.1)
             bin_idx = min(bins - 1, int(timestamp // window_sec))
             prev_gray = _accumulate_frame_stats(
                 frame,
