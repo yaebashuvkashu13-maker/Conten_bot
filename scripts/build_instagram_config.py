@@ -46,7 +46,8 @@ def main() -> int:
         raw["instagram_cookies_path"] = cookies
     else:
         raw["instagram_cookies_path"] = None
-    proxy = env.get("HTTP_PROXY") or env.get("PROXY_URL") or env.get("YTDLP_PROXY")
+    # Do not reuse TikTok LTE proxy by default — IG often breaks on datacenter IPs.
+    proxy = os.environ.get("INSTAGRAM_PROXY_URL") or env.get("INSTAGRAM_PROXY_URL") or None
     raw["proxy_url"] = proxy
 
     max_posts = int(os.environ.get("IG_DIGEST_MAX_POSTS", "7"))
