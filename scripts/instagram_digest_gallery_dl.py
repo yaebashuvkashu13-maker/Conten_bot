@@ -80,6 +80,41 @@ def notify_empty_digest(token: str, chat_id: str, published: set[str], errors: i
     tg_send(token, chat_id, "sendMessage", {"chat_id": chat_id, "text": text[:3900]})
 
 
+def notify_cookies_expired(token: str, chat_id: str, detail: str = "") -> None:
+    if os.environ.get("IG_NOTIFY_AUTH", "1") != "1":
+        return
+    text = (
+        "⚠️ Instagram: сессия истекла (401 Unauthorized). "
+        "Дайджест не может загрузить посты.\n\n"
+        "1) Зайдите в instagram.com в браузере\n"
+        "2) Экспорт cookies (Netscape) — Get cookies.txt LOCALLY\n"
+        "3) Пришлите cookies.txt боту как документ\n"
+        "4) /ig_digest — повторить рассылку"
+    )
+    if detail:
+        text += f"\n\nТех.: {detail[:500]}"
+    tg_send(token, chat_id, "sendMessage", {"chat_id": chat_id, "text": text[:3900]})
+
+
+def _gallery_dl_entry_error(entry: object) -> str | None:
+    if not isinstance(entry, list) or len(entry) < 2:
+        return None
+    meta = entry[1] if isinstance(entry[1], dict) else None
+    if not meta or not meta.get("error"):
+        return None
+    msg = str(meta.get("message") or meta.get("error") or "")
+    return msg[:800]
+
+
+def _is_auth_error(message: str) -> bool:
+    low = message.lower()
+    return (
+        "401" in message
+        or "unauthorized" in low
+        or ("login" in low and "required" in low)
+    )
+
+
 def fetch_posts(username: str, limit: int) -> list[dict]:
     url = f"https://www.instagram.com/{username}/posts/"
     cmd = [
@@ -96,7 +131,12 @@ def fetch_posts(username: str, limit: int) -> list[dict]:
         raise RuntimeError((proc.stderr or proc.stdout or "gallery-dl failed")[-500:])
     raw = json.loads(proc.stdout or "[]")
     by_id: dict[str, dict] = {}
+    fetch_errors: list[str] = []
     for entry in raw:
+        err_msg = _gallery_dl_entry_error(entry)
+        if err_msg:
+            fetch_errors.append(err_msg)
+            continue
         if not isinstance(entry, list) or len(entry) < 2:
             continue
         meta = None
@@ -135,6 +175,11 @@ def fetch_posts(username: str, limit: int) -> list[dict]:
             row["thumbnail"] = entry[1]
     posts = list(by_id.values())
     posts.sort(key=lambda p: p["post_id"], reverse=True)
+    if not posts and fetch_errors:
+        last = fetch_errors[-1]
+        if any(_is_auth_error(e) for e in fetch_errors):
+            raise RuntimeError(f"instagram_auth_expired: {last}")
+        raise RuntimeError(last)
     return posts[:limit]
 
 
@@ -206,6 +251,7 @@ def main() -> int:
     sent = 0
     skipped_ads = 0
     errors = 0
+    auth_expired = False
     for source in cfg.get("instagram_sources") or []:
         if sent >= max_posts:
             break
@@ -217,6 +263,9 @@ def main() -> int:
         except Exception as exc:
             logging.warning("fetch %s failed: %s", name, exc)
             errors += 1
+            if "instagram_auth_expired" in str(exc) or _is_auth_error(str(exc)):
+                auth_expired = True
+                break
             time.sleep(4)
             continue
         if not posts:
@@ -243,11 +292,20 @@ def main() -> int:
                 errors += 1
         time.sleep(3)
     save_state(published)
-    logging.info("done sent=%s skipped_ads=%s errors=%s", sent, skipped_ads, errors)
+    logging.info(
+        "done sent=%s skipped_ads=%s errors=%s auth_expired=%s",
+        sent,
+        skipped_ads,
+        errors,
+        auth_expired,
+    )
     print(f"Published {sent} new posts.")
-    if sent == 0 and os.environ.get("IG_DIGEST_DRY_RUN", "0") != "1":
-        notify_empty_digest(token, chat_id, published, errors)
-    return 0 if sent > 0 else (1 if errors else 0)
+    if os.environ.get("IG_DIGEST_DRY_RUN", "0") != "1":
+        if auth_expired:
+            notify_cookies_expired(token, chat_id)
+        elif sent == 0:
+            notify_empty_digest(token, chat_id, published, errors)
+    return 0 if sent > 0 else (1 if errors or auth_expired else 0)
 
 
 if __name__ == "__main__":
