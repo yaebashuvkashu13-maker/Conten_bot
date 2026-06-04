@@ -246,7 +246,11 @@ def process_game(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=CONFIG)
-    parser.add_argument("--deadline-hour-msk", type=int, default=8)
+    parser.add_argument(
+        "--deadline-hour-msk",
+        type=int,
+        default=int(os.environ.get("OVERNIGHT_DEADLINE_HOUR_MSK", "8")),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Discover only, no download")
     args = parser.parse_args()
 

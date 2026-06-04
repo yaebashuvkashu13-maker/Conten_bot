@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Midnight Europe/Moscow → montages for 5 games (YouTube long VOD, no proxy).
+# ~18:00 MSK start → montages for 5 games, ready by ~08:00 MSK (YouTube VOD, no proxy).
 set -Eeuo pipefail
 
 LOCK=/var/lock/overnight_msk.lock
@@ -25,6 +25,7 @@ if ! flock -n 9; then
 fi
 
 export OVERNIGHT_GAMES_CONFIG="${OVERNIGHT_GAMES_CONFIG:-/root/content_bot_ml/config/overnight_games.yaml}"
+export OVERNIGHT_DEADLINE_HOUR_MSK="${OVERNIGHT_DEADLINE_HOUR_MSK:-8}"
 export PYTHONPATH="/root/content_bot_ml/scripts:/root/content_bot_ml:${PYTHONPATH:-}"
 
 python3 /usr/local/bin/overnight_youtube_batch.py

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Midnight MSK = 21:00 UTC. Disable legacy auto-send crons.
+# 18:00 MSK = 15:00 UTC → ~14h window, montages in Telegram by 08:00 MSK.
 set -Eeuo pipefail
 
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 DEST=/usr/local/bin
 MARK="# overnight-msk-5games"
-CRON_LINE="0 21 * * * root /usr/local/bin/overnight_msk.sh >>/root/data/mlbb/overnight_msk/cron.log 2>&1 $MARK"
+CRON_LINE="0 15 * * * root /usr/local/bin/overnight_msk.sh >>/root/data/mlbb/overnight_msk/cron.log 2>&1 $MARK"
 
 install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh"
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py"
@@ -28,5 +28,5 @@ fi
 # Disable legacy notification / duplicate YouTube pipelines
 bash "$REPO/scripts/disable_legacy_publish_crons.sh"
 
-echo "OK overnight MSK cron: 21:00 UTC = 00:00 Moscow"
+echo "OK overnight MSK cron: 15:00 UTC = 18:00 Moscow (delivery target 08:00 MSK)"
 grep overnight /etc/cron.d/* 2>/dev/null || true

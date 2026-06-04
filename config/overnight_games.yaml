@@ -1,4 +1,5 @@
-# Midnight MSK batch: long YouTube streams → montages (one run until ~08:00 MSK).
+# Daily batch: cron 18:00 MSK → Telegram montages by 08:00 MSK (5 games × 2 cuts).
+# Fallback URLs (1.5h+) used when YouTube search finds no 2h+ VOD.
 # Scene logic: MLBB uses HUD gate; other games use motion/audio/scene scoring only.
 
 games:
