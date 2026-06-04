@@ -14,12 +14,12 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 try:
-    from source_freshness import filter_new_sources, mark_used
+    from source_freshness import filter_new_sources, mark_used, prune_used_from_queue_file
 except ImportError:
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
-    from source_freshness import filter_new_sources, mark_used
+    from source_freshness import filter_new_sources, mark_used, prune_used_from_queue_file
 
 ENV_FILE = Path('/root/.video_bot.env')
 LOG_FILE = Path('/root/telegram_upload_bot.log')
@@ -1305,8 +1305,9 @@ def _smart_edit_failure_hint(code: int, log_tail: str, chat_id: str = '') -> str
 def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
     limited = is_limited_notify(chat_id)
     try:
+        prune_used_from_queue_file(queue_file_for(chat_id), chat_id=chat_id)
         if only_paths is not None:
-            fresh_paths = filter_new_sources(only_paths)
+            fresh_paths = filter_new_sources(only_paths, chat_id=chat_id)
             lines = _lines_from_paths(chat_id, fresh_paths)
         else:
             queue_path = queue_file_for(chat_id)
@@ -1316,18 +1317,18 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
                 if line.strip()
             ]
             paths = [Path(line.split('|', 1)[0]) for line in lines]
-            fresh_paths = filter_new_sources(paths)
+            fresh_paths = filter_new_sources(paths, chat_id=chat_id)
             lines = [line for line in lines if Path(line.split('|', 1)[0]) in fresh_paths]
         if not lines:
             if limited:
                 send_message(
                     chat_id,
-                    'Не могу сделать нарезку: это видео уже использовали или файл слишком старый. '
-                    'Пришлите другой ролик.',
+                    'Этот ролик уже нарезали (тот же файл). Пришлите **новое** видео или другой фрагмент стрима.',
                 )
-                notify_owner(
-                    f'Нарезка пропущена для chat {chat_id}: видео уже в used_source или старше 36 ч.',
-                )
+                if os.environ.get('NOTIFY_OWNER_ON_SKIP', '0') == '1':
+                    notify_owner(
+                        f'Нарезка пропущена для chat {chat_id}: дубликат или старше {env.get("SOURCE_MAX_AGE_HOURS", "36")} ч.',
+                    )
                 return
             send_message(chat_id, 'У тебя пока нет загруженных видео. Сначала пришли файлы, потом команду /make.')
             return
@@ -1379,7 +1380,7 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         Path(tmp_queue_path).unlink(missing_ok=True)
 
         if completed.returncode == 0:
-            mark_used([Path(line.split('|', 1)[0]) for line in lines])
+            mark_used([Path(line.split('|', 1)[0]) for line in lines], chat_id=chat_id)
             archive_processed(chat_id, lines)
             if limited:
                 # Готовый ролик приходит отдельным sendVideo из smart_video_editor.py
