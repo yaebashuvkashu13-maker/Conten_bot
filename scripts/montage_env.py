@@ -52,11 +52,11 @@ def profile_montage_env(profile: str) -> dict[str, str]:
         if profile == "pubg":
             out.update(
                 {
-                    "MIN_HIGHLIGHTS": "5",
+                    "MIN_HIGHLIGHTS": "3",
                     "MAX_HIGHLIGHTS": "5",
-                    "SMART_PUBG_PEAK_PERCENTILE": "32",
-                    "SMART_PUBG_SUSTAIN_PERCENTILE": "28",
-                    "SMART_PUBG_COMBAT_MIN": "0.10",
+                    "SMART_PUBG_PEAK_PERCENTILE": "28",
+                    "SMART_PUBG_SUSTAIN_PERCENTILE": "24",
+                    "SMART_PUBG_COMBAT_MIN": "0.08",
                     "SMART_BURST_WEIGHT": "0.46",
                     "SMART_PUBG_CLIP_MIN_SEC": "7",
                     "SMART_PUBG_CLIP_MAX_SEC": "10",

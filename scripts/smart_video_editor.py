@@ -639,10 +639,11 @@ def build_candidates(
         burst = max(0.0, base - prev_mean)
         penalty = 0.0
         if profile == 'pubg':
+            rescue_mode = float(os.environ.get('SMART_PUBG_PEAK_PERCENTILE', '60')) <= 20
             if motion < 0.20 and audio < 0.22:
-                penalty += 0.38
+                penalty += 0.20 if rescue_mode else 0.38
             if scene > 0.55 and audio < 0.25:
-                penalty += 0.12
+                penalty += 0.08 if rescue_mode else 0.12
         elif motion < 0.14 and audio < 0.16 and scene < 0.08:
             penalty += 0.20
         if bright < 0.18:
@@ -937,7 +938,10 @@ def extend_selected_to_min_duration(selected: list[dict], profile: str = 'mobile
             start = float(item['start'])
             input_duration = float(item['input_duration'])
             extra = min(2.0, MIN_FINAL_DURATION - effective_duration(items) + 0.5)
-            new_input = min(15.8, input_duration + extra)
+            input_cap = 15.8
+            if profile == 'pubg':
+                input_cap = float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', '11'))
+            new_input = min(input_cap, input_duration + extra)
             new_start = max(0.0, start - extra * 0.35)
             if new_start + new_input > src_duration - 0.2:
                 new_input = max(input_duration, src_duration - new_start - 0.2)
@@ -1023,6 +1027,45 @@ def candidate_hero_id(candidate: dict) -> str:
     return ''
 
 
+PUBG_RESCUE_TIERS: list[dict[str, str]] = [
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '26',
+        'SMART_PUBG_COMBAT_MIN': '0.06',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '24',
+        'SMART_PUBG_MOTION_PERCENTILE': '40',
+        'SMART_PUBG_AUDIO_PERCENTILE': '38',
+    },
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '14',
+        'SMART_PUBG_COMBAT_MIN': '0.035',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '14',
+        'SMART_PUBG_MOTION_PERCENTILE': '32',
+        'SMART_PUBG_AUDIO_PERCENTILE': '30',
+        'SMART_PUBG_CLIP_MAX_SEC': '11',
+    },
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '8',
+        'SMART_PUBG_COMBAT_MIN': '0.025',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '8',
+        'SMART_PUBG_MOTION_PERCENTILE': '28',
+        'SMART_PUBG_AUDIO_PERCENTILE': '26',
+        'SMART_PUBG_CLIP_MAX_SEC': '12',
+        'SMART_BURST_WEIGHT': '0.40',
+    },
+]
+
+
+def apply_pubg_rescue_tier(tier: dict[str, str]) -> None:
+    for key, value in tier.items():
+        os.environ[key] = value
+
+
+def pubg_montage_ready(selected: list[dict], arranged: list[dict]) -> bool:
+    if len(arranged) < min(MIN_HIGHLIGHTS, 3):
+        return False
+    return effective_duration(arranged) >= MIN_FINAL_DURATION
+
+
 def select_candidates(all_candidates: list[dict], source_count: int) -> list[dict]:
     if not all_candidates:
         return []
@@ -1041,10 +1084,12 @@ def select_candidates(all_candidates: list[dict], source_count: int) -> list[dic
     per_source_count: dict[str, int] = {}
     pool: list[dict] = []
     fallback_pool: list[dict] = []
+    single_source_mode = source_count == 1 or os.environ.get('SINGLE_SOURCE_MODE') == '1'
+    max_per_source = MAX_HIGHLIGHTS if single_source_mode else 2
     for candidate in all_candidates:
         source_key = candidate.get('source_signature', str(candidate['source_index']))
         segment_key = f"{source_key}:{round(candidate['start'], 3)}"
-        if per_source_count.get(source_key, 0) >= 2:
+        if per_source_count.get(source_key, 0) >= max_per_source:
             continue
         excluded = source_key in EXCLUDED_SOURCE_SIGNATURES or segment_key in EXCLUDED_SEGMENT_KEYS
         target_pool = fallback_pool if excluded else pool
@@ -1573,68 +1618,62 @@ def _run_smart_edit(
             for key in global_values:
                 global_values[key].extend(float(value) for value in analysis[key])
 
-        all_candidates: list[dict] = []
-        single_source = len(sources) == 1 and os.environ.get('SINGLE_SOURCE_MODE') == '1'
-        for source in sources:
-            candidates = build_candidates(
-                source['source_index'],
-                source['source_path'],
-                source['game_name'],
-                source['analysis'],
-                global_values,
-                profile,
-                source['source_signature'],
-            )
-            logging.info('source=%s yielded %s candidates', source['source_path'].name, len(candidates))
-            all_candidates.extend(candidates)
+        def collect_candidates(*, relax_gate: bool = False) -> list[dict]:
+            found: list[dict] = []
+            for source in sources:
+                candidates = build_candidates(
+                    source['source_index'],
+                    source['source_path'],
+                    source['game_name'],
+                    source['analysis'],
+                    global_values,
+                    profile,
+                    source['source_signature'],
+                    relax_segment_gate=relax_gate,
+                )
+                logging.info('source=%s yielded %s candidates', source['source_path'].name, len(candidates))
+                found.extend(candidates)
+            return found
 
+        single_source = len(sources) == 1 and os.environ.get('SINGLE_SOURCE_MODE') == '1'
         strict_gameplay = os.environ.get('STRICT_GAMEPLAY', '0') == '1'
+        all_candidates = collect_candidates()
         if not all_candidates and single_source and not strict_gameplay:
             logging.warning('single-source retry with relaxed segment gate')
-            source = sources[0]
-            all_candidates = build_candidates(
-                source['source_index'],
-                source['source_path'],
-                source['game_name'],
-                source['analysis'],
-                global_values,
-                profile,
-                source['source_signature'],
-                relax_segment_gate=True,
-            )
-        if not all_candidates and single_source and profile == 'pubg':
-            logging.warning('pubg rescue scoring (lower combat floor)')
-            for key, val in (
-                ('SMART_PUBG_PEAK_PERCENTILE', '26'),
-                ('SMART_PUBG_COMBAT_MIN', '0.06'),
-                ('SMART_PUBG_SUSTAIN_PERCENTILE', '24'),
-                ('SMART_PUBG_MOTION_PERCENTILE', '40'),
-                ('SMART_PUBG_AUDIO_PERCENTILE', '38'),
-            ):
-                os.environ[key] = val
-            source = sources[0]
-            all_candidates = build_candidates(
-                source['source_index'],
-                source['source_path'],
-                source['game_name'],
-                source['analysis'],
-                global_values,
-                profile,
-                source['source_signature'],
-                relax_segment_gate=True,
-            )
+            all_candidates = collect_candidates(relax_gate=True)
 
-        all_candidates.sort(key=lambda item: item['score'], reverse=True)
+        selected: list[dict] = []
+        arranged: list[dict] = []
+        eff_duration = 0.0
+        pubg_rescue_attempts = list(PUBG_RESCUE_TIERS) if single_source and profile == 'pubg' else []
+        while True:
+            if not all_candidates and pubg_rescue_attempts:
+                tier = pubg_rescue_attempts.pop(0)
+                logging.warning('pubg rescue scoring tier: %s', tier)
+                apply_pubg_rescue_tier(tier)
+                all_candidates = collect_candidates(relax_gate=True)
+            if not all_candidates:
+                break
+
+            all_candidates.sort(key=lambda item: item['score'], reverse=True)
+            selected = select_candidates(all_candidates, len(sources))
+            arranged = arrange_candidates(selected)
+            if profile in ('mobile_legends', 'pubg'):
+                arranged = extend_selected_to_min_duration(arranged, profile)
+            eff_duration = effective_duration(arranged)
+            logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)
+            if pubg_montage_ready(selected, arranged) or not pubg_rescue_attempts:
+                break
+            logging.warning(
+                'pubg montage insufficient (%s clips, %.1fs) — trying looser rescue tier',
+                len(arranged),
+                eff_duration,
+            )
+            all_candidates = []
+
         if not all_candidates:
             logging.error('smart scoring produced no candidates')
             return 1
-
-        selected = select_candidates(all_candidates, len(sources))
-        arranged = arrange_candidates(selected)
-        if profile == 'mobile_legends':
-            arranged = extend_selected_to_min_duration(arranged, profile)
-        eff_duration = effective_duration(arranged)
-        logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)
         if eff_duration < MIN_FINAL_DURATION:
             logging.error(
                 'montage too short (%.1fs < %.1fs) — not enough real gameplay segments',
