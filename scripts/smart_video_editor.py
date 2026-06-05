@@ -565,18 +565,19 @@ def build_candidates(
             base += 0.09 * max(0.0, center - motion * 0.55)
             base += 0.05 * max(0.0, scene - 0.35)
         elif profile == 'pubg':
-            # Metro Royale / PUBG: перестрелки = всплески audio + motion + burst.
+            # Metro Royale / PUBG: gunfire audio + motion bursts (not loot/walking).
             base = (
-                0.32 * motion +
-                0.10 * center +
-                0.26 * audio +
-                0.10 * scene +
-                0.10 * sharp +
+                0.28 * motion +
+                0.08 * center +
+                0.34 * audio +
+                0.06 * scene +
+                0.12 * sharp +
                 0.07 * bright +
                 0.05 * sat
             )
-            base += 0.12 * max(0.0, audio - 0.36)
-            base += 0.08 * max(0.0, motion - 0.28)
+            base += 0.16 * max(0.0, audio - 0.32)
+            base += 0.10 * max(0.0, motion - 0.24)
+            base += 0.08 * max(0.0, sharp - 0.35)
         elif profile == 'genshin':
             # Open-world combat: scene cuts + center action + ability bursts (no MLBB HUD).
             base = (
@@ -635,8 +636,10 @@ def build_candidates(
         burst = max(0.0, base - prev_mean)
         penalty = 0.0
         if profile == 'pubg':
-            if motion < 0.18 and audio < 0.20:
-                penalty += 0.28
+            if motion < 0.20 and audio < 0.22:
+                penalty += 0.38
+            if scene > 0.55 and audio < 0.25:
+                penalty += 0.12
         elif motion < 0.14 and audio < 0.16 and scene < 0.08:
             penalty += 0.20
         if bright < 0.18:
@@ -655,10 +658,17 @@ def build_candidates(
     if profile == 'pubg':
         peak_pct = float(os.environ.get('SMART_PUBG_PEAK_PERCENTILE', '60'))
     peak_threshold = float(np.percentile(smooth_scores, peak_pct)) if bins > 4 else float(smooth_scores.max())
-    sustain_threshold = float(np.percentile(smooth_scores, 48)) if bins > 4 else peak_threshold * 0.72
-    motion_threshold = float(np.percentile(analysis['motion'], 55)) if bins > 3 else float(np.max(analysis['motion']))
+    sustain_pct = 48.0
+    if profile == 'pubg':
+        sustain_pct = float(os.environ.get('SMART_PUBG_SUSTAIN_PERCENTILE', '36'))
+    sustain_threshold = float(np.percentile(smooth_scores, sustain_pct)) if bins > 4 else peak_threshold * 0.72
+    motion_pct, audio_pct = 55, 52
+    if profile == 'pubg':
+        motion_pct = float(os.environ.get('SMART_PUBG_MOTION_PERCENTILE', '48'))
+        audio_pct = float(os.environ.get('SMART_PUBG_AUDIO_PERCENTILE', '45'))
+    motion_threshold = float(np.percentile(analysis['motion'], motion_pct)) if bins > 3 else float(np.max(analysis['motion']))
     scene_threshold = float(np.percentile(analysis['scene'], 58)) if bins > 3 else float(np.max(analysis['scene']))
-    audio_threshold = float(np.percentile(analysis['audio'], 52)) if bins > 3 else float(np.max(analysis['audio']))
+    audio_threshold = float(np.percentile(analysis['audio'], audio_pct)) if bins > 3 else float(np.max(analysis['audio']))
 
     for idx in range(bins):
         score = float(smooth_scores[idx])
@@ -711,7 +721,15 @@ def build_candidates(
         if profile == 'mobile_legends' and mean_motion < float(os.environ.get('SMART_MIN_BIN_MOTION', '0.012')):
             continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
-        desired_duration = max(9.5, min(15.0, (right - left + 1) * win + 3.2))
+        if profile == 'pubg':
+            combat_min = float(os.environ.get('SMART_PUBG_COMBAT_MIN', '0.20'))
+            if mean_motion < combat_min and mean_audio < combat_min:
+                continue
+        clip_lo, clip_hi = 9.5, 15.0
+        if profile == 'pubg':
+            clip_lo = float(os.environ.get('SMART_PUBG_CLIP_MIN_SEC', '7'))
+            clip_hi = float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', '11'))
+        desired_duration = max(clip_lo, min(clip_hi, (right - left + 1) * win + 2.0))
         desired_pre = min(5.2, max(3.6, desired_duration * 0.34))
         desired_post = desired_duration - desired_pre
         peak_time = idx * win
@@ -728,7 +746,9 @@ def build_candidates(
                     end = min(analysis['duration'], start + desired_duration)
                 elif end >= analysis['duration'] - 0.01:
                     start = max(0.0, end - desired_duration)
-        input_duration = max(9.0, min(15.0, end - start))
+        input_floor = clip_lo if profile == 'pubg' else 9.0
+        input_cap = clip_hi if profile == 'pubg' else 15.0
+        input_duration = max(input_floor, min(input_cap, end - start))
         end = min(analysis['duration'], start + input_duration)
         start = max(0.0, end - input_duration)
 
@@ -754,8 +774,9 @@ def build_candidates(
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
         if profile == 'pubg':
-            combo_score += 0.10 * max(0.0, float(bursts[idx]) - 0.05)
-            combo_score += 0.06 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.14 * max(0.0, float(bursts[idx]) - 0.04)
+            combo_score += 0.12 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.08 * max(0.0, mean_motion - motion_threshold)
 
         candidates.append({
             'source_index': source_index,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Four PUBG Metro montages from one long VOD — different selection harshness.
-Sends each to TG_CHAT_ID with labels 1/4 … 4/4 for owner feedback.
+Four PUBG Metro montages from one long VOD — increasing COMBAT density (more gunfights).
+«Жёсткость» = больше коротких клипов с перестрелками, меньше бега/лута.
 """
 
 from __future__ import annotations
@@ -15,50 +15,82 @@ from pathlib import Path
 
 ENV_FILE = Path("/root/.video_bot.env")
 PROCESSOR = Path("/usr/local/bin/smart_video_editor.py")
-# Owner Metro Royale VOD (not classic ranked)
 DEFAULT_SOURCE = Path("/root/data/mlbb/youtube_nightly/inbox/yt_FpMs48XOnq0.mp4")
 FALLBACK_URL = "https://www.youtube.com/live/FpMs48XOnq0"
 HISTORY = Path("/tmp/pubg_harshness_demo_history.json")
 LOG = Path("/root/data/mlbb/pubg_harshness_demo.log")
 
+# Peak percentile ↓ = больше боевых пиков; highlights ↑ = больше событий в ролике.
 PRESETS = [
     {
-        "id": "soft",
-        "label": "1/4 мягко",
-        "SMART_PUBG_PEAK_PERCENTILE": "72",
-        "SMART_BURST_WEIGHT": "0.18",
-        "MIN_HIGHLIGHTS": "3",
-        "MAX_HIGHLIGHTS": "3",
+        "id": "v2_gun4",
+        "label": "1/4 — 4 перестрелки",
+        "SMART_PUBG_PEAK_PERCENTILE": "46",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "34",
+        "SMART_PUBG_COMBAT_MIN": "0.18",
+        "SMART_BURST_WEIGHT": "0.40",
+        "SMART_PUBG_CLIP_MIN_SEC": "7",
+        "SMART_PUBG_CLIP_MAX_SEC": "11",
+        "MIN_HIGHLIGHTS": "4",
+        "MAX_HIGHLIGHTS": "4",
         "SELECTION_VARIANT": "0",
     },
     {
-        "id": "balanced",
-        "label": "2/4 сбалансировано",
-        "SMART_PUBG_PEAK_PERCENTILE": "60",
-        "SMART_BURST_WEIGHT": "0.34",
-        "MIN_HIGHLIGHTS": "4",
-        "MAX_HIGHLIGHTS": "4",
+        "id": "v2_gun5",
+        "label": "2/4 — 5 перестрелок",
+        "SMART_PUBG_PEAK_PERCENTILE": "38",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "30",
+        "SMART_PUBG_COMBAT_MIN": "0.20",
+        "SMART_BURST_WEIGHT": "0.46",
+        "SMART_PUBG_CLIP_MIN_SEC": "7",
+        "SMART_PUBG_CLIP_MAX_SEC": "10",
+        "MIN_HIGHLIGHTS": "5",
+        "MAX_HIGHLIGHTS": "5",
         "SELECTION_VARIANT": "1",
     },
     {
-        "id": "hard",
-        "label": "3/4 жёстко",
-        "SMART_PUBG_PEAK_PERCENTILE": "52",
-        "SMART_BURST_WEIGHT": "0.42",
-        "MIN_HIGHLIGHTS": "4",
+        "id": "v2_gun5h",
+        "label": "3/4 — 5 боёв, только пики",
+        "SMART_PUBG_PEAK_PERCENTILE": "30",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "26",
+        "SMART_PUBG_COMBAT_MIN": "0.22",
+        "SMART_BURST_WEIGHT": "0.52",
+        "SMART_PUBG_CLIP_MIN_SEC": "6.5",
+        "SMART_PUBG_CLIP_MAX_SEC": "10",
+        "MIN_HIGHLIGHTS": "5",
         "MAX_HIGHLIGHTS": "5",
         "SELECTION_VARIANT": "2",
     },
     {
-        "id": "max",
-        "label": "4/4 максимум перестрелок",
-        "SMART_PUBG_PEAK_PERCENTILE": "45",
-        "SMART_BURST_WEIGHT": "0.52",
-        "MIN_HIGHLIGHTS": "5",
-        "MAX_HIGHLIGHTS": "5",
+        "id": "v2_gun6",
+        "label": "4/4 — 6 боёв, макс суета",
+        "SMART_PUBG_PEAK_PERCENTILE": "22",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "22",
+        "SMART_PUBG_COMBAT_MIN": "0.24",
+        "SMART_BURST_WEIGHT": "0.58",
+        "SMART_PUBG_CLIP_MIN_SEC": "6",
+        "SMART_PUBG_CLIP_MAX_SEC": "9.5",
+        "MIN_HIGHLIGHTS": "6",
+        "MAX_HIGHLIGHTS": "6",
+        "MAX_FINAL_DURATION": "57",
         "SELECTION_VARIANT": "3",
     },
 ]
+
+ENV_KEYS = (
+    "SMART_PUBG_PEAK_PERCENTILE",
+    "SMART_PUBG_SUSTAIN_PERCENTILE",
+    "SMART_PUBG_COMBAT_MIN",
+    "SMART_PUBG_MOTION_PERCENTILE",
+    "SMART_PUBG_AUDIO_PERCENTILE",
+    "SMART_BURST_WEIGHT",
+    "SMART_PUBG_CLIP_MIN_SEC",
+    "SMART_PUBG_CLIP_MAX_SEC",
+    "MIN_HIGHLIGHTS",
+    "MAX_HIGHLIGHTS",
+    "MAX_FINAL_DURATION",
+    "SELECTION_VARIANT",
+)
 
 
 def load_env(path: Path = ENV_FILE) -> dict[str, str]:
@@ -107,20 +139,18 @@ def run_one(source: Path, preset: dict, env: dict[str, str], chat_id: str) -> in
             "SMART_BLOCKING_LOCK": "1",
             "OUTPUT_BASENAME": f"pubg_harsh_{preset['id']}",
             "MONTAGE_CAPTION": (
-                f"🎯 PUBG Metro — {preset['label']}\n"
-                f"Один длинный VOD, разная «жёсткость» отбора перестрелок.\n"
-                f"Напишите, какой уровень (1–4) зашёл больше."
+                f"🔫 PUBG Metro — {preset['label']}\n"
+                f"Больше коротких клипов с перестрелками (v2). Напишите 1–4."
             ),
         }
     )
-    for key in (
-        "SMART_PUBG_PEAK_PERCENTILE",
-        "SMART_BURST_WEIGHT",
-        "MIN_HIGHLIGHTS",
-        "MAX_HIGHLIGHTS",
-        "SELECTION_VARIANT",
-    ):
-        run_env[key] = preset[key]
+    for key in ENV_KEYS:
+        if key in preset:
+            run_env[key] = str(preset[key])
+
+    out_dir = Path(run_env.get("OUTPUT_DIR", "/root/videos"))
+    slug = f"pubg_harsh_{preset['id']}"
+    before = {p.name for p in out_dir.glob(f"{slug}_*.mp4")}
 
     try:
         log(f"start {preset['label']} ({preset['id']})")
@@ -131,14 +161,15 @@ def run_one(source: Path, preset: dict, env: dict[str, str], chat_id: str) -> in
             text=True,
             timeout=int(float(env.get("SMART_MAKE_TIMEOUT_MAX_SEC", "14400"))),
         )
+        new_files = [p for p in out_dir.glob(f"{slug}_*.mp4") if p.name not in before]
         tail = (completed.stderr or completed.stdout or "")[-600:]
         if completed.returncode != 0:
             log(f"fail {preset['id']} rc={completed.returncode} tail={tail}")
-        elif "another smart editor instance is already running" in tail.lower():
-            log(f"fail {preset['id']} lock busy (no montage produced)")
+        elif not new_files:
+            log(f"fail {preset['id']} no output file tail={tail}")
             return 3
         else:
-            log(f"ok {preset['label']}")
+            log(f"ok {preset['label']} -> {new_files[-1].name}")
         return completed.returncode
     finally:
         Path(queue_path).unlink(missing_ok=True)
@@ -159,15 +190,12 @@ def main() -> int:
 
         args.source.parent.mkdir(parents=True, exist_ok=True)
         try:
-            args.source = download_one(
-                FALLBACK_URL,
-                args.source.parent,
-                env,
-            )
+            args.source = download_one(FALLBACK_URL, args.source.parent, env)
             log(f"downloaded {args.source}")
         except Exception as exc:
-            log(f"source missing and download failed: {exc}")
+            log(f"download failed: {exc}")
             return 1
+
     chat_id = env.get("TG_CHAT_ID", "")
     if not env.get("TG_BOT_TOKEN") or not chat_id:
         log("TG_BOT_TOKEN / TG_CHAT_ID missing")
@@ -176,7 +204,7 @@ def main() -> int:
     if HISTORY.exists():
         HISTORY.unlink()
 
-    log(f"pubg harshness demo source={args.source.name} chat={chat_id[:8]}…")
+    log(f"v2 combat demo source={args.source.name}")
     for preset in PRESETS:
         code = run_one(args.source, preset, env, chat_id)
         if code != 0:
@@ -184,7 +212,7 @@ def main() -> int:
             return code
         time.sleep(8)
 
-    log("all 4 montages done")
+    log("all 4 combat montages done")
     return 0
 
 
