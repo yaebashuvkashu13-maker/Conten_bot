@@ -891,10 +891,20 @@ def build_candidates(
         if profile in GUNFIRE_PROFILES:
             prefix = 'SMART_PUBG_' if profile == 'pubg' else 'SMART_STANDOFF_'
             combat_min = profile_combat_min(profile)
-            gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.10'))
-            if mean_gunfire < gunfire_min and mean_audio < combat_min:
+            gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.08'))
+            gunfire_track = analysis.get('gunfire', analysis['audio'])
+            if bins > 8:
+                adaptive_floor = float(np.percentile(gunfire_track, 52)) * 0.72
+                effective_gunfire_min = min(gunfire_min, max(0.028, adaptive_floor))
+            else:
+                effective_gunfire_min = gunfire_min
+            if (
+                mean_gunfire < effective_gunfire_min
+                and mean_audio < combat_min * 0.78
+                and mean_motion < combat_min * 0.78
+            ):
                 continue
-            if mean_motion < combat_min and mean_gunfire < gunfire_min * 0.85:
+            if mean_motion < combat_min * 0.72 and mean_gunfire < effective_gunfire_min * 0.90:
                 continue
         elif profile in ('wot', 'world_of_tanks'):
             combat_min = profile_combat_min(profile)
@@ -1284,7 +1294,10 @@ PUBG_RESCUE_TIERS: list[dict[str, str]] = [
     {
         'SMART_PUBG_PEAK_PERCENTILE': '34',
         'SMART_PUBG_COMBAT_MIN': '0.16',
-        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.08',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.07',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.050',
+        'SMART_PUBG_MIN_BURST_RATIO': '2.3',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.042',
         'SMART_PUBG_SUSTAIN_PERCENTILE': '30',
         'SMART_PUBG_GUNFIRE_PERCENTILE': '48',
         'SMART_PUBG_MOTION_PERCENTILE': '44',
@@ -1293,11 +1306,29 @@ PUBG_RESCUE_TIERS: list[dict[str, str]] = [
     {
         'SMART_PUBG_PEAK_PERCENTILE': '28',
         'SMART_PUBG_COMBAT_MIN': '0.14',
-        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.07',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.055',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.042',
+        'SMART_PUBG_MIN_BURST_RATIO': '2.1',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.036',
+        'SMART_PUBG_MIN_CENTER_MOTION': '0.015',
         'SMART_PUBG_SUSTAIN_PERCENTILE': '26',
         'SMART_PUBG_GUNFIRE_PERCENTILE': '44',
         'SMART_PUBG_MOTION_PERCENTILE': '40',
         'SMART_PUBG_AUDIO_PERCENTILE': '40',
+    },
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '22',
+        'SMART_PUBG_COMBAT_MIN': '0.11',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.040',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.034',
+        'SMART_PUBG_MIN_BURST_RATIO': '1.9',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.028',
+        'SMART_PUBG_MIN_CENTER_MOTION': '0.013',
+        'SMART_PUBG_MIN_AUDIO_RMS': '0.006',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '22',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '38',
+        'MIN_HIGHLIGHTS': '4',
+        'MIN_FINAL_DURATION': '36',
     },
 ]
 
@@ -1305,8 +1336,10 @@ STANDOFF_RESCUE_TIERS: list[dict[str, str]] = [
     {
         'SMART_STANDOFF_PEAK_PERCENTILE': '28',
         'SMART_STANDOFF_COMBAT_MIN': '0.14',
-        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.08',
-        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.045',
+        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.07',
+        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.042',
+        'SMART_STANDOFF_MIN_BURST_RATIO': '2.1',
+        'SMART_STANDOFF_RELAX_MIN_GUNFIRE': '0.038',
         'SMART_STANDOFF_SUSTAIN_PERCENTILE': '24',
         'SMART_STANDOFF_GUNFIRE_PERCENTILE': '46',
         'SMART_STANDOFF_MOTION_PERCENTILE': '42',
@@ -1315,12 +1348,29 @@ STANDOFF_RESCUE_TIERS: list[dict[str, str]] = [
     {
         'SMART_STANDOFF_PEAK_PERCENTILE': '22',
         'SMART_STANDOFF_COMBAT_MIN': '0.11',
-        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.06',
-        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.038',
+        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.050',
+        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.034',
+        'SMART_STANDOFF_MIN_BURST_RATIO': '1.9',
+        'SMART_STANDOFF_RELAX_MIN_GUNFIRE': '0.030',
+        'SMART_STANDOFF_MIN_CENTER_MOTION': '0.014',
         'SMART_STANDOFF_SUSTAIN_PERCENTILE': '20',
         'SMART_STANDOFF_GUNFIRE_PERCENTILE': '40',
         'SMART_STANDOFF_MOTION_PERCENTILE': '38',
         'SMART_STANDOFF_AUDIO_PERCENTILE': '36',
+    },
+    {
+        'SMART_STANDOFF_PEAK_PERCENTILE': '18',
+        'SMART_STANDOFF_COMBAT_MIN': '0.09',
+        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.035',
+        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.028',
+        'SMART_STANDOFF_MIN_BURST_RATIO': '1.7',
+        'SMART_STANDOFF_RELAX_MIN_GUNFIRE': '0.024',
+        'SMART_STANDOFF_MIN_CENTER_MOTION': '0.012',
+        'SMART_STANDOFF_MIN_AUDIO_RMS': '0.006',
+        'SMART_STANDOFF_SUSTAIN_PERCENTILE': '18',
+        'SMART_STANDOFF_GUNFIRE_PERCENTILE': '34',
+        'MIN_HIGHLIGHTS': '4',
+        'MIN_FINAL_DURATION': '36',
     },
 ]
 

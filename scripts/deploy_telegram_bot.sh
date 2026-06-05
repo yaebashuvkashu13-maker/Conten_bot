@@ -48,6 +48,7 @@ install_scripts() {
     action_showcase_2x5.py \
     action_showcase_queue.sh \
     genshin_boss_rebuild.py \
+    morning_pubg_standoff_catchup.py \
     install_pipeline_watchdog_cron.sh; do
     if [[ -f "$REPO/scripts/$f" ]]; then
       install -m 755 "$REPO/scripts/$f" "$DEST/$f"

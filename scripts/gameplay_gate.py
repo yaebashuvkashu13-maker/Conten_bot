@@ -1128,9 +1128,13 @@ def segment_is_valid_for_montage(
         )
         min_burst = float(os.environ.get(f"{prefix}MIN_BURST_RATIO", "2.4"))
         min_audio = float(os.environ.get(f"{prefix}MIN_AUDIO_RMS", "0.008"))
-        if gunfire_density < min_gun and burst_ratio < min_burst:
+        if (
+            gunfire_density < min_gun
+            and burst_ratio < min_burst
+            and audio_rms < min_audio * 1.10
+        ):
             return False, f"low_gunfire=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
-        if audio_rms < min_audio and gunfire_density < min_gun * 1.2:
+        if audio_rms < min_audio * 0.85 and gunfire_density < min_gun * 0.90:
             return False, f"silent_segment=rms{audio_rms:.4f}"
         if segment_looks_like_pubg_loot_or_walk(
             video_path,

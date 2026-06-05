@@ -66,3 +66,10 @@ restart_if_needed \
   1 \
   "genshin_boss_rebuild.py" \
   "/root/data/mlbb/genshin_boss_rebuild.log"
+
+restart_if_needed \
+  "morning_pubg_standoff" \
+  "/root/data/mlbb/morning_pubg_standoff_state.json" \
+  4 \
+  "morning_pubg_standoff_catchup.py" \
+  "/root/data/mlbb/morning_pubg_standoff.log"
