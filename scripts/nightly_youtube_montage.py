@@ -113,11 +113,20 @@ def parse_youtube_id(url: str) -> str:
     return (parse_qs(parsed.query).get("v") or [""])[0][:11]
 
 
+def _ytdlp_env() -> dict[str, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from youtube_download import subprocess_env_no_proxy  # noqa: WPS433
+
+    return subprocess_env_no_proxy()
+
+
 def fetch_video_meta(video_id: str, env: dict[str, str]) -> dict | None:
     url = f"https://www.youtube.com/watch?v={video_id}"
     cmd = ytdlp_base(env) + ["-j", "--no-playlist", url]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=90, env=_ytdlp_env()
+        )
     except subprocess.TimeoutExpired:
         return None
     if result.returncode != 0:
@@ -166,7 +175,9 @@ def discover_candidates(
             "%(id)s",
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120, env=_ytdlp_env()
+            )
         except subprocess.TimeoutExpired:
             logging.warning("search timeout: %s", query)
             continue

@@ -145,9 +145,28 @@ def discover_pick(game: dict, env: dict[str, str], used: set[str]) -> tuple[dict
     return None, "no_candidate"
 
 
+def existing_inbox_video(pick: dict) -> Path | None:
+    """Reuse VOD already on disk (saves hours after a failed overnight run)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from nightly_youtube_montage import INBOX
+
+    vid = str(pick.get("id") or "").strip()
+    if not vid:
+        return None
+    path = INBOX / f"yt_{vid}.mp4"
+    if path.is_file() and path.stat().st_size > 50_000_000:
+        logging.info("reuse inbox %s (%.1f MB)", path.name, path.stat().st_size / 1e6)
+        return path
+    return None
+
+
 def download_with_retries(pick: dict, env: dict[str, str]) -> Path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from nightly_youtube_montage import download_video
+
+    cached = existing_inbox_video(pick)
+    if cached:
+        return cached
 
     last_exc: Exception | None = None
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
