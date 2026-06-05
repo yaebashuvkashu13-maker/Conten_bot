@@ -108,11 +108,15 @@ def setup_logging(log_path: Path) -> None:
 def acquire_lock(lock_path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open('w')
+    blocking = os.environ.get('SMART_BLOCKING_LOCK', '0') == '1'
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if blocking:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         logging.info('another smart editor instance is already running, exiting')
-        raise SystemExit(0)
+        raise SystemExit(3)
     return handle
 
 

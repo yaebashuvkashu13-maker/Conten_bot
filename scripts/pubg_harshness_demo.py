@@ -104,6 +104,7 @@ def run_one(source: Path, preset: dict, env: dict[str, str], chat_id: str) -> in
             "SMART_GAME_AUDIO_ONLY": "0",
             "SMART_ADD_MUSIC": "0",
             "SMART_STRIP_MUSIC_BED": "0",
+            "SMART_BLOCKING_LOCK": "1",
             "OUTPUT_BASENAME": f"pubg_harsh_{preset['id']}",
             "MONTAGE_CAPTION": (
                 f"🎯 PUBG Metro — {preset['label']}\n"
@@ -130,8 +131,12 @@ def run_one(source: Path, preset: dict, env: dict[str, str], chat_id: str) -> in
             text=True,
             timeout=int(float(env.get("SMART_MAKE_TIMEOUT_MAX_SEC", "14400"))),
         )
+        tail = (completed.stderr or completed.stdout or "")[-600:]
         if completed.returncode != 0:
-            log(f"fail {preset['id']} rc={completed.returncode} tail={(completed.stderr or '')[-400:]}")
+            log(f"fail {preset['id']} rc={completed.returncode} tail={tail}")
+        elif "another smart editor instance is already running" in tail.lower():
+            log(f"fail {preset['id']} lock busy (no montage produced)")
+            return 3
         else:
             log(f"ok {preset['label']}")
         return completed.returncode
