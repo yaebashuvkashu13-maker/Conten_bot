@@ -86,12 +86,9 @@ def save_lookup(lookup: dict[str, dict]) -> None:
         views = max(_int(item.get("views")), 1)
         likes = _int(item.get("likes"))
         item["engagement_rate"] = round(likes / views, 6)
-        item["popularity_score"] = round(
-            _float(item.get("csv_score")) * 0.45
-            + min(1.0, views / 500_000) * 0.35
-            + min(1.0, likes / max(views // 50, 1)) * 0.20,
-            4,
-        )
+        view_norm = min(1.0, math.log10(views + 10) / 8.0)
+        like_norm = min(1.0, likes / max(views * 0.02, 1))
+        item["popularity_score"] = round(view_norm * 0.55 + like_norm * 0.45, 4)
     LOOKUP_PATH.write_text(json.dumps({"updated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "items": lookup}, ensure_ascii=False, indent=2))
     top = ranked[:50]
     SUMMARY_PATH.write_text(
@@ -174,7 +171,10 @@ def sync_all_downloads(inbox: Path | None = None) -> dict:
             continue
         if record_download(video):
             added += 1
-    return {"lookup_size": len(lookup), "registry_added": added, "top_score": lookup[max(lookup, key=lambda k: _float(lookup[k].get('popularity_score')))]["popularity_score"] if lookup else 0}
+    top = 0.0
+    if lookup:
+        top = max(_float(v.get("popularity_score")) for v in lookup.values())
+    return {"lookup_size": len(lookup), "registry_added": added, "top_score": top}
 
 
 def main() -> int:

@@ -222,6 +222,16 @@ def run_montage(
                 "MAX_HIGHLIGHTS": "5",
             }
         )
+    elif relaxed and profile == "pubg":
+        run_env.update(
+            {
+                "SMART_PUBG_PEAK_PERCENTILE": "24",
+                "SMART_PUBG_COMBAT_MIN": "0.06",
+                "SMART_PUBG_SUSTAIN_PERCENTILE": "22",
+                "MIN_HIGHLIGHTS": "4",
+                "MAX_HIGHLIGHTS": "5",
+            }
+        )
     elif relaxed:
         run_env.update(
             {
@@ -232,6 +242,7 @@ def run_montage(
                 "MAX_HIGHLIGHTS": "4",
             }
         )
+    gid = game["id"]
     run_env.update(
         {
             "QUEUE_FILE": queue_path,
@@ -239,6 +250,8 @@ def run_montage(
             "SINGLE_SOURCE_MODE": "1",
             "SEND_TELEGRAM": "1",
             "OVERNIGHT_BATCH": "1",
+            "OVERNIGHT_FRESH_SEGMENTS": "1",
+            "SEGMENT_HISTORY_FILE": str(WORK_ROOT / f"segment_history_{gid}.json"),
             "SMART_BLOCKING_LOCK": "1",
             "TG_CHAT_ID": chat_id,
             "TG_BOT_TOKEN": env.get("TG_BOT_TOKEN", ""),
@@ -390,7 +403,12 @@ def process_game(
             logging.warning("%s manifest: %s", gid, exc)
         send_text(env, chat_id, f"✅ [{game['queue_label']}] готово: {ok} нарезка(ок).")
     else:
-        send_text(env, chat_id, f"⚠️ [{game['queue_label']}] скачано, но нарезка не собралась.")
+        send_text(
+            env,
+            chat_id,
+            f"⚠️ [{game['queue_label']}] скачано, нарезка не собралась "
+            f"(мало боевых пиков). Перезапущу с мягче отбором.",
+        )
 
     state.setdefault("game_status", {})[gid] = {
         **report,

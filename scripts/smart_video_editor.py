@@ -1424,12 +1424,23 @@ def main() -> int:
     SELECTION_VARIANT = int(os.environ.get('SELECTION_VARIANT', str(SELECTION_VARIANT)))
     EXCLUDED_SOURCE_SIGNATURES = {sig for sig in os.environ.get('EXCLUDED_SOURCE_SIGNATURES', '').split(',') if sig}
     EXCLUDED_SEGMENT_KEYS = {sig for sig in os.environ.get('EXCLUDED_SEGMENT_KEYS', '').split(',') if sig}
-    hist_sources, hist_segments = load_segment_history()
+    seg_hist_path = Path(os.environ.get('SEGMENT_HISTORY_FILE', str(SEGMENT_HISTORY_FILE)))
+    if os.environ.get('OVERNIGHT_FRESH_SEGMENTS', '0') == '1':
+        hist_sources, hist_segments = load_segment_history(seg_hist_path)
+    else:
+        hist_sources, hist_segments = load_segment_history(seg_hist_path)
     EXCLUDED_SOURCE_SIGNATURES |= hist_sources
     EXCLUDED_SEGMENT_KEYS |= hist_segments
     NICK_BLUR_ENABLED = os.environ.get('BLUR_NICKNAME', '0') == '1'
     SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
-    if os.environ.get('SINGLE_SOURCE_MODE') == '1' and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
+    profile_boot = os.environ.get('QUEUE_GAME_PROFILE', os.environ.get('DEFAULT_GAME_PROFILE', '')).lower()
+    overnight = os.environ.get('OVERNIGHT_BATCH', '0') == '1'
+    if (
+        os.environ.get('SINGLE_SOURCE_MODE') == '1'
+        and os.environ.get('STRICT_GAMEPLAY', '0') != '1'
+        and not overnight
+        and profile_boot not in ('pubg',)
+    ):
         MIN_HIGHLIGHTS = max(2, min(MIN_HIGHLIGHTS, 2))
         MIN_FINAL_DURATION = max(22.0, MIN_FINAL_DURATION - 11.0)
 
@@ -1591,6 +1602,27 @@ def _run_smart_edit(
                 source['source_signature'],
                 relax_segment_gate=True,
             )
+        if not all_candidates and single_source and profile == 'pubg':
+            logging.warning('pubg rescue scoring (lower combat floor)')
+            for key, val in (
+                ('SMART_PUBG_PEAK_PERCENTILE', '26'),
+                ('SMART_PUBG_COMBAT_MIN', '0.06'),
+                ('SMART_PUBG_SUSTAIN_PERCENTILE', '24'),
+                ('SMART_PUBG_MOTION_PERCENTILE', '40'),
+                ('SMART_PUBG_AUDIO_PERCENTILE', '38'),
+            ):
+                os.environ[key] = val
+            source = sources[0]
+            all_candidates = build_candidates(
+                source['source_index'],
+                source['source_path'],
+                source['game_name'],
+                source['analysis'],
+                global_values,
+                profile,
+                source['source_signature'],
+                relax_segment_gate=True,
+            )
 
         all_candidates.sort(key=lambda item: item['score'], reverse=True)
         if not all_candidates:
@@ -1682,7 +1714,10 @@ def _run_smart_edit(
                 send_telegram_video(bot_token, batch_chat_id or default_chat_id, output_path, caption)
             except Exception as exc:
                 logging.warning('telegram send failed for %s: %s', output_path.name, exc)
-        register_segment_history(arranged)
+        register_segment_history(
+            arranged,
+            path=Path(os.environ.get('SEGMENT_HISTORY_FILE', str(SEGMENT_HISTORY_FILE))),
+        )
         if os.environ.get('SMART_SKIP_MARK_USED', '0') != '1':
             mark_used([Path(item['source_path']) for item in sources])
         drop_first_queue_lines(queue_file, len(batch_lines))

@@ -38,8 +38,6 @@ while true; do
       --negative-dir /root/datasets/tiktok/mlbb/non_gameplay \
       --output-dir /root/models/mlbb/hayabusa_v1 2>/dev/null || true
   fi
-  # PUBG tiktok gentle batch
-  run_step "$PY" "$BIN/pubg_tiktok_gentle.py"
   run_step "$PY" "$BIN/audio_game_extract_worker.py"
   run_step "$PY" "$BIN/ad_screenshot_ingest.py"
   echo "[$(date)] cycle sleep 8m"

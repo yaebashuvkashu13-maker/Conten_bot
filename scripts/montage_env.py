@@ -54,12 +54,14 @@ def profile_montage_env(profile: str) -> dict[str, str]:
                 {
                     "MIN_HIGHLIGHTS": "5",
                     "MAX_HIGHLIGHTS": "5",
-                    "SMART_PUBG_PEAK_PERCENTILE": "38",
-                    "SMART_PUBG_SUSTAIN_PERCENTILE": "30",
-                    "SMART_PUBG_COMBAT_MIN": "0.14",
+                    "SMART_PUBG_PEAK_PERCENTILE": "32",
+                    "SMART_PUBG_SUSTAIN_PERCENTILE": "28",
+                    "SMART_PUBG_COMBAT_MIN": "0.10",
                     "SMART_BURST_WEIGHT": "0.46",
                     "SMART_PUBG_CLIP_MIN_SEC": "7",
                     "SMART_PUBG_CLIP_MAX_SEC": "10",
+                    "SMART_PUBG_MOTION_PERCENTILE": "42",
+                    "SMART_PUBG_AUDIO_PERCENTILE": "40",
                 }
             )
         return out
