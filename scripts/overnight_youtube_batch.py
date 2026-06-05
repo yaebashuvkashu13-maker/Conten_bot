@@ -71,8 +71,18 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    import os
+
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(state, ensure_ascii=False, indent=2)
+    if STATE_FILE.exists():
+        try:
+            STATE_FILE.replace(STATE_FILE.with_suffix(".json.bak"))
+        except OSError:
+            pass
+    tmp = STATE_FILE.with_suffix(f".json.tmp.{os.getpid()}")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
 
 
 def send_text(env: dict[str, str], chat_id: str, text: str) -> None:

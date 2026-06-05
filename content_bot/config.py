@@ -65,6 +65,22 @@ def load_config(path: str | Path) -> AppConfig:
     dry_run = bool(raw.get("dry_run", False))
     max_posts_per_run = int(raw.get("max_posts_per_run", 7))
 
+    if not telegram.bot_token.strip():
+        raise ValueError("telegram.bot_token is empty")
+    if not telegram.channel_id.strip():
+        raise ValueError("telegram.channel_id is empty")
+    if not instagram_sources:
+        raise ValueError("instagram_sources must contain at least one source")
+    for source in instagram_sources:
+        if not source.url.strip():
+            raise ValueError(f"instagram source {source.name!r} has empty url")
+        if source.max_entries < 1:
+            raise ValueError(f"instagram source {source.name!r}: max_entries must be >= 1")
+    if max_posts_per_run < 1:
+        raise ValueError("max_posts_per_run must be >= 1")
+    if instagram_cookies_path and not instagram_cookies_path.exists():
+        raise ValueError(f"instagram_cookies_path not found: {instagram_cookies_path}")
+
     return AppConfig(
         telegram=telegram,
         instagram_sources=instagram_sources,

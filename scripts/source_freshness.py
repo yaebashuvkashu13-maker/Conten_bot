@@ -33,21 +33,40 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            path.replace(path.with_suffix(path.suffix + ".bak"))
+        except OSError:
+            pass
+    tmp = path.with_suffix(f"{path.suffix}.tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def load_used() -> dict:
     if not USED_SOURCES_PATH.exists():
         return {"hashes": [], "paths": []}
     try:
-        return json.loads(USED_SOURCES_PATH.read_text())
-    except Exception:
+        return json.loads(USED_SOURCES_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        backup = USED_SOURCES_PATH.with_suffix(USED_SOURCES_PATH.suffix + ".bak")
+        if backup.exists():
+            try:
+                return json.loads(backup.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
         return {"hashes": [], "paths": []}
 
 
 def save_used(data: dict, keep: int = 8000) -> None:
-    USED_SOURCES_PATH.parent.mkdir(parents=True, exist_ok=True)
     data["hashes"] = list(data.get("hashes", []))[-keep:]
     data["paths"] = list(data.get("paths", []))[-keep:]
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    USED_SOURCES_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    _atomic_write_json(USED_SOURCES_PATH, data)
 
 
 def is_used(path: Path, data: dict | None = None) -> bool:

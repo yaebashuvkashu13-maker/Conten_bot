@@ -10,6 +10,7 @@ from .state import StateStore
 from .telegram_publisher import TelegramPublisher
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def run(config_path: str) -> int:
@@ -29,9 +30,10 @@ def run(config_path: str) -> int:
                 proxy_url=config.proxy_url,
             )
         except Exception as exc:
-            logging.warning("fetch failed source=%s: %s", source.name, exc)
+            logger.warning("fetch failed source=%s: %s", source.name, exc)
             errors += 1
             continue
+
         for post in posts:
             if published >= config.max_posts_per_run:
                 break
@@ -39,15 +41,24 @@ def run(config_path: str) -> int:
                 continue
             try:
                 publisher.publish_post(post)
-                state.mark_published(post.post_id)
-                published += 1
-                time.sleep(1.2)
             except Exception as exc:
-                logging.warning("publish failed source=%s post=%s: %s", source.name, post.post_id, exc)
+                logger.warning(
+                    "publish failed source=%s post=%s: %s", source.name, post.post_id, exc
+                )
                 errors += 1
+                continue
+            try:
+                state.mark_published(post.post_id)
+            except Exception as exc:
+                state.record_recovery(post.post_id, reason=str(exc))
+                logger.error(
+                    "published but state not saved post=%s — recovery journal written",
+                    post.post_id,
+                )
+            published += 1
+            time.sleep(1.2)
 
-    logging.info("digest finished published=%s errors=%s", published, errors)
-    print(f"Published {published} new posts.")
+    logger.info("digest finished published=%s errors=%s", published, errors)
     return 0 if published > 0 or errors == 0 else 1
 
 
@@ -65,4 +76,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

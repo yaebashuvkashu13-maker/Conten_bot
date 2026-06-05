@@ -11,8 +11,12 @@ dependencies = [
   "PyYAML",
   "pandas",
   "scikit-learn",
+  "joblib",
   "yt-dlp",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [build-system]
 requires = ["setuptools>=68"]
