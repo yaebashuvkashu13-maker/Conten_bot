@@ -557,6 +557,107 @@ def moving_average(values: np.ndarray) -> np.ndarray:
     return np.convolve(values, kernel, mode='same')
 
 
+ACTION_PROFILES = frozenset({
+    'pubg', 'genshin', 'standoff', 'wot', 'world_of_tanks', 'mobile_legends',
+})
+GUNFIRE_PROFILES = frozenset({'pubg', 'standoff'})
+
+
+def profile_env_float(profile: str, name: str, default: str) -> float:
+    return float(os.environ.get(name, default))
+
+
+def profile_peak_percentile(profile: str) -> float:
+    mapping = {
+        'mobile_legends': ('SMART_MLBB_PEAK_PERCENTILE', '52'),
+        'pubg': ('SMART_PUBG_PEAK_PERCENTILE', '36'),
+        'genshin': ('SMART_GENSHIN_PEAK_PERCENTILE', '38'),
+        'standoff': ('SMART_STANDOFF_PEAK_PERCENTILE', '34'),
+        'wot': ('SMART_WOT_PEAK_PERCENTILE', '36'),
+        'world_of_tanks': ('SMART_WOT_PEAK_PERCENTILE', '36'),
+    }
+    key, default = mapping.get(profile, ('SMART_PEAK_PERCENTILE', '52'))
+    return profile_env_float(profile, key, default)
+
+
+def profile_sustain_percentile(profile: str) -> float:
+    mapping = {
+        'pubg': ('SMART_PUBG_SUSTAIN_PERCENTILE', '28'),
+        'genshin': ('SMART_GENSHIN_SUSTAIN_PERCENTILE', '30'),
+        'standoff': ('SMART_STANDOFF_SUSTAIN_PERCENTILE', '28'),
+        'wot': ('SMART_WOT_SUSTAIN_PERCENTILE', '30'),
+        'world_of_tanks': ('SMART_WOT_SUSTAIN_PERCENTILE', '30'),
+    }
+    key, default = mapping.get(profile, ('SMART_SUSTAIN_PERCENTILE', '42'))
+    return profile_env_float(profile, key, default)
+
+
+def profile_motion_audio_percentiles(profile: str) -> tuple[float, float, float]:
+    mapping = {
+        'pubg': (
+            ('SMART_PUBG_MOTION_PERCENTILE', '48'),
+            ('SMART_PUBG_AUDIO_PERCENTILE', '46'),
+            ('SMART_PUBG_GUNFIRE_PERCENTILE', '56'),
+        ),
+        'genshin': (
+            ('SMART_GENSHIN_MOTION_PERCENTILE', '50'),
+            ('SMART_GENSHIN_AUDIO_PERCENTILE', '48'),
+            ('SMART_GENSHIN_SCENE_PERCENTILE', '52'),
+        ),
+        'standoff': (
+            ('SMART_STANDOFF_MOTION_PERCENTILE', '48'),
+            ('SMART_STANDOFF_AUDIO_PERCENTILE', '46'),
+            ('SMART_STANDOFF_GUNFIRE_PERCENTILE', '54'),
+        ),
+        'wot': (
+            ('SMART_WOT_MOTION_PERCENTILE', '48'),
+            ('SMART_WOT_AUDIO_PERCENTILE', '50'),
+            ('SMART_WOT_SCENE_PERCENTILE', '46'),
+        ),
+        'world_of_tanks': (
+            ('SMART_WOT_MOTION_PERCENTILE', '48'),
+            ('SMART_WOT_AUDIO_PERCENTILE', '50'),
+            ('SMART_WOT_SCENE_PERCENTILE', '46'),
+        ),
+    }
+    motion_key, motion_def = ('SMART_MOTION_PERCENTILE', '52')
+    audio_key, audio_def = ('SMART_AUDIO_PERCENTILE', '50')
+    third_key, third_def = ('SMART_SCENE_PERCENTILE', '54')
+    if profile in mapping:
+        (motion_key, motion_def), (audio_key, audio_def), (third_key, third_def) = mapping[profile]
+    return (
+        profile_env_float(profile, motion_key, motion_def),
+        profile_env_float(profile, audio_key, audio_def),
+        profile_env_float(profile, third_key, third_def),
+    )
+
+
+def profile_combat_min(profile: str) -> float:
+    mapping = {
+        'pubg': ('SMART_PUBG_COMBAT_MIN', '0.20'),
+        'genshin': ('SMART_GENSHIN_COMBAT_MIN', '0.17'),
+        'standoff': ('SMART_STANDOFF_COMBAT_MIN', '0.19'),
+        'wot': ('SMART_WOT_COMBAT_MIN', '0.16'),
+        'world_of_tanks': ('SMART_WOT_COMBAT_MIN', '0.16'),
+    }
+    key, default = mapping.get(profile, ('SMART_COMBAT_MIN', '0.14'))
+    return profile_env_float(profile, key, default)
+
+
+def profile_action_clip_bounds(profile: str) -> tuple[float, float]:
+    if profile == 'pubg':
+        return (
+            float(os.environ.get('SMART_PUBG_CLIP_MIN_SEC', os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7'))),
+            float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', os.environ.get('SMART_ACTION_CLIP_MAX_SEC', '9.5'))),
+        )
+    if profile in ACTION_PROFILES:
+        return (
+            float(os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7')),
+            float(os.environ.get('SMART_ACTION_CLIP_MAX_SEC', '10')),
+        )
+    return 9.5, 15.0
+
+
 def build_candidates(
     source_index: int,
     source_path: Path,
@@ -616,29 +717,31 @@ def build_candidates(
             base += 0.08 * max(0.0, motion - 0.22)
             base += 0.06 * max(0.0, sharp - 0.32)
         elif profile == 'genshin':
-            # Open-world combat: scene cuts + center action + ability bursts (no MLBB HUD).
             base = (
-                0.22 * motion +
-                0.18 * center +
-                0.14 * audio +
-                0.22 * scene +
-                0.12 * sharp +
-                0.07 * bright +
-                0.05 * sat
-            )
-            base += 0.06 * max(0.0, scene - 0.38)
-        elif profile == 'standoff':
-            # FPS duels: sharp audio transients + fast center motion.
-            base = (
-                0.28 * motion +
+                0.24 * motion +
                 0.20 * center +
-                0.22 * audio +
-                0.12 * scene +
+                0.18 * audio +
+                0.20 * scene +
                 0.10 * sharp +
                 0.05 * bright +
                 0.03 * sat
             )
-            base += 0.10 * max(0.0, audio - 0.42)
+            base += 0.10 * max(0.0, scene - 0.36)
+            base += 0.08 * max(0.0, audio - 0.34)
+            base += 0.06 * max(0.0, center - 0.28)
+        elif profile == 'standoff':
+            base = (
+                0.18 * motion +
+                0.18 * center +
+                0.16 * audio +
+                0.32 * gunshot +
+                0.08 * scene +
+                0.08 * sharp +
+                0.02 * bright
+            )
+            base += 0.18 * max(0.0, gunshot - 0.30)
+            base += 0.10 * max(0.0, audio - 0.38)
+            base += 0.08 * max(0.0, center - 0.26)
         elif profile in ('wot', 'world_of_tanks'):
             # Tank battles (Blitz / PC): sustained motion + hits + map pans.
             motion_w, scene_w, audio_w = (0.26, 0.20, 0.18)
@@ -654,9 +757,10 @@ def build_candidates(
                 0.07 * bright +
                 0.05 * sat
             )
-            base += 0.05 * max(0.0, motion - 0.22)
+            base += 0.08 * max(0.0, motion - 0.24)
+            base += 0.10 * max(0.0, audio - 0.36)
             if profile == 'world_of_tanks':
-                base += 0.06 * max(0.0, audio - 0.40)
+                base += 0.06 * max(0.0, scene - 0.34)
         else:
             base = (
                 0.28 * motion +
@@ -679,6 +783,21 @@ def build_candidates(
                 penalty += 0.28
             if scene > 0.50 and gunshot < 0.20:
                 penalty += 0.14
+        elif profile == 'standoff':
+            if gunshot < 0.20 and audio < 0.26:
+                penalty += 0.40
+            if motion > 0.28 and gunshot < 0.20:
+                penalty += 0.26
+        elif profile == 'genshin':
+            if motion < 0.16 and audio < 0.18 and scene < 0.14:
+                penalty += 0.34
+            if scene < 0.12 and center < 0.14:
+                penalty += 0.18
+        elif profile in ('wot', 'world_of_tanks'):
+            if motion < 0.14 and audio < 0.16:
+                penalty += 0.30
+            if scene < 0.10 and audio < 0.18:
+                penalty += 0.16
         elif motion < 0.14 and audio < 0.16 and scene < 0.08:
             penalty += 0.20
         if bright < 0.18:
@@ -686,31 +805,25 @@ def build_candidates(
         if sharp < 0.12:
             penalty += 0.08
         burst_w = 0.24
-        if profile == 'pubg':
-            burst_w = float(os.environ.get('SMART_BURST_WEIGHT', '0.34'))
+        if profile in ACTION_PROFILES:
+            burst_w = float(os.environ.get('SMART_BURST_WEIGHT', '0.46'))
         raw_scores[idx] = max(0.0, base + burst_w * burst - penalty)
         bursts[idx] = burst
 
     smooth_scores = moving_average(raw_scores)
     candidates: list[dict] = []
-    peak_pct = float(os.environ.get('SMART_PEAK_PERCENTILE', '68'))
+    peak_pct = profile_peak_percentile(profile) if profile in ACTION_PROFILES else float(
+        os.environ.get('SMART_PEAK_PERCENTILE', '52')
+    )
     if profile == 'mobile_legends':
-        peak_pct = float(os.environ.get('SMART_MLBB_PEAK_PERCENTILE', '58'))
-    if profile == 'pubg':
-        peak_pct = float(os.environ.get('SMART_PUBG_PEAK_PERCENTILE', '60'))
+        peak_pct = float(os.environ.get('SMART_MLBB_PEAK_PERCENTILE', str(peak_pct)))
     peak_threshold = float(np.percentile(smooth_scores, peak_pct)) if bins > 4 else float(smooth_scores.max())
-    sustain_pct = 48.0
-    if profile == 'pubg':
-        sustain_pct = float(os.environ.get('SMART_PUBG_SUSTAIN_PERCENTILE', '36'))
+    sustain_pct = profile_sustain_percentile(profile) if profile in ACTION_PROFILES else 42.0
     sustain_threshold = float(np.percentile(smooth_scores, sustain_pct)) if bins > 4 else peak_threshold * 0.72
-    motion_pct, audio_pct = 55, 52
-    gunfire_pct = 55.0
-    if profile == 'pubg':
-        motion_pct = float(os.environ.get('SMART_PUBG_MOTION_PERCENTILE', '48'))
-        audio_pct = float(os.environ.get('SMART_PUBG_AUDIO_PERCENTILE', '45'))
-        gunfire_pct = float(os.environ.get('SMART_PUBG_GUNFIRE_PERCENTILE', '52'))
+    motion_pct, audio_pct, scene_pct = profile_motion_audio_percentiles(profile) if profile in ACTION_PROFILES else (52.0, 50.0, 54.0)
+    gunfire_pct = audio_pct if profile not in GUNFIRE_PROFILES else profile_motion_audio_percentiles(profile)[2]
     motion_threshold = float(np.percentile(analysis['motion'], motion_pct)) if bins > 3 else float(np.max(analysis['motion']))
-    scene_threshold = float(np.percentile(analysis['scene'], 58)) if bins > 3 else float(np.max(analysis['scene']))
+    scene_threshold = float(np.percentile(analysis['scene'], scene_pct)) if bins > 3 else float(np.max(analysis['scene']))
     audio_threshold = float(np.percentile(analysis['audio'], audio_pct)) if bins > 3 else float(np.max(analysis['audio']))
     gunfire_threshold = float(
         np.percentile(analysis.get('gunfire', analysis['audio']), gunfire_pct)
@@ -770,17 +883,27 @@ def build_candidates(
             continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
         mean_gunfire = float(np.mean(analysis.get('gunfire', analysis['audio'])[region_slice]))
-        if profile == 'pubg':
-            combat_min = float(os.environ.get('SMART_PUBG_COMBAT_MIN', '0.14'))
-            gunfire_min = float(os.environ.get('SMART_PUBG_BIN_GUNFIRE_MIN', '0.10'))
+        if profile in GUNFIRE_PROFILES:
+            prefix = 'SMART_PUBG_' if profile == 'pubg' else 'SMART_STANDOFF_'
+            combat_min = profile_combat_min(profile)
+            gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.10'))
             if mean_gunfire < gunfire_min and mean_audio < combat_min:
                 continue
             if mean_motion < combat_min and mean_gunfire < gunfire_min * 0.85:
                 continue
-        clip_lo, clip_hi = 9.5, 15.0
-        if profile == 'pubg':
-            clip_lo = float(os.environ.get('SMART_PUBG_CLIP_MIN_SEC', '7'))
-            clip_hi = float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', '11'))
+        elif profile == 'genshin':
+            combat_min = profile_combat_min(profile)
+            mean_scene = float(np.mean(analysis['scene'][region_slice]))
+            mean_center = float(np.mean(analysis['center_motion'][region_slice]))
+            if mean_motion < combat_min and mean_audio < combat_min and mean_scene < combat_min:
+                continue
+            if mean_center < float(os.environ.get('SMART_GENSHIN_MIN_CENTER_MOTION', '0.015')) and mean_audio < combat_min:
+                continue
+        elif profile in ('wot', 'world_of_tanks'):
+            combat_min = profile_combat_min(profile)
+            if mean_motion < combat_min and mean_audio < float(os.environ.get('SMART_WOT_MIN_AUDIO_HIT', '0.13')):
+                continue
+        clip_lo, clip_hi = profile_action_clip_bounds(profile)
         desired_duration = max(clip_lo, min(clip_hi, (right - left + 1) * win + 2.0))
         desired_pre = min(5.2, max(3.6, desired_duration * 0.34))
         desired_post = desired_duration - desired_pre
@@ -798,14 +921,19 @@ def build_candidates(
                     end = min(analysis['duration'], start + desired_duration)
                 elif end >= analysis['duration'] - 0.01:
                     start = max(0.0, end - desired_duration)
-        input_floor = clip_lo if profile == 'pubg' else 9.0
-        input_cap = clip_hi if profile == 'pubg' else 15.0
+        input_floor = clip_lo if profile in ACTION_PROFILES else 9.0
+        input_cap = clip_hi if profile in ACTION_PROFILES else 15.0
         input_duration = max(input_floor, min(input_cap, end - start))
         end = min(analysis['duration'], start + input_duration)
         start = max(0.0, end - input_duration)
 
-        if profile == 'pubg':
-            skip_intro = float(os.environ.get('SMART_PUBG_SKIP_INTRO_SEC', '120'))
+        if profile in ACTION_PROFILES:
+            skip_intro = float(
+                os.environ.get(
+                    'SMART_PUBG_SKIP_INTRO_SEC' if profile == 'pubg' else 'SMART_SKIP_INTRO_SEC',
+                    '120' if profile == 'pubg' else '90',
+                )
+            )
             if start < skip_intro:
                 continue
 
@@ -830,11 +958,20 @@ def build_candidates(
         if profile in ('mobile_legends', 'pubg'):
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
-        if profile == 'pubg':
+        if profile in GUNFIRE_PROFILES:
             combo_score += 0.20 * max(0.0, mean_gunfire - gunfire_threshold)
             combo_score += 0.14 * max(0.0, float(bursts[idx]) - 0.04)
             combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
             combo_score += 0.06 * max(0.0, mean_motion - motion_threshold)
+        elif profile == 'genshin':
+            mean_scene = float(np.mean(analysis['scene'][region_slice]))
+            combo_score += 0.12 * max(0.0, mean_scene - scene_threshold)
+            combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.08 * max(0.0, mean_motion - motion_threshold)
+        elif profile in ('wot', 'world_of_tanks'):
+            combo_score += 0.14 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.10 * max(0.0, mean_motion - motion_threshold)
+            combo_score += 0.08 * max(0.0, float(bursts[idx]) - 0.04)
 
         candidates.append({
             'source_index': source_index,
@@ -900,9 +1037,10 @@ def build_candidates(
                 'max_cartoon_ratio': 0.55,
                 'min_hud_frame_rate': max(0.68, float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.72'))),
             }
-        elif relax_segment_gate and profile == 'pubg':
+        elif relax_segment_gate and profile in GUNFIRE_PROFILES:
+            relax_key = 'SMART_PUBG_RELAX_MIN_GUNFIRE' if profile == 'pubg' else 'SMART_STANDOFF_RELAX_MIN_GUNFIRE'
             gate_kwargs = {
-                'min_gunfire': float(os.environ.get('SMART_PUBG_RELAX_MIN_GUNFIRE', '0.040')),
+                'min_gunfire': float(os.environ.get(relax_key, '0.045')),
             }
         elif relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
@@ -995,8 +1133,8 @@ def extend_selected_to_min_duration(selected: list[dict], profile: str = 'mobile
             input_duration = float(item['input_duration'])
             extra = min(2.0, MIN_FINAL_DURATION - effective_duration(items) + 0.5)
             input_cap = 15.8
-            if profile == 'pubg':
-                input_cap = float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', '11'))
+            if profile in ACTION_PROFILES:
+                _lo, input_cap = profile_action_clip_bounds(profile)
             new_input = min(input_cap, input_duration + extra)
             new_start = max(0.0, start - extra * 0.35)
             if new_start + new_input > src_duration - 0.2:

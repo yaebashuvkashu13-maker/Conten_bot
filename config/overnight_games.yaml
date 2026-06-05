@@ -1,6 +1,6 @@
 # Daily batch: cron 18:00 MSK → Telegram montages by 08:00 MSK (5 games × 1 cut, sequential CPU).
 # Fallback URLs (1.5h+) used when YouTube search finds no 2h+ VOD.
-# Scene logic: MLBB uses HUD gate; other games use motion/audio/scene scoring only.
+# Scene logic: MLBB=HUD gate; PUBG/Standoff=gunfire audio; Genshin/WoT=aggressive combat peaks (5 clips).
 
 games:
   - id: mlbb

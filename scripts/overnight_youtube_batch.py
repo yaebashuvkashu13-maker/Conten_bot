@@ -201,7 +201,7 @@ def run_montage(
     relaxed: bool = False,
 ) -> tuple[int, str]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from montage_env import profile_montage_env
+    from montage_env import profile_montage_env, relaxed_montage_env
 
     profile = game["profile"]
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".queue.txt") as tmp:
@@ -212,38 +212,8 @@ def run_montage(
     for key, value in env.items():
         run_env.setdefault(key, value)
     run_env.update(profile_montage_env(profile))
-    if relaxed and profile in ("mobile_legends", "mlbb"):
-        run_env.update(
-            {
-                "SMART_MLBB_PEAK_PERCENTILE": "48",
-                "SMART_MIN_MINIMAP_PRESENCE": "0.62",
-                "SMART_MIN_CENTER_MOTION": "0.015",
-                "MIN_HIGHLIGHTS": "4",
-                "MAX_HIGHLIGHTS": "5",
-            }
-        )
-    elif relaxed and profile == "pubg":
-        run_env.update(
-            {
-                "SMART_PUBG_PEAK_PERCENTILE": "30",
-                "SMART_PUBG_COMBAT_MIN": "0.14",
-                "SMART_PUBG_BIN_GUNFIRE_MIN": "0.08",
-                "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.045",
-                "SMART_PUBG_SUSTAIN_PERCENTILE": "26",
-                "MIN_HIGHLIGHTS": "4",
-                "MAX_HIGHLIGHTS": "5",
-            }
-        )
-    elif relaxed:
-        run_env.update(
-            {
-                "SMART_PUBG_PEAK_PERCENTILE": "48",
-                "SMART_PUBG_COMBAT_MIN": "0.12",
-                "SMART_PUBG_SUSTAIN_PERCENTILE": "40",
-                "MIN_HIGHLIGHTS": "3",
-                "MAX_HIGHLIGHTS": "4",
-            }
-        )
+    if relaxed:
+        run_env.update(relaxed_montage_env(profile))
     gid = game["id"]
     run_env.update(
         {

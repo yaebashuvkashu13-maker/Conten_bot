@@ -959,7 +959,7 @@ def segment_looks_like_pubg_loot_or_walk(
     center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
     )
-    min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
+    min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.06"))
     if gunfire_density >= min_gun:
         return False
     if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
@@ -985,19 +985,20 @@ def segment_is_valid_for_montage(
     min_gunfire: float | None = None,
     crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
-    if profile == "pubg":
+    if profile in ("pubg", "standoff"):
+        prefix = "SMART_PUBG_" if profile == "pubg" else "SMART_STANDOFF_"
         if crop_box is None:
             crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
         gunfire_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(
             video_path, start_sec, duration_sec
         )
         min_gun = (
-            float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
+            float(os.environ.get(f"{prefix}MIN_GUNFIRE_DENSITY", "0.055"))
             if min_gunfire is None
             else min_gunfire
         )
-        min_burst = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "2.4"))
-        min_audio = float(os.environ.get("SMART_PUBG_MIN_AUDIO_RMS", "0.008"))
+        min_burst = float(os.environ.get(f"{prefix}MIN_BURST_RATIO", "2.4"))
+        min_audio = float(os.environ.get(f"{prefix}MIN_AUDIO_RMS", "0.008"))
         if gunfire_density < min_gun and burst_ratio < min_burst:
             return False, f"low_gunfire=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
         if audio_rms < min_audio and gunfire_density < min_gun * 1.2:
@@ -1013,9 +1014,10 @@ def segment_is_valid_for_montage(
         center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
             video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
         )
-        if center_motion < float(os.environ.get("SMART_PUBG_MIN_CENTER_MOTION", "0.016")):
+        if center_motion < float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018")):
             return False, f"no_aim_motion={center_motion:.3f}"
-        if center_text > float(os.environ.get("SMART_PUBG_MAX_CENTER_TEXT", "0.14")):
+        max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", "0.14"))
+        if center_text > max_text:
             return False, f"menu_overlay={center_text:.2f}"
         return True, "ok"
     if profile != "mobile_legends":

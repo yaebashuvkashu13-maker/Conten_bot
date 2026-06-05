@@ -13,32 +13,90 @@ def passthrough_audio_env() -> dict[str, str]:
     }
 
 
-def pubg_combat_env() -> dict[str, str]:
-    """PUBG Metro: only segments with gunshot audio, reject loot/walk/intro."""
+def aggressive_action_base() -> dict[str, str]:
+    """More clips, shorter windows, higher action density for overnight montages."""
     return {
-        "MIN_HIGHLIGHTS": "4",
+        "MIN_HIGHLIGHTS": "5",
         "MAX_HIGHLIGHTS": "5",
-        "MIN_FINAL_DURATION": "36",
-        "SMART_PUBG_PEAK_PERCENTILE": "38",
-        "SMART_PUBG_SUSTAIN_PERCENTILE": "30",
-        "SMART_PUBG_COMBAT_MIN": "0.18",
-        "SMART_PUBG_BIN_GUNFIRE_MIN": "0.11",
-        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.06",
-        "SMART_PUBG_MIN_BURST_RATIO": "2.5",
-        "SMART_PUBG_MIN_CENTER_MOTION": "0.018",
-        "SMART_PUBG_SKIP_INTRO_SEC": "120",
+        "MIN_FINAL_DURATION": "40",
+        "MAX_FINAL_DURATION": "55",
         "SMART_BURST_WEIGHT": "0.48",
+        "SMART_ACTION_CLIP_MIN_SEC": "7",
+        "SMART_ACTION_CLIP_MAX_SEC": "10",
+        "SMART_SKIP_INTRO_SEC": "90",
+        "OVERNIGHT_AGGRESSIVE": "1",
+    }
+
+
+def pubg_combat_env() -> dict[str, str]:
+    """PUBG Metro: gunshot audio, reject loot/walk/intro."""
+    return {
+        **aggressive_action_base(),
+        "SMART_PUBG_PEAK_PERCENTILE": "36",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "28",
+        "SMART_PUBG_COMBAT_MIN": "0.20",
+        "SMART_PUBG_BIN_GUNFIRE_MIN": "0.12",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.065",
+        "SMART_PUBG_MIN_BURST_RATIO": "2.6",
+        "SMART_PUBG_MIN_CENTER_MOTION": "0.020",
+        "SMART_PUBG_SKIP_INTRO_SEC": "120",
         "SMART_PUBG_CLIP_MIN_SEC": "7",
-        "SMART_PUBG_CLIP_MAX_SEC": "10",
-        "SMART_PUBG_MOTION_PERCENTILE": "46",
-        "SMART_PUBG_AUDIO_PERCENTILE": "44",
-        "SMART_PUBG_GUNFIRE_PERCENTILE": "54",
+        "SMART_PUBG_CLIP_MAX_SEC": "9.5",
+        "SMART_PUBG_MOTION_PERCENTILE": "48",
+        "SMART_PUBG_AUDIO_PERCENTILE": "46",
+        "SMART_PUBG_GUNFIRE_PERCENTILE": "56",
+    }
+
+
+def genshin_combat_env() -> dict[str, str]:
+    """Genshin: ability bursts + combat audio, skip exploration idle."""
+    return {
+        **aggressive_action_base(),
+        "SMART_GENSHIN_PEAK_PERCENTILE": "38",
+        "SMART_GENSHIN_SUSTAIN_PERCENTILE": "30",
+        "SMART_GENSHIN_COMBAT_MIN": "0.17",
+        "SMART_GENSHIN_MOTION_PERCENTILE": "50",
+        "SMART_GENSHIN_AUDIO_PERCENTILE": "48",
+        "SMART_GENSHIN_SCENE_PERCENTILE": "52",
+        "SMART_GENSHIN_MIN_CENTER_MOTION": "0.017",
+    }
+
+
+def standoff_combat_env() -> dict[str, str]:
+    """Standoff 2: FPS duels — gunfire transients + aim motion."""
+    return {
+        **aggressive_action_base(),
+        "SMART_STANDOFF_PEAK_PERCENTILE": "34",
+        "SMART_STANDOFF_SUSTAIN_PERCENTILE": "28",
+        "SMART_STANDOFF_COMBAT_MIN": "0.19",
+        "SMART_STANDOFF_BIN_GUNFIRE_MIN": "0.11",
+        "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.06",
+        "SMART_STANDOFF_MIN_BURST_RATIO": "2.5",
+        "SMART_STANDOFF_MIN_CENTER_MOTION": "0.020",
+        "SMART_STANDOFF_MOTION_PERCENTILE": "48",
+        "SMART_STANDOFF_AUDIO_PERCENTILE": "46",
+        "SMART_STANDOFF_GUNFIRE_PERCENTILE": "54",
+    }
+
+
+def wot_combat_env() -> dict[str, str]:
+    """WoT: hits, explosions, brawls — not base capture idle."""
+    return {
+        **aggressive_action_base(),
+        "SMART_WOT_PEAK_PERCENTILE": "36",
+        "SMART_WOT_SUSTAIN_PERCENTILE": "30",
+        "SMART_WOT_COMBAT_MIN": "0.16",
+        "SMART_WOT_MOTION_PERCENTILE": "48",
+        "SMART_WOT_AUDIO_PERCENTILE": "50",
+        "SMART_WOT_SCENE_PERCENTILE": "46",
+        "SMART_WOT_MIN_AUDIO_HIT": "0.14",
     }
 
 
 def mlbb_combat_env() -> dict[str, str]:
     """MLBB: only in-match fights, minimap required, no draft/webcam in frame."""
     return {
+        **aggressive_action_base(),
         "STRICT_GAMEPLAY": "1",
         "SMART_REQUIRE_MINIMAP": "1",
         "SMART_MIN_MINIMAP_PRESENCE": "0.72",
@@ -48,11 +106,8 @@ def mlbb_combat_env() -> dict[str, str]:
         "SMART_MAX_OVERLAY_TEXT": "0.10",
         "SMART_REJECT_DRAFT_QUEUE": "1",
         "SMART_CROP_WEBCAM": "1",
-        "SMART_MLBB_PEAK_PERCENTILE": "54",
-        "MIN_HIGHLIGHTS": "5",
-        "MAX_HIGHLIGHTS": "5",
+        "SMART_MLBB_PEAK_PERCENTILE": "52",
         "MIN_FINAL_DURATION": "42",
-        "MAX_FINAL_DURATION": "57",
         "SMART_OUTPUT_CRF": "15",
         "SMART_OUTPUT_PRESET": "slow",
     }
@@ -60,19 +115,65 @@ def mlbb_combat_env() -> dict[str, str]:
 
 def profile_montage_env(profile: str) -> dict[str, str]:
     """Per-game Smart Edit defaults."""
-    if profile in (
-        "mobile_legends",
-        "pubg",
-        "mlbb",
-        "genshin",
-        "standoff",
-        "wot",
-        "world_of_tanks",
-    ):
-        out = passthrough_audio_env()
-        if profile in ("mobile_legends", "mlbb"):
-            out.update(mlbb_combat_env())
-        if profile == "pubg":
-            out.update(pubg_combat_env())
-        return out
-    return {}
+    combat_map = {
+        "mobile_legends": mlbb_combat_env,
+        "mlbb": mlbb_combat_env,
+        "pubg": pubg_combat_env,
+        "genshin": genshin_combat_env,
+        "standoff": standoff_combat_env,
+        "wot": wot_combat_env,
+        "world_of_tanks": wot_combat_env,
+    }
+    if profile not in combat_map:
+        return {}
+    out = passthrough_audio_env()
+    out.update(combat_map[profile]())
+    return out
+
+
+def relaxed_montage_env(profile: str) -> dict[str, str]:
+    """Second-attempt floors — still action-heavy, never back to filler montages."""
+    if profile in ("mobile_legends", "mlbb"):
+        return {
+            "SMART_MLBB_PEAK_PERCENTILE": "46",
+            "SMART_MIN_MINIMAP_PRESENCE": "0.65",
+            "SMART_MIN_CENTER_MOTION": "0.016",
+            "MIN_HIGHLIGHTS": "4",
+            "MAX_HIGHLIGHTS": "5",
+        }
+    if profile == "pubg":
+        return {
+            "SMART_PUBG_PEAK_PERCENTILE": "30",
+            "SMART_PUBG_COMBAT_MIN": "0.15",
+            "SMART_PUBG_BIN_GUNFIRE_MIN": "0.09",
+            "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.05",
+            "SMART_PUBG_SUSTAIN_PERCENTILE": "24",
+            "MIN_HIGHLIGHTS": "4",
+            "MAX_HIGHLIGHTS": "5",
+        }
+    if profile == "genshin":
+        return {
+            "SMART_GENSHIN_PEAK_PERCENTILE": "32",
+            "SMART_GENSHIN_COMBAT_MIN": "0.14",
+            "SMART_GENSHIN_SUSTAIN_PERCENTILE": "26",
+            "MIN_HIGHLIGHTS": "4",
+            "MAX_HIGHLIGHTS": "5",
+        }
+    if profile == "standoff":
+        return {
+            "SMART_STANDOFF_PEAK_PERCENTILE": "28",
+            "SMART_STANDOFF_COMBAT_MIN": "0.15",
+            "SMART_STANDOFF_BIN_GUNFIRE_MIN": "0.09",
+            "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.05",
+            "MIN_HIGHLIGHTS": "4",
+            "MAX_HIGHLIGHTS": "5",
+        }
+    if profile in ("wot", "world_of_tanks"):
+        return {
+            "SMART_WOT_PEAK_PERCENTILE": "30",
+            "SMART_WOT_COMBAT_MIN": "0.13",
+            "SMART_WOT_SUSTAIN_PERCENTILE": "26",
+            "MIN_HIGHLIGHTS": "4",
+            "MAX_HIGHLIGHTS": "5",
+        }
+    return {"MIN_HIGHLIGHTS": "4", "MAX_HIGHLIGHTS": "5"}
