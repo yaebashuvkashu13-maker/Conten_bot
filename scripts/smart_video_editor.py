@@ -722,7 +722,7 @@ def build_candidates(
             continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
         if profile == 'pubg':
-            combat_min = float(os.environ.get('SMART_PUBG_COMBAT_MIN', '0.20'))
+            combat_min = float(os.environ.get('SMART_PUBG_COMBAT_MIN', '0.14'))
             if mean_motion < combat_min and mean_audio < combat_min:
                 continue
         clip_lo, clip_hi = 9.5, 15.0

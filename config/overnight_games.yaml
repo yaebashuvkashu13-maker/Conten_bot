@@ -9,6 +9,7 @@ games:
     montages: 1
     min_duration_sec: 7200
     max_duration_sec: 10800
+    fallback_min_duration_sec: 5400
     search_limit: 12
     queries:
       - "Mobile Legends Bang Bang live stream full gameplay"

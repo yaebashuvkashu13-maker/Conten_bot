@@ -30,6 +30,7 @@ install -m 755 "$REPO/scripts/gameplay_gate.py" "$DEST/gameplay_gate.py" 2>/dev/
 install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/youtube_game_prefs.py" "$DEST/youtube_game_prefs.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh" 2>/dev/null || true
+install -m 755 "$REPO/scripts/overnight_catchup.sh" "$DEST/overnight_catchup.sh" 2>/dev/null || true
 install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/install_overnight_msk_cron.sh" "$DEST/install_overnight_msk_cron.sh" 2>/dev/null || true
 install -m 755 "$REPO/scripts/disable_legacy_publish_crons.sh" "$DEST/disable_legacy_publish_crons.sh" 2>/dev/null || true

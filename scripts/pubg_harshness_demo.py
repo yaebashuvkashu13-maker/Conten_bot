@@ -27,7 +27,7 @@ PRESETS = [
         "label": "1/4 — 4 перестрелки",
         "SMART_PUBG_PEAK_PERCENTILE": "46",
         "SMART_PUBG_SUSTAIN_PERCENTILE": "34",
-        "SMART_PUBG_COMBAT_MIN": "0.18",
+        "SMART_PUBG_COMBAT_MIN": "0.12",
         "SMART_BURST_WEIGHT": "0.40",
         "SMART_PUBG_CLIP_MIN_SEC": "7",
         "SMART_PUBG_CLIP_MAX_SEC": "11",
