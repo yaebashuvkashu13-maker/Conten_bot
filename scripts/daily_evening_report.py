@@ -129,25 +129,38 @@ def build_report() -> str:
     editor_err = log_errors_today(EDITOR_LOG, "ERROR")
     completed = log_errors_today(EDITOR_LOG, "completed successfully")
 
+    overnight_report = Path("/root/data/mlbb/overnight_msk/last_report.json")
+    overnight_done = 0
+    overnight_total = 5
+    if overnight_report.exists():
+        try:
+            rep = json.loads(overnight_report.read_text(encoding="utf-8"))
+            results = rep.get("results") or []
+            overnight_done = sum(int(r.get("montages_ok") or 0) for r in results)
+            overnight_total = max(overnight_total, len(results))
+        except json.JSONDecodeError:
+            pass
+
     done_lines = [
-        "✅ Telegram: API без мёртвого прокси (бот + отправка видео)",
-        "✅ PUBG коллеге: досланы 3 старых ролика + сообщение о восстановлении",
-        f"✅ hero_datasets: {heroes} клипов (работа без TikTok-прокси)",
+        f"✅ Ночной батч: {overnight_done}/{overnight_total} нарезок (5 игр — цель дня)",
+        "✅ Telegram: отправка без мёртвого HTTP_PROXY",
+        f"✅ hero_datasets: {heroes} клипов",
     ]
     if vids:
         done_lines.append("✅ Ролики за сутки:")
         done_lines.extend(vids[:6])
 
     todo_lines = []
+    if overnight_done < 5:
+        todo_lines.append(f"🎯 Догнать нарезки: {overnight_done}/5 (MLBB, PUBG Metro, Genshin, Standoff, WoT)")
     if not ok_proxy:
-        todo_lines.append("⏸ TikTok-скачивание: прокси мёртв — нужен новый CyberYozh (или пауза)")
-    todo_lines.append("🎯 MLBB эталон: ждём твой фидбек по Ling (звук / обучение / куски)")
-    todo_lines.append("🎯 PUBG: проверить первую новую загрузку коллеги после фикса")
+        todo_lines.append("⏸ TikTok-скачивание: прокси мёртв — нужен новый (или пауза)")
 
     help_lines = []
+    if overnight_done < 5:
+        help_lines.append("• Если к утру не 5/5 — catch-up или fallback URL по игре")
     if not ok_proxy:
-        help_lines.append("• Креды нового прокси в .video_bot.env — запустим burst gameplay-only")
-    help_lines.append("• 2–3 конкретных замечания по последнему эталону — правим фильтры точечно")
+        help_lines.append("• Креды нового прокси в .video_bot.env — для TikTok burst")
 
     return f"""🌙 Отчёт за {day}
 
