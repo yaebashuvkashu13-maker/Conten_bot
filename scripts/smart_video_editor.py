@@ -1278,13 +1278,41 @@ PUBG_RESCUE_TIERS: list[dict[str, str]] = [
     },
 ]
 
+STANDOFF_RESCUE_TIERS: list[dict[str, str]] = [
+    {
+        'SMART_STANDOFF_PEAK_PERCENTILE': '28',
+        'SMART_STANDOFF_COMBAT_MIN': '0.14',
+        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.08',
+        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.045',
+        'SMART_STANDOFF_SUSTAIN_PERCENTILE': '24',
+        'SMART_STANDOFF_GUNFIRE_PERCENTILE': '46',
+        'SMART_STANDOFF_MOTION_PERCENTILE': '42',
+        'SMART_STANDOFF_AUDIO_PERCENTILE': '40',
+    },
+    {
+        'SMART_STANDOFF_PEAK_PERCENTILE': '22',
+        'SMART_STANDOFF_COMBAT_MIN': '0.11',
+        'SMART_STANDOFF_BIN_GUNFIRE_MIN': '0.06',
+        'SMART_STANDOFF_MIN_GUNFIRE_DENSITY': '0.038',
+        'SMART_STANDOFF_SUSTAIN_PERCENTILE': '20',
+        'SMART_STANDOFF_GUNFIRE_PERCENTILE': '40',
+        'SMART_STANDOFF_MOTION_PERCENTILE': '38',
+        'SMART_STANDOFF_AUDIO_PERCENTILE': '36',
+    },
+]
 
-def apply_pubg_rescue_tier(tier: dict[str, str]) -> None:
+GUNFIRE_RESCUE_BY_PROFILE: dict[str, list[dict[str, str]]] = {
+    'pubg': PUBG_RESCUE_TIERS,
+    'standoff': STANDOFF_RESCUE_TIERS,
+}
+
+
+def apply_rescue_tier(tier: dict[str, str]) -> None:
     for key, value in tier.items():
         os.environ[key] = value
 
 
-def pubg_montage_ready(selected: list[dict], arranged: list[dict]) -> bool:
+def action_montage_ready(selected: list[dict], arranged: list[dict]) -> bool:
     if len(arranged) < min(MIN_HIGHLIGHTS, 3):
         return False
     return effective_duration(arranged) >= MIN_FINAL_DURATION
@@ -1871,12 +1899,16 @@ def _run_smart_edit(
         selected: list[dict] = []
         arranged: list[dict] = []
         eff_duration = 0.0
-        pubg_rescue_attempts = list(PUBG_RESCUE_TIERS) if single_source and profile == 'pubg' else []
+        rescue_attempts = (
+            list(GUNFIRE_RESCUE_BY_PROFILE.get(profile, []))
+            if single_source and profile in GUNFIRE_RESCUE_BY_PROFILE
+            else []
+        )
         while True:
-            if not all_candidates and pubg_rescue_attempts:
-                tier = pubg_rescue_attempts.pop(0)
-                logging.warning('pubg rescue scoring tier: %s', tier)
-                apply_pubg_rescue_tier(tier)
+            if not all_candidates and rescue_attempts:
+                tier = rescue_attempts.pop(0)
+                logging.warning('%s rescue scoring tier: %s', profile, tier)
+                apply_rescue_tier(tier)
                 all_candidates = collect_candidates(relax_gate=True)
             if not all_candidates:
                 break
@@ -1884,14 +1916,15 @@ def _run_smart_edit(
             all_candidates.sort(key=lambda item: item['score'], reverse=True)
             selected = select_candidates(all_candidates, len(sources))
             arranged = arrange_candidates(selected)
-            if profile in ('mobile_legends', 'pubg'):
+            if profile in ('mobile_legends', 'pubg', 'standoff'):
                 arranged = extend_selected_to_min_duration(arranged, profile)
             eff_duration = effective_duration(arranged)
             logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)
-            if pubg_montage_ready(selected, arranged) or not pubg_rescue_attempts:
+            if action_montage_ready(selected, arranged) or not rescue_attempts:
                 break
             logging.warning(
-                'pubg montage insufficient (%s clips, %.1fs) — trying looser rescue tier',
+                '%s montage insufficient (%s clips, %.1fs) — trying looser rescue tier',
+                profile,
                 len(arranged),
                 eff_duration,
             )
