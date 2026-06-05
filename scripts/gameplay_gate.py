@@ -1136,22 +1136,27 @@ def segment_is_valid_for_montage(
             return False, f"low_gunfire=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
         if audio_rms < min_audio * 0.85 and gunfire_density < min_gun * 0.90:
             return False, f"silent_segment=rms{audio_rms:.4f}"
-        if segment_looks_like_pubg_loot_or_walk(
-            video_path,
-            start_sec,
-            duration_sec,
-            crop_box=crop_box,
-            gunfire_density=gunfire_density,
-        ):
-            return False, f"loot_walk=density{gunfire_density:.3f}"
         center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
             video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
         )
         if center_motion < float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018")):
             return False, f"no_aim_motion={center_motion:.3f}"
-        max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", "0.14"))
-        if center_text > max_text:
+        default_max_text = "0.62" if profile == "pubg" else "0.14"
+        max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", default_max_text))
+        if center_text > max_text and gunfire_density < min_gun * 0.90:
             return False, f"menu_overlay={center_text:.2f}"
+        loot_cap = min_gun * (0.72 if profile == "pubg" else 1.0)
+        if (
+            segment_looks_like_pubg_loot_or_walk(
+                video_path,
+                start_sec,
+                duration_sec,
+                crop_box=crop_box,
+                gunfire_density=gunfire_density,
+            )
+            and gunfire_density < loot_cap
+        ):
+            return False, f"loot_walk=density{gunfire_density:.3f}"
         return True, "ok"
     if profile != "mobile_legends":
         return True, "skip_profile"
