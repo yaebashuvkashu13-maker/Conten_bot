@@ -360,6 +360,15 @@ def process_game(
     if ok > 0:
         used.add(pick["id"])
         state.setdefault("used_by_game", {})[gid] = list(used)[-80:]
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish_ready_montage import latest_in_output_dir, register  # noqa: WPS433
+
+            montage = latest_in_output_dir()
+            if montage:
+                register(montage, source_url=pick.get("url", ""), title=pick.get("title", ""))
+        except Exception as exc:
+            logging.warning("%s manifest: %s", gid, exc)
         send_text(env, chat_id, f"✅ [{game['queue_label']}] готово: {ok} нарезка(ок).")
     else:
         send_text(env, chat_id, f"⚠️ [{game['queue_label']}] скачано, но нарезка не собралась.")

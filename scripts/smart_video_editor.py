@@ -288,6 +288,9 @@ def parse_queue_line(line: str, default_chat_id: str) -> tuple[str, str, str]:
 
 def maybe_download_source(source: str, temp_dir: Path, impersonate: str) -> Path:
     if source.startswith('http://') or source.startswith('https://'):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from youtube_download import subprocess_env_no_proxy  # noqa: WPS433
+
         template = temp_dir / 'source_%(id)s.%(ext)s'
         run_command([
             'yt-dlp',
@@ -298,7 +301,7 @@ def maybe_download_source(source: str, temp_dir: Path, impersonate: str) -> Path
             '--merge-output-format', 'mp4',
             '-o', str(template),
             source,
-        ])
+        ], env=subprocess_env_no_proxy())
         files = sorted(temp_dir.glob('source_*'))
         if not files:
             raise RuntimeError(f'yt-dlp did not produce an output file for {source}')

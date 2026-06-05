@@ -45,12 +45,17 @@ done
 TMP=$(mktemp)
 if crontab -l 2>/dev/null | grep -v 'nightly_youtube.sh' \
   | grep -v 'morning_publish_reminder' \
+  | grep -v 'morning-publish-reminder' \
   | grep -v 'hourly_new_sources' \
   | grep -v 'mlbb_hourly' \
+  | grep -v 'mlbb-hourly' \
   | grep -v 'mlbb_evening' \
   | grep -v 'youtube_triple_montage' \
   | grep -v 'overnight_orchestrator' \
-  | grep -v 'run_parallel_stack' >"$TMP"; then
+  | grep -v 'run_parallel_stack' \
+  | grep -v 'auto_video_bot' \
+  | grep -v 'nightly_hayabusa' \
+  | grep -v 'hayabusa_ml' >"$TMP"; then
   crontab "$TMP"
   echo "pruned root crontab"
 fi

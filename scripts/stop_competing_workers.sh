@@ -10,6 +10,9 @@ pkill -f mlbb_hourly_cycle.sh 2>/dev/null || true
 pkill -f overnight_orchestrator.sh 2>/dev/null || true
 pkill -f run_parallel_stack.sh 2>/dev/null || true
 pkill -f mass_download 2>/dev/null || true
+pkill -f auto_video_bot.sh 2>/dev/null || true
+pkill -f nightly_hayabusa_ml.sh 2>/dev/null || true
+pkill -f pubg_harshness_demo.py 2>/dev/null || true
 
 # Abandon long proactive MLBB AV1 proxy / triple montage chain
 tmux kill-session -t yt-h264-proxy 2>/dev/null || true

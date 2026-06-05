@@ -11,6 +11,6 @@ cd "$REPO" || exit 1
 git fetch origin
 git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git checkout main
 git pull --ff-only
-bash "$REPO/scripts/burst.sh"
-bash "$REPO/scripts/deploy_telegram_bot.sh" 2>/dev/null || true
+# deploy only — burst training loops off by default (BURST_ENABLE_TRAINING=0)
+bash "$REPO/scripts/deploy_telegram_bot.sh"
 echo "[$(date)] auto_update done"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run ON THE VPS: updates telegram bot + watermark OCR for /wm and IG digest.
+# Run ON THE VPS: deploy bot + 5-game overnight pipeline (single source of truth).
 set -Eeuo pipefail
 
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
@@ -11,54 +11,82 @@ git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git pull origin main
 git pull --ff-only 2>/dev/null || true
 
 apt-get update -qq
-apt-get install -y -qq tesseract-ocr curl >/dev/null
+apt-get install -y -qq tesseract-ocr curl ffmpeg >/dev/null
 python3 -m pip install -q --break-system-packages pytesseract opencv-python-headless numpy PyYAML 2>/dev/null || true
 
-mkdir -p /root/data/mlbb/watermark_examples
-install -m 755 "$REPO/scripts/telegram_upload_bot.py" "$DEST/telegram_upload_bot.py"
-install -m 755 "$REPO/scripts/image_watermark_remove.py" "$DEST/image_watermark_remove.py"
-install -m 755 "$REPO/scripts/instagram_digest_gallery_dl.py" "$DEST/instagram_digest_gallery_dl.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/instagram_digest_run.sh" /usr/local/bin/instagram_digest_run.sh 2>/dev/null || true
-install -m 755 "$REPO/scripts/youtube_download.py" "$DEST/youtube_download.py"
-install -m 755 "$REPO/scripts/youtube_health_check.py" "$DEST/youtube_health_check.py"
-install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py"
-install -m 755 "$REPO/scripts/nightly_youtube.sh" "$DEST/nightly_youtube.sh"
-install -m 755 "$REPO/scripts/youtube_triple_montage.py" "$DEST/youtube_triple_montage.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/montage_env.py" "$DEST/montage_env.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/video_frame_io.py" "$DEST/video_frame_io.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/gameplay_gate.py" "$DEST/gameplay_gate.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/nightly_youtube_montage.py" "$DEST/nightly_youtube_montage.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/youtube_game_prefs.py" "$DEST/youtube_game_prefs.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/overnight_msk.sh" "$DEST/overnight_msk.sh" 2>/dev/null || true
-install -m 755 "$REPO/scripts/overnight_catchup.sh" "$DEST/overnight_catchup.sh" 2>/dev/null || true
-install -m 755 "$REPO/scripts/overnight_youtube_batch.py" "$DEST/overnight_youtube_batch.py" 2>/dev/null || true
-install -m 755 "$REPO/scripts/install_overnight_msk_cron.sh" "$DEST/install_overnight_msk_cron.sh" 2>/dev/null || true
-install -m 755 "$REPO/scripts/disable_legacy_publish_crons.sh" "$DEST/disable_legacy_publish_crons.sh" 2>/dev/null || true
-install -m 755 "$REPO/scripts/stop_competing_workers.sh" "$DEST/stop_competing_workers.sh" 2>/dev/null || true
-mkdir -p "$REPO/config"
-install -m 644 "$REPO/config/overnight_games.yaml" "$REPO/config/overnight_games.yaml" 2>/dev/null || true
-install -m 755 "$REPO/scripts/install_youtube_nightly_cron.sh" "$DEST/install_youtube_nightly_cron.sh"
+mkdir -p /root/data/mlbb/watermark_examples /root/data/mlbb/overnight_msk /root/data/mlbb/publish
 
-# Only one poller — duplicate processes steal getUpdates (HTTP 409).
-pkill -f telegram_upload_bot.py 2>/dev/null || true
-sleep 2
-pgrep -f telegram_upload_bot.py && pkill -9 -f telegram_upload_bot.py 2>/dev/null || true
-sleep 1
+install_scripts() {
+  local f
+  for f in \
+    telegram_upload_bot.py \
+    image_watermark_remove.py \
+    instagram_digest_gallery_dl.py \
+    youtube_download.py \
+    youtube_health_check.py \
+    youtube_game_prefs.py \
+    nightly_youtube_montage.py \
+    overnight_youtube_batch.py \
+    overnight_msk.sh \
+    overnight_catchup.sh \
+    stop_competing_workers.sh \
+    disable_legacy_publish_crons.sh \
+    install_overnight_msk_cron.sh \
+    montage_env.py \
+    video_frame_io.py \
+    gameplay_gate.py \
+    smart_video_editor.py \
+    publish_ready_montage.py \
+    daily_morning_plan.py \
+    daily_evening_report.py \
+    daily_ops_cron.sh \
+    install_daily_ops_cron.sh \
+    overnight_watchdog.sh; do
+    if [[ -f "$REPO/scripts/$f" ]]; then
+      install -m 755 "$REPO/scripts/$f" "$DEST/$f"
+    fi
+  done
+  if [[ -f "$REPO/scripts/instagram_digest_run.sh" ]]; then
+    install -m 755 "$REPO/scripts/instagram_digest_run.sh" "$DEST/instagram_digest_run.sh"
+  fi
+}
+
+install_scripts
 
 if ! command -v yt-dlp >/dev/null 2>&1; then
-  echo "WARN: yt-dlp not found — YouTube links will fail. Install: pip install -U yt-dlp"
+  echo "WARN: yt-dlp not found — pip install -U yt-dlp"
 else
   python3 "$DEST/youtube_health_check.py" || echo "WARN: youtube_health_check failed"
 fi
 
-if systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
-  systemctl restart telegram-upload-bot
-  echo "restarted telegram-upload-bot"
-else
-  nohup python3 "$DEST/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
-  echo "started bot via nohup (no systemd unit)"
+# Cron: 18:00 MSK batch; disable legacy auto-publish
+if [[ -x "$DEST/install_overnight_msk_cron.sh" ]]; then
+  bash "$DEST/install_overnight_msk_cron.sh"
+fi
+if [[ -x "$DEST/disable_legacy_publish_crons.sh" ]]; then
+  bash "$DEST/disable_legacy_publish_crons.sh"
+fi
+if [[ -x "$DEST/install_daily_ops_cron.sh" ]]; then
+  bash "$DEST/install_daily_ops_cron.sh"
 fi
 
-grep -m1 BOT_VERSION "$DEST/telegram_upload_bot.py" || true
-pgrep -af telegram_upload_bot.py || true
-echo "OK. Telegram: /ping (version youtube-v2), /whoami, /yt <url>, or paste Shorts link"
+# Bot restart only when overnight batch is idle (do not disrupt active montage)
+if pgrep -f 'overnight_youtube_batch.py|smart_video_editor.py' >/dev/null 2>&1; then
+  echo "SKIP bot restart: overnight montage in progress"
+else
+  pkill -f telegram_upload_bot.py 2>/dev/null || true
+  sleep 2
+  pgrep -f telegram_upload_bot.py && pkill -9 -f telegram_upload_bot.py 2>/dev/null || true
+  sleep 1
+  if systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
+    systemctl restart telegram-upload-bot
+    echo "restarted telegram-upload-bot"
+  else
+    nohup python3 "$DEST/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
+    echo "started bot via nohup"
+  fi
+fi
+
+grep -m1 BOT_VERSION "$DEST/telegram_upload_bot.py" 2>/dev/null || true
+pgrep -af 'telegram_upload_bot|overnight_youtube_batch|smart_video_editor' || true
+echo "OK deploy: 5-game overnight pipeline + telegram bot"

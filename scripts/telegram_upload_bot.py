@@ -50,7 +50,7 @@ PROFILE_LABELS = {
     'mlbb': 'Mobile Legends',
     'genshin': 'Genshin Impact',
     'standoff': 'Standoff 2',
-    'wot': 'WoT Blitz',
+    'wot': 'WoT PC',
     'world_of_tanks': 'World of Tanks',
 }
 
@@ -843,7 +843,14 @@ def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
             cmd += ['--no-playlist']
         cmd.append(url)
         timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '14400')))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        import sys
+
+        sys.path.insert(0, '/usr/local/bin')
+        from youtube_download import subprocess_env_no_proxy  # noqa: WPS433
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, env=subprocess_env_no_proxy()
+        )
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
         outfile = finalize_yt_work_file(work)

@@ -344,6 +344,8 @@ def send_text(env: dict[str, str], chat_id: str, text: str) -> None:
     subprocess.run(
         [
             "curl",
+            "--noproxy",
+            "*",
             "-sS",
             "-m",
             "60",
