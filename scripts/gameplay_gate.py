@@ -879,6 +879,98 @@ def segment_looks_like_meme_comic(
     return False
 
 
+def _extract_segment_audio_pcm(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    sample_rate: int = 11025,
+) -> np.ndarray:
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{start_sec:.3f}",
+        "-t",
+        f"{duration_sec:.3f}",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "s16le",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, check=False, timeout=45)
+    except subprocess.TimeoutExpired:
+        return np.array([], dtype=np.int16)
+    if result.returncode != 0 or not result.stdout:
+        return np.array([], dtype=np.int16)
+    return np.frombuffer(result.stdout, dtype=np.int16)
+
+
+def score_pubg_gunfire_audio(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+) -> tuple[float, float, float]:
+    """Gunshot-like transients in segment audio: density, peak/rms, mean rms."""
+    samples = _extract_segment_audio_pcm(video_path, start_sec, duration_sec)
+    if samples.size < 384:
+        return 0.0, 0.0, 0.0
+    pcm = samples.astype(np.float32) / 32768.0
+    frame = 256
+    energies: list[float] = []
+    for offset in range(0, len(pcm) - frame, frame):
+        chunk = pcm[offset : offset + frame]
+        energies.append(float(np.sqrt(np.mean(chunk * chunk))))
+    if len(energies) < 3:
+        return 0.0, 0.0, 0.0
+    arr = np.asarray(energies, dtype=np.float32)
+    median = float(np.median(arr))
+    peak = float(np.max(arr))
+    rms = float(np.mean(arr))
+    floor = max(median * 2.6, 0.010)
+    spikes = 0
+    for idx in range(1, len(arr)):
+        if arr[idx] > floor and arr[idx] > arr[idx - 1] * 1.55:
+            spikes += 1
+    density = spikes / max(len(arr) - 1, 1)
+    burst_ratio = peak / max(rms, 1e-6)
+    return density, burst_ratio, rms
+
+
+def segment_looks_like_pubg_loot_or_walk(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    gunfire_density: float,
+) -> bool:
+    """Running/looting/inventory — motion without gunfire transients."""
+    center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+    )
+    min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
+    if gunfire_density >= min_gun:
+        return False
+    if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
+        return True
+    if center_motion < 0.014 and gunfire_density < min_gun * 0.55:
+        return True
+    if center_text > 0.12 and gunfire_density < min_gun * 0.8:
+        return True
+    return False
+
+
 def segment_is_valid_for_montage(
     video_path: Path,
     start_sec: float,
@@ -890,8 +982,42 @@ def segment_is_valid_for_montage(
     max_cartoon_ratio: float = 0.50,
     max_reject_similarity: float = 0.72,
     min_hud_frame_rate: float = 0.55,
+    min_gunfire: float | None = None,
     crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
+    if profile == "pubg":
+        if crop_box is None:
+            crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        gunfire_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(
+            video_path, start_sec, duration_sec
+        )
+        min_gun = (
+            float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
+            if min_gunfire is None
+            else min_gunfire
+        )
+        min_burst = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "2.4"))
+        min_audio = float(os.environ.get("SMART_PUBG_MIN_AUDIO_RMS", "0.008"))
+        if gunfire_density < min_gun and burst_ratio < min_burst:
+            return False, f"low_gunfire=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+        if audio_rms < min_audio and gunfire_density < min_gun * 1.2:
+            return False, f"silent_segment=rms{audio_rms:.4f}"
+        if segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop_box,
+            gunfire_density=gunfire_density,
+        ):
+            return False, f"loot_walk=density{gunfire_density:.3f}"
+        center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
+            video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+        )
+        if center_motion < float(os.environ.get("SMART_PUBG_MIN_CENTER_MOTION", "0.016")):
+            return False, f"no_aim_motion={center_motion:.3f}"
+        if center_text > float(os.environ.get("SMART_PUBG_MAX_CENTER_TEXT", "0.14")):
+            return False, f"menu_overlay={center_text:.2f}"
+        return True, "ok"
     if profile != "mobile_legends":
         return True, "skip_profile"
     if path_blocked_by_calibration(video_path):

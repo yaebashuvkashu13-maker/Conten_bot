@@ -13,6 +13,29 @@ def passthrough_audio_env() -> dict[str, str]:
     }
 
 
+def pubg_combat_env() -> dict[str, str]:
+    """PUBG Metro: only segments with gunshot audio, reject loot/walk/intro."""
+    return {
+        "MIN_HIGHLIGHTS": "4",
+        "MAX_HIGHLIGHTS": "5",
+        "MIN_FINAL_DURATION": "36",
+        "SMART_PUBG_PEAK_PERCENTILE": "38",
+        "SMART_PUBG_SUSTAIN_PERCENTILE": "30",
+        "SMART_PUBG_COMBAT_MIN": "0.18",
+        "SMART_PUBG_BIN_GUNFIRE_MIN": "0.11",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.06",
+        "SMART_PUBG_MIN_BURST_RATIO": "2.5",
+        "SMART_PUBG_MIN_CENTER_MOTION": "0.018",
+        "SMART_PUBG_SKIP_INTRO_SEC": "120",
+        "SMART_BURST_WEIGHT": "0.48",
+        "SMART_PUBG_CLIP_MIN_SEC": "7",
+        "SMART_PUBG_CLIP_MAX_SEC": "10",
+        "SMART_PUBG_MOTION_PERCENTILE": "46",
+        "SMART_PUBG_AUDIO_PERCENTILE": "44",
+        "SMART_PUBG_GUNFIRE_PERCENTILE": "54",
+    }
+
+
 def mlbb_combat_env() -> dict[str, str]:
     """MLBB: only in-match fights, minimap required, no draft/webcam in frame."""
     return {
@@ -50,19 +73,6 @@ def profile_montage_env(profile: str) -> dict[str, str]:
         if profile in ("mobile_legends", "mlbb"):
             out.update(mlbb_combat_env())
         if profile == "pubg":
-            out.update(
-                {
-                    "MIN_HIGHLIGHTS": "3",
-                    "MAX_HIGHLIGHTS": "5",
-                    "SMART_PUBG_PEAK_PERCENTILE": "28",
-                    "SMART_PUBG_SUSTAIN_PERCENTILE": "24",
-                    "SMART_PUBG_COMBAT_MIN": "0.08",
-                    "SMART_BURST_WEIGHT": "0.46",
-                    "SMART_PUBG_CLIP_MIN_SEC": "7",
-                    "SMART_PUBG_CLIP_MAX_SEC": "10",
-                    "SMART_PUBG_MOTION_PERCENTILE": "42",
-                    "SMART_PUBG_AUDIO_PERCENTILE": "40",
-                }
-            )
+            out.update(pubg_combat_env())
         return out
     return {}

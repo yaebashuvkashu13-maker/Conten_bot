@@ -313,17 +313,30 @@ def maybe_download_source(source: str, temp_dir: Path, impersonate: str) -> Path
 
 
 def analyze_audio(path: Path, duration: float, bins: int, window_sec: float = WINDOW_SECONDS) -> np.ndarray:
+    layers = analyze_audio_layers(path, duration, bins, window_sec)
+    return layers['energy']
+
+
+def analyze_audio_layers(
+    path: Path,
+    duration: float,
+    bins: int,
+    window_sec: float = WINDOW_SECONDS,
+) -> dict[str, np.ndarray]:
+    zero = np.zeros(bins, dtype=np.float32)
     if not ffprobe_has_audio(path):
-        return np.zeros(bins, dtype=np.float32)
+        return {'energy': zero, 'gunfire': zero}
     result = run_command([
         'ffmpeg', '-v', 'error', '-hwaccel', 'none', '-i', str(path), '-vn', '-ac', '1', '-ar', '11025', '-f', 's16le', '-'
     ], capture_output=True, text=False)
     samples = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32)
     if samples.size == 0:
-        return np.zeros(bins, dtype=np.float32)
+        return {'energy': zero, 'gunfire': zero}
     samples /= 32768.0
     samples_per_bin = max(int(len(samples) / max(duration, 1e-3) * window_sec), 1)
+    micro_frame = 256
     energy = np.zeros(bins, dtype=np.float32)
+    gunfire = np.zeros(bins, dtype=np.float32)
     for idx in range(bins):
         start = idx * samples_per_bin
         end = min(len(samples), start + samples_per_bin)
@@ -331,7 +344,21 @@ def analyze_audio(path: Path, duration: float, bins: int, window_sec: float = WI
             continue
         chunk = samples[start:end]
         energy[idx] = float(np.sqrt(np.mean(chunk ** 2)))
-    return energy
+        micro_energies: list[float] = []
+        for offset in range(0, max(len(chunk) - micro_frame, 0), micro_frame):
+            micro = chunk[offset : offset + micro_frame]
+            micro_energies.append(float(np.sqrt(np.mean(micro * micro))))
+        if len(micro_energies) < 2:
+            continue
+        micro_arr = np.asarray(micro_energies, dtype=np.float32)
+        median = float(np.median(micro_arr))
+        floor = max(median * 2.4, 0.009)
+        spikes = 0
+        for probe in range(1, len(micro_arr)):
+            if micro_arr[probe] > floor and micro_arr[probe] > micro_arr[probe - 1] * 1.5:
+                spikes += 1
+        gunfire[idx] = spikes / max(len(micro_arr) - 1, 1)
+    return {'energy': energy, 'gunfire': gunfire}
 
 
 def analysis_sampling(duration: float) -> tuple[float, float, bool]:
@@ -505,7 +532,7 @@ def analyze_video(path: Path) -> dict:
     brightness /= counts
     saturation /= counts
     scene /= counts
-    audio = analyze_audio(path, duration, bins, window_sec)
+    audio_layers = analyze_audio_layers(path, duration, bins, window_sec)
 
     return {
         'duration': duration,
@@ -518,7 +545,8 @@ def analyze_video(path: Path) -> dict:
         'brightness': brightness,
         'saturation': saturation,
         'scene': scene,
-        'audio': audio,
+        'audio': audio_layers['energy'],
+        'gunfire': audio_layers['gunfire'],
     }
 
 
@@ -551,6 +579,10 @@ def build_candidates(
         sharp = robust_scale(global_values['sharpness'], float(analysis['sharpness'][idx]))
         scene = robust_scale(global_values['scene'], float(analysis['scene'][idx]))
         audio = robust_scale(global_values['audio'], float(analysis['audio'][idx]))
+        gunshot = robust_scale(
+            global_values.get('gunfire', global_values['audio']),
+            float(analysis.get('gunfire', analysis['audio'])[idx]),
+        )
         bright = brightness_score(float(analysis['brightness'][idx]))
         sat = saturation_score(float(analysis['saturation'][idx]))
 
@@ -568,19 +600,21 @@ def build_candidates(
             base += 0.09 * max(0.0, center - motion * 0.55)
             base += 0.05 * max(0.0, scene - 0.35)
         elif profile == 'pubg':
-            # Metro Royale / PUBG: gunfire audio + motion bursts (not loot/walking).
+            # Metro Royale / PUBG: gunshot transients + bursts (not loot/walking).
             base = (
-                0.28 * motion +
-                0.08 * center +
-                0.34 * audio +
-                0.06 * scene +
-                0.12 * sharp +
-                0.07 * bright +
-                0.05 * sat
+                0.16 * motion +
+                0.10 * center +
+                0.18 * audio +
+                0.34 * gunshot +
+                0.05 * scene +
+                0.10 * sharp +
+                0.04 * bright +
+                0.03 * sat
             )
-            base += 0.16 * max(0.0, audio - 0.32)
-            base += 0.10 * max(0.0, motion - 0.24)
-            base += 0.08 * max(0.0, sharp - 0.35)
+            base += 0.22 * max(0.0, gunshot - 0.28)
+            base += 0.12 * max(0.0, audio - 0.30)
+            base += 0.08 * max(0.0, motion - 0.22)
+            base += 0.06 * max(0.0, sharp - 0.32)
         elif profile == 'genshin':
             # Open-world combat: scene cuts + center action + ability bursts (no MLBB HUD).
             base = (
@@ -639,11 +673,12 @@ def build_candidates(
         burst = max(0.0, base - prev_mean)
         penalty = 0.0
         if profile == 'pubg':
-            rescue_mode = float(os.environ.get('SMART_PUBG_PEAK_PERCENTILE', '60')) <= 20
-            if motion < 0.20 and audio < 0.22:
-                penalty += 0.20 if rescue_mode else 0.38
-            if scene > 0.55 and audio < 0.25:
-                penalty += 0.08 if rescue_mode else 0.12
+            if gunshot < 0.18 and audio < 0.24:
+                penalty += 0.42
+            if motion > 0.30 and gunshot < 0.22:
+                penalty += 0.28
+            if scene > 0.50 and gunshot < 0.20:
+                penalty += 0.14
         elif motion < 0.14 and audio < 0.16 and scene < 0.08:
             penalty += 0.20
         if bright < 0.18:
@@ -669,12 +704,17 @@ def build_candidates(
         sustain_pct = float(os.environ.get('SMART_PUBG_SUSTAIN_PERCENTILE', '36'))
     sustain_threshold = float(np.percentile(smooth_scores, sustain_pct)) if bins > 4 else peak_threshold * 0.72
     motion_pct, audio_pct = 55, 52
+    gunfire_pct = 55.0
     if profile == 'pubg':
         motion_pct = float(os.environ.get('SMART_PUBG_MOTION_PERCENTILE', '48'))
         audio_pct = float(os.environ.get('SMART_PUBG_AUDIO_PERCENTILE', '45'))
+        gunfire_pct = float(os.environ.get('SMART_PUBG_GUNFIRE_PERCENTILE', '52'))
     motion_threshold = float(np.percentile(analysis['motion'], motion_pct)) if bins > 3 else float(np.max(analysis['motion']))
     scene_threshold = float(np.percentile(analysis['scene'], 58)) if bins > 3 else float(np.max(analysis['scene']))
     audio_threshold = float(np.percentile(analysis['audio'], audio_pct)) if bins > 3 else float(np.max(analysis['audio']))
+    gunfire_threshold = float(
+        np.percentile(analysis.get('gunfire', analysis['audio']), gunfire_pct)
+    ) if bins > 3 else float(np.max(analysis.get('gunfire', analysis['audio'])))
 
     for idx in range(bins):
         score = float(smooth_scores[idx])
@@ -693,7 +733,8 @@ def build_candidates(
                 float(smooth_scores[probe]) >= sustain_threshold or
                 float(analysis['motion'][probe]) >= motion_threshold or
                 float(analysis['scene'][probe]) >= scene_threshold or
-                float(analysis['audio'][probe]) >= audio_threshold
+                float(analysis['audio'][probe]) >= audio_threshold or
+                float(analysis.get('gunfire', analysis['audio'])[probe]) >= gunfire_threshold
             )
             left = probe
             if active:
@@ -711,7 +752,8 @@ def build_candidates(
                 float(smooth_scores[probe]) >= sustain_threshold * 0.96 or
                 float(analysis['motion'][probe]) >= motion_threshold or
                 float(analysis['scene'][probe]) >= scene_threshold or
-                float(analysis['audio'][probe]) >= audio_threshold
+                float(analysis['audio'][probe]) >= audio_threshold or
+                float(analysis.get('gunfire', analysis['audio'])[probe]) >= gunfire_threshold
             )
             right = probe
             if active:
@@ -727,9 +769,13 @@ def build_candidates(
         if profile == 'mobile_legends' and mean_motion < float(os.environ.get('SMART_MIN_BIN_MOTION', '0.012')):
             continue
         mean_audio = float(np.mean(analysis['audio'][region_slice]))
+        mean_gunfire = float(np.mean(analysis.get('gunfire', analysis['audio'])[region_slice]))
         if profile == 'pubg':
             combat_min = float(os.environ.get('SMART_PUBG_COMBAT_MIN', '0.14'))
-            if mean_motion < combat_min and mean_audio < combat_min:
+            gunfire_min = float(os.environ.get('SMART_PUBG_BIN_GUNFIRE_MIN', '0.10'))
+            if mean_gunfire < gunfire_min and mean_audio < combat_min:
+                continue
+            if mean_motion < combat_min and mean_gunfire < gunfire_min * 0.85:
                 continue
         clip_lo, clip_hi = 9.5, 15.0
         if profile == 'pubg':
@@ -758,6 +804,11 @@ def build_candidates(
         end = min(analysis['duration'], start + input_duration)
         start = max(0.0, end - input_duration)
 
+        if profile == 'pubg':
+            skip_intro = float(os.environ.get('SMART_PUBG_SKIP_INTRO_SEC', '120'))
+            if start < skip_intro:
+                continue
+
         if profile == 'mobile_legends' and os.environ.get('SMART_REJECT_TRAINING', '1') == '1':
             crop_probe = detect_game_viewport_crop(source_path, start, input_duration)
             for _ in range(6):
@@ -780,9 +831,10 @@ def build_candidates(
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
         if profile == 'pubg':
+            combo_score += 0.20 * max(0.0, mean_gunfire - gunfire_threshold)
             combo_score += 0.14 * max(0.0, float(bursts[idx]) - 0.04)
-            combo_score += 0.12 * max(0.0, mean_audio - audio_threshold)
-            combo_score += 0.08 * max(0.0, mean_motion - motion_threshold)
+            combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.06 * max(0.0, mean_motion - motion_threshold)
 
         candidates.append({
             'source_index': source_index,
@@ -847,6 +899,10 @@ def build_candidates(
                 'max_text': 0.11,
                 'max_cartoon_ratio': 0.55,
                 'min_hud_frame_rate': max(0.68, float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.72'))),
+            }
+        elif relax_segment_gate and profile == 'pubg':
+            gate_kwargs = {
+                'min_gunfire': float(os.environ.get('SMART_PUBG_RELAX_MIN_GUNFIRE', '0.040')),
             }
         elif relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
@@ -1029,28 +1085,22 @@ def candidate_hero_id(candidate: dict) -> str:
 
 PUBG_RESCUE_TIERS: list[dict[str, str]] = [
     {
-        'SMART_PUBG_PEAK_PERCENTILE': '26',
-        'SMART_PUBG_COMBAT_MIN': '0.06',
-        'SMART_PUBG_SUSTAIN_PERCENTILE': '24',
+        'SMART_PUBG_PEAK_PERCENTILE': '34',
+        'SMART_PUBG_COMBAT_MIN': '0.16',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.08',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '30',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '48',
+        'SMART_PUBG_MOTION_PERCENTILE': '44',
+        'SMART_PUBG_AUDIO_PERCENTILE': '42',
+    },
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '28',
+        'SMART_PUBG_COMBAT_MIN': '0.14',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.07',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '26',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '44',
         'SMART_PUBG_MOTION_PERCENTILE': '40',
-        'SMART_PUBG_AUDIO_PERCENTILE': '38',
-    },
-    {
-        'SMART_PUBG_PEAK_PERCENTILE': '14',
-        'SMART_PUBG_COMBAT_MIN': '0.035',
-        'SMART_PUBG_SUSTAIN_PERCENTILE': '14',
-        'SMART_PUBG_MOTION_PERCENTILE': '32',
-        'SMART_PUBG_AUDIO_PERCENTILE': '30',
-        'SMART_PUBG_CLIP_MAX_SEC': '11',
-    },
-    {
-        'SMART_PUBG_PEAK_PERCENTILE': '8',
-        'SMART_PUBG_COMBAT_MIN': '0.025',
-        'SMART_PUBG_SUSTAIN_PERCENTILE': '8',
-        'SMART_PUBG_MOTION_PERCENTILE': '28',
-        'SMART_PUBG_AUDIO_PERCENTILE': '26',
-        'SMART_PUBG_CLIP_MAX_SEC': '12',
-        'SMART_BURST_WEIGHT': '0.40',
+        'SMART_PUBG_AUDIO_PERCENTILE': '40',
     },
 ]
 
@@ -1612,11 +1662,13 @@ def _run_smart_edit(
             'sharpness': [],
             'scene': [],
             'audio': [],
+            'gunfire': [],
         }
         for source in sources:
             analysis = source['analysis']
             for key in global_values:
-                global_values[key].extend(float(value) for value in analysis[key])
+                if key in analysis:
+                    global_values[key].extend(float(value) for value in analysis[key])
 
         def collect_candidates(*, relax_gate: bool = False) -> list[dict]:
             found: list[dict] = []

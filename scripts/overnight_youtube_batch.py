@@ -225,9 +225,11 @@ def run_montage(
     elif relaxed and profile == "pubg":
         run_env.update(
             {
-                "SMART_PUBG_PEAK_PERCENTILE": "24",
-                "SMART_PUBG_COMBAT_MIN": "0.06",
-                "SMART_PUBG_SUSTAIN_PERCENTILE": "22",
+                "SMART_PUBG_PEAK_PERCENTILE": "30",
+                "SMART_PUBG_COMBAT_MIN": "0.14",
+                "SMART_PUBG_BIN_GUNFIRE_MIN": "0.08",
+                "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.045",
+                "SMART_PUBG_SUSTAIN_PERCENTILE": "26",
                 "MIN_HIGHLIGHTS": "4",
                 "MAX_HIGHLIGHTS": "5",
             }
