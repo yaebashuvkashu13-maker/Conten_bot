@@ -41,7 +41,14 @@ install_scripts() {
     daily_evening_report.py \
     daily_ops_cron.sh \
     install_daily_ops_cron.sh \
-    overnight_watchdog.sh; do
+    overnight_watchdog.sh \
+    pipeline_watchdog.sh \
+    run_job_until_ok.sh \
+    pipeline_retry.py \
+    action_showcase_2x5.py \
+    action_showcase_queue.sh \
+    genshin_boss_rebuild.py \
+    install_pipeline_watchdog_cron.sh; do
     if [[ -f "$REPO/scripts/$f" ]]; then
       install -m 755 "$REPO/scripts/$f" "$DEST/$f"
     fi
@@ -68,6 +75,9 @@ if [[ -x "$DEST/disable_legacy_publish_crons.sh" ]]; then
 fi
 if [[ -x "$DEST/install_daily_ops_cron.sh" ]]; then
   bash "$DEST/install_daily_ops_cron.sh"
+fi
+if [[ -x "$DEST/install_pipeline_watchdog_cron.sh" ]]; then
+  bash "$DEST/install_pipeline_watchdog_cron.sh"
 fi
 
 # Bot restart only when overnight batch is idle (do not disrupt active montage)
