@@ -36,7 +36,8 @@ GAMES = [
         "id": "genshin",
         "profile": "genshin",
         "label": "Genshin",
-        "source": "yt_NXJuHTKXs2g.mp4",
+        "source": "yt_ViQhjTOShrA.mp4",
+        "fallback_source": "yt_NXJuHTKXs2g.mp4",
     },
     {
         "id": "standoff",
@@ -189,12 +190,22 @@ def main() -> int:
     for game in GAMES:
         source = INBOX / game["source"]
         if not source.exists():
-            log(f"skip {game['id']}: missing {source}")
-            failures += 1
-            continue
+            fallback_name = game.get("fallback_source")
+            if fallback_name:
+                source = INBOX / fallback_name
+            if not source.exists():
+                log(f"skip {game['id']}: missing {game['source']}")
+                failures += 1
+                continue
         for variant in VARIANTS:
             wait_editor()
             code = run_one(source, game, variant, env, chat_id)
+            if code != 0 and game.get("fallback_source"):
+                alt = INBOX / game["fallback_source"]
+                if alt.exists() and alt != source:
+                    log(f"retry {game['id']} with fallback {alt.name}")
+                    wait_editor()
+                    code = run_one(alt, game, variant, env, chat_id)
             if code != 0:
                 failures += 1
             time.sleep(8)

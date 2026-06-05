@@ -911,11 +911,14 @@ def build_candidates(
             mean_scene = float(np.mean(analysis['scene'][region_slice]))
             mean_center = float(np.mean(analysis['center_motion'][region_slice]))
             cluster_sec = (right - left + 1) * win
-            if cluster_sec < float(os.environ.get('SMART_GENSHIN_MIN_CLUSTER_SEC', '14')):
+            min_center = float(os.environ.get('SMART_GENSHIN_MIN_CENTER_MOTION', '0.018'))
+            if cluster_sec < float(os.environ.get('SMART_GENSHIN_MIN_CLUSTER_SEC', '16')):
                 continue
             if mean_motion < combat_min and mean_audio < combat_min and mean_scene < combat_min:
                 continue
-            if mean_center < float(os.environ.get('SMART_GENSHIN_MIN_CENTER_MOTION', '0.015')) and mean_audio < combat_min:
+            if mean_center < min_center and mean_audio < combat_min * 0.90:
+                continue
+            if mean_audio < combat_min * 0.82 and mean_center < min_center * 1.15:
                 continue
         clip_lo, clip_hi = profile_action_clip_bounds(profile)
         desired_duration = max(clip_lo, min(clip_hi, (right - left + 1) * win + 2.0))
@@ -1060,7 +1063,7 @@ def build_candidates(
             }
         elif relax_segment_gate and profile == 'genshin':
             gate_kwargs = {
-                'min_boss': float(os.environ.get('SMART_GENSHIN_RELAX_MIN_BOSS_BAR', '0.08')),
+                'min_boss': float(os.environ.get('SMART_GENSHIN_RELAX_MIN_BOSS_BAR', '0.16')),
             }
         elif relax_segment_gate and profile in ('wot', 'world_of_tanks'):
             gate_kwargs = {
@@ -1092,16 +1095,22 @@ def build_candidates(
             candidate['crop_box'] = crop_box
         if profile == 'genshin':
             try:
-                boss_bar, _center_motion, boss_score = score_genshin_boss_likelihood(
+                boss_bar, center_motion, boss_score, bar_peak = score_genshin_boss_likelihood(
                     Path(candidate['source_path']),
                     float(candidate['start']),
                     float(candidate['input_duration']),
                     crop_box=candidate.get('crop_box'),
                 )
                 candidate['boss_bar'] = round(boss_bar, 4)
+                candidate['boss_peak'] = round(bar_peak, 4)
                 candidate['boss_score'] = round(boss_score, 4)
+                candidate['center_motion'] = round(center_motion, 4)
                 candidate['score'] = round(
-                    float(candidate['score']) + boss_score * 0.32 + boss_bar * 0.18,
+                    float(candidate['score'])
+                    + bar_peak * 0.28
+                    + boss_bar * 0.24
+                    + boss_score * 0.14
+                    + min(center_motion, 0.06) * 0.8,
                     4,
                 )
             except Exception:
@@ -1353,9 +1362,16 @@ def action_montage_ready(selected: list[dict], arranged: list[dict]) -> bool:
     return effective_duration(arranged) >= MIN_FINAL_DURATION
 
 
+def segment_is_excluded(candidate: dict) -> bool:
+    source_key = candidate.get('source_signature', str(candidate['source_index']))
+    segment_key = f"{source_key}:{round(candidate['start'], 3)}"
+    return source_key in EXCLUDED_SOURCE_SIGNATURES or segment_key in EXCLUDED_SEGMENT_KEYS
+
+
 def select_candidates(all_candidates: list[dict], source_count: int) -> list[dict]:
     if not all_candidates:
         return []
+    allow_excluded_fallback = os.environ.get('SMART_ALLOW_EXCLUDED_FALLBACK', '0') == '1'
     if os.environ.get('SINGLE_HERO_MODE', '0') == '1':
         forced = (os.environ.get('SINGLE_HERO_ID') or '').strip().lower()
         if not forced:
@@ -1378,13 +1394,13 @@ def select_candidates(all_candidates: list[dict], source_count: int) -> list[dic
         segment_key = f"{source_key}:{round(candidate['start'], 3)}"
         if per_source_count.get(source_key, 0) >= max_per_source:
             continue
-        excluded = source_key in EXCLUDED_SOURCE_SIGNATURES or segment_key in EXCLUDED_SEGMENT_KEYS
+        excluded = segment_is_excluded(candidate)
         target_pool = fallback_pool if excluded else pool
         target_pool.append(candidate)
         per_source_count[source_key] = per_source_count.get(source_key, 0) + 1
         if len(pool) >= 16:
             break
-    if len(pool) < 16:
+    if len(pool) < 16 and allow_excluded_fallback:
         for candidate in fallback_pool:
             if candidate in pool:
                 continue
@@ -1392,7 +1408,9 @@ def select_candidates(all_candidates: list[dict], source_count: int) -> list[dic
             if len(pool) >= 16:
                 break
     if len(pool) < MIN_HIGHLIGHTS:
-        pool = all_candidates[:max(len(all_candidates), MIN_HIGHLIGHTS)]
+        fresh = [item for item in all_candidates if not segment_is_excluded(item)]
+        if fresh:
+            pool = fresh[:max(len(fresh), MIN_HIGHLIGHTS)]
 
     unique_pool_sources = len({item.get('source_signature', item['source_index']) for item in pool})
 
@@ -1758,7 +1776,7 @@ def main() -> int:
     EXCLUDED_SEGMENT_KEYS = {sig for sig in os.environ.get('EXCLUDED_SEGMENT_KEYS', '').split(',') if sig}
     seg_hist_path = Path(os.environ.get('SEGMENT_HISTORY_FILE', str(SEGMENT_HISTORY_FILE)))
     if os.environ.get('OVERNIGHT_FRESH_SEGMENTS', '0') == '1':
-        hist_sources, hist_segments = load_segment_history(seg_hist_path)
+        hist_sources, hist_segments = set(), set()
     else:
         hist_sources, hist_segments = load_segment_history(seg_hist_path)
     EXCLUDED_SOURCE_SIGNATURES |= hist_sources

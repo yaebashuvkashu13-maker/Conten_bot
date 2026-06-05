@@ -997,13 +997,13 @@ def score_genshin_boss_likelihood(
     *,
     crop_box: tuple[int, int, int, int] | None = None,
     sample_frames: int = 6,
-) -> tuple[float, float, float]:
-    """Returns (boss_bar, sustained_center_motion, combined boss score)."""
+) -> tuple[float, float, float, float]:
+    """Returns (boss_bar, center_motion, combined boss score, bar_peak)."""
     end_sec = start_sec + max(duration_sec, 0.5)
     times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
     bar_scores: list[float] = []
     center_motions: list[float] = []
     prev_center: np.ndarray | None = None
@@ -1028,12 +1028,16 @@ def score_genshin_boss_likelihood(
     bar_peak = float(np.max(bar_scores)) if bar_scores else 0.0
     combined = min(
         1.0,
-        boss_bar * 0.62
-        + bar_peak * 0.18
-        + min(center_motion * 4.5, 0.22)
-        + (0.08 if boss_bar > 0.10 and center_motion > 0.020 else 0.0),
+        boss_bar * 0.70
+        + bar_peak * 0.22
+        + min(center_motion * 2.5, 0.10)
+        + (
+            0.06
+            if boss_bar > 0.18 and bar_peak > 0.25 and center_motion > 0.022
+            else 0.0
+        ),
     )
-    return boss_bar, center_motion, combined
+    return boss_bar, center_motion, combined, bar_peak
 
 
 def segment_is_valid_for_montage(
@@ -1054,21 +1058,35 @@ def segment_is_valid_for_montage(
     if profile == "genshin" and os.environ.get("SMART_GENSHIN_REQUIRE_BOSS", "1") == "1":
         if crop_box is None:
             crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
-        boss_bar, center_motion, boss_score = score_genshin_boss_likelihood(
+        boss_bar, center_motion, boss_score, bar_peak = score_genshin_boss_likelihood(
             video_path, start_sec, duration_sec, crop_box=crop_box
         )
         min_bar = (
-            float(os.environ.get("SMART_GENSHIN_MIN_BOSS_BAR", "0.11"))
+            float(os.environ.get("SMART_GENSHIN_MIN_BOSS_BAR", "0.20"))
             if min_boss is None
             else min_boss
         )
-        min_score = float(os.environ.get("SMART_GENSHIN_MIN_BOSS_SCORE", "0.20"))
-        if boss_bar < min_bar and boss_score < min_score:
-            return False, f"mob_not_boss=bar{boss_bar:.3f}:score{boss_score:.2f}"
-        if boss_bar < min_bar * 0.75 and center_motion < float(
-            os.environ.get("SMART_GENSHIN_MIN_CENTER_MOTION", "0.017")
+        min_peak = float(os.environ.get("SMART_GENSHIN_MIN_BOSS_BAR_PEAK", "0.28"))
+        min_motion = float(os.environ.get("SMART_GENSHIN_MIN_CENTER_MOTION", "0.020"))
+        min_audio = float(os.environ.get("SMART_GENSHIN_MIN_AUDIO_RMS", "0.012"))
+        if boss_bar < min_bar and bar_peak < min_peak:
+            return False, f"no_boss_bar=bar{boss_bar:.3f}:peak{bar_peak:.3f}"
+        if boss_bar < min_bar * 0.90 and bar_peak < min_peak * 0.92:
+            return False, f"mob_not_boss=bar{boss_bar:.3f}:peak{bar_peak:.3f}"
+        _impact_density, _burst_ratio, audio_rms = score_pubg_gunfire_audio(
+            video_path, start_sec, duration_sec
+        )
+        if center_motion < min_motion and audio_rms < min_audio:
+            return False, f"idle=motion{center_motion:.3f}:rms{audio_rms:.4f}"
+        if (
+            boss_bar >= min_bar
+            and center_motion < min_motion * 0.80
+            and audio_rms < min_audio * 1.15
         ):
-            return False, f"trash_mobs=bar{boss_bar:.3f}:motion{center_motion:.3f}"
+            return False, f"false_boss_ui=motion{center_motion:.3f}:rms{audio_rms:.4f}"
+        min_score = float(os.environ.get("SMART_GENSHIN_MIN_BOSS_SCORE", "0.32"))
+        if boss_score < min_score and bar_peak < min_peak * 1.05:
+            return False, f"weak_boss=score{boss_score:.2f}:peak{bar_peak:.3f}"
         return True, "boss_ok"
     if profile in ("wot", "world_of_tanks"):
         if crop_box is None:
