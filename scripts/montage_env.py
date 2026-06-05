@@ -39,6 +39,7 @@ def pubg_combat_env() -> dict[str, str]:
         "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.048",
         "SMART_PUBG_MIN_BURST_RATIO": "2.2",
         "SMART_PUBG_RELAX_MIN_GUNFIRE": "0.040",
+        "SMART_PUBG_MAX_CENTER_TEXT": "0.62",
         "SMART_PUBG_MIN_CENTER_MOTION": "0.020",
         "SMART_PUBG_SKIP_INTRO_SEC": "120",
         "SMART_PUBG_CLIP_MIN_SEC": "7",
