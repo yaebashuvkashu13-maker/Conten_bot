@@ -212,7 +212,17 @@ def run_montage(
     for key, value in env.items():
         run_env.setdefault(key, value)
     run_env.update(profile_montage_env(profile))
-    if relaxed:
+    if relaxed and profile in ("mobile_legends", "mlbb"):
+        run_env.update(
+            {
+                "SMART_MLBB_PEAK_PERCENTILE": "48",
+                "SMART_MIN_MINIMAP_PRESENCE": "0.62",
+                "SMART_MIN_CENTER_MOTION": "0.015",
+                "MIN_HIGHLIGHTS": "4",
+                "MAX_HIGHLIGHTS": "5",
+            }
+        )
+    elif relaxed:
         run_env.update(
             {
                 "SMART_PUBG_PEAK_PERCENTILE": "48",
@@ -235,7 +245,6 @@ def run_montage(
             "OUTPUT_DIR": str(OUTPUT_DIR),
             "DEFAULT_GAME_PROFILE": profile,
             "QUEUE_GAME_PROFILE": profile,
-            "STRICT_GAMEPLAY": "0",
             "SELECTION_VARIANT": str(variant),
             "SMART_SKIP_MARK_USED": "1" if skip_mark_used else "0",
             "SMART_MAKE_TIMEOUT_SEC": env.get("SMART_MAKE_TIMEOUT_SEC", "10800"),

@@ -13,8 +13,30 @@ def passthrough_audio_env() -> dict[str, str]:
     }
 
 
+def mlbb_combat_env() -> dict[str, str]:
+    """MLBB: only in-match fights, minimap required, no draft/webcam in frame."""
+    return {
+        "STRICT_GAMEPLAY": "1",
+        "SMART_REQUIRE_MINIMAP": "1",
+        "SMART_MIN_MINIMAP_PRESENCE": "0.72",
+        "SMART_MIN_MINIMAP_DELTA": "0.011",
+        "SMART_MIN_CENTER_MOTION": "0.018",
+        "SMART_MIN_HUD_FRAME_RATE": "0.72",
+        "SMART_MAX_OVERLAY_TEXT": "0.10",
+        "SMART_REJECT_DRAFT_QUEUE": "1",
+        "SMART_CROP_WEBCAM": "1",
+        "SMART_MLBB_PEAK_PERCENTILE": "54",
+        "MIN_HIGHLIGHTS": "5",
+        "MAX_HIGHLIGHTS": "5",
+        "MIN_FINAL_DURATION": "42",
+        "MAX_FINAL_DURATION": "57",
+        "SMART_OUTPUT_CRF": "15",
+        "SMART_OUTPUT_PRESET": "slow",
+    }
+
+
 def profile_montage_env(profile: str) -> dict[str, str]:
-    """MLBB/PUBG: user prefers source audio without the combat-DSP filter chain."""
+    """Per-game Smart Edit defaults."""
     if profile in (
         "mobile_legends",
         "pubg",
@@ -25,6 +47,8 @@ def profile_montage_env(profile: str) -> dict[str, str]:
         "world_of_tanks",
     ):
         out = passthrough_audio_env()
+        if profile in ("mobile_legends", "mlbb"):
+            out.update(mlbb_combat_env())
         if profile == "pubg":
             out.update(
                 {

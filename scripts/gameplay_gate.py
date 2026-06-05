@@ -290,37 +290,119 @@ def detect_horizontal_content_crop(
     return left_px, y0, crop_w, crop_h
 
 
+def _corner_webcam_score(frame: np.ndarray, corner: str) -> float:
+    """Higher = more likely a persistent face-cam PIP in a corner."""
+    small = cv2.resize(frame, (320, 180))
+    h, w = small.shape[:2]
+    boxes = {
+        "bl": (0, int(h * 0.62), int(w * 0.28), h - int(h * 0.62)),
+        "br": (int(w * 0.72), int(h * 0.62), w - int(w * 0.72), h - int(h * 0.62)),
+        "tl": (0, 0, int(w * 0.26), int(h * 0.30)),
+    }
+    x0, y0, cw, ch = boxes.get(corner, boxes["bl"])
+    if cw <= 0 or ch <= 0:
+        return 0.0
+    patch = small[y0 : y0 + ch, x0 : x0 + cw]
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 45, 130)
+    edge_ratio = float(np.count_nonzero(edges)) / max(edges.size, 1)
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32) / 255.0
+    val = hsv[:, :, 2].astype(np.float32) / 255.0
+    skin = ((hsv[:, :, 0] >= 0) & (hsv[:, :, 0] <= 35) & (sat >= 0.12) & (val >= 0.18))
+    skin_ratio = float(np.count_nonzero(skin)) / max(skin.size, 1)
+    return edge_ratio * 0.55 + min(skin_ratio, 0.35) * 0.45
+
+
+def detect_webcam_pip_crop(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    base_crop: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 5,
+) -> tuple[int, int, int, int] | None:
+    """Crop out streamer webcam PIP (bottom-left / bottom-right / top-left)."""
+    if os.environ.get("SMART_CROP_WEBCAM", "1") != "1":
+        return base_crop
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
+        return base_crop
+    full_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    full_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    corner_hits = {"bl": 0, "br": 0, "tl": 0}
+    total = 0
+    for t in times:
+        frame = _read_frame_at(video_path, float(t), cap)
+        if frame is None:
+            continue
+        total += 1
+        for corner in corner_hits:
+            if _corner_webcam_score(frame, corner) >= 0.085:
+                corner_hits[corner] += 1
+    cap.release()
+    if total < 2:
+        return base_crop
+
+    pick = max(corner_hits, key=corner_hits.get)
+    if corner_hits[pick] < max(2, (total + 1) // 2):
+        return base_crop
+
+    bx, by, bw, bh = base_crop or (0, 0, full_w, full_h)
+    if pick == "bl":
+        nx = min(full_w - 80, bx + int(bw * 0.24))
+        ny = by
+        nw = max(80, bx + bw - nx)
+        nh = max(80, int(bh * 0.88))
+        return nx, ny, nw, nh
+    if pick == "br":
+        nw = max(80, int(bw * 0.76))
+        return bx, by, nw, bh
+    # top-left webcam: trim top + left
+    nx = min(full_w - 80, bx + int(bw * 0.22))
+    ny = min(full_h - 80, by + int(bh * 0.18))
+    nw = max(80, bx + bw - nx)
+    nh = max(80, by + bh - ny)
+    return nx, ny, nw, nh
+
+
 def detect_game_viewport_crop(
     video_path: Path,
     start_sec: float,
     duration_sec: float,
 ) -> tuple[int, int, int, int] | None:
-    """Merge vertical + horizontal crop so letterbox becomes black bars in render."""
+    """Merge vertical + horizontal crop; strip letterbox and webcam PIP."""
     vertical = detect_vertical_content_crop(video_path, start_sec, duration_sec)
     horizontal = detect_horizontal_content_crop(
         video_path, start_sec, duration_sec, vertical_crop=vertical
     )
     if vertical is None and horizontal is None:
-        return None
-    if vertical is None:
-        return horizontal
-    if horizontal is None:
-        return vertical
-    vx, vy, vw, vh = vertical
-    hx, hy, hw, hh = horizontal
-    x = max(vx, hx)
-    y = max(vy, hy)
-    w = min(vx + vw, hx + hw) - x
-    h = min(vy + vh, hy + hh) - y
-    if w <= 0 or h <= 0:
-        return vertical
-    cap = cv2.VideoCapture(str(video_path))
-    full_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    full_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    cap.release()
-    if w < int(full_w * 0.50) or h < int(full_h * 0.45):
-        return vertical
-    return x, y, w, h
+        merged = None
+    elif vertical is None:
+        merged = horizontal
+    elif horizontal is None:
+        merged = vertical
+    else:
+        vx, vy, vw, vh = vertical
+        hx, hy, hw, hh = horizontal
+        x = max(vx, hx)
+        y = max(vy, hy)
+        w = min(vx + vw, hx + hw) - x
+        h = min(vy + vh, hy + hh) - y
+        if w <= 0 or h <= 0:
+            merged = vertical
+        else:
+            cap = cv2.VideoCapture(str(video_path))
+            full_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            full_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            cap.release()
+            merged = vertical if w < int(full_w * 0.50) or h < int(full_h * 0.45) else (x, y, w, h)
+
+    return detect_webcam_pip_crop(
+        video_path, start_sec, duration_sec, base_crop=merged
+    )
 
 
 def score_left_chat_panel(
@@ -655,6 +737,62 @@ def score_segment_combat(
     )
 
 
+def segment_minimap_presence_rate(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 5,
+    min_minimap: float = 7.5,
+    min_skill: float = 6.5,
+) -> float:
+    """Share of frames with visible minimap + skill bar (real in-match HUD)."""
+    return segment_hud_frame_pass_rate(
+        video_path,
+        start_sec,
+        duration_sec,
+        crop_box=crop_box,
+        sample_frames=sample_frames,
+        min_minimap=min_minimap,
+        min_skill=min_skill,
+    )
+
+
+def segment_looks_like_draft_or_queue(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> bool:
+    """Hero pick, loading, queue wait — not active teamfight."""
+    if segment_looks_like_hero_showcase(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+    ):
+        return True
+    center_motion, mini_delta, skill_delta, center_text = score_segment_combat(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=6
+    )
+    hud_rate = segment_minimap_presence_rate(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+    )
+    if hud_rate < 0.34 and center_motion < 0.014:
+        return True
+    if hud_rate < 0.50 and center_motion < 0.018 and mini_delta < 0.006:
+        return True
+    if segment_opens_with_training(video_path, start_sec, crop_box=crop_box):
+        return True
+    if center_text > 0.14 and center_motion < 0.020 and skill_delta < 0.007:
+        return True
+    chat_panel = score_left_chat_panel(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=4
+    )
+    if chat_panel > 0.14 and hud_rate < 0.55 and center_motion < 0.022:
+        return True
+    return False
+
+
 def segment_hud_frame_pass_rate(
     video_path: Path,
     start_sec: float,
@@ -796,6 +934,8 @@ def segment_is_valid_for_montage(
 
     min_center_motion = float(os.environ.get("SMART_MIN_CENTER_MOTION", "0.016"))
     min_minimap_delta = float(os.environ.get("SMART_MIN_MINIMAP_DELTA", "0.009"))
+    min_minimap_presence = float(os.environ.get("SMART_MIN_MINIMAP_PRESENCE", "0.72"))
+    require_minimap = os.environ.get("SMART_REQUIRE_MINIMAP", "1") == "1"
     max_center_text = float(os.environ.get("SMART_MAX_CENTER_TEXT", "0.11"))
 
     center_motion, mini_delta, skill_delta, center_text = score_segment_combat(
@@ -818,10 +958,21 @@ def segment_is_valid_for_montage(
         max_bed = float(os.environ.get("SMART_MAX_MUSIC_BED", "0.50"))
         if bed >= max_bed:
             return False, f"music_bed={bed:.2f}"
+    if os.environ.get("SMART_REJECT_DRAFT_QUEUE", "1") == "1" and segment_looks_like_draft_or_queue(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    ):
+        return False, "draft_queue_loading"
+
+    minimap_presence = segment_minimap_presence_rate(
+        video_path, start_sec, duration_sec, crop_box=crop_box
+    )
+    if require_minimap and minimap_presence < min_minimap_presence:
+        return False, f"no_minimap={minimap_presence:.2f}"
+
     if center_motion < min_center_motion:
         return False, f"no_combat_motion={center_motion:.3f}"
-    if mini_delta < min_minimap_delta and center_motion < min_center_motion * 1.35:
-        return False, f"static_scene=mini{mini_delta:.3f}"
+    if mini_delta < min_minimap_delta:
+        return False, f"static_minimap={mini_delta:.3f}"
     if skill_delta < 0.006 and center_motion < min_center_motion * 1.2 and mini_delta < min_minimap_delta * 1.5:
         return False, f"no_fight_activity=skill{skill_delta:.3f}"
 

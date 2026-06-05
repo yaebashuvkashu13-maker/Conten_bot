@@ -7,12 +7,14 @@ games:
     profile: mobile_legends
     queue_label: MLBB
     montages: 1
+    prefer_russian: true
     min_duration_sec: 7200
     max_duration_sec: 10800
     fallback_min_duration_sec: 5400
     search_limit: 12
     queries:
-      - "Mobile Legends Bang Bang live stream full gameplay"
+      - "MLBB стрим полный геймплей русский"
+      - "Mobile Legends стрим ранкед русский"
       - "MLBB ranked stream replay full match"
 
   - id: pubg

@@ -658,6 +658,8 @@ def build_candidates(
     smooth_scores = moving_average(raw_scores)
     candidates: list[dict] = []
     peak_pct = float(os.environ.get('SMART_PEAK_PERCENTILE', '68'))
+    if profile == 'mobile_legends':
+        peak_pct = float(os.environ.get('SMART_MLBB_PEAK_PERCENTILE', '58'))
     if profile == 'pubg':
         peak_pct = float(os.environ.get('SMART_PUBG_PEAK_PERCENTILE', '60'))
     peak_threshold = float(np.percentile(smooth_scores, peak_pct)) if bins > 4 else float(smooth_scores.max())
@@ -838,7 +840,14 @@ def build_candidates(
                     }
             except ValueError:
                 gate_kwargs = {}
-        if relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
+        if relax_segment_gate and profile == 'mobile_legends':
+            gate_kwargs = {
+                'min_hud': 15.0,
+                'max_text': 0.11,
+                'max_cartoon_ratio': 0.55,
+                'min_hud_frame_rate': max(0.68, float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.72'))),
+            }
+        elif relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
         ok_segment, reason = segment_is_valid_for_montage(
             Path(candidate['source_path']),
@@ -1184,10 +1193,12 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
                 '-map', '1:a:0',
             ])
 
+    output_crf = os.environ.get('SMART_OUTPUT_CRF', '15')
+    output_preset = os.environ.get('SMART_OUTPUT_PRESET', 'slow')
     command.extend([
         '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '18',
+        '-preset', output_preset,
+        '-crf', output_crf,
         '-pix_fmt', 'yuv420p',
         '-profile:v', 'high',
         '-c:a', 'aac',
