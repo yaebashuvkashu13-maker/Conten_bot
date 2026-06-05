@@ -971,6 +971,71 @@ def segment_looks_like_pubg_loot_or_walk(
     return False
 
 
+def _genshin_boss_bar_score(frame: np.ndarray) -> float:
+    """Boss HP bar at top center — red/orange horizontal strip (0..1)."""
+    small = cv2.resize(frame, (320, 180))
+    top = small[0 : int(180 * 0.13), int(320 * 0.12) : int(320 * 0.88)]
+    if top.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(top, cv2.COLOR_BGR2HSV)
+    red_a = cv2.inRange(hsv, (0, 70, 70), (12, 255, 255))
+    red_b = cv2.inRange(hsv, (168, 70, 70), (180, 255, 255))
+    orange = cv2.inRange(hsv, (8, 90, 90), (32, 255, 255))
+    mask = red_a | red_b | orange
+    fill = float(np.count_nonzero(mask)) / float(mask.size)
+    row_signal = mask.mean(axis=1) / 255.0
+    strong_rows = int(np.sum(row_signal > 0.10))
+    col_signal = mask.mean(axis=0) / 255.0
+    wide_bar = float(np.sum(col_signal > 0.08)) / max(len(col_signal), 1)
+    return min(1.0, fill * 4.2 + strong_rows * 0.06 + wide_bar * 0.35)
+
+
+def score_genshin_boss_likelihood(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+    sample_frames: int = 6,
+) -> tuple[float, float, float]:
+    """Returns (boss_bar, sustained_center_motion, combined boss score)."""
+    end_sec = start_sec + max(duration_sec, 0.5)
+    times = np.linspace(start_sec, max(start_sec + 0.1, end_sec - 0.05), num=sample_frames)
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
+        return 0.0, 0.0, 0.0
+    bar_scores: list[float] = []
+    center_motions: list[float] = []
+    prev_center: np.ndarray | None = None
+    for t in times:
+        frame = _read_frame_at(video_path, float(t), cap)
+        if frame is None:
+            continue
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            frame = frame[y : y + h, x : x + w]
+        bar_scores.append(_genshin_boss_bar_score(frame))
+        small = cv2.resize(frame, (320, 180))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        center = gray[int(h * 0.18) : int(h * 0.72), int(w * 0.10) : int(w * 0.90)]
+        if prev_center is not None and center.size and prev_center.shape == center.shape:
+            center_motions.append(float(cv2.absdiff(center, prev_center).mean()) / 255.0)
+        prev_center = center
+    cap.release()
+    boss_bar = float(np.mean(bar_scores)) if bar_scores else 0.0
+    center_motion = float(np.mean(center_motions)) if center_motions else 0.0
+    bar_peak = float(np.max(bar_scores)) if bar_scores else 0.0
+    combined = min(
+        1.0,
+        boss_bar * 0.62
+        + bar_peak * 0.18
+        + min(center_motion * 4.5, 0.22)
+        + (0.08 if boss_bar > 0.10 and center_motion > 0.020 else 0.0),
+    )
+    return boss_bar, center_motion, combined
+
+
 def segment_is_valid_for_montage(
     video_path: Path,
     start_sec: float,
@@ -983,8 +1048,28 @@ def segment_is_valid_for_montage(
     max_reject_similarity: float = 0.72,
     min_hud_frame_rate: float = 0.55,
     min_gunfire: float | None = None,
+    min_boss: float | None = None,
     crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
+    if profile == "genshin" and os.environ.get("SMART_GENSHIN_REQUIRE_BOSS", "1") == "1":
+        if crop_box is None:
+            crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        boss_bar, center_motion, boss_score = score_genshin_boss_likelihood(
+            video_path, start_sec, duration_sec, crop_box=crop_box
+        )
+        min_bar = (
+            float(os.environ.get("SMART_GENSHIN_MIN_BOSS_BAR", "0.11"))
+            if min_boss is None
+            else min_boss
+        )
+        min_score = float(os.environ.get("SMART_GENSHIN_MIN_BOSS_SCORE", "0.20"))
+        if boss_bar < min_bar and boss_score < min_score:
+            return False, f"mob_not_boss=bar{boss_bar:.3f}:score{boss_score:.2f}"
+        if boss_bar < min_bar * 0.75 and center_motion < float(
+            os.environ.get("SMART_GENSHIN_MIN_CENTER_MOTION", "0.017")
+        ):
+            return False, f"trash_mobs=bar{boss_bar:.3f}:motion{center_motion:.3f}"
+        return True, "boss_ok"
     if profile in ("pubg", "standoff"):
         prefix = "SMART_PUBG_" if profile == "pubg" else "SMART_STANDOFF_"
         if crop_box is None:

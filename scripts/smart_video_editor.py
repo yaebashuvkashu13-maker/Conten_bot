@@ -24,6 +24,7 @@ try:
         detect_game_viewport_crop,
         is_gameplay_video,
         load_csv_lookup,
+        score_genshin_boss_likelihood,
         segment_is_valid_for_montage,
         segment_opens_with_training,
         source_has_valid_gameplay_window,
@@ -39,6 +40,7 @@ except ImportError:
         detect_game_viewport_crop,
         is_gameplay_video,
         load_csv_lookup,
+        score_genshin_boss_likelihood,
         segment_is_valid_for_montage,
         segment_opens_with_training,
         source_has_valid_gameplay_window,
@@ -895,6 +897,9 @@ def build_candidates(
             combat_min = profile_combat_min(profile)
             mean_scene = float(np.mean(analysis['scene'][region_slice]))
             mean_center = float(np.mean(analysis['center_motion'][region_slice]))
+            cluster_sec = (right - left + 1) * win
+            if cluster_sec < float(os.environ.get('SMART_GENSHIN_MIN_CLUSTER_SEC', '14')):
+                continue
             if mean_motion < combat_min and mean_audio < combat_min and mean_scene < combat_min:
                 continue
             if mean_center < float(os.environ.get('SMART_GENSHIN_MIN_CENTER_MOTION', '0.015')) and mean_audio < combat_min:
@@ -968,6 +973,7 @@ def build_candidates(
             combo_score += 0.12 * max(0.0, mean_scene - scene_threshold)
             combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
             combo_score += 0.08 * max(0.0, mean_motion - motion_threshold)
+            combo_score += 0.06 * max(0.0, (right - left + 1) * win - 12.0)
         elif profile in ('wot', 'world_of_tanks'):
             combo_score += 0.14 * max(0.0, mean_audio - audio_threshold)
             combo_score += 0.10 * max(0.0, mean_motion - motion_threshold)
@@ -1042,6 +1048,10 @@ def build_candidates(
             gate_kwargs = {
                 'min_gunfire': float(os.environ.get(relax_key, '0.045')),
             }
+        elif relax_segment_gate and profile == 'genshin':
+            gate_kwargs = {
+                'min_boss': float(os.environ.get('SMART_GENSHIN_RELAX_MIN_BOSS_BAR', '0.08')),
+            }
         elif relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
         ok_segment, reason = segment_is_valid_for_montage(
@@ -1066,6 +1076,22 @@ def build_candidates(
         )
         if crop_box:
             candidate['crop_box'] = crop_box
+        if profile == 'genshin':
+            try:
+                boss_bar, _center_motion, boss_score = score_genshin_boss_likelihood(
+                    Path(candidate['source_path']),
+                    float(candidate['start']),
+                    float(candidate['input_duration']),
+                    crop_box=candidate.get('crop_box'),
+                )
+                candidate['boss_bar'] = round(boss_bar, 4)
+                candidate['boss_score'] = round(boss_score, 4)
+                candidate['score'] = round(
+                    float(candidate['score']) + boss_score * 0.32 + boss_bar * 0.18,
+                    4,
+                )
+            except Exception:
+                pass
         vid_pop = pop_video_id(f"{candidate['source_path']} {game_name}")
         if vid_pop:
             candidate['score'] = round(float(candidate['score']) + popularity_boost(vid_pop), 4)
@@ -1086,7 +1112,17 @@ def candidate_overlap_seconds(candidate: dict, other: dict) -> float:
 
 
 def overlaps(candidate: dict, selected: list[dict]) -> bool:
-    return any(candidate_overlap_seconds(candidate, existing) > min(candidate['input_duration'], existing['input_duration']) * 0.35 for existing in selected)
+    profile = os.environ.get('QUEUE_GAME_PROFILE', os.environ.get('DEFAULT_GAME_PROFILE', '')).lower()
+    for existing in selected:
+        if candidate_overlap_seconds(candidate, existing) > min(
+            candidate['input_duration'], existing['input_duration']
+        ) * 0.35:
+            return True
+        if profile == 'genshin' and candidate.get('source_signature') == existing.get('source_signature'):
+            gap = float(os.environ.get('SMART_GENSHIN_MIN_SEGMENT_GAP', '75'))
+            if abs(float(candidate['start']) - float(existing['start'])) < gap:
+                return True
+    return False
 
 
 def effective_duration(selected: list[dict]) -> float:

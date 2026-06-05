@@ -49,9 +49,10 @@ def pubg_combat_env() -> dict[str, str]:
 
 
 def genshin_combat_env() -> dict[str, str]:
-    """Genshin: ability bursts + combat audio, skip exploration idle."""
+    """Genshin: boss fights only — HP bar + sustained combat, no trash mobs."""
     return {
         **aggressive_action_base(),
+        "SMART_GENSHIN_REQUIRE_BOSS": "1",
         "SMART_GENSHIN_PEAK_PERCENTILE": "38",
         "SMART_GENSHIN_SUSTAIN_PERCENTILE": "30",
         "SMART_GENSHIN_COMBAT_MIN": "0.17",
@@ -59,6 +60,12 @@ def genshin_combat_env() -> dict[str, str]:
         "SMART_GENSHIN_AUDIO_PERCENTILE": "48",
         "SMART_GENSHIN_SCENE_PERCENTILE": "52",
         "SMART_GENSHIN_MIN_CENTER_MOTION": "0.017",
+        "SMART_GENSHIN_MIN_BOSS_BAR": "0.11",
+        "SMART_GENSHIN_MIN_BOSS_SCORE": "0.20",
+        "SMART_GENSHIN_MIN_CLUSTER_SEC": "16",
+        "SMART_GENSHIN_MIN_SEGMENT_GAP": "80",
+        "SMART_ACTION_CLIP_MIN_SEC": "8",
+        "SMART_ACTION_CLIP_MAX_SEC": "11",
     }
 
 
@@ -156,6 +163,8 @@ def relaxed_montage_env(profile: str) -> dict[str, str]:
             "SMART_GENSHIN_PEAK_PERCENTILE": "32",
             "SMART_GENSHIN_COMBAT_MIN": "0.14",
             "SMART_GENSHIN_SUSTAIN_PERCENTILE": "26",
+            "SMART_GENSHIN_RELAX_MIN_BOSS_BAR": "0.09",
+            "SMART_GENSHIN_MIN_CLUSTER_SEC": "12",
             "MIN_HIGHLIGHTS": "4",
             "MAX_HIGHLIGHTS": "5",
         }
