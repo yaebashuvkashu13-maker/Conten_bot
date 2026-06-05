@@ -563,6 +563,7 @@ ACTION_PROFILES = frozenset({
     'pubg', 'genshin', 'standoff', 'wot', 'world_of_tanks', 'mobile_legends',
 })
 GUNFIRE_PROFILES = frozenset({'pubg', 'standoff'})
+IMPACT_PROFILES = frozenset({'pubg', 'standoff', 'wot', 'world_of_tanks'})
 
 
 def profile_env_float(profile: str, name: str, default: str) -> float:
@@ -745,24 +746,19 @@ def build_candidates(
             base += 0.10 * max(0.0, audio - 0.38)
             base += 0.08 * max(0.0, center - 0.26)
         elif profile in ('wot', 'world_of_tanks'):
-            # Tank battles (Blitz / PC): sustained motion + hits + map pans.
-            motion_w, scene_w, audio_w = (0.26, 0.20, 0.18)
-            if profile == 'world_of_tanks':
-                # PC WoT: slower pace, more wide shots and impact audio.
-                motion_w, scene_w, audio_w = 0.22, 0.24, 0.20
             base = (
-                motion_w * motion +
-                0.12 * center +
-                audio_w * audio +
-                scene_w * scene +
-                0.12 * sharp +
-                0.07 * bright +
-                0.05 * sat
+                0.10 * motion +
+                0.08 * center +
+                0.18 * audio +
+                0.32 * gunshot +
+                0.16 * scene +
+                0.10 * sharp +
+                0.04 * bright +
+                0.02 * sat
             )
-            base += 0.08 * max(0.0, motion - 0.24)
-            base += 0.10 * max(0.0, audio - 0.36)
-            if profile == 'world_of_tanks':
-                base += 0.06 * max(0.0, scene - 0.34)
+            base += 0.16 * max(0.0, gunshot - 0.28)
+            base += 0.10 * max(0.0, audio - 0.34)
+            base += 0.06 * max(0.0, scene - 0.30)
         else:
             base = (
                 0.28 * motion +
@@ -796,10 +792,12 @@ def build_candidates(
             if scene < 0.12 and center < 0.14:
                 penalty += 0.18
         elif profile in ('wot', 'world_of_tanks'):
-            if motion < 0.14 and audio < 0.16:
-                penalty += 0.30
-            if scene < 0.10 and audio < 0.18:
-                penalty += 0.16
+            if gunshot < 0.18 and audio < 0.20:
+                penalty += 0.40
+            if motion > 0.26 and gunshot < 0.15:
+                penalty += 0.34
+            if scene < 0.10 and gunshot < 0.14:
+                penalty += 0.14
         elif motion < 0.14 and audio < 0.16 and scene < 0.08:
             penalty += 0.20
         if bright < 0.18:
@@ -823,7 +821,12 @@ def build_candidates(
     sustain_pct = profile_sustain_percentile(profile) if profile in ACTION_PROFILES else 42.0
     sustain_threshold = float(np.percentile(smooth_scores, sustain_pct)) if bins > 4 else peak_threshold * 0.72
     motion_pct, audio_pct, scene_pct = profile_motion_audio_percentiles(profile) if profile in ACTION_PROFILES else (52.0, 50.0, 54.0)
-    gunfire_pct = audio_pct if profile not in GUNFIRE_PROFILES else profile_motion_audio_percentiles(profile)[2]
+    if profile in GUNFIRE_PROFILES:
+        gunfire_pct = profile_motion_audio_percentiles(profile)[2]
+    elif profile in ('wot', 'world_of_tanks'):
+        gunfire_pct = float(os.environ.get('SMART_WOT_IMPACT_PERCENTILE', '50'))
+    else:
+        gunfire_pct = audio_pct
     motion_threshold = float(np.percentile(analysis['motion'], motion_pct)) if bins > 3 else float(np.max(analysis['motion']))
     scene_threshold = float(np.percentile(analysis['scene'], scene_pct)) if bins > 3 else float(np.max(analysis['scene']))
     audio_threshold = float(np.percentile(analysis['audio'], audio_pct)) if bins > 3 else float(np.max(analysis['audio']))
@@ -893,6 +896,16 @@ def build_candidates(
                 continue
             if mean_motion < combat_min and mean_gunfire < gunfire_min * 0.85:
                 continue
+        elif profile in ('wot', 'world_of_tanks'):
+            combat_min = profile_combat_min(profile)
+            impact_min = float(os.environ.get('SMART_WOT_BIN_IMPACT_MIN', '0.10'))
+            cluster_sec = (right - left + 1) * win
+            if cluster_sec < float(os.environ.get('SMART_WOT_MIN_CLUSTER_SEC', '12')):
+                continue
+            if mean_gunfire < impact_min and mean_audio < combat_min:
+                continue
+            if mean_motion > 0.24 and mean_gunfire < impact_min * 0.82:
+                continue
         elif profile == 'genshin':
             combat_min = profile_combat_min(profile)
             mean_scene = float(np.mean(analysis['scene'][region_slice]))
@@ -903,10 +916,6 @@ def build_candidates(
             if mean_motion < combat_min and mean_audio < combat_min and mean_scene < combat_min:
                 continue
             if mean_center < float(os.environ.get('SMART_GENSHIN_MIN_CENTER_MOTION', '0.015')) and mean_audio < combat_min:
-                continue
-        elif profile in ('wot', 'world_of_tanks'):
-            combat_min = profile_combat_min(profile)
-            if mean_motion < combat_min and mean_audio < float(os.environ.get('SMART_WOT_MIN_AUDIO_HIT', '0.13')):
                 continue
         clip_lo, clip_hi = profile_action_clip_bounds(profile)
         desired_duration = max(clip_lo, min(clip_hi, (right - left + 1) * win + 2.0))
@@ -975,8 +984,9 @@ def build_candidates(
             combo_score += 0.08 * max(0.0, mean_motion - motion_threshold)
             combo_score += 0.06 * max(0.0, (right - left + 1) * win - 12.0)
         elif profile in ('wot', 'world_of_tanks'):
-            combo_score += 0.14 * max(0.0, mean_audio - audio_threshold)
-            combo_score += 0.10 * max(0.0, mean_motion - motion_threshold)
+            combo_score += 0.18 * max(0.0, mean_gunfire - gunfire_threshold)
+            combo_score += 0.12 * max(0.0, mean_audio - audio_threshold)
+            combo_score += 0.06 * max(0.0, mean_motion - motion_threshold)
             combo_score += 0.08 * max(0.0, float(bursts[idx]) - 0.04)
 
         candidates.append({
@@ -1051,6 +1061,10 @@ def build_candidates(
         elif relax_segment_gate and profile == 'genshin':
             gate_kwargs = {
                 'min_boss': float(os.environ.get('SMART_GENSHIN_RELAX_MIN_BOSS_BAR', '0.08')),
+            }
+        elif relax_segment_gate and profile in ('wot', 'world_of_tanks'):
+            gate_kwargs = {
+                'min_gunfire': float(os.environ.get('SMART_WOT_RELAX_MIN_IMPACT', '0.04')),
             }
         elif relax_segment_gate and os.environ.get('STRICT_GAMEPLAY', '0') != '1':
             gate_kwargs = {'min_hud': 10.0, 'max_text': 0.14, 'max_cartoon_ratio': 0.7}
@@ -1301,9 +1315,30 @@ STANDOFF_RESCUE_TIERS: list[dict[str, str]] = [
     },
 ]
 
+WOT_RESCUE_TIERS: list[dict[str, str]] = [
+    {
+        'SMART_WOT_PEAK_PERCENTILE': '30',
+        'SMART_WOT_COMBAT_MIN': '0.14',
+        'SMART_WOT_BIN_IMPACT_MIN': '0.08',
+        'SMART_WOT_MIN_IMPACT_DENSITY': '0.045',
+        'SMART_WOT_SUSTAIN_PERCENTILE': '26',
+        'SMART_WOT_AUDIO_PERCENTILE': '46',
+    },
+    {
+        'SMART_WOT_PEAK_PERCENTILE': '24',
+        'SMART_WOT_COMBAT_MIN': '0.12',
+        'SMART_WOT_BIN_IMPACT_MIN': '0.06',
+        'SMART_WOT_MIN_IMPACT_DENSITY': '0.038',
+        'SMART_WOT_SUSTAIN_PERCENTILE': '22',
+        'SMART_WOT_AUDIO_PERCENTILE': '42',
+    },
+]
+
 GUNFIRE_RESCUE_BY_PROFILE: dict[str, list[dict[str, str]]] = {
     'pubg': PUBG_RESCUE_TIERS,
     'standoff': STANDOFF_RESCUE_TIERS,
+    'wot': WOT_RESCUE_TIERS,
+    'world_of_tanks': WOT_RESCUE_TIERS,
 }
 
 
@@ -1916,7 +1951,7 @@ def _run_smart_edit(
             all_candidates.sort(key=lambda item: item['score'], reverse=True)
             selected = select_candidates(all_candidates, len(sources))
             arranged = arrange_candidates(selected)
-            if profile in ('mobile_legends', 'pubg', 'standoff'):
+            if profile in ('mobile_legends', 'pubg', 'standoff', 'wot', 'world_of_tanks'):
                 arranged = extend_selected_to_min_duration(arranged, profile)
             eff_duration = effective_duration(arranged)
             logging.info('selected %s clips, effective duration %.2fs', len(arranged), eff_duration)

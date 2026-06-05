@@ -1070,6 +1070,32 @@ def segment_is_valid_for_montage(
         ):
             return False, f"trash_mobs=bar{boss_bar:.3f}:motion{center_motion:.3f}"
         return True, "boss_ok"
+    if profile in ("wot", "world_of_tanks"):
+        if crop_box is None:
+            crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        impact_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(
+            video_path, start_sec, duration_sec
+        )
+        min_impact = (
+            float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
+            if min_gunfire is None
+            else min_gunfire
+        )
+        min_burst = float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3"))
+        min_audio = float(os.environ.get("SMART_WOT_MIN_AUDIO_RMS", "0.010"))
+        if impact_density < min_impact and burst_ratio < min_burst:
+            return False, f"no_hits=density{impact_density:.3f}:burst{burst_ratio:.2f}"
+        if audio_rms < min_audio and impact_density < min_impact * 1.15:
+            return False, f"silent_drive=rms{audio_rms:.4f}"
+        center_motion, _mini_delta, _skill_delta, _center_text = score_segment_combat(
+            video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+        )
+        if center_motion < float(os.environ.get("SMART_WOT_MIN_CENTER_MOTION", "0.014")):
+            if impact_density < min_impact * 1.1:
+                return False, f"cruise_no_action=motion{center_motion:.3f}"
+        if impact_density < min_impact * 0.85 and center_motion < 0.020:
+            return False, f"empty_drive=density{impact_density:.3f}"
+        return True, "brawl_ok"
     if profile in ("pubg", "standoff"):
         prefix = "SMART_PUBG_" if profile == "pubg" else "SMART_STANDOFF_"
         if crop_box is None:

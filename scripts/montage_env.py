@@ -87,16 +87,21 @@ def standoff_combat_env() -> dict[str, str]:
 
 
 def wot_combat_env() -> dict[str, str]:
-    """WoT: hits, explosions, brawls — not base capture idle."""
+    """WoT: hits/explosions/brawls — reject empty driving."""
     return {
         **aggressive_action_base(),
-        "SMART_WOT_PEAK_PERCENTILE": "36",
-        "SMART_WOT_SUSTAIN_PERCENTILE": "30",
-        "SMART_WOT_COMBAT_MIN": "0.16",
-        "SMART_WOT_MOTION_PERCENTILE": "48",
-        "SMART_WOT_AUDIO_PERCENTILE": "50",
-        "SMART_WOT_SCENE_PERCENTILE": "46",
-        "SMART_WOT_MIN_AUDIO_HIT": "0.14",
+        "SMART_WOT_PEAK_PERCENTILE": "34",
+        "SMART_WOT_SUSTAIN_PERCENTILE": "28",
+        "SMART_WOT_COMBAT_MIN": "0.17",
+        "SMART_WOT_BIN_IMPACT_MIN": "0.11",
+        "SMART_WOT_MIN_IMPACT_DENSITY": "0.055",
+        "SMART_WOT_MIN_BURST_RATIO": "2.4",
+        "SMART_WOT_MIN_CLUSTER_SEC": "14",
+        "SMART_WOT_MIN_CENTER_MOTION": "0.015",
+        "SMART_WOT_MOTION_PERCENTILE": "46",
+        "SMART_WOT_AUDIO_PERCENTILE": "52",
+        "SMART_WOT_SCENE_PERCENTILE": "44",
+        "SMART_WOT_IMPACT_PERCENTILE": "52",
     }
 
 
@@ -179,9 +184,11 @@ def relaxed_montage_env(profile: str) -> dict[str, str]:
         }
     if profile in ("wot", "world_of_tanks"):
         return {
-            "SMART_WOT_PEAK_PERCENTILE": "30",
+            "SMART_WOT_PEAK_PERCENTILE": "28",
             "SMART_WOT_COMBAT_MIN": "0.13",
-            "SMART_WOT_SUSTAIN_PERCENTILE": "26",
+            "SMART_WOT_BIN_IMPACT_MIN": "0.08",
+            "SMART_WOT_MIN_IMPACT_DENSITY": "0.042",
+            "SMART_WOT_SUSTAIN_PERCENTILE": "24",
             "MIN_HIGHLIGHTS": "4",
             "MAX_HIGHLIGHTS": "5",
         }
