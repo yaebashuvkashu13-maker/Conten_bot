@@ -80,3 +80,17 @@ restart_if_needed \
   2 \
   "pubg_gunfire_rebuild.py" \
   "/root/data/mlbb/pubg_gunfire_rebuild.log"
+
+restart_if_needed \
+  "pubg_tiktok_batch_10" \
+  "/root/data/mlbb/pubg_tiktok_batch_10_state.json" \
+  10 \
+  "pubg_tiktok_batch_10.py" \
+  "/root/data/mlbb/pubg_tiktok_batch_10.log"
+
+restart_if_needed \
+  "mlbb_showcase_rebuild" \
+  "/root/data/mlbb/mlbb_showcase_rebuild_state.json" \
+  2 \
+  "mlbb_showcase_rebuild.py" \
+  "/root/data/mlbb/mlbb_showcase_rebuild.log"
