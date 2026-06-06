@@ -18,12 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gameplay_gate import detect_game_viewport_crop
-from montage_env import pubg_combat_env
-from pubg_shooting_gate import (
-    format_segment_metrics_line,
-    pubg_passes_shooting_gate,
-    verify_montage_segments,
-)
+from montage_env import strict_peak_env
+from pubg_shooting_gate import format_segment_metrics_line, pubg_passes_shooting_gate
+from strict_segment_gate import verify_montage_segments
 
 # Owner-confirmed brawl anchors (n97cHIR9Qow) — not sniper 33:25
 FIGHT_ANCHORS_SEC = [1845.0, 2150.0, 2470.0]
@@ -81,7 +78,7 @@ def resolve_pubg_chat_id(env: dict[str, str]) -> str:
 
 
 def apply_pubg_env(env: dict[str, str]) -> dict[str, str]:
-    merged = dict(pubg_combat_env())
+    merged = dict(strict_peak_env("pubg"))
     merged.update(env)
     for key, val in merged.items():
         os.environ[key] = val
@@ -241,9 +238,8 @@ def build_montage(
 
     sig = file_sha256(vod)
     segment_pairs = [(c.start, CLIP_SEC) for c in clips]
-    all_ok, verify_metrics, verify_lines = verify_montage_segments(vod, segment_pairs)
-    for line in verify_lines:
-        log.info("pre_send %s", line)
+    all_ok, verify_metrics, acceptance_table = verify_montage_segments(vod, "pubg", segment_pairs)
+    log.info("\n%s", acceptance_table)
     if not all_ok:
         log.error("abort send: %s segment(s) failed shooting gate", sum(1 for m in verify_metrics if not m.get("pass")))
         return None
@@ -287,11 +283,13 @@ def build_montage(
 
         meta = {
             "profile": "pubg",
-            "mode": "brawl_direct",
+            "mode": "strict_peak",
             "final_duration": final_dur,
             "output_id": short_file_id(out),
             "sources": [{"path": str(vod), "game_name": "PUBG Metro"}],
             "selected_segments": candidates,
+            "acceptance_table": acceptance_table,
+            "segment_metrics": verify_metrics,
             "brawl_metrics": verify_metrics,
         }
         out.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -313,37 +311,37 @@ def make_brawl_montage(
     if not vod.exists():
         return 2, f"vod missing: {vod}"
 
+    from strict_montage_direct import build_and_send, discover_strict_candidates, pick_segments
+
     merged_env = apply_pubg_env(env)
     sig = file_sha256(vod)
     used = load_used_keys()
-    pool = discover_brawl_pool(vod, sig, used)
+    pool = discover_strict_candidates(vod, "pubg", sig, used)
     if len(pool) < MIN_CLIPS:
-        return 1, f"only {len(pool)} brawl windows (need {MIN_CLIPS})"
+        return 1, f"Game=PUBG, found {len(pool)}/{MIN_CLIPS} strict segments"
 
-    clips = pick_clips(pool, used, sig)
+    clips = pick_segments(pool, used, sig)
     if len(clips) < MIN_CLIPS:
-        return 1, f"only {len(clips)} non-overlapping clips (need {MIN_CLIPS})"
+        return 1, f"Game=PUBG, found {len(clips)}/{MIN_CLIPS} non-overlapping strict segments"
 
     out_dir = Path(merged_env.get("OUTPUT_DIR", "/root/videos"))
     out_dir.mkdir(parents=True, exist_ok=True)
-
     chat_id = resolve_pubg_chat_id(merged_env)
-    result = build_montage(
+    result = build_and_send(
         vod,
+        "pubg",
         clips,
         output_dir=out_dir,
         basename=output_basename,
         caption=caption,
         chat_id=chat_id,
         bot_token=merged_env.get("TG_BOT_TOKEN", ""),
+        sig=sig,
     )
     if result is None:
-        return 1, "render or gate verify failed"
+        return 1, "Game=PUBG, render/gate failed"
 
     for clip in clips:
-        used.add(segment_key(sig, clip.start))
+        used.add(segment_key(sig, float(clip["start"])))
     save_used_keys(used)
-    metrics_summary = ", ".join(
-        f"{c.start:.0f}s gun={c.gun:.3f} burst={c.burst:.1f}" for c in clips
-    )
-    return 0, f"{result.name} [{len(clips)} clips, {metrics_summary}]"
+    return 0, f"Game=PUBG, segments={len(clips)}, all passed strict gate, 0 run/loot/talk/idle -> {result.name}"

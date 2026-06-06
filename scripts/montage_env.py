@@ -38,7 +38,7 @@ def pubg_combat_env() -> dict[str, str]:
         "MAX_FINAL_DURATION": "57",
         "SMART_PUBG_STRICT_SHOOTING": "1",
         "SMART_PUBG_TIKTOK_COMBAT": "1",
-        "SMART_PUBG_ANCHOR_GOOD_ONLY": "1",
+        "SMART_PUBG_ANCHOR_GOOD_ONLY": "0",
         "SMART_PUBG_PEAK_PERCENTILE": "36",
         "SMART_PUBG_SUSTAIN_PERCENTILE": "28",
         "SMART_PUBG_COMBAT_MIN": "0.20",
@@ -140,6 +140,64 @@ def mlbb_combat_env() -> dict[str, str]:
         "SMART_OUTPUT_CRF": "15",
         "SMART_OUTPUT_PRESET": "slow",
     }
+
+
+def strict_peak_env(profile: str) -> dict[str, str]:
+    """Strict peak montage — no rescue tiers, no relax, 3-4 clips / 33-57s."""
+    profile = profile.strip().lower()
+    if profile in ("mlbb",):
+        profile = "mobile_legends"
+    if profile == "world_of_tanks":
+        profile = "wot"
+
+    base = {
+        **passthrough_audio_env(),
+        "STRICT_PEAK_MONTAGE": "1",
+        "SMART_PUBG_STRICT_SHOOTING": "1",
+        "SMART_ALLOW_EXCLUDED_FALLBACK": "0",
+        "MIN_HIGHLIGHTS": "3",
+        "MAX_HIGHLIGHTS": "4",
+        "MIN_FINAL_DURATION": "33",
+        "MAX_FINAL_DURATION": "57",
+        "SMART_ACTION_CLIP_MIN_SEC": "8",
+        "SMART_ACTION_CLIP_MAX_SEC": "11",
+    }
+    per_game = {
+        "mobile_legends": {
+            **mlbb_combat_env(),
+            "STRICT_GAMEPLAY": "1",
+            "SMART_MAX_OVERLAY_TEXT": "0.10",
+            "SMART_MLBB_MIN_FIGHT_MOTION": "0.042",
+            "SMART_MIN_CENTER_MOTION": "0.038",
+            "SMART_MIN_MINIMAP_DELTA": "0.012",
+            "MIN_HIGHLIGHTS": "3",
+            "MAX_HIGHLIGHTS": "4",
+        },
+        "pubg": {
+            **pubg_combat_env(),
+            "SMART_PUBG_ANCHOR_GOOD_ONLY": "0",
+            "SMART_PUBG_TIKTOK_COMBAT": "0",
+        },
+        "genshin": genshin_combat_env(),
+        "standoff": {
+            **standoff_combat_env(),
+            "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.055",
+            "SMART_STANDOFF_MIN_BURST_RATIO": "4.0",
+            "SMART_STANDOFF_MIN_CENTER_MOTION": "0.022",
+        },
+        "wot": {
+            **wot_combat_env(),
+            "SMART_WOT_MIN_IMPACT_DENSITY": "0.052",
+            "SMART_WOT_MIN_BURST_RATIO": "2.3",
+            "SMART_WOT_MIN_CENTER_MOTION": "0.018",
+            "SMART_WOT_RELAX_MIN_IMPACT": "0.052",
+        },
+    }
+    if profile not in per_game:
+        return base
+    out = dict(base)
+    out.update(per_game[profile])
+    return out
 
 
 def profile_montage_env(profile: str) -> dict[str, str]:

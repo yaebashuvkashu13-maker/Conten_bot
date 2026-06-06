@@ -1368,14 +1368,14 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         run_env['DEFAULT_GAME_PROFILE'] = profile
         run_env['QUEUE_GAME_PROFILE'] = profile
         try:
-            from montage_env import profile_montage_env
+            from montage_env import strict_peak_env
 
-            run_env.update(profile_montage_env(profile))
+            run_env.update(strict_peak_env(profile))
         except ImportError:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from montage_env import profile_montage_env
+            from montage_env import strict_peak_env
 
-            run_env.update(profile_montage_env(profile))
+            run_env.update(strict_peak_env(profile))
         if len(lines) == 1:
             run_env['SINGLE_SOURCE_MODE'] = '1'
         completed = subprocess.run(

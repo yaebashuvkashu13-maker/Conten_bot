@@ -1127,17 +1127,18 @@ def build_candidates(
         elif (
             relax_segment_gate
             and profile in GUNFIRE_PROFILES
+            and os.environ.get('STRICT_PEAK_MONTAGE', '0') != '1'
             and not (profile == 'pubg' and os.environ.get('SMART_PUBG_STRICT_SHOOTING', '0') == '1')
         ):
             relax_key = 'SMART_PUBG_RELAX_MIN_GUNFIRE' if profile == 'pubg' else 'SMART_STANDOFF_RELAX_MIN_GUNFIRE'
             gate_kwargs = {
                 'min_gunfire': float(os.environ.get(relax_key, '0.045')),
             }
-        elif relax_segment_gate and profile == 'genshin':
+        elif relax_segment_gate and profile == 'genshin' and os.environ.get('STRICT_PEAK_MONTAGE', '0') != '1':
             gate_kwargs = {
                 'min_boss': float(os.environ.get('SMART_GENSHIN_RELAX_MIN_BOSS_BAR', '0.16')),
             }
-        elif relax_segment_gate and profile in ('wot', 'world_of_tanks'):
+        elif relax_segment_gate and profile in ('wot', 'world_of_tanks') and os.environ.get('STRICT_PEAK_MONTAGE', '0') != '1':
             gate_kwargs = {
                 'min_gunfire': float(os.environ.get('SMART_WOT_RELAX_MIN_IMPACT', '0.04')),
             }
@@ -2073,9 +2074,10 @@ def _run_smart_edit(
 
         single_source = len(sources) == 1 and os.environ.get('SINGLE_SOURCE_MODE') == '1'
         strict_gameplay = os.environ.get('STRICT_GAMEPLAY', '0') == '1'
+        strict_peak = os.environ.get('STRICT_PEAK_MONTAGE', '0') == '1'
         strict_pubg_shooting = profile == 'pubg' and os.environ.get('SMART_PUBG_STRICT_SHOOTING', '0') == '1'
         all_candidates = collect_candidates()
-        if not all_candidates and single_source and not strict_gameplay and not strict_pubg_shooting:
+        if not all_candidates and single_source and not strict_gameplay and not strict_pubg_shooting and not strict_peak:
             logging.warning('single-source retry with relaxed segment gate')
             all_candidates = collect_candidates(relax_gate=True)
 
@@ -2084,7 +2086,7 @@ def _run_smart_edit(
         eff_duration = 0.0
         rescue_attempts = (
             []
-            if strict_pubg_shooting
+            if strict_peak or strict_pubg_shooting
             else list(GUNFIRE_RESCUE_BY_PROFILE.get(profile, []))
             if single_source and profile in GUNFIRE_RESCUE_BY_PROFILE
             else []
@@ -2175,13 +2177,41 @@ def _run_smart_edit(
                 f'Smart Edit v1.1 | {profile.replace("_", " ").title()}{hint_text} | '
                 f'{duration_label} | id={file_id}'
             )
+        segment_metrics: list[dict] = []
+        acceptance_table = ''
+        if os.environ.get('STRICT_PEAK_MONTAGE', '0') == '1' and arranged:
+            try:
+                from strict_segment_gate import normalize_profile, verify_montage_segments
+
+                gate_profile = normalize_profile(profile)
+                vod_path = Path(arranged[0]['source_path'])
+                pairs = [
+                    (
+                        float(item['start']),
+                        float(item.get('input_duration') or item.get('output_duration') or 9.0),
+                    )
+                    for item in arranged
+                ]
+                all_ok, segment_metrics, acceptance_table = verify_montage_segments(
+                    vod_path, gate_profile, pairs
+                )
+                logging.info('\n%s', acceptance_table)
+                if not all_ok:
+                    logging.error('abort send: strict peak gate failed for one or more segments')
+                    return 1
+            except ImportError:
+                logging.warning('strict_segment_gate not available — skipping pre-send verify')
+
         save_analysis(output_path, {
             'profile': profile,
+            'mode': 'strict_peak' if os.environ.get('STRICT_PEAK_MONTAGE', '0') == '1' else None,
             'target_duration': TARGET_DURATION,
             'min_final_duration': MIN_FINAL_DURATION,
             'max_final_duration': MAX_FINAL_DURATION,
             'final_duration': final_duration,
             'output_id': file_id,
+            'acceptance_table': acceptance_table or None,
+            'segment_metrics': segment_metrics or None,
             'sources': [
                 {
                     'path': str(item['source_path']),
