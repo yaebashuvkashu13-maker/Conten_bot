@@ -100,7 +100,9 @@ def discover_strict_candidates(
 
     profile = normalize_profile(profile)
     gate_profile = "world_of_tanks" if profile == "wot" else profile
+    log.info("analyze %s profile=%s", vod.name, profile)
     analysis = analyze_video(vod)
+    log.info("analyze done %s bins=%s", vod.name, analysis.get("bins"))
     global_values = {
         "motion": list(analysis["motion"]),
         "center_motion": list(analysis["center_motion"]),
@@ -120,8 +122,9 @@ def discover_strict_candidates(
         relax_segment_gate=False,
     )
 
+    probe_limit = int(os.environ.get("STRICT_PROBE_LIMIT", "50"))
     verified: list[dict] = []
-    for cand in raw:
+    for cand in raw[:probe_limit]:
         start = float(cand["start"])
         dur = float(cand.get("input_duration") or cand.get("output_duration") or 9.0)
         key = segment_key(sig, start)

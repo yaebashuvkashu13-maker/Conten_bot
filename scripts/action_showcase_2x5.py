@@ -32,11 +32,22 @@ LOG = Path("/root/data/mlbb/action_showcase_2x5.log")
 STATE_FILE = Path("/root/data/mlbb/action_showcase_2x5_state.json")
 
 GAMES = [
-    {"id": "mlbb", "profile": "mobile_legends", "label": "MLBB", "source": "yt_2XbUY9dvS7Y.mp4"},
-    {"id": "pubg", "profile": "pubg", "label": "PUBG Metro", "source": "yt_n97cHIR9Qow.mp4", "fallback_source": "yt_FpMs48XOnq0.mp4"},
-    {"id": "genshin", "profile": "genshin", "label": "Genshin", "source": "yt_ViQhjTOShrA.mp4", "fallback_source": "yt_NXJuHTKXs2g.mp4"},
-    {"id": "standoff", "profile": "standoff", "label": "Standoff 2", "source": "yt_z8ImUR0_x_M.mp4"},
-    {"id": "wot", "profile": "wot", "label": "WoT", "source": "yt_dQNh92Po_zE.mp4", "fallback_source": "yt_68K8GrmWil4.mp4"},
+    {"id": "mlbb", "profile": "mobile_legends", "label": "MLBB", "sources": ["yt_2XbUY9dvS7Y.mp4"]},
+    {
+        "id": "pubg",
+        "profile": "pubg",
+        "label": "PUBG Metro RU",
+        "sources": ["yt_n97cHIR9Qow.mp4", "yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4"],
+        "pubg_chat": True,
+    },
+    {
+        "id": "genshin",
+        "profile": "genshin",
+        "label": "Genshin",
+        "sources": ["yt_GVwLYDAB7cY.mp4", "yt_ViQhjTOShrA.mp4", "yt_NXJuHTKXs2g.mp4"],
+    },
+    {"id": "standoff", "profile": "standoff", "label": "Standoff 2", "sources": ["yt_z8ImUR0_x_M.mp4"]},
+    {"id": "wot", "profile": "wot", "label": "WoT", "sources": ["yt_dQNh92Po_zE.mp4", "yt_68K8GrmWil4.mp4"]},
 ]
 
 VARIANTS = [
@@ -73,11 +84,15 @@ def wait_editor() -> None:
 
 
 def resolve_source(game: dict, attempt: int) -> Path | None:
-    primary = INBOX / game["source"]
+    sources = game.get("sources")
+    if sources:
+        existing = [INBOX / s for s in sources if (INBOX / s).exists()]
+        if not existing:
+            return None
+        return existing[min(attempt - 1, len(existing) - 1)]
+    primary = INBOX / game.get("source", "")
     fallback_name = game.get("fallback_source")
     fallback = INBOX / fallback_name if fallback_name else None
-    if attempt >= 3 and fallback and fallback.exists():
-        return fallback
     if primary.exists():
         return primary
     if fallback and fallback.exists():
@@ -98,6 +113,12 @@ def run_job(game: dict, variant: dict, env: dict[str, str], chat_id: str, state:
             log(f"fail {job_key}: no source file")
             return 2
         run_env = dict(env)
+        if game.get("pubg_chat"):
+            from pubg_brawl_direct import resolve_pubg_chat_id
+
+            chat = resolve_pubg_chat_id(run_env)
+            if chat:
+                run_env["TG_CHAT_ID"] = chat
         run_env["SELECTION_VARIANT"] = variant["SELECTION_VARIANT"]
         run_env["OUTPUT_DIR"] = "/root/videos"
         caption = (
