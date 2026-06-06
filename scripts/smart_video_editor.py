@@ -831,17 +831,29 @@ def build_candidates(
     motion_threshold = float(np.percentile(analysis['motion'], motion_pct)) if bins > 3 else float(np.max(analysis['motion']))
     scene_threshold = float(np.percentile(analysis['scene'], scene_pct)) if bins > 3 else float(np.max(analysis['scene']))
     audio_threshold = float(np.percentile(analysis['audio'], audio_pct)) if bins > 3 else float(np.max(analysis['audio']))
+    gunfire_track = analysis.get('gunfire', analysis['audio'])
     gunfire_threshold = float(
-        np.percentile(analysis.get('gunfire', analysis['audio']), gunfire_pct)
-    ) if bins > 3 else float(np.max(analysis.get('gunfire', analysis['audio'])))
+        np.percentile(gunfire_track, gunfire_pct)
+    ) if bins > 3 else float(np.max(gunfire_track))
+    pubg_gunfire_peak_thr = 0.0
+    if profile == 'pubg' and bins > 3:
+        pubg_gunfire_peak_thr = max(
+            0.11,
+            float(np.percentile(gunfire_track, float(os.environ.get('SMART_PUBG_GUNFIRE_PEAK_PERCENTILE', '86')))),
+        )
 
     for idx in range(bins):
         score = float(smooth_scores[idx])
-        if score < peak_threshold:
+        gunfire_bin = float(gunfire_track[idx])
+        if profile == 'pubg':
+            if score < peak_threshold and gunfire_bin < pubg_gunfire_peak_thr:
+                continue
+        elif score < peak_threshold:
             continue
         local_left = max(0, idx - 1)
         local_right = min(bins, idx + 2)
-        if score < float(smooth_scores[local_left:local_right].max()):
+        gunfire_is_peak = profile == 'pubg' and gunfire_bin >= pubg_gunfire_peak_thr
+        if not gunfire_is_peak and score < float(smooth_scores[local_left:local_right].max()):
             continue
 
         left = idx
@@ -896,13 +908,13 @@ def build_candidates(
             peak_gunfire = float(np.max(gunfire_track[region_slice]))
             gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.08'))
             if profile == 'pubg':
-                peak_min = float(os.environ.get('SMART_PUBG_MIN_BIN_GUNFIRE_PEAK', '0.13'))
-                gunfire_min = max(gunfire_min, float(os.environ.get('SMART_PUBG_BIN_GUNFIRE_MIN', '0.10')))
+                peak_min = float(os.environ.get('SMART_PUBG_MIN_BIN_GUNFIRE_PEAK', '0.11'))
+                gunfire_min = max(gunfire_min, float(os.environ.get('SMART_PUBG_BIN_GUNFIRE_MIN', '0.08')))
                 if peak_gunfire < peak_min:
                     continue
-                if mean_gunfire < gunfire_min:
+                if mean_gunfire < gunfire_min and peak_gunfire < peak_min * 1.12:
                     continue
-                if mean_audio > combat_min * 1.05 and peak_gunfire < peak_min * 1.08:
+                if mean_audio > combat_min * 1.08 and peak_gunfire < peak_min * 1.05:
                     continue
             else:
                 if bins > 8:
