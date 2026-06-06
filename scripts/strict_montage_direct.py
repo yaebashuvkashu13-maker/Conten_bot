@@ -90,62 +90,101 @@ def save_used_keys(keys: set[str]) -> None:
     )
 
 
+def _fast_peak_starts(analysis: dict, profile: str, *, limit: int = 45) -> list[float]:
+    """Top motion/audio/gunfire bins — avoids slow build_candidates on 3h VODs."""
+    import numpy as np
+
+    win = float(analysis.get("window_seconds", 2.0))
+    gun = np.asarray(analysis.get("gunfire", analysis["audio"]), dtype=np.float32)
+    motion = np.asarray(analysis["center_motion"], dtype=np.float32)
+    audio = np.asarray(analysis["audio"], dtype=np.float32)
+    if profile in ("pubg", "standoff", "wot"):
+        combined = gun * 0.62 + motion * 0.22 + audio * 0.16
+    elif profile == "genshin":
+        scene = np.asarray(analysis["scene"], dtype=np.float32)
+        combined = motion * 0.35 + audio * 0.30 + scene * 0.35
+    else:
+        combined = motion * 0.40 + audio * 0.35 + gun * 0.25
+
+    skip_intro = 120.0 if profile != "pubg" else 90.0
+    min_gap = 75.0
+    order = np.argsort(combined)[::-1]
+    starts: list[float] = []
+    for idx in order:
+        start = float(idx) * win
+        if start < skip_intro:
+            continue
+        if any(abs(start - s) < min_gap for s in starts):
+            continue
+        starts.append(start)
+        if len(starts) >= limit:
+            break
+    return starts
+
+
 def discover_strict_candidates(
     vod: Path,
     profile: str,
     sig: str,
     used: set[str],
 ) -> list[dict]:
-    from smart_video_editor import analyze_video, build_candidates
+    from smart_video_editor import profile_action_clip_bounds
 
     profile = normalize_profile(profile)
-    gate_profile = "world_of_tanks" if profile == "wot" else profile
     log.info("analyze %s profile=%s", vod.name, profile)
+    from smart_video_editor import analyze_video
+
     analysis = analyze_video(vod)
     log.info("analyze done %s bins=%s", vod.name, analysis.get("bins"))
-    global_values = {
-        "motion": list(analysis["motion"]),
-        "center_motion": list(analysis["center_motion"]),
-        "sharpness": list(analysis["sharpness"]),
-        "scene": list(analysis["scene"]),
-        "audio": list(analysis["audio"]),
-        "gunfire": list(analysis.get("gunfire", analysis["audio"])),
-    }
-    raw = build_candidates(
-        0,
-        vod,
-        GAME_LABELS.get(profile, profile),
-        analysis,
-        global_values,
-        gate_profile,
-        sig or file_sha256(vod),
-        relax_segment_gate=False,
-    )
 
-    probe_limit = int(os.environ.get("STRICT_PROBE_LIMIT", "50"))
+    clip_lo, clip_hi = profile_action_clip_bounds(
+        "world_of_tanks" if profile == "wot" else profile
+    )
+    default_dur = min(10.0, clip_hi)
+
+    probe_limit = int(os.environ.get("STRICT_PROBE_LIMIT", "45"))
+    peak_starts = _fast_peak_starts(analysis, profile, limit=probe_limit * 2)
+    log.info("fast peaks %s: %s candidates to probe", vod.name, len(peak_starts))
+
     verified: list[dict] = []
-    for cand in raw[:probe_limit]:
-        start = float(cand["start"])
-        dur = float(cand.get("input_duration") or cand.get("output_duration") or 9.0)
+    for start in peak_starts:
+        dur = default_dur
         key = segment_key(sig, start)
         if key in used:
             continue
         ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
         log.info(
-            "[%s] probe start=%.1f %s reason=%s",
+            "[%s] probe start=%.1f reason=%s",
             "PASS" if ok else "FAIL",
             start,
-            metrics,
             reason,
         )
         if not ok:
             continue
-        cand["strict_metrics"] = metrics
-        cand["gate_reason"] = reason
-        cand["strict_score"] = float(cand.get("score", 0)) + float(metrics.get("gunfire_density", 0) or metrics.get("impact_density", 0) or 0)
-        verified.append(cand)
+        score = float(metrics.get("gunfire_density", 0) or metrics.get("impact_density", 0) or 0)
+        score += float(metrics.get("boss_score", 0) or 0) * 0.5
+        score += float(metrics.get("center_motion", 0) or 0)
+        verified.append(
+            {
+                "source_index": 0,
+                "source_signature": sig,
+                "source_path": str(vod),
+                "game_name": GAME_LABELS.get(profile, profile),
+                "start": round(start, 3),
+                "input_duration": dur,
+                "output_duration": dur,
+                "speed": 1.0,
+                "score": round(score, 4),
+                "strict_metrics": metrics,
+                "gate_reason": reason,
+                "strict_score": score,
+            }
+        )
+        if len(verified) >= probe_limit:
+            break
 
-    verified.sort(key=lambda c: c.get("strict_score", c.get("score", 0)), reverse=True)
+    verified.sort(key=lambda c: c.get("strict_score", 0), reverse=True)
+    log.info("strict pool %s: %s passed", vod.name, len(verified))
     return verified
 
 

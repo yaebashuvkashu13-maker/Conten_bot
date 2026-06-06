@@ -21,19 +21,20 @@ LOG = Path("/root/data/mlbb/investor_demo_batch.log")
 STATE_FILE = Path("/root/data/mlbb/investor_demo_batch_state.json")
 
 # PUBG: RU Metro (n97cHIR9Qow = owner labels). Genshin: longer RU-friendly VODs first.
+# Fast/smaller VODs first — investor demo must finish overnight.
 GAMES = [
-    {
-        "id": "mlbb",
-        "profile": "mobile_legends",
-        "label": "MLBB",
-        "sources": ["yt_2XbUY9dvS7Y.mp4"],
-    },
     {
         "id": "pubg",
         "profile": "pubg",
         "label": "PUBG Metro RU",
         "sources": ["yt_n97cHIR9Qow.mp4", "yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4"],
         "pubg_chat": True,
+    },
+    {
+        "id": "wot",
+        "profile": "wot",
+        "label": "WoT",
+        "sources": ["yt_dQNh92Po_zE.mp4", "yt_68K8GrmWil4.mp4"],
     },
     {
         "id": "genshin",
@@ -48,10 +49,10 @@ GAMES = [
         "sources": ["yt_z8ImUR0_x_M.mp4"],
     },
     {
-        "id": "wot",
-        "profile": "wot",
-        "label": "WoT",
-        "sources": ["yt_dQNh92Po_zE.mp4", "yt_68K8GrmWil4.mp4"],
+        "id": "mlbb",
+        "profile": "mobile_legends",
+        "label": "MLBB",
+        "sources": ["yt_2XbUY9dvS7Y.mp4"],
     },
 ]
 
