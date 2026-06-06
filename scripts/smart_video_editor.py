@@ -1020,11 +1020,23 @@ def build_candidates(
                 shot_density, shot_burst, shot_rms = score_pubg_gunfire_audio(
                     source_path, start, input_duration
                 )
-                combo_score += 1.05 * max(0.0, shot_density - 0.075)
-                combo_score += 0.18 * max(0.0, shot_burst - 5.5)
-                combo_score -= 0.42 * max(0.0, shot_rms - 0.032) * (
-                    1.0 if shot_density < 0.08 else 0.45
+                combo_score += 0.85 * max(0.0, shot_density - 0.048)
+                combo_score += 0.18 * max(0.0, shot_burst - 5.0)
+                combo_score -= 0.42 * max(0.0, shot_rms - 0.038) * (
+                    1.0 if shot_density < 0.04 else 0.40
                 )
+                try:
+                    from pubg_owner_calibration import nearest_owner_label
+
+                    owner_near, owner_dist = nearest_owner_label(
+                        source_path, start, radius_sec=22.0
+                    )
+                    if owner_near == 'good':
+                        combo_score += max(0.0, 0.62 - owner_dist * 0.028)
+                    elif owner_near == 'bad':
+                        combo_score -= 0.85
+                except ImportError:
+                    pass
                 combo_score -= 0.18 * max(0.0, mean_audio - audio_threshold) * (
                     1.0 if peak_gunfire < gunfire_threshold * 1.15 else 0.35
                 )

@@ -1,0 +1,14 @@
+{
+  "videos": {
+    "n97cHIR9Qow": [
+      {"tc": "30:45", "time_sec": 1845, "label": "good"},
+      {"tc": "33:25", "time_sec": 2005, "label": "good"},
+      {"tc": "35:05", "time_sec": 2105, "label": "bad"},
+      {"tc": "35:50", "time_sec": 2150, "label": "good"},
+      {"tc": "36:55", "time_sec": 2215, "label": "bad"},
+      {"tc": "38:07", "time_sec": 2287, "label": "bad"},
+      {"tc": "41:10", "time_sec": 2470, "label": "good"},
+      {"tc": "42:01", "time_sec": 2521, "label": "bad"}
+    ]
+  }
+}

@@ -1121,6 +1121,9 @@ def segment_is_valid_for_montage(
         gunfire_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(
             video_path, start_sec, duration_sec
         )
+        center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
+            video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
+        )
         min_gun = (
             float(os.environ.get(f"{prefix}MIN_GUNFIRE_DENSITY", "0.055"))
             if min_gunfire is None
@@ -1129,8 +1132,32 @@ def segment_is_valid_for_montage(
         min_burst = float(os.environ.get(f"{prefix}MIN_BURST_RATIO", "2.4"))
         min_audio = float(os.environ.get(f"{prefix}MIN_AUDIO_RMS", "0.008"))
         if profile == "pubg":
-            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.075")))
-            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.2")))
+            try:
+                from pubg_owner_calibration import (
+                    nearest_owner_label,
+                    pubg_passes_owner_heuristics,
+                    segment_overlaps_owner_label,
+                )
+            except ImportError:
+                from pubg_owner_calibration import (  # type: ignore[no-redef]
+                    nearest_owner_label,
+                    pubg_passes_owner_heuristics,
+                    segment_overlaps_owner_label,
+                )
+            if segment_overlaps_owner_label(
+                video_path, start_sec, duration_sec, label="bad", pad_sec=10.0
+            ):
+                return False, "owner_bad_window"
+            owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=12.0)
+            if owner_near == "good" and owner_dist <= 12.0:
+                return True, "owner_good"
+            ok_owner, owner_reason = pubg_passes_owner_heuristics(
+                gunfire_density, burst_ratio, audio_rms, center_motion
+            )
+            if not ok_owner:
+                return False, owner_reason
+            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.048")))
+            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.0")))
             if gunfire_density < min_gun and burst_ratio < min_burst:
                 return False, f"no_shots=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
             talk_rms = float(os.environ.get("SMART_PUBG_MAX_TALK_RMS", "0.034"))
@@ -1144,10 +1171,14 @@ def segment_is_valid_for_montage(
             return False, f"low_gunfire=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
         if audio_rms < min_audio * 0.85 and gunfire_density < min_gun * 0.90:
             return False, f"silent_segment=rms{audio_rms:.4f}"
-        center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
-            video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
-        )
-        if center_motion < float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018")):
+        min_center_motion = float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018"))
+        if profile == "pubg":
+            sniper_ok, _ = pubg_passes_owner_heuristics(
+                gunfire_density, burst_ratio, audio_rms, center_motion
+            )
+            if sniper_ok and center_motion < min_center_motion:
+                min_center_motion = 0.010
+        if center_motion < min_center_motion:
             return False, f"no_aim_motion={center_motion:.3f}"
         default_max_text = "0.62" if profile == "pubg" else "0.14"
         max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", default_max_text))
