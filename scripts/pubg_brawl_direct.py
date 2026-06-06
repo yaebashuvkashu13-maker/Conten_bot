@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -16,20 +17,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gameplay_gate import (
-    detect_game_viewport_crop,
-    score_pubg_gunfire_audio,
-    score_segment_combat,
+from gameplay_gate import detect_game_viewport_crop
+from montage_env import pubg_combat_env
+from pubg_shooting_gate import (
+    format_segment_metrics_line,
+    pubg_passes_shooting_gate,
+    verify_montage_segments,
 )
 
 # Owner-confirmed brawl anchors (n97cHIR9Qow) — not sniper 33:25
 FIGHT_ANCHORS_SEC = [1845.0, 2150.0, 2470.0]
 CLIP_SEC = 9.5
-CLIPS_PER_MONTAGE = 5
+MIN_CLIPS = 3
+TARGET_CLIPS = 4
+MIN_FINAL_DURATION = 33.0
+MAX_FINAL_DURATION = 57.0
 MIN_GAP_SEC = 95.0
 
 GLOBAL_HISTORY = Path("/root/data/mlbb/pubg_global_segment_history.json")
 DEFAULT_VOD = Path("/root/data/mlbb/youtube_nightly/inbox/yt_n97cHIR9Qow.mp4")
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("pubg_brawl_direct")
 
 
 @dataclass
@@ -53,6 +62,30 @@ def file_sha256(path: Path) -> str:
 
 def segment_key(sig: str, start: float) -> str:
     return f"{sig}:{round(start, 3)}"
+
+
+def resolve_pubg_chat_id(env: dict[str, str]) -> str:
+    for key in ("PUBG_CHAT_IDS",):
+        raw = env.get(key, "")
+        for part in raw.split(","):
+            part = part.strip()
+            if part:
+                return part
+    for part in env.get("CHAT_GAME_PROFILES", "").split(","):
+        part = part.strip()
+        if ":" in part:
+            chat_id, profile = part.split(":", 1)
+            if profile.strip().lower() == "pubg" and chat_id.strip():
+                return chat_id.strip()
+    return env.get("TG_CHAT_ID", "")
+
+
+def apply_pubg_env(env: dict[str, str]) -> dict[str, str]:
+    merged = dict(pubg_combat_env())
+    merged.update(env)
+    for key, val in merged.items():
+        os.environ[key] = val
+    return merged
 
 
 def load_used_keys() -> set[str]:
@@ -95,36 +128,19 @@ def nearest_anchor(start: float) -> float:
     return min(abs(start - anchor) for anchor in FIGHT_ANCHORS_SEC)
 
 
-def qualifies_brawl(start: float, gun: float, burst: float, motion: float, rms: float) -> tuple[bool, str]:
-    dist = nearest_anchor(start)
-    if rms > 0.050 and gun < 0.020:
-        return False, "talk"
-    if motion > 0.24 and gun < 0.060:
-        return False, "run"
-    if dist <= 5.0:
-        if gun >= 0.052 and burst >= 4.6 and motion >= 0.035:
-            return True, f"anchor_dist{dist:.0f}"
-        return False, f"weak_anchor_gun{gun:.3f}"
-    if gun >= 0.080 and burst >= 5.8 and motion >= 0.050:
-        return True, "hot_scan"
-    return False, f"low_gun{gun:.3f}"
-
-
 def probe_window(vod: Path, start: float) -> BrawlWindow | None:
     if start < 0 or start + CLIP_SEC > 20000:
         return None
-    crop = detect_game_viewport_crop(vod, start, CLIP_SEC)
-    gun, burst, rms = score_pubg_gunfire_audio(vod, start, CLIP_SEC)
-    motion, _, _, _ = score_segment_combat(vod, start, CLIP_SEC, crop_box=crop, sample_frames=5)
-    ok, reason = qualifies_brawl(start, gun, burst, motion, rms)
+    ok, reason, metrics = pubg_passes_shooting_gate(vod, start, CLIP_SEC)
+    log.info(format_segment_metrics_line(metrics, reason, ok=ok))
     if not ok:
         return None
     return BrawlWindow(
         start=round(start, 3),
-        gun=gun,
-        burst=burst,
-        motion=motion,
-        rms=rms,
+        gun=float(metrics["gunfire_density"]),
+        burst=float(metrics["burst_ratio"]),
+        motion=float(metrics["center_motion"]),
+        rms=float(metrics["audio_rms"]),
         near_anchor=nearest_anchor(start),
         reason=reason,
     )
@@ -175,7 +191,14 @@ def discover_brawl_pool(vod: Path, sig: str, used: set[str]) -> list[BrawlWindow
     return pool
 
 
-def pick_clips(pool: list[BrawlWindow], used: set[str], sig: str, count: int = CLIPS_PER_MONTAGE) -> list[BrawlWindow]:
+def pick_clips(
+    pool: list[BrawlWindow],
+    used: set[str],
+    sig: str,
+    *,
+    target: int = TARGET_CLIPS,
+    minimum: int = MIN_CLIPS,
+) -> list[BrawlWindow]:
     chosen: list[BrawlWindow] = []
     for win in pool:
         key = segment_key(sig, win.start)
@@ -184,8 +207,16 @@ def pick_clips(pool: list[BrawlWindow], used: set[str], sig: str, count: int = C
         if any(abs(win.start - c.start) < MIN_GAP_SEC for c in chosen):
             continue
         chosen.append(win)
-        if len(chosen) >= count:
+        if len(chosen) >= target:
             break
+    est_duration = len(chosen) * CLIP_SEC
+    if len(chosen) < minimum:
+        return []
+    if est_duration < MIN_FINAL_DURATION and len(chosen) < target:
+        return []
+    if est_duration > MAX_FINAL_DURATION:
+        while len(chosen) > minimum and len(chosen) * CLIP_SEC > MAX_FINAL_DURATION:
+            chosen.pop()
     return chosen
 
 
@@ -209,6 +240,14 @@ def build_montage(
     )
 
     sig = file_sha256(vod)
+    segment_pairs = [(c.start, CLIP_SEC) for c in clips]
+    all_ok, verify_metrics, verify_lines = verify_montage_segments(vod, segment_pairs)
+    for line in verify_lines:
+        log.info("pre_send %s", line)
+    if not all_ok:
+        log.error("abort send: %s segment(s) failed shooting gate", sum(1 for m in verify_metrics if not m.get("pass")))
+        return None
+
     logo = Path(os.environ.get("LOGO_FILE", "/root/logo.png"))
     temp_dir = Path(tempfile.mkdtemp(prefix="pubg-brawl-"))
     try:
@@ -242,6 +281,10 @@ def build_montage(
         run_command(build_xfade_command(segment_paths, durations, out))
         final_dur = ffprobe_duration(out)
 
+        if final_dur < MIN_FINAL_DURATION or final_dur > MAX_FINAL_DURATION:
+            log.error("abort send: final duration %.1fs outside %.0f-%.0fs", final_dur, MIN_FINAL_DURATION, MAX_FINAL_DURATION)
+            return None
+
         meta = {
             "profile": "pubg",
             "mode": "brawl_direct",
@@ -249,16 +292,7 @@ def build_montage(
             "output_id": short_file_id(out),
             "sources": [{"path": str(vod), "game_name": "PUBG Metro"}],
             "selected_segments": candidates,
-            "brawl_metrics": [
-                {
-                    "start": c["start"],
-                    "gun": clips[i].gun,
-                    "burst": clips[i].burst,
-                    "motion": clips[i].motion,
-                    "reason": clips[i].reason,
-                }
-                for i, c in enumerate(candidates)
-            ],
+            "brawl_metrics": verify_metrics,
         }
         out.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -279,34 +313,37 @@ def make_brawl_montage(
     if not vod.exists():
         return 2, f"vod missing: {vod}"
 
+    merged_env = apply_pubg_env(env)
     sig = file_sha256(vod)
     used = load_used_keys()
     pool = discover_brawl_pool(vod, sig, used)
-    if len(pool) < CLIPS_PER_MONTAGE:
-        return 1, f"only {len(pool)} brawl windows (need {CLIPS_PER_MONTAGE})"
+    if len(pool) < MIN_CLIPS:
+        return 1, f"only {len(pool)} brawl windows (need {MIN_CLIPS})"
 
-    clips = pick_clips(pool, used, sig, CLIPS_PER_MONTAGE)
-    if len(clips) < CLIPS_PER_MONTAGE:
-        return 1, f"only {len(clips)} non-overlapping clips"
+    clips = pick_clips(pool, used, sig)
+    if len(clips) < MIN_CLIPS:
+        return 1, f"only {len(clips)} non-overlapping clips (need {MIN_CLIPS})"
 
-    out_dir = Path(env.get("OUTPUT_DIR", "/root/videos"))
+    out_dir = Path(merged_env.get("OUTPUT_DIR", "/root/videos"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    for key, val in env.items():
-        os.environ.setdefault(key, val)
 
+    chat_id = resolve_pubg_chat_id(merged_env)
     result = build_montage(
         vod,
         clips,
         output_dir=out_dir,
         basename=output_basename,
         caption=caption,
-        chat_id=env.get("TG_CHAT_ID", ""),
-        bot_token=env.get("TG_BOT_TOKEN", ""),
+        chat_id=chat_id,
+        bot_token=merged_env.get("TG_BOT_TOKEN", ""),
     )
     if result is None:
-        return 1, "render failed"
+        return 1, "render or gate verify failed"
 
     for clip in clips:
         used.add(segment_key(sig, clip.start))
     save_used_keys(used)
-    return 0, result.name
+    metrics_summary = ", ".join(
+        f"{c.start:.0f}s gun={c.gun:.3f} burst={c.burst:.1f}" for c in clips
+    )
+    return 0, f"{result.name} [{len(clips)} clips, {metrics_summary}]"

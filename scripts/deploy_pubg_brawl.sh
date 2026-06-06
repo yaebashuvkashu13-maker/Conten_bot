@@ -12,8 +12,10 @@ git pull --ff-only origin "$BRANCH"
 
 install -m 755 \
   scripts/pubg_brawl_direct.py \
+  scripts/pubg_shooting_gate.py \
   scripts/pubg_tiktok_batch_10.py \
   scripts/pubg_owner_calibration.py \
+  scripts/montage_env.py \
   scripts/gameplay_gate.py \
   /usr/local/bin/
 

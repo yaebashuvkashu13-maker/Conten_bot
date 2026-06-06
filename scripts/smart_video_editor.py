@@ -1124,7 +1124,11 @@ def build_candidates(
                 'max_cartoon_ratio': 0.55,
                 'min_hud_frame_rate': max(0.68, float(os.environ.get('SMART_MIN_HUD_FRAME_RATE', '0.72'))),
             }
-        elif relax_segment_gate and profile in GUNFIRE_PROFILES:
+        elif (
+            relax_segment_gate
+            and profile in GUNFIRE_PROFILES
+            and not (profile == 'pubg' and os.environ.get('SMART_PUBG_STRICT_SHOOTING', '0') == '1')
+        ):
             relax_key = 'SMART_PUBG_RELAX_MIN_GUNFIRE' if profile == 'pubg' else 'SMART_STANDOFF_RELAX_MIN_GUNFIRE'
             gate_kwargs = {
                 'min_gunfire': float(os.environ.get(relax_key, '0.045')),
@@ -2069,8 +2073,9 @@ def _run_smart_edit(
 
         single_source = len(sources) == 1 and os.environ.get('SINGLE_SOURCE_MODE') == '1'
         strict_gameplay = os.environ.get('STRICT_GAMEPLAY', '0') == '1'
+        strict_pubg_shooting = profile == 'pubg' and os.environ.get('SMART_PUBG_STRICT_SHOOTING', '0') == '1'
         all_candidates = collect_candidates()
-        if not all_candidates and single_source and not strict_gameplay:
+        if not all_candidates and single_source and not strict_gameplay and not strict_pubg_shooting:
             logging.warning('single-source retry with relaxed segment gate')
             all_candidates = collect_candidates(relax_gate=True)
 
@@ -2078,7 +2083,9 @@ def _run_smart_edit(
         arranged: list[dict] = []
         eff_duration = 0.0
         rescue_attempts = (
-            list(GUNFIRE_RESCUE_BY_PROFILE.get(profile, []))
+            []
+            if strict_pubg_shooting
+            else list(GUNFIRE_RESCUE_BY_PROFILE.get(profile, []))
             if single_source and profile in GUNFIRE_RESCUE_BY_PROFILE
             else []
         )

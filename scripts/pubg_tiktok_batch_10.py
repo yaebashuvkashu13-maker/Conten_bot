@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from montage_env import pubg_combat_env
 from pipeline_retry import (
     count_ok_jobs,
     job_is_ok,
@@ -21,7 +22,7 @@ from pipeline_retry import (
     run_until_success,
     save_json_state,
 )
-from pubg_brawl_direct import make_brawl_montage
+from pubg_brawl_direct import make_brawl_montage, resolve_pubg_chat_id
 
 ENV_FILE = Path("/root/.video_bot.env")
 LOG = Path("/root/data/mlbb/pubg_tiktok_batch_10.log")
@@ -44,6 +45,15 @@ def load_env(path: Path = ENV_FILE) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         env[key.strip()] = value.strip().strip('"').strip("'")
+    return env
+
+
+def build_pubg_env(raw: dict[str, str]) -> dict[str, str]:
+    env = dict(pubg_combat_env())
+    env.update(raw)
+    chat_id = resolve_pubg_chat_id(env)
+    if chat_id:
+        env["TG_CHAT_ID"] = chat_id
     return env
 
 
@@ -98,10 +108,15 @@ def main() -> int:
     parser.add_argument("--reset", action="store_true")
     args = parser.parse_args()
 
-    env = load_env()
-    if not env.get("TG_BOT_TOKEN") or not env.get("TG_CHAT_ID"):
-        log("TG_BOT_TOKEN / TG_CHAT_ID missing")
+    env = build_pubg_env(load_env())
+    if not env.get("TG_BOT_TOKEN"):
+        log("TG_BOT_TOKEN missing")
         return 1
+    chat_id = resolve_pubg_chat_id(env)
+    if not chat_id:
+        log("PUBG_CHAT_IDS / CHAT_GAME_PROFILES pubg chat missing")
+        return 1
+    log(f"pubg batch target chat_id={chat_id}")
 
     if args.reset and STATE_FILE.exists():
         STATE_FILE.unlink(missing_ok=True)

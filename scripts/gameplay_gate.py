@@ -959,7 +959,7 @@ def segment_looks_like_pubg_loot_or_walk(
     center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
     )
-    min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.06"))
+    min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
     if gunfire_density >= min_gun:
         return False
     if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
@@ -1148,28 +1148,13 @@ def segment_is_valid_for_montage(
                 video_path, start_sec, duration_sec, label="bad", pad_sec=10.0
             ):
                 return False, "owner_bad_window"
-            owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=12.0)
-            if owner_near == "good" and owner_dist <= 12.0:
-                if os.environ.get("SMART_PUBG_TIKTOK_COMBAT", "0") == "1":
-                    try:
-                        from pubg_owner_calibration import pubg_passes_tiktok_combat_gate
-                    except ImportError:
-                        from pubg_owner_calibration import pubg_passes_tiktok_combat_gate  # type: ignore
-                    ok_tt, tt_reason = pubg_passes_tiktok_combat_gate(
-                        video_path,
-                        start_sec,
-                        gunfire_density,
-                        burst_ratio,
-                        center_motion=center_motion,
-                    )
-                    if not ok_tt:
-                        return False, tt_reason
-                return True, "owner_good"
             ok_owner, owner_reason = pubg_passes_owner_heuristics(
                 gunfire_density, burst_ratio, audio_rms, center_motion
             )
             if not ok_owner:
                 return False, owner_reason
+            if owner_reason == "sniper_hold" and center_motion < 0.030:
+                return False, f"sniper_hold_no_motion=motion{center_motion:.3f}"
             if os.environ.get("SMART_PUBG_TIKTOK_COMBAT", "0") == "1":
                 try:
                     from pubg_owner_calibration import pubg_passes_tiktok_combat_gate
@@ -1184,10 +1169,13 @@ def segment_is_valid_for_montage(
                 )
                 if not ok_tt:
                     return False, tt_reason
-            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.048")))
-            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.0")))
-            if gunfire_density < min_gun and burst_ratio < min_burst:
-                return False, f"no_shots=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+            strict_gun = gunfire_density >= min_gun and burst_ratio >= min_burst
+            heuristic_gun = owner_reason in ("fight_audio", "light_combat")
+            if not strict_gun and not heuristic_gun:
+                if owner_reason == "sniper_hold" and center_motion >= 0.030:
+                    pass
+                else:
+                    return False, f"no_shots=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
             talk_rms = float(os.environ.get("SMART_PUBG_MAX_TALK_RMS", "0.034"))
             if audio_rms > talk_rms and gunfire_density < min_gun * 1.08:
                 return False, f"streamer_talk=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"

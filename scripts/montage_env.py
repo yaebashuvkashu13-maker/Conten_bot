@@ -29,20 +29,27 @@ def aggressive_action_base() -> dict[str, str]:
 
 
 def pubg_combat_env() -> dict[str, str]:
-    """PUBG Metro: gunshot audio, reject loot/walk/intro."""
+    """PUBG Metro: verified gunfire only — no rescue tiers, no run/loot/talk."""
     return {
-        **aggressive_action_base(),
+        **passthrough_audio_env(),
+        "MIN_HIGHLIGHTS": "3",
+        "MAX_HIGHLIGHTS": "4",
+        "MIN_FINAL_DURATION": "33",
+        "MAX_FINAL_DURATION": "57",
+        "SMART_PUBG_STRICT_SHOOTING": "1",
+        "SMART_PUBG_TIKTOK_COMBAT": "1",
+        "SMART_PUBG_ANCHOR_GOOD_ONLY": "1",
         "SMART_PUBG_PEAK_PERCENTILE": "36",
         "SMART_PUBG_SUSTAIN_PERCENTILE": "28",
         "SMART_PUBG_COMBAT_MIN": "0.20",
         "SMART_PUBG_BIN_GUNFIRE_MIN": "0.09",
         "SMART_PUBG_MIN_BIN_GUNFIRE_PEAK": "0.13",
         "SMART_PUBG_GUNFIRE_PEAK_PERCENTILE": "86",
-        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.048",
-        "SMART_PUBG_MIN_BURST_RATIO": "3.0",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.055",
+        "SMART_PUBG_MIN_BURST_RATIO": "4.8",
         "SMART_PUBG_MAX_TALK_RMS": "0.034",
         "SMART_PUBG_MAX_RUN_MOTION": "0.20",
-        "SMART_PUBG_RELAX_MIN_GUNFIRE": "0.050",
+        "SMART_PUBG_RELAX_MIN_GUNFIRE": "0.055",
         "SMART_PUBG_MAX_CENTER_TEXT": "0.62",
         "SMART_PUBG_MIN_CENTER_MOTION": "0.020",
         "SMART_PUBG_SKIP_INTRO_SEC": "120",
@@ -165,14 +172,14 @@ def relaxed_montage_env(profile: str) -> dict[str, str]:
         }
     if profile == "pubg":
         return {
-            "SMART_PUBG_PEAK_PERCENTILE": "28",
-            "SMART_PUBG_COMBAT_MIN": "0.14",
-            "SMART_PUBG_BIN_GUNFIRE_MIN": "0.07",
-            "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.058",
+            "SMART_PUBG_PEAK_PERCENTILE": "32",
+            "SMART_PUBG_COMBAT_MIN": "0.18",
+            "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.055",
+            "SMART_PUBG_MIN_BURST_RATIO": "4.8",
             "SMART_PUBG_RELAX_MIN_GUNFIRE": "0.055",
-            "SMART_PUBG_SUSTAIN_PERCENTILE": "24",
-            "MIN_HIGHLIGHTS": "4",
-            "MAX_HIGHLIGHTS": "5",
+            "SMART_PUBG_SUSTAIN_PERCENTILE": "26",
+            "MIN_HIGHLIGHTS": "3",
+            "MAX_HIGHLIGHTS": "4",
         }
     if profile == "genshin":
         return {
