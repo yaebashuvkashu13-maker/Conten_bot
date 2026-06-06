@@ -704,21 +704,20 @@ def build_candidates(
             base += 0.09 * max(0.0, center - motion * 0.55)
             base += 0.05 * max(0.0, scene - 0.35)
         elif profile == 'pubg':
-            # Metro Royale / PUBG: gunshot transients + bursts (not loot/walking).
+            # Metro Royale / PUBG: gunshot bins first — not streamer talk / running.
             base = (
-                0.16 * motion +
-                0.10 * center +
-                0.18 * audio +
-                0.34 * gunshot +
-                0.05 * scene +
-                0.10 * sharp +
-                0.04 * bright +
-                0.03 * sat
+                0.08 * motion +
+                0.05 * center +
+                0.08 * audio +
+                0.52 * gunshot +
+                0.04 * scene +
+                0.08 * sharp +
+                0.03 * bright +
+                0.02 * sat
             )
-            base += 0.22 * max(0.0, gunshot - 0.28)
-            base += 0.12 * max(0.0, audio - 0.30)
-            base += 0.08 * max(0.0, motion - 0.22)
-            base += 0.06 * max(0.0, sharp - 0.32)
+            base += 0.38 * max(0.0, gunshot - 0.12)
+            base += 0.06 * max(0.0, audio - 0.38)
+            base += 0.04 * max(0.0, motion - 0.28)
         elif profile == 'genshin':
             base = (
                 0.24 * motion +
@@ -775,12 +774,14 @@ def build_candidates(
         burst = max(0.0, base - prev_mean)
         penalty = 0.0
         if profile == 'pubg':
-            if gunshot < 0.18 and audio < 0.24:
-                penalty += 0.42
-            if motion > 0.30 and gunshot < 0.22:
+            if gunshot < 0.12:
+                penalty += 0.55
+            if audio > 0.32 and gunshot < 0.14:
+                penalty += 0.48
+            if motion > 0.16 and gunshot < 0.11:
+                penalty += 0.36
+            if motion > 0.28 and gunshot < 0.16:
                 penalty += 0.28
-            if scene > 0.50 and gunshot < 0.20:
-                penalty += 0.14
         elif profile == 'standoff':
             if gunshot < 0.20 and audio < 0.26:
                 penalty += 0.40
@@ -891,21 +892,32 @@ def build_candidates(
         if profile in GUNFIRE_PROFILES:
             prefix = 'SMART_PUBG_' if profile == 'pubg' else 'SMART_STANDOFF_'
             combat_min = profile_combat_min(profile)
-            gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.08'))
             gunfire_track = analysis.get('gunfire', analysis['audio'])
-            if bins > 8:
-                adaptive_floor = float(np.percentile(gunfire_track, 52)) * 0.72
-                effective_gunfire_min = min(gunfire_min, max(0.028, adaptive_floor))
+            peak_gunfire = float(np.max(gunfire_track[region_slice]))
+            gunfire_min = float(os.environ.get(f'{prefix}BIN_GUNFIRE_MIN', '0.08'))
+            if profile == 'pubg':
+                peak_min = float(os.environ.get('SMART_PUBG_MIN_BIN_GUNFIRE_PEAK', '0.13'))
+                gunfire_min = max(gunfire_min, float(os.environ.get('SMART_PUBG_BIN_GUNFIRE_MIN', '0.10')))
+                if peak_gunfire < peak_min:
+                    continue
+                if mean_gunfire < gunfire_min:
+                    continue
+                if mean_audio > combat_min * 1.05 and peak_gunfire < peak_min * 1.08:
+                    continue
             else:
-                effective_gunfire_min = gunfire_min
-            if (
-                mean_gunfire < effective_gunfire_min
-                and mean_audio < combat_min * 0.78
-                and mean_motion < combat_min * 0.78
-            ):
-                continue
-            if mean_motion < combat_min * 0.72 and mean_gunfire < effective_gunfire_min * 0.90:
-                continue
+                if bins > 8:
+                    adaptive_floor = float(np.percentile(gunfire_track, 52)) * 0.72
+                    effective_gunfire_min = min(gunfire_min, max(0.028, adaptive_floor))
+                else:
+                    effective_gunfire_min = gunfire_min
+                if (
+                    mean_gunfire < effective_gunfire_min
+                    and mean_audio < combat_min * 0.78
+                    and mean_motion < combat_min * 0.78
+                ):
+                    continue
+                if mean_motion < combat_min * 0.72 and mean_gunfire < effective_gunfire_min * 0.90:
+                    continue
         elif profile in ('wot', 'world_of_tanks'):
             combat_min = profile_combat_min(profile)
             impact_min = float(os.environ.get('SMART_WOT_BIN_IMPACT_MIN', '0.10'))
@@ -986,10 +998,17 @@ def build_candidates(
             combo_score += 0.08 * max(0.0, mean_motion - 0.5 * motion_threshold)
             combo_score += 0.06 * max(0.0, mean_audio - 0.5 * audio_threshold)
         if profile in GUNFIRE_PROFILES:
-            combo_score += 0.20 * max(0.0, mean_gunfire - gunfire_threshold)
-            combo_score += 0.14 * max(0.0, float(bursts[idx]) - 0.04)
-            combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
-            combo_score += 0.06 * max(0.0, mean_motion - motion_threshold)
+            peak_gunfire = float(np.max(analysis.get('gunfire', analysis['audio'])[region_slice]))
+            combo_score += 0.34 * max(0.0, peak_gunfire - gunfire_threshold)
+            combo_score += 0.22 * max(0.0, mean_gunfire - gunfire_threshold)
+            combo_score += 0.10 * max(0.0, float(bursts[idx]) - 0.04)
+            if profile == 'pubg':
+                combo_score -= 0.18 * max(0.0, mean_audio - audio_threshold) * (
+                    1.0 if peak_gunfire < gunfire_threshold * 1.15 else 0.35
+                )
+            else:
+                combo_score += 0.10 * max(0.0, mean_audio - audio_threshold)
+                combo_score += 0.06 * max(0.0, mean_motion - motion_threshold)
         elif profile == 'genshin':
             mean_scene = float(np.mean(analysis['scene'][region_slice]))
             combo_score += 0.12 * max(0.0, mean_scene - scene_threshold)
@@ -1292,41 +1311,44 @@ def candidate_hero_id(candidate: dict) -> str:
 
 PUBG_RESCUE_TIERS: list[dict[str, str]] = [
     {
-        'SMART_PUBG_PEAK_PERCENTILE': '34',
-        'SMART_PUBG_COMBAT_MIN': '0.16',
-        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.07',
-        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.050',
-        'SMART_PUBG_MIN_BURST_RATIO': '2.3',
-        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.042',
-        'SMART_PUBG_SUSTAIN_PERCENTILE': '30',
-        'SMART_PUBG_GUNFIRE_PERCENTILE': '48',
-        'SMART_PUBG_MOTION_PERCENTILE': '44',
-        'SMART_PUBG_AUDIO_PERCENTILE': '42',
-    },
-    {
-        'SMART_PUBG_PEAK_PERCENTILE': '28',
-        'SMART_PUBG_COMBAT_MIN': '0.14',
-        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.055',
-        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.042',
-        'SMART_PUBG_MIN_BURST_RATIO': '2.1',
-        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.036',
-        'SMART_PUBG_MIN_CENTER_MOTION': '0.015',
-        'SMART_PUBG_SUSTAIN_PERCENTILE': '26',
-        'SMART_PUBG_GUNFIRE_PERCENTILE': '44',
-        'SMART_PUBG_MOTION_PERCENTILE': '40',
+        'SMART_PUBG_PEAK_PERCENTILE': '32',
+        'SMART_PUBG_COMBAT_MIN': '0.17',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.09',
+        'SMART_PUBG_MIN_BIN_GUNFIRE_PEAK': '0.12',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.054',
+        'SMART_PUBG_MIN_BURST_RATIO': '3.0',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.050',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '28',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '50',
+        'SMART_PUBG_MOTION_PERCENTILE': '42',
         'SMART_PUBG_AUDIO_PERCENTILE': '40',
     },
     {
-        'SMART_PUBG_PEAK_PERCENTILE': '22',
-        'SMART_PUBG_COMBAT_MIN': '0.11',
-        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.040',
-        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.034',
-        'SMART_PUBG_MIN_BURST_RATIO': '1.9',
-        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.028',
-        'SMART_PUBG_MIN_CENTER_MOTION': '0.013',
-        'SMART_PUBG_MIN_AUDIO_RMS': '0.006',
+        'SMART_PUBG_PEAK_PERCENTILE': '28',
+        'SMART_PUBG_COMBAT_MIN': '0.15',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.08',
+        'SMART_PUBG_MIN_BIN_GUNFIRE_PEAK': '0.11',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.050',
+        'SMART_PUBG_MIN_BURST_RATIO': '2.8',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.046',
+        'SMART_PUBG_MIN_CENTER_MOTION': '0.016',
+        'SMART_PUBG_SUSTAIN_PERCENTILE': '26',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '46',
+        'SMART_PUBG_MOTION_PERCENTILE': '38',
+        'SMART_PUBG_AUDIO_PERCENTILE': '38',
+    },
+    {
+        'SMART_PUBG_PEAK_PERCENTILE': '24',
+        'SMART_PUBG_COMBAT_MIN': '0.13',
+        'SMART_PUBG_BIN_GUNFIRE_MIN': '0.07',
+        'SMART_PUBG_MIN_BIN_GUNFIRE_PEAK': '0.10',
+        'SMART_PUBG_MIN_GUNFIRE_DENSITY': '0.046',
+        'SMART_PUBG_MIN_BURST_RATIO': '2.6',
+        'SMART_PUBG_RELAX_MIN_GUNFIRE': '0.042',
+        'SMART_PUBG_MIN_CENTER_MOTION': '0.014',
+        'SMART_PUBG_MAX_TALK_RMS': '0.042',
         'SMART_PUBG_SUSTAIN_PERCENTILE': '22',
-        'SMART_PUBG_GUNFIRE_PERCENTILE': '38',
+        'SMART_PUBG_GUNFIRE_PERCENTILE': '42',
         'MIN_HIGHLIGHTS': '4',
         'MIN_FINAL_DURATION': '36',
     },

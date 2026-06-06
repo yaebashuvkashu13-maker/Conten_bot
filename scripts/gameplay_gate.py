@@ -1128,7 +1128,17 @@ def segment_is_valid_for_montage(
         )
         min_burst = float(os.environ.get(f"{prefix}MIN_BURST_RATIO", "2.4"))
         min_audio = float(os.environ.get(f"{prefix}MIN_AUDIO_RMS", "0.008"))
-        if (
+        if profile == "pubg":
+            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055")))
+            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.2")))
+            if gunfire_density < min_gun:
+                return False, f"no_shots=density{gunfire_density:.3f}"
+            if burst_ratio < min_burst and gunfire_density < min_gun * 1.15:
+                return False, f"weak_burst=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+            talk_rms = float(os.environ.get("SMART_PUBG_MAX_TALK_RMS", "0.040"))
+            if audio_rms > talk_rms and gunfire_density < min_gun * 1.25:
+                return False, f"streamer_talk=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
+        elif (
             gunfire_density < min_gun
             and burst_ratio < min_burst
             and audio_rms < min_audio * 1.10
@@ -1145,7 +1155,15 @@ def segment_is_valid_for_montage(
         max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", default_max_text))
         if center_text > max_text and gunfire_density < min_gun * 0.90:
             return False, f"menu_overlay={center_text:.2f}"
-        loot_cap = min_gun * (0.72 if profile == "pubg" else 1.0)
+        if profile == "pubg":
+            run_hi = float(os.environ.get("SMART_PUBG_MAX_RUN_MOTION", "0.21"))
+            if (
+                center_motion >= 0.09
+                and center_motion <= run_hi
+                and gunfire_density < min_gun * 1.20
+            ):
+                return False, f"run_no_fight=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+        loot_cap = min_gun * (0.85 if profile == "pubg" else 1.0)
         if (
             segment_looks_like_pubg_loot_or_walk(
                 video_path,

@@ -73,3 +73,10 @@ restart_if_needed \
   4 \
   "morning_pubg_standoff_catchup.py" \
   "/root/data/mlbb/morning_pubg_standoff.log"
+
+restart_if_needed \
+  "pubg_gunfire_rebuild" \
+  "/root/data/mlbb/pubg_gunfire_rebuild_state.json" \
+  2 \
+  "pubg_gunfire_rebuild.py" \
+  "/root/data/mlbb/pubg_gunfire_rebuild.log"
