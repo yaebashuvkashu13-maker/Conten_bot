@@ -1208,6 +1208,10 @@ def overlaps(candidate: dict, selected: list[dict]) -> bool:
             gap = float(os.environ.get('SMART_GENSHIN_MIN_SEGMENT_GAP', '75'))
             if abs(float(candidate['start']) - float(existing['start'])) < gap:
                 return True
+        if profile == 'pubg' and candidate.get('source_signature') == existing.get('source_signature'):
+            gap = float(os.environ.get('SMART_PUBG_MIN_SEGMENT_GAP', '0'))
+            if gap > 0 and abs(float(candidate['start']) - float(existing['start'])) < gap:
+                return True
     return False
 
 
@@ -1324,7 +1328,10 @@ def best_combo_for_size(pool: list[dict], size: int, require_range: bool, unique
     if not ranked_combos:
         return []
     ranked_combos.sort(key=lambda item: item[0], reverse=True)
-    explore_window = min(5, len(ranked_combos))
+    explore_window = min(
+        max(1, int(os.environ.get('SMART_EXPLORE_WINDOW', '5'))),
+        len(ranked_combos),
+    )
     chosen_idx = SELECTION_VARIANT % explore_window
     return list(ranked_combos[chosen_idx][1])
 
