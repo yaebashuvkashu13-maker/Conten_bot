@@ -18,7 +18,7 @@ def aggressive_action_base() -> dict[str, str]:
     return {
         "MIN_HIGHLIGHTS": "5",
         "MAX_HIGHLIGHTS": "5",
-        "MIN_FINAL_DURATION": "40",
+        "MIN_FINAL_DURATION": "36",
         "MAX_FINAL_DURATION": "55",
         "SMART_BURST_WEIGHT": "0.48",
         "SMART_ACTION_CLIP_MIN_SEC": "7",

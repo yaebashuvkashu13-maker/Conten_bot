@@ -1402,8 +1402,15 @@ GUNFIRE_RESCUE_BY_PROFILE: dict[str, list[dict[str, str]]] = {
 
 
 def apply_rescue_tier(tier: dict[str, str]) -> None:
+    global MIN_FINAL_DURATION, MIN_HIGHLIGHTS, MAX_HIGHLIGHTS
     for key, value in tier.items():
         os.environ[key] = value
+    if 'MIN_FINAL_DURATION' in tier:
+        MIN_FINAL_DURATION = float(tier['MIN_FINAL_DURATION'])
+    if 'MIN_HIGHLIGHTS' in tier:
+        MIN_HIGHLIGHTS = int(tier['MIN_HIGHLIGHTS'])
+    if 'MAX_HIGHLIGHTS' in tier:
+        MAX_HIGHLIGHTS = int(tier['MAX_HIGHLIGHTS'])
 
 
 def action_montage_ready(selected: list[dict], arranged: list[dict]) -> bool:
