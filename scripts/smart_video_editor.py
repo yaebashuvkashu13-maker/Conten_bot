@@ -25,6 +25,7 @@ try:
         is_gameplay_video,
         load_csv_lookup,
         score_genshin_boss_likelihood,
+        score_pubg_gunfire_audio,
         segment_is_valid_for_montage,
         segment_opens_with_training,
         source_has_valid_gameplay_window,
@@ -41,6 +42,7 @@ except ImportError:
         is_gameplay_video,
         load_csv_lookup,
         score_genshin_boss_likelihood,
+        score_pubg_gunfire_audio,
         segment_is_valid_for_montage,
         segment_opens_with_training,
         source_has_valid_gameplay_window,
@@ -1015,6 +1017,14 @@ def build_candidates(
             combo_score += 0.22 * max(0.0, mean_gunfire - gunfire_threshold)
             combo_score += 0.10 * max(0.0, float(bursts[idx]) - 0.04)
             if profile == 'pubg':
+                shot_density, shot_burst, shot_rms = score_pubg_gunfire_audio(
+                    source_path, start, input_duration
+                )
+                combo_score += 1.05 * max(0.0, shot_density - 0.075)
+                combo_score += 0.18 * max(0.0, shot_burst - 5.5)
+                combo_score -= 0.42 * max(0.0, shot_rms - 0.032) * (
+                    1.0 if shot_density < 0.08 else 0.45
+                )
                 combo_score -= 0.18 * max(0.0, mean_audio - audio_threshold) * (
                     1.0 if peak_gunfire < gunfire_threshold * 1.15 else 0.35
                 )

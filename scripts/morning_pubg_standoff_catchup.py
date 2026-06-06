@@ -6,6 +6,8 @@ PUBG + Standoff morning catch-up: 2 montages each, auto-retry, deadline 08:00 MS
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -73,6 +75,13 @@ VARIANTS = [
 
 TOTAL_JOBS = len(GAMES) * len(VARIANTS)
 
+PUBG_BAD_START_SEC = {
+    130.4, 146.4, 356.4, 590.4, 612.4, 824.4, 992.4, 1418.4, 2038.4, 2178.4,
+    3432.4, 3598.4, 3718.4, 4124.4, 5072.4, 5416.4, 5464.4, 5820.4, 6158.4,
+    6256.4, 6652.4, 7598.4, 7764.4, 7904.4, 8120.4, 8126.4, 8218.4, 8630.4,
+    9110.4, 9124.4, 9190.4, 9226.4, 9246.4, 9558.4, 9718.4, 9936.4, 10006.4,
+}
+
 
 def load_env(path: Path = ENV_FILE) -> dict[str, str]:
     env: dict[str, str] = {}
@@ -104,6 +113,35 @@ def deadline_reached(hour_msk: int = 8) -> bool:
 def wait_editor() -> None:
     while subprocess.run(["pgrep", "-f", "smart_video_editor.py"], capture_output=True).returncode == 0:
         time.sleep(40)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def collect_pubg_excluded(source: Path) -> set[str]:
+    excluded: set[str] = set()
+    sig = file_sha256(source)
+    for start in PUBG_BAD_START_SEC:
+        excluded.add(f"{sig}:{round(start, 3)}")
+    for hist in (
+        Path("/tmp/morning_pubg_history.json"),
+        Path("/root/.smart_edit_segment_history.json"),
+        Path("/tmp/pubg_gunfire_rebuild_history.json"),
+    ):
+        if not hist.exists():
+            continue
+        try:
+            payload = json.loads(hist.read_text())
+        except Exception:
+            continue
+        for key in payload.get("segment_keys", []):
+            excluded.add(str(key))
+    return excluded
 
 
 def ensure_standoff_source(game: dict, env: dict[str, str], attempt: int) -> Path | None:
@@ -173,27 +211,28 @@ def run_attempt(
     if attempt >= 3:
         run_env["OVERNIGHT_FRESH_SEGMENTS"] = "1"
         run_env["SELECTION_VARIANT"] = str((int(variant["SELECTION_VARIANT"]) + attempt) % 4)
-    run_env.update(
-        {
-            "QUEUE_FILE": queue_path,
-            "MAX_SOURCES": "1",
-            "SINGLE_SOURCE_MODE": "1",
-            "SEND_TELEGRAM": "1",
-            "SMART_BLOCKING_LOCK": "1",
-            "OUTPUT_DIR": "/root/videos",
-            "DEFAULT_GAME_PROFILE": profile,
-            "QUEUE_GAME_PROFILE": profile,
-            "SEGMENT_HISTORY_FILE": str(history),
-            "SELECTION_VARIANT": run_env.get("SELECTION_VARIANT", str(variant["SELECTION_VARIANT"])),
-            "OUTPUT_BASENAME": f"morning_{gid}_{variant['suffix']}",
-            "MONTAGE_CAPTION": (
-                f"⚔️ {game['label']} {variant['part']} — утренняя нарезка\n"
-                f"Перестрелки / дуэли, без пустого бега"
-            ),
-            "SMART_ALLOW_EXCLUDED_FALLBACK": "0",
-            "PIPELINE_JOB_RETRIES": "6",
-        }
-    )
+    extra_env: dict[str, str] = {
+        "QUEUE_FILE": queue_path,
+        "MAX_SOURCES": "1",
+        "SINGLE_SOURCE_MODE": "1",
+        "SEND_TELEGRAM": "1",
+        "SMART_BLOCKING_LOCK": "1",
+        "OUTPUT_DIR": "/root/videos",
+        "DEFAULT_GAME_PROFILE": profile,
+        "QUEUE_GAME_PROFILE": profile,
+        "SEGMENT_HISTORY_FILE": str(history),
+        "SELECTION_VARIANT": run_env.get("SELECTION_VARIANT", str(variant["SELECTION_VARIANT"])),
+        "OUTPUT_BASENAME": f"morning_{gid}_{variant['suffix']}",
+        "MONTAGE_CAPTION": (
+            f"⚔️ {game['label']} {variant['part']} — утренняя нарезка\n"
+            f"Перестрелки / дуэли, без пустого бега"
+        ),
+        "SMART_ALLOW_EXCLUDED_FALLBACK": "0",
+        "PIPELINE_JOB_RETRIES": "6",
+    }
+    if gid == "pubg":
+        extra_env["EXCLUDED_SEGMENT_KEYS"] = ",".join(sorted(collect_pubg_excluded(source)))
+    run_env.update(extra_env)
     if attempt < 3:
         run_env.setdefault("OVERNIGHT_FRESH_SEGMENTS", "1")
 

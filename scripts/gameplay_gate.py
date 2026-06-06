@@ -1129,12 +1129,12 @@ def segment_is_valid_for_montage(
         min_burst = float(os.environ.get(f"{prefix}MIN_BURST_RATIO", "2.4"))
         min_audio = float(os.environ.get(f"{prefix}MIN_AUDIO_RMS", "0.008"))
         if profile == "pubg":
-            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.050")))
-            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "2.8")))
+            min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.075")))
+            min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.2")))
             if gunfire_density < min_gun and burst_ratio < min_burst:
                 return False, f"no_shots=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
-            talk_rms = float(os.environ.get("SMART_PUBG_MAX_TALK_RMS", "0.038"))
-            if audio_rms > talk_rms and gunfire_density < min_gun * 1.10:
+            talk_rms = float(os.environ.get("SMART_PUBG_MAX_TALK_RMS", "0.034"))
+            if audio_rms > talk_rms and gunfire_density < min_gun * 1.08:
                 return False, f"streamer_talk=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
         elif (
             gunfire_density < min_gun
