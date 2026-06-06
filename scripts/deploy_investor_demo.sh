@@ -20,7 +20,10 @@ install -m 755 \
   scripts/montage_env.py \
   scripts/gameplay_gate.py \
   scripts/smart_video_editor.py \
+  scripts/overnight_youtube_batch.py \
+  scripts/morning_pubg_standoff_catchup.py \
   scripts/pipeline_watchdog.sh \
+  scripts/audit_strict_peak_cron.sh \
   /usr/local/bin/
 
 bash "$REPO/scripts/install_pipeline_watchdog_cron.sh"

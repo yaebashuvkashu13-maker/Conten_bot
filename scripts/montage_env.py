@@ -178,12 +178,18 @@ def strict_peak_env(profile: str) -> dict[str, str]:
             "SMART_PUBG_ANCHOR_GOOD_ONLY": "0",
             "SMART_PUBG_TIKTOK_COMBAT": "0",
         },
-        "genshin": genshin_combat_env(),
+        "genshin": {
+            **genshin_combat_env(),
+            "SMART_GENSHIN_STRICT_MIN_CENTER_MOTION": "0.18",
+            "SMART_GENSHIN_STRICT_MIN_BOSS_SCORE": "0.35",
+            "SMART_GENSHIN_MIN_BOSS_SCORE": "0.35",
+            "SMART_GENSHIN_MIN_CENTER_MOTION": "0.18",
+        },
         "standoff": {
             **standoff_combat_env(),
-            "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.055",
-            "SMART_STANDOFF_MIN_BURST_RATIO": "4.0",
-            "SMART_STANDOFF_MIN_CENTER_MOTION": "0.022",
+            "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.10",
+            "SMART_STANDOFF_MIN_BURST_RATIO": "8.0",
+            "SMART_STANDOFF_MIN_CENTER_MOTION": "0.12",
         },
         "wot": {
             **wot_combat_env(),

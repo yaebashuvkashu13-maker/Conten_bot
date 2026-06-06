@@ -1810,8 +1810,26 @@ def telegram_curl_env() -> dict[str, str]:
     return env
 
 
+STRICT_PEAK_PROFILES = frozenset({
+    'pubg', 'genshin', 'standoff', 'wot', 'world_of_tanks', 'mobile_legends', 'mlbb',
+})
+
+
 def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
     """Upload via curl - manual multipart often triggers Telegram HTTP 400."""
+    profile = (os.environ.get('QUEUE_GAME_PROFILE') or os.environ.get('DEFAULT_GAME_PROFILE', '')).strip().lower()
+    if profile in ('world_of_tanks',):
+        profile = 'wot'
+    if profile == 'mlbb':
+        profile = 'mobile_legends'
+    if (
+        profile in STRICT_PEAK_PROFILES
+        and os.environ.get('STRICT_PEAK_MONTAGE', '0') != '1'
+        and os.environ.get('ALLOW_LEGACY_MONTAGE_SEND', '0') != '1'
+    ):
+        raise RuntimeError(
+            f'blocked telegram send: STRICT_PEAK_MONTAGE required for profile={profile}'
+        )
     short_cap = caption[:900]
     url = f'https://api.telegram.org/bot{bot_token}/sendVideo'
     curl_env = telegram_curl_env()

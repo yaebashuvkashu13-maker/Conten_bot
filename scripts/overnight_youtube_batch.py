@@ -201,7 +201,7 @@ def run_montage(
     relaxed: bool = False,
 ) -> tuple[int, str]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from montage_env import profile_montage_env, relaxed_montage_env
+    from montage_env import strict_peak_env
 
     profile = game["profile"]
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".queue.txt") as tmp:
@@ -211,9 +211,7 @@ def run_montage(
     run_env = clean_proxy_env(os.environ.copy())
     for key, value in env.items():
         run_env.setdefault(key, value)
-    run_env.update(profile_montage_env(profile))
-    if relaxed:
-        run_env.update(relaxed_montage_env(profile))
+    run_env.update(strict_peak_env(profile))
     gid = game["id"]
     run_env.update(
         {

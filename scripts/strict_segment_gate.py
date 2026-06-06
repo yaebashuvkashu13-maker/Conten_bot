@@ -114,6 +114,36 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     return False, ""
 
 
+def _standoff_extra_reject(metrics: dict) -> tuple[bool, str]:
+    """Reject run/idle rounds: need sustained gunfire + aim motion."""
+    gun = float(metrics.get("gunfire_density", 0))
+    burst = float(metrics.get("burst_ratio", 0))
+    motion = float(metrics.get("center_motion", 0))
+    min_gun = float(os.environ.get("SMART_STANDOFF_MIN_GUNFIRE_DENSITY", "0.10"))
+    min_burst = float(os.environ.get("SMART_STANDOFF_MIN_BURST_RATIO", "8.0"))
+    min_motion = float(os.environ.get("SMART_STANDOFF_MIN_CENTER_MOTION", "0.12"))
+    if gun < min_gun:
+        return True, f"low_gunfire=density{gun:.3f}:need{min_gun:.2f}"
+    if burst < min_burst:
+        return True, f"low_burst=burst{burst:.2f}:need{min_burst:.1f}"
+    if motion < min_motion:
+        return True, f"run_no_fight=motion{motion:.3f}:gun{gun:.3f}"
+    return False, ""
+
+
+def _genshin_extra_reject(metrics: dict) -> tuple[bool, str]:
+    """Stricter boss fight bar on top of gameplay_gate boss_ok."""
+    motion = float(metrics.get("center_motion", 0))
+    boss_score = float(metrics.get("boss_score", 0))
+    min_motion = float(os.environ.get("SMART_GENSHIN_STRICT_MIN_CENTER_MOTION", "0.18"))
+    min_score = float(os.environ.get("SMART_GENSHIN_STRICT_MIN_BOSS_SCORE", "0.35"))
+    if motion < min_motion:
+        return True, f"low_boss_motion=motion{motion:.3f}:need{min_motion:.2f}"
+    if boss_score < min_score:
+        return True, f"weak_boss_score=score{boss_score:.2f}:need{min_score:.2f}"
+    return False, ""
+
+
 def _mlbb_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject lane walk / low fight activity."""
     motion = float(metrics.get("center_motion", 0))
@@ -181,16 +211,17 @@ def passes_strict_gate(
             metrics["gate_reason"] = extra
             return False, extra, metrics
 
+    if profile == "genshin":
+        bad, extra = _genshin_extra_reject(metrics)
+        if bad:
+            metrics["gate_reason"] = extra
+            return False, extra, metrics
+
     if profile == "standoff":
-        gun = float(metrics.get("gunfire_density", 0))
-        burst = float(metrics.get("burst_ratio", 0))
-        motion = float(metrics.get("center_motion", 0))
-        min_gun = float(os.environ.get("SMART_STANDOFF_MIN_GUNFIRE_DENSITY", "0.055"))
-        min_burst = float(os.environ.get("SMART_STANDOFF_MIN_BURST_RATIO", "4.0"))
-        if gun < min_gun or burst < min_burst:
-            return False, f"low_gunfire=density{gun:.3f}:burst{burst:.2f}", metrics
-        if motion < 0.022 and gun < min_gun * 1.08:
-            return False, f"idle_round=motion{motion:.3f}", metrics
+        bad, extra = _standoff_extra_reject(metrics)
+        if bad:
+            metrics["gate_reason"] = extra
+            return False, extra, metrics
 
     return True, gate_reason, metrics
 

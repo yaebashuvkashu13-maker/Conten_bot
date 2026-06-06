@@ -193,7 +193,7 @@ def run_attempt(
     chat_id: str,
     attempt: int,
 ) -> tuple[int, str]:
-    from montage_env import profile_montage_env, relaxed_montage_env
+    from montage_env import strict_peak_env
 
     profile = game["profile"]
     gid = game["id"]
@@ -205,10 +205,8 @@ def run_attempt(
     run_env = os.environ.copy()
     for key, value in env.items():
         run_env.setdefault(key, value)
-    run_env.update(profile_montage_env(profile))
+    run_env.update(strict_peak_env(profile))
     run_env.update(variant.get("extra") or {})
-    if attempt >= 2:
-        run_env.update(relaxed_montage_env(profile))
     if attempt >= 3:
         run_env["OVERNIGHT_FRESH_SEGMENTS"] = "1"
         run_env["SELECTION_VARIANT"] = str((int(variant["SELECTION_VARIANT"]) + attempt) % 4)

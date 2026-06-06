@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restart showcase / genshin rebuild if they died before delivering results.
+# Restart strict-peak pipelines if they died before delivering results.
 set -Eeuo pipefail
 
 LOG=/root/data/mlbb/pipeline_watchdog.log
@@ -15,6 +15,7 @@ restart_if_needed() {
   local total_jobs="$3"
   local script="$4"
   local job_log="$5"
+  local extra_args="${6:-}"
 
   if [[ ! -f "$state_file" ]]; then
     return 0
@@ -49,48 +50,23 @@ PY
 
   echo "[$(date -Is)] watchdog: restart ${name}"
   /usr/local/bin/stop_competing_workers.sh 2>/dev/null || true
-  nohup /usr/local/bin/run_job_until_ok.sh "$job_log" python3 "/usr/local/bin/${script}" --resume \
+  nohup /usr/local/bin/run_job_until_ok.sh "$job_log" python3 "/usr/local/bin/${script}" ${extra_args} \
     >>"$job_log" 2>&1 &
 }
+
+# Strict peak only — legacy batches must not auto-restart without STRICT_PEAK_MONTAGE.
+restart_if_needed \
+  "investor_demo_batch" \
+  "/root/data/mlbb/investor_demo_batch_state.json" \
+  5 \
+  "investor_demo_batch.py" \
+  "/root/data/mlbb/investor_demo_batch.log" \
+  "--resume"
 
 restart_if_needed \
   "action_showcase_2x5" \
   "/root/data/mlbb/action_showcase_2x5_state.json" \
   10 \
   "action_showcase_2x5.py" \
-  "/root/data/mlbb/action_showcase_2x5.log"
-
-restart_if_needed \
-  "genshin_boss_rebuild" \
-  "/root/data/mlbb/genshin_boss_rebuild_state.json" \
-  1 \
-  "genshin_boss_rebuild.py" \
-  "/root/data/mlbb/genshin_boss_rebuild.log"
-
-restart_if_needed \
-  "morning_pubg_standoff" \
-  "/root/data/mlbb/morning_pubg_standoff_state.json" \
-  4 \
-  "morning_pubg_standoff_catchup.py" \
-  "/root/data/mlbb/morning_pubg_standoff.log"
-
-restart_if_needed \
-  "pubg_gunfire_rebuild" \
-  "/root/data/mlbb/pubg_gunfire_rebuild_state.json" \
-  2 \
-  "pubg_gunfire_rebuild.py" \
-  "/root/data/mlbb/pubg_gunfire_rebuild.log"
-
-restart_if_needed \
-  "pubg_tiktok_batch_10" \
-  "/root/data/mlbb/pubg_tiktok_batch_10_state.json" \
-  10 \
-  "pubg_tiktok_batch_10.py" \
-  "/root/data/mlbb/pubg_tiktok_batch_10.log"
-
-restart_if_needed \
-  "mlbb_showcase_rebuild" \
-  "/root/data/mlbb/mlbb_showcase_rebuild_state.json" \
-  2 \
-  "mlbb_showcase_rebuild.py" \
-  "/root/data/mlbb/mlbb_showcase_rebuild.log"
+  "/root/data/mlbb/action_showcase_2x5.log" \
+  "--resume"

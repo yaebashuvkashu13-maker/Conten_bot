@@ -125,7 +125,37 @@
 
 ---
 
-## 5. Smart Edit v1.1 — правила (обязательные)
+## 5. Strict peak montage (5 игр) — единственный путь
+
+С **июня 2026** для **MLBB, PUBG, Genshin, Standoff 2, WoT** в Telegram уходит **только** контент через **strict peak**:
+
+| Компонент | Путь |
+|-----------|------|
+| Env | `montage_env.strict_peak_env(profile)` → `STRICT_PEAK_MONTAGE=1` |
+| Гейт сегментов | `scripts/strict_segment_gate.py` + `pubg_shooting_gate.py` (PUBG) |
+| Сборка | `strict_montage_direct.py`, `pubg_brawl_direct.py`, `investor_demo_batch.py`, `action_showcase_2x5.py` |
+| Pre-send | Acceptance table в логе: `ALL_PASS=true` — **обязательно** перед `sendVideo` |
+
+**Пороги strict (не ослаблять без явного запроса владельца):**
+
+| Игра | Условие PASS |
+|------|----------------|
+| PUBG | `gun >= 0.055`, `burst >= 4.8` (`pubg_shooting_gate`) |
+| Standoff | `gun >= 0.10`, `burst >= 8`, `motion >= 0.12` |
+| Genshin | `boss_ok` + `motion >= 0.18`, `boss_score >= 0.35` |
+| WoT / MLBB | `strict_segment_gate` + extra-reject (cruise / overlay) |
+
+**Legacy / rescue / relaxed env** (`profile_montage_env`, `relaxed_montage_env`, rescue tiers в `smart_video_editor.py`) — **запрещены** для отправки 5 игр в Telegram.
+
+- Включить legacy только с явным флагом: `ALLOW_LEGACY_MONTAGE_SEND=1` (ручной отладочный прогон, не cron).
+- `send_telegram_video()` в `smart_video_editor.py` **блокирует** send для 5 профилей без `STRICT_PEAK_MONTAGE=1`.
+- Watchdog cron перезапускает только `investor_demo_batch` и `action_showcase_2x5` (strict).
+
+**Честный отказ:** лучше не слать ролик, чем слать filler. В логе — таблица сегментов с метриками и `ALL_PASS=false`.
+
+---
+
+## 6. Smart Edit v1.1 — правила (обязательные)
 
 Владелец зафиксировал **6 требований** — они уже заложены в код/env:
 
@@ -140,9 +170,9 @@
 
 ---
 
-## 6. Обучение и CSV
+## 7. Обучение и CSV
 
-### 6.1 Файлы в репозитории (`data/mlbb/`)
+### 7.1 Файлы в репозитории (`data/mlbb/`)
 
 | Файл | Строк | Назначение |
 |------|-------|------------|
@@ -153,7 +183,7 @@
 
 **Проблема:** в CSV пути вида `datasets/tiktok/mlbb/....mp4` — на VPS файлы **появляются только после** `tiktok_download_batch.py` (прокси обязателен для TikTok).
 
-### 6.2 Герои
+### 7.2 Герои
 
 | Этап | Герои |
 |------|--------|
@@ -162,7 +192,7 @@
 
 Цель модели: **узнавать героя** → **монтаж с одним героем** → по паттернам улучшать качество нарезок (генерация «с нуля» — отдельный далёкий этап).
 
-### 6.3 ML в git vs на сервере
+### 7.3 ML в git vs на сервере
 
 | Где | Пакет |
 |-----|--------|
@@ -171,13 +201,13 @@
 
 ---
 
-## 7. Прокси (TikTok)
+## 8. Прокси (TikTok)
 
 - Хранится в `/root/.video_bot.env`: `PROXY_URL`, `YTDLP_PROXY`, `HTTP_PROXY`, …
 - **Не коммитить.** Владелец выдавал CyberYozh (HTTP + SOCKS5); срок обычно **24 ч**.
 - Проверка: `yt-dlp --proxy "$YTDLP_PROXY" --print title '<tiktok url>'`
 
-### 7.1 Burst: 4000–5000 роликов за окно прокси
+### 8.1 Burst: 4000–5000 роликов за окно прокси
 
 Не только 805 URL из CSV — **`tiktok_mass_download.py`** качает каналы, хештеги и поиск MLBB (8 потоков).
 
@@ -201,18 +231,18 @@ bash /usr/local/bin/run_parallel_stack.sh
 
 ---
 
-## 8. Instagram (приоритет 2)
+## 9. Instagram (приоритет 2)
 
-### 8.1 Конфиг в git
+### 9.1 Конфиг в git
 
 `config.instagram-mlbb.yaml` — **12 блогеров** MLBB, `dry_run: true` в примере.
 
-### 8.2 Прод сейчас
+### 9.2 Прод сейчас
 
 - **n8n Cloud:** `https://kotletashop123.app.n8n.cloud/...` (workflow Instagram, 19:00 МСК, ~7 постов).
 - **Нужно:** владелец **выключает Active** в Cloud после запуска нового пайплайна из git — иначе **двойной дайджест**.
 
-### 8.3 Требования к новому дайджесту
+### 9.3 Требования к новому дайджесту
 
 - Cookies Instagram (файл на VPS, не в git).
 - Текст: **смысл на русском**, не копипаст.
@@ -221,7 +251,7 @@ bash /usr/local/bin/run_parallel_stack.sh
 
 ---
 
-## 9. Переменные окружения (`/root/.video_bot.env`)
+## 10. Переменные окружения (`/root/.video_bot.env`)
 
 **Шаблон (без значений):**
 
@@ -264,7 +294,7 @@ YOUTUBE_CHANNEL_ID=...   # optional, UC...
 
 ---
 
-## 10. Репозиторий: структура
+## 11. Репозиторий: структура
 
 ```text
 conten_bot/
@@ -291,7 +321,7 @@ conten_bot/
 
 ---
 
-## 11. Почасовой цикл (что пишет владельцу)
+## 12. Почасовой цикл (что пишет владельцу)
 
 `mlbb_hourly_cycle.sh` каждый час в **:12 UTC** (~:15 МСК):
 
@@ -311,7 +341,7 @@ conten_bot/
 
 ---
 
-## 12. Backlog (не делать без запроса)
+## 13. Backlog (не делать без запроса)
 
 - [ ] Новый Instagram-дайджест из `content_bot` + cron (замена n8n Cloud)
 - [ ] Кнопка «Опубликовать» → YouTube, TikTok, Instagram, VK, Rutube, Дзен
@@ -324,7 +354,7 @@ conten_bot/
 
 ---
 
-## 13. Чеклист для нового агента
+## 14. Чеклист для нового агента
 
 1. Прочитать **этот файл** и `docs/mlbb_video_pipeline.md`.
 2. `git pull` — проверить `data/mlbb/*.csv`.
@@ -337,7 +367,7 @@ conten_bot/
 
 ---
 
-## 14. Частые ошибки агентов (из реального чата)
+## 15. Частые ошибки агентов (из реального чата)
 
 | Ошибка | Правда |
 |--------|--------|
@@ -350,7 +380,7 @@ conten_bot/
 
 ---
 
-## 15. Контакты и доступы (мета)
+## 16. Контакты и доступы (мета)
 
 - **Владелец:** Telegram `@PMAntonShapkin`, chat в `TG_CHAT_ID`.
 - **Коллега с доступом к боту:** `6366727522`.
@@ -359,10 +389,10 @@ conten_bot/
 
 ---
 
-## 16. Одно предложение для эскалации
+## 17. Одно предложение для эскалации
 
 **Conten_bot** — это VPS-пайплайн **Smart Edit** (MLBB, 3–4 сцены, 33–57 с, без повторов) + Telegram-бот для загрузки + докачка TikTok по CSV через прокси + будущий Instagram из git; секреты на сервере, код в GitHub, n8n Cloud для Instagram пока устаревающий прод.
 
 ---
 
-*Последнее обновление справочника: 2026-06-01. При изменении cron, chat ID или путей — обновляйте этот файл в том же PR.*
+*Последнее обновление справочника: 2026-06-06. При изменении cron, strict_peak порогов, chat ID или путей — обновляйте этот файл в том же PR.*
