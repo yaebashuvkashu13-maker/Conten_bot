@@ -102,6 +102,30 @@ def segment_overlaps_owner_label(
     return False
 
 
+def has_owner_labels(video_path: Path) -> bool:
+    return bool(labels_for_video(video_path))
+
+
+def pubg_passes_tiktok_combat_gate(
+    video_path: Path,
+    start_sec: float,
+    gunfire_density: float,
+    burst_ratio: float,
+) -> tuple[bool, str]:
+    """TikTok: brawl near owner-good windows or clearly hot gunfire."""
+    if not has_owner_labels(video_path):
+        if gunfire_density >= 0.076 and burst_ratio >= 5.4:
+            return True, "tiktok_hot_audio"
+        return False, f"tiktok_no_brawl=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+
+    owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=20.0)
+    if owner_near == "good" and owner_dist <= 16.0:
+        return True, f"tiktok_owner_good=dist{owner_dist:.0f}"
+    if gunfire_density >= 0.082 and burst_ratio >= 5.6:
+        return True, "tiktok_hot_audio"
+    return False, f"tiktok_no_brawl=gun{gunfire_density:.3f}:near{owner_dist:.0f}"
+
+
 def pubg_passes_owner_heuristics(
     gunfire_density: float,
     burst_ratio: float,

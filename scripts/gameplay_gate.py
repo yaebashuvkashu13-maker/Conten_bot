@@ -1150,12 +1150,32 @@ def segment_is_valid_for_montage(
                 return False, "owner_bad_window"
             owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=12.0)
             if owner_near == "good" and owner_dist <= 12.0:
+                if os.environ.get("SMART_PUBG_TIKTOK_COMBAT", "0") == "1":
+                    try:
+                        from pubg_owner_calibration import pubg_passes_tiktok_combat_gate
+                    except ImportError:
+                        from pubg_owner_calibration import pubg_passes_tiktok_combat_gate  # type: ignore
+                    ok_tt, tt_reason = pubg_passes_tiktok_combat_gate(
+                        video_path, start_sec, gunfire_density, burst_ratio
+                    )
+                    if not ok_tt:
+                        return False, tt_reason
                 return True, "owner_good"
             ok_owner, owner_reason = pubg_passes_owner_heuristics(
                 gunfire_density, burst_ratio, audio_rms, center_motion
             )
             if not ok_owner:
                 return False, owner_reason
+            if os.environ.get("SMART_PUBG_TIKTOK_COMBAT", "0") == "1":
+                try:
+                    from pubg_owner_calibration import pubg_passes_tiktok_combat_gate
+                except ImportError:
+                    from pubg_owner_calibration import pubg_passes_tiktok_combat_gate  # type: ignore
+                ok_tt, tt_reason = pubg_passes_tiktok_combat_gate(
+                    video_path, start_sec, gunfire_density, burst_ratio
+                )
+                if not ok_tt:
+                    return False, tt_reason
             min_gun = max(min_gun, float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.048")))
             min_burst = max(min_burst, float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "3.0")))
             if gunfire_density < min_gun and burst_ratio < min_burst:

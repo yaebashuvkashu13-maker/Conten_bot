@@ -1032,9 +1032,14 @@ def build_candidates(
                         source_path, start, radius_sec=22.0
                     )
                     if owner_near == 'good':
-                        combo_score += max(0.0, 0.62 - owner_dist * 0.028)
+                        combo_score += max(0.0, 0.95 - owner_dist * 0.035)
                     elif owner_near == 'bad':
-                        combo_score -= 0.85
+                        combo_score -= 1.05
+                    if os.environ.get('SMART_PUBG_TIKTOK_COMBAT', '0') == '1':
+                        if owner_near == 'good' and owner_dist <= 16.0:
+                            combo_score += 0.75
+                        elif owner_near != 'good':
+                            combo_score -= 0.55
                 except ImportError:
                     pass
                 combo_score -= 0.18 * max(0.0, mean_audio - audio_threshold) * (

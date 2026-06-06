@@ -40,11 +40,11 @@ SOURCE_NAMES = [
 ]
 
 BAD_START_SEC = {
-    130.4, 146.4, 356.4, 590.4, 612.4, 824.4, 992.4, 1418.4, 2038.4, 2105.4,
-    2178.4, 2215.4, 2287.4, 2521.4, 3432.4, 3598.4, 3718.4, 4124.4, 5072.4,
-    5416.4, 5464.4, 5820.4, 6158.4, 6256.4, 6652.4, 7598.4, 7764.4, 7904.4,
-    8120.4, 8126.4, 8218.4, 8630.4, 9110.4, 9124.4, 9190.4, 9226.4, 9246.4,
-    9558.4, 9718.4, 9936.4, 10006.4,
+    130.4, 146.4, 356.4, 590.4, 612.4, 824.4, 992.4, 1418.4, 2038.4, 2050.4,
+    2105.4, 2164.4, 2178.4, 2215.4, 2287.4, 2521.4, 3432.4, 3598.4, 3718.4,
+    4124.4, 5072.4, 5416.4, 5464.4, 5672.4, 5820.4, 6158.4, 6256.4, 6652.4,
+    7598.4, 7764.4, 7904.4, 8060.4, 8120.4, 8126.4, 8218.4, 8630.4, 9110.4,
+    9124.4, 9190.4, 9226.4, 9246.4, 9558.4, 9718.4, 9936.4, 10006.4,
 }
 
 PEAK_CYCLE = [42, 36, 30, 46, 34, 40, 28, 44, 32, 38]
@@ -167,6 +167,7 @@ def run_attempt(
     chat_id: str,
     attempt: int,
     excluded: set[str],
+    state: dict,
 ) -> tuple[int, str]:
     from montage_env import profile_montage_env, relaxed_montage_env
 
@@ -206,8 +207,11 @@ def run_attempt(
             "OVERNIGHT_FRESH_SEGMENTS": "1",
             "SMART_EXPLORE_WINDOW": "12",
             "SMART_PUBG_MIN_SEGMENT_GAP": "110",
+            "SMART_PUBG_TIKTOK_COMBAT": "1",
+            "SMART_PUBG_CLIP_MAX_SEC": "10.5",
+            "SMART_ACTION_CLIP_MAX_SEC": "10.5",
             "TARGET_DURATION": "45",
-            "MIN_FINAL_DURATION": "33",
+            "MIN_FINAL_DURATION": "40",
             "MAX_FINAL_DURATION": "57",
             "MIN_HIGHLIGHTS": "5",
             "MAX_HIGHLIGHTS": "5",
@@ -243,7 +247,6 @@ def run_attempt(
         if json_path.exists():
             new_keys = segment_keys_from_json(json_path)
             if new_keys:
-                state = load_json_state(STATE_FILE)
                 used = set(state.get("used_segment_keys", []))
                 used |= new_keys
                 state["used_segment_keys"] = sorted(used)
@@ -266,7 +269,7 @@ def run_job(variant: dict, env: dict[str, str], chat_id: str, state: dict) -> in
         if source is None:
             return 2
         excluded = collect_excluded(source, state)
-        code, detail = run_attempt(source, variant, env, chat_id, attempt, excluded)
+        code, detail = run_attempt(source, variant, env, chat_id, attempt, excluded, state)
         if code == 0:
             mark_job(state, job_key, status="ok", path=STATE_FILE, output=detail, attempts=attempt)
             return 0
