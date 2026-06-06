@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
@@ -111,19 +112,29 @@ def pubg_passes_tiktok_combat_gate(
     start_sec: float,
     gunfire_density: float,
     burst_ratio: float,
+    *,
+    center_motion: float = 0.0,
 ) -> tuple[bool, str]:
-    """TikTok: brawl near owner-good windows or clearly hot gunfire."""
-    if not has_owner_labels(video_path):
-        if gunfire_density >= 0.076 and burst_ratio >= 5.4:
-            return True, "tiktok_hot_audio"
-        return False, f"tiktok_no_brawl=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+    """TikTok: visible brawl — anchor to owner-good fights, never talk/sniper-only."""
+    anchor_only = os.environ.get("SMART_PUBG_ANCHOR_GOOD_ONLY", "0") == "1"
+    owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=12.0)
 
-    owner_near, owner_dist = nearest_owner_label(video_path, start_sec, radius_sec=20.0)
-    if owner_near == "good" and owner_dist <= 16.0:
-        return True, f"tiktok_owner_good=dist{owner_dist:.0f}"
-    if gunfire_density >= 0.082 and burst_ratio >= 5.6:
+    if has_owner_labels(video_path):
+        if owner_near != "good" or owner_dist > 9.0:
+            return False, f"tiktok_off_anchor=dist{owner_dist:.0f}"
+        min_gun = 0.048 if owner_dist <= 4.0 else 0.056
+        min_burst = 4.6 if owner_dist <= 4.0 else 5.6
+        if gunfire_density >= min_gun and burst_ratio >= min_burst:
+            if gunfire_density < 0.052 and center_motion < 0.030:
+                return False, f"tiktok_sniper_only=gun{gunfire_density:.3f}:motion{center_motion:.3f}"
+            return True, f"tiktok_anchor_fight=dist{owner_dist:.0f}:gun{gunfire_density:.3f}"
+        return False, f"tiktok_anchor_weak=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+
+    if anchor_only:
+        return False, "tiktok_no_owner_labels"
+    if gunfire_density >= 0.090 and burst_ratio >= 6.0 and center_motion >= 0.035:
         return True, "tiktok_hot_audio"
-    return False, f"tiktok_no_brawl=gun{gunfire_density:.3f}:near{owner_dist:.0f}"
+    return False, f"tiktok_no_brawl=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
 
 
 def pubg_passes_owner_heuristics(

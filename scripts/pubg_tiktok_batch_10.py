@@ -33,10 +33,9 @@ STATE_FILE = Path("/root/data/mlbb/pubg_tiktok_batch_10_state.json")
 HISTORY_FILE = Path("/tmp/pubg_tiktok_batch_10_history.json")
 OUT_DIR = Path("/root/videos")
 
+# Calibrated VOD only — other streams pass audio without visible gunfights.
 SOURCE_NAMES = [
     "yt_n97cHIR9Qow.mp4",
-    "yt_FpMs48XOnq0.mp4",
-    "yt_zv3JymSZOb0.mp4",
 ]
 
 BAD_START_SEC = {
@@ -208,6 +207,7 @@ def run_attempt(
             "SMART_EXPLORE_WINDOW": "12",
             "SMART_PUBG_MIN_SEGMENT_GAP": "110",
             "SMART_PUBG_TIKTOK_COMBAT": "1",
+            "SMART_PUBG_ANCHOR_GOOD_ONLY": "1",
             "SMART_PUBG_CLIP_MAX_SEC": "10.5",
             "SMART_ACTION_CLIP_MAX_SEC": "10.5",
             "TARGET_DURATION": "45",
@@ -216,8 +216,8 @@ def run_attempt(
             "MIN_HIGHLIGHTS": "5",
             "MAX_HIGHLIGHTS": "5",
             "MONTAGE_CAPTION": (
-                f"🎯 PUBG Metro TikTok {variant['part']}\n"
-                f"~45с | разные сцены, без бега и разговоров"
+                f"🔫 PUBG Metro TikTok {variant['part']}\n"
+                f"Только замесы у твоих меток (30:45 / 35:50 / 41:10)"
             ),
         }
     )

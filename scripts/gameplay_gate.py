@@ -1156,7 +1156,11 @@ def segment_is_valid_for_montage(
                     except ImportError:
                         from pubg_owner_calibration import pubg_passes_tiktok_combat_gate  # type: ignore
                     ok_tt, tt_reason = pubg_passes_tiktok_combat_gate(
-                        video_path, start_sec, gunfire_density, burst_ratio
+                        video_path,
+                        start_sec,
+                        gunfire_density,
+                        burst_ratio,
+                        center_motion=center_motion,
                     )
                     if not ok_tt:
                         return False, tt_reason
@@ -1172,7 +1176,11 @@ def segment_is_valid_for_montage(
                 except ImportError:
                     from pubg_owner_calibration import pubg_passes_tiktok_combat_gate  # type: ignore
                 ok_tt, tt_reason = pubg_passes_tiktok_combat_gate(
-                    video_path, start_sec, gunfire_density, burst_ratio
+                    video_path,
+                    start_sec,
+                    gunfire_density,
+                    burst_ratio,
+                    center_motion=center_motion,
                 )
                 if not ok_tt:
                     return False, tt_reason
