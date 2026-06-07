@@ -31,12 +31,14 @@ def rescore_clip(
     duration = _segment_duration(cand)
     metrics = score_candidate_window(video_path, start, duration, profile)
 
-    hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
     if not metrics.rule_pass:
         return False, metrics.pass_reason or "rule_fail", metrics.to_dict()
     if not metrics.visual_pass:
         return False, metrics.pass_reason or "visual_fail", metrics.to_dict()
-    if metrics.hook_score < hook_min:
+    prof = normalize_profile(profile)
+    hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
+    combat_ok = prof in ("pubg", "standoff") and metrics.panns_gun_max >= 0.25
+    if not combat_ok and metrics.hook_score < hook_min:
         return False, f"hook_low={metrics.hook_score:.3f}", metrics.to_dict()
 
     if profile in ("pubg", "standoff"):
