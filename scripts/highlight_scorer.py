@@ -47,6 +47,7 @@ MIN_CLIPS = int(os.environ.get("HIGHLIGHT_MIN_CLIPS", "3"))
 TARGET_CLIPS = int(os.environ.get("HIGHLIGHT_TARGET_CLIPS", "4"))
 
 PANN_GUN_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
+PANN_GUN_SPEECH_RATIO_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_SPEECH_RATIO", "0.08"))
 CLIP_MIN_SHOOTER = float(os.environ.get("HIGHLIGHT_CLIP_MIN_SHOOTER", "0.05"))
 CLASSIFIER_MIN = float(os.environ.get("HIGHLIGHT_CLASSIFIER_MIN", "0.6"))
 
@@ -91,6 +92,7 @@ class HighlightMetrics:
     panns_speech: float = 0.0
     panns_music: float = 0.0
     panns_gun_max: float = 0.0
+    panns_gun_threshold: float = PANN_GUN_MIN
     clip_score: float = 0.0
     ocr_text: str = ""
     ocr_hits: int = 0
@@ -118,6 +120,7 @@ class HighlightMetrics:
             "panns_speech": round(self.panns_speech, 4),
             "panns_music": round(self.panns_music, 4),
             "panns_gun_max": round(self.panns_gun_max, 4),
+            "panns_gun_threshold": round(self.panns_gun_threshold, 4),
             "clip_score": round(self.clip_score, 4),
             "ocr_text": self.ocr_text,
             "ocr_hits": self.ocr_hits,
@@ -501,15 +504,60 @@ def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> 
     }
 
 
-def audio_passes_shooter(panns: dict[str, float]) -> tuple[bool, str]:
+def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
+    """Owner-label separation — stream RU Metro has low absolute PANNs gun scores."""
+    if os.environ.get("HIGHLIGHT_PANN_FIXED", "0") == "1":
+        return PANN_GUN_MIN
+    starts = _owner_anchor_starts(video_path, profile)
+    if not starts:
+        return PANN_GUN_MIN
+    try:
+        data = json.loads(OWNER_LABELS.read_text(encoding="utf-8"))
+        vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+        rows = data.get("videos", {}).get(vid, [])
+    except (json.JSONDecodeError, OSError):
+        return PANN_GUN_MIN
+
+    good_scores: list[float] = []
+    bad_scores: list[float] = []
+    for row in rows:
+        if "time_sec" not in row:
+            continue
+        t = float(row["time_sec"]) - WINDOW_SEC * 0.5
+        p = score_panns_audio(video_path, max(0, t), WINDOW_SEC)
+        s = p["panns_gun_max"]
+        if row.get("label") == "good":
+            good_scores.append(s)
+        elif row.get("label") == "bad":
+            bad_scores.append(s)
+
+    if not good_scores:
+        return PANN_GUN_MIN
+    good_p90 = float(np.percentile(good_scores, 90))
+    bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
+    # Separate good from bad on this VOD; floor avoids noise-only PASS
+    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, 0.008)
+    return min(dynamic, PANN_GUN_MIN)
+
+
+def audio_passes_shooter(
+    panns: dict[str, float],
+    *,
+    gun_min: float | None = None,
+) -> tuple[bool, str]:
     gun_max = panns["panns_gun_max"]
-    if gun_max < PANN_GUN_MIN:
-        return False, f"panns_gun_low={gun_max:.3f}"
-    if panns["panns_speech"] > 0.45 and gun_max < PANN_GUN_MIN * 1.2:
-        return False, f"speech_dominant={panns['panns_speech']:.3f}"
-    if panns["panns_music"] > 0.40 and gun_max < PANN_GUN_MIN * 1.15:
+    threshold = PANN_GUN_MIN if gun_min is None else gun_min
+    speech = max(panns["panns_speech"], 0.01)
+    gun_ratio = gun_max / speech
+    if gun_max < threshold and gun_ratio < PANN_GUN_SPEECH_RATIO_MIN:
+        return False, f"panns_gun_low={gun_max:.3f}:thr{threshold:.3f}"
+    if panns["panns_music"] > 0.55 and gun_max < threshold * 1.1 and gun_ratio < PANN_GUN_SPEECH_RATIO_MIN * 1.2:
         return False, f"music_dominant={panns['panns_music']:.3f}"
-    return True, "panns_gun_ok"
+    if gun_max >= threshold:
+        return True, f"panns_gun_ok={gun_max:.3f}"
+    if gun_ratio >= PANN_GUN_SPEECH_RATIO_MIN:
+        return True, f"panns_gun_ratio_ok={gun_ratio:.3f}"
+    return False, f"panns_gun_low={gun_max:.3f}:ratio{gun_ratio:.3f}"
 
 
 def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
@@ -576,8 +624,11 @@ def score_candidate_window(
         **{k: v for k, v in panns.items()},
     )
 
+    gun_min = calibrated_pann_gun_min(video_path, profile) if profile in SHOOTER_PROFILES else PANN_GUN_MIN
+    m.__dict__["panns_gun_threshold"] = round(gun_min, 4)
+
     if profile in SHOOTER_PROFILES:
-        m.audio_pass, audio_reason = audio_passes_shooter(panns)
+        m.audio_pass, audio_reason = audio_passes_shooter(panns, gun_min=gun_min)
         if not m.audio_pass:
             m.pass_reason = audio_reason
     else:

@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
@@ -19,7 +19,7 @@ if not OWNER_LABELS.exists():
     if _fb.exists():
         OWNER_LABELS = _fb
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
-OUT = REPO / "data" / "highlight_exemplars"
+OUT = Path(os.environ.get("HIGHLIGHT_EXEMPLAR_ROOT", str(REPO / "data" / "highlight_exemplars")))
 CLIP_SEC = 4.0
 
 
