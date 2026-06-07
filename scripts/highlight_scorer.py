@@ -365,6 +365,8 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
 
     profile = normalize_profile(profile)
     game = profile
+    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+        return _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
     try:
         import open_clip
         import torch

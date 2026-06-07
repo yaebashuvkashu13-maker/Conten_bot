@@ -91,6 +91,7 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["HIGHLIGHT_ANCHOR_FIRST"] = "1"
         run_env["HIGHLIGHT_MAX_STAGE1"] = "48"
         run_env["HIGHLIGHT_MAX_PANN_PROBE"] = "32"
+        run_env["HIGHLIGHT_CLIP_DISABLED"] = "1"
         if game["id"] == "pubg" and "FpMs48XOnq0" in source.name:
             run_env["HIGHLIGHT_SEED_STARTS"] = "480,120,390,1080,1110,630,780,870,900"
         elif game["id"] == "pubg" and "zv3JymSZOb0" in source.name:
