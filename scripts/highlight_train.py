@@ -54,6 +54,8 @@ def main() -> int:
     parser.add_argument("--vod", default="yt_n97cHIR9Qow.mp4")
     parser.add_argument("--profile", default="pubg")
     args = parser.parse_args()
+    os.environ["HIGHLIGHT_TRAIN_MODE"] = "1"
+    os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
 
     vod = INBOX / args.vod if not Path(args.vod).exists() else Path(args.vod)
     if not vod.exists():

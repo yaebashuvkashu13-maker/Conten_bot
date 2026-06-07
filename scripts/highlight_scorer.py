@@ -764,10 +764,13 @@ def score_candidate_window(
 
     m.classifier_prob = classifier_probability(m)
     if not classifier_available():
-        m.rule_pass = False
-        m.pass_reason = "classifier_missing"
-        m.combined_score = 0.0
-        return m
+        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+            m.classifier_prob = 0.5
+        else:
+            m.rule_pass = False
+            m.pass_reason = "classifier_missing"
+            m.combined_score = 0.0
+            return m
 
     try:
         from youtube_heatmap_peaks import load_heatmap_intensity_map, nearest_heatmap_intensity
