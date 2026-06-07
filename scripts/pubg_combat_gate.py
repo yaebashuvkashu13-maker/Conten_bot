@@ -136,7 +136,7 @@ def pubg_passes_combat_gate(
         panns_gun = float(panns.get("panns_gun_max", 0))
         panns_thr = calibrated_pann_gun_min(video_path, profile)
 
-    floor = max(PANN_ABSOLUTE_MIN, PANN_GUN_INFERENCE_FLOOR, panns_thr)
+    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
     out["panns_gun_max"] = round(panns_gun, 4)
     out["panns_gun_threshold"] = round(floor, 4)
     if panns_gun < floor:

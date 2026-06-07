@@ -852,7 +852,9 @@ def score_candidate_window(
     )
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
 
-    if m.rule_pass and m.classifier_prob >= CLASSIFIER_MIN:
+    combat_authoritative = profile in SHOOTER_PROFILES and m.rule_pass
+    clf_ok = m.classifier_prob >= CLASSIFIER_MIN
+    if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
             m.panns_gun_max * 0.45
             + max(m.clip_score, 0) * 0.35
@@ -863,7 +865,7 @@ def score_candidate_window(
     else:
         m.combined_score = 0.0
         m.rule_pass = False
-        if m.classifier_prob < CLASSIFIER_MIN:
+        if not clf_ok and not combat_authoritative:
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
 
     if os.environ.get("INTELLICLIP", "1") == "1":
@@ -956,7 +958,8 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
-    if owner_anchors_enabled():
+    # Gun-peak scan near owner labels (not raw timestamp injection).
+    if owner_anchors_enabled() or _owner_anchor_starts(video_path, profile):
         for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
             starts.add(vicinity_start)
 
@@ -1045,6 +1048,14 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
             kept.append(start)
+    if not kept and profile == "pubg" and _owner_anchor_starts(video_path, profile):
+        kept = _owner_vicinity_gun_starts(video_path, profile)
+        if kept:
+            log.info(
+                "highlight panns prefilter %s: owner-vicinity fallback %s windows",
+                video_path.name,
+                len(kept),
+            )
     if not kept:
         log.warning("highlight panns prefilter %s: 0/%s passed min=%.3f", video_path.name, len(starts), pre_min)
     return kept
