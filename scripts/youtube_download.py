@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
+import re
 from urllib.parse import parse_qs, urlparse
 
 ENV_FILE = Path("/root/.video_bot.env")
@@ -23,6 +24,69 @@ def load_env(path: Path = ENV_FILE) -> dict[str, str]:
         key, value = line.split("=", 1)
         env[key.strip()] = value.strip().strip('"').strip("'")
     return env
+
+
+def normalize_youtube_url(url: str) -> str:
+    """Canonical watch URL — strips si= tracking; reliable for Shorts/Live."""
+    raw = url.strip().rstrip(".,);")
+    if not raw:
+        return raw
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    elif re.match(r"^(?:www\.)?(?:youtube\.com|youtu\.be|m\.youtube\.com)/", raw, re.I):
+        raw = "https://" + raw.lstrip("/")
+
+    parsed = urlparse(raw)
+    host = parsed.netloc.lower().split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    path = parsed.path or ""
+    vid = None
+    if host == "youtu.be":
+        vid = path.strip("/").split("/")[0][:11]
+    else:
+        low = path.lower()
+        for marker in ("/shorts/", "/live/", "/embed/", "/v/"):
+            if marker in low:
+                vid = low.split(marker, 1)[-1].split("/")[0].split("?")[0][:11]
+                break
+        if not vid and path.startswith("/watch"):
+            vid = (parse_qs(parsed.query).get("v") or [""])[0][:11]
+    if vid and len(vid) == 11:
+        return f"https://www.youtube.com/watch?v={vid}"
+    return raw
+
+
+def is_youtube_shorts_url(url: str) -> bool:
+    return "/shorts/" in urlparse(url).path.lower()
+
+
+def is_youtube_live_url(url: str) -> bool:
+    return "/live/" in urlparse(url).path.lower()
+
+
+def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
+    if is_youtube_shorts_url(url):
+        return env.get(
+            "YOUTUBE_SHORTS_FORMAT",
+            "bv*[height<=1080]+ba/b[height<=720]/b",
+        )
+    return env.get(
+        "YOUTUBE_FORMAT",
+        "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
+        "bv*[height<=1080]+ba/b[height<=1080]/b",
+    )
+
+
+def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
+    return [
+        "--socket-timeout",
+        env.get("YOUTUBE_SOCKET_TIMEOUT", "45"),
+        "--retries",
+        env.get("YOUTUBE_RETRIES", "5"),
+        "--fragment-retries",
+        env.get("YOUTUBE_FRAGMENT_RETRIES", "10"),
+    ]
 
 
 def is_youtube_url(url: str) -> bool:
@@ -82,6 +146,7 @@ def ytdlp_cmd(env: dict[str, str], *, use_proxy: bool = False) -> list[str]:
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     """Download single video to dest_dir; returns path to mp4."""
     env = env or load_env()
+    url = normalize_youtube_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
     template = dest_dir / "yt_%(id)s.%(ext)s"
     cmd = ytdlp_cmd(env, use_proxy=False) + [
@@ -90,11 +155,8 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         "--merge-output-format",
         "mp4",
         "-f",
-        env.get(
-            "YOUTUBE_FORMAT",
-            "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
-            "bv*[height<=1080]+ba/b[height<=1080]/b",
-        ),
+        youtube_format_for_url(url, env),
+        *ytdlp_extra_args(env),
         "-o",
         str(template),
         url,

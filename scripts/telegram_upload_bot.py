@@ -39,7 +39,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-06-youtube-v3'
+BOT_VERSION = '2026-06-07-youtube-shorts-v4'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -196,6 +196,7 @@ PROCESSING_CHATS: set[str] = set()
 PROCESSING_LOCK = threading.Lock()
 YOUTUBE_DOWNLOAD_CHATS: set[str] = set()
 YOUTUBE_DOWNLOAD_LOCK = threading.Lock()
+YOUTUBE_PENDING_QUEUES: dict[str, list[dict[str, str]]] = {}
 _TELEGRAM_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -807,59 +808,85 @@ def finalize_yt_work_file(work: Path) -> Path:
     return dest
 
 
-def save_youtube_from_url(url: str, chat_id: str, label: str = '') -> Path:
-    """Download YouTube via yt-dlp into pending queue (no 20MB Telegram limit)."""
-    with YOUTUBE_DOWNLOAD_LOCK:
-        if chat_id in YOUTUBE_DOWNLOAD_CHATS:
-            raise RuntimeError('Уже качаю другой YouTube для этого чата — подождите.')
-        YOUTUBE_DOWNLOAD_CHATS.add(chat_id)
+def _disk_free_gb(path: Path) -> float:
     try:
-        pending_dir = chat_pending_dir(chat_id)
-        stamp = time.strftime('%Y%m%d_%H%M%S')
-        work = pending_dir / f'_yt_tmp_{stamp}'
-        work.mkdir(parents=True, exist_ok=True)
-        env = load_env(ENV_FILE)
-        impersonate = env.get('YTDLP_IMPERSONATE', 'chrome-131')
-        template = work / 'yt_%(id)s.%(ext)s'
-        cmd = [
-            'yt-dlp',
-            '--impersonate', impersonate,
-            '--no-warnings',
-            '--no-progress',
-            '--restrict-filenames',
-            '--merge-output-format', 'mp4',
-            '-f', env.get(
-                'YOUTUBE_FORMAT',
-                'bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/'
-                'bv*[height<=1080]+ba/b[height<=1080]/b',
-            ),
-            '-o', str(template),
-        ]
-        if looks_like_youtube_url(url) and any(
-            x in url.lower() for x in ('/playlist', 'list=', '/@', '/channel/', '/c/')
-        ):
-            cmd += ['--playlist-end', env.get('YOUTUBE_PLAYLIST_END', '3')]
-        else:
-            cmd += ['--no-playlist']
-        cmd.append(url)
-        timeout = int(float(env.get('YOUTUBE_DOWNLOAD_TIMEOUT', '14400')))
-        import sys
+        stat = os.statvfs(path)
+        return stat.f_bavail * stat.f_frsize / (1024**3)
+    except OSError:
+        return 0.0
 
-        sys.path.insert(0, '/usr/local/bin')
-        from youtube_download import subprocess_env_no_proxy  # noqa: WPS433
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, env=subprocess_env_no_proxy()
+def save_youtube_from_url(
+    url: str,
+    chat_id: str,
+    label: str = '',
+    *,
+    source_url: str | None = None,
+) -> Path:
+    """Download YouTube via yt-dlp into pending queue (no 20MB Telegram limit)."""
+    import sys
+
+    sys.path.insert(0, '/usr/local/bin')
+    from youtube_download import (  # noqa: WPS433
+        is_youtube_live_url,
+        is_youtube_shorts_url,
+        normalize_youtube_url,
+        subprocess_env_no_proxy,
+        ytdlp_extra_args,
+        youtube_format_for_url,
+    )
+
+    raw_url = source_url or url
+    url = normalize_youtube_url(url)
+    pending_dir = chat_pending_dir(chat_id)
+    if _disk_free_gb(pending_dir) < 0.4:
+        raise RuntimeError('На сервере мало места на диске (<400 МБ). Освободите место и повторите.')
+
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    work = pending_dir / f'_yt_tmp_{stamp}'
+    work.mkdir(parents=True, exist_ok=True)
+    env = load_env(ENV_FILE)
+    impersonate = env.get('YTDLP_IMPERSONATE', 'chrome-131')
+    template = work / 'yt_%(id)s.%(ext)s'
+    timeout = int(float(
+        env.get(
+            'YOUTUBE_SHORTS_TIMEOUT' if is_youtube_shorts_url(raw_url) else 'YOUTUBE_DOWNLOAD_TIMEOUT',
+            '300' if is_youtube_shorts_url(raw_url) else '14400',
         )
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or 'yt-dlp failed')[:500])
-        outfile = finalize_yt_work_file(work)
-        destination = pending_dir / f'{stamp}_youtube_{outfile.stem.replace("yt_", "")}.mp4'
-        shutil.move(str(outfile), str(destination))
-        shutil.rmtree(work, ignore_errors=True)
-    finally:
-        with YOUTUBE_DOWNLOAD_LOCK:
-            YOUTUBE_DOWNLOAD_CHATS.discard(chat_id)
+    ))
+    cmd = [
+        'yt-dlp',
+        '--impersonate', impersonate,
+        '--no-warnings',
+        '--no-progress',
+        '--restrict-filenames',
+        '--merge-output-format', 'mp4',
+        '-f', youtube_format_for_url(raw_url, env),
+        *ytdlp_extra_args(env),
+        '-o', str(template),
+    ]
+    if looks_like_youtube_url(url) and any(
+        x in url.lower() for x in ('/playlist', 'list=', '/@', '/channel/', '/c/')
+    ):
+        cmd += ['--playlist-end', env.get('YOUTUBE_PLAYLIST_END', '3')]
+    else:
+        cmd += ['--no-playlist']
+    cmd.append(url)
+
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout, env=subprocess_env_no_proxy()
+    )
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or 'yt-dlp failed')[:800]
+        if is_youtube_shorts_url(raw_url):
+            err += ' (Shorts: попробуйте ещё раз через минуту или /yt <ссылка>)'
+        elif is_youtube_live_url(raw_url):
+            err += ' (Live/VOD: полный стрим качается долго — для Shorts шлите /shorts/…)'
+        raise RuntimeError(err)
+    outfile = finalize_yt_work_file(work)
+    destination = pending_dir / f'{stamp}_youtube_{outfile.stem.replace("yt_", "")}.mp4'
+    shutil.move(str(outfile), str(destination))
+    shutil.rmtree(work, ignore_errors=True)
     game_label = label.strip() or game_label_for_chat(chat_id)
     append_pending(chat_id, destination, game_label)
     hero = (env.get('YOUTUBE_DEFAULT_HERO') or '').strip().lower()
@@ -930,13 +957,82 @@ def youtube_ingest_allowed(chat_id: str) -> bool:
     return chat_is_allowed(chat_id)
 
 
+def _youtube_download_worker(chat_id: str) -> None:
+    """Background worker — does not block Telegram poll loop."""
+    import sys
+
+    sys.path.insert(0, '/usr/local/bin')
+    from youtube_download import is_youtube_live_url, is_youtube_shorts_url  # noqa: WPS433
+
+    while True:
+        with YOUTUBE_DOWNLOAD_LOCK:
+            queue = YOUTUBE_PENDING_QUEUES.get(chat_id) or []
+            if not queue:
+                YOUTUBE_DOWNLOAD_CHATS.discard(chat_id)
+                return
+            item = queue.pop(0)
+            remaining = len(queue)
+        url = item['url']
+        raw = item.get('raw', url)
+        logging.info('youtube worker chat=%s url=%s remaining=%s', chat_id, url[:120], remaining)
+        try:
+            saved = save_youtube_from_url(url, chat_id, source_url=raw)
+            pending_count = count_pending(chat_id)
+            dur = ffprobe_duration_sec(saved)
+            dur_hint = ''
+            if dur >= 3600:
+                dur_hint = f' ~{int(dur // 3600)}ч {int((dur % 3600) // 60)}м'
+            elif dur >= 120:
+                dur_hint = f' ~{int(dur // 60)}м'
+            kind = 'Short' if is_youtube_shorts_url(raw) else ('Live/VOD' if is_youtube_live_url(raw) else 'YouTube')
+            tail = f' Осталось в очереди: {remaining}.' if remaining else ''
+            send_message(
+                chat_id,
+                f'✅ {kind} скачан: {saved.name} ({pending_count} в pending).{dur_hint}{tail} Дальше /make.',
+            )
+        except Exception as exc:
+            logging.exception('youtube download failed')
+            tail = f' Осталось в очереди: {remaining}.' if remaining else ''
+            send_message(chat_id, f'❌ YouTube не скачался: {exc}{tail}')
+        time.sleep(1)
+
+
+def enqueue_youtube_downloads(chat_id: str, items: list[dict[str, str]]) -> int:
+    with YOUTUBE_DOWNLOAD_LOCK:
+        queue = YOUTUBE_PENDING_QUEUES.setdefault(chat_id, [])
+        seen = {x['url'] for x in queue}
+        added = 0
+        for item in items:
+            if item['url'] not in seen:
+                queue.append(item)
+                seen.add(item['url'])
+                added += 1
+        start_worker = chat_id not in YOUTUBE_DOWNLOAD_CHATS
+        if start_worker and queue:
+            YOUTUBE_DOWNLOAD_CHATS.add(chat_id)
+    if start_worker and queue:
+        threading.Thread(target=_youtube_download_worker, args=(chat_id,), daemon=True).start()
+    return added
+
+
 def try_youtube_ingest(chat_id: str, message: dict) -> bool:
     """Handle YouTube URLs in text/caption/entities. Returns True if handled."""
+    import sys
+
+    sys.path.insert(0, '/usr/local/bin')
+    from youtube_download import is_youtube_live_url, is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
+
     yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
     if not yt_urls:
         return False
-    url = yt_urls[0]
-    logging.info('youtube ingest chat=%s url=%s', chat_id, url[:120])
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in yt_urls:
+        url = normalize_youtube_url(raw)
+        if url and url not in seen:
+            seen.add(url)
+            items.append({'url': url, 'raw': raw})
+    logging.info('youtube ingest chat=%s urls=%s', chat_id, len(items))
     if not youtube_ingest_allowed(chat_id):
         send_message(
             chat_id,
@@ -944,26 +1040,19 @@ def try_youtube_ingest(chat_id: str, message: dict) -> bool:
             f'Напишите /ping — там «владелец=да/нет».',
         )
         return True
-    send_message(
-        chat_id,
-        'Качаю с YouTube на сервер (Shorts ~1–3 мин, VOD 2–3 ч может занять до ~1 ч).',
-    )
-    try:
-        saved = save_youtube_from_url(url, chat_id)
-        pending_count = count_pending(chat_id)
-        dur = ffprobe_duration_sec(saved)
-        dur_hint = ''
-        if dur >= 3600:
-            dur_hint = f' Длительность ~{int(dur // 3600)} ч {int((dur % 3600) // 60)} мин — /make может идти 30–90 мин.'
-        elif dur >= 1200:
-            dur_hint = f' Длительность ~{int(dur // 60)} мин — /make может идти 15–45 мин.'
-        send_message(
-            chat_id,
-            f'YouTube в очереди: {saved.name} ({pending_count} шт.).{dur_hint} Дальше /make.',
-        )
-    except Exception as exc:
-        logging.exception('youtube download failed')
-        send_message(chat_id, f'YouTube не скачался: {exc}')
+
+    shorts_n = sum(1 for u in yt_urls if is_youtube_shorts_url(u))
+    live_n = sum(1 for u in yt_urls if is_youtube_live_url(u))
+    if shorts_n:
+        eta = 'Shorts: ~30–90 сек каждый (в фоне, бот не зависает).'
+    elif live_n:
+        eta = 'Live/VOD: полный стрим — может занять 30–60+ мин.'
+    else:
+        eta = 'YouTube: ~1–5 мин.'
+    if len(items) > 1:
+        eta += f' В очереди: {len(items)} ссылок.'
+    send_message(chat_id, f'Качаю на сервер. {eta}')
+    enqueue_youtube_downloads(chat_id, items)
     return True
 
 
