@@ -109,6 +109,8 @@ def segment_viral_score(metrics: Any, video_path: Path | None = None) -> float:
 
 def segment_hook_ok(metrics: dict) -> bool:
     hook = float(metrics.get("hook_score", 0) or 0)
+    if float(metrics.get("panns_gun_max", 0) or 0) >= 0.25:
+        return True
     return hook >= SEGMENT_HOOK_MIN
 
 
