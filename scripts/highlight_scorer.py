@@ -723,6 +723,23 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             if s >= 60:
                 starts.add(round(s, 1))
 
+    seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+    for part in seed_raw.split(","):
+        part = part.strip()
+        if part:
+            try:
+                s = float(part) - WINDOW_SEC * 0.5
+                if s >= 60:
+                    starts.add(round(s, 1))
+            except ValueError:
+                pass
+
+    if not starts and profile in SHOOTER_PROFILES:
+        t = 120.0
+        while t < min(float(duration), 1800.0):
+            starts.add(round(t, 1))
+            t += 60.0
+
     return sorted(starts)[:max_stage1]
 
 
