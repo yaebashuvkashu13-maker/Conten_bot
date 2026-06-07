@@ -879,7 +879,7 @@ def score_candidate_window(
     try:
         from viral_scorer import hook_score, segment_viral_score
 
-        hook, _ = hook_score(video_path, start_sec, profile)
+        hook, _ = hook_score(video_path, start_sec, profile, duration_sec=duration_sec)
         if m.hook_score <= 0:
             m.hook_score = hook
         m.viral_score = segment_viral_score(m, video_path)
