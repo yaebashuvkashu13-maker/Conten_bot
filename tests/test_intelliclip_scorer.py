@@ -9,6 +9,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from intelliclip_scorer import (  # noqa: E402
+    candidate_intelliclip_score,
     intelliclip_score,
     merge_starts_with_anchors,
     select_intelliclip_clips,
@@ -28,6 +29,12 @@ def test_merge_starts_boosts_owner_anchors() -> None:
     assert 510.0 in merged
     assert 2837.0 in merged
     assert merged.index(510.0) < merged.index(900.0)
+
+
+def test_anchor_proximity_boosts_ranking() -> None:
+    near = {"start": 510.0, "highlight_metrics": {"intelliclip_score": 0.55, "hook_score": 0.4}}
+    far = {"start": 7000.0, "highlight_metrics": {"intelliclip_score": 0.70, "hook_score": 0.5}}
+    assert candidate_intelliclip_score(near, [515.0]) > candidate_intelliclip_score(far, [515.0])
 
 
 def test_select_intelliclip_clips_respects_gap_and_cap() -> None:

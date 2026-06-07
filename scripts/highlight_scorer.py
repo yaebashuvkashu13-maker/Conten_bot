@@ -892,11 +892,13 @@ def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: st
 
                     dur = float(ffprobe_duration(sp) or 0)
             max_clips = int(os.environ.get("INTELLICLIP_MAX_CLIPS", str(TARGET_CLIPS)))
+            anchors = _owner_anchor_starts(sp, os.environ.get("_HIGHLIGHT_PROFILE", "pubg")) if pool else []
             chosen = select_intelliclip_clips(
                 pool,
                 video_duration=dur or None,
                 max_clips=max_clips,
                 min_gap=MIN_GAP_SEC,
+                anchors=anchors or None,
             )
         except Exception as exc:
             log.warning("intelliclip select failed: %s", exc)

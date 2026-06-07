@@ -386,13 +386,22 @@ def merge_starts_with_anchors(
     return [s for s, _ in ordered[:limit]]
 
 
-def candidate_intelliclip_score(cand: dict) -> float:
+def candidate_intelliclip_score(cand: dict, anchors: list[float] | None = None) -> float:
     hm = cand.get("highlight_metrics") or cand.get("strict_metrics") or {}
-    return float(
+    base = float(
         hm.get("intelliclip_score")
         or hm.get("combined_score")
         or cand.get("score", 0.0)
     )
+    if not anchors:
+        return base
+    start = float(cand.get("start", 0))
+    near = min(abs(start + 5.0 - float(a)) for a in anchors)
+    bonus = float(os.environ.get("INTELLICLIP_ANCHOR_NEAR_BONUS", "0.22"))
+    window = float(os.environ.get("INTELLICLIP_ANCHOR_NEAR_SEC", "90"))
+    if near <= window:
+        base += bonus * (1.0 - near / max(window, 1.0))
+    return base
 
 
 def select_intelliclip_clips(
@@ -402,6 +411,7 @@ def select_intelliclip_clips(
     max_clips: int = MAX_CLIPS_QUSO,
     max_coverage: float = MAX_COVERAGE_RATIO,
     min_gap: float = 75.0,
+    anchors: list[float] | None = None,
 ) -> list[dict]:
     """
     Quso Intelliclips final pick: top 3–5 moments, <=30% of source length, spaced apart.
@@ -412,8 +422,9 @@ def select_intelliclip_clips(
     ranked = sorted(
         candidates,
         key=lambda c: (
-            candidate_intelliclip_score(c),
+            candidate_intelliclip_score(c, anchors),
             float((c.get("highlight_metrics") or {}).get("hook_score", 0)),
+            float((c.get("highlight_metrics") or {}).get("panns_gun_max", 0)),
         ),
         reverse=True,
     )
@@ -431,6 +442,34 @@ def select_intelliclip_clips(
         used += seg_dur
         if len(chosen) >= max_clips:
             break
+
+    if anchors:
+        min_anchor_hits = int(os.environ.get("INTELLICLIP_MIN_ANCHOR_HITS", "2"))
+        near_sec = float(os.environ.get("INTELLICLIP_ANCHOR_NEAR_SEC", "90"))
+        anchor_pool = [
+            c
+            for c in candidates
+            if min(abs(float(c.get("start", 0)) + 5.0 - float(a)) for a in anchors) <= near_sec
+        ]
+        anchor_pool.sort(key=lambda c: candidate_intelliclip_score(c, anchors), reverse=True)
+        hits = sum(
+            1
+            for c in chosen
+            if min(abs(float(c.get("start", 0)) + 5.0 - float(a)) for a in anchors) <= near_sec
+        )
+        for extra in anchor_pool:
+            if hits >= min_anchor_hits:
+                break
+            if extra in chosen:
+                continue
+            start = float(extra.get("start", 0))
+            if any(abs(start - float(c.get("start", 0))) < min_gap for c in chosen):
+                continue
+            if len(chosen) >= max_clips and chosen:
+                chosen[-1] = extra
+            else:
+                chosen.append(extra)
+            hits += 1
     return chosen
 
 
