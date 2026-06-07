@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,8 +17,6 @@ from urllib.parse import unquote, urlparse
 try:
     from source_freshness import filter_new_sources, mark_used, prune_used_from_queue_file
 except ImportError:
-    import sys
-
     sys.path.insert(0, '/usr/local/bin')
     from source_freshness import filter_new_sources, mark_used, prune_used_from_queue_file
 
