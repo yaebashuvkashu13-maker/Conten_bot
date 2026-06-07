@@ -192,6 +192,18 @@ def discover_strict_candidates(
 
 
 def pick_segments(candidates: list[dict], used: set[str], sig: str) -> list[dict]:
+    if os.environ.get("HIGHLIGHT_SCORER", "1") == "1" and os.environ.get("INTELLICLIP", "1") == "1":
+        try:
+            from highlight_scorer import select_montage_segments
+
+            chosen = select_montage_segments(candidates, used, sig, segment_key)
+            if chosen:
+                est = sum(float(c.get("output_duration") or c.get("input_duration") or 9) for c in chosen)
+                if len(chosen) >= MIN_CLIPS and est >= MIN_FINAL_DURATION:
+                    return chosen
+        except Exception as exc:
+            log.warning("intelliclip pick_segments failed: %s", exc)
+
     chosen: list[dict] = []
     for cand in candidates:
         start = float(cand["start"])

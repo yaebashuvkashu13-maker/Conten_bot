@@ -712,16 +712,16 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
 
     if os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
         try:
-            from intelliclip_scorer import merge_starts_with_anchors, rank_window_starts
+            from intelliclip_scorer import merge_starts_with_anchors, rank_hybrid_starts
 
-            ranked = rank_window_starts(
+            anchors = _owner_anchor_starts(video_path, profile)
+            ranked = rank_hybrid_starts(
                 video_path,
                 profile,
+                anchors or None,
                 window_sec=WINDOW_SEC,
-                step_sec=STEP_SEC,
                 limit=max_stage1,
             )
-            anchors = _owner_anchor_starts(video_path, profile)
             out = merge_starts_with_anchors(ranked, anchors, limit=max_stage1)
             if out:
                 log.info(
@@ -875,16 +875,42 @@ def discover_highlight_candidates(
 
 
 def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: str, segment_key_fn) -> list[dict]:
-    chosen: list[dict] = []
-    for cand in candidates:
-        start = float(cand["start"])
-        if segment_key_fn(sig, start) in used_keys:
-            continue
-        if any(abs(start - float(c["start"])) < MIN_GAP_SEC for c in chosen):
-            continue
-        chosen.append(cand)
-        if len(chosen) >= TARGET_CLIPS:
-            break
+    pool = [
+        c
+        for c in candidates
+        if segment_key_fn(sig, float(c["start"])) not in used_keys
+    ]
+    if os.environ.get("INTELLICLIP", "1") == "1":
+        try:
+            from intelliclip_scorer import select_intelliclip_clips
+
+            dur = 0.0
+            if pool:
+                sp = Path(str(pool[0].get("source_path", "")))
+                if sp.exists():
+                    from smart_video_editor import ffprobe_duration
+
+                    dur = float(ffprobe_duration(sp) or 0)
+            max_clips = int(os.environ.get("INTELLICLIP_MAX_CLIPS", str(TARGET_CLIPS)))
+            chosen = select_intelliclip_clips(
+                pool,
+                video_duration=dur or None,
+                max_clips=max_clips,
+                min_gap=MIN_GAP_SEC,
+            )
+        except Exception as exc:
+            log.warning("intelliclip select failed: %s", exc)
+            chosen = []
+    else:
+        chosen = []
+    if not chosen:
+        for cand in pool:
+            start = float(cand["start"])
+            if any(abs(start - float(c["start"])) < MIN_GAP_SEC for c in chosen):
+                continue
+            chosen.append(cand)
+            if len(chosen) >= TARGET_CLIPS:
+                break
     if len(chosen) < MIN_CLIPS:
         return []
     est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)

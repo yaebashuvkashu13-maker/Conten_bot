@@ -102,8 +102,9 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["INTELLICLIP_STAGE1"] = "1"
         run_env["INTELLICLIP_FUSION"] = "1"
         if game["id"] == "pubg" and "pJ-X6NdSU9k" in source.name:
-            # Owner shooting anchors — seed-first, no full-VOD scan
-            run_env["HIGHLIGHT_SEED_STARTS"] = "515,550,615,2842,2940,3285"
+            # Quso-style: intelliclip hybrid scan + owner anchors (pubg_owner_labels.json)
+            run_env["INTELLICLIP_ANCHOR_BOOST"] = "0.90"
+            run_env["INTELLICLIP_MAX_CLIPS"] = "5"
         elif game["id"] == "pubg" and "FpMs48XOnq0" in source.name:
             run_env["HIGHLIGHT_SEED_STARTS"] = "480,120,390,1080,1110,630,780,870,900"
         elif game["id"] == "pubg" and "zv3JymSZOb0" in source.name:
