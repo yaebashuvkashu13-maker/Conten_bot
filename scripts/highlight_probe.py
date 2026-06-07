@@ -63,7 +63,7 @@ def main() -> int:
             )
     else:
         pool = discover_highlight_candidates(vod, profile, sig=sig, segment_key_fn=segment_key, limit=args.limit)
-    chosen = select_montage_segments(pool, set(), sig, segment_key_fn)
+    chosen = select_montage_segments(pool, set(), sig, segment_key)
 
     rows = [c.get("highlight_metrics") or c.get("strict_metrics") for c in pool[: args.limit]]
     game = profile.upper() if profile != "mobile_legends" else "MLBB"

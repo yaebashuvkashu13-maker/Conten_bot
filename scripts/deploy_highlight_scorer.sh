@@ -10,7 +10,13 @@ git pull --ff-only origin "$BRANCH"
 
 pip3 install --break-system-packages -q torch panns-inference open-clip-torch Pillow scikit-learn joblib 2>/dev/null || true
 
+# Free disk for PANNs/CLIP weights
+rm -rf /root/.cache/pip /root/.cache/huggingface/hub/models--timm--vit_base_patch32_clip_224.openai 2>/dev/null || true
+find /root/videos -name '*.mp4' -mtime +3 -size +50M -delete 2>/dev/null || true
+
 mkdir -p /root/data/mlbb /root/data/highlight_exemplars
+export HF_HOME=/root/data/mlbb/hf_cache
+export HIGHLIGHT_CLIP_PRETRAINED=laion2b_s34b_b79k
 install -m 644 "$REPO/data/pubg_owner_labels.json" /root/data/mlbb/pubg_owner_labels.json 2>/dev/null || true
 install -m 644 "$REPO/data/pubg_owner_labels.json" "$REPO/data/pubg_owner_labels.json" 2>/dev/null || true
 

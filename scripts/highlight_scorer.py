@@ -221,7 +221,7 @@ def _clip_bundle():
     import torch
 
     model_name = os.environ.get("HIGHLIGHT_CLIP_MODEL", "ViT-B-32")
-    pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "openai")
+    pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "laion2b_s34b_b79k")
     device = "cuda" if torch.cuda.is_available() and os.environ.get("HIGHLIGHT_CLIP_DEVICE") == "cuda" else "cpu"
     model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
     model = model.to(device).eval()
@@ -299,13 +299,18 @@ def _text_bootstrap_embeddings(game: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float, profile: str) -> tuple[float, list[dict]]:
-    import open_clip
-    import torch
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
     profile = normalize_profile(profile)
     game = profile
-    model, preprocess, _, device = _clip_bundle()
+    try:
+        import open_clip
+        import torch
+
+        model, preprocess, _, device = _clip_bundle()
+    except Exception as exc:
+        log.warning("CLIP unavailable (%s) — text-only bootstrap skipped", exc)
+        return 0.0, []
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     times = [
         ("start", start_sec + 0.15),
