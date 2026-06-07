@@ -22,11 +22,19 @@ export HIGHLIGHT_EXEMPLAR_ROOT=/root/content_bot_ml/data/highlight_exemplars
 export CONTENT_BOT_REPO=/root/content_bot_ml
 export PUBG_OWNER_LABELS_PATH=/root/content_bot_ml/data/pubg_owner_labels.json
 export HIGHLIGHT_SCORER=1
-export HIGHLIGHT_ANCHOR_FIRST=1
+export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
+export OWNER_PREVIEW_REQUIRED=1
+
+install -m 644 config/highlight_queries.yaml /root/content_bot_ml/config/highlight_queries.yaml
 
 install -m 755 \
+  scripts/youtube_heatmap_peaks.py \
+  scripts/viral_scorer.py \
   scripts/intelliclip_scorer.py \
   scripts/highlight_scorer.py \
+  scripts/visual_action_check.py \
+  scripts/deploy_highlight_scorer.sh \
   scripts/vps_disk_cleanup.sh \
   scripts/highlight_train.py \
   scripts/highlight_probe.py \

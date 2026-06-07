@@ -47,10 +47,13 @@ def _frame_hit_flash_score(frame: np.ndarray) -> float:
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     sat = hsv[:, :, 1]
     val = hsv[:, :, 2]
-    center = val[int(180 * 0.25) : int(180 * 0.70), int(320 * 0.20) : int(320 * 0.80)]
+    y0, y1 = int(180 * 0.25), int(180 * 0.70)
+    x0, x1 = int(320 * 0.20), int(320 * 0.80)
+    center = val[y0:y1, x0:x1]
+    center_sat = sat[y0:y1, x0:x1]
     if center.size == 0:
         return 0.0
-    hot = (center > 210) & (sat > 45)
+    hot = (center > 210) & (center_sat > 45)
     return float(np.count_nonzero(hot)) / float(center.size)
 
 

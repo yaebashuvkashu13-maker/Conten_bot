@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Deploy viral highlight engine stack to VPS /usr/local/bin
 set -Eeuo pipefail
 REPO="${REPO:-/root/content_bot_ml}"
 BRANCH="${BRANCH:-cursor/mlbb-video-pipeline-e712}"
@@ -8,39 +9,50 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
-pip3 install --break-system-packages -q torch panns-inference open-clip-torch Pillow scikit-learn joblib 2>/dev/null || true
+pip3 install --break-system-packages -q torch panns-inference open-clip-torch Pillow scikit-learn joblib pyyaml 2>/dev/null || true
 
-# Free disk for PANNs/CLIP weights
-rm -rf /root/.cache/pip /root/.cache/huggingface/hub/models--timm--vit_base_patch32_clip_224.openai 2>/dev/null || true
+rm -rf /root/.cache/pip 2>/dev/null || true
 find /root/videos -name '*.mp4' -mtime +3 -size +50M -delete 2>/dev/null || true
 
-mkdir -p /root/data/mlbb /root/data/highlight_exemplars
+mkdir -p /root/data/mlbb/analysis_cache /root/data/highlight_exemplars
 export HF_HOME=/root/data/mlbb/hf_cache
-export HIGHLIGHT_CLIP_PRETRAINED=laion2b_s34b_b79k
+export HIGHLIGHT_EXEMPLAR_ROOT=/root/content_bot_ml/data/highlight_exemplars
+export CONTENT_BOT_REPO=/root/content_bot_ml
+export PUBG_OWNER_LABELS_PATH=/root/content_bot_ml/data/pubg_owner_labels.json
+export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
+export HIGHLIGHT_SCORER=1
+export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export OWNER_PREVIEW_REQUIRED=1
+
+install -m 644 "$REPO/config/highlight_queries.yaml" /root/content_bot_ml/config/highlight_queries.yaml
 install -m 644 "$REPO/data/pubg_owner_labels.json" /root/data/mlbb/pubg_owner_labels.json 2>/dev/null || true
-install -m 644 "$REPO/data/pubg_owner_labels.json" "$REPO/data/pubg_owner_labels.json" 2>/dev/null || true
 
 install -m 755 \
+  scripts/youtube_heatmap_peaks.py \
+  scripts/viral_scorer.py \
+  scripts/intelliclip_scorer.py \
   scripts/highlight_scorer.py \
   scripts/highlight_train.py \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \
+  scripts/vps_disk_cleanup.sh \
   scripts/strict_montage_direct.py \
   scripts/segment_preview.py \
   scripts/pubg_mlbb_pipeline.py \
+  scripts/visual_action_check.py \
   scripts/pause_legacy_pipelines.sh \
   /usr/local/bin/
 
 bash /usr/local/bin/pause_legacy_pipelines.sh
+bash /usr/local/bin/vps_disk_cleanup.sh 2>/dev/null || true
 
-# Bootstrap exemplars from owner labels
 python3 /usr/local/bin/highlight_bootstrap_exemplars.py --game pubg --vod yt_n97cHIR9Qow.mp4 || true
 python3 /usr/local/bin/highlight_train.py --profile pubg --vod yt_n97cHIR9Qow.mp4 || true
 
-export HIGHLIGHT_SCORER=1
 nohup /usr/local/bin/run_job_until_ok.sh \
   /root/data/mlbb/pubg_mlbb_pipeline.log \
   python3 /usr/local/bin/pubg_mlbb_pipeline.py --reset \
   >>/root/data/mlbb/pubg_mlbb_pipeline.log 2>&1 &
 
-echo "highlight scorer deployed — probe: python3 /usr/local/bin/highlight_probe.py --profile pubg --vod yt_n97cHIR9Qow.mp4"
+echo "highlight engine deployed — probe:"
+echo "  HIGHLIGHT_USE_OWNER_ANCHORS=0 python3 /usr/local/bin/highlight_probe.py --profile pubg --vod yt_n97cHIR9Qow.mp4"

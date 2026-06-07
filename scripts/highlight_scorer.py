@@ -35,6 +35,9 @@ OWNER_LABELS = Path(
         str(REPO_ROOT / "data" / "pubg_owner_labels.json"),
     )
 )
+QUERY_CONFIG = Path(
+    os.environ.get("HIGHLIGHT_QUERY_CONFIG", str(REPO_ROOT / "config" / "highlight_queries.yaml"))
+)
 if not OWNER_LABELS.exists():
     _fallback = Path("/root/data/mlbb/pubg_owner_labels.json")
     if _fallback.exists():
@@ -71,6 +74,15 @@ GAME_LABELS = {
 SHOOTER_PROFILES = frozenset({"pubg", "standoff"})
 
 
+def owner_anchors_enabled() -> bool:
+    """Owner timestamps for train/calibrate only — never default in inference."""
+    return os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") == "1"
+
+
+def classifier_available() -> bool:
+    return CLASSIFIER_PATH.exists()
+
+
 def normalize_profile(profile: str) -> str:
     p = profile.strip().lower()
     if p == "mlbb":
@@ -100,10 +112,12 @@ class HighlightMetrics:
     boss_bar: float = 0.0
     minimap_delta: float = 0.0
     skill_delta: float = 0.0
-    classifier_prob: float = 1.0
+    classifier_prob: float = 0.0
     intelliclip_score: float = 0.0
     hook_score: float = 0.0
     visual_dynamics: float = 0.0
+    heatmap_intensity: float = 0.0
+    viral_score: float = 0.0
     combined_score: float = 0.0
     pass_reason: str = ""
     visual_pass: bool = False
@@ -135,6 +149,8 @@ class HighlightMetrics:
             "intelliclip_score": round(self.intelliclip_score, 4),
             "hook_score": round(self.hook_score, 4),
             "visual_dynamics": round(self.visual_dynamics, 4),
+            "heatmap_intensity": round(self.heatmap_intensity, 4),
+            "viral_score": round(self.viral_score, 4),
             "combined_score": round(self.combined_score, 4),
             "pass_reason": self.pass_reason,
             "visual_pass": self.visual_pass,
@@ -260,21 +276,28 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     embs: list[np.ndarray] = []
     from gameplay_gate import _read_frame_at
 
+    from smart_video_editor import ffprobe_duration
+
     for path in paths[:24]:
-        frame = None
+        frames_to_encode: list = []
         if path.suffix.lower() in (".jpg", ".png"):
             import cv2
 
             frame = cv2.imread(str(path))
+            if frame is not None:
+                frames_to_encode.append(frame)
         else:
-            frame = _read_frame_at(path, 1.0)
-        if frame is None:
-            continue
-        tensor = preprocess(_frame_to_pil(frame)).unsqueeze(0).to(device)
-        with torch.no_grad():
-            emb = model.encode_image(tensor)
-            emb = emb / emb.norm(dim=-1, keepdim=True)
-        embs.append(emb.cpu().numpy()[0])
+            dur = float(ffprobe_duration(path) or 10.0)
+            for frac in (0.25, 0.5, 0.75):
+                frame = _read_frame_at(path, max(0.1, dur * frac))
+                if frame is not None:
+                    frames_to_encode.append(frame)
+        for frame in frames_to_encode:
+            tensor = preprocess(_frame_to_pil(frame)).unsqueeze(0).to(device)
+            with torch.no_grad():
+                emb = model.encode_image(tensor)
+                emb = emb / emb.norm(dim=-1, keepdim=True)
+            embs.append(emb.cpu().numpy()[0])
     return tuple(embs)
 
 
@@ -286,6 +309,68 @@ def _hist_vector(frame: np.ndarray) -> np.ndarray:
     hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
     cv2.normalize(hist, hist)
     return hist.flatten()
+
+
+@lru_cache(maxsize=1)
+def _load_highlight_queries() -> dict:
+    if not QUERY_CONFIG.exists():
+        return {}
+    try:
+        import yaml
+
+        return yaml.safe_load(QUERY_CONFIG.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        log.warning("highlight_queries load failed: %s", exc)
+        return {}
+
+
+def score_text_query_clip(
+    video_path: Path, start_sec: float, duration_sec: float, profile: str
+) -> float:
+    """HL-CLIP style text-query scoring from config/highlight_queries.yaml."""
+    profile = normalize_profile(profile)
+    queries = _load_highlight_queries().get(profile, {})
+    good_q = queries.get("good_queries") or []
+    bad_q = queries.get("bad_queries") or []
+    if not good_q and not bad_q:
+        return 0.0
+
+    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+        return 0.0
+    try:
+        import open_clip
+        import torch
+
+        model, preprocess, tokenizer, device = _clip_bundle()
+    except Exception as exc:
+        log.warning("text CLIP unavailable: %s", exc)
+        return 0.0
+
+    from gameplay_gate import _read_frame_at, detect_game_viewport_crop
+
+    crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    frame = _read_frame_at(video_path, start_sec + 0.2)
+    if frame is None:
+        return 0.0
+    if crop is not None:
+        x, y, w, h = crop
+        frame = frame[y : y + h, x : x + w]
+
+    tensor = preprocess(_frame_to_pil(frame)).unsqueeze(0).to(device)
+    with torch.no_grad():
+        img_emb = model.encode_image(tensor)
+        img_emb = (img_emb / img_emb.norm(dim=-1, keepdim=True)).cpu().numpy()[0]
+
+    def text_emb(texts: list[str]) -> np.ndarray:
+        tokens = tokenizer(texts).to(device)
+        with torch.no_grad():
+            t = model.encode_text(tokens)
+            t = (t / t.norm(dim=-1, keepdim=True)).cpu().numpy()
+        return t.mean(axis=0)
+
+    good_mat = text_emb(good_q) if good_q else np.zeros_like(img_emb)
+    bad_mat = text_emb(bad_q) if bad_q else np.zeros_like(img_emb)
+    return float(np.dot(img_emb, good_mat) - np.dot(img_emb, bad_mat))
 
 
 def _score_hist_exemplar_fallback(
@@ -333,7 +418,16 @@ def _score_hist_exemplar_fallback(
         sim_b = float(np.mean([cv2.compareHist(vec.reshape(16, 16), b.reshape(16, 16), cv2.HISTCMP_CORREL) for b in bad_vecs])) if bad_vecs else 0.0
         clip_s = sim_g - sim_b
         scores.append(clip_s)
-        rows.append({"label": label, "timestamp": round(t, 3), "clip_score": round(clip_s, 4), "pass": clip_s > CLIP_MIN_SHOOTER, "fallback": "hist"})
+        rows.append(
+            {
+                "label": label,
+                "timestamp": round(t, 3),
+                "clip_score": round(clip_s, 4),
+                "pass": clip_s > CLIP_MIN_SHOOTER,
+                "fallback": "hist",
+            }
+        )
+    log.warning("CLIP disabled/unavailable — histogram exemplar emergency fallback for %s", video_path.name)
     return (float(np.mean(scores)) if scores else 0.0, rows)
 
 
@@ -371,8 +465,11 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
 
     profile = normalize_profile(profile)
     game = profile
+    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
-        return _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
+        hist_score, rows = _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
+        combined = text_score if text_score else hist_score
+        return combined, rows
     try:
         import open_clip
         import torch
@@ -380,7 +477,9 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
         model, preprocess, _, device = _clip_bundle()
     except Exception as exc:
         log.warning("CLIP unavailable (%s) — histogram exemplar fallback", exc)
-        return _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
+        hist_score, rows = _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
+        combined = (hist_score + text_score) / 2 if text_score else hist_score
+        return combined, rows
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     times = [
         ("start", start_sec + 0.15),
@@ -427,7 +526,12 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
             }
         )
 
-    return (float(np.mean(scores)) if scores else 0.0, frame_rows)
+    exemplar_score = float(np.mean(scores)) if scores else 0.0
+    if good_embs and bad_embs:
+        clip_final = (exemplar_score + text_score) / 2.0 if text_score else exemplar_score
+    else:
+        clip_final = text_score if text_score else exemplar_score
+    return clip_final, frame_rows
 
 
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:
@@ -472,7 +576,7 @@ def _load_classifier():
 def classifier_probability(metrics: HighlightMetrics) -> float:
     clf = _load_classifier()
     if clf is None:
-        return 1.0
+        return 0.0
     feats = np.array(
         [
             [
@@ -490,7 +594,7 @@ def classifier_probability(metrics: HighlightMetrics) -> float:
             return float(clf.predict_proba(feats)[0][1])
         return float(clf.decision_function(feats)[0])
     except Exception:
-        return 1.0
+        return 0.0
 
 
 def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
@@ -544,7 +648,7 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
     good_p90 = float(np.percentile(good_scores, 90))
     bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
     # Separate good from bad on this VOD; floor avoids noise-only PASS
-    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, 0.008)
+    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, 0.015)
     return min(dynamic, PANN_GUN_MIN)
 
 
@@ -557,19 +661,17 @@ def audio_passes_shooter(
     threshold = PANN_GUN_MIN if gun_min is None else gun_min
     speech = max(panns["panns_speech"], 0.01)
     gun_ratio = gun_max / speech
-    if gun_max < threshold and gun_ratio < PANN_GUN_SPEECH_RATIO_MIN:
+    if gun_max < threshold:
         return False, f"panns_gun_low={gun_max:.3f}:thr{threshold:.3f}"
-    if panns["panns_music"] > 0.55 and gun_max < threshold * 1.1 and gun_ratio < PANN_GUN_SPEECH_RATIO_MIN * 1.2:
+    if panns["panns_music"] > 0.55 and gun_max < threshold * 1.15:
         return False, f"music_dominant={panns['panns_music']:.3f}"
-    if gun_max >= threshold:
-        return True, f"panns_gun_ok={gun_max:.3f}"
-    if gun_ratio >= PANN_GUN_SPEECH_RATIO_MIN:
-        return True, f"panns_gun_ratio_ok={gun_ratio:.3f}"
-    return False, f"panns_gun_low={gun_max:.3f}:ratio{gun_ratio:.3f}"
+    return True, f"panns_gun_ok={gun_max:.3f}"
 
 
 def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
     profile = normalize_profile(profile)
+    if not metrics.visual_pass:
+        return False, "visual_fail"
     if profile in SHOOTER_PROFILES:
         if not metrics.audio_pass:
             return False, metrics.pass_reason or "audio_fail"
@@ -644,8 +746,37 @@ def score_candidate_window(
     else:
         m.audio_pass = True
 
-    m.visual_pass = clip_score > (CLIP_MIN_SHOOTER if profile in SHOOTER_PROFILES else 0.03)
+    from gameplay_gate import _read_frame_at, detect_game_viewport_crop
+    from visual_action_check import check_frame_visual
+
+    vis_frame = _read_frame_at(video_path, start_sec + 0.15)
+    if vis_frame is not None:
+        crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        if crop is not None:
+            x, y, w, h = crop
+            vis_frame = vis_frame[y : y + h, x : x + w]
+        m.visual_pass, vis_reason, _ = check_frame_visual(profile, vis_frame)
+        if not m.visual_pass and not m.pass_reason:
+            m.pass_reason = vis_reason
+    else:
+        m.visual_pass = False
+        m.pass_reason = m.pass_reason or "visual_frame_missing"
+
     m.classifier_prob = classifier_probability(m)
+    if not classifier_available():
+        m.rule_pass = False
+        m.pass_reason = "classifier_missing"
+        m.combined_score = 0.0
+        return m
+
+    try:
+        from youtube_heatmap_peaks import load_heatmap_intensity_map, nearest_heatmap_intensity
+
+        hm_map = load_heatmap_intensity_map(video_path)
+        m.heatmap_intensity = nearest_heatmap_intensity(start_sec + duration_sec * 0.5, hm_map)
+    except Exception:
+        m.heatmap_intensity = 0.0
+
     m.rule_pass, rule_reason = rule_gate(profile, m)
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
 
@@ -671,6 +802,16 @@ def score_candidate_window(
         except Exception as exc:
             log.warning("intelliclip enrich failed: %s", exc)
 
+    try:
+        from viral_scorer import hook_score, segment_viral_score
+
+        hook, _ = hook_score(video_path, start_sec, profile)
+        if m.hook_score <= 0:
+            m.hook_score = hook
+        m.viral_score = segment_viral_score(m, video_path)
+    except Exception as exc:
+        log.warning("viral score failed: %s", exc)
+
     return m
 
 
@@ -688,14 +829,27 @@ def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
     return [float(r["time_sec"]) for r in rows if r.get("label") == "good" and "time_sec" in r]
 
 
+def _heatmap_stage0_starts(video_path: Path) -> list[float]:
+    try:
+        from youtube_heatmap_peaks import heatmap_peak_starts
+
+        peaks = heatmap_peak_starts(video_path, window_sec=WINDOW_SEC)
+        if peaks:
+            log.info("heatmap stage0 %s: %s peaks", video_path.name, len(peaks))
+        return peaks
+    except Exception as exc:
+        log.warning("heatmap stage0 failed: %s", exc)
+        return []
+
+
 def stage1_candidates(video_path: Path, profile: str) -> list[float]:
-    """Sliding 10s / step 2s with cheap motion prefilter + owner anchors."""
+    """Stage0 heatmap + Stage1 cheap motion/gun scan. No owner anchor injection in inference."""
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
+    starts: set[float] = set(_heatmap_stage0_starts(video_path))
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
-    if seed_raw.strip():
-        starts: set[float] = set()
+    if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
@@ -707,48 +861,25 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             except ValueError:
                 pass
         out = sorted(starts)[:max_stage1]
-        log.info("highlight seed-first %s: %s windows", video_path.name, len(out))
+        log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
         return out
 
     if os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
         try:
-            from intelliclip_scorer import merge_starts_with_anchors, rank_hybrid_starts
+            from intelliclip_scorer import rank_window_starts
 
-            anchors = _owner_anchor_starts(video_path, profile)
-            ranked = rank_hybrid_starts(
+            ranked = rank_window_starts(
                 video_path,
                 profile,
-                anchors or None,
                 window_sec=WINDOW_SEC,
+                step_sec=STEP_SEC,
                 limit=max_stage1,
             )
-            out = merge_starts_with_anchors(ranked, anchors, limit=max_stage1)
-            if out:
-                log.info(
-                    "intelliclip stage1 %s: %s windows (ranked=%s anchors=%s)",
-                    video_path.name,
-                    len(out),
-                    len(ranked),
-                    len(anchors),
-                )
-                return out
+            for start, _, _ in ranked:
+                starts.add(start)
+            log.info("intelliclip stage1 %s: %s windows", video_path.name, len(ranked))
         except Exception as exc:
             log.warning("intelliclip stage1 failed: %s", exc)
-
-    if os.environ.get("HIGHLIGHT_ANCHOR_FIRST", "1") == "1" and profile in SHOOTER_PROFILES:
-        anchors = _owner_anchor_starts(video_path, profile)
-        if anchors:
-            starts: set[float] = set()
-            span = int(os.environ.get("HIGHLIGHT_ANCHOR_SPAN_SEC", "180"))
-            step = int(os.environ.get("HIGHLIGHT_ANCHOR_STEP_SEC", "10"))
-            for anchor in anchors:
-                for off in range(-span, span + 1, step):
-                    s = anchor + off - WINDOW_SEC * 0.5
-                    if s >= 60:
-                        starts.add(round(s, 1))
-            out = sorted(starts)[:max_stage1]
-            log.info("highlight anchor-first %s: %s windows (anchors=%s)", video_path.name, len(out), len(anchors))
-            return out
 
     from smart_video_editor import analyze_video
 
@@ -761,7 +892,6 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     p90 = float(np.percentile(motion, 90)) if motion.size else 0.02
     motion_thr = max(0.018, p90 * 0.55)
 
-    starts: set[float] = set()
     t = 90.0
     while t + WINDOW_SEC <= duration - 30:
         i0 = int(t / win)
@@ -777,22 +907,12 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             starts.add(round(t, 1))
         t += STEP_SEC
 
-    for anchor in _owner_anchor_starts(video_path, profile):
-        for off in (-60, -30, 0, 30, 60):
-            s = anchor + off - WINDOW_SEC * 0.5
-            if s >= 60:
-                starts.add(round(s, 1))
-
-    seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
-    for part in seed_raw.split(","):
-        part = part.strip()
-        if part:
-            try:
-                s = float(part) - WINDOW_SEC * 0.5
+    if owner_anchors_enabled():
+        for anchor in _owner_anchor_starts(video_path, profile):
+            for off in (-60, -30, 0, 30, 60):
+                s = anchor + off - WINDOW_SEC * 0.5
                 if s >= 60:
                     starts.add(round(s, 1))
-            except ValueError:
-                pass
 
     if not starts and profile in SHOOTER_PROFILES:
         t = 120.0
@@ -840,13 +960,25 @@ def discover_highlight_candidates(
         if segment_key_fn and sig and segment_key_fn(sig, start) in used_keys:
             continue
         metrics = score_candidate_window(video_path, start, WINDOW_SEC, profile)
+        try:
+            from viral_scorer import trim_segment_start
+
+            trimmed = trim_segment_start(video_path, start, profile, window_sec=WINDOW_SEC)
+            if abs(trimmed - start) > 0.1:
+                metrics = score_candidate_window(video_path, trimmed, WINDOW_SEC, profile)
+                start = trimmed
+        except Exception:
+            pass
         status = "PASS" if metrics.rule_pass else "FAIL"
         log.info(
-            "[%s] highlight start=%.1f panns_gun=%.3f clip=%.3f reason=%s",
+            "[%s] highlight start=%.1f panns=%.3f clip=%.3f hook=%.3f viral=%.3f heat=%.3f reason=%s",
             status,
             start,
             metrics.panns_gun_max,
             metrics.clip_score,
+            metrics.hook_score,
+            metrics.viral_score,
+            metrics.heatmap_intensity,
             metrics.pass_reason,
         )
         if not metrics.rule_pass:
@@ -859,8 +991,8 @@ def discover_highlight_candidates(
                 "input_duration": WINDOW_SEC,
                 "output_duration": WINDOW_SEC,
                 "speed": 1.0,
-                "score": metrics.combined_score,
-                "strict_score": metrics.combined_score,
+                "score": metrics.viral_score or metrics.combined_score,
+                "strict_score": metrics.viral_score or metrics.combined_score,
                 "highlight_metrics": metrics.to_dict(),
                 "gate_reason": metrics.pass_reason,
                 "strict_metrics": metrics.to_dict(),
@@ -869,7 +1001,13 @@ def discover_highlight_candidates(
         if len(verified) >= limit:
             break
 
-    verified.sort(key=lambda c: c.get("score", 0), reverse=True)
+    verified.sort(
+        key=lambda c: (
+            (c.get("highlight_metrics") or {}).get("viral_score", 0),
+            c.get("score", 0),
+        ),
+        reverse=True,
+    )
     log.info("highlight pool %s: %s passed", video_path.name, len(verified))
     return verified
 
@@ -880,39 +1018,22 @@ def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: st
         for c in candidates
         if segment_key_fn(sig, float(c["start"])) not in used_keys
     ]
-    if os.environ.get("INTELLICLIP", "1") == "1":
-        try:
-            from intelliclip_scorer import select_intelliclip_clips
-
-            dur = 0.0
-            if pool:
-                sp = Path(str(pool[0].get("source_path", "")))
-                if sp.exists():
-                    from smart_video_editor import ffprobe_duration
-
-                    dur = float(ffprobe_duration(sp) or 0)
-            max_clips = int(os.environ.get("INTELLICLIP_MAX_CLIPS", str(TARGET_CLIPS)))
-            anchors = _owner_anchor_starts(sp, os.environ.get("_HIGHLIGHT_PROFILE", "pubg")) if pool else []
-            chosen = select_intelliclip_clips(
-                pool,
-                video_duration=dur or None,
-                max_clips=max_clips,
-                min_gap=MIN_GAP_SEC,
-                anchors=anchors or None,
-            )
-        except Exception as exc:
-            log.warning("intelliclip select failed: %s", exc)
-            chosen = []
-    else:
-        chosen = []
-    if not chosen:
-        for cand in pool:
-            start = float(cand["start"])
-            if any(abs(start - float(c["start"])) < MIN_GAP_SEC for c in chosen):
-                continue
-            chosen.append(cand)
-            if len(chosen) >= TARGET_CLIPS:
-                break
+    pool.sort(
+        key=lambda c: (
+            (c.get("highlight_metrics") or {}).get("viral_score", 0),
+            c.get("score", 0),
+        ),
+        reverse=True,
+    )
+    chosen: list[dict] = []
+    for cand in pool:
+        start = float(cand["start"])
+        if any(abs(start - float(c["start"])) < MIN_GAP_SEC for c in chosen):
+            continue
+        chosen.append(cand)
+        max_pick = int(os.environ.get("INTELLICLIP_MAX_CLIPS", str(TARGET_CLIPS)))
+        if len(chosen) >= max_pick:
+            break
     if len(chosen) < MIN_CLIPS:
         return []
     est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)

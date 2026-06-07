@@ -155,7 +155,39 @@
 
 ---
 
-## 6. Smart Edit v1.1 — правила (обязательные)
+## 6. Viral Highlight Engine + Smart Edit v1.1
+
+### 6.1 Highlight Engine (PUBG → Standoff → MLBB → Genshin → WoT)
+
+**Цель:** находить **интересные** моменты (стрельба, тимфайт, босс) — не бег/лут/меню.
+
+| Стадия | Модуль | Что делает |
+|--------|--------|------------|
+| Stage0 | `youtube_heatmap_peaks.py` | YouTube Most Replayed — weak labels (top 20, gap ≥60s) |
+| Stage1 | `intelliclip_scorer` + motion bins | Дешёвый скан пиков |
+| Stage2 | PANNs (`panns-inference`) | gunshot / machine_gun / explosion |
+| Stage3 | CLIP | exemplars `data/highlight_exemplars/{game}/` + `config/highlight_queries.yaml` |
+| Stage4 | `rule_gate` + `visual_action_check` | AND-гейт: audio + clip + **независимый visual** |
+| Stage5 | `viral_scorer.py` | hook (первые 0.3–2с), payoff timing, menu penalty |
+| Stage6 | `select_montage_segments` | 3–4 сегмента, gap ≥90s, 33–57s |
+| Stage7 | `segment_preview.py` | **только preview** → `sendVideo` после `/approve_preview` |
+
+**Owner labels (`pubg_owner_labels.json`):** только train/calibrate (`highlight_train.py`, `calibrated_pann_gun_min`).  
+**Inference:** `HIGHLIGHT_USE_OWNER_ANCHORS=0` (default) — **никогда** не подмешивать таймкоды владельца в `stage1_candidates`.
+
+**Env (прод):**
+```bash
+HIGHLIGHT_SCORER=1
+HIGHLIGHT_USE_OWNER_ANCHORS=0
+OWNER_PREVIEW_REQUIRED=1
+HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
+```
+
+**Viral rules:** первый кадр монтажа = action in motion (hook ≥0.42); сегмент 15–34s; montage 33–57s; trim start к первому gun spike (+3s max).
+
+**Деплой:** `bash scripts/deploy_highlight_scorer.sh`
+
+### 6.2 Smart Edit v1.1 — правила (обязательные)
 
 Владелец зафиксировал **6 требований** — они уже заложены в код/env:
 

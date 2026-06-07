@@ -1,0 +1,49 @@
+# HL-CLIP / SportCLIP-style text queries for highlight scoring (English for OpenCLIP).
+pubg:
+  good_queries:
+    - "first person shooter firefight gunshots enemies combat kill"
+    - "battle royale shootout muzzle flash crosshair aiming"
+    - "intense gun battle squad fight explosions"
+  bad_queries:
+    - "running looting inventory menu walking empty field"
+    - "driving vehicle no combat streamer talking"
+    - "map screen lobby waiting room"
+  viral_hook_queries:
+    - "action already in motion gunfight started"
+    - "explosive combat moment no menu"
+
+standoff:
+  good_queries:
+    - "fps mobile shooter firefight gunshots enemies"
+    - "counter strike style combat shooting kill"
+  bad_queries:
+    - "menu lobby inventory walking idle"
+  viral_hook_queries:
+    - "instant combat hook shooting"
+
+mobile_legends:
+  good_queries:
+    - "moba teamfight abilities skills minimap combat heroes"
+    - "five versus five clash ultimate skills"
+  bad_queries:
+    - "lane farming walking draft hero select shop"
+  viral_hook_queries:
+    - "teamfight already started skill effects"
+
+genshin:
+  good_queries:
+    - "boss fight hp bar elemental combat damage"
+    - "intense boss battle special attack"
+  bad_queries:
+    - "exploration walking open world idle menu cooking"
+  viral_hook_queries:
+    - "boss fight in progress hp bar visible"
+
+wot:
+  good_queries:
+    - "tank battle explosion hit marker impact"
+    - "artillery explosion tank combat"
+  bad_queries:
+    - "garage loading screen cruise map edge driving"
+  viral_hook_queries:
+    - "tank shot impact explosion"
