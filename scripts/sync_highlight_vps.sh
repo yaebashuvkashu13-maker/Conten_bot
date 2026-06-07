@@ -43,6 +43,7 @@ pkill -f 'run_job_until_ok.sh /root/data/mlbb/pubg_mlbb_pipeline' 2>/dev/null ||
 bash /usr/local/bin/pause_legacy_pipelines.sh
 
 python3 /usr/local/bin/highlight_bootstrap_exemplars.py --game pubg --vod yt_n97cHIR9Qow.mp4 || true
+python3 /usr/local/bin/highlight_bootstrap_panns_peaks.py --game pubg --vod yt_FpMs48XOnq0.mp4 --min-panns 0.35 --top 10 || true
 mv /usr/local/data/highlight_exemplars/pubg /root/content_bot_ml/data/highlight_exemplars/ 2>/dev/null || true
 
 grep -c calibrated_pann_gun_min /usr/local/bin/highlight_scorer.py
