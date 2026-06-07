@@ -122,12 +122,10 @@ def montage_viral_score(segments: list[dict]) -> tuple[float, bool]:
     for seg in segments:
         hm = seg.get("highlight_metrics") or seg.get("strict_metrics") or {}
         scores.append(float(hm.get("viral_score", hm.get("combined_score", 0))))
-    first_hook = float(
-        (segments[0].get("highlight_metrics") or segments[0].get("strict_metrics") or {}).get(
-            "hook_score", 0
-        )
-    )
-    hook_ok = first_hook >= HOOK_MIN_SCORE
+    first_hm = segments[0].get("highlight_metrics") or segments[0].get("strict_metrics") or {}
+    first_hook = float(first_hm.get("hook_score", 0) or 0)
+    first_panns = float(first_hm.get("panns_gun_max", 0) or 0)
+    hook_ok = first_hook >= HOOK_MIN_SCORE or first_panns >= 0.25
     return round(float(np.mean(scores)) if scores else 0.0, 4), hook_ok
 
 
