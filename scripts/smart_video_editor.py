@@ -1822,13 +1822,9 @@ def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption:
         profile = 'wot'
     if profile == 'mlbb':
         profile = 'mobile_legends'
-    if (
-        profile in STRICT_PEAK_PROFILES
-        and os.environ.get('STRICT_PEAK_MONTAGE', '0') != '1'
-        and os.environ.get('ALLOW_LEGACY_MONTAGE_SEND', '0') != '1'
-    ):
+    if profile in STRICT_PEAK_PROFILES and os.environ.get('OWNER_PREVIEW_APPROVED', '0') != '1':
         raise RuntimeError(
-            f'blocked telegram send: STRICT_PEAK_MONTAGE required for profile={profile}'
+            f'blocked sendVideo: owner visual preview required for profile={profile}'
         )
     short_cap = caption[:900]
     url = f'https://api.telegram.org/bot{bot_token}/sendVideo'

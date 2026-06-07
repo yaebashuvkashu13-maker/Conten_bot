@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Restart strict-peak pipelines if they died before delivering results.
+# Restart pubg_mlbb strict queue only.
 set -Eeuo pipefail
 
 LOG=/root/data/mlbb/pipeline_watchdog.log
+PAUSE=/root/data/mlbb/PAUSED_PIPELINES
 exec >>"$LOG" 2>&1
+
+if [[ -f "$PAUSE" ]] && grep -q 'pubg_mlbb_pipeline.py' "$PAUSE" 2>/dev/null; then
+  echo "[$(date -Is)] watchdog: pubg_mlbb paused"
+  exit 0
+fi
 
 if pgrep -f 'smart_video_editor.py' >/dev/null; then
   exit 0
@@ -15,8 +21,11 @@ restart_if_needed() {
   local total_jobs="$3"
   local script="$4"
   local job_log="$5"
-  local extra_args="${6:-}"
+  local extra_args="${6:---resume}"
 
+  if [[ -f "$PAUSE" ]] && grep -q "$script" "$PAUSE" 2>/dev/null; then
+    return 0
+  fi
   if [[ ! -f "$state_file" ]]; then
     return 0
   fi
@@ -54,19 +63,10 @@ PY
     >>"$job_log" 2>&1 &
 }
 
-# Strict peak only — legacy batches must not auto-restart without STRICT_PEAK_MONTAGE.
 restart_if_needed \
-  "investor_demo_batch" \
-  "/root/data/mlbb/investor_demo_batch_state.json" \
-  5 \
-  "investor_demo_batch.py" \
-  "/root/data/mlbb/investor_demo_batch.log" \
-  "--resume"
-
-restart_if_needed \
-  "action_showcase_2x5" \
-  "/root/data/mlbb/action_showcase_2x5_state.json" \
-  10 \
-  "action_showcase_2x5.py" \
-  "/root/data/mlbb/action_showcase_2x5.log" \
+  "pubg_mlbb_pipeline" \
+  "/root/data/mlbb/pubg_mlbb_pipeline_state.json" \
+  2 \
+  "pubg_mlbb_pipeline.py" \
+  "/root/data/mlbb/pubg_mlbb_pipeline.log" \
   "--resume"

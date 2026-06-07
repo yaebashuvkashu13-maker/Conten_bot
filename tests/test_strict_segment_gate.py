@@ -158,5 +158,5 @@ def test_smart_editor_blocks_send_without_strict_peak(monkeypatch: pytest.Monkey
     monkeypatch.setenv("QUEUE_GAME_PROFILE", "pubg")
     monkeypatch.delenv("STRICT_PEAK_MONTAGE", raising=False)
     monkeypatch.delenv("ALLOW_LEGACY_MONTAGE_SEND", raising=False)
-    with pytest.raises(RuntimeError, match="STRICT_PEAK_MONTAGE"):
+    with pytest.raises(RuntimeError, match="owner visual preview"):
         send_telegram_video("token", "123", video, "caption")

@@ -339,9 +339,9 @@ def make_brawl_montage(
         sig=sig,
     )
     if result is None:
-        return 1, "Game=PUBG, render/gate failed"
+        return 1, "REFUSED: game=PUBG, reason=render_or_visual_gate_failed, visual_passed=0/0"
 
     for clip in clips:
         used.add(segment_key(sig, float(clip["start"])))
     save_used_keys(used)
-    return 0, f"Game=PUBG, segments={len(clips)}, all passed strict gate, 0 run/loot/talk/idle -> {result.name}"
+    return 3, f"REFUSED: game=PUBG, reason=awaiting_owner_preview, visual_passed={len(clips)}/{len(clips)}, montage={result.name}"

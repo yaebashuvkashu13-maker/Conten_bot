@@ -16,12 +16,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from montage_env import strict_peak_env
+from segment_preview import PROOF_ROOT, build_proof_package, preview_id_for, send_proof_to_owner
 from strict_segment_gate import (
     GAME_LABELS,
     normalize_profile,
     passes_strict_gate,
     verify_montage_segments,
 )
+from visual_action_check import verify_segments_visual
 
 MIN_CLIPS = 3
 TARGET_CLIPS = 4
@@ -230,7 +232,6 @@ def build_and_send(
         ffprobe_duration,
         render_segment,
         run_command,
-        send_telegram_video,
         short_file_id,
     )
 
@@ -244,7 +245,20 @@ def build_and_send(
     all_ok, metrics_rows, table = verify_montage_segments(vod, profile, segment_pairs)
     log.info("\n%s", table)
     if not all_ok:
-        log.error("abort send: not all segments passed strict gate")
+        log.error("REFUSED: audio/UI gate failed — not proof of visual action")
+        return None
+
+    vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
+        vod, profile, segment_pairs, segment_metrics=metrics_rows
+    )
+    if vis_passed < vis_total:
+        log.error(
+            "REFUSED: game=%s reason=%s visual_passed=%s/%s",
+            GAME_LABELS.get(normalize_profile(profile), profile),
+            vis_reason,
+            vis_passed,
+            vis_total,
+        )
         return None
 
     logo = Path(os.environ.get("LOGO_FILE", "/root/logo.png"))
@@ -271,21 +285,49 @@ def build_and_send(
             return None
 
         game = GAME_LABELS.get(normalize_profile(profile), profile)
+        pid = preview_id_for(profile, basename)
+        env_snapshot = {
+            "TG_BOT_TOKEN": bot_token,
+            "TG_CHAT_ID": os.environ.get("TG_CHAT_ID", chat_id),
+        }
+        pkg = build_proof_package(
+            video_path=vod,
+            profile=profile,
+            game_label=game,
+            segments=clips,
+            visual_rows=visual_rows,
+            audio_metrics=metrics_rows,
+            montage_path=out,
+            preview_id=pid,
+        )
         meta = {
             "profile": profile,
-            "mode": "strict_peak",
+            "mode": "visual_preview",
             "game": game,
             "final_duration": final_dur,
             "output_id": short_file_id(out),
             "acceptance_table": table,
             "segment_metrics": metrics_rows,
+            "visual_proof": visual_rows,
+            "preview_id": pid,
+            "preview_status": "PENDING_OWNER",
             "selected_segments": clips,
-            "strict_gate_summary": f"Game={game}, segments={len(clips)}, all passed strict gate",
         }
         out.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        (PROOF_ROOT / pid / "montage.json").write_text(
+            json.dumps({"montage": str(out), "caption": caption, "profile": profile}, indent=2),
+            encoding="utf-8",
+        )
 
-        if bot_token and chat_id:
-            send_telegram_video(bot_token, chat_id, out, caption)
+        if bot_token and env_snapshot.get("TG_CHAT_ID"):
+            send_proof_to_owner(pkg, env_snapshot)
+            log.info(
+                "REFUSED sendVideo: game=%s reason=awaiting_owner_preview visual_passed=%s/%s preview_id=%s",
+                game,
+                vis_passed,
+                vis_total,
+                pid,
+            )
         return out
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -316,11 +358,13 @@ def make_strict_montage(
     pool = discover_strict_candidates(vod, profile, sig, used)
 
     if len(pool) < MIN_CLIPS:
-        return 1, f"Game={GAME_LABELS.get(profile, profile)}, found {len(pool)}/{MIN_CLIPS} strict segments"
+        game = GAME_LABELS.get(profile, profile)
+        return 1, f"REFUSED: game={game}, reason=insufficient_audio_candidates, visual_passed=0/{MIN_CLIPS}"
 
     clips = pick_segments(pool, used, sig)
     if len(clips) < MIN_CLIPS:
-        return 1, f"Game={GAME_LABELS.get(profile, profile)}, found {len(clips)}/{MIN_CLIPS} non-overlapping strict segments"
+        game = GAME_LABELS.get(profile, profile)
+        return 1, f"REFUSED: game={game}, reason=insufficient_segments, visual_passed=0/{MIN_CLIPS}"
 
     out_dir = Path(merged.get("OUTPUT_DIR", "/root/videos"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -339,10 +383,20 @@ def make_strict_montage(
         sig=sig,
     )
     if result is None:
-        return 1, f"Game={GAME_LABELS.get(profile, profile)}, render/gate failed"
+        game = GAME_LABELS.get(profile, profile)
+        return 1, f"REFUSED: game={game}, reason=render_or_visual_gate_failed, visual_passed=0/{len(clips)}"
 
     for clip in clips:
         used.add(segment_key(sig, float(clip["start"])))
     save_used_keys(used)
     game = GAME_LABELS.get(profile, profile)
-    return 0, f"Game={game}, segments={len(clips)}, all passed strict gate, 0 run/loot/talk/idle -> {result.name}"
+    meta_path = result.with_suffix(".json")
+    preview_id = ""
+    try:
+        preview_id = json.loads(meta_path.read_text(encoding="utf-8")).get("preview_id", "")
+    except (json.JSONDecodeError, OSError):
+        pass
+    return 3, (
+        f"REFUSED: game={game}, reason=awaiting_owner_preview, "
+        f"visual_passed={len(clips)}/{len(clips)}, preview_id={preview_id}, montage={result.name}"
+    )

@@ -1700,6 +1700,51 @@ def handle_message(message: dict):
             logging.exception('research url download failed')
             send_message(chat_id, f'Не удалось скачать по ссылке: {exc}\n\n{research_help_text()}')
         return
+    if is_owner(chat_id) and text.startswith('/approve_preview'):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            send_message(chat_id, 'Использование: /approve_preview <preview_id>')
+            return
+        preview_id = parts[1].strip()
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from segment_preview import approve_preview, send_approved_montage
+
+            pkg = approve_preview(preview_id, by_chat=str(chat_id))
+            if not pkg:
+                send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
+                return
+            env_map = dict(os.environ)
+            if ENV_FILE.exists():
+                for line in ENV_FILE.read_text().splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        k, v = line.split('=', 1)
+                        env_map.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            caption = f"{pkg.get('game', '')} | owner approved"
+            send_approved_montage(pkg, env_map, caption)
+            n = sum(len(s.get('screenshots', [])) for s in pkg.get('segments', []))
+            ts = [s['start'] for s in pkg.get('segments', [])]
+            send_message(chat_id, f'SENT: preview_id={preview_id}, screens={n}, timestamps={ts}')
+        except Exception as exc:
+            logging.exception('approve_preview failed')
+            send_message(chat_id, f'REFUSED: preview, reason={exc}, visual_passed=0/0')
+        return
+    if is_owner(chat_id) and text.startswith('/reject_preview'):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            send_message(chat_id, 'Использование: /reject_preview <preview_id>')
+            return
+        preview_id = parts[1].strip()
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from segment_preview import reject_preview
+
+            reject_preview(preview_id, by_chat=str(chat_id), reason='owner_rejected')
+            send_message(chat_id, f'REFUSED: preview_id={preview_id}, reason=owner_rejected')
+        except Exception as exc:
+            send_message(chat_id, f'REFUSED: preview, reason={exc}')
+        return
     if text.startswith('/status'):
         if limited:
             return
