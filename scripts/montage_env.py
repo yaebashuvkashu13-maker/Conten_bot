@@ -62,9 +62,11 @@ def pubg_combat_env() -> dict[str, str]:
         "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.18",
         "HIGHLIGHT_PANN_PREFILTER_MIN": "0.12",
         "HIGHLIGHT_CLIP_MIN_SHOOTER": "0.10",
-        "VISUAL_PUBG_MIN_FRAMES_PASS": "2",
+        "VISUAL_PUBG_MIN_FRAMES_PASS": "3",
         "VIRAL_SEGMENT_HOOK_MIN": "0.35",
         "VIRAL_HOOK_MIN": "0.42",
+        "INTELLICLIP_FUSION": "0",
+        "HIGHLIGHT_CLIP_DISABLED": "0",
     }
 
 

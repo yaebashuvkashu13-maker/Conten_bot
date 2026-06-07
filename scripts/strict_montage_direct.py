@@ -21,9 +21,8 @@ from strict_segment_gate import (
     GAME_LABELS,
     normalize_profile,
     passes_strict_gate,
-    verify_montage_segments,
 )
-from visual_action_check import verify_segments_visual
+from preview_gate import format_acceptance_table, validate_clips_before_preview
 
 MIN_CLIPS = 3
 TARGET_CLIPS = 4
@@ -259,77 +258,24 @@ def build_and_send(
         short_file_id,
     )
 
-    segment_pairs = [
-        (
-            float(c["start"]),
-            float(c.get("input_duration") or c.get("output_duration") or 9.0),
-        )
-        for c in clips
-    ]
-    has_highlight = all(
-        "panns_gunshot" in (clips[i].get("highlight_metrics") or clips[i].get("strict_metrics") or {})
-        or "clip_score" in (clips[i].get("highlight_metrics") or clips[i].get("strict_metrics") or {})
-        for i in range(len(clips))
+    clip_count = len(clips)
+    gate_ok, gate_reason, clips, metrics_rows, visual_rows = validate_clips_before_preview(
+        vod, profile, clips
     )
-    if has_highlight:
-        metrics_rows = [c.get("highlight_metrics") or c.get("strict_metrics", {}) for c in clips]
-        for row in metrics_rows:
-            row["pass"] = bool(row.get("rule_pass"))
-        all_ok = all(row.get("pass") for row in metrics_rows)
-        if not all_ok:
-            log.error("REFUSED: highlight rule gate failed")
-            return None
-    else:
-        all_ok, metrics_rows, table = verify_montage_segments(vod, profile, segment_pairs)
-        log.info("\n%s", table)
-        if not all_ok:
-            log.error("REFUSED: legacy audio/UI gate failed")
-            return None
-
-    from visual_action_check import verify_segments_visual
-
-    vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
-        vod, profile, segment_pairs, segment_metrics=metrics_rows
-    )
-    if vis_passed < vis_total:
+    if not gate_ok:
+        game = GAME_LABELS.get(normalize_profile(profile), profile)
         log.error(
-            "REFUSED: game=%s reason=%s visual_passed=%s/%s",
-            GAME_LABELS.get(normalize_profile(profile), profile),
-            vis_reason,
-            vis_passed,
-            vis_total,
+            "REFUSED: game=%s reason=%s visual_passed=0/%s",
+            game,
+            gate_reason,
+            clip_count,
         )
         return None
 
-    from viral_scorer import montage_viral_score, segment_hook_ok
-
-    _, hook_ok = montage_viral_score(clips)
-    if not hook_ok:
-        log.error("REFUSED: game=%s reason=viral_hook_fail segment1", GAME_LABELS.get(profile, profile))
-        return None
-    for idx, cand in enumerate(clips, 1):
-        hm = cand.get("highlight_metrics") or cand.get("strict_metrics") or {}
-        if not segment_hook_ok(hm):
-            log.error(
-                "REFUSED: game=%s reason=viral_hook_fail seg%d hook=%.3f",
-                GAME_LABELS.get(profile, profile),
-                idx,
-                float(hm.get("hook_score", 0)),
-            )
-            return None
-
-    game = GAME_LABELS.get(normalize_profile(profile), profile)
-    header = "| # | start | panns | clip | visual | hook | heatmap | viral | PASS |"
-    sep = "|---|-------|-------|------|--------|------|---------|-------|------|"
-    lines = [header, sep]
-    for i, row in enumerate(metrics_rows, 1):
-        lines.append(
-            f"| {i} | {row.get('start', 0)} | {row.get('panns_gun_max', 0):.3f} | "
-            f"{row.get('clip_score', 0):.3f} | {row.get('visual_pass', False)} | "
-            f"{row.get('hook_score', 0):.3f} | {row.get('heatmap_intensity', 0):.3f} | "
-            f"{row.get('viral_score', 0):.3f} | {row.get('pass', False)} |"
-        )
-    log.info("\n%s\n%s", game, "\n".join(lines))
+    table = format_acceptance_table(profile, metrics_rows)
+    log.info("\n%s", table)
+    vis_passed = len(visual_rows)
+    vis_total = len(visual_rows)
 
     logo = Path(os.environ.get("LOGO_FILE", "/root/logo.png"))
     temp_dir = Path(tempfile.mkdtemp(prefix="strict-peak-"))

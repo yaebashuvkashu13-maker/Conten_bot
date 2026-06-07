@@ -33,6 +33,11 @@ def test_audio_passes_shooter_requires_panns_gun() -> None:
     )
     assert bad is False
     assert "panns_gun_low" in reason2
+    talk, reason3 = audio_passes_shooter(
+        {"panns_gun_max": 0.30, "panns_speech": 5.0, "panns_music": 0.1}
+    )
+    assert talk is False
+    assert "speech_dominant" in reason3
 
 
 def test_shooter_rule_requires_audio_and_clip() -> None:
@@ -44,7 +49,7 @@ def test_shooter_rule_requires_audio_and_clip() -> None:
         visual_pass=True,
         clip_score=0.12,
         panns_gun_max=0.22,
-        center_motion=0.11,
+        center_motion=0.13,
         panns_gun_threshold=0.18,
     )
     ok, reason = rule_gate("pubg", m)

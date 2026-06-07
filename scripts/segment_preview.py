@@ -115,7 +115,25 @@ def build_proof_package(
 
 def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str]) -> None:
     """Send screenshots + caption to owner — never sendVideo here."""
+    from preview_gate import validate_clips_before_preview
     from smart_video_editor import run_command, telegram_curl_env
+
+    video_path = Path(pkg.get("video_source", ""))
+    profile = pkg.get("profile", "pubg")
+    clips = [
+        {
+            "start": seg.get("start"),
+            "input_duration": seg.get("duration"),
+            "output_duration": seg.get("duration"),
+            "highlight_metrics": seg.get("audio_metrics") or {},
+            "strict_metrics": seg.get("audio_metrics") or {},
+        }
+        for seg in pkg.get("segments", [])
+    ]
+    if video_path.exists() and clips:
+        ok, reason, _, _, _ = validate_clips_before_preview(video_path, profile, clips)
+        if not ok:
+            raise RuntimeError(f"pre_send_refused:{reason}")
 
     token = env.get("TG_BOT_TOKEN", "")
     chat_id = _owner_chat_id(env)
@@ -186,10 +204,28 @@ def is_owner_approved(preview_id: str) -> bool:
 
 
 def approve_preview(preview_id: str, *, by_chat: str = "") -> dict[str, Any] | None:
+    from preview_gate import validate_clips_before_preview
+
     proof_path = PROOF_ROOT / preview_id / "proof.json"
     if not proof_path.exists():
         return None
     pkg = json.loads(proof_path.read_text(encoding="utf-8"))
+    video_path = Path(pkg.get("video_source", ""))
+    profile = pkg.get("profile", "pubg")
+    clips = [
+        {
+            "start": seg.get("start"),
+            "input_duration": seg.get("duration"),
+            "output_duration": seg.get("duration"),
+            "highlight_metrics": seg.get("audio_metrics") or {},
+            "strict_metrics": seg.get("audio_metrics") or {},
+        }
+        for seg in pkg.get("segments", [])
+    ]
+    if video_path.exists() and clips:
+        ok, reason, _, _, _ = validate_clips_before_preview(video_path, profile, clips)
+        if not ok:
+            raise RuntimeError(f"approve_refused:{reason}")
     pkg["owner_approved"] = True
     pkg["status"] = "APPROVED"
     pkg["approved_at"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
@@ -215,12 +251,31 @@ def reject_preview(preview_id: str, *, by_chat: str = "", reason: str = "") -> N
 
 
 def send_approved_montage(pkg: dict[str, Any], env: dict[str, str], caption: str) -> None:
+    from preview_gate import validate_clips_before_preview
+
     montage = pkg.get("montage_path")
     if not montage:
         raise RuntimeError("no montage_path in proof package")
     path = Path(montage)
     if not path.exists():
         raise RuntimeError(f"montage missing: {path}")
+
+    video_path = Path(pkg.get("video_source", ""))
+    profile = pkg.get("profile", "pubg")
+    clips = [
+        {
+            "start": seg.get("start"),
+            "input_duration": seg.get("duration"),
+            "output_duration": seg.get("duration"),
+            "highlight_metrics": seg.get("audio_metrics") or {},
+            "strict_metrics": seg.get("audio_metrics") or {},
+        }
+        for seg in pkg.get("segments", [])
+    ]
+    if video_path.exists() and clips:
+        ok, reason, _, _, _ = validate_clips_before_preview(video_path, profile, clips)
+        if not ok:
+            raise RuntimeError(f"send_refused:{reason}")
 
     proof_path = PROOF_ROOT / pkg["preview_id"] / "proof.json"
     if pkg.get("video_sent_at"):

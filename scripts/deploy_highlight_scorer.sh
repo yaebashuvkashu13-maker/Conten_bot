@@ -23,6 +23,8 @@ export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
 export HIGHLIGHT_SCORER=1
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
 export OWNER_PREVIEW_REQUIRED=1
+export HIGHLIGHT_CLIP_DISABLED=0
+export INTELLICLIP_FUSION=0
 
 install -m 644 "$REPO/config/highlight_queries.yaml" /root/content_bot_ml/config/highlight_queries.yaml
 install -m 644 "$REPO/data/pubg_owner_labels.json" /root/data/mlbb/pubg_owner_labels.json 2>/dev/null || true
@@ -40,6 +42,7 @@ install -m 755 \
   scripts/segment_preview.py \
   scripts/pubg_mlbb_pipeline.py \
   scripts/visual_action_check.py \
+  scripts/preview_gate.py \
   scripts/pause_legacy_pipelines.sh \
   /usr/local/bin/
 

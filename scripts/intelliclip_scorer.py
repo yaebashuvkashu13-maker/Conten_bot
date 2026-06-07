@@ -483,7 +483,8 @@ def enrich_highlight_metrics(metrics: Any, video_path, profile: str) -> None:
         panns_gun=float(getattr(metrics, "panns_gun_max", 0)),
         clip_score=float(getattr(metrics, "clip_score", 0)),
     )
-    metrics.hook_score = round(sig["hook_energy"], 4)
+    if float(getattr(metrics, "hook_score", 0) or 0) <= 0:
+        metrics.hook_score = round(sig["hook_energy"], 4)
     metrics.visual_dynamics = round(sig["visual_dynamics"], 4)
     metrics.intelliclip_score = ic
 
@@ -495,7 +496,3 @@ def enrich_highlight_metrics(metrics: Any, video_path, profile: str) -> None:
             metrics.combined_score * 0.45 + ic * 0.55,
             4,
         )
-    elif ic >= float(os.environ.get("INTELLICLIP_PASS_MIN", "0.42")) and metrics.audio_pass:
-        metrics.rule_pass = True
-        metrics.combined_score = ic
-        metrics.pass_reason = f"intelliclip_ok={ic:.3f}:hook{sig['hook_energy']:.3f}"

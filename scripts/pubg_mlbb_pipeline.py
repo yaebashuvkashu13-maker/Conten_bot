@@ -97,10 +97,10 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
         run_env["HIGHLIGHT_MAX_STAGE1"] = "48"
         run_env["HIGHLIGHT_MAX_PANN_PROBE"] = "32"
-        run_env["HIGHLIGHT_CLIP_DISABLED"] = "1"
+        run_env["HIGHLIGHT_CLIP_DISABLED"] = "0"
         run_env["INTELLICLIP"] = "1"
         run_env["INTELLICLIP_STAGE1"] = "1"
-        run_env["INTELLICLIP_FUSION"] = "1"
+        run_env["INTELLICLIP_FUSION"] = "0"
         run_env["INTELLICLIP_MAX_CLIPS"] = "4"
 
         log(f"queue {game['label']} attempt={attempt} vod={source.name}")

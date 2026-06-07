@@ -676,6 +676,8 @@ def audio_passes_shooter(
         return False, f"panns_gun_low={gun_max:.3f}:thr{threshold:.3f}"
     if panns["panns_music"] > 0.55 and gun_max < threshold * 1.15:
         return False, f"music_dominant={panns['panns_music']:.3f}"
+    if gun_ratio < PANN_GUN_SPEECH_RATIO_MIN:
+        return False, f"speech_dominant=ratio{gun_ratio:.3f}"
     return True, f"panns_gun_ok={gun_max:.3f}"
 
 
@@ -693,12 +695,14 @@ def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
         gun_floor = max(thr, PANN_GUN_INFERENCE_FLOOR)
         if gun < gun_floor:
             return False, f"panns_gun_low={gun:.3f}:floor{gun_floor:.3f}"
-        if gun >= 0.28 and (clip >= 0.08 or motion >= 0.12):
+        if clip < CLIP_MIN_SHOOTER:
+            return False, f"clip_low={clip:.3f}"
+        if motion < 0.12:
+            return False, f"motion_low={motion:.3f}"
+        if gun >= 0.28:
             return True, f"shooter_gun_strong={gun:.3f}"
-        if clip >= CLIP_MIN_SHOOTER and gun >= gun_floor and motion >= 0.10:
+        if clip >= CLIP_MIN_SHOOTER and gun >= gun_floor:
             return True, f"shooter_combat={gun:.3f}:clip{clip:.3f}:motion{motion:.3f}"
-        if metrics.panns_gun_max >= 0.35 and metrics.center_motion >= 0.10:
-            return True, f"shooter_panns_strong={metrics.panns_gun_max:.3f}:motion{metrics.center_motion:.3f}"
         return False, f"shooter_weak gun={gun:.3f} clip={clip:.3f} motion={motion:.3f}"
 
     if profile == "genshin":
@@ -795,6 +799,18 @@ def score_candidate_window(
     m.rule_pass, rule_reason = rule_gate(profile, m)
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
 
+    if profile == "pubg" and m.rule_pass:
+        from pubg_shooting_gate import pubg_passes_shooting_gate
+
+        shoot_ok, shoot_reason, _gun = pubg_passes_shooting_gate(
+            video_path, start_sec, duration_sec
+        )
+        if not shoot_ok:
+            m.rule_pass = False
+            m.pass_reason = shoot_reason
+        else:
+            m.pass_reason = shoot_reason
+
     if m.rule_pass and m.classifier_prob >= CLASSIFIER_MIN:
         m.combined_score = (
             m.panns_gun_max * 0.45
@@ -840,7 +856,7 @@ def _owner_vicinity_gun_starts(video_path: Path, profile: str) -> list[float]:
         return []
     radius = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_SEC", "120"))
     step = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_STEP", "4"))
-    gun_floor = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_GUN_MIN", "0.14"))
+    gun_floor = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_GUN_MIN", "0.18"))
     peaks: list[tuple[float, float]] = []
     for anchor in anchors:
         lo = max(60.0, anchor - radius)
@@ -969,10 +985,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                     starts.add(round(s, 1))
 
     if not starts and profile in SHOOTER_PROFILES:
-        t = 120.0
-        while t < min(float(duration), 1800.0):
-            starts.add(round(t, 1))
-            t += 60.0
+        log.warning("highlight stage1 %s: no combat windows — refusing filler grid", video_path.name)
 
     return sorted(starts)[:max_stage1]
 
@@ -990,7 +1003,9 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
             kept.append(start)
-    return kept or starts[: min(24, len(starts))]
+    if not kept:
+        log.warning("highlight panns prefilter %s: 0/%s passed min=%.3f", video_path.name, len(starts), pre_min)
+    return kept
 
 
 def discover_highlight_candidates(
@@ -1035,7 +1050,7 @@ def discover_highlight_candidates(
             metrics.heatmap_intensity,
             metrics.pass_reason,
         )
-        if not metrics.rule_pass:
+        if not metrics.rule_pass or not metrics.visual_pass:
             continue
         hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
         if metrics.hook_score < hook_min:
@@ -1116,4 +1131,14 @@ def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: st
         while len(chosen) > MIN_CLIPS and est > 57.0:
             chosen.pop()
             est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)
+    if chosen:
+        vod = Path(str(chosen[0].get("source_path", "")))
+        prof = normalize_profile((chosen[0].get("highlight_metrics") or {}).get("profile", "pubg"))
+        if vod.exists():
+            from preview_gate import rescore_clips
+
+            rescored, ok, _reason = rescore_clips(vod, prof, chosen)
+            if not ok:
+                return []
+            chosen = rescored
     return chosen

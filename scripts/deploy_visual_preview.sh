@@ -9,6 +9,8 @@ git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
 install -m 755 \
+  scripts/preview_gate.py \
+  scripts/highlight_scorer.py \
   scripts/visual_action_check.py \
   scripts/segment_preview.py \
   scripts/pubg_mlbb_pipeline.py \

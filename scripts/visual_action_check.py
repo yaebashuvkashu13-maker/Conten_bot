@@ -85,7 +85,9 @@ def check_frame_visual(profile: str, frame: np.ndarray) -> tuple[bool, str, dict
         min_center = float(os.environ.get("VISUAL_PUBG_MIN_CENTER_EDGE", "0.028"))
         min_weapon = float(os.environ.get("VISUAL_PUBG_MIN_WEAPON_EDGE", "0.018"))
         min_flash = float(os.environ.get("VISUAL_PUBG_MIN_HIT_FLASH", "0.0015"))
-        combat = center_edge >= min_center or weapon_edge >= min_weapon or flash >= min_flash
+        combat = center_edge >= min_center and (
+            weapon_edge >= min_weapon or flash >= min_flash
+        )
         if not combat:
             return False, "no_visible_combat", metrics
         sky_edge = _laplacian_edge_score(frame, 0.02, 0.35, 0.10, 0.90)
@@ -181,7 +183,7 @@ def extract_and_check_segment(
 
     need = int(os.environ.get("VISUAL_MIN_FRAMES_PASS", "3"))
     if profile in ("pubg", "standoff"):
-        need = int(os.environ.get("VISUAL_PUBG_MIN_FRAMES_PASS", "2"))
+        need = int(os.environ.get("VISUAL_PUBG_MIN_FRAMES_PASS", "3"))
     seg_pass = passed_frames >= need
     fail_reason = ""
     if not seg_pass:
