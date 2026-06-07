@@ -162,6 +162,7 @@ def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str]) -> None:
                     "-sS",
                     "-m",
                     "120",
+                    photo_url,
                     "-F",
                     f"chat_id={chat_id}",
                     "-F",
