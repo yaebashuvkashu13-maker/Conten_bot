@@ -28,8 +28,13 @@ GAMES = [
         "id": "pubg",
         "profile": "pubg",
         "label": "PUBG",
-        # zv3J first: stable 3+ PANNs peaks; FpMs48 second for seed expansion
-        "sources": ["yt_zv3JymSZOb0.mp4", "yt_FpMs48XOnq0.mp4", "yt_n97cHIR9Qow.mp4"],
+        # Owner-anchored live VOD first; then zv3J / FpMs48 fallbacks
+        "sources": [
+            "yt_pJ-X6NdSU9k.mp4",
+            "yt_zv3JymSZOb0.mp4",
+            "yt_FpMs48XOnq0.mp4",
+            "yt_n97cHIR9Qow.mp4",
+        ],
     },
     {
         "id": "standoff",
@@ -93,7 +98,10 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["HIGHLIGHT_MAX_STAGE1"] = "48"
         run_env["HIGHLIGHT_MAX_PANN_PROBE"] = "32"
         run_env["HIGHLIGHT_CLIP_DISABLED"] = "1"
-        if game["id"] == "pubg" and "FpMs48XOnq0" in source.name:
+        if game["id"] == "pubg" and "pJ-X6NdSU9k" in source.name:
+            # Owner shooting anchors — seed-first, no full-VOD scan
+            run_env["HIGHLIGHT_SEED_STARTS"] = "515,550,615,2842,2940,3285"
+        elif game["id"] == "pubg" and "FpMs48XOnq0" in source.name:
             run_env["HIGHLIGHT_SEED_STARTS"] = "480,120,390,1080,1110,630,780,870,900"
         elif game["id"] == "pubg" and "zv3JymSZOb0" in source.name:
             run_env["HIGHLIGHT_SEED_STARTS"] = "900,870,780,630,390"
