@@ -25,7 +25,9 @@ export HIGHLIGHT_SCORER=1
 export HIGHLIGHT_ANCHOR_FIRST=1
 
 install -m 755 \
+  scripts/intelliclip_scorer.py \
   scripts/highlight_scorer.py \
+  scripts/vps_disk_cleanup.sh \
   scripts/highlight_train.py \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \

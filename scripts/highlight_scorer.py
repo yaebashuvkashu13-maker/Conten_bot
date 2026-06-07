@@ -101,6 +101,9 @@ class HighlightMetrics:
     minimap_delta: float = 0.0
     skill_delta: float = 0.0
     classifier_prob: float = 1.0
+    intelliclip_score: float = 0.0
+    hook_score: float = 0.0
+    visual_dynamics: float = 0.0
     combined_score: float = 0.0
     pass_reason: str = ""
     visual_pass: bool = False
@@ -129,6 +132,9 @@ class HighlightMetrics:
             "minimap_delta": round(self.minimap_delta, 4),
             "skill_delta": round(self.skill_delta, 4),
             "classifier_prob": round(self.classifier_prob, 4),
+            "intelliclip_score": round(self.intelliclip_score, 4),
+            "hook_score": round(self.hook_score, 4),
+            "visual_dynamics": round(self.visual_dynamics, 4),
             "combined_score": round(self.combined_score, 4),
             "pass_reason": self.pass_reason,
             "visual_pass": self.visual_pass,
@@ -657,6 +663,14 @@ def score_candidate_window(
         if m.classifier_prob < CLASSIFIER_MIN:
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
 
+    if os.environ.get("INTELLICLIP", "1") == "1":
+        try:
+            from intelliclip_scorer import enrich_highlight_metrics
+
+            enrich_highlight_metrics(m, video_path, profile)
+        except Exception as exc:
+            log.warning("intelliclip enrich failed: %s", exc)
+
     return m
 
 
@@ -695,6 +709,31 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         out = sorted(starts)[:max_stage1]
         log.info("highlight seed-first %s: %s windows", video_path.name, len(out))
         return out
+
+    if os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
+        try:
+            from intelliclip_scorer import merge_starts_with_anchors, rank_window_starts
+
+            ranked = rank_window_starts(
+                video_path,
+                profile,
+                window_sec=WINDOW_SEC,
+                step_sec=STEP_SEC,
+                limit=max_stage1,
+            )
+            anchors = _owner_anchor_starts(video_path, profile)
+            out = merge_starts_with_anchors(ranked, anchors, limit=max_stage1)
+            if out:
+                log.info(
+                    "intelliclip stage1 %s: %s windows (ranked=%s anchors=%s)",
+                    video_path.name,
+                    len(out),
+                    len(ranked),
+                    len(anchors),
+                )
+                return out
+        except Exception as exc:
+            log.warning("intelliclip stage1 failed: %s", exc)
 
     if os.environ.get("HIGHLIGHT_ANCHOR_FIRST", "1") == "1" and profile in SHOOTER_PROFILES:
         anchors = _owner_anchor_starts(video_path, profile)

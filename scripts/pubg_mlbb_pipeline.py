@@ -98,6 +98,9 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["HIGHLIGHT_MAX_STAGE1"] = "48"
         run_env["HIGHLIGHT_MAX_PANN_PROBE"] = "32"
         run_env["HIGHLIGHT_CLIP_DISABLED"] = "1"
+        run_env["INTELLICLIP"] = "1"
+        run_env["INTELLICLIP_STAGE1"] = "1"
+        run_env["INTELLICLIP_FUSION"] = "1"
         if game["id"] == "pubg" and "pJ-X6NdSU9k" in source.name:
             # Owner shooting anchors — seed-first, no full-VOD scan
             run_env["HIGHLIGHT_SEED_STARTS"] = "515,550,615,2842,2940,3285"
