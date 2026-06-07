@@ -43,6 +43,7 @@ install -m 755 \
   scripts/pubg_mlbb_pipeline.py \
   scripts/visual_action_check.py \
   scripts/preview_gate.py \
+  scripts/pubg_combat_gate.py \
   scripts/pause_legacy_pipelines.sh \
   /usr/local/bin/
 

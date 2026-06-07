@@ -10,6 +10,7 @@ git pull --ff-only origin "$BRANCH"
 
 install -m 755 \
   scripts/preview_gate.py \
+  scripts/pubg_combat_gate.py \
   scripts/highlight_scorer.py \
   scripts/visual_action_check.py \
   scripts/segment_preview.py \
@@ -20,6 +21,7 @@ install -m 755 \
   scripts/pubg_brawl_direct.py \
   scripts/smart_video_editor.py \
   scripts/telegram_upload_bot.py \
+  scripts/pubg_shooting_gate.py \
   scripts/pipeline_watchdog.sh \
   /usr/local/bin/
 

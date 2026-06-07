@@ -40,7 +40,7 @@ def test_audio_passes_shooter_requires_panns_gun() -> None:
     assert "speech_dominant" in reason3
 
 
-def test_shooter_rule_requires_audio_and_clip() -> None:
+def test_shooter_rule_delegates_to_combat_gate() -> None:
     m = HighlightMetrics(
         start=0,
         duration=10,
@@ -52,29 +52,28 @@ def test_shooter_rule_requires_audio_and_clip() -> None:
         center_motion=0.13,
         panns_gun_threshold=0.18,
     )
-    ok, reason = rule_gate("pubg", m)
+    with patch("pubg_combat_gate.pubg_passes_combat_gate", return_value=(True, "combat_ok", {})):
+        ok, reason = rule_gate("pubg", m, video_path=Path("x.mp4"), start_sec=0, duration_sec=10)
     assert ok is True
-    m.panns_gun_max = 0.08
-    ok2, reason2 = rule_gate("pubg", m)
+    assert reason == "combat_ok"
+
+    with patch("pubg_combat_gate.pubg_passes_combat_gate", return_value=(False, "no_shots", {})):
+        ok2, reason2 = rule_gate("pubg", m, video_path=Path("x.mp4"), start_sec=0, duration_sec=10)
     assert ok2 is False
-    assert "panns_gun_low" in reason2
+    assert reason2 == "no_shots"
 
 
-def test_shooter_rule_rejects_histogram_only_weak_gun() -> None:
+def test_shooter_rule_requires_video_path() -> None:
     m = HighlightMetrics(
         start=0,
         duration=10,
         profile="pubg",
         audio_pass=True,
         visual_pass=True,
-        clip_score=0.11,
-        panns_gun_max=0.07,
-        center_motion=0.05,
-        panns_gun_threshold=0.18,
     )
     ok, reason = rule_gate("pubg", m)
     assert ok is False
-    assert "panns_gun_low" in reason or "shooter_weak" in reason
+    assert reason == "combat_gate_no_video"
 
 
 def test_calibrated_pann_gun_min_has_inference_floor(monkeypatch, tmp_path: Path) -> None:

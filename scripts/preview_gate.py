@@ -39,19 +39,14 @@ def rescore_clip(
     if metrics.hook_score < hook_min:
         return False, f"hook_low={metrics.hook_score:.3f}", metrics.to_dict()
 
-    if profile == "pubg":
-        from pubg_shooting_gate import pubg_passes_shooting_gate
+    if profile in ("pubg", "standoff"):
+        from pubg_combat_gate import pubg_passes_combat_gate
 
-        ok, reason, gun_row = pubg_passes_shooting_gate(video_path, start, duration)
-        row = metrics.to_dict()
-        row.update(
-            {
-                "gunfire_density": gun_row.get("gunfire_density"),
-                "burst_ratio": gun_row.get("burst_ratio"),
-                "shooting_gate": ok,
-                "shooting_reason": reason,
-            }
+        ok, reason, combat_row = pubg_passes_combat_gate(
+            video_path, start, duration, profile, metrics=metrics
         )
+        row = metrics.to_dict()
+        row.update(combat_row)
         if not ok:
             return False, reason, row
         row["pass_reason"] = reason

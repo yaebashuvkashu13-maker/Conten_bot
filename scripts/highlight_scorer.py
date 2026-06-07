@@ -478,19 +478,28 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     game = profile
     text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
-        hist_score, rows = _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
-        combined = text_score if text_score else hist_score
-        return combined, rows
+        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+            hist_score, rows = _score_hist_exemplar_fallback(
+                video_path, start_sec, duration_sec, profile
+            )
+            combined = text_score if text_score else hist_score
+            return combined, rows
+        log.error("HIGHLIGHT_CLIP_DISABLED=1 blocked for inference on %s", video_path.name)
+        return -1.0, [{"pass": False, "reason": "clip_disabled"}]
     try:
         import open_clip
         import torch
 
         model, preprocess, _, device = _clip_bundle()
     except Exception as exc:
-        log.warning("CLIP unavailable (%s) — histogram exemplar fallback", exc)
-        hist_score, rows = _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
-        combined = (hist_score + text_score) / 2 if text_score else hist_score
-        return combined, rows
+        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+            hist_score, rows = _score_hist_exemplar_fallback(
+                video_path, start_sec, duration_sec, profile
+            )
+            combined = (hist_score + text_score) / 2 if text_score else hist_score
+            return combined, rows
+        log.error("CLIP unavailable (%s) — REFUSE inference", exc)
+        return -1.0, [{"pass": False, "reason": f"clip_unavailable:{exc}"}]
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     times = [
         ("start", start_sec + 0.15),
@@ -681,29 +690,61 @@ def audio_passes_shooter(
     return True, f"panns_gun_ok={gun_max:.3f}"
 
 
-def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
+def exemplars_sufficient(profile: str, min_good: int = 5) -> tuple[bool, str]:
+    game = normalize_profile(profile)
+    root = EXEMPLAR_ROOT / game / "good"
+    good = [
+        p
+        for p in root.glob("*")
+        if p.suffix.lower() in (".jpg", ".png", ".jpeg", ".mp4", ".webp")
+    ]
+    if len(good) < min_good:
+        return (
+            False,
+            f"upload exemplars to data/highlight_exemplars/{game}/good/ "
+            f"(have {len(good)}, need {min_good})",
+        )
+    return True, ""
+
+
+def require_inference_ready(profile: str) -> tuple[bool, str]:
+    """Exemplars + CLIP required for inference (not train/bootstrap)."""
+    if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+        return True, ""
+    ok, msg = exemplars_sufficient(profile)
+    if not ok:
+        return False, msg
+    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+        return True, ""
+    try:
+        _clip_bundle()
+        return True, ""
+    except Exception as exc:
+        return False, f"CLIP weights unavailable: {exc}"
+
+
+def rule_gate(
+    profile: str,
+    metrics: HighlightMetrics,
+    *,
+    video_path: Path | None = None,
+    start_sec: float = 0,
+    duration_sec: float = WINDOW_SEC,
+) -> tuple[bool, str]:
     profile = normalize_profile(profile)
     if not metrics.visual_pass:
         return False, "visual_fail"
     if profile in SHOOTER_PROFILES:
         if not metrics.audio_pass:
             return False, metrics.pass_reason or "audio_fail"
-        gun = metrics.panns_gun_max
-        thr = metrics.panns_gun_threshold or PANN_GUN_MIN
-        clip = metrics.clip_score
-        motion = metrics.center_motion
-        gun_floor = max(thr, PANN_GUN_INFERENCE_FLOOR)
-        if gun < gun_floor:
-            return False, f"panns_gun_low={gun:.3f}:floor{gun_floor:.3f}"
-        if clip < CLIP_MIN_SHOOTER:
-            return False, f"clip_low={clip:.3f}"
-        if motion < 0.12:
-            return False, f"motion_low={motion:.3f}"
-        if gun >= 0.28:
-            return True, f"shooter_gun_strong={gun:.3f}"
-        if clip >= CLIP_MIN_SHOOTER and gun >= gun_floor:
-            return True, f"shooter_combat={gun:.3f}:clip{clip:.3f}:motion{motion:.3f}"
-        return False, f"shooter_weak gun={gun:.3f} clip={clip:.3f} motion={motion:.3f}"
+        if video_path is None:
+            return False, "combat_gate_no_video"
+        from pubg_combat_gate import pubg_passes_combat_gate
+
+        ok, reason, _ = pubg_passes_combat_gate(
+            video_path, start_sec, duration_sec, profile, metrics=metrics
+        )
+        return ok, reason
 
     if profile == "genshin":
         if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
@@ -742,6 +783,16 @@ def score_candidate_window(
 
     panns = score_panns_audio(video_path, start_sec, duration_sec)
     clip_score, frames = score_clip_exemplar(video_path, start_sec, duration_sec, profile)
+    if clip_score < 0:
+        m = HighlightMetrics(
+            start=start_sec,
+            duration=duration_sec,
+            profile=profile,
+            clip_score=0.0,
+            pass_reason=frames[0].get("reason", "clip_unavailable") if frames else "clip_unavailable",
+            rule_pass=False,
+        )
+        return m
     ocr_text, ocr_hits = score_killfeed_ocr(video_path, start_sec, duration_sec)
     motion = _motion_context(video_path, start_sec, duration_sec)
 
@@ -796,20 +847,10 @@ def score_candidate_window(
         except Exception:
             m.heatmap_intensity = 0.0
 
-    m.rule_pass, rule_reason = rule_gate(profile, m)
+    m.rule_pass, rule_reason = rule_gate(
+        profile, m, video_path=video_path, start_sec=start_sec, duration_sec=duration_sec
+    )
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
-
-    if profile == "pubg" and m.rule_pass:
-        from pubg_shooting_gate import pubg_passes_shooting_gate
-
-        shoot_ok, shoot_reason, _gun = pubg_passes_shooting_gate(
-            video_path, start_sec, duration_sec
-        )
-        if not shoot_ok:
-            m.rule_pass = False
-            m.pass_reason = shoot_reason
-        else:
-            m.pass_reason = shoot_reason
 
     if m.rule_pass and m.classifier_prob >= CLASSIFIER_MIN:
         m.combined_score = (
@@ -915,8 +956,9 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
-    for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
-        starts.add(vicinity_start)
+    if owner_anchors_enabled():
+        for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
+            starts.add(vicinity_start)
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
@@ -1019,6 +1061,10 @@ def discover_highlight_candidates(
 ) -> list[dict]:
     profile = normalize_profile(profile)
     used_keys = used_keys or set()
+    ready, refuse_reason = require_inference_ready(profile)
+    if not ready:
+        log.error("highlight REFUSE %s: %s", video_path.name, refuse_reason)
+        return []
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     starts = stage1_panns_prefilter(video_path, starts, profile)

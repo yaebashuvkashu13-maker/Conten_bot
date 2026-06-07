@@ -53,6 +53,16 @@ PROFILE_LABELS = {
     'world_of_tanks': 'World of Tanks',
 }
 
+STRICT_MONTAGE_PROFILES = frozenset({
+    'pubg',
+    'standoff',
+    'mobile_legends',
+    'genshin',
+    'wot',
+    'world_of_tanks',
+    'mlbb',
+})
+
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 PENDING_ROOT.mkdir(parents=True, exist_ok=True)
 ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -152,6 +162,66 @@ def chat_is_allowed(chat_id: str) -> bool:
 
 def is_pubg_chat(chat_id: str) -> bool:
     return game_profile_for_chat(chat_id) == 'pubg'
+
+
+def normalize_montage_profile(profile: str) -> str:
+    p = profile.strip().lower()
+    if p == 'mlbb':
+        return 'mobile_legends'
+    if p == 'world_of_tanks':
+        return 'wot'
+    return p
+
+
+def build_strict_montage_env(profile: str) -> dict[str, str]:
+    """highlight_scorer + strict_peak + owner preview — no smart_video_editor."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from montage_env import strict_peak_env
+
+    prof = normalize_montage_profile(profile)
+    run_env = dict(env)
+    run_env.update(strict_peak_env(prof))
+    run_env.update({
+        'HIGHLIGHT_SCORER': '1',
+        'HIGHLIGHT_USE_OWNER_ANCHORS': '0',
+        'SEND_TELEGRAM': '0',
+        'OWNER_PREVIEW_REQUIRED': '1',
+        'HIGHLIGHT_CLIP_DISABLED': '0',
+        'INTELLICLIP_FUSION': '0',
+        'DEFAULT_GAME_PROFILE': prof,
+        'QUEUE_GAME_PROFILE': prof,
+        'TG_BOT_TOKEN': env.get('TG_BOT_TOKEN', ''),
+        'TG_CHAT_ID': env.get('TG_CHAT_ID', ''),
+    })
+    return run_env
+
+
+def run_strict_montage_for_source(
+    chat_id: str,
+    source_path: Path,
+    profile: str,
+    caption: str,
+) -> tuple[int, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from strict_montage_direct import make_strict_montage
+
+    prof = normalize_montage_profile(profile)
+    run_env = build_strict_montage_env(prof)
+    for key, val in run_env.items():
+        os.environ[key] = str(val)
+    basename = f'tg_{prof}_{chat_id}_{int(time.time())}'
+    return make_strict_montage(
+        profile=prof,
+        vod=source_path,
+        output_basename=basename,
+        caption=caption,
+        env=run_env,
+    )
+
+
+def _extract_preview_id(detail: str) -> str:
+    match = re.search(r'preview_id=(\S+?)(?:,|$)', detail)
+    return match.group(1) if match else ''
 
 
 def spawn_pubg_learning(video_path: Path, chat_id: str) -> None:
@@ -1432,68 +1502,89 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         source_paths = [Path(line.split('|', 1)[0]) for line in lines]
         make_timeout = smart_make_timeout_sec(source_paths, env)
         max_dur = max((ffprobe_duration_sec(p) for p in source_paths), default=0.0)
+        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
+        prof = normalize_montage_profile(profile)
+        game_hint = PROFILE_LABELS.get(prof, prof.replace('_', ' ').title())
+        long_note = ''
+        if max_dur >= 1200:
+            long_note = (
+                f' Длинный исходник (~{int(max_dur // 60)} мин): '
+                f'ищу моменты со стрельбой по всему ролику, ждите до ~{make_timeout // 60} мин.'
+            )
         if not limited:
-            game_hint = 'PUBG' if is_pubg_chat(chat_id) else 'MLBB'
-            long_note = ''
-            if max_dur >= 1200:
-                long_note = (
-                    f' Длинный исходник (~{int(max_dur // 60)} мин): '
-                    f'ищу лучшие моменты по всему ролику, ждите до ~{make_timeout // 60} мин.'
-                )
             send_message(
                 chat_id,
-                f'Принял задачу ({game_hint}). Smart Edit: 3–4 хайлайта, итог ~33–57 сек.{long_note}',
+                f'Принял задачу ({game_hint}). Строгий монтаж: 3–4 сегмента, ~33–57 сек.{long_note}',
             )
-        with tempfile.NamedTemporaryFile('w', delete=False, prefix=f'tg-batch-{chat_id}-', suffix='.txt') as tmp_queue:
-            tmp_queue.write('\n'.join(lines) + '\n')
-            tmp_queue_path = tmp_queue.name
 
-        run_env = os.environ.copy()
-        run_env['QUEUE_FILE'] = tmp_queue_path
-        run_env['MAX_SOURCES'] = str(len(lines))
-        run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
-        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
-        run_env['DEFAULT_GAME_PROFILE'] = profile
-        run_env['QUEUE_GAME_PROFILE'] = profile
-        try:
-            from montage_env import strict_peak_env
-
-            run_env.update(strict_peak_env(profile))
-        except ImportError:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from montage_env import strict_peak_env
-
-            run_env.update(strict_peak_env(profile))
-        if len(lines) == 1:
-            run_env['SINGLE_SOURCE_MODE'] = '1'
-        completed = subprocess.run(
-            [PROCESSOR],
-            env=run_env,
-            timeout=make_timeout,
-            capture_output=True,
-            text=True,
-        )
-        Path(tmp_queue_path).unlink(missing_ok=True)
-
-        if completed.returncode == 0:
-            mark_used([Path(line.split('|', 1)[0]) for line in lines], chat_id=chat_id)
-            archive_processed(chat_id, lines)
-            if limited:
-                # Готовый ролик приходит отдельным sendVideo из smart_video_editor.py
-                pass
-            else:
-                send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
-        else:
-            log_tail = tail_smart_edit_log()
-            err_hint = _smart_edit_failure_hint(completed.returncode, log_tail, chat_id)
-            if limited:
-                send_message(chat_id, f'Не удалось сделать нарезку. {err_hint}')
-                notify_owner(
-                    f'Ошибка нарезки для chat {chat_id}. Код {completed.returncode}.\n'
-                    f'{err_hint}\n{log_tail}',
+        if prof in STRICT_MONTAGE_PROFILES:
+            source_path = source_paths[0]
+            caption = game_label_for_chat(
+                chat_id,
+                lines[0].split('|', 1)[1] if '|' in lines[0] and len(lines[0].split('|', 1)) > 1 else None,
+            )
+            code, detail = run_strict_montage_for_source(chat_id, source_path, prof, caption)
+            logging.info('strict_montage chat=%s code=%s detail=%s', chat_id, code, detail)
+            if code == 3:
+                mark_used([source_path], chat_id=chat_id)
+                archive_processed(chat_id, lines)
+                preview_id = _extract_preview_id(detail)
+                owner_note = (
+                    f'Превью отправлено владельцу. Подтверди: /approve_preview {preview_id}'
+                    if preview_id
+                    else 'Превью отправлено владельцу — ждём /approve_preview.'
                 )
+                if limited:
+                    send_message(chat_id, f'Монтаж готов к проверке. {owner_note}')
+                else:
+                    send_message(chat_id, owner_note)
+            elif code == 2:
+                send_message(chat_id, f'REFUSED: исходник не найден — {detail}')
             else:
-                send_message(chat_id, 'Не удалось обработать видео. Исходники сохранены, можно повторить /make позже.')
+                refuse = detail if detail.startswith('REFUSED') else f'REFUSED: {detail}'
+                if limited:
+                    send_message(chat_id, refuse[:900])
+                    notify_owner(f'REFUSED montage chat={chat_id}\n{detail}')
+                else:
+                    send_message(chat_id, refuse[:900])
+        else:
+            with tempfile.NamedTemporaryFile('w', delete=False, prefix=f'tg-batch-{chat_id}-', suffix='.txt') as tmp_queue:
+                tmp_queue.write('\n'.join(lines) + '\n')
+                tmp_queue_path = tmp_queue.name
+
+            run_env = os.environ.copy()
+            run_env['QUEUE_FILE'] = tmp_queue_path
+            run_env['MAX_SOURCES'] = str(len(lines))
+            run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
+            run_env['DEFAULT_GAME_PROFILE'] = profile
+            run_env['QUEUE_GAME_PROFILE'] = profile
+            if len(lines) == 1:
+                run_env['SINGLE_SOURCE_MODE'] = '1'
+            completed = subprocess.run(
+                [PROCESSOR],
+                env=run_env,
+                timeout=make_timeout,
+                capture_output=True,
+                text=True,
+            )
+            Path(tmp_queue_path).unlink(missing_ok=True)
+
+            if completed.returncode == 0:
+                mark_used([Path(line.split('|', 1)[0]) for line in lines], chat_id=chat_id)
+                archive_processed(chat_id, lines)
+                if not limited:
+                    send_message(chat_id, 'Smart Edit v1.1 завершен. Готовый ролик уже отправлен в этот чат.')
+            else:
+                log_tail = tail_smart_edit_log()
+                err_hint = _smart_edit_failure_hint(completed.returncode, log_tail, chat_id)
+                if limited:
+                    send_message(chat_id, f'Не удалось сделать нарезку. {err_hint}')
+                    notify_owner(
+                        f'Ошибка нарезки для chat {chat_id}. Код {completed.returncode}.\n'
+                        f'{err_hint}\n{log_tail}',
+                    )
+                else:
+                    send_message(chat_id, 'Не удалось обработать видео. Исходники сохранены, можно повторить /make позже.')
     except subprocess.TimeoutExpired:
         if limited:
             send_message(chat_id, 'Не удалось сделать нарезку.')

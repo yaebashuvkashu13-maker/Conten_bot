@@ -362,6 +362,15 @@ def make_strict_montage(
         return 2, f"vod missing: {vod}"
 
     profile = normalize_profile(profile)
+    try:
+        from highlight_scorer import require_inference_ready
+
+        ready, refuse_reason = require_inference_ready(profile)
+        if not ready:
+            game = GAME_LABELS.get(profile, profile)
+            return 1, f"REFUSED: game={game}, reason={refuse_reason}, visual_passed=0/0"
+    except Exception as exc:
+        log.warning("inference readiness check failed: %s", exc)
     if profile == "pubg":
         from pubg_brawl_direct import make_brawl_montage
 
