@@ -625,7 +625,7 @@ def score_candidate_window(
     )
 
     gun_min = calibrated_pann_gun_min(video_path, profile) if profile in SHOOTER_PROFILES else PANN_GUN_MIN
-    m.__dict__["panns_gun_threshold"] = round(gun_min, 4)
+    m.panns_gun_threshold = round(gun_min, 4)
 
     if profile in SHOOTER_PROFILES:
         m.audio_pass, audio_reason = audio_passes_shooter(panns, gun_min=gun_min)
@@ -672,9 +672,26 @@ def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
 
 def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     """Sliding 10s / step 2s with cheap motion prefilter + owner anchors."""
+    profile = normalize_profile(profile)
+    max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
+
+    if os.environ.get("HIGHLIGHT_ANCHOR_FIRST", "1") == "1" and profile in SHOOTER_PROFILES:
+        anchors = _owner_anchor_starts(video_path, profile)
+        if anchors:
+            starts: set[float] = set()
+            span = int(os.environ.get("HIGHLIGHT_ANCHOR_SPAN_SEC", "180"))
+            step = int(os.environ.get("HIGHLIGHT_ANCHOR_STEP_SEC", "10"))
+            for anchor in anchors:
+                for off in range(-span, span + 1, step):
+                    s = anchor + off - WINDOW_SEC * 0.5
+                    if s >= 60:
+                        starts.add(round(s, 1))
+            out = sorted(starts)[:max_stage1]
+            log.info("highlight anchor-first %s: %s windows (anchors=%s)", video_path.name, len(out), len(anchors))
+            return out
+
     from smart_video_editor import analyze_video
 
-    profile = normalize_profile(profile)
     analysis = analyze_video(video_path)
     win = float(analysis.get("window_seconds", 2.0))
     motion = np.asarray(analysis["center_motion"], dtype=np.float32)
@@ -706,21 +723,23 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             if s >= 60:
                 starts.add(round(s, 1))
 
-    return sorted(starts)
+    return sorted(starts)[:max_stage1]
 
 
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
+    max_pann = int(os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "36"))
+    starts = starts[:max_pann]
     if profile not in SHOOTER_PROFILES:
         return starts
     kept: list[float] = []
-    pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
+    pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.06"))
     for start in starts:
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
             kept.append(start)
-    return kept or starts[: min(40, len(starts))]
+    return kept or starts[: min(24, len(starts))]
 
 
 def discover_highlight_candidates(

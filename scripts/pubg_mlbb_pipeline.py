@@ -87,6 +87,10 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["TG_CHAT_ID"] = owner_chat
         run_env["SEND_TELEGRAM"] = "0"
         run_env["OWNER_PREVIEW_REQUIRED"] = "1"
+        run_env["HIGHLIGHT_SCORER"] = "1"
+        run_env["HIGHLIGHT_ANCHOR_FIRST"] = "1"
+        run_env["HIGHLIGHT_MAX_STAGE1"] = "48"
+        run_env["HIGHLIGHT_MAX_PANN_PROBE"] = "32"
 
         log(f"queue {game['label']} attempt={attempt} vod={source.name}")
         code, detail = make_strict_montage(
