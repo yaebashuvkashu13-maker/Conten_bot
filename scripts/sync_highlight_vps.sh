@@ -29,6 +29,7 @@ install -m 755 \
   scripts/highlight_train.py \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \
+  scripts/highlight_bootstrap_panns_peaks.py \
   scripts/strict_montage_direct.py \
   scripts/segment_preview.py \
   scripts/pubg_mlbb_pipeline.py \
