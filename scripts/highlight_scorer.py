@@ -21,7 +21,17 @@ import numpy as np
 
 log = logging.getLogger("highlight_scorer")
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def _repo_root() -> Path:
+    env = os.environ.get("CONTENT_BOT_REPO", "").strip()
+    if env:
+        return Path(env)
+    root = Path(__file__).resolve().parent.parent
+    if root.name == "bin" or str(root) == "/usr/local":
+        return Path("/root/content_bot_ml")
+    return root
+
+
+REPO_ROOT = _repo_root()
 EXEMPLAR_ROOT = Path(os.environ.get("HIGHLIGHT_EXEMPLAR_ROOT", str(REPO_ROOT / "data" / "highlight_exemplars")))
 CLASSIFIER_PATH = Path(
     os.environ.get(

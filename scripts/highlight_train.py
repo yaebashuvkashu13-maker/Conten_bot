@@ -15,7 +15,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from highlight_scorer import CLASSIFIER_PATH, WINDOW_SEC, score_candidate_window
 
-REPO = Path(__file__).resolve().parent.parent
+def _repo_root() -> Path:
+    env = os.environ.get("CONTENT_BOT_REPO", "").strip()
+    if env:
+        return Path(env)
+    root = Path(__file__).resolve().parent.parent
+    if root.name == "bin" or str(root) == "/usr/local":
+        return Path("/root/content_bot_ml")
+    return root
+
+
+REPO = _repo_root()
 OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
 if not OWNER_LABELS.exists() and Path("/root/data/mlbb/pubg_owner_labels.json").exists():
     OWNER_LABELS = Path("/root/data/mlbb/pubg_owner_labels.json")
