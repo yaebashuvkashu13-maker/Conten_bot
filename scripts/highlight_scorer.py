@@ -850,7 +850,9 @@ def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: st
         return []
     est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)
     if est < 33.0:
-        per = 33.0 / len(chosen)
+        xfade = float(os.environ.get("TRANSITION_DURATION", "0.28"))
+        target = 33.0 + xfade * max(0, len(chosen) - 1)
+        per = target / len(chosen)
         for cand in chosen:
             cur = float(cand.get("output_duration") or cand.get("input_duration") or WINDOW_SEC)
             if cur < per:

@@ -208,8 +208,10 @@ def pick_segments(candidates: list[dict], used: set[str], sig: str) -> list[dict
     if len(chosen) < MIN_CLIPS:
         return []
     if est < MIN_FINAL_DURATION:
-        # Highlight windows are 10s; 3×10 < 33s montage floor — extend evenly.
-        per = MIN_FINAL_DURATION / len(chosen)
+        # Highlight windows are 10s; xfade eats ~0.28s per join — pad target sum.
+        xfade = float(os.environ.get("TRANSITION_DURATION", "0.28"))
+        target = MIN_FINAL_DURATION + xfade * max(0, len(chosen) - 1)
+        per = target / len(chosen)
         for cand in chosen:
             cur = float(cand.get("output_duration") or cand.get("input_duration") or 9)
             if cur < per:
