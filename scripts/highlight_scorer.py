@@ -1110,6 +1110,13 @@ def discover_highlight_candidates(
         if not metrics.rule_pass or not metrics.visual_pass:
             continue
         hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
+        if (
+            metrics.hook_score < hook_min
+            and profile in SHOOTER_PROFILES
+            and metrics.panns_gun_max >= 0.35
+            and metrics.visual_pass
+        ):
+            hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
         if metrics.hook_score < hook_min:
             log.info(
                 "[FAIL] highlight start=%.1f hook=%.3f < %.3f",

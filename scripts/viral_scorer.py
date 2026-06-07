@@ -46,18 +46,31 @@ def hook_score_frame(frame, profile: str) -> tuple[float, dict[str, float]]:
     }
 
 
-def hook_score(video_path: Path, start_sec: float, profile: str) -> tuple[float, dict[str, float]]:
+def hook_score(
+    video_path: Path, start_sec: float, profile: str, *, duration_sec: float = 10.0
+) -> tuple[float, dict[str, float]]:
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
-    t = start_sec + 0.15
-    frame = _read_frame_at(video_path, t)
-    if frame is None:
-        return 0.0, {"reason": "frame_missing"}
-    crop = detect_game_viewport_crop(video_path, start_sec, 10.0)
-    if crop is not None:
-        x, y, w, h = crop
-        frame = frame[y : y + h, x : x + w]
-    return hook_score_frame(frame, profile)
+    crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    times = (
+        start_sec + 0.15,
+        start_sec + duration_sec * 0.5,
+        max(start_sec + 0.2, start_sec + duration_sec - 0.25),
+    )
+    best = 0.0
+    best_meta: dict[str, float] = {"reason": "frame_missing"}
+    for t in times:
+        frame = _read_frame_at(video_path, t)
+        if frame is None:
+            continue
+        if crop is not None:
+            x, y, w, h = crop
+            frame = frame[y : y + h, x : x + w]
+        score, meta = hook_score_frame(frame, profile)
+        if score > best:
+            best = score
+            best_meta = meta
+    return round(best, 4), best_meta
 
 
 def payoff_timing_score(metrics: Any, duration_sec: float = 10.0) -> float:
