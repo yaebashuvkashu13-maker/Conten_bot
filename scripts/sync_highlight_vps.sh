@@ -31,6 +31,7 @@ install -m 755 \
   scripts/highlight_bootstrap_exemplars.py \
   scripts/highlight_bootstrap_panns_peaks.py \
   scripts/strict_montage_direct.py \
+  scripts/pubg_brawl_direct.py \
   scripts/segment_preview.py \
   scripts/pubg_mlbb_pipeline.py \
   scripts/smart_video_editor.py \

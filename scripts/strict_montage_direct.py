@@ -208,7 +208,16 @@ def pick_segments(candidates: list[dict], used: set[str], sig: str) -> list[dict
     if len(chosen) < MIN_CLIPS:
         return []
     if est < MIN_FINAL_DURATION:
-        return []
+        # Highlight windows are 10s; 3×10 < 33s montage floor — extend evenly.
+        per = MIN_FINAL_DURATION / len(chosen)
+        for cand in chosen:
+            cur = float(cand.get("output_duration") or cand.get("input_duration") or 9)
+            if cur < per:
+                cand["input_duration"] = round(per, 3)
+                cand["output_duration"] = round(per, 3)
+        est = sum(float(c.get("output_duration") or c.get("input_duration") or 9) for c in chosen)
+        if est < MIN_FINAL_DURATION:
+            return []
     if est > MAX_FINAL_DURATION and len(chosen) > MIN_CLIPS:
         while len(chosen) > MIN_CLIPS and est > MAX_FINAL_DURATION:
             chosen.pop()

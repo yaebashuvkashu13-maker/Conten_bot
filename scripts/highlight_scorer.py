@@ -850,7 +850,15 @@ def select_montage_segments(candidates: list[dict], used_keys: set[str], sig: st
         return []
     est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)
     if est < 33.0:
-        return []
+        per = 33.0 / len(chosen)
+        for cand in chosen:
+            cur = float(cand.get("output_duration") or cand.get("input_duration") or WINDOW_SEC)
+            if cur < per:
+                cand["input_duration"] = round(per, 3)
+                cand["output_duration"] = round(per, 3)
+        est = sum(float(c.get("output_duration", WINDOW_SEC)) for c in chosen)
+        if est < 33.0:
+            return []
     if est > 57.0 and len(chosen) > MIN_CLIPS:
         while len(chosen) > MIN_CLIPS and est > 57.0:
             chosen.pop()

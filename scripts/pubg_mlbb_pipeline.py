@@ -28,7 +28,8 @@ GAMES = [
         "id": "pubg",
         "profile": "pubg",
         "label": "PUBG",
-        "sources": ["yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4", "yt_n97cHIR9Qow.mp4"],
+        # zv3J first: stable 3+ PANNs peaks; FpMs48 second for seed expansion
+        "sources": ["yt_zv3JymSZOb0.mp4", "yt_FpMs48XOnq0.mp4", "yt_n97cHIR9Qow.mp4"],
     },
     {
         "id": "standoff",
