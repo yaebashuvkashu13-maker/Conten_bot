@@ -567,9 +567,11 @@ def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
     if profile in SHOOTER_PROFILES:
         if not metrics.audio_pass:
             return False, metrics.pass_reason or "audio_fail"
-        if metrics.clip_score <= CLIP_MIN_SHOOTER:
-            return False, f"clip_low={metrics.clip_score:.3f}"
-        return True, "shooter_ab_ok"
+        if metrics.clip_score > CLIP_MIN_SHOOTER:
+            return True, "shooter_ab_ok"
+        if metrics.panns_gun_max >= 0.35 and metrics.center_motion >= 0.10:
+            return True, f"shooter_panns_strong={metrics.panns_gun_max:.3f}:motion{metrics.center_motion:.3f}"
+        return False, f"clip_low={metrics.clip_score:.3f}"
 
     if profile == "genshin":
         if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
