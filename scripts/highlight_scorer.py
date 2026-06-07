@@ -782,13 +782,14 @@ def score_candidate_window(
             m.combined_score = 0.0
             return m
 
-    try:
-        from youtube_heatmap_peaks import load_heatmap_intensity_map, nearest_heatmap_intensity
+    if os.environ.get("HIGHLIGHT_HEATMAP", "1") == "1":
+        try:
+            from youtube_heatmap_peaks import load_heatmap_intensity_map, nearest_heatmap_intensity
 
-        hm_map = load_heatmap_intensity_map(video_path)
-        m.heatmap_intensity = nearest_heatmap_intensity(start_sec + duration_sec * 0.5, hm_map)
-    except Exception:
-        m.heatmap_intensity = 0.0
+            hm_map = load_heatmap_intensity_map(video_path)
+            m.heatmap_intensity = nearest_heatmap_intensity(start_sec + duration_sec * 0.5, hm_map)
+        except Exception:
+            m.heatmap_intensity = 0.0
 
     m.rule_pass, rule_reason = rule_gate(profile, m)
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)

@@ -66,6 +66,8 @@ def main() -> int:
     args = parser.parse_args()
     os.environ["HIGHLIGHT_TRAIN_MODE"] = "1"
     os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
+    os.environ["HIGHLIGHT_HEATMAP"] = "0"
+    os.environ.setdefault("CONTENT_BOT_REPO", str(REPO))
 
     vod = INBOX / args.vod if not Path(args.vod).exists() else Path(args.vod)
     if not vod.exists():
