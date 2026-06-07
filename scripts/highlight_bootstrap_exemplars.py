@@ -12,7 +12,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-OWNER_LABELS = REPO / "data" / "pubg_owner_labels.json"
+OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
+if not OWNER_LABELS.exists():
+    _fb = Path("/root/data/mlbb/pubg_owner_labels.json")
+    if _fb.exists():
+        OWNER_LABELS = _fb
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 OUT = REPO / "data" / "highlight_exemplars"
 CLIP_SEC = 4.0

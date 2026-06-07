@@ -13,7 +13,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from highlight_scorer import CLASSIFIER_PATH, OWNER_LABELS, WINDOW_SEC, score_candidate_window
+from highlight_scorer import CLASSIFIER_PATH, WINDOW_SEC, score_candidate_window
+
+OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
+if not OWNER_LABELS.exists() and Path("/root/data/mlbb/pubg_owner_labels.json").exists():
+    OWNER_LABELS = Path("/root/data/mlbb/pubg_owner_labels.json")
 
 REPO = Path(__file__).resolve().parent.parent
 INBOX = Path(os.environ.get("HIGHLIGHT_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))

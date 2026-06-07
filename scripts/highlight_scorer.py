@@ -29,7 +29,16 @@ CLASSIFIER_PATH = Path(
         str(REPO_ROOT / "data" / "mlbb" / "highlight_classifier.joblib"),
     )
 )
-OWNER_LABELS = REPO_ROOT / "data" / "pubg_owner_labels.json"
+OWNER_LABELS = Path(
+    os.environ.get(
+        "PUBG_OWNER_LABELS_PATH",
+        str(REPO_ROOT / "data" / "pubg_owner_labels.json"),
+    )
+)
+if not OWNER_LABELS.exists():
+    _fallback = Path("/root/data/mlbb/pubg_owner_labels.json")
+    if _fallback.exists():
+        OWNER_LABELS = _fallback
 
 WINDOW_SEC = float(os.environ.get("HIGHLIGHT_WINDOW_SEC", "10"))
 STEP_SEC = float(os.environ.get("HIGHLIGHT_STEP_SEC", "2"))

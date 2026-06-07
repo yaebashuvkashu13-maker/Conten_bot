@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--profile", required=True, choices=["pubg", "standoff", "mobile_legends", "genshin", "wot"])
     parser.add_argument("--vod", required=True)
     parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--owner-only", action="store_true", help="Score only owner-labeled good windows (fast)")
     args = parser.parse_args()
 
     vod = Path(args.vod)
@@ -45,7 +46,23 @@ def main() -> int:
 
     profile = normalize_profile(args.profile)
     sig = file_sha256(vod)
-    pool = discover_highlight_candidates(vod, profile, sig=sig, segment_key_fn=segment_key, limit=args.limit)
+
+    if args.owner_only:
+        from highlight_scorer import WINDOW_SEC, score_candidate_window, _owner_anchor_starts
+
+        pool = []
+        for start in _owner_anchor_starts(vod, profile):
+            m = score_candidate_window(vod, max(0, start - 2), WINDOW_SEC, profile)
+            pool.append(
+                {
+                    "start": m.start,
+                    "highlight_metrics": m.to_dict(),
+                    "score": m.combined_score,
+                    "output_duration": WINDOW_SEC,
+                }
+            )
+    else:
+        pool = discover_highlight_candidates(vod, profile, sig=sig, segment_key_fn=segment_key, limit=args.limit)
     chosen = select_montage_segments(pool, set(), sig, segment_key_fn)
 
     rows = [c.get("highlight_metrics") or c.get("strict_metrics") for c in pool[: args.limit]]

@@ -8,7 +8,11 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
-pip3 install -q torch panns-inference open-clip-torch Pillow 2>/dev/null || true
+pip3 install --break-system-packages -q torch panns-inference open-clip-torch Pillow scikit-learn joblib 2>/dev/null || true
+
+mkdir -p /root/data/mlbb /root/data/highlight_exemplars
+install -m 644 "$REPO/data/pubg_owner_labels.json" /root/data/mlbb/pubg_owner_labels.json 2>/dev/null || true
+install -m 644 "$REPO/data/pubg_owner_labels.json" "$REPO/data/pubg_owner_labels.json" 2>/dev/null || true
 
 install -m 755 \
   scripts/highlight_scorer.py \
