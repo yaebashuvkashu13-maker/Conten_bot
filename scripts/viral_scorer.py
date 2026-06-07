@@ -94,6 +94,11 @@ def segment_viral_score(metrics: Any, video_path: Path | None = None) -> float:
     return round(min(1.0, max(0.0, viral)), 4)
 
 
+def segment_hook_ok(metrics: dict) -> bool:
+    hook = float(metrics.get("hook_score", 0) or 0)
+    return hook >= SEGMENT_HOOK_MIN
+
+
 def montage_viral_score(segments: list[dict]) -> tuple[float, bool]:
     """First segment must pass hook threshold (frame 1 = action)."""
     if not segments:

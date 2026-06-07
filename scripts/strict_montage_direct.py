@@ -301,15 +301,22 @@ def build_and_send(
         )
         return None
 
-    try:
-        from viral_scorer import montage_viral_score
+    from viral_scorer import montage_viral_score, segment_hook_ok
 
-        _, hook_ok = montage_viral_score(clips)
-        if not hook_ok:
-            log.error("REFUSED: game=%s reason=viral_hook_fail segment1", GAME_LABELS.get(profile, profile))
+    _, hook_ok = montage_viral_score(clips)
+    if not hook_ok:
+        log.error("REFUSED: game=%s reason=viral_hook_fail segment1", GAME_LABELS.get(profile, profile))
+        return None
+    for idx, cand in enumerate(clips, 1):
+        hm = cand.get("highlight_metrics") or cand.get("strict_metrics") or {}
+        if not segment_hook_ok(hm):
+            log.error(
+                "REFUSED: game=%s reason=viral_hook_fail seg%d hook=%.3f",
+                GAME_LABELS.get(profile, profile),
+                idx,
+                float(hm.get("hook_score", 0)),
+            )
             return None
-    except Exception as exc:
-        log.warning("viral hook check skipped: %s", exc)
 
     game = GAME_LABELS.get(normalize_profile(profile), profile)
     header = "| # | start | panns | clip | visual | hook | heatmap | viral | PASS |"

@@ -12,8 +12,10 @@ sys.path.insert(0, str(SCRIPTS))
 
 from highlight_scorer import (  # noqa: E402
     HighlightMetrics,
+    PANN_GUN_INFERENCE_FLOOR,
     _owner_anchor_starts,
     audio_passes_shooter,
+    calibrated_pann_gun_min,
     owner_anchors_enabled,
     rule_gate,
     score_panns_audio,
@@ -40,15 +42,50 @@ def test_shooter_rule_requires_audio_and_clip() -> None:
         profile="pubg",
         audio_pass=True,
         visual_pass=True,
-        clip_score=0.08,
-        panns_gun_max=0.3,
+        clip_score=0.12,
+        panns_gun_max=0.22,
+        center_motion=0.11,
+        panns_gun_threshold=0.18,
     )
     ok, reason = rule_gate("pubg", m)
     assert ok is True
-    m.clip_score = 0.01
+    m.panns_gun_max = 0.08
     ok2, reason2 = rule_gate("pubg", m)
     assert ok2 is False
-    assert "clip_low" in reason2
+    assert "panns_gun_low" in reason2
+
+
+def test_shooter_rule_rejects_histogram_only_weak_gun() -> None:
+    m = HighlightMetrics(
+        start=0,
+        duration=10,
+        profile="pubg",
+        audio_pass=True,
+        visual_pass=True,
+        clip_score=0.11,
+        panns_gun_max=0.07,
+        center_motion=0.05,
+        panns_gun_threshold=0.18,
+    )
+    ok, reason = rule_gate("pubg", m)
+    assert ok is False
+    assert "panns_gun_low" in reason or "shooter_weak" in reason
+
+
+def test_calibrated_pann_gun_min_has_inference_floor(monkeypatch, tmp_path: Path) -> None:
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        '{"videos":{"testvid":[{"time_sec":515,"label":"good"},{"time_sec":600,"label":"bad"}]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("highlight_scorer.OWNER_LABELS", labels)
+    with patch("highlight_scorer.score_panns_audio") as panns_mock:
+        panns_mock.side_effect = [
+            {"panns_gun_max": 0.07},
+            {"panns_gun_max": 0.05},
+        ]
+        floor = calibrated_pann_gun_min(tmp_path / "yt_testvid.mp4", "pubg")
+    assert floor >= PANN_GUN_INFERENCE_FLOOR
 
 
 def test_score_panns_audio_mock() -> None:

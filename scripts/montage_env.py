@@ -58,6 +58,13 @@ def pubg_combat_env() -> dict[str, str]:
         "SMART_PUBG_MOTION_PERCENTILE": "48",
         "SMART_PUBG_AUDIO_PERCENTILE": "46",
         "SMART_PUBG_GUNFIRE_PERCENTILE": "56",
+        "HIGHLIGHT_PANN_GUN_MIN": "0.22",
+        "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.18",
+        "HIGHLIGHT_PANN_PREFILTER_MIN": "0.12",
+        "HIGHLIGHT_CLIP_MIN_SHOOTER": "0.10",
+        "VISUAL_PUBG_MIN_FRAMES_PASS": "2",
+        "VIRAL_SEGMENT_HOOK_MIN": "0.35",
+        "VIRAL_HOOK_MIN": "0.42",
     }
 
 

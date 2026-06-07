@@ -60,8 +60,9 @@ MIN_CLIPS = int(os.environ.get("HIGHLIGHT_MIN_CLIPS", "3"))
 TARGET_CLIPS = int(os.environ.get("HIGHLIGHT_TARGET_CLIPS", "4"))
 
 PANN_GUN_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
+PANN_GUN_INFERENCE_FLOOR = float(os.environ.get("HIGHLIGHT_PANN_INFERENCE_FLOOR", "0.18"))
 PANN_GUN_SPEECH_RATIO_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_SPEECH_RATIO", "0.08"))
-CLIP_MIN_SHOOTER = float(os.environ.get("HIGHLIGHT_CLIP_MIN_SHOOTER", "0.05"))
+CLIP_MIN_SHOOTER = float(os.environ.get("HIGHLIGHT_CLIP_MIN_SHOOTER", "0.10"))
 CLASSIFIER_MIN = float(os.environ.get("HIGHLIGHT_CLASSIFIER_MIN", "0.6"))
 
 PANN_GUN_IDX = {
@@ -657,9 +658,9 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
         return PANN_GUN_MIN
     good_p90 = float(np.percentile(good_scores, 90))
     bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
-    # Separate good from bad on this VOD; floor avoids noise-only PASS
-    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, 0.015)
-    return min(dynamic, PANN_GUN_MIN)
+    # Separate good from bad on this VOD; never drop below inference floor (RU streams).
+    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, PANN_GUN_INFERENCE_FLOOR)
+    return max(PANN_GUN_INFERENCE_FLOOR, min(dynamic, PANN_GUN_MIN))
 
 
 def audio_passes_shooter(
@@ -685,11 +686,20 @@ def rule_gate(profile: str, metrics: HighlightMetrics) -> tuple[bool, str]:
     if profile in SHOOTER_PROFILES:
         if not metrics.audio_pass:
             return False, metrics.pass_reason or "audio_fail"
-        if metrics.clip_score > CLIP_MIN_SHOOTER:
-            return True, "shooter_ab_ok"
+        gun = metrics.panns_gun_max
+        thr = metrics.panns_gun_threshold or PANN_GUN_MIN
+        clip = metrics.clip_score
+        motion = metrics.center_motion
+        gun_floor = max(thr, PANN_GUN_INFERENCE_FLOOR)
+        if gun < gun_floor:
+            return False, f"panns_gun_low={gun:.3f}:floor{gun_floor:.3f}"
+        if gun >= 0.28 and (clip >= 0.08 or motion >= 0.12):
+            return True, f"shooter_gun_strong={gun:.3f}"
+        if clip >= CLIP_MIN_SHOOTER and gun >= gun_floor and motion >= 0.10:
+            return True, f"shooter_combat={gun:.3f}:clip{clip:.3f}:motion{motion:.3f}"
         if metrics.panns_gun_max >= 0.35 and metrics.center_motion >= 0.10:
             return True, f"shooter_panns_strong={metrics.panns_gun_max:.3f}:motion{metrics.center_motion:.3f}"
-        return False, f"clip_low={metrics.clip_score:.3f}"
+        return False, f"shooter_weak gun={gun:.3f} clip={clip:.3f} motion={motion:.3f}"
 
     if profile == "genshin":
         if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
@@ -756,21 +766,12 @@ def score_candidate_window(
     else:
         m.audio_pass = True
 
-    from gameplay_gate import _read_frame_at, detect_game_viewport_crop
-    from visual_action_check import check_frame_visual
+    from visual_action_check import extract_and_check_segment
 
-    vis_frame = _read_frame_at(video_path, start_sec + 0.15)
-    if vis_frame is not None:
-        crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
-        if crop is not None:
-            x, y, w, h = crop
-            vis_frame = vis_frame[y : y + h, x : x + w]
-        m.visual_pass, vis_reason, _ = check_frame_visual(profile, vis_frame)
-        if not m.visual_pass and not m.pass_reason:
-            m.pass_reason = vis_reason
-    else:
-        m.visual_pass = False
-        m.pass_reason = m.pass_reason or "visual_frame_missing"
+    vis_row = extract_and_check_segment(video_path, start_sec, duration_sec, profile)
+    m.visual_pass = bool(vis_row.get("visual_pass"))
+    if not m.visual_pass:
+        m.pass_reason = vis_row.get("fail_reason") or "visual_multi_fail"
 
     m.classifier_prob = classifier_probability(m)
     if not classifier_available():
@@ -829,6 +830,43 @@ def score_candidate_window(
     return m
 
 
+def _owner_vicinity_gun_starts(video_path: Path, profile: str) -> list[float]:
+    """Scan near owner good labels for real gun peaks — not raw timestamp injection."""
+    profile = normalize_profile(profile)
+    if profile != "pubg" or not OWNER_LABELS.exists():
+        return []
+    anchors = _owner_anchor_starts(video_path, profile)
+    if not anchors:
+        return []
+    radius = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_SEC", "120"))
+    step = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_STEP", "4"))
+    gun_floor = float(os.environ.get("HIGHLIGHT_OWNER_VICINITY_GUN_MIN", "0.14"))
+    peaks: list[tuple[float, float]] = []
+    for anchor in anchors:
+        lo = max(60.0, anchor - radius)
+        hi = anchor + radius
+        t = lo
+        while t <= hi:
+            win_start = max(0.0, t - WINDOW_SEC * 0.5)
+            panns = score_panns_audio(video_path, win_start, WINDOW_SEC)
+            gun = panns["panns_gun_max"]
+            if gun >= gun_floor:
+                peaks.append((gun, round(win_start, 1)))
+            t += step
+    peaks.sort(key=lambda row: row[0], reverse=True)
+    starts: list[float] = []
+    min_gap = 45.0
+    for gun, start in peaks:
+        if any(abs(start - s) < min_gap for s in starts):
+            continue
+        starts.append(start)
+        if len(starts) >= int(os.environ.get("HIGHLIGHT_OWNER_VICINITY_MAX", "12")):
+            break
+    if starts:
+        log.info("owner vicinity gun peaks %s: %s windows (top gun=%.3f)", video_path.name, len(starts), peaks[0][0])
+    return starts
+
+
 def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     if profile != "pubg" or not OWNER_LABELS.exists():
@@ -861,6 +899,8 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
+    for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
+        starts.add(vicinity_start)
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
@@ -945,7 +985,7 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
     if profile not in SHOOTER_PROFILES:
         return starts
     kept: list[float] = []
-    pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.06"))
+    pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     for start in starts:
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
@@ -996,6 +1036,15 @@ def discover_highlight_candidates(
             metrics.pass_reason,
         )
         if not metrics.rule_pass:
+            continue
+        hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
+        if metrics.hook_score < hook_min:
+            log.info(
+                "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
+                start,
+                metrics.hook_score,
+                hook_min,
+            )
             continue
         verified.append(
             {
