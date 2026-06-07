@@ -28,7 +28,7 @@ GAMES = [
         "id": "pubg",
         "profile": "pubg",
         "label": "PUBG",
-        "sources": ["yt_n97cHIR9Qow.mp4", "yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4"],
+        "sources": ["yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4", "yt_n97cHIR9Qow.mp4"],
     },
     {
         "id": "standoff",
