@@ -269,6 +269,65 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     return tuple(embs)
 
 
+def _hist_vector(frame: np.ndarray) -> np.ndarray:
+    import cv2
+
+    small = cv2.resize(frame, (64, 36))
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+    cv2.normalize(hist, hist)
+    return hist.flatten()
+
+
+def _score_hist_exemplar_fallback(
+    video_path: Path, start_sec: float, duration_sec: float, profile: str
+) -> tuple[float, list[dict]]:
+    import cv2
+    from gameplay_gate import _read_frame_at, detect_game_viewport_crop
+
+    game = normalize_profile(profile)
+    good_paths = list((EXEMPLAR_ROOT / game / "good").glob("*.jpg")) + list(
+        (EXEMPLAR_ROOT / game / "good").glob("*.mp4")
+    )
+    bad_paths = list((EXEMPLAR_ROOT / game / "bad").glob("*.jpg")) + list(
+        (EXEMPLAR_ROOT / game / "bad").glob("*.mp4")
+    )
+    good_vecs: list[np.ndarray] = []
+    bad_vecs: list[np.ndarray] = []
+    for path in good_paths[:12]:
+        frame = cv2.imread(str(path)) if path.suffix.lower() in (".jpg", ".png") else _read_frame_at(path, 1.0)
+        if frame is not None:
+            good_vecs.append(_hist_vector(frame))
+    for path in bad_paths[:12]:
+        frame = cv2.imread(str(path)) if path.suffix.lower() in (".jpg", ".png") else _read_frame_at(path, 1.0)
+        if frame is not None:
+            bad_vecs.append(_hist_vector(frame))
+
+    crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    times = [
+        ("start", start_sec + 0.15),
+        ("mid", start_sec + duration_sec * 0.5),
+        ("end", start_sec + max(0.2, duration_sec - 0.25)),
+    ]
+    scores: list[float] = []
+    rows: list[dict] = []
+    for label, t in times:
+        frame = _read_frame_at(video_path, t)
+        if frame is None:
+            rows.append({"label": label, "timestamp": round(t, 3), "clip_score": 0.0, "pass": False})
+            continue
+        if crop is not None:
+            x, y, w, h = crop
+            frame = frame[y : y + h, x : x + w]
+        vec = _hist_vector(frame)
+        sim_g = float(np.mean([cv2.compareHist(vec.reshape(16, 16), g.reshape(16, 16), cv2.HISTCMP_CORREL) for g in good_vecs])) if good_vecs else 0.0
+        sim_b = float(np.mean([cv2.compareHist(vec.reshape(16, 16), b.reshape(16, 16), cv2.HISTCMP_CORREL) for b in bad_vecs])) if bad_vecs else 0.0
+        clip_s = sim_g - sim_b
+        scores.append(clip_s)
+        rows.append({"label": label, "timestamp": round(t, 3), "clip_score": round(clip_s, 4), "pass": clip_s > CLIP_MIN_SHOOTER, "fallback": "hist"})
+    return (float(np.mean(scores)) if scores else 0.0, rows)
+
+
 def _text_bootstrap_embeddings(game: str) -> tuple[np.ndarray, np.ndarray]:
     """Fallback when exemplar clips are sparse (Mixpeek-style text anchors)."""
     import open_clip
@@ -309,8 +368,8 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
 
         model, preprocess, _, device = _clip_bundle()
     except Exception as exc:
-        log.warning("CLIP unavailable (%s) — text-only bootstrap skipped", exc)
-        return 0.0, []
+        log.warning("CLIP unavailable (%s) — histogram exemplar fallback", exc)
+        return _score_hist_exemplar_fallback(video_path, start_sec, duration_sec, profile)
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     times = [
         ("start", start_sec + 0.15),
