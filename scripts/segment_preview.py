@@ -130,10 +130,12 @@ def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str]) -> None:
         "Отклонить: /reject_preview " + pkg["preview_id"],
     ]
     for seg in pkg["segments"]:
+        am = seg.get("audio_metrics") or {}
         lines.append(
-            f"seg{seg['index']} start={seg['start']}s visual={seg['visual_pass']} "
-            f"gun={seg['audio_metrics'].get('gunfire_density', '—')} "
-            f"motion={seg['audio_metrics'].get('center_motion', '—')}"
+            f"seg{seg['index']} start={seg['start']}s "
+            f"panns_gun={am.get('panns_gun_max', am.get('panns_gunshot', '—'))} "
+            f"clip={am.get('clip_score', '—')} "
+            f"ocr={am.get('ocr_hits', 0)} reason={am.get('pass_reason', '')}"
         )
     caption = "\n".join(lines)[:900]
 

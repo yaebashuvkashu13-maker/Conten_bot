@@ -16,6 +16,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+highlight = [
+  "torch",
+  "panns-inference",
+  "open-clip-torch",
+  "Pillow",
+]
 dev = ["pytest"]
 
 [build-system]

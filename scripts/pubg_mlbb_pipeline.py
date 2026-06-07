@@ -22,7 +22,7 @@ LOG = Path("/root/data/mlbb/pubg_mlbb_pipeline.log")
 STATE_FILE = Path("/root/data/mlbb/pubg_mlbb_pipeline_state.json")
 PAUSE_FILE = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
-# PUBG first, MLBB second. Other games after first owner OK (not started here).
+# PUBG + Standoff (highlight scorer priority). MLBB/Genshin/WoT after owner OK.
 GAMES = [
     {
         "id": "pubg",
@@ -31,10 +31,10 @@ GAMES = [
         "sources": ["yt_n97cHIR9Qow.mp4", "yt_FpMs48XOnq0.mp4", "yt_zv3JymSZOb0.mp4"],
     },
     {
-        "id": "mlbb",
-        "profile": "mobile_legends",
-        "label": "MLBB",
-        "sources": ["yt_2XbUY9dvS7Y.mp4"],
+        "id": "standoff",
+        "profile": "standoff",
+        "label": "Standoff",
+        "sources": ["yt_z8ImUR0_x_M.mp4"],
     },
 ]
 

@@ -130,24 +130,35 @@ def discover_strict_candidates(
     sig: str,
     used: set[str],
 ) -> list[dict]:
-    from smart_video_editor import profile_action_clip_bounds
-
     profile = normalize_profile(profile)
-    log.info("analyze %s profile=%s", vod.name, profile)
-    from smart_video_editor import analyze_video
+    use_highlight = os.environ.get("HIGHLIGHT_SCORER", "1") == "1"
+    if use_highlight and profile in ("pubg", "standoff", "mobile_legends", "genshin", "wot"):
+        from highlight_scorer import discover_highlight_candidates
 
+        probe_limit = int(os.environ.get("STRICT_PROBE_LIMIT", "40"))
+        verified = discover_highlight_candidates(
+            vod,
+            profile,
+            used_keys=used,
+            segment_key_fn=segment_key,
+            sig=sig,
+            limit=probe_limit,
+        )
+        for cand in verified:
+            cand["source_signature"] = sig
+            cand["source_index"] = 0
+        return verified
+
+    from smart_video_editor import profile_action_clip_bounds, analyze_video
+
+    log.info("legacy analyze %s profile=%s", vod.name, profile)
     analysis = analyze_video(vod)
-    log.info("analyze done %s bins=%s", vod.name, analysis.get("bins"))
-
     clip_lo, clip_hi = profile_action_clip_bounds(
         "world_of_tanks" if profile == "wot" else profile
     )
     default_dur = min(10.0, clip_hi)
-
     probe_limit = int(os.environ.get("STRICT_PROBE_LIMIT", "45"))
     peak_starts = _fast_peak_starts(analysis, profile, limit=probe_limit * 2)
-    log.info("fast peaks %s: %s candidates to probe", vod.name, len(peak_starts))
-
     verified: list[dict] = []
     for start in peak_starts:
         dur = default_dur
@@ -155,17 +166,9 @@ def discover_strict_candidates(
         if key in used:
             continue
         ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
-        log.info(
-            "[%s] probe start=%.1f reason=%s",
-            "PASS" if ok else "FAIL",
-            start,
-            reason,
-        )
         if not ok:
             continue
         score = float(metrics.get("gunfire_density", 0) or metrics.get("impact_density", 0) or 0)
-        score += float(metrics.get("boss_score", 0) or 0) * 0.5
-        score += float(metrics.get("center_motion", 0) or 0)
         verified.append(
             {
                 "source_index": 0,
@@ -176,7 +179,7 @@ def discover_strict_candidates(
                 "input_duration": dur,
                 "output_duration": dur,
                 "speed": 1.0,
-                "score": round(score, 4),
+                "score": score,
                 "strict_metrics": metrics,
                 "gate_reason": reason,
                 "strict_score": score,
@@ -184,9 +187,7 @@ def discover_strict_candidates(
         )
         if len(verified) >= probe_limit:
             break
-
     verified.sort(key=lambda c: c.get("strict_score", 0), reverse=True)
-    log.info("strict pool %s: %s passed", vod.name, len(verified))
     return verified
 
 
@@ -242,24 +243,66 @@ def build_and_send(
         )
         for c in clips
     ]
-    all_ok, metrics_rows, table = verify_montage_segments(vod, profile, segment_pairs)
-    log.info("\n%s", table)
-    if not all_ok:
-        log.error("REFUSED: audio/UI gate failed — not proof of visual action")
-        return None
-
-    vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
-        vod, profile, segment_pairs, segment_metrics=metrics_rows
+    has_highlight = all(
+        "panns_gunshot" in (clips[i].get("highlight_metrics") or clips[i].get("strict_metrics") or {})
+        or "clip_score" in (clips[i].get("highlight_metrics") or clips[i].get("strict_metrics") or {})
+        for i in range(len(clips))
     )
-    if vis_passed < vis_total:
-        log.error(
-            "REFUSED: game=%s reason=%s visual_passed=%s/%s",
-            GAME_LABELS.get(normalize_profile(profile), profile),
-            vis_reason,
-            vis_passed,
-            vis_total,
+    if has_highlight:
+        metrics_rows = [c.get("highlight_metrics") or c.get("strict_metrics", {}) for c in clips]
+        for row in metrics_rows:
+            row["pass"] = bool(row.get("rule_pass"))
+        all_ok = all(row.get("pass") for row in metrics_rows)
+        from strict_segment_gate import format_acceptance_table
+
+        game = GAME_LABELS.get(normalize_profile(profile), profile)
+        table = format_acceptance_table(
+            game,
+            [{**row, "gate_reason": row.get("pass_reason", "")} for row in metrics_rows],
         )
-        return None
+        log.info("\n%s", table.replace("gun=", "panns=").replace("burst=", "clip="))
+        if not all_ok:
+            log.error("REFUSED: highlight gate failed")
+            return None
+    else:
+        all_ok, metrics_rows, table = verify_montage_segments(vod, profile, segment_pairs)
+        log.info("\n%s", table)
+        if not all_ok:
+            log.error("REFUSED: legacy audio/UI gate failed")
+            return None
+
+    # Highlight scorer already fused PANNs+CLIP; legacy visual check only if no highlight metrics
+    if has_highlight:
+        visual_rows = []
+        for c in clips:
+            row = dict(c.get("highlight_metrics") or c.get("strict_metrics") or {})
+            row["visual_pass"] = bool(row.get("rule_pass"))
+            visual_rows.append(row)
+        vis_passed = sum(1 for r in visual_rows if r.get("rule_pass"))
+        vis_total = len(visual_rows)
+        if vis_passed < vis_total:
+            log.error(
+                "REFUSED: game=%s reason=highlight_rule_fail visual_passed=%s/%s",
+                GAME_LABELS.get(normalize_profile(profile), profile),
+                vis_passed,
+                vis_total,
+            )
+            return None
+    else:
+        from visual_action_check import verify_segments_visual
+
+        vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
+            vod, profile, segment_pairs, segment_metrics=metrics_rows
+        )
+        if vis_passed < vis_total:
+            log.error(
+                "REFUSED: game=%s reason=%s visual_passed=%s/%s",
+                GAME_LABELS.get(normalize_profile(profile), profile),
+                vis_reason,
+                vis_passed,
+                vis_total,
+            )
+            return None
 
     logo = Path(os.environ.get("LOGO_FILE", "/root/logo.png"))
     temp_dir = Path(tempfile.mkdtemp(prefix="strict-peak-"))
