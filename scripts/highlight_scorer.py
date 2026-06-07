@@ -679,6 +679,23 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
 
+    seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+    if seed_raw.strip():
+        starts: set[float] = set()
+        for part in seed_raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                s = float(part) - WINDOW_SEC * 0.5
+                if s >= 60:
+                    starts.add(round(s, 1))
+            except ValueError:
+                pass
+        out = sorted(starts)[:max_stage1]
+        log.info("highlight seed-first %s: %s windows", video_path.name, len(out))
+        return out
+
     if os.environ.get("HIGHLIGHT_ANCHOR_FIRST", "1") == "1" and profile in SHOOTER_PROFILES:
         anchors = _owner_anchor_starts(video_path, profile)
         if anchors:
