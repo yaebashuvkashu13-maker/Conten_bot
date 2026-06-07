@@ -222,6 +222,10 @@ def send_approved_montage(pkg: dict[str, Any], env: dict[str, str], caption: str
     if not path.exists():
         raise RuntimeError(f"montage missing: {path}")
 
+    proof_path = PROOF_ROOT / pkg["preview_id"] / "proof.json"
+    if pkg.get("video_sent_at"):
+        return
+
     os.environ["OWNER_PREVIEW_APPROVED"] = "1"
     os.environ["STRICT_PEAK_MONTAGE"] = "1"
     os.environ["QUEUE_GAME_PROFILE"] = pkg.get("profile", "")
@@ -234,3 +238,6 @@ def send_approved_montage(pkg: dict[str, Any], env: dict[str, str], caption: str
     if not token or not chat_id:
         raise RuntimeError("TG_BOT_TOKEN/TG_CHAT_ID missing")
     send_telegram_video(token, chat_id, path, caption)
+    pkg["video_sent_at"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    if proof_path.exists():
+        proof_path.write_text(json.dumps(pkg, ensure_ascii=False, indent=2), encoding="utf-8")

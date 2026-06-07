@@ -161,6 +161,9 @@ def strict_peak_env(profile: str) -> dict[str, str]:
         "MAX_FINAL_DURATION": "57",
         "SMART_ACTION_CLIP_MIN_SEC": "8",
         "SMART_ACTION_CLIP_MAX_SEC": "11",
+        "SMART_OUTPUT_CRF": "14",
+        "SMART_OUTPUT_PRESET": "slow",
+        "SMART_OUTPUT_AUDIO_K": "192",
     }
     per_game = {
         "mobile_legends": {

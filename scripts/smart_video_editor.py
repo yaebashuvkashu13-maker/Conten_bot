@@ -1593,6 +1593,22 @@ def arrange_candidates(candidates: list[dict]) -> list[dict]:
     return arranged
 
 
+def output_encode_args() -> list[str]:
+    crf = os.environ.get('SMART_OUTPUT_CRF', '15')
+    preset = os.environ.get('SMART_OUTPUT_PRESET', 'slow')
+    audio_k = os.environ.get('SMART_OUTPUT_AUDIO_K', '192')
+    return [
+        '-c:v', 'libx264',
+        '-preset', preset,
+        '-crf', crf,
+        '-pix_fmt', 'yuv420p',
+        '-profile:v', 'high',
+        '-c:a', 'aac',
+        '-b:a', f'{audio_k}k',
+        '-movflags', '+faststart',
+    ]
+
+
 def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float:
     source_path = Path(candidate['source_path'])
     has_audio = ffprobe_has_audio(source_path)
@@ -1673,20 +1689,8 @@ def render_segment(candidate: dict, output_path: Path, logo_path: Path) -> float
                 '-map', '1:a:0',
             ])
 
-    output_crf = os.environ.get('SMART_OUTPUT_CRF', '15')
-    output_preset = os.environ.get('SMART_OUTPUT_PRESET', 'slow')
-    command.extend([
-        '-c:v', 'libx264',
-        '-preset', output_preset,
-        '-crf', output_crf,
-        '-pix_fmt', 'yuv420p',
-        '-profile:v', 'high',
-        '-c:a', 'aac',
-        '-b:a', '160k',
-        '-movflags', '+faststart',
-        '-shortest',
-        str(output_path),
-    ])
+    command.extend(output_encode_args())
+    command.extend(['-shortest', str(output_path)])
     run_command(command)
     return ffprobe_duration(output_path)
 
@@ -1696,17 +1700,8 @@ def build_xfade_command(segment_paths: list[Path], durations: list[float], outpu
     for segment_path in segment_paths:
         command.extend(['-i', str(segment_path)])
     if len(segment_paths) == 1:
-        command.extend([
-            '-c:v', 'libx264',
-            '-preset', 'medium',
-            '-crf', '18',
-            '-pix_fmt', 'yuv420p',
-            '-profile:v', 'high',
-            '-c:a', 'aac',
-            '-b:a', '160k',
-            '-movflags', '+faststart',
-            str(output_path),
-        ])
+        command.extend(output_encode_args())
+        command.append(str(output_path))
         return command
 
     filters: list[str] = []
@@ -1736,14 +1731,7 @@ def build_xfade_command(segment_paths: list[Path], durations: list[float], outpu
         '-filter_complex', ';'.join(filters),
         '-map', '[vout]',
         '-map', f'[{audio_prev}]',
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '18',
-        '-pix_fmt', 'yuv420p',
-        '-profile:v', 'high',
-        '-c:a', 'aac',
-        '-b:a', '160k',
-        '-movflags', '+faststart',
+        *output_encode_args(),
         str(output_path),
     ])
     return command
