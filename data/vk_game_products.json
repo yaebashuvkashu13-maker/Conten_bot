@@ -1,0 +1,27 @@
+{
+  "mobile_legends": {
+    "market_item_id": null,
+    "title": "",
+    "note": "Артикул/ID товара VK Market для MLBB — заполнит владелец"
+  },
+  "pubg": {
+    "market_item_id": null,
+    "title": "",
+    "note": ""
+  },
+  "genshin": {
+    "market_item_id": null,
+    "title": "",
+    "note": ""
+  },
+  "standoff": {
+    "market_item_id": null,
+    "title": "",
+    "note": ""
+  },
+  "wot": {
+    "market_item_id": null,
+    "title": "",
+    "note": ""
+  }
+}

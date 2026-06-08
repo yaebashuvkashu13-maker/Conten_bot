@@ -144,11 +144,21 @@ def upload_video_file(upload_url: str, path: Path) -> dict:
         raise RuntimeError(f"upload_bad_json:{proc.stdout[:300]}") from exc
 
 
+def _product_description_suffix(game: str = "mobile_legends") -> str:
+    try:
+        from vk_game_products import description_suffix
+
+        return description_suffix(game)
+    except Exception:
+        return ""
+
+
 def publish_clip(
     source: Path,
     *,
     title: str = "",
     description: str = "",
+    game: str = "mobile_legends",
     env: dict[str, str] | None = None,
 ) -> dict:
     env = env or load_env()
@@ -158,11 +168,15 @@ def publish_clip(
     try:
         if not title:
             title = f"MLBB {time.strftime('%d.%m %H:%M')}"
+        product_line = _product_description_suffix(game)
+        base_desc = description or "Mobile Legends"
+        if product_line:
+            base_desc = f"{base_desc}\n{product_line}"
         save = vk_call(
             "video.save",
             {
                 "name": title[:128],
-                "description": (description or "Mobile Legends")[:5000],
+                "description": base_desc[:5000],
                 "group_id": group_id,
                 "wallpost": 0,
                 "is_private": 0,
