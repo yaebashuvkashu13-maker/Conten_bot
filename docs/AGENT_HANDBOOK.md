@@ -1,9 +1,9 @@
 # Справочник проекта Conten_bot (для людей и AI-агентов)
 
-> **Если вы новый агент:** прочитайте этот файл целиком перед любыми правками.  
+> **Если вы новый агент:** сначала **`docs/SESSION_HANDOFF_2026-06-08.md`** (последняя сессия, P0, промпт), затем этот файл целиком.  
 > После прочтения вы должны понимать: **что строим**, **что уже есть**, **где что лежит**, **что трогать нельзя**, **что делать дальше** — без 2 часов устных объяснений.
 
-**Триггер для владельца:** *«Открой `docs/AGENT_HANDBOOK.md` — там вся правда по проекту»*.
+**Триггер для владельца:** *«Открой `docs/SESSION_HANDOFF_2026-06-08.md` + `docs/AGENT_HANDBOOK.md`»*.
 
 ---
 
@@ -140,7 +140,7 @@
 
 | Игра | Условие PASS |
 |------|----------------|
-| PUBG | `gun >= 0.055`, `burst >= 4.8` (`pubg_shooting_gate`) |
+| PUBG | **`pubg_combat_gate`**: audio + PANNs ≥0.24 + visual 3/3 + hit_flash/weapon; audio floor gun≥0.068, burst≥5.2 |
 | Standoff | `gun >= 0.10`, `burst >= 8`, `motion >= 0.12` |
 | Genshin | `boss_ok` + `motion >= 0.18`, `boss_score >= 0.35` |
 | WoT / MLBB | `strict_segment_gate` + extra-reject (cruise / overlay) |
@@ -427,4 +427,23 @@ conten_bot/
 
 ---
 
-*Последнее обновление справочника: 2026-06-06. При изменении cron, strict_peak порогов, chat ID или путей — обновляйте этот файл в том же PR.*
+---
+
+## 18. VK MLBB (июнь 2026)
+
+Очередь клипов от владельца → автопубликация в сообщество VK.
+
+| Компонент | Путь |
+|-----------|------|
+| Очередь | `/root/data/mlbb/vk_mlbb_queue/pending/` |
+| Загрузка | `scripts/vk_mlbb_upload.py` (9:16, ≤90s) |
+| Cron | `install_vk_mlbb_scheduler.sh` — 09:00 / 13:30 / 18:00 МСК, 3 шт. |
+| Telegram | `/upload_vkmlbb`, `/upload_vkmlbb_status`, `/upload_vkmlbb_done` |
+| Токен | `VK_MLBB_ACCESS_TOKEN` в `/root/.video_bot.env` — **обязателен** |
+| Callback | `vk_callback_webhook.py`, group `234820335` |
+
+Подробности и P0: **`docs/SESSION_HANDOFF_2026-06-08.md`**.
+
+---
+
+*Последнее обновление справочника: 2026-06-08. При изменении cron, strict_peak порогов, chat ID или путей — обновляйте этот файл в том же PR.*
