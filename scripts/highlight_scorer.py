@@ -574,6 +574,13 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
 
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:
     try:
+        from pubg_combat_gate import _pubg_killfeed_hits
+    except ImportError:
+        pass
+    else:
+        return _pubg_killfeed_hits(video_path, start_sec, duration_sec)
+
+    try:
         import cv2
         import pytesseract
         from gameplay_gate import _read_frame_at, detect_game_viewport_crop
@@ -581,22 +588,39 @@ def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) 
         return "", 0
 
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
-    t = start_sec + duration_sec * 0.5
-    frame = _read_frame_at(video_path, t)
-    if frame is None:
-        return "", 0
-    if crop is not None:
-        x, y, w, h = crop
-        frame = frame[y : y + h, x : x + w]
-    small = cv2.resize(frame, (320, 180))
-    h, w = small.shape[:2]
-    zone = small[int(h * 0.02) : int(h * 0.22), int(w * 0.62) : int(w * 0.98)]
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    text = pytesseract.image_to_string(gray, config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+- ")
-    text = " ".join(text.split())
-    hits = sum(1 for kw in ("kill", "knock", "eliminated", "headshot", "убил", "убийство") if kw.lower() in text.lower())
-    return text[:120], hits
+    merged = ""
+    best_hits = 0
+    for frac in (0.2, 0.5, 0.8):
+        frame = _read_frame_at(video_path, start_sec + duration_sec * frac)
+        if frame is None:
+            continue
+        if crop is not None:
+            x, y, w, h = crop
+            frame = frame[y : y + h, x : x + w]
+        small = cv2.resize(frame, (320, 180))
+        h, w = small.shape[:2]
+        zone = small[int(h * 0.02) : int(h * 0.22), int(w * 0.62) : int(w * 0.98)]
+        gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        text = pytesseract.image_to_string(
+            gray,
+            config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+- ",
+        )
+        text = " ".join(text.split())
+        merged = f"{merged} {text}".strip()
+        hits = sum(
+            1
+            for kw in ("kill", "knock", "eliminated", "headshot", "убил", "убийство")
+            if kw.lower() in text.lower()
+        )
+        best_hits = max(best_hits, hits)
+    if best_hits == 0 and merged:
+        best_hits = sum(
+            1
+            for kw in ("kill", "knock", "eliminated", "headshot", "убил", "убийство")
+            if kw.lower() in merged.lower()
+        )
+    return merged[:120], best_hits
 
 
 def _load_classifier():
