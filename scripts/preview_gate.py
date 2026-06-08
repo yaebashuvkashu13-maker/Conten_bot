@@ -18,6 +18,20 @@ def _segment_duration(cand: dict) -> float:
     return float(cand.get("input_duration") or cand.get("output_duration") or 10.0)
 
 
+def _gate_window(cand: dict, profile: str) -> tuple[float, float]:
+    """Score the combat core when montage padding extends beyond WINDOW_SEC."""
+    from highlight_scorer import WINDOW_SEC
+
+    full_start = float(cand["start"])
+    full_dur = _segment_duration(cand)
+    prof = normalize_profile(profile)
+    if prof not in ("pubg", "standoff") or full_dur <= WINDOW_SEC:
+        return full_start, full_dur
+    gate_dur = WINDOW_SEC
+    gate_start = full_start + (full_dur - gate_dur) / 2.0
+    return gate_start, gate_dur
+
+
 def rescore_clip(
     video_path: Path,
     profile: str,
@@ -27,9 +41,10 @@ def rescore_clip(
     from highlight_scorer import score_candidate_window
 
     profile = normalize_profile(profile)
-    start = float(cand["start"])
-    duration = _segment_duration(cand)
+    start, duration = _gate_window(cand, profile)
     metrics = score_candidate_window(video_path, start, duration, profile)
+    metrics.start = float(cand["start"])
+    metrics.duration = _segment_duration(cand)
 
     if not metrics.rule_pass:
         return False, metrics.pass_reason or "rule_fail", metrics.to_dict()
@@ -93,7 +108,7 @@ def validate_clips_before_preview(
         log.error("REFUSED preview: rescore failed %s", reason)
         return False, reason, [], [], []
 
-    segment_pairs = [(float(c["start"]), _segment_duration(c)) for c in rescored]
+    segment_pairs = [_gate_window(c, profile) for c in rescored]
     metrics_rows = [c.get("highlight_metrics") or c.get("strict_metrics") or {} for c in rescored]
 
     vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
