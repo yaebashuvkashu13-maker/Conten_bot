@@ -48,19 +48,19 @@ GAMES = [
         "id": "mobile_legends",
         "profile": "mobile_legends",
         "label": "MLBB",
-        "sources": [],
+        "sources": ["yt_E4Dsp53yvv4.mp4"],
     },
     {
         "id": "genshin",
         "profile": "genshin",
         "label": "Genshin",
-        "sources": [],
+        "sources": ["yt_i67K34fQa9I.mp4"],
     },
     {
         "id": "wot",
         "profile": "wot",
         "label": "WoT",
-        "sources": [],
+        "sources": ["yt_QbBwJJTio6A.mp4"],
     },
 ]
 
@@ -130,11 +130,15 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
             "HIGHLIGHT_EXEMPLAR_ROOT",
             f"{run_env['CONTENT_BOT_REPO']}/data/highlight_exemplars",
         )
-        run_env.setdefault("PUBG_OWNER_LABELS_PATH", f"{run_env['CONTENT_BOT_REPO']}/data/pubg_owner_labels.json")
-        run_env.setdefault(
-            "STANDOFF_OWNER_LABELS_PATH",
-            f"{run_env['CONTENT_BOT_REPO']}/data/standoff_owner_labels.json",
-        )
+        label_root = f"{run_env['CONTENT_BOT_REPO']}/data"
+        for env_key, fname in (
+            ("PUBG_OWNER_LABELS_PATH", "pubg_owner_labels.json"),
+            ("STANDOFF_OWNER_LABELS_PATH", "standoff_owner_labels.json"),
+            ("MLBB_OWNER_LABELS_PATH", "mobile_legends_owner_labels.json"),
+            ("GENSHIN_OWNER_LABELS_PATH", "genshin_owner_labels.json"),
+            ("WOT_OWNER_LABELS_PATH", "wot_owner_labels.json"),
+        ):
+            run_env.setdefault(env_key, f"{label_root}/{fname}")
 
         log(f"queue {game['label']} attempt={attempt} vod={source.name}")
         code, detail = make_strict_montage(

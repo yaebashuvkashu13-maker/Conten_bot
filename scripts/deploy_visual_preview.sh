@@ -9,10 +9,9 @@ git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
 install -m 644 \
-  "$REPO/data/pubg_owner_labels.json" \
-  "$REPO/data/standoff_owner_labels.json" \
+  "$REPO/data/"*_owner_labels.json \
   /root/data/mlbb/ 2>/dev/null || true
-cp -f "$REPO/data/pubg_owner_labels.json" "$REPO/data/standoff_owner_labels.json" "$REPO/data/" 2>/dev/null || true
+cp -f "$REPO/data/"*_owner_labels.json "$REPO/data/" 2>/dev/null || true
 
 install -m 755 \
   scripts/preview_gate.py \

@@ -39,15 +39,22 @@ CLASSIFIER_PATH = Path(
         str(REPO_ROOT / "data" / "mlbb" / "highlight_classifier.joblib"),
     )
 )
-OWNER_LABEL_PROFILES = frozenset({"pubg", "standoff"})
+OWNER_LABEL_PROFILES = frozenset({"pubg", "standoff", "mobile_legends", "genshin", "wot"})
+
+_OWNER_LABEL_FILES: dict[str, tuple[str, str]] = {
+    "pubg": ("PUBG_OWNER_LABELS_PATH", "pubg_owner_labels.json"),
+    "standoff": ("STANDOFF_OWNER_LABELS_PATH", "standoff_owner_labels.json"),
+    "mobile_legends": ("MLBB_OWNER_LABELS_PATH", "mobile_legends_owner_labels.json"),
+    "genshin": ("GENSHIN_OWNER_LABELS_PATH", "genshin_owner_labels.json"),
+    "wot": ("WOT_OWNER_LABELS_PATH", "wot_owner_labels.json"),
+}
 
 
 def _owner_labels_path(profile: str) -> Path | None:
     profile = normalize_profile(profile)
     if profile not in OWNER_LABEL_PROFILES:
         return None
-    env_key = f"{profile.upper()}_OWNER_LABELS_PATH" if profile == "standoff" else "PUBG_OWNER_LABELS_PATH"
-    default_name = "standoff_owner_labels.json" if profile == "standoff" else "pubg_owner_labels.json"
+    env_key, default_name = _OWNER_LABEL_FILES[profile]
     path = Path(os.environ.get(env_key, str(REPO_ROOT / "data" / default_name)))
     if path.exists():
         return path
@@ -943,6 +950,22 @@ def _owner_vicinity_gun_starts(video_path: Path, profile: str) -> list[float]:
     return starts
 
 
+def _owner_anchor_stage1_starts(video_path: Path, profile: str) -> list[float]:
+    """Probe windows near owner good labels — still passes full gates later."""
+    anchors = _owner_anchor_starts(video_path, profile)
+    if not anchors:
+        return []
+    out: list[float] = []
+    for anchor in anchors:
+        for off in (-90, -60, -30, 0, 30, 60, 90):
+            s = anchor + off - WINDOW_SEC * 0.5
+            if s >= 60:
+                out.append(round(s, 1))
+    if out:
+        log.info("owner anchor vicinity %s: %s probe windows near %s labels", video_path.name, len(out), len(anchors))
+    return out
+
+
 def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     labels_path = _owner_labels_path(profile)
@@ -977,8 +1000,15 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
     # Gun-peak scan near owner labels (not raw timestamp injection).
-    if owner_anchors_enabled() or _owner_anchor_starts(video_path, profile):
+    if profile in SHOOTER_PROFILES and _owner_anchor_starts(video_path, profile):
         for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
+            starts.add(vicinity_start)
+    elif _owner_anchor_starts(video_path, profile):
+        for vicinity_start in _owner_anchor_stage1_starts(video_path, profile):
+            starts.add(vicinity_start)
+
+    if owner_anchors_enabled():
+        for vicinity_start in _owner_anchor_stage1_starts(video_path, profile):
             starts.add(vicinity_start)
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
