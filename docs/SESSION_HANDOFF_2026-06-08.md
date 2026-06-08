@@ -113,12 +113,24 @@ HTTPS tunnel: **cloudflared** (`vk-cloudflared` systemd) — URL может ме
 - Пустая очередь → уведомление в ТГ
 - Клип: вертикаль 1080×1920, max 90s (VK сам решает Clips feed — отдельного API флага нет)
 
-### После появления токена (P0)
+### ⚠️ КРИТИЧНО: привязка токена к IP (error 5)
+
+Владелец уже сталкивался с этим через другого разработчика:
+
+```
+vk api error 5: access_token was given to another ip address
+```
+
+**Токен с ПК / Cursor / дома ≠ токен для VPS.** Заливка идёт с IP сервера — токен нужно **выдать или обменять на VPS**, либо отключить «Защищённую авторизацию» в приложении VK.
+
+**Полная инструкция:** `docs/VK_MLBB_TOKEN.md`  
+**Проверка:** `scripts/vk_mlbb_token_check.py`  
+**OAuth на VPS:** `scripts/vk_mlbb_oauth_token.py`
+
+### После валидного токена с IP VPS (P0)
 ```bash
 # На VPS:
-echo 'VK_MLBB_ACCESS_TOKEN=vk1.a...' >> /root/.video_bot.env
-# или:
-VK_MLBB_ACCESS_TOKEN=vk1.a... bash /usr/local/bin/sync_vk_mlbb_token.sh
+python3 /usr/local/bin/vk_mlbb_token_check.py   # must print OK token_valid_from_this_host
 
 # Тест 1 клипа:
 set -a && source /root/.video_bot.env && set +a
@@ -208,6 +220,7 @@ GitHub Actions: `.github/workflows/deploy-vps.yml` (нужны secrets `VPS_HOST
 | PUBG только по audio gunfire | Всегда `pubg_combat_gate` |
 | Telegram notify через curl с HTTP_PROXY | `ProxyHandler({})` или `telegram_curl_env()` |
 | Секрет добавлен в Cursor, но не в Cloud Agent list | Агент не увидит — нужен новый чат **или** явная передача токена |
+| Токен VK взят с ПК и вставлен на VPS | **error 5** — перевыпустить на VPS (`docs/VK_MLBB_TOKEN.md`) |
 | Товары к VK клипам через API | Невозможно — только ручное прикрепление в приложении VK |
 
 ---

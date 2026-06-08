@@ -439,7 +439,7 @@ conten_bot/
 | Загрузка | `scripts/vk_mlbb_upload.py` (9:16, ≤90s) |
 | Cron | `install_vk_mlbb_scheduler.sh` — 09:00 / 13:30 / 18:00 МСК, 3 шт. |
 | Telegram | `/upload_vkmlbb`, `/upload_vkmlbb_status`, `/upload_vkmlbb_done` |
-| Токен | `VK_MLBB_ACCESS_TOKEN` в `/root/.video_bot.env` — **обязателен** |
+| Токен | `VK_MLBB_ACCESS_TOKEN` в `/root/.video_bot.env` — **обязателен**, **с IP VPS** (см. `docs/VK_MLBB_TOKEN.md`, error 5) |
 | Callback | `vk_callback_webhook.py`, group `234820335` |
 
 Подробности и P0: **`docs/SESSION_HANDOFF_2026-06-08.md`**.
