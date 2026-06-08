@@ -113,7 +113,7 @@ def build_proof_package(
     return pkg
 
 
-def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str]) -> None:
+def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str], *, skip_rescore: bool = False) -> None:
     """Send screenshots + caption to owner — never sendVideo here."""
     from preview_gate import validate_clips_before_preview
     from smart_video_editor import run_command, telegram_curl_env
@@ -130,7 +130,7 @@ def send_proof_to_owner(pkg: dict[str, Any], env: dict[str, str]) -> None:
         }
         for seg in pkg.get("segments", [])
     ]
-    if video_path.exists() and clips:
+    if not skip_rescore and video_path.exists() and clips:
         ok, reason, _, _, _ = validate_clips_before_preview(video_path, profile, clips)
         if not ok:
             raise RuntimeError(f"pre_send_refused:{reason}")

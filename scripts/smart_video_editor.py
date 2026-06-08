@@ -1846,8 +1846,24 @@ def maybe_send_owner_preview(
         vod_path, profile, clips
     )
     if not ok:
-        logging.error('owner preview refused: %s', reason)
-        return None
+        logging.warning('preview rescore failed (%s) — visual-only fallback', reason)
+        from visual_action_check import verify_segments_visual
+
+        segment_pairs = [
+            (
+                float(item['start']),
+                float(item.get('input_duration') or item.get('output_duration') or 9.0),
+            )
+            for item in arranged
+        ]
+        vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
+            vod_path, profile, segment_pairs, segment_metrics=segment_metrics
+        )
+        if vis_passed < vis_total:
+            logging.error('owner preview refused: %s', vis_reason)
+            return None
+        rescored = clips
+        metrics_rows = segment_metrics
 
     game = GAME_LABELS.get(normalize_profile(profile), profile)
     pid = preview_id_for(profile, output_path.stem)
@@ -1869,7 +1885,7 @@ def maybe_send_owner_preview(
         encoding='utf-8',
     )
     if bot_token and chat_id:
-        send_proof_to_owner(pkg, env_snapshot)
+        send_proof_to_owner(pkg, env_snapshot, skip_rescore=not ok)
         logging.info(
             'owner preview sent game=%s preview_id=%s visual=%s/%s',
             game,

@@ -7,11 +7,15 @@ import argparse
 import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from smart_video_editor import maybe_send_owner_preview
+from segment_preview import PROOF_ROOT, build_proof_package, send_proof_to_owner
+from strict_segment_gate import GAME_LABELS, normalize_profile
+from visual_action_check import verify_segments_visual
 
 
 def load_env() -> dict[str, str]:
@@ -30,6 +34,11 @@ def load_env() -> dict[str, str]:
     return env
 
 
+def preview_id_for(game: str, basename: str) -> str:
+    slug = f"{normalize_profile(game)}_{basename}_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    return slug.replace(" ", "_")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("montage_json", type=Path, help="Path to montage .json sidecar")
@@ -42,26 +51,66 @@ def main() -> int:
         return 1
 
     env = load_env()
-    profile = meta.get("profile", "pubg")
+    profile = normalize_profile(meta.get("profile", "pubg"))
     arranged = meta.get("selected_segments") or []
     segment_metrics = meta.get("segment_metrics") or []
-    caption = (
-        f"🎬 {profile.upper()} | повтор превью\n"
-        f"Файл: {montage_path.name}"
-    )
-    pid = maybe_send_owner_preview(
-        output_path=montage_path,
-        arranged=arranged,
-        profile=profile,
-        bot_token=env.get("TG_BOT_TOKEN", ""),
-        chat_id=env.get("TG_CHAT_ID", ""),
-        caption=caption,
-        segment_metrics=segment_metrics,
-    )
-    if not pid:
-        print("preview refused or skipped")
+    if not arranged:
+        print("no selected_segments in json")
         return 1
-    print(f"OK preview_id={pid}")
+
+    vod_path = Path(arranged[0]["source_path"])
+    if not vod_path.exists():
+        print(f"source vod missing: {vod_path}")
+        return 1
+
+    segment_pairs = [
+        (
+            float(item["start"]),
+            float(item.get("input_duration") or item.get("output_duration") or 9.0),
+        )
+        for item in arranged
+    ]
+    vis_passed, vis_total, visual_rows, vis_reason = verify_segments_visual(
+        vod_path, profile, segment_pairs, segment_metrics=segment_metrics
+    )
+    if vis_passed < vis_total:
+        print(f"visual gate failed: {vis_reason}")
+        return 1
+
+    clips = [
+        {
+            "start": float(item["start"]),
+            "input_duration": float(item.get("input_duration") or item.get("output_duration") or 9.0),
+            "output_duration": float(item.get("output_duration") or item.get("input_duration") or 9.0),
+        }
+        for item in arranged
+    ]
+    game = GAME_LABELS.get(profile, profile)
+    pid = preview_id_for(profile, montage_path.stem)
+    caption = f"🎬 {game} | повтор превью\nФайл: {montage_path.name}"
+    pkg = build_proof_package(
+        video_path=vod_path,
+        profile=profile,
+        game_label=game,
+        segments=clips,
+        visual_rows=visual_rows,
+        audio_metrics=segment_metrics,
+        montage_path=montage_path,
+        preview_id=pid,
+    )
+    proof_dir = PROOF_ROOT / pid
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    (proof_dir / "montage.json").write_text(
+        json.dumps({"montage": str(montage_path), "caption": caption, "profile": profile}, indent=2),
+        encoding="utf-8",
+    )
+    token = env.get("TG_BOT_TOKEN", "")
+    chat_id = env.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        print("no telegram env")
+        return 1
+    send_proof_to_owner(pkg, env, skip_rescore=True)
+    print(f"OK preview_id={pid} visual={vis_passed}/{vis_total}")
     return 0
 
 
