@@ -1803,6 +1803,84 @@ STRICT_PEAK_PROFILES = frozenset({
 })
 
 
+def _norm_strict_profile(profile: str) -> str:
+    p = profile.strip().lower()
+    if p == 'world_of_tanks':
+        return 'wot'
+    if p == 'mlbb':
+        return 'mobile_legends'
+    return p
+
+
+def maybe_send_owner_preview(
+    *,
+    output_path: Path,
+    arranged: list[dict],
+    profile: str,
+    bot_token: str,
+    chat_id: str,
+    caption: str,
+    segment_metrics: list[dict],
+) -> str | None:
+    """When direct sendVideo is blocked, ship screenshots + /approve_preview to owner."""
+    profile = _norm_strict_profile(profile)
+    if profile not in STRICT_PEAK_PROFILES or not arranged:
+        return None
+
+    from preview_gate import validate_clips_before_preview
+    from segment_preview import PROOF_ROOT, build_proof_package, preview_id_for, send_proof_to_owner
+    from strict_segment_gate import GAME_LABELS, normalize_profile
+
+    vod_path = Path(arranged[0]['source_path'])
+    clips = [
+        {
+            'start': float(item['start']),
+            'input_duration': float(item.get('input_duration') or item.get('output_duration') or 9.0),
+            'output_duration': float(item.get('output_duration') or item.get('input_duration') or 9.0),
+            'highlight_metrics': segment_metrics[idx] if idx < len(segment_metrics) else {},
+            'strict_metrics': segment_metrics[idx] if idx < len(segment_metrics) else {},
+        }
+        for idx, item in enumerate(arranged)
+    ]
+    ok, reason, rescored, metrics_rows, visual_rows = validate_clips_before_preview(
+        vod_path, profile, clips
+    )
+    if not ok:
+        logging.error('owner preview refused: %s', reason)
+        return None
+
+    game = GAME_LABELS.get(normalize_profile(profile), profile)
+    pid = preview_id_for(profile, output_path.stem)
+    env_snapshot = {'TG_BOT_TOKEN': bot_token, 'TG_CHAT_ID': chat_id}
+    pkg = build_proof_package(
+        video_path=vod_path,
+        profile=profile,
+        game_label=game,
+        segments=rescored,
+        visual_rows=visual_rows,
+        audio_metrics=metrics_rows,
+        montage_path=output_path,
+        preview_id=pid,
+    )
+    proof_dir = PROOF_ROOT / pid
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    (proof_dir / 'montage.json').write_text(
+        json.dumps({'montage': str(output_path), 'caption': caption, 'profile': profile}, indent=2),
+        encoding='utf-8',
+    )
+    if bot_token and chat_id:
+        send_proof_to_owner(pkg, env_snapshot)
+        logging.info(
+            'owner preview sent game=%s preview_id=%s visual=%s/%s',
+            game,
+            pid,
+            pkg.get('visual_passed_segments', 0),
+            pkg.get('total_segments', 0),
+        )
+        print(f'PREVIEW_SENT preview_id={pid}')
+    return pid
+
+
 def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption: str) -> None:
     """Upload via curl - manual multipart often triggers Telegram HTTP 400."""
     profile = (os.environ.get('QUEUE_GAME_PROFILE') or os.environ.get('DEFAULT_GAME_PROFILE', '')).strip().lower()
@@ -2225,10 +2303,21 @@ def _run_smart_edit(
             'selected_segments': arranged,
         })
         if SEND_TELEGRAM:
+            notify_chat = batch_chat_id or default_chat_id
             try:
-                send_telegram_video(bot_token, batch_chat_id or default_chat_id, output_path, caption)
+                send_telegram_video(bot_token, notify_chat, output_path, caption)
             except Exception as exc:
                 logging.warning('telegram send failed for %s: %s', output_path.name, exc)
+                if 'owner visual preview required' in str(exc):
+                    maybe_send_owner_preview(
+                        output_path=output_path,
+                        arranged=arranged,
+                        profile=profile,
+                        bot_token=bot_token,
+                        chat_id=notify_chat,
+                        caption=caption,
+                        segment_metrics=segment_metrics,
+                    )
         register_segment_history(
             arranged,
             path=Path(os.environ.get('SEGMENT_HISTORY_FILE', str(SEGMENT_HISTORY_FILE))),

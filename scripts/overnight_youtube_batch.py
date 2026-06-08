@@ -371,7 +371,13 @@ def process_game(
                 register(montage, source_url=pick.get("url", ""), title=pick.get("title", ""))
         except Exception as exc:
             logging.warning("%s manifest: %s", gid, exc)
-        send_text(env, chat_id, f"✅ [{game['queue_label']}] готово: {ok} нарезка(ок).")
+        send_text(
+            env,
+            chat_id,
+            f"✅ [{game['queue_label']}] монтаж собран ({ok} шт.).\n"
+            "Видео придёт после /approve_preview (или сразу, если авто-отправка).\n"
+            "Нет скринов? Напиши — дослать превью.",
+        )
     else:
         send_text(
             env,
