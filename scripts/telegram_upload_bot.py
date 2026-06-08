@@ -39,7 +39,8 @@ AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
-BOT_VERSION = '2026-06-07-youtube-shorts-v4'
+VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
+BOT_VERSION = '2026-06-08-vkmlbb-upload-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -553,6 +554,7 @@ def load_state() -> dict:
             'reject_mode_until': {},
             'wm_mode_until': {},
             'standoff_exemplar_mode_until': {},
+            'vk_mlbb_upload_mode_until': {},
         }
     try:
         state = json.loads(STATE_FILE.read_text())
@@ -563,11 +565,13 @@ def load_state() -> dict:
             'reject_mode_until': {},
             'wm_mode_until': {},
             'standoff_exemplar_mode_until': {},
+            'vk_mlbb_upload_mode_until': {},
         }
     state.setdefault('ad_mode_until', {})
     state.setdefault('reject_mode_until', {})
     state.setdefault('wm_mode_until', {})
     state.setdefault('standoff_exemplar_mode_until', {})
+    state.setdefault('vk_mlbb_upload_mode_until', {})
     return state
 
 
@@ -660,6 +664,44 @@ def set_standoff_exemplar_mode(chat_id: str, enabled: bool):
     else:
         state['standoff_exemplar_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_vk_mlbb_upload_mode(chat_id: str) -> bool:
+    until = _bot_state().get('vk_mlbb_upload_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['vk_mlbb_upload_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_vk_mlbb_upload_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('vk_mlbb_upload_mode_until', {})
+    if enabled:
+        state['vk_mlbb_upload_mode_until'][chat_id] = time.time() + VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC
+    else:
+        state['vk_mlbb_upload_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def _vk_mlbb_queue_helpers():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from vk_mlbb_queue import enqueue_video, pending_count  # noqa: WPS433
+
+    return enqueue_video, pending_count
+
+
+def enqueue_vk_mlbb_video(chat_id: str, source: Path, label: str) -> Path:
+    enqueue_video, _ = _vk_mlbb_queue_helpers()
+    return enqueue_video(source, chat_id=chat_id, label=label or 'MLBB')
+
+
+def count_vk_mlbb_pending() -> int:
+    _, pending_count_fn = _vk_mlbb_queue_helpers()
+    return pending_count_fn()
 
 
 def _standoff_exemplar_helpers():
@@ -1827,6 +1869,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'whoami', 'description': 'Ваш chat_id (как в ping)'},
         {'command': 'make', 'description': 'Собрать нарезку из видео'},
         {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
+        {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
@@ -2002,6 +2045,47 @@ def handle_message(message: dict):
             chat_id,
             f'Режим /upload_standoff2 выключен. Exemplars Standoff: {total} шт.\n'
             + ('Последние клипы сохранены.' if was else ''),
+        )
+        return
+    if cmd in ('/upload_vkmlbb', '/vkmlbb_upload', '/vk_mlbb'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /upload_vkmlbb только для владельца.')
+            return
+        set_vk_mlbb_upload_mode(chat_id, True)
+        q = count_vk_mlbb_pending()
+        send_message(
+            chat_id,
+            'Режим загрузки MLBB → VK включён на 7 дней.\n'
+            'Присылай видео (клипы/нарезки) — попадут в очередь на публикацию.\n'
+            'Расписание VK: 09:00, 13:30, 18:00 МСК — по 3 ролика за раз.\n'
+            f'Сейчас в очереди: {q} шт.\n'
+            'Статус: /upload_vkmlbb_status | Завершить приём: /upload_vkmlbb_done',
+        )
+        return
+    if cmd in ('/upload_vkmlbb_status', '/vkmlbb_status'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда только для владельца.')
+            return
+        q = count_vk_mlbb_pending()
+        mode = 'включён' if is_vk_mlbb_upload_mode(chat_id) else 'выключен'
+        send_message(
+            chat_id,
+            f'VK MLBB очередь: {q} видео.\n'
+            f'Режим /upload_vkmlbb: {mode}.\n'
+            'Слоты: 09:00 / 13:30 / 18:00 МСК (3 шт. за слот).',
+        )
+        return
+    if cmd in ('/upload_vkmlbb_done', '/vkmlbb_done'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда только для владельца.')
+            return
+        was = is_vk_mlbb_upload_mode(chat_id)
+        set_vk_mlbb_upload_mode(chat_id, False)
+        q = count_vk_mlbb_pending()
+        send_message(
+            chat_id,
+            f'Режим /upload_vkmlbb выключен. В очереди VK: {q} шт.\n'
+            + ('Последние видео сохранены в очередь.' if was else ''),
         )
         return
     if cmd in ('/bad_done', '/bad_stop', '/плохо_готово'):
@@ -2368,6 +2452,23 @@ def handle_message(message: dict):
         except Exception as exc:
             logging.exception('standoff exemplar save failed')
             send_message(chat_id, f'Не удалось сохранить exemplar: {exc}')
+        return
+    if is_vk_mlbb_upload_mode(chat_id):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Режим /upload_vkmlbb только для владельца.')
+            return
+        try:
+            saved = enqueue_vk_mlbb_video(chat_id, destination, label)
+            q = count_vk_mlbb_pending()
+            send_message(
+                chat_id,
+                f'В очередь VK MLBB: {saved.name}\n'
+                f'Всего в очереди: {q} шт. (по 3 за слот: 09:00 / 13:30 / 18:00 МСК).\n'
+                'Ещё видео или /upload_vkmlbb_done.',
+            )
+        except Exception as exc:
+            logging.exception('vk mlbb enqueue failed')
+            send_message(chat_id, f'Не удалось добавить в очередь VK: {exc}')
         return
     append_pending(chat_id, destination, label)
     spawn_pubg_learning(destination, chat_id)

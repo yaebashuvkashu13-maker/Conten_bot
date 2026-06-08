@@ -50,7 +50,11 @@ install_scripts() {
     action_showcase_queue.sh \
     genshin_boss_rebuild.py \
     morning_pubg_standoff_catchup.py \
-    install_pipeline_watchdog_cron.sh; do
+    install_pipeline_watchdog_cron.sh \
+    vk_mlbb_queue.py \
+    vk_mlbb_upload.py \
+    vk_mlbb_publish_slot.py \
+    install_vk_mlbb_scheduler.sh; do
     if [[ -f "$REPO/scripts/$f" ]]; then
       install -m 755 "$REPO/scripts/$f" "$DEST/$f"
     fi
@@ -80,6 +84,9 @@ if [[ -x "$DEST/install_daily_ops_cron.sh" ]]; then
 fi
 if [[ -x "$DEST/install_pipeline_watchdog_cron.sh" ]]; then
   bash "$DEST/install_pipeline_watchdog_cron.sh"
+fi
+if [[ -x "$DEST/install_vk_mlbb_scheduler.sh" ]]; then
+  bash "$DEST/install_vk_mlbb_scheduler.sh"
 fi
 
 # Bot restart only when overnight batch is idle (do not disrupt active montage)

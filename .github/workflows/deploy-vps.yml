@@ -29,6 +29,7 @@ jobs:
             git checkout cursor/mlbb-video-pipeline-e712 || git checkout main
             git pull --ff-only
             bash scripts/deploy_telegram_bot.sh
+            bash scripts/install_vk_mlbb_scheduler.sh
             bash scripts/burst.sh
             echo "=== deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
