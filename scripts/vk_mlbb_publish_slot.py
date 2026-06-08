@@ -46,7 +46,8 @@ def notify_telegram(text: str) -> None:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=60) as resp:
             resp.read()
     except Exception as exc:
         append_publish_log(f"notify_fail: {exc}")
