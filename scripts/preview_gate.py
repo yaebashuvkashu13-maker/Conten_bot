@@ -19,7 +19,7 @@ def _segment_duration(cand: dict) -> float:
 
 
 def _gate_window(cand: dict, profile: str) -> tuple[float, float]:
-    """Score the combat core when montage padding extends beyond WINDOW_SEC."""
+    """Score combat at segment anchor; extra padding is render-only."""
     from highlight_scorer import WINDOW_SEC
 
     full_start = float(cand["start"])
@@ -27,9 +27,7 @@ def _gate_window(cand: dict, profile: str) -> tuple[float, float]:
     prof = normalize_profile(profile)
     if prof not in ("pubg", "standoff") or full_dur <= WINDOW_SEC:
         return full_start, full_dur
-    gate_dur = WINDOW_SEC
-    gate_start = full_start + (full_dur - gate_dur) / 2.0
-    return gate_start, gate_dur
+    return full_start, WINDOW_SEC
 
 
 def rescore_clip(
