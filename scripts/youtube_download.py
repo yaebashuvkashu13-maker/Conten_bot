@@ -79,7 +79,7 @@ def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
 
 
 def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
-    return [
+    args = [
         "--socket-timeout",
         env.get("YOUTUBE_SOCKET_TIMEOUT", "45"),
         "--retries",
@@ -87,6 +87,10 @@ def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
         "--fragment-retries",
         env.get("YOUTUBE_FRAGMENT_RETRIES", "10"),
     ]
+    cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
+    if cookies and Path(cookies).exists():
+        args += ["--cookies", cookies]
+    return args
 
 
 def is_youtube_url(url: str) -> bool:
