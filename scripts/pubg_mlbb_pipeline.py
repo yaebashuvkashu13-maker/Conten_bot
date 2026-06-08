@@ -22,13 +22,12 @@ LOG = Path("/root/data/mlbb/pubg_mlbb_pipeline.log")
 STATE_FILE = Path("/root/data/mlbb/pubg_mlbb_pipeline_state.json")
 PAUSE_FILE = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
-# PUBG + Standoff (highlight scorer priority). MLBB/Genshin/WoT after owner OK.
+# Five games — strict montage + owner preview. Standoff exemplars required when user uploads.
 GAMES = [
     {
         "id": "pubg",
         "profile": "pubg",
         "label": "PUBG",
-        # Owner-anchored live VOD first; then zv3J / FpMs48 fallbacks
         "sources": [
             "yt_pJ-X6NdSU9k.mp4",
             "yt_zv3JymSZOb0.mp4",
@@ -40,7 +39,28 @@ GAMES = [
         "id": "standoff",
         "profile": "standoff",
         "label": "Standoff",
-        "sources": ["yt_z8ImUR0_x_M.mp4"],
+        "sources": [
+            "yt_ou2CbjDp2Yc.mp4",
+            "yt_z8ImUR0_x_M.mp4",
+        ],
+    },
+    {
+        "id": "mobile_legends",
+        "profile": "mobile_legends",
+        "label": "MLBB",
+        "sources": [],
+    },
+    {
+        "id": "genshin",
+        "profile": "genshin",
+        "label": "Genshin",
+        "sources": [],
+    },
+    {
+        "id": "wot",
+        "profile": "wot",
+        "label": "WoT",
+        "sources": [],
     },
 ]
 
@@ -69,7 +89,10 @@ def log(msg: str) -> None:
 
 
 def pick_source(game: dict, attempt: int) -> Path | None:
-    sources = game.get("sources") or []
+    sources = list(game.get("sources") or [])
+    if not sources:
+        prefix = f"yt_{game['id']}_"
+        sources = sorted(p.name for p in INBOX.glob("*.mp4") if p.name.startswith(prefix))
     existing = [INBOX / s for s in sources if (INBOX / s).exists()]
     if not existing:
         return None
@@ -102,6 +125,16 @@ def run_game(game: dict, env: dict[str, str], state: dict) -> int:
         run_env["INTELLICLIP_STAGE1"] = "1"
         run_env["INTELLICLIP_FUSION"] = "0"
         run_env["INTELLICLIP_MAX_CLIPS"] = "4"
+        run_env.setdefault("CONTENT_BOT_REPO", "/root/content_bot_ml")
+        run_env.setdefault(
+            "HIGHLIGHT_EXEMPLAR_ROOT",
+            f"{run_env['CONTENT_BOT_REPO']}/data/highlight_exemplars",
+        )
+        run_env.setdefault("PUBG_OWNER_LABELS_PATH", f"{run_env['CONTENT_BOT_REPO']}/data/pubg_owner_labels.json")
+        run_env.setdefault(
+            "STANDOFF_OWNER_LABELS_PATH",
+            f"{run_env['CONTENT_BOT_REPO']}/data/standoff_owner_labels.json",
+        )
 
         log(f"queue {game['label']} attempt={attempt} vod={source.name}")
         code, detail = make_strict_montage(

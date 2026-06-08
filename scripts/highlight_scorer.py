@@ -39,19 +39,30 @@ CLASSIFIER_PATH = Path(
         str(REPO_ROOT / "data" / "mlbb" / "highlight_classifier.joblib"),
     )
 )
-OWNER_LABELS = Path(
-    os.environ.get(
-        "PUBG_OWNER_LABELS_PATH",
-        str(REPO_ROOT / "data" / "pubg_owner_labels.json"),
-    )
-)
+OWNER_LABEL_PROFILES = frozenset({"pubg", "standoff"})
+
+
+def _owner_labels_path(profile: str) -> Path | None:
+    profile = normalize_profile(profile)
+    if profile not in OWNER_LABEL_PROFILES:
+        return None
+    env_key = f"{profile.upper()}_OWNER_LABELS_PATH" if profile == "standoff" else "PUBG_OWNER_LABELS_PATH"
+    default_name = "standoff_owner_labels.json" if profile == "standoff" else "pubg_owner_labels.json"
+    path = Path(os.environ.get(env_key, str(REPO_ROOT / "data" / default_name)))
+    if path.exists():
+        return path
+    fallback = Path(f"/root/data/mlbb/{default_name}")
+    if fallback.exists():
+        return fallback
+    legacy = Path("/root/data/mlbb/pubg_owner_labels.json")
+    if profile == "pubg" and legacy.exists():
+        return legacy
+    return path if path.exists() else None
+
+
 QUERY_CONFIG = Path(
     os.environ.get("HIGHLIGHT_QUERY_CONFIG", str(REPO_ROOT / "config" / "highlight_queries.yaml"))
 )
-if not OWNER_LABELS.exists():
-    _fallback = Path("/root/data/mlbb/pubg_owner_labels.json")
-    if _fallback.exists():
-        OWNER_LABELS = _fallback
 
 WINDOW_SEC = float(os.environ.get("HIGHLIGHT_WINDOW_SEC", "10"))
 STEP_SEC = float(os.environ.get("HIGHLIGHT_STEP_SEC", "2"))
@@ -641,10 +652,11 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
     if os.environ.get("HIGHLIGHT_PANN_FIXED", "0") == "1":
         return PANN_GUN_MIN
     starts = _owner_anchor_starts(video_path, profile)
-    if not starts:
+    labels_path = _owner_labels_path(normalize_profile(profile))
+    if not starts or labels_path is None:
         return PANN_GUN_MIN
     try:
-        data = json.loads(OWNER_LABELS.read_text(encoding="utf-8"))
+        data = json.loads(labels_path.read_text(encoding="utf-8"))
         vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
         rows = data.get("videos", {}).get(vid, [])
     except (json.JSONDecodeError, OSError):
@@ -897,7 +909,7 @@ def score_candidate_window(
 def _owner_vicinity_gun_starts(video_path: Path, profile: str) -> list[float]:
     """Scan near owner good labels for real gun peaks — not raw timestamp injection."""
     profile = normalize_profile(profile)
-    if profile != "pubg" or not OWNER_LABELS.exists():
+    if profile not in OWNER_LABEL_PROFILES or _owner_labels_path(profile) is None:
         return []
     anchors = _owner_anchor_starts(video_path, profile)
     if not anchors:
@@ -933,10 +945,11 @@ def _owner_vicinity_gun_starts(video_path: Path, profile: str) -> list[float]:
 
 def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
-    if profile != "pubg" or not OWNER_LABELS.exists():
+    labels_path = _owner_labels_path(profile)
+    if labels_path is None:
         return []
     try:
-        data = json.loads(OWNER_LABELS.read_text(encoding="utf-8"))
+        data = json.loads(labels_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
     vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
@@ -1053,7 +1066,7 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
             kept.append(start)
-    if not kept and profile == "pubg" and _owner_anchor_starts(video_path, profile):
+    if not kept and profile in OWNER_LABEL_PROFILES and _owner_anchor_starts(video_path, profile):
         kept = _owner_vicinity_gun_starts(video_path, profile)
         if kept:
             log.info(
