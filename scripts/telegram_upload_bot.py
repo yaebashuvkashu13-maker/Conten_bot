@@ -38,6 +38,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
+STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 BOT_VERSION = '2026-06-07-youtube-shorts-v4'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
@@ -546,14 +547,27 @@ def send_upload_status(chat_id: str, pending_count: int):
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
-        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}, 'wm_mode_until': {}}
+        return {
+            'last_update_id': 0,
+            'ad_mode_until': {},
+            'reject_mode_until': {},
+            'wm_mode_until': {},
+            'standoff_exemplar_mode_until': {},
+        }
     try:
         state = json.loads(STATE_FILE.read_text())
     except Exception:
-        return {'last_update_id': 0, 'ad_mode_until': {}, 'reject_mode_until': {}, 'wm_mode_until': {}}
+        return {
+            'last_update_id': 0,
+            'ad_mode_until': {},
+            'reject_mode_until': {},
+            'wm_mode_until': {},
+            'standoff_exemplar_mode_until': {},
+        }
     state.setdefault('ad_mode_until', {})
     state.setdefault('reject_mode_until', {})
     state.setdefault('wm_mode_until', {})
+    state.setdefault('standoff_exemplar_mode_until', {})
     return state
 
 
@@ -625,6 +639,61 @@ def set_wm_mode(chat_id: str, enabled: bool):
     else:
         state['wm_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_standoff_exemplar_mode(chat_id: str) -> bool:
+    until = _bot_state().get('standoff_exemplar_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['standoff_exemplar_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_standoff_exemplar_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('standoff_exemplar_mode_until', {})
+    if enabled:
+        state['standoff_exemplar_mode_until'][chat_id] = time.time() + STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC
+    else:
+        state['standoff_exemplar_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def _standoff_exemplar_helpers():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from standoff_exemplar_ingest import (  # noqa: WPS433
+        count_standoff_exemplars,
+        import_recent_standoff_exemplars,
+        save_standoff_exemplar_video,
+        standoff_exemplar_dir,
+    )
+
+    return (
+        count_standoff_exemplars,
+        import_recent_standoff_exemplars,
+        save_standoff_exemplar_video,
+        standoff_exemplar_dir,
+    )
+
+
+def count_standoff_exemplar_clips() -> int:
+    try:
+        return _standoff_exemplar_helpers()[0]()
+    except Exception as exc:
+        logging.warning('count standoff exemplars failed: %s', exc)
+        return 0
+
+
+def import_owner_standoff_exemplars(chat_id: str, *, limit: int = 9) -> tuple[list[Path], list[Path]]:
+    return _standoff_exemplar_helpers()[1](chat_id, limit=limit)
+
+
+def store_standoff_exemplar_video(chat_id: str, source: Path, label: str) -> Path:
+    save_fn = _standoff_exemplar_helpers()[2]
+    return save_fn(source, chat_id=chat_id, label=label)
 
 
 def count_wm_examples() -> int:
@@ -1757,6 +1826,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'yt', 'description': 'Скачать YouTube / Shorts'},
         {'command': 'whoami', 'description': 'Ваш chat_id (как в ping)'},
         {'command': 'make', 'description': 'Собрать нарезку из видео'},
+        {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
@@ -1884,6 +1954,54 @@ def handle_message(message: dict):
             'Пришли кадры/скрины (фото) и в подписи коротко почему плохо (мем/меню/донат/реклама/чат и т.д.).\n'
             'Завершить: /bad_done\n'
             f'Сейчас в базе: {count_reject_examples()} шт.',
+        )
+        return
+    if cmd in ('/upload_standoff2', '/standoff2_upload', '/so2_upload'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /upload_standoff2 только для владельца.')
+            return
+        set_standoff_exemplar_mode(chat_id, True)
+        total = count_standoff_exemplar_clips()
+        send_message(
+            chat_id,
+            'Режим примеров Standoff 2 включён на 2 часа.\n'
+            'Пришли короткие клипы с дуэлями/клатчами — сохраню как эталоны для нарезки.\n'
+            'Уже загруженные 9 роликов: /upload_standoff2_import\n'
+            'Завершить: /upload_standoff2_done\n'
+            f'Сейчас exemplars: {total} шт. (нужно ≥5).',
+        )
+        return
+    if cmd in ('/upload_standoff2_import', '/standoff2_import'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда только для владельца.')
+            return
+        try:
+            saved, skipped = import_owner_standoff_exemplars(chat_id, limit=9)
+            total = count_standoff_exemplar_clips()
+            lines = [f'Импорт Standoff exemplars: +{len(saved)}, пропущено {len(skipped)}, всего {total}.']
+            for path in saved[:9]:
+                lines.append(f'• {path.name}')
+            if total >= 5:
+                lines.append('Достаточно для /make standoff и ночной очереди.')
+            else:
+                lines.append(f'Ещё нужно {5 - total} примеров (или /upload_standoff2).')
+            send_message(chat_id, '\n'.join(lines))
+            notify_owner(f'Standoff exemplars import chat={chat_id}: +{len(saved)} total={total}')
+        except Exception as exc:
+            logging.exception('standoff exemplar import failed')
+            send_message(chat_id, f'Импорт не удался: {exc}')
+        return
+    if cmd in ('/upload_standoff2_done', '/standoff2_done'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда только для владельца.')
+            return
+        was = is_standoff_exemplar_mode(chat_id)
+        set_standoff_exemplar_mode(chat_id, False)
+        total = count_standoff_exemplar_clips()
+        send_message(
+            chat_id,
+            f'Режим /upload_standoff2 выключен. Exemplars Standoff: {total} шт.\n'
+            + ('Последние клипы сохранены.' if was else ''),
         )
         return
     if cmd in ('/bad_done', '/bad_stop', '/плохо_готово'):
@@ -2235,6 +2353,22 @@ def handle_message(message: dict):
         )
         return
     label = game_label_for_chat(chat_id, caption)
+    if is_standoff_exemplar_mode(chat_id):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Режим /upload_standoff2 только для владельца.')
+            return
+        try:
+            saved = store_standoff_exemplar_video(chat_id, destination, label)
+            total = count_standoff_exemplar_clips()
+            send_message(
+                chat_id,
+                f'Сохранил Standoff exemplar: {saved.name}\n'
+                f'Всего: {total} шт. Ещё клипы или /upload_standoff2_done.',
+            )
+        except Exception as exc:
+            logging.exception('standoff exemplar save failed')
+            send_message(chat_id, f'Не удалось сохранить exemplar: {exc}')
+        return
     append_pending(chat_id, destination, label)
     spawn_pubg_learning(destination, chat_id)
     pending_count = count_pending(chat_id)

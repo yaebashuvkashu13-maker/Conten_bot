@@ -20,6 +20,7 @@ install_scripts() {
   local f
   for f in \
     telegram_upload_bot.py \
+    standoff_exemplar_ingest.py \
     image_watermark_remove.py \
     instagram_digest_gallery_dl.py \
     youtube_download.py \
