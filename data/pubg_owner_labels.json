@@ -8,6 +8,12 @@
       {"tc": "49:00", "time_sec": 2940, "label": "good"},
       {"tc": "54:45", "time_sec": 3285, "label": "good"}
     ],
+    "zv3JymSZOb0": [
+      {"tc": "29:54", "time_sec": 1794, "label": "bad", "note": "run no starter shots"},
+      {"tc": "35:40", "time_sec": 2140, "label": "bad", "note": "run no starter shots"},
+      {"tc": "1:22:56", "time_sec": 4976, "label": "bad", "note": "run no starter shots"},
+      {"tc": "1:45:08", "time_sec": 6308, "label": "bad", "note": "run no starter shots"}
+    ],
     "n97cHIR9Qow": [
       {"tc": "30:45", "time_sec": 1845, "label": "good"},
       {"tc": "33:25", "time_sec": 2005, "label": "good"},

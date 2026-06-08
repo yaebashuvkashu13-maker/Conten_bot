@@ -173,10 +173,10 @@ def passes_strict_gate(
     metrics = probe_segment(video_path, start_sec, duration_sec, profile, crop_box=crop_box)
 
     if profile == "pubg":
-        from pubg_shooting_gate import pubg_passes_shooting_gate
+        from pubg_combat_gate import pubg_passes_combat_gate
 
-        ok, reason, pubg_metrics = pubg_passes_shooting_gate(
-            video_path, start_sec, duration_sec, crop_box=crop_box
+        ok, reason, pubg_metrics = pubg_passes_combat_gate(
+            video_path, start_sec, duration_sec, "pubg"
         )
         metrics.update(pubg_metrics)
         metrics["gate_reason"] = reason

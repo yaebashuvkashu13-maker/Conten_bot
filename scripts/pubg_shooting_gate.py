@@ -14,12 +14,14 @@ from gameplay_gate import (
     segment_looks_like_pubg_loot_or_walk,
 )
 
-MIN_GUNFIRE_DENSITY = 0.055
-MIN_BURST_RATIO = 4.8
+MIN_GUNFIRE_DENSITY = 0.068
+MIN_BURST_RATIO = 5.2
 
 FORBIDDEN_REASONS = frozenset(
     {
         "run_no_fight",
+        "run_no_shots",
+        "run_fake_gun",
         "loot_walk",
         "run_loot",
         "talk_menu",
@@ -88,6 +90,17 @@ def pubg_passes_shooting_gate(
     Pass if gun >= 0.055 and burst >= 4.8, or owner heuristics fight_audio/light_combat.
     Reject sniper_hold without visible aim motion, and all forbidden gate reasons.
     """
+    try:
+        from pubg_owner_calibration import segment_overlaps_owner_label
+
+        if segment_overlaps_owner_label(
+            video_path, start_sec, duration_sec, label="bad", pad_sec=14.0
+        ):
+            metrics = pubg_probe_segment(video_path, start_sec, duration_sec, crop_box=crop_box)
+            return False, "owner_bad_window", metrics
+    except ImportError:
+        pass
+
     metrics = pubg_probe_segment(video_path, start_sec, duration_sec, crop_box=crop_box)
     gun = float(metrics["gunfire_density"])
     burst = float(metrics["burst_ratio"])

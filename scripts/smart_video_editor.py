@@ -1159,6 +1159,26 @@ def build_candidates(
                 reason,
             )
             continue
+        if profile == 'pubg' and os.environ.get('SMART_PUBG_STRICT_SHOOTING', '0') == '1':
+            try:
+                from pubg_combat_gate import pubg_combat_visual_strict
+
+                vis_ok, vis_reason, _ = pubg_combat_visual_strict(
+                    Path(candidate['source_path']),
+                    float(candidate['start']),
+                    float(candidate['input_duration']),
+                    'pubg',
+                )
+                if not vis_ok:
+                    logging.info(
+                        'skip segment source=%s start=%.2f reason=%s',
+                        candidate['source_path'],
+                        candidate['start'],
+                        vis_reason,
+                    )
+                    continue
+            except Exception as exc:
+                logging.warning('pubg visual prefilter failed: %s', exc)
         crop_box = detect_game_viewport_crop(
             Path(candidate['source_path']),
             float(candidate['start']),

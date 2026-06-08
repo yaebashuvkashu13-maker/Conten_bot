@@ -89,11 +89,15 @@ def check_frame_visual(profile: str, frame: np.ndarray) -> tuple[bool, str, dict
         min_center = float(os.environ.get("VISUAL_PUBG_MIN_CENTER_EDGE", "0.028"))
         min_weapon = float(os.environ.get("VISUAL_PUBG_MIN_WEAPON_EDGE", "0.018"))
         min_flash = float(os.environ.get("VISUAL_PUBG_MIN_HIT_FLASH", "0.0015"))
-        combat = center_edge >= min_center and (
-            weapon_edge >= min_weapon or flash >= min_flash
-        )
+        has_weapon_or_flash = weapon_edge >= min_weapon or flash >= min_flash
+        combat = center_edge >= min_center and has_weapon_or_flash
         if not combat:
             return False, "no_visible_combat", metrics
+        # Running/loot: motion edges without muzzle or weapon silhouette.
+        if center_edge >= min_center * 1.35 and not (
+            weapon_edge >= min_weapon * 1.15 or flash >= min_flash * 2.5
+        ):
+            return False, "run_no_shots", metrics
         sky_edge = _laplacian_edge_score(frame, 0.02, 0.35, 0.10, 0.90)
         ground_edge = _laplacian_edge_score(frame, 0.45, 0.95, 0.10, 0.90)
         metrics["sky_edge"] = round(sky_edge, 4)

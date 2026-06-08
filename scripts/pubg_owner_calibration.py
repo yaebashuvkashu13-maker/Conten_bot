@@ -148,6 +148,8 @@ def pubg_passes_owner_heuristics(
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if center_motion > 0.22 and gunfire_density < 0.052:
         return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    if center_motion >= 0.075 and gunfire_density < 0.115:
+        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
     if gunfire_density < 0.040 and audio_rms > 0.036:
         return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if gunfire_density >= 0.055:
