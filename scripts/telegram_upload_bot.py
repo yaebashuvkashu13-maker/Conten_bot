@@ -63,6 +63,28 @@ STRICT_MONTAGE_PROFILES = frozenset({
     'mlbb',
 })
 
+PIPELINE_INBOX = Path('/root/data/mlbb/youtube_nightly/inbox')
+MAKE_PROFILE_OVERRIDES: dict[str, str] = {}
+PROFILE_ALIASES = {
+    'pubg': 'pubg',
+    'standoff': 'standoff',
+    'standoff2': 'standoff',
+    'стендоф': 'standoff',
+    'стендофф': 'standoff',
+    'mlbb': 'mobile_legends',
+    'mobile_legends': 'mobile_legends',
+    'genshin': 'genshin',
+    'wot': 'wot',
+    'world_of_tanks': 'wot',
+}
+OWNER_LABEL_FILES = {
+    'pubg': 'pubg_owner_labels.json',
+    'standoff': 'standoff_owner_labels.json',
+    'mobile_legends': 'mobile_legends_owner_labels.json',
+    'genshin': 'genshin_owner_labels.json',
+    'wot': 'wot_owner_labels.json',
+}
+
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 PENDING_ROOT.mkdir(parents=True, exist_ok=True)
 ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -171,6 +193,115 @@ def normalize_montage_profile(profile: str) -> str:
     if p == 'world_of_tanks':
         return 'wot'
     return p
+
+
+def _repo_data_dir() -> Path:
+    repo = Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml'))
+    data = repo / 'data'
+    if data.exists():
+        return data
+    local = Path(__file__).resolve().parent.parent / 'data'
+    return local if local.exists() else data
+
+
+def youtube_id_from_upload(path: Path) -> str | None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from pipeline_inbox import youtube_id_from_name
+
+        return youtube_id_from_name(path.name)
+    except ImportError:
+        stem = path.stem
+        if '_youtube_' in stem:
+            return stem.rsplit('_youtube_', 1)[-1]
+        if stem.startswith('yt_'):
+            return stem[3:]
+        return None
+
+
+def profile_from_owner_labels(path: Path) -> str | None:
+    vid = youtube_id_from_upload(path)
+    if not vid:
+        return None
+    data_dir = _repo_data_dir()
+    for profile, fname in OWNER_LABEL_FILES.items():
+        labels_path = data_dir / fname
+        if not labels_path.exists():
+            continue
+        try:
+            payload = json.loads(labels_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if vid in payload.get('videos', {}):
+            return profile
+    return None
+
+
+def caption_implies_profile(label: str | None) -> str | None:
+    if not label:
+        return None
+    low = label.lower()
+    if 'standoff' in low or 'стендоф' in low:
+        return 'standoff'
+    if 'pubg' in low or 'пабг' in low or 'metro' in low:
+        return 'pubg'
+    if 'genshin' in low or 'геншин' in low:
+        return 'genshin'
+    if 'mlbb' in low or 'mobile legends' in low or 'mobile_legends' in low:
+        return 'mobile_legends'
+    if 'wot' in low or 'world of tanks' in low or 'танк' in low:
+        return 'wot'
+    return None
+
+
+def mirror_upload_to_pipeline_inbox(source: Path) -> Path | None:
+    """Copy owner uploads into nightly inbox so the queue can pick them up."""
+    if not source.exists():
+        return None
+    PIPELINE_INBOX.mkdir(parents=True, exist_ok=True)
+    vid = youtube_id_from_upload(source)
+    dest = PIPELINE_INBOX / (f'yt_{vid}.mp4' if vid else source.name)
+    try:
+        if dest.exists() and dest.stat().st_size >= source.stat().st_size * 0.98:
+            return dest
+        shutil.copy2(source, dest)
+        logging.info('mirrored upload to inbox %s -> %s', source.name, dest.name)
+        return dest
+    except OSError as exc:
+        logging.warning('inbox mirror failed %s: %s', source, exc)
+        return None
+
+
+def resolve_montage_profile(
+    chat_id: str,
+    lines: list[str],
+    *,
+    forced: str | None = None,
+) -> str:
+    if forced:
+        alias = PROFILE_ALIASES.get(forced.strip().lower(), forced.strip().lower())
+        return normalize_montage_profile(alias)
+
+    mapped = game_profile_for_chat(chat_id)
+    if mapped:
+        return normalize_montage_profile(mapped)
+
+    default_profile = env.get('DEFAULT_GAME_PROFILE', '').strip().lower()
+    if default_profile:
+        return normalize_montage_profile(default_profile)
+
+    for line in lines:
+        parts = line.split('|', 2)
+        label = parts[1] if len(parts) > 1 else ''
+        path = Path(parts[0])
+        from_label = caption_implies_profile(label)
+        if from_label:
+            return from_label
+        from_labels = profile_from_owner_labels(path)
+        if from_labels:
+            return from_labels
+
+    return 'mobile_legends'
 
 
 def build_strict_montage_env(profile: str) -> dict[str, str]:
@@ -577,6 +708,8 @@ def count_pending(chat_id: str) -> int:
 
 
 def append_pending(chat_id: str, local_path: Path, label: str):
+    if is_owner(chat_id):
+        mirror_upload_to_pipeline_inbox(local_path)
     line = f'{local_path}|{label}|{chat_id}\n'
     with queue_file_for(chat_id).open('a', encoding='utf-8') as handle:
         handle.write(line)
@@ -1502,8 +1635,8 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         source_paths = [Path(line.split('|', 1)[0]) for line in lines]
         make_timeout = smart_make_timeout_sec(source_paths, env)
         max_dur = max((ffprobe_duration_sec(p) for p in source_paths), default=0.0)
-        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
-        prof = normalize_montage_profile(profile)
+        forced_profile = MAKE_PROFILE_OVERRIDES.pop(chat_id, None)
+        prof = resolve_montage_profile(chat_id, lines, forced=forced_profile)
         game_hint = PROFILE_LABELS.get(prof, prof.replace('_', ' ').title())
         long_note = ''
         if max_dur >= 1200:
@@ -1945,6 +2078,16 @@ def handle_message(message: dict):
                 '(владельцу). /status — проверить очередь.',
             )
             return
+        parts = text.split()
+        if len(parts) > 1:
+            alias = PROFILE_ALIASES.get(parts[1].lower(), parts[1].lower())
+            if alias not in STRICT_MONTAGE_PROFILES and normalize_montage_profile(alias) not in STRICT_MONTAGE_PROFILES:
+                send_message(
+                    chat_id,
+                    'Игра: /make standoff | /make pubg | /make mlbb | /make genshin | /make wot',
+                )
+                return
+            MAKE_PROFILE_OVERRIDES[chat_id] = alias
         start_processing(chat_id)
         return
 

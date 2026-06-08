@@ -13,11 +13,35 @@ from pathlib import Path
 REPO = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
-if not OWNER_LABELS.exists():
-    _fb = Path("/root/data/mlbb/pubg_owner_labels.json")
-    if _fb.exists():
-        OWNER_LABELS = _fb
+LABEL_ENV_KEYS = {
+    "pubg": "PUBG_OWNER_LABELS_PATH",
+    "standoff": "STANDOFF_OWNER_LABELS_PATH",
+    "mobile_legends": "MLBB_OWNER_LABELS_PATH",
+    "genshin": "GENSHIN_OWNER_LABELS_PATH",
+    "wot": "WOT_OWNER_LABELS_PATH",
+}
+DEFAULT_LABEL_FILES = {
+    "pubg": "pubg_owner_labels.json",
+    "standoff": "standoff_owner_labels.json",
+    "mobile_legends": "mobile_legends_owner_labels.json",
+    "genshin": "genshin_owner_labels.json",
+    "wot": "wot_owner_labels.json",
+}
+
+
+def owner_labels_path(game: str) -> Path:
+    game = game.strip().lower()
+    if game == "mlbb":
+        game = "mobile_legends"
+    env_key = LABEL_ENV_KEYS.get(game, "PUBG_OWNER_LABELS_PATH")
+    default_name = DEFAULT_LABEL_FILES.get(game, "pubg_owner_labels.json")
+    path = Path(os.environ.get(env_key, str(REPO / "data" / default_name)))
+    if path.exists():
+        return path
+    for fb in (Path(f"/root/data/mlbb/{default_name}"), REPO / "data" / default_name):
+        if fb.exists():
+            return fb
+    return path
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 OUT = Path(os.environ.get("HIGHLIGHT_EXEMPLAR_ROOT", str(REPO / "data" / "highlight_exemplars")))
 CLIP_SEC = 4.0
@@ -48,17 +72,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default="pubg")
     parser.add_argument("--vod", default="yt_n97cHIR9Qow.mp4")
+    parser.add_argument("--labels-path", type=Path, default=None)
     args = parser.parse_args()
 
-    vod = INBOX / args.vod
+    vod = INBOX / args.vod if not Path(args.vod).exists() else Path(args.vod)
     if not vod.exists():
         print(f"REFUSED: bootstrap, reason=vod_missing {vod}")
         return 1
-    if not OWNER_LABELS.exists():
-        print("REFUSED: bootstrap, reason=no_owner_labels")
+    labels_path = args.labels_path or owner_labels_path(args.game)
+    if not labels_path.exists():
+        print(f"REFUSED: bootstrap, reason=no_owner_labels {labels_path}")
         return 1
 
-    data = json.loads(OWNER_LABELS.read_text(encoding="utf-8"))
+    data = json.loads(labels_path.read_text(encoding="utf-8"))
     vid = vod.stem[3:] if vod.stem.startswith("yt_") else vod.stem
     rows = data.get("videos", {}).get(vid, [])
     good_n = bad_n = 0

@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from pipeline_inbox import pick_inbox_source
 from pipeline_retry import count_ok_jobs, job_is_ok, load_json_state, mark_job, pipeline_complete, run_until_success, save_json_state
 from pubg_brawl_direct import resolve_pubg_chat_id
 from strict_montage_direct import make_strict_montage
@@ -89,14 +90,7 @@ def log(msg: str) -> None:
 
 
 def pick_source(game: dict, attempt: int) -> Path | None:
-    sources = list(game.get("sources") or [])
-    if not sources:
-        prefix = f"yt_{game['id']}_"
-        sources = sorted(p.name for p in INBOX.glob("*.mp4") if p.name.startswith(prefix))
-    existing = [INBOX / s for s in sources if (INBOX / s).exists()]
-    if not existing:
-        return None
-    return existing[min(attempt - 1, len(existing) - 1)]
+    return pick_inbox_source(game, attempt, inbox=INBOX, all_games=GAMES)
 
 
 def run_game(game: dict, env: dict[str, str], state: dict) -> int:
