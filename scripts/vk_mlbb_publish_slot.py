@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,11 +38,18 @@ def notify_telegram(text: str) -> None:
     if not token or not chat_id:
         append_publish_log(f"notify_skip no_telegram: {text}")
         return
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    subprocess.run(
-        ["curl", "-sS", "-m", "60", "-X", "POST", url, "-d", f"chat_id={chat_id}", "-d", f"text={text}"],
-        check=False,
+    payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+    except Exception as exc:
+        append_publish_log(f"notify_fail: {exc}")
 
 
 def main() -> int:
