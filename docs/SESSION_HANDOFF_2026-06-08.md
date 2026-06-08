@@ -15,7 +15,7 @@
 |--------|--------|
 | MLBB нарезки — качество, без залипания на интро | Частично: owner-label montage OK; auto-discovery дорабатывался |
 | VK Callback API для сообщества MLBB | ✅ Подтверждён (`group_id=234820335`, code `c3de1fe9`) |
-| **Очередь VK MLBB:** `/upload_vkmlbb` → 3 клипа × 3 раза/день (09:00, 13:30, 18:00 МСК) | ✅ Код + cron на VPS; **заливка ждёт токен** |
+| **Очередь VK MLBB:** `/upload_vkmlbb` → 3 клипа × 3 раза/день (09:00, 13:30, 18:00 МСК) | ⚠️ Код + cron OK; токен manage-only — ждёт user OAuth |
 | Пока бот плохо режет — владелец кидает свои клипы в ТГ, бот публикует в VK | ✅ Очередь работает (9 видео в pending) |
 | PUBG ночной монтаж — не беготня, только стрельба | ✅ Ужесточены гейты (см. §5) |
 | Товары к клипам VK | ❌ Отменено владельцем — «ерунда получится» (API не прикрепляет товары) |
@@ -84,7 +84,7 @@ HTTPS tunnel: **cloudflared** (`vk-cloudflared` systemd) — URL может ме
 | `TG_BOT_TOKEN`, `TG_CHAT_ID` | ✅ |
 | `VK_MLBB_GROUP_ID=234820335` | ✅ |
 | `VK_MLBB_CONFIRMATION=c3de1fe9` | ✅ |
-| **`VK_MLBB_ACCESS_TOKEN`** | ❌ **НЕТ** — заливка в VK не работает |
+| **`VK_MLBB_ACCESS_TOKEN`** | ⚠️ **Есть, но manage-only (Callback)** — `video.save` не работает, нужен user OAuth |
 | `HTTP_PROXY` / `HTTPS_PROXY` | ✅ (для yt-dlp; Telegram API — **без прокси**) |
 
 ### Сервисы VK
@@ -187,7 +187,7 @@ GitHub Actions: `.github/workflows/deploy-vps.yml` (нужны secrets `VPS_HOST
 
 ## 9. P0 для следующего агента
 
-1. **Синхронизировать `VK_MLBB_ACCESS_TOKEN`** на VPS → тестовая заливка 1 клипа из очереди (9 шт.)
+1. ~~**Синхронизировать `VK_MLBB_ACCESS_TOKEN`** на VPS~~ ✅ Синхронизирован; **нужен user OAuth** (не Callback manage-only) → тестовая заливка 1 клипа
 2. Подтвердить владельцу ссылку на VK-пост / формат клипа
 3. MLBB auto-discovery: дождаться preview без owner timestamps или дожать hook threshold в discover loop
 4. Стабильный HTTPS для VK callback (свой домен vs rotating trycloudflare)

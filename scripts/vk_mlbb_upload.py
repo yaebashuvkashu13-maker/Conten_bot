@@ -50,6 +50,26 @@ def vk_group_id(env: dict[str, str]) -> int:
     return int(env.get("VK_MLBB_GROUP_ID", "234820335"))
 
 
+def assert_upload_token(token: str, group_id: int) -> None:
+    """Community Callback keys (manage-only) cannot call video.save."""
+    try:
+        perms = vk_call("groups.getTokenPermissions", {"group_id": group_id}, token)
+    except RuntimeError as exc:
+        if "error_code': 27" in str(exc) or "Group authorization failed" in str(exc):
+            return
+        raise
+    names = {p.get("name", "") for p in perms.get("permissions", []) if p.get("name")}
+    if names and names <= {"manage"}:
+        raise RuntimeError(
+            "VK token is community manage-only (Callback key). "
+            "video.save requires a user OAuth token (admin of group 234820335) "
+            "with scopes video+groups. "
+            "Get it: https://oauth.vk.com/authorize?client_id=6121396&"
+            "scope=video,groups,offline&redirect_uri=https://oauth.vk.com/blank.html&"
+            "response_type=token — then update VK_MLBB_ACCESS_TOKEN secret."
+        )
+
+
 def _vk_opener() -> urllib.request.OpenerDirector:
     """VK API must not go through HTTP_PROXY (TikTok proxy is often dead)."""
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -169,6 +189,7 @@ def publish_clip(
     env = env or load_env()
     token = vk_token(env)
     group_id = vk_group_id(env)
+    assert_upload_token(token, group_id)
     prepared = prepare_clip_source(source)
     try:
         if not title:
