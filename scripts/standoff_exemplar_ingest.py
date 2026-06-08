@@ -19,9 +19,11 @@ def repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
     if env:
         return Path(env)
-    local = Path(__file__).resolve().parent.parent
-    if (local / "data").exists():
-        return local
+    root = Path(__file__).resolve().parent.parent
+    if root.name == "bin" or str(root) == "/usr/local":
+        return Path("/root/content_bot_ml")
+    if (root / "data").exists():
+        return root
     return Path("/root/content_bot_ml")
 
 
