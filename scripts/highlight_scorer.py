@@ -108,6 +108,92 @@ def owner_anchors_enabled() -> bool:
     return os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") == "1"
 
 
+def _mlbb_skip_intro_sec() -> float:
+    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "300"))
+
+
+def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> list[float]:
+    """Top motion/audio peaks spread across full VOD — avoids intro-only traps on long streams."""
+    win = float(analysis.get("window_seconds", 2.0))
+    gun = np.asarray(analysis.get("gunfire", analysis["audio"]), dtype=np.float32)
+    motion = np.asarray(analysis["center_motion"], dtype=np.float32)
+    audio = np.asarray(analysis["audio"], dtype=np.float32)
+    if profile in SHOOTER_PROFILES:
+        combined = gun * 0.62 + motion * 0.22 + audio * 0.16
+        skip_intro = 90.0
+    elif profile == "genshin":
+        scene = np.asarray(analysis["scene"], dtype=np.float32)
+        combined = motion * 0.35 + audio * 0.30 + scene * 0.35
+        skip_intro = 120.0
+    elif profile == "mobile_legends":
+        combined = motion * 0.45 + audio * 0.35 + gun * 0.20
+        skip_intro = _mlbb_skip_intro_sec()
+    else:
+        combined = motion * 0.40 + audio * 0.35 + gun * 0.25
+        skip_intro = 120.0
+
+    min_gap = float(os.environ.get("HIGHLIGHT_PEAK_MIN_GAP_SEC", "75"))
+    order = np.argsort(combined)[::-1]
+    starts: list[float] = []
+    for idx in order:
+        start = float(idx) * win
+        if start < skip_intro:
+            continue
+        if any(abs(start - s) < min_gap for s in starts):
+            continue
+        starts.append(round(start, 1))
+        if len(starts) >= limit:
+            break
+    return starts
+
+
+def _rank_stage1_starts(analysis: dict, profile: str, starts: list[float]) -> list[float]:
+    """Score windows by local action — probe high-motion regions before chronological intro."""
+    if not starts:
+        return []
+    win = float(analysis.get("window_seconds", 2.0))
+    gun = np.asarray(analysis.get("gunfire", analysis["audio"]), dtype=np.float32)
+    motion = np.asarray(analysis["center_motion"], dtype=np.float32)
+    audio = np.asarray(analysis["audio"], dtype=np.float32)
+    if profile in SHOOTER_PROFILES:
+        weights = (0.62, 0.22, 0.16, 0.0)
+    elif profile == "mobile_legends":
+        weights = (0.20, 0.45, 0.35, 0.0)
+    elif profile == "genshin":
+        scene = np.asarray(analysis.get("scene", motion), dtype=np.float32)
+        scored: list[tuple[float, float]] = []
+        for start in starts:
+            i0 = max(0, int(start / win))
+            i1 = min(len(motion), int((start + WINDOW_SEC) / win))
+            if i1 <= i0:
+                continue
+            val = (
+                float(np.max(motion[i0:i1])) * 0.35
+                + float(np.max(audio[i0:i1])) * 0.30
+                + float(np.max(scene[i0:i1])) * 0.35
+            )
+            scored.append((val, start))
+        scored.sort(key=lambda row: row[0], reverse=True)
+        return [s for _, s in scored]
+    else:
+        weights = (0.25, 0.40, 0.35, 0.0)
+
+    scored = []
+    for start in starts:
+        i0 = max(0, int(start / win))
+        i1 = min(len(motion), int((start + WINDOW_SEC) / win))
+        if i1 <= i0:
+            continue
+        val = (
+            float(np.max(gun[i0:i1])) * weights[0]
+            + float(np.max(motion[i0:i1])) * weights[1]
+            + float(np.max(audio[i0:i1])) * weights[2]
+        )
+        scored.append((val, start))
+    scored.sort(key=lambda row: row[0], reverse=True)
+    return [s for _, s in scored]
+
+
 def classifier_available() -> bool:
     return CLASSIFIER_PATH.exists()
 
@@ -1026,15 +1112,13 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
-    # Gun-peak scan near owner labels (not raw timestamp injection).
-    if profile in SHOOTER_PROFILES and _owner_anchor_starts(video_path, profile):
-        for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
-            starts.add(vicinity_start)
-    elif _owner_anchor_starts(video_path, profile):
-        for vicinity_start in _owner_anchor_stage1_starts(video_path, profile):
-            starts.add(vicinity_start)
-
     if owner_anchors_enabled():
+        if profile in SHOOTER_PROFILES and _owner_anchor_starts(video_path, profile):
+            for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
+                starts.add(vicinity_start)
+        elif _owner_anchor_starts(video_path, profile):
+            for vicinity_start in _owner_anchor_stage1_starts(video_path, profile):
+                starts.add(vicinity_start)
         for vicinity_start in _owner_anchor_stage1_starts(video_path, profile):
             starts.add(vicinity_start)
 
@@ -1074,6 +1158,16 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     from smart_video_editor import analyze_video
 
     analysis = analyze_video(video_path)
+    if not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"):
+        peak_limit = int(os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"))
+        for peak_start in _action_peak_starts(analysis, profile, limit=peak_limit):
+            starts.add(peak_start)
+        log.info(
+            "highlight action peaks %s: %s windows (anchors_off)",
+            video_path.name,
+            min(peak_limit, len(starts)),
+        )
+
     win = float(analysis.get("window_seconds", 2.0))
     motion = np.asarray(analysis["center_motion"], dtype=np.float32)
     gun = np.asarray(analysis.get("gunfire", analysis["audio"]), dtype=np.float32)
@@ -1082,7 +1176,15 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     p90 = float(np.percentile(motion, 90)) if motion.size else 0.02
     motion_thr = max(0.018, p90 * 0.55)
 
-    t = 90.0
+    skip_intro = 90.0
+    if profile == "mobile_legends":
+        skip_intro = _mlbb_skip_intro_sec()
+    elif profile == "pubg":
+        skip_intro = 90.0
+    else:
+        skip_intro = float(os.environ.get("SMART_SKIP_INTRO_SEC", "120"))
+
+    t = skip_intro
     while t + WINDOW_SEC <= duration - 30:
         i0 = int(t / win)
         i1 = int((t + WINDOW_SEC) / win)
@@ -1107,7 +1209,10 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     if not starts and profile in SHOOTER_PROFILES:
         log.warning("highlight stage1 %s: no combat windows — refusing filler grid", video_path.name)
 
-    return sorted(starts)[:max_stage1]
+    ranked = _rank_stage1_starts(analysis, profile, sorted(starts))
+    if not ranked:
+        ranked = sorted(starts)
+    return ranked[:max_stage1]
 
 
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
@@ -1184,8 +1289,20 @@ def discover_highlight_candidates(
         )
         if not metrics.rule_pass or not metrics.visual_pass:
             continue
+        if profile == "mobile_legends" and not owner_anchors_enabled():
+            min_clip = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
+            if start < _mlbb_skip_intro_sec() and metrics.clip_score < min_clip:
+                log.info(
+                    "[FAIL] highlight start=%.1f intro_clip=%.3f < %.3f",
+                    start,
+                    metrics.clip_score,
+                    min_clip,
+                )
+                continue
         hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
-        if (
+        if profile == "mobile_legends" and metrics.rule_pass and metrics.visual_pass:
+            hook_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
+        elif (
             metrics.hook_score < hook_min
             and profile in SHOOTER_PROFILES
             and metrics.panns_gun_max >= 0.35
@@ -1193,13 +1310,18 @@ def discover_highlight_candidates(
         ):
             hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
         if metrics.hook_score < hook_min:
-            log.info(
-                "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
-                start,
-                metrics.hook_score,
-                hook_min,
-            )
-            continue
+            if profile == "mobile_legends" and metrics.clip_score >= float(
+                os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
+            ):
+                pass
+            else:
+                log.info(
+                    "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
+                    start,
+                    metrics.hook_score,
+                    hook_min,
+                )
+                continue
         verified.append(
             {
                 "source_path": str(video_path),
