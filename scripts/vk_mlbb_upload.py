@@ -50,6 +50,11 @@ def vk_group_id(env: dict[str, str]) -> int:
     return int(env.get("VK_MLBB_GROUP_ID", "234820335"))
 
 
+def _vk_opener() -> urllib.request.OpenerDirector:
+    """VK API must not go through HTTP_PROXY (TikTok proxy is often dead)."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def vk_call(method: str, params: dict, token: str) -> dict:
     payload = dict(params)
     payload["access_token"] = token
@@ -61,7 +66,7 @@ def vk_call(method: str, params: dict, token: str) -> dict:
         method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with _vk_opener().open(req, timeout=90) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     if "error" in body:
         raise RuntimeError(f"vk_{method}:{body['error']}")
@@ -131,7 +136,7 @@ def prepare_clip_source(source: Path) -> Path:
 
 def upload_video_file(upload_url: str, path: Path) -> dict:
     proc = subprocess.run(
-        ["curl", "-sS", "-m", "900", "-F", f"video_file=@{path}", upload_url],
+        ["curl", "-sS", "-m", "900", "--noproxy", "*", "-F", f"video_file=@{path}", upload_url],
         capture_output=True,
         text=True,
         check=False,
