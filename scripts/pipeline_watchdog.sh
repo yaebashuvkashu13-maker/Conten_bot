@@ -66,7 +66,7 @@ PY
 restart_if_needed \
   "pubg_mlbb_pipeline" \
   "/root/data/mlbb/pubg_mlbb_pipeline_state.json" \
-  2 \
+  5 \
   "pubg_mlbb_pipeline.py" \
   "/root/data/mlbb/pubg_mlbb_pipeline.log" \
   "--resume"

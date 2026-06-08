@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single queue: PUBG then MLBB. No sendVideo until owner approves visual proof."""
+"""Single queue: MLBB → PUBG → Standoff → Genshin → WoT. Owner preview before send."""
 
 from __future__ import annotations
 
@@ -23,8 +23,14 @@ LOG = Path("/root/data/mlbb/pubg_mlbb_pipeline.log")
 STATE_FILE = Path("/root/data/mlbb/pubg_mlbb_pipeline_state.json")
 PAUSE_FILE = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
-# Five games — strict montage + owner preview. Standoff exemplars required when user uploads.
+# Priority: MLBB → PUBG → Standoff → Genshin → WoT (owner 2026-06-08)
 GAMES = [
+    {
+        "id": "mobile_legends",
+        "profile": "mobile_legends",
+        "label": "MLBB",
+        "sources": ["yt_E4Dsp53yvv4.mp4"],
+    },
     {
         "id": "pubg",
         "profile": "pubg",
@@ -44,12 +50,6 @@ GAMES = [
             "yt_ou2CbjDp2Yc.mp4",
             "yt_z8ImUR0_x_M.mp4",
         ],
-    },
-    {
-        "id": "mobile_legends",
-        "profile": "mobile_legends",
-        "label": "MLBB",
-        "sources": ["yt_E4Dsp53yvv4.mp4"],
     },
     {
         "id": "genshin",
