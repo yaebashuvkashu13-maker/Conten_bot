@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-08-vkmlbb-upload-v1'
+BOT_VERSION = '2026-06-08-approve-preview-async-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -1850,6 +1850,33 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             PROCESSING_CHATS.discard(chat_id)
 
 
+def _approve_preview_worker(chat_id: str, preview_id: str) -> None:
+    """Heavy CLIP/rescore — must not block getUpdates poll loop."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from segment_preview import approve_preview, send_approved_montage
+
+        pkg = approve_preview(preview_id, by_chat=str(chat_id))
+        if not pkg:
+            send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
+            return
+        env_map = dict(os.environ)
+        if ENV_FILE.exists():
+            for line in ENV_FILE.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    env_map.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        caption = f"{pkg.get('game', '')} | owner approved"
+        send_approved_montage(pkg, env_map, caption)
+        n = sum(len(s.get('screenshots', [])) for s in pkg.get('segments', []))
+        ts = [s['start'] for s in pkg.get('segments', [])]
+        send_message(chat_id, f'SENT: preview_id={preview_id}, screens={n}, timestamps={ts}')
+    except Exception as exc:
+        logging.exception('approve_preview failed')
+        send_message(chat_id, f'REFUSED: preview, reason={exc}, visual_passed=0/0')
+
+
 def start_processing(chat_id: str, only_paths: list[Path] | None = None):
     with PROCESSING_LOCK:
         if chat_id in PROCESSING_CHATS:
@@ -2220,29 +2247,16 @@ def handle_message(message: dict):
             send_message(chat_id, 'Использование: /approve_preview <preview_id>')
             return
         preview_id = parts[1].strip()
-        try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from segment_preview import approve_preview, send_approved_montage
-
-            pkg = approve_preview(preview_id, by_chat=str(chat_id))
-            if not pkg:
-                send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
-                return
-            env_map = dict(os.environ)
-            if ENV_FILE.exists():
-                for line in ENV_FILE.read_text().splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        k, v = line.split('=', 1)
-                        env_map.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-            caption = f"{pkg.get('game', '')} | owner approved"
-            send_approved_montage(pkg, env_map, caption)
-            n = sum(len(s.get('screenshots', [])) for s in pkg.get('segments', []))
-            ts = [s['start'] for s in pkg.get('segments', [])]
-            send_message(chat_id, f'SENT: preview_id={preview_id}, screens={n}, timestamps={ts}')
-        except Exception as exc:
-            logging.exception('approve_preview failed')
-            send_message(chat_id, f'REFUSED: preview, reason={exc}, visual_passed=0/0')
+        send_message(
+            chat_id,
+            f'Принял /approve_preview — проверяю и отправляю видео (1–5 мин).\n'
+            f'id={preview_id}',
+        )
+        threading.Thread(
+            target=_approve_preview_worker,
+            args=(chat_id, preview_id),
+            daemon=True,
+        ).start()
         return
     if is_owner(chat_id) and text.startswith('/reject_preview'):
         parts = text.split(maxsplit=1)
