@@ -864,9 +864,14 @@ def score_candidate_window(
         )
     else:
         m.combined_score = 0.0
+        gate_reason = m.pass_reason or rule_reason
         m.rule_pass = False
-        if not clf_ok and not combat_authoritative:
+        if profile in SHOOTER_PROFILES:
+            m.pass_reason = gate_reason or "combat_gate_fail"
+        elif not clf_ok:
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
+        elif not m.pass_reason:
+            m.pass_reason = gate_reason or "rule_fail"
 
     if os.environ.get("INTELLICLIP", "1") == "1":
         try:
