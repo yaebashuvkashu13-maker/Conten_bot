@@ -67,7 +67,11 @@ def check_frame_visual(profile: str, frame: np.ndarray) -> tuple[bool, str, dict
 
     menu = _frame_menu_overlay(frame)
     metrics["menu_overlay"] = round(menu, 4)
-    if menu > 0.42:
+    menu_max = float(os.environ.get("VISUAL_MENU_OVERLAY_MAX", "0.42"))
+    if profile == "mobile_legends":
+        # MLBB always has skill/minimap HUD in the center band — not a lobby menu.
+        menu_max = float(os.environ.get("VISUAL_MLBB_MENU_OVERLAY_MAX", "0.78"))
+    if menu > menu_max:
         return False, "menu_overlay", metrics
 
     center_edge = _laplacian_edge_score(frame, 0.22, 0.72, 0.12, 0.88)

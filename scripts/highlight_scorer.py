@@ -897,6 +897,9 @@ def score_candidate_window(
 
     combat_authoritative = profile in SHOOTER_PROFILES and m.rule_pass
     clf_ok = m.classifier_prob >= CLASSIFIER_MIN
+    if profile == "mobile_legends" and m.rule_pass and m.visual_pass:
+        # LR meta-model is PUBG-biased; trust HUD + CLIP + owner exemplars for MLBB.
+        clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
             m.panns_gun_max * 0.45
