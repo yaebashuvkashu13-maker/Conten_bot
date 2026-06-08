@@ -148,6 +148,10 @@ def mlbb_combat_env() -> dict[str, str]:
         "MIN_FINAL_DURATION": "42",
         "SMART_OUTPUT_CRF": "15",
         "SMART_OUTPUT_PRESET": "slow",
+        "VIRAL_SEGMENT_HOOK_MIN": "0.06",
+        "VIRAL_HOOK_MIN": "0.06",
+        "VIRAL_MLBB_HOOK_MIN": "0.06",
+        "VIRAL_MLBB_CLIP_HOOK_MIN": "0.12",
     }
 
 

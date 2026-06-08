@@ -111,6 +111,15 @@ def segment_hook_ok(metrics: dict) -> bool:
     hook = float(metrics.get("hook_score", 0) or 0)
     if float(metrics.get("panns_gun_max", 0) or 0) >= 0.25:
         return True
+    profile = str(metrics.get("profile", "")).strip().lower()
+    if profile in ("mobile_legends", "mlbb"):
+        mlbb_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
+        if metrics.get("visual_pass") and hook >= mlbb_min:
+            return True
+        if metrics.get("visual_pass") and float(metrics.get("clip_score", 0) or 0) >= float(
+            os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
+        ):
+            return True
     return hook >= SEGMENT_HOOK_MIN
 
 
@@ -125,7 +134,15 @@ def montage_viral_score(segments: list[dict]) -> tuple[float, bool]:
     first_hm = segments[0].get("highlight_metrics") or segments[0].get("strict_metrics") or {}
     first_hook = float(first_hm.get("hook_score", 0) or 0)
     first_panns = float(first_hm.get("panns_gun_max", 0) or 0)
-    hook_ok = first_hook >= HOOK_MIN_SCORE or first_panns >= 0.25
+    profile = str(first_hm.get("profile", "")).strip().lower()
+    if profile in ("mobile_legends", "mlbb"):
+        mlbb_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
+        clip_min = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12"))
+        hook_ok = first_hook >= mlbb_min or (
+            first_hm.get("visual_pass") and float(first_hm.get("clip_score", 0) or 0) >= clip_min
+        )
+    else:
+        hook_ok = first_hook >= HOOK_MIN_SCORE or first_panns >= 0.25
     return round(float(np.mean(scores)) if scores else 0.0, 4), hook_ok
 
 

@@ -50,8 +50,17 @@ def rescore_clip(
         return False, metrics.pass_reason or "visual_fail", metrics.to_dict()
     prof = normalize_profile(profile)
     hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
+    if prof == "mobile_legends" and metrics.rule_pass and metrics.visual_pass:
+        # MOBA fights lack gunfire transients; trust HUD + CLIP + owner labels.
+        hook_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
     combat_ok = prof in ("pubg", "standoff") and metrics.panns_gun_max >= 0.25
-    if not combat_ok and metrics.hook_score < hook_min:
+    mlbb_ok = (
+        prof == "mobile_legends"
+        and metrics.rule_pass
+        and metrics.visual_pass
+        and metrics.clip_score >= float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12"))
+    )
+    if not combat_ok and not mlbb_ok and metrics.hook_score < hook_min:
         return False, f"hook_low={metrics.hook_score:.3f}", metrics.to_dict()
 
     if profile in ("pubg", "standoff"):
