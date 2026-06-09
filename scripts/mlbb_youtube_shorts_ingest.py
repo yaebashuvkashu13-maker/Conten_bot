@@ -127,7 +127,10 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
     date_after = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y%m%d")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
-        env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b"),
+        env.get(
+            "YOUTUBE_SHORTS_FORMAT",
+            "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b[height<=720]/b",
+        ),
         "--merge-output-format",
         "mp4",
         "--dateafter",
@@ -265,12 +268,18 @@ def main() -> int:
             continue
 
         ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
+        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
+        hard_reject = reason in ("promo_text", "csv_lookup")
         if not ok:
-            rejected += 1
-            continue
+            if hard_reject or not lenient:
+                rejected += 1
+                continue
 
         feats = score_clip(mp4)
-        if feats["score"] < args.min_score and not feats["rule_pass"]:
+        if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
+            rejected += 1
+            continue
+        if not ok and lenient and feats["score"] < 0.05:
             rejected += 1
             continue
 
@@ -279,6 +288,7 @@ def main() -> int:
                 **row,
                 **feats,
                 "path": str(mp4),
+                "gameplay_pass": int(ok),
                 "gameplay_score": round(float(gscore), 4),
                 "gameplay_reason": reason,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),

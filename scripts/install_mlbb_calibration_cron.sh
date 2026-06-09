@@ -48,6 +48,7 @@ export YTDLP_SLEEP_INTERVAL=4
 export YTDLP_MAX_SLEEP_INTERVAL=12
 export MLBB_INGEST_MAX_DOWNLOADS=3
 export MLBB_INGEST_SKIP_IF_PENDING=12
+export MLBB_CALIBRATION_LENIENT=1
 flock -n /tmp/mlbb_shorts_ingest.lock \
   python3 /usr/local/bin/mlbb_youtube_shorts_ingest.py \
     --incremental --max-downloads 3 --download-delay 12 --search-delay 5 \
