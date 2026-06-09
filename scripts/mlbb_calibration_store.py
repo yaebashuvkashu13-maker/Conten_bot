@@ -224,21 +224,59 @@ def apply_owner_label(
     return True, "good" if is_good else "bad"
 
 
+def _expected_path(video_id: str) -> Path:
+    return SHORTS_ROOT / f"yt_{video_id}.mp4"
+
+
+def repair_index() -> int:
+    """Drop corrupt rows (path/video_id mismatch) and duplicate video_ids."""
+    data = load_index()
+    rows = data.get("candidates", [])
+    best: dict[str, dict] = {}
+    removed = 0
+    for row in rows:
+        vid = str(row.get("video_id", "")).strip()
+        if not vid or len(vid) != 11:
+            removed += 1
+            continue
+        path = Path(row.get("path", ""))
+        expected = _expected_path(vid)
+        if path.name != expected.name or not expected.exists():
+            removed += 1
+            continue
+        row = {**row, "path": str(expected)}
+        prev = best.get(vid)
+        if prev is None or float(row.get("score") or 0) >= float(prev.get("score") or 0):
+            best[vid] = row
+        else:
+            removed += 1
+    old_n = len(rows)
+    data["candidates"] = list(best.values())
+    save_index(data)
+    return old_n - len(data["candidates"])
+
+
 def pending_candidates(*, limit: int = 50) -> list[dict]:
+    repair_index()
     labeled = labeled_ids()
     sent = load_feed_sent()
     rows = load_index().get("candidates", [])
     out: list[dict] = []
+    seen_vids: set[str] = set()
+    seen_paths: set[str] = set()
     for row in rows:
         vid = str(row.get("video_id", ""))
-        if not vid or vid in labeled or vid in sent:
+        if not vid or vid in labeled or vid in sent or vid in seen_vids:
             continue
-        path = Path(row.get("path", ""))
-        if not path.exists():
-            path = SHORTS_ROOT / f"yt_{vid}.mp4"
+        path = _expected_path(vid)
         if not path.exists():
             continue
-        out.append(row)
+        path_key = str(path.resolve())
+        if path_key in seen_paths:
+            continue
+        seen_vids.add(vid)
+        seen_paths.add(path_key)
+        out.append({**row, "path": str(path)})
     out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
     return out[:limit]
 

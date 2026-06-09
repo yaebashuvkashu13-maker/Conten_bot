@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mlbb_calibration_store import DATA_MLBB, mark_feed_sent, pending_candidates, stats
+from mlbb_calibration_store import DATA_MLBB, mark_feed_sent, pending_candidates, repair_index, stats
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -89,7 +89,28 @@ def main() -> int:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
 
-    picked = pending_candidates(limit=BATCH_SIZE)
+    repair_index()
+    picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+    # Guarantee unique files — never send the same mp4 twice in one batch.
+    unique: list[dict] = []
+    seen_paths: set[str] = set()
+    seen_vids: set[str] = set()
+    for row in picked:
+        vid = str(row.get("video_id", ""))
+        path = Path(row.get("path", ""))
+        if not vid or vid in seen_vids:
+            continue
+        path_key = str(path.resolve()) if path.exists() else ""
+        if not path_key or path_key in seen_paths:
+            continue
+        if path.name != f"yt_{vid}.mp4":
+            continue
+        seen_vids.add(vid)
+        seen_paths.add(path_key)
+        unique.append(row)
+        if len(unique) >= BATCH_SIZE:
+            break
+    picked = unique
     if not picked:
         s = stats()
         now = time.time()

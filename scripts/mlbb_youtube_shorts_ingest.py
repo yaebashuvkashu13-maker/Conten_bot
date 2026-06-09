@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
-from mlbb_calibration_store import SHORTS_ROOT, pending_candidates, upsert_candidate
+from mlbb_calibration_store import SHORTS_ROOT, pending_candidates, repair_index, upsert_candidate
 from viral_scorer import hook_score
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
@@ -157,8 +157,7 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         return None
     if dest.exists():
         return dest
-    mp4s = sorted(out_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return mp4s[0] if mp4s else None
+    return None
 
 
 def score_clip(path: Path) -> dict:
@@ -225,6 +224,9 @@ def main() -> int:
     os.environ.setdefault("CONTENT_BOT_REPO", "/root/content_bot_ml")
     env = {**os.environ, **load_env()}
     SHORTS_ROOT.mkdir(parents=True, exist_ok=True)
+    pruned = repair_index()
+    if pruned:
+        print(f"repair_index removed={pruned}")
 
     pending_n = len(pending_candidates(limit=9999))
     if args.skip_if_pending > 0 and pending_n >= args.skip_if_pending:
@@ -264,7 +266,7 @@ def main() -> int:
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid) or mp4
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
-        if not mp4.exists():
+        if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
             continue
 
         ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))

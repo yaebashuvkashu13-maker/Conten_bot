@@ -54,6 +54,10 @@ def notify_telegram(text: str) -> None:
 
 
 def main() -> int:
+    if os.environ.get("VK_MLBB_DISABLED", "0") == "1":
+        print("VK MLBB publish disabled (VK_MLBB_DISABLED=1)")
+        return 0
+
     parser = argparse.ArgumentParser()
     parser.add_argument("slot", choices=["morning", "afternoon", "evening"])
     args = parser.parse_args()
@@ -63,7 +67,8 @@ def main() -> int:
     if not batch:
         msg = f"VK MLBB {slot_label}: очередь пуста — нечего заливать. Жду /upload_vkmlbb."
         append_publish_log(msg)
-        notify_telegram(msg)
+        if os.environ.get("VK_MLBB_NOTIFY_EMPTY", "1") == "1":
+            notify_telegram(msg)
         print(msg)
         return 0
 

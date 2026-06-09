@@ -2081,6 +2081,9 @@ def handle_message(message: dict):
         if not is_owner(chat_id):
             send_message(chat_id, 'Команда /upload_vkmlbb только для владельца.')
             return
+        if env.get('VK_MLBB_DISABLED', '0') == '1':
+            send_message(chat_id, 'VK MLBB отключён — рассылка и уведомления выключены.')
+            return
         set_vk_mlbb_upload_mode(chat_id, True)
         q = count_vk_mlbb_pending()
         send_message(
