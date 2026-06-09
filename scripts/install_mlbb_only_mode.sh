@@ -119,8 +119,11 @@ set +a
 export CONTENT_BOT_REPO=/root/content_bot_ml
 export HIGHLIGHT_HEATMAP=0
 export MLBB_ONLY_MODE=1
-export MLBB_VOD_PROBE_LIMIT=50
+export MLBB_VOD_PROBE_LIMIT=20
 export MLBB_VOD_FULL_SCAN=1
+export MLBB_VOD_BOOTSTRAP=0
+export MLBB_VOD_SEGMENT_SEC=10
+export LOGO_FILE=/nonexistent/mlbb_calibration_no_logo.png
 flock -n /tmp/mlbb_vod_segment_feed.lock \
   python3 /usr/local/bin/mlbb_vod_segment_feed.py \
   >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1

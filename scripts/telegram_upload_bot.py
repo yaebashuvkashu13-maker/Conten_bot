@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-09-mlbb-vod-segments-v1'
+BOT_VERSION = '2026-06-09-mlbb-vod-10s-nologo-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -2438,8 +2438,16 @@ def handle_message(message: dict):
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from mlbb_vod_segment_feed import main as mlbb_vod_feed_main
 
-            send_message(chat_id, 'Сканирую MLBB VOD — пришлю все подходящие куски отдельно…')
-            threading.Thread(target=mlbb_vod_feed_main, daemon=True).start()
+            send_message(chat_id, 'Сканирую MLBB VOD (~10с куски, без логотипа) — займёт несколько минут…')
+
+            def _vod_feed_worker() -> None:
+                os.environ['MLBB_VOD_FULL_SCAN'] = '1'
+                os.environ['MLBB_VOD_BOOTSTRAP'] = '0'
+                os.environ['MLBB_VOD_SEGMENT_SEC'] = '10'
+                os.environ['LOGO_FILE'] = '/nonexistent/mlbb_calibration_no_logo.png'
+                mlbb_vod_feed_main()
+
+            threading.Thread(target=_vod_feed_worker, daemon=True).start()
         except Exception as exc:
             send_message(chat_id, f'MLBB VOD feed error: {exc}')
         return

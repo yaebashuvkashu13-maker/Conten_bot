@@ -36,6 +36,8 @@ from youtube_download import load_env
 ENV_PATH = Path("/root/.video_bot.env")
 PROFILE = "mobile_legends"
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
+SEGMENT_SEC = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", os.environ.get("HIGHLIGHT_WINDOW_SEC", "10")))
+STATE_PATH = Path("/root/data/mlbb/vod_segment_state.json")
 
 def _ffprobe_duration(path: Path) -> float:
     proc = subprocess.run(
@@ -60,22 +62,55 @@ def _ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
-def pick_vod() -> Path | None:
-    """Prefer full YouTube VOD in inbox (GB), not short owner preview clips."""
-    candidates: list[Path] = []
-    for root in (
-        Path("/root/data/mlbb/youtube_nightly/inbox"),
-        Path("/root/videos"),
-        Path("/root/datasets/mlbb"),
-    ):
-        if not root.exists():
-            continue
-        for path in root.rglob("*E4Dsp53yvv4*.mp4"):
-            if path.is_file():
-                candidates.append(path)
-    if not candidates:
+def _load_state() -> dict:
+    if not STATE_PATH.exists():
+        return {"active_vod": "", "scanned_vods": []}
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"active_vod": "", "scanned_vods": []}
+
+
+def _save_state(state: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def list_mlbb_vods() -> list[Path]:
+    """MLBB-only VODs (never PUBG/Standoff inbox files)."""
+    allow = [x.strip() for x in os.environ.get("MLBB_VOD_IDS", "E4Dsp53yvv4").split(",") if x.strip()]
+    rows: list[Path] = []
+    inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
+    if inbox.exists():
+        for p in inbox.glob("yt_*.mp4"):
+            if p.is_file() and any(vid in p.name for vid in allow):
+                rows.append(p)
+    for p in Path("/root/videos").glob("owner_mlbb_*.mp4"):
+        if p.is_file() and _ffprobe_duration(p) > 120:
+            rows.append(p)
+    rows.sort(key=lambda p: (p.stat().st_size, _ffprobe_duration(p)), reverse=True)
+    return rows
+
+
+def pick_vod(*, rotate: bool = False) -> Path | None:
+    """Pick full inbox VOD; rotate to next large file when rotate=True."""
+    vods = list_mlbb_vods()
+    if not vods:
         return None
-    return max(candidates, key=lambda p: (p.stat().st_size, _ffprobe_duration(p)))
+    state = _load_state()
+    active = state.get("active_vod", "")
+    if rotate and len(vods) > 1 and active:
+        names = [p.name for p in vods]
+        try:
+            idx = names.index(active)
+            return vods[(idx + 1) % len(vods)]
+        except ValueError:
+            pass
+    if active:
+        for p in vods:
+            if p.name == active:
+                return p
+    return vods[0]
 
 
 def bootstrap_exemplar_segments() -> list[dict]:
@@ -157,15 +192,32 @@ def send_message(token: str, chat_id: str, text: str) -> None:
     )
 
 
+def _normalize_clip(clip: dict, vod: Path) -> dict:
+    from smart_video_editor import profile_action_clip_bounds
+
+    _, clip_hi = profile_action_clip_bounds(PROFILE)
+    dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", str(max(SEGMENT_SEC, clip_hi))))
+    return {
+        **clip,
+        "source_path": str(vod),
+        "source_index": 0,
+        "input_duration": dur,
+        "output_duration": dur,
+        "speed": 1.0,
+    }
+
+
 def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     from smart_video_editor import render_segment, run_command
 
-    logo = Path(os.environ.get("LOGO_FILE", "/root/logo.png"))
+    # Calibration clips: no logo/watermark (owner rates raw montage window).
+    logo = Path("/nonexistent/mlbb_calibration_no_logo.png")
+    os.environ["LOGO_FILE"] = str(logo)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix="mlbb-seg-"))
     try:
         seg_path = temp_dir / "seg.mp4"
-        clip = {**clip, "source_path": str(vod), "source_index": 0}
+        clip = _normalize_clip(clip, vod)
         render_segment(clip, seg_path, logo)
         if not seg_path.exists():
             return False
@@ -243,19 +295,36 @@ def main() -> int:
     dur = _ffprobe_duration(vod)
     labeled = labeled_ids()
     sent = load_feed_sent()
-    probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
-    full_scan = os.environ.get("MLBB_VOD_FULL_SCAN", "0") == "1"
+    probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "20"))
+    full_scan = os.environ.get("MLBB_VOD_FULL_SCAN", "1") == "1"
+    use_bootstrap = os.environ.get("MLBB_VOD_BOOTSTRAP", "0") == "1"
+    rotate_vod = os.environ.get("MLBB_VOD_ROTATE", "0") == "1"
+
+    if rotate_vod:
+        vod = pick_vod(rotate=True) or vod
+
+    os.environ["LOGO_FILE"] = "/nonexistent/mlbb_calibration_no_logo.png"
+    os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", "10")
 
     to_send: list[dict] = []
-    for row in bootstrap_exemplar_segments():
-        sid = row["segment_id"]
-        if sid in labeled or sid in sent:
-            continue
-        to_send.append(row)
+    if use_bootstrap:
+        for row in bootstrap_exemplar_segments():
+            sid = row["segment_id"]
+            if sid in labeled or sid in sent:
+                continue
+            to_send.append(row)
 
     sig = file_sha256(vod)
-    if not to_send and full_scan:
-        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+    if full_scan:
+        scanned = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+        if scanned:
+            to_send = scanned
+        elif not to_send and rotate_vod:
+            alt = pick_vod(rotate=True)
+            if alt and alt != vod:
+                vod = alt
+                sig = file_sha256(vod)
+                to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
 
     if not to_send:
         s = stats()
@@ -269,12 +338,14 @@ def main() -> int:
         print(f"nothing to send pending={s['pending']} vod={vod.name} full_scan={full_scan}")
         return 0
 
-    mode = "exemplar" if to_send[0].get("bootstrap") else "scan"
+    mode = "scan"
+    seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "10")))
     send_message(
         token,
         chat_id,
-        f"MLBB VOD — {len(to_send)} кусков ({mode})\n"
-        f"Каждый отдельно — жми 👍 Ок / 👎 Не ок под видео.\n"
+        f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с, без логотипа)\n"
+        f"Файл: {vod.name}\n"
+        f"Жми 👍 Ок / 👎 Не ок под каждым.\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
 
@@ -282,19 +353,15 @@ def main() -> int:
     sent_ids: list[str] = []
     for row in to_send:
         sid = row["segment_id"]
-        if row.get("bootstrap"):
-            out = Path(row["path"])
-        else:
-            out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
-            if not out.exists():
-                if not render_single_segment(vod, row["clip"], out):
-                    continue
+        out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
+        if not out.exists() or out.stat().st_size < 500_000:
+            if not render_single_segment(vod, row["clip"], out):
+                continue
 
-        prior = row.get("prior_label", "")
-        prior_hint = f" (было: {prior})" if prior else ""
+        seg_dur = _ffprobe_duration(out)
         caption = (
             f"MLBB кусок #{sid}\n"
-            f"VOD {vod_youtube_id(vod)} @ {int(row['start'])}s{prior_hint}\n"
+            f"{vod_youtube_id(vod)} @ {int(row['start'])}s | {seg_dur:.0f}с\n"
             f"score={row['score']:.3f} hook={row['hook_score']:.2f}\n"
             f"👍 Ок / 👎 Не ок"
         )
@@ -317,6 +384,12 @@ def main() -> int:
         time.sleep(1.5)
 
     mark_feed_sent(sent_ids)
+    state = _load_state()
+    state["active_vod"] = vod.name
+    scanned = set(state.get("scanned_vods", []))
+    scanned.add(vod.name)
+    state["scanned_vods"] = sorted(scanned)
+    _save_state(state)
     print(f"sent={len(sent_ids)} mode={mode} vod={vod.name}")
     return 0
 
