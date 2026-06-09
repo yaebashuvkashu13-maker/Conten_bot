@@ -104,8 +104,82 @@ SHOOTER_PROFILES = frozenset({"pubg", "standoff"})
 
 
 def owner_anchors_enabled() -> bool:
-    """Owner timestamps for train/calibrate only — never default in inference."""
+    """Hard inject owner windows into stage1 — off by default in inference."""
     return os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") == "1"
+
+
+def classifier_path_for_profile(profile: str) -> Path:
+    profile = normalize_profile(profile)
+    override = os.environ.get("HIGHLIGHT_CLASSIFIER_PATH", "").strip()
+    if override:
+        return Path(override)
+    per_game = REPO_ROOT / "data" / "mlbb" / f"highlight_classifier_{profile}.joblib"
+    if per_game.exists():
+        return per_game
+    return CLASSIFIER_PATH
+
+
+def _labels_for_vod(video_path: Path, profile: str) -> list[dict]:
+    labels_path = _owner_labels_path(profile)
+    if labels_path is None or not labels_path.exists():
+        return []
+    try:
+        data = json.loads(labels_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+    return list(data.get("videos", {}).get(vid, []))
+
+
+def vod_has_owner_labels(video_path: Path, profile: str) -> bool:
+    return bool(_labels_for_vod(video_path, profile))
+
+
+def soft_anchor_enabled(video_path: Path, profile: str) -> bool:
+    """Boost (not inject) owner good windows when VOD has labels in JSON."""
+    if os.environ.get("HIGHLIGHT_SOFT_ANCHOR", "1") == "0":
+        return False
+    if owner_anchors_enabled():
+        return False
+    return vod_has_owner_labels(video_path, profile)
+
+
+def segment_overlaps_owner_label(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str,
+    *,
+    label: str,
+    pad_sec: float = 60.0,
+) -> bool:
+    end_sec = start_sec + duration_sec
+    for row in _labels_for_vod(video_path, profile):
+        if row.get("label") != label:
+            continue
+        center = float(row["time_sec"])
+        if start_sec - pad_sec <= center <= end_sec + pad_sec:
+            return True
+    return False
+
+
+def _filter_bad_label_starts(
+    video_path: Path,
+    profile: str,
+    starts: list[float],
+    *,
+    pad_sec: float | None = None,
+) -> list[float]:
+    pad = pad_sec if pad_sec is not None else float(os.environ.get("HIGHLIGHT_SOFT_BAD_PAD_SEC", "60"))
+    kept: list[float] = []
+    for start in starts:
+        if segment_overlaps_owner_label(
+            video_path, start, WINDOW_SEC, profile, label="bad", pad_sec=pad
+        ):
+            log.info("soft anchor exclude bad label near start=%.1f", start)
+            continue
+        kept.append(start)
+    return kept
 
 
 def _mlbb_skip_intro_sec() -> float:
@@ -194,8 +268,9 @@ def _rank_stage1_starts(analysis: dict, profile: str, starts: list[float]) -> li
     return [s for _, s in scored]
 
 
-def classifier_available() -> bool:
-    return CLASSIFIER_PATH.exists()
+def classifier_available(profile: str | None = None) -> bool:
+    prof = normalize_profile(profile or os.environ.get("_HIGHLIGHT_PROFILE", "pubg"))
+    return classifier_path_for_profile(prof).exists()
 
 
 def normalize_profile(profile: str) -> str:
@@ -709,20 +784,21 @@ def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) 
     return merged[:120], best_hits
 
 
-def _load_classifier():
-    if not CLASSIFIER_PATH.exists():
+def _load_classifier(profile: str | None = None):
+    path = classifier_path_for_profile(normalize_profile(profile or os.environ.get("_HIGHLIGHT_PROFILE", "pubg")))
+    if not path.exists():
         return None
     try:
         import joblib
 
-        return joblib.load(CLASSIFIER_PATH)
+        return joblib.load(path)
     except Exception as exc:
-        log.warning("classifier load failed: %s", exc)
+        log.warning("classifier load failed %s: %s", path, exc)
         return None
 
 
-def classifier_probability(metrics: HighlightMetrics) -> float:
-    clf = _load_classifier()
+def classifier_probability(metrics: HighlightMetrics, profile: str | None = None) -> float:
+    clf = _load_classifier(profile or metrics.profile)
     if clf is None:
         return 0.0
     feats = np.array(
@@ -957,16 +1033,6 @@ def score_candidate_window(
     if not m.visual_pass:
         m.pass_reason = vis_row.get("fail_reason") or "visual_multi_fail"
 
-    m.classifier_prob = classifier_probability(m)
-    if not classifier_available():
-        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
-            m.classifier_prob = 0.5
-        else:
-            m.rule_pass = False
-            m.pass_reason = "classifier_missing"
-            m.combined_score = 0.0
-            return m
-
     if os.environ.get("HIGHLIGHT_HEATMAP", "1") == "1":
         try:
             from youtube_heatmap_peaks import load_heatmap_intensity_map, nearest_heatmap_intensity
@@ -976,13 +1042,28 @@ def score_candidate_window(
         except Exception:
             m.heatmap_intensity = 0.0
 
+    if segment_overlaps_owner_label(
+        video_path, start_sec, duration_sec, profile, label="bad", pad_sec=60.0
+    ):
+        m.rule_pass = False
+        m.pass_reason = "owner_bad_window"
+        m.combined_score = 0.0
+        return m
+
     m.rule_pass, rule_reason = rule_gate(
         profile, m, video_path=video_path, start_sec=start_sec, duration_sec=duration_sec
     )
     m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
 
+    if classifier_available(profile):
+        m.classifier_prob = classifier_probability(m, profile)
+    else:
+        m.classifier_prob = 0.5
+
     combat_authoritative = profile in SHOOTER_PROFILES and m.rule_pass
     clf_ok = m.classifier_prob >= CLASSIFIER_MIN
+    if not classifier_available(profile) and m.rule_pass and m.visual_pass:
+        clf_ok = True
     if profile == "mobile_legends" and m.rule_pass and m.visual_pass:
         # LR meta-model is PUBG-biased; trust HUD + CLIP + owner exemplars for MLBB.
         clf_ok = True
@@ -1108,10 +1189,45 @@ def _heatmap_stage0_starts(video_path: Path) -> list[float]:
 
 
 def stage1_candidates(video_path: Path, profile: str) -> list[float]:
-    """Stage0 heatmap + Stage1 cheap motion/gun scan. No owner anchor injection in inference."""
+    """Stage0 heatmap + Stage1 peaks; soft owner boost when VOD has labels (not hard inject)."""
     profile = normalize_profile(profile)
     max_stage1 = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "60"))
     starts: set[float] = set(_heatmap_stage0_starts(video_path))
+
+    if soft_anchor_enabled(video_path, profile):
+        good_anchors = _owner_anchor_starts(video_path, profile)
+        if good_anchors:
+            try:
+                from intelliclip_scorer import merge_starts_with_anchors, rank_hybrid_starts
+
+                prev_boost = os.environ.get("INTELLICLIP_ANCHOR_BOOST")
+                os.environ["INTELLICLIP_ANCHOR_BOOST"] = os.environ.get(
+                    "HIGHLIGHT_SOFT_ANCHOR_BOOST", "0.5"
+                )
+                ranked = rank_hybrid_starts(
+                    video_path,
+                    profile,
+                    good_anchors,
+                    window_sec=WINDOW_SEC,
+                    limit=max_stage1,
+                )
+                merged = merge_starts_with_anchors(ranked, good_anchors, limit=max_stage1)
+                if prev_boost is None:
+                    os.environ.pop("INTELLICLIP_ANCHOR_BOOST", None)
+                else:
+                    os.environ["INTELLICLIP_ANCHOR_BOOST"] = prev_boost
+                for start in merged:
+                    starts.add(start)
+                log.info(
+                    "soft anchor stage1 %s: %s windows (good_labels=%s boost=%s)",
+                    video_path.name,
+                    len(merged),
+                    len(good_anchors),
+                    os.environ.get("INTELLICLIP_ANCHOR_BOOST", "0.5"),
+                )
+            except Exception as exc:
+                log.warning("soft anchor stage1 failed: %s", exc)
+
     if owner_anchors_enabled():
         if profile in SHOOTER_PROFILES and _owner_anchor_starts(video_path, profile):
             for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
@@ -1212,6 +1328,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     ranked = _rank_stage1_starts(analysis, profile, sorted(starts))
     if not ranked:
         ranked = sorted(starts)
+    ranked = _filter_bad_label_starts(video_path, profile, ranked)
     return ranked[:max_stage1]
 
 

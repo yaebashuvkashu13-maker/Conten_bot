@@ -23,6 +23,7 @@ export CONTENT_BOT_REPO=/root/content_bot_ml
 export PUBG_OWNER_LABELS_PATH=/root/content_bot_ml/data/pubg_owner_labels.json
 export HIGHLIGHT_SCORER=1
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export HIGHLIGHT_SOFT_ANCHOR=1
 export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
 export OWNER_PREVIEW_REQUIRED=1
 
@@ -37,6 +38,7 @@ install -m 755 \
   scripts/deploy_highlight_scorer.sh \
   scripts/vps_disk_cleanup.sh \
   scripts/highlight_train.py \
+  scripts/eval_owner_labels.py \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \
   scripts/highlight_bootstrap_panns_peaks.py \

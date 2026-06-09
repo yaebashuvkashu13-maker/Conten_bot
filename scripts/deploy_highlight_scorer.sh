@@ -22,6 +22,7 @@ export PUBG_OWNER_LABELS_PATH=/root/content_bot_ml/data/pubg_owner_labels.json
 export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
 export HIGHLIGHT_SCORER=1
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export HIGHLIGHT_SOFT_ANCHOR=1
 export OWNER_PREVIEW_REQUIRED=1
 export HIGHLIGHT_CLIP_DISABLED=0
 export INTELLICLIP_FUSION=0
@@ -35,6 +36,7 @@ install -m 755 \
   scripts/intelliclip_scorer.py \
   scripts/highlight_scorer.py \
   scripts/highlight_train.py \
+  scripts/eval_owner_labels.py \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \
   scripts/vps_disk_cleanup.sh \
@@ -51,7 +53,12 @@ bash /usr/local/bin/pause_legacy_pipelines.sh
 bash /usr/local/bin/vps_disk_cleanup.sh 2>/dev/null || true
 
 python3 /usr/local/bin/highlight_bootstrap_exemplars.py --game pubg --vod yt_n97cHIR9Qow.mp4 || true
-python3 /usr/local/bin/highlight_train.py --profile pubg --vod yt_n97cHIR9Qow.mp4 || true
+for f in pubg_owner_labels.json mobile_legends_owner_labels.json genshin_owner_labels.json standoff_owner_labels.json wot_owner_labels.json; do
+  install -m 644 "$REPO/data/$f" "/root/content_bot_ml/data/$f" 2>/dev/null || true
+  install -m 644 "$REPO/data/$f" "/root/data/mlbb/$f" 2>/dev/null || true
+done
+python3 /usr/local/bin/highlight_train.py --profile all || true
+python3 /usr/local/bin/eval_owner_labels.py --profile pubg --csv /root/data/mlbb/eval_owner_labels.csv || true
 
 nohup /usr/local/bin/run_job_until_ok.sh \
   /root/data/mlbb/pubg_mlbb_pipeline.log \

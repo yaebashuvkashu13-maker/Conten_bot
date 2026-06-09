@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train LogisticRegression meta-model on owner labels + exemplar clips (~1h setup)."""
+"""Train per-game LogisticRegression meta-model on owner labels + exemplar clips."""
 
 from __future__ import annotations
 
@@ -13,7 +13,24 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from highlight_scorer import CLASSIFIER_PATH, WINDOW_SEC, score_candidate_window
+from highlight_scorer import (
+    WINDOW_SEC,
+    _owner_labels_path,
+    classifier_path_for_profile,
+    normalize_profile,
+    score_candidate_window,
+)
+
+PROFILE_ALIASES = {"mlbb": "mobile_legends", "world_of_tanks": "wot"}
+
+LABEL_FILES = {
+    "pubg": "pubg_owner_labels.json",
+    "standoff": "standoff_owner_labels.json",
+    "mobile_legends": "mobile_legends_owner_labels.json",
+    "genshin": "genshin_owner_labels.json",
+    "wot": "wot_owner_labels.json",
+}
+
 
 def _repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
@@ -26,29 +43,58 @@ def _repo_root() -> Path:
 
 
 REPO = _repo_root()
-OWNER_LABELS = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json")))
-if not OWNER_LABELS.exists() and Path("/root/data/mlbb/pubg_owner_labels.json").exists():
-    OWNER_LABELS = Path("/root/data/mlbb/pubg_owner_labels.json")
 INBOX = Path(os.environ.get("HIGHLIGHT_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
 
 
-def load_owner_samples(vod: Path) -> list[tuple[float, int]]:
-    if not OWNER_LABELS.exists():
+def labels_path_for(profile: str) -> Path:
+    profile = normalize_profile(profile)
+    path = _owner_labels_path(profile)
+    if path and path.exists():
+        return path
+    return REPO / "data" / LABEL_FILES.get(profile, "pubg_owner_labels.json")
+
+
+def resolve_vod(video_id: str) -> Path | None:
+    for candidate in (
+        INBOX / f"yt_{video_id}.mp4",
+        REPO / "data" / "samples" / f"yt_{video_id}.mp4",
+        Path(f"/root/data/mlbb/youtube_nightly/inbox/yt_{video_id}.mp4"),
+    ):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
+    """All (vod, start, label) from data/{game}_owner_labels.json."""
+    path = labels_path_for(profile)
+    if not path.exists():
         return []
-    data = json.loads(OWNER_LABELS.read_text(encoding="utf-8"))
-    vid = vod.stem[3:] if vod.stem.startswith("yt_") else vod.stem
-    rows = data.get("videos", {}).get(vid, [])
-    out: list[tuple[float, int]] = []
-    for row in rows:
-        if "time_sec" not in row:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    videos = data.get("videos", data) if isinstance(data.get("videos"), dict) else {}
+    if not isinstance(videos, dict):
+        videos = data if isinstance(data, dict) else {}
+    out: list[tuple[Path, float, int]] = []
+    for vid, rows in videos.items():
+        if not isinstance(rows, list):
             continue
-        label = 1 if row.get("label") == "good" else 0
-        out.append((float(row["time_sec"]) - WINDOW_SEC * 0.5, label))
+        vod = resolve_vod(str(vid))
+        if not vod:
+            continue
+        for row in rows:
+            if "time_sec" not in row:
+                continue
+            label = 1 if row.get("label") == "good" else 0
+            start = float(row["time_sec"]) - WINDOW_SEC * 0.5
+            out.append((vod, max(0.0, start), label))
     return out
 
 
 def extract_features(vod: Path, start: float, profile: str) -> list[float]:
-    m = score_candidate_window(vod, max(0, start), WINDOW_SEC, profile)
+    m = score_candidate_window(vod, start, WINDOW_SEC, profile)
     return [
         m.panns_gunshot,
         m.panns_machine_gun,
@@ -59,40 +105,31 @@ def extract_features(vod: Path, start: float, profile: str) -> list[float]:
     ]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--vod", default="yt_n97cHIR9Qow.mp4")
-    parser.add_argument("--profile", default="pubg")
-    args = parser.parse_args()
+def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
+    profile = normalize_profile(profile)
     os.environ["HIGHLIGHT_TRAIN_MODE"] = "1"
-    os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
+    os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
     os.environ["HIGHLIGHT_HEATMAP"] = "0"
     os.environ.setdefault("CONTENT_BOT_REPO", str(REPO))
-
-    vod = INBOX / args.vod if not Path(args.vod).exists() else Path(args.vod)
-    if not vod.exists():
-        vod = REPO / "data" / "samples" / args.vod
-    if not vod.exists():
-        print(f"REFUSED: train, reason=vod_missing {args.vod}")
-        return 1
+    os.environ["_HIGHLIGHT_PROFILE"] = profile
 
     X: list[list[float]] = []
     y: list[int] = []
-    for start, label in load_owner_samples(vod):
-        X.append(extract_features(vod, start, args.profile))
+    for vod, start, label in load_all_owner_samples(profile):
+        X.append(extract_features(vod, start, profile))
         y.append(label)
 
-    exemplar_root = REPO / "data" / "highlight_exemplars" / args.profile
+    exemplar_root = REPO / "data" / "highlight_exemplars" / profile
     for label_name, cls in (("good", 1), ("bad", 0)):
         folder = exemplar_root / label_name
         if not folder.exists():
             continue
-        for clip in sorted(folder.glob("*.mp4"))[:30]:
-            X.append(extract_features(clip, 0.5, args.profile))
+        for clip in sorted(folder.glob("*.mp4"))[:max_exemplar]:
+            X.append(extract_features(clip, 0.5, profile))
             y.append(cls)
 
     if len(X) < 8:
-        print(f"REFUSED: train, reason=insufficient_samples n={len(X)}")
+        print(f"REFUSED: train profile={profile}, reason=insufficient_samples n={len(X)}")
         return 1
 
     from sklearn.linear_model import LogisticRegression
@@ -100,11 +137,31 @@ def main() -> int:
 
     clf = LogisticRegression(max_iter=500, class_weight="balanced")
     clf.fit(np.array(X), np.array(y))
-    CLASSIFIER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(clf, CLASSIFIER_PATH)
+    out_path = classifier_path_for_profile(profile)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(clf, out_path)
     acc = clf.score(np.array(X), np.array(y))
-    print(f"OK classifier saved {CLASSIFIER_PATH} samples={len(X)} train_acc={acc:.3f}")
+    print(f"OK classifier profile={profile} path={out_path} samples={len(X)} train_acc={acc:.3f}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--profile",
+        default="pubg",
+        choices=["pubg", "standoff", "mobile_legends", "mlbb", "genshin", "wot", "all"],
+    )
+    parser.add_argument("--vod", default="", help="legacy single-vod hint (ignored if labels json has videos)")
+    args = parser.parse_args()
+
+    if args.profile == "all":
+        code = 0
+        for prof in ("pubg", "standoff", "mobile_legends", "genshin", "wot"):
+            if train_profile(prof) != 0:
+                code = 1
+        return code
+    return train_profile(normalize_profile(args.profile))
 
 
 if __name__ == "__main__":
