@@ -26,9 +26,9 @@ from viral_scorer import hook_score
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
 SEARCH_QUERIES = (
-    "mobile legends highlights shorts",
     "mlbb teamfight shorts",
     "mlbb savage shorts",
+    "mobile legends highlights shorts",
 )
 
 NEGATIVE_TITLE = re.compile(
