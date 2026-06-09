@@ -37,23 +37,74 @@ ENV_PATH = Path("/root/.video_bot.env")
 PROFILE = "mobile_legends"
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
 
-VOD_PATHS = (
-    Path("/root/videos/owner_mlbb_E4Dsp53yvv4_v2_20260608_144710.mp4"),
-    Path("/root/videos/yt_E4Dsp53yvv4.mp4"),
-)
+def _ffprobe_duration(path: Path) -> float:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        return float((proc.stdout or "0").strip())
+    except ValueError:
+        return 0.0
 
 
 def pick_vod() -> Path | None:
-    for path in VOD_PATHS:
-        if path.exists():
-            return path
-    inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
-    for pattern in ("*E4Dsp53yvv4*", "yt_*.mp4", "owner_mlbb_*.mp4"):
-        for path in sorted(inbox.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
-            if path.is_file() and path.suffix == ".mp4":
-                return path
-    videos = sorted(Path("/root/videos").glob("owner_mlbb_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return videos[0] if videos else None
+    """Prefer full YouTube VOD in inbox (GB), not short owner preview clips."""
+    candidates: list[Path] = []
+    for root in (
+        Path("/root/data/mlbb/youtube_nightly/inbox"),
+        Path("/root/videos"),
+        Path("/root/datasets/mlbb"),
+    ):
+        if not root.exists():
+            continue
+        for path in root.rglob("*E4Dsp53yvv4*.mp4"):
+            if path.is_file():
+                candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: (p.stat().st_size, _ffprobe_duration(p)))
+
+
+def bootstrap_exemplar_segments() -> list[dict]:
+    """Send existing owner-marked exemplar clips when auto-scan finds nothing yet."""
+    root = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml")) / "data/highlight_exemplars/mobile_legends"
+    rows: list[dict] = []
+    for label_dir, is_good_hint in (("good", True), ("bad", False)):
+        for path in sorted((root / label_dir).glob("E4Dsp53yvv4_*.mp4")):
+            stem = path.stem
+            parts = stem.split("_")
+            if len(parts) < 3:
+                continue
+            try:
+                start = int(parts[1])
+            except ValueError:
+                continue
+            sid = f"E4Dsp53yvv4_{start}"
+            rows.append(
+                {
+                    "segment_id": sid,
+                    "path": path,
+                    "start": start,
+                    "score": 1.0 if is_good_hint else 0.0,
+                    "hook_score": 0.0,
+                    "bootstrap": True,
+                    "prior_label": label_dir,
+                }
+            )
+    return rows
 
 
 def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: str) -> bool:
@@ -170,6 +221,14 @@ def main() -> int:
 
     pool = discover_strict_candidates(vod, PROFILE, sig, set())
     pool = pool[:probe_limit]
+    dur = _ffprobe_duration(vod)
+    if dur < 120:
+        print(f"WARN short vod {vod.name} dur={dur:.0f}s — trying inbox full file")
+        full = pick_vod()
+        if full and full != vod and _ffprobe_duration(full) > dur:
+            vod = full
+            sig = file_sha256(vod)
+            pool = discover_strict_candidates(vod, PROFILE, sig, set())[:probe_limit]
 
     to_send: list[dict] = []
     for clip in pool:
@@ -194,8 +253,21 @@ def main() -> int:
         )
 
     if not to_send:
+        for row in bootstrap_exemplar_segments():
+            sid = row["segment_id"]
+            if sid in labeled or sid in sent:
+                continue
+            to_send.append(row)
+
+    if not to_send:
         s = stats()
-        print(f"nothing to send pending={s['pending']} pool={len(pool)}")
+        send_message(
+            token,
+            chat_id,
+            f"MLBB VOD: сканирую {vod.name} ({int(dur // 60)} мин) — пока 0 кусков прошли фильтр.\n"
+            "Повтор через cron или /mlbb_vod. Скан полного VOD занимает 15–40 мин.",
+        )
+        print(f"nothing to send pending={s['pending']} pool={len(pool)} vod={vod.name}")
         return 0
 
     send_message(
@@ -210,14 +282,19 @@ def main() -> int:
     sent_ids: list[str] = []
     for row in to_send:
         sid = row["segment_id"]
-        out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
-        if not out.exists():
-            if not render_single_segment(vod, row["clip"], out):
-                continue
+        if row.get("bootstrap"):
+            out = Path(row["path"])
+        else:
+            out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
+            if not out.exists():
+                if not render_single_segment(vod, row["clip"], out):
+                    continue
 
+        prior = row.get("prior_label", "")
+        prior_hint = f" (было: {prior})" if prior else ""
         caption = (
             f"MLBB кусок #{sid}\n"
-            f"VOD {vod_youtube_id(vod)} @ {int(row['start'])}s\n"
+            f"VOD {vod_youtube_id(vod)} @ {int(row['start'])}s{prior_hint}\n"
             f"score={row['score']:.3f} hook={row['hook_score']:.2f}\n"
             f"👍 Ок / 👎 Не ок"
         )
