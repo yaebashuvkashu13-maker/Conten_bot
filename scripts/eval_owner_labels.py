@@ -76,6 +76,7 @@ def eval_vod(
 
     os.environ.setdefault("HIGHLIGHT_SOFT_ANCHOR", "1")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     candidates = discover_highlight_candidates(vod, profile, limit=24)
 
     good_rows = [r for r in rows if r.get("label") == "good" and "time_sec" in r]

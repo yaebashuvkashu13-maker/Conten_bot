@@ -114,9 +114,12 @@ def _ffprobe_aspect(path: Path) -> float:
 
 def search_youtube_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict]:
     """yt-dlp flat search — returns entries with id, title, view_count, duration."""
+    search_n = max(limit * 4, 40)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
-        f"ytsearch{limit}:{query} shorts",
+        f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
+        "--match-filter",
+        "duration < 61 & duration > 3",
         "--print",
         "%(id)s\t%(title)s\t%(view_count)s\t%(duration)s\t%(webpage_url)s",
         "--no-download",
@@ -136,8 +139,10 @@ def search_youtube_shorts(query: str, *, limit: int, env: dict[str, str]) -> lis
             view_count = int(views or 0)
         except ValueError:
             continue
-        if duration <= 0 or duration > 60:
+        if duration <= 3 or duration > 60:
             continue
+        if len(entries) >= limit:
+            break
         entries.append(
             {
                 "video_id": vid,
@@ -357,6 +362,8 @@ def ingest_game(
     tiktok_limit: int,
 ) -> int:
     profile = normalize_profile(profile)
+    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     env = {**os.environ, **load_env()}
     out_dir = DATASET_ROOT / profile
     meta_path = DATA_ROOT / f"{profile}.csv"
@@ -401,7 +408,7 @@ def ingest_game(
         if not mp4.exists():
             continue
 
-        ok, score, reason = is_gameplay_video(mp4, description=row.get("title", ""))
+        ok, score, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
         if not ok:
             row["reject_reason"] = reason
             row["is_gameplay"] = 0
