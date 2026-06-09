@@ -26,9 +26,9 @@ from viral_scorer import hook_score
 from youtube_download import load_env, ytdlp_cmd, ytdlp_extra_args
 
 SEARCH_QUERIES = (
-    "mobile legends highlights",
-    "mlbb teamfight",
-    "mlbb savage",
+    "mobile legends highlights shorts",
+    "mlbb teamfight shorts",
+    "mlbb savage shorts",
 )
 
 NEGATIVE_TITLE = re.compile(
@@ -70,7 +70,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
     import subprocess
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
-    search_n = max(limit * 5, 50)
+    search_n = max(limit * 8, 80)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -88,7 +88,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
         vid, title, views, dur, upload_date, url = parts[:6]
         if not vid or len(vid) != 11:
             continue
-        if upload_date and upload_date.isdigit() and upload_date < cutoff:
+        if upload_date and upload_date not in ("NA", "N/A") and upload_date.isdigit() and upload_date < cutoff:
             continue
         try:
             duration = float(dur or 0)
@@ -120,11 +120,14 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
 
     out_dir.mkdir(parents=True, exist_ok=True)
     template = str(out_dir / "yt_%(id)s.%(ext)s")
+    date_after = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y%m%d")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
         env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b"),
         "--merge-output-format",
         "mp4",
+        "--dateafter",
+        date_after,
         "-o",
         template,
         "--no-playlist",
