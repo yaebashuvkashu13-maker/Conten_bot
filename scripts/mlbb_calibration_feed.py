@@ -159,7 +159,10 @@ def main() -> int:
         sent_ids.append(str(row.get("video_id", "")))
         time.sleep(1.2)
 
-    mark_feed_sent(sent_ids)
+    mark_feed_sent(
+        sent_ids,
+        paths=[Path(row.get("path", "")) for row in picked if row.get("path")],
+    )
     print(f"sent={len(sent_ids)}")
     return 0
 

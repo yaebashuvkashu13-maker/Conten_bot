@@ -58,6 +58,9 @@ def save_index(data: dict) -> None:
 
 
 def upsert_candidate(row: dict) -> None:
+    path = Path(str(row.get("path", "")))
+    if path.name.startswith("yt_"):
+        row = {**row, "video_id": id_from_path(path), "id": id_from_path(path)}
     data = load_index()
     candidates: list[dict] = data["candidates"]
     vid = str(row.get("video_id", ""))
@@ -86,42 +89,96 @@ def save_labels(data: dict) -> None:
     _write_json(LABELS_PATH, data)
 
 
-def load_feed_sent() -> set[str]:
-    raw = _read_json(FEED_SENT_PATH, {"sent_ids": []})
-    if isinstance(raw, dict):
-        return set(str(x) for x in raw.get("sent_ids", []))
-    return set()
+def id_from_path(path: Path) -> str:
+    """Canonical YouTube id from yt_{id}.mp4 on disk."""
+    stem = path.stem
+    if stem.startswith("yt_") and len(stem) > 3:
+        return stem[3:]
+    return stem
 
 
-def mark_feed_sent(ids: list[str]) -> None:
+def load_feed_sent() -> dict[str, set[str]]:
+    raw = _read_json(FEED_SENT_PATH, {"sent_ids": [], "sent_file_ids": []})
+    if not isinstance(raw, dict):
+        return {"ids": set(), "file_ids": set()}
+    return {
+        "ids": set(str(x) for x in raw.get("sent_ids", [])),
+        "file_ids": set(str(x) for x in raw.get("sent_file_ids", [])),
+    }
+
+
+def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
     sent = load_feed_sent()
-    sent.update(ids)
+    sent["ids"].update(str(x) for x in ids if x)
+    for path in paths or []:
+        if path.exists() or path.name.startswith("yt_"):
+            sent["file_ids"].add(id_from_path(path))
+            sent["ids"].add(id_from_path(path))
     _write_json(
         FEED_SENT_PATH,
-        {"sent_ids": sorted(sent), "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")},
+        {
+            "sent_ids": sorted(sent["ids"]),
+            "sent_file_ids": sorted(sent["file_ids"]),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        },
     )
 
 
+def migrate_labels_from_paths() -> int:
+    """Fix legacy rows where video_id != filename (duplicate-bug era)."""
+    labels = load_labels()
+    fixed = 0
+    for section in ("good", "bad", "feedback"):
+        for row in labels.get(section, []):
+            path = Path(str(row.get("path", "")))
+            if not path.name.startswith("yt_"):
+                continue
+            canon = id_from_path(path)
+            if row.get("video_id") != canon or row.get("id") != canon:
+                row["video_id"] = canon
+                row["id"] = canon
+                fixed += 1
+    if fixed:
+        save_labels(labels)
+    return fixed
+
+
 def labeled_ids() -> dict[str, str]:
-    """video_id -> good|bad"""
+    """video_id and file-canonical id -> good|bad"""
+    migrate_labels_from_paths()
     labels = load_labels()
     out: dict[str, str] = {}
+
+    def add_row(row: dict, label: str) -> None:
+        path = Path(str(row.get("path", "")))
+        vid = str(row.get("video_id") or row.get("id") or "")
+        if vid:
+            out[vid] = label
+        if path.name.startswith("yt_"):
+            out[id_from_path(path)] = label
+
     for row in labels.get("good", []):
-        vid = str(row.get("video_id") or row.get("id") or "")
-        if vid:
-            out[vid] = "good"
+        add_row(row, "good")
     for row in labels.get("bad", []):
-        vid = str(row.get("video_id") or row.get("id") or "")
-        if vid:
-            out[vid] = "bad"
+        add_row(row, "bad")
     for row in labels.get("feedback", []):
-        vid = str(row.get("video_id") or row.get("id") or "")
         label = row.get("owner_label")
-        if vid and label in ("yes", "good"):
-            out[vid] = "good"
-        elif vid and label in ("no", "bad"):
-            out[vid] = "bad"
+        if label in ("yes", "good"):
+            add_row(row, "good")
+        elif label in ("no", "bad"):
+            add_row(row, "bad")
     return out
+
+
+def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str]]) -> bool:
+    file_id = id_from_path(path)
+    if vid in labeled or file_id in labeled:
+        return True
+    if vid in sent["ids"] or file_id in sent["ids"]:
+        return True
+    if file_id in sent["file_ids"]:
+        return True
+    return False
 
 
 def find_candidate(video_id: str) -> dict | None:
@@ -130,10 +187,24 @@ def find_candidate(video_id: str) -> dict | None:
         vid = vid[3:]
     data = load_index()
     for row in data.get("candidates", []):
-        if row.get("video_id") == vid or str(row.get("id", "")) == vid:
+        row_vid = str(row.get("video_id", ""))
+        path = Path(str(row.get("path", "")))
+        if row_vid == vid or str(row.get("id", "")) == vid:
             return row
-        if str(row.get("video_id", "")).startswith(vid):
+        if str(row_vid).startswith(vid):
             return row
+        if path.name.startswith("yt_") and id_from_path(path) == vid:
+            return row
+    # Fallback: file on disk (owner pasted correct filename id)
+    direct = SHORTS_ROOT / f"yt_{vid}.mp4"
+    if direct.exists():
+        return {
+            "video_id": vid,
+            "path": str(direct),
+            "title": vid,
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "score": 0.0,
+        }
     return None
 
 
@@ -177,12 +248,12 @@ def apply_owner_label(
     if not row:
         return False, f"unknown_id:{video_id}"
 
-    vid = str(row.get("video_id", video_id))
     path = Path(row.get("path", ""))
     if not path.exists():
-        path = SHORTS_ROOT / f"yt_{vid}.mp4"
+        path = SHORTS_ROOT / f"yt_{video_id.strip()}.mp4"
     if not path.exists():
-        return False, f"file_missing:{vid}"
+        return False, f"file_missing:{video_id}"
+    vid = id_from_path(path)
 
     labels = load_labels()
     entry = {
@@ -202,19 +273,23 @@ def apply_owner_label(
         "owner_label": "yes" if is_good else "no",
         "model_score": row.get("score", 0),
     }
-    labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("video_id") != vid]
+    def _same_file(row: dict) -> bool:
+        p = Path(str(row.get("path", "")))
+        return id_from_path(p) == vid if p.name.startswith("yt_") else row.get("video_id") == vid
+
+    labels["feedback"] = [f for f in labels.get("feedback", []) if not _same_file(f)]
     labels["feedback"].append(feedback)
 
     if is_good:
-        labels["good"] = [g for g in labels.get("good", []) if g.get("video_id") != vid]
-        labels["bad"] = [b for b in labels.get("bad", []) if b.get("video_id") != vid]
+        labels["good"] = [g for g in labels.get("good", []) if not _same_file(g)]
+        labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
         labels["good"].append(entry)
         exemplar = copy_exemplar(path, "good", vid)
         if exemplar:
             entry["exemplar"] = str(exemplar)
     else:
-        labels["bad"] = [b for b in labels.get("bad", []) if b.get("video_id") != vid]
-        labels["good"] = [g for g in labels.get("good", []) if g.get("video_id") != vid]
+        labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
+        labels["good"] = [g for g in labels.get("good", []) if not _same_file(g)]
         labels["bad"].append(entry)
         exemplar = copy_exemplar(path, "bad", vid)
         if exemplar:
@@ -258,6 +333,7 @@ def repair_index() -> int:
 
 def pending_candidates(*, limit: int = 50) -> list[dict]:
     repair_index()
+    migrate_labels_from_paths()
     labeled = labeled_ids()
     sent = load_feed_sent()
     rows = load_index().get("candidates", [])
@@ -265,18 +341,18 @@ def pending_candidates(*, limit: int = 50) -> list[dict]:
     seen_vids: set[str] = set()
     seen_paths: set[str] = set()
     for row in rows:
-        vid = str(row.get("video_id", ""))
-        if not vid or vid in labeled or vid in sent or vid in seen_vids:
-            continue
-        path = _expected_path(vid)
+        path = _expected_path(str(row.get("video_id", "")))
         if not path.exists():
+            continue
+        vid = id_from_path(path)
+        if _is_excluded(vid, path, labeled, sent) or vid in seen_vids:
             continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
             continue
         seen_vids.add(vid)
         seen_paths.add(path_key)
-        out.append({**row, "path": str(path)})
+        out.append({**row, "video_id": vid, "id": vid, "path": str(path)})
     out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
     return out[:limit]
 
