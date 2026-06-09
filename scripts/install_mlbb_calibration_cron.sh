@@ -40,6 +40,7 @@ set -Eeuo pipefail
 set -a
 source /root/.video_bot.env
 set +a
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export CONTENT_BOT_REPO=/root/content_bot_ml
 export HIGHLIGHT_HEATMAP=0
 export YTDLP_SLEEP_REQUESTS=1.5

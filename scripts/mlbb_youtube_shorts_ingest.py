@@ -23,7 +23,7 @@ from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import SHORTS_ROOT, pending_candidates, upsert_candidate
 from viral_scorer import hook_score
-from youtube_download import load_env, ytdlp_cmd, ytdlp_extra_args
+from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
 SEARCH_QUERIES = (
     "mobile legends highlights shorts",
@@ -81,7 +81,9 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
         "--no-download",
         *ytdlp_extra_args(env),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, timeout=180, env=subprocess_env_no_proxy(env)
+    )
     entries: list[dict] = []
     for line in (proc.stdout or "").splitlines():
         parts = line.split("\t")
@@ -145,7 +147,9 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
     dest = out_dir / f"yt_{video_id}.mp4"
     if dest.exists():
         return dest
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, timeout=300, env=subprocess_env_no_proxy(env)
+    )
     if proc.returncode != 0:
         return None
     if dest.exists():
