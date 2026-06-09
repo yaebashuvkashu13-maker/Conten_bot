@@ -37,6 +37,10 @@ install -m 755 \
   scripts/highlight_scorer.py \
   scripts/highlight_train.py \
   scripts/eval_owner_labels.py \
+  scripts/eval_highlight_model.py \
+  scripts/score_owner_windows.py \
+  scripts/viral_reference_ingest.py \
+  scripts/viral_reference_refresh.sh \
   scripts/highlight_probe.py \
   scripts/highlight_bootstrap_exemplars.py \
   scripts/vps_disk_cleanup.sh \
