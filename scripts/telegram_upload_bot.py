@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-08-approve-preview-async-v2'
+BOT_VERSION = '2026-06-09-mlbb-calibration-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -1901,6 +1901,9 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
+        {'command': 'mlbb_samples', 'description': '5 MLBB Shorts на оценку (владелец)'},
+        {'command': 'mlbb_yes', 'description': 'MLBB Shorts — хороший (#id)'},
+        {'command': 'mlbb_no', 'description': 'MLBB Shorts — плохой (#id)'},
     ]
 
 
@@ -2257,6 +2260,67 @@ def handle_message(message: dict):
             args=(chat_id, preview_id),
             daemon=True,
         ).start()
+        return
+    if is_owner(chat_id) and cmd in ('/mlbb_samples', '/mlbb_sample'):
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from mlbb_calibration_feed import main as mlbb_feed_main
+
+            send_message(chat_id, 'Подбираю 5 MLBB Shorts на оценку…')
+            threading.Thread(target=mlbb_feed_main, daemon=True).start()
+        except Exception as exc:
+            send_message(chat_id, f'MLBB feed error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/mlbb_yes', '/mlbb_good'):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 2:
+            send_message(chat_id, 'Использование: /mlbb_yes {youtube_id}\nПример: /mlbb_yes cUniwjo02H4')
+            return
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from mlbb_calibration_store import apply_owner_label, stats
+
+            ok, label = apply_owner_label(parts[1].strip(), is_good=True, by_chat=str(chat_id))
+            s = stats()
+            if ok:
+                send_message(
+                    chat_id,
+                    f'✅ Записал good exemplar #{parts[1].strip()}\n'
+                    f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}',
+                )
+            else:
+                send_message(chat_id, f'Не нашёл id={parts[1]} в индексе Shorts. Сначала /mlbb_samples')
+        except Exception as exc:
+            send_message(chat_id, f'mlbb_yes error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/mlbb_no', '/mlbb_bad'):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 2:
+            send_message(chat_id, 'Использование: /mlbb_no {youtube_id} [причина]')
+            return
+        reason = parts[2].strip() if len(parts) > 2 else ''
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from mlbb_calibration_store import apply_owner_label, stats
+
+            ok, label = apply_owner_label(
+                parts[1].strip(),
+                is_good=False,
+                reason=reason,
+                by_chat=str(chat_id),
+            )
+            s = stats()
+            if ok:
+                send_message(
+                    chat_id,
+                    f'❌ Записал bad exemplar #{parts[1].strip()}\n'
+                    f'Причина: {reason or "—"}\n'
+                    f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}',
+                )
+            else:
+                send_message(chat_id, f'Не нашёл id={parts[1]} в индексе Shorts.')
+        except Exception as exc:
+            send_message(chat_id, f'mlbb_no error: {exc}')
         return
     if is_owner(chat_id) and text.startswith('/reject_preview'):
         parts = text.split(maxsplit=1)
