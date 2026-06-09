@@ -391,3 +391,23 @@ def stats() -> dict:
 def ready_for_eval(*, min_yes: int = 30, min_no: int = 20) -> bool:
     s = stats()
     return s["feedback_yes"] >= min_yes and s["feedback_no"] >= min_no
+
+
+def inline_keyboard_markup(video_id: str) -> dict:
+    """Telegram inline keyboard: 👍 / 👎 under calibration Shorts."""
+    vid = str(video_id).strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "👍", "callback_data": f"mlbb_yes:{vid}"},
+                {"text": "👎", "callback_data": f"mlbb_no:{vid}"},
+            ]
+        ]
+    }
+
+
+def labeled_keyboard_markup(label: str) -> dict:
+    mark = "✅ Хорошо" if label == "good" else "❌ Плохо"
+    return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}

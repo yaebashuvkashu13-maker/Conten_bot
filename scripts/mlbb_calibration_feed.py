@@ -12,7 +12,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mlbb_calibration_store import DATA_MLBB, mark_feed_sent, pending_candidates, repair_index, stats
+from mlbb_calibration_store import (
+    DATA_MLBB,
+    inline_keyboard_markup,
+    mark_feed_sent,
+    pending_candidates,
+    repair_index,
+    stats,
+)
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -22,7 +29,14 @@ QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "21600"))  # 6
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
 
 
-def send_video(token: str, chat_id: str, path: Path, caption: str) -> bool:
+def send_video(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    video_id: str = "",
+) -> bool:
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
         return False
     url = f"https://api.telegram.org/bot{token}/sendVideo"
@@ -41,6 +55,9 @@ def send_video(token: str, chat_id: str, path: Path, caption: str) -> bool:
         f"video=@{path}",
         url,
     ]
+    if video_id:
+        cmd.insert(-1, "-F")
+        cmd.insert(-1, f"reply_markup={json.dumps(inline_keyboard_markup(video_id), ensure_ascii=False)}")
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
     try:
@@ -50,17 +67,31 @@ def send_video(token: str, chat_id: str, path: Path, caption: str) -> bool:
     return bool(payload.get("ok"))
 
 
-def send_message(token: str, chat_id: str, text: str) -> None:
+def send_message(
+    token: str,
+    chat_id: str,
+    text: str,
+    *,
+    video_id: str = "",
+) -> None:
+    cmd = [
+        "curl",
+        "-sS",
+        "-F",
+        f"chat_id={chat_id}",
+        "-F",
+        f"text={text[:3900]}",
+    ]
+    if video_id:
+        cmd.extend(
+            [
+                "-F",
+                f"reply_markup={json.dumps(inline_keyboard_markup(video_id), ensure_ascii=False)}",
+            ]
+        )
+    cmd.append(f"https://api.telegram.org/bot{token}/sendMessage")
     subprocess.run(
-        [
-            "curl",
-            "-sS",
-            "-F",
-            f"chat_id={chat_id}",
-            "-F",
-            f"text={text[:3900]}",
-            f"https://api.telegram.org/bot{token}/sendMessage",
-        ],
+        cmd,
         env={k: v for k, v in os.environ.items() if "proxy" not in k.lower()},
         check=False,
         timeout=30,
@@ -76,8 +107,7 @@ def format_caption(row: dict, idx: int, total: int) -> str:
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"
         f"#id {vid}\n"
-        f"👍 /mlbb_yes {vid}\n"
-        f"👎 /mlbb_no {vid} причина"
+        f"Нажми 👍 или 👎 под видео"
     )
 
 
@@ -138,7 +168,7 @@ def main() -> int:
         token,
         chat_id,
         f"MLBB Shorts — {len(picked)} кандидатов на оценку.\n"
-        "Ответь: /mlbb_yes {id} или /mlbb_no {id} причина\n"
+        "Под каждым роликом — кнопки 👍 / 👎\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
 
@@ -148,13 +178,14 @@ def main() -> int:
         if not path.exists():
             continue
         caption = format_caption(row, idx, len(picked))
-        ok = send_video(token, chat_id, path, caption)
+        vid = str(row.get("video_id", ""))
+        ok = send_video(token, chat_id, path, caption, video_id=vid)
         if not ok:
-            vid = str(row.get("video_id", ""))
             send_message(
                 token,
                 chat_id,
                 f"#{idx} (видео >20MB, ссылка)\n{caption}",
+                video_id=vid,
             )
         sent_ids.append(str(row.get("video_id", "")))
         time.sleep(1.2)

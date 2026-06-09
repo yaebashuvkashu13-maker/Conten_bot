@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-09-mlbb-calibration-v1'
+BOT_VERSION = '2026-06-09-mlbb-inline-buttons-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -430,6 +430,124 @@ def send_message(chat_id: str | int, text: str):
         api_call('sendMessage', {'chat_id': str(chat_id), 'text': text}, timeout=30)
     except Exception as exc:
         logging.error('failed to send message to %s: %s', chat_id, exc)
+
+
+def _mlbb_apply_owner_label(
+    chat_id: str | int,
+    video_id: str,
+    *,
+    is_good: bool,
+    reason: str = '',
+) -> tuple[bool, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from mlbb_calibration_store import apply_owner_label, stats
+
+    ok, _label = apply_owner_label(
+        video_id.strip(),
+        is_good=is_good,
+        reason=reason,
+        by_chat=str(chat_id),
+    )
+    s = stats()
+    if not ok:
+        return False, f'Не нашёл id={video_id} в индексе Shorts. Сначала /mlbb_samples'
+    if is_good:
+        return True, (
+            f'✅ Записал good exemplar #{video_id.strip()}\n'
+            f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}'
+        )
+    return True, (
+        f'❌ Записал bad exemplar #{video_id.strip()}\n'
+        f'Причина: {reason or "—"}\n'
+        f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}'
+    )
+
+
+def handle_callback_query(query: dict) -> None:
+    query_id = query.get('id')
+    data = str(query.get('data') or '')
+    message = query.get('message') or {}
+    chat = message.get('chat') or {}
+    chat_id = chat.get('id')
+    message_id = message.get('message_id')
+    if not query_id or chat_id is None or message_id is None:
+        return
+    if not is_owner(chat_id):
+        try:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Нет доступа', 'show_alert': True},
+                timeout=15,
+            )
+        except Exception:
+            pass
+        return
+
+    if data == 'mlbb_noop':
+        try:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+        except Exception:
+            pass
+        return
+
+    is_good: bool | None = None
+    video_id = ''
+    reason = ''
+    if data.startswith('mlbb_yes:'):
+        is_good = True
+        video_id = data.split(':', 1)[1].strip()
+    elif data.startswith('mlbb_no:'):
+        is_good = False
+        video_id = data.split(':', 1)[1].strip()
+        reason = 'button_dislike'
+    else:
+        try:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+        except Exception:
+            pass
+        return
+
+    try:
+        ok, reply = _mlbb_apply_owner_label(chat_id, video_id, is_good=is_good, reason=reason)
+        alert = '✅ Хорошо' if is_good else '❌ Плохо'
+        if not ok:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                timeout=15,
+            )
+            return
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': alert},
+            timeout=15,
+        )
+        from mlbb_calibration_store import labeled_keyboard_markup
+
+        api_call(
+            'editMessageReplyMarkup',
+            {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'reply_markup': labeled_keyboard_markup('good' if is_good else 'bad'),
+            },
+            timeout=15,
+        )
+        if not is_good:
+            send_message(
+                chat_id,
+                f'{reply}\n\nМожешь уточнить причину ответом на это сообщение (необязательно).',
+            )
+    except Exception as exc:
+        logging.exception('mlbb callback failed data=%s', data)
+        try:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        except Exception:
+            pass
 
 
 def send_photo_file(chat_id: str | int, image_path: Path, caption: str = '') -> None:
@@ -2277,51 +2395,28 @@ def handle_message(message: dict):
     if is_owner(chat_id) and cmd in ('/mlbb_yes', '/mlbb_good'):
         parts = text.split(maxsplit=2)
         if len(parts) < 2:
-            send_message(chat_id, 'Использование: /mlbb_yes {youtube_id}\nПример: /mlbb_yes cUniwjo02H4')
+            send_message(chat_id, 'Использование: /mlbb_yes {youtube_id} или кнопка 👍 под видео')
             return
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from mlbb_calibration_store import apply_owner_label, stats
-
-            ok, label = apply_owner_label(parts[1].strip(), is_good=True, by_chat=str(chat_id))
-            s = stats()
-            if ok:
-                send_message(
-                    chat_id,
-                    f'✅ Записал good exemplar #{parts[1].strip()}\n'
-                    f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}',
-                )
-            else:
-                send_message(chat_id, f'Не нашёл id={parts[1]} в индексе Shorts. Сначала /mlbb_samples')
+            ok, reply = _mlbb_apply_owner_label(chat_id, parts[1].strip(), is_good=True)
+            send_message(chat_id, reply)
         except Exception as exc:
             send_message(chat_id, f'mlbb_yes error: {exc}')
         return
     if is_owner(chat_id) and cmd in ('/mlbb_no', '/mlbb_bad'):
         parts = text.split(maxsplit=2)
         if len(parts) < 2:
-            send_message(chat_id, 'Использование: /mlbb_no {youtube_id} [причина]')
+            send_message(chat_id, 'Использование: /mlbb_no {youtube_id} [причина] или кнопка 👎 под видео')
             return
         reason = parts[2].strip() if len(parts) > 2 else ''
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from mlbb_calibration_store import apply_owner_label, stats
-
-            ok, label = apply_owner_label(
+            ok, reply = _mlbb_apply_owner_label(
+                chat_id,
                 parts[1].strip(),
                 is_good=False,
                 reason=reason,
-                by_chat=str(chat_id),
             )
-            s = stats()
-            if ok:
-                send_message(
-                    chat_id,
-                    f'❌ Записал bad exemplar #{parts[1].strip()}\n'
-                    f'Причина: {reason or "—"}\n'
-                    f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} | accuracy {s["accuracy"]:.0%}',
-                )
-            else:
-                send_message(chat_id, f'Не нашёл id={parts[1]} в индексе Shorts.')
+            send_message(chat_id, reply)
         except Exception as exc:
             send_message(chat_id, f'mlbb_no error: {exc}')
         return
@@ -2580,13 +2675,17 @@ def main():
                 {
                     'offset': state.get('last_update_id', 0) + 1,
                     'timeout': POLL_TIMEOUT,
-                    'allowed_updates': ['message'],
+                    'allowed_updates': ['message', 'callback_query'],
                 },
                 timeout=POLL_TIMEOUT + 10,
             )
             for update in updates:
                 state['last_update_id'] = update['update_id']
                 save_state(state)
+                callback = update.get('callback_query')
+                if callback:
+                    handle_callback_query(callback)
+                    continue
                 message = update.get('message')
                 if message:
                     handle_message(message)

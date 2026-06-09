@@ -93,10 +93,19 @@ install -m 755 \
   "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
   "$REPO/scripts/mlbb_calibration_feed.py" \
   "$REPO/scripts/mlbb_calibration_weekly_report.py" \
+  "$REPO/scripts/telegram_upload_bot.py" \
   "$REPO/scripts/daily_ops_cron.sh" \
   "$REPO/scripts/daily_morning_plan.py" \
   "$REPO/scripts/daily_evening_report.py" \
   "$BIN/" 2>/dev/null || true
+
+if systemctl is-active telegram-upload-bot >/dev/null 2>&1; then
+  systemctl restart telegram-upload-bot
+elif pgrep -f telegram_upload_bot.py >/dev/null 2>&1; then
+  pkill -f telegram_upload_bot.py 2>/dev/null || true
+  sleep 1
+  nohup python3 "$BIN/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
+fi
 
 bash "$REPO/scripts/disable_vk_mlbb_scheduler.sh" 2>/dev/null || true
 bash "$REPO/scripts/install_mlbb_calibration_cron.sh"
