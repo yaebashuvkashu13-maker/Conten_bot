@@ -147,8 +147,42 @@ def batch_running() -> bool:
         return False
 
 
+def mlbb_calibration_summary() -> str:
+    try:
+        sys.path.insert(0, "/usr/local/bin")
+        from mlbb_calibration_store import stats
+
+        s = stats()
+        need_yes = max(0, 30 - s["feedback_yes"])
+        need_no = max(0, 20 - s["feedback_no"])
+        return (
+            f"• Shorts в очереди: {s['pending']} | 👍{s['feedback_yes']} 👎{s['feedback_no']}\n"
+            f"• До eval: ещё 👍{need_yes} / 👎{need_no}\n"
+            f"• Согласие с моделью: {s['accuracy']:.0%}"
+        )
+    except Exception:
+        return "• Калибровка MLBB Shorts — смотри /mlbb_samples"
+
+
 def build_plan() -> str:
     day = time.strftime("%Y-%m-%d")
+    if os.environ.get("MLBB_ONLY_MODE", "0") == "1":
+        cal = mlbb_calibration_summary()
+        return f"""🌅 План на {day} — только MLBB
+
+Главная цель
+🎯 Учимся делать залетающий контент по Mobile Legends.
+Качаем короткие YouTube Shorts, смотрим просмотры, вы оцениваете 👍/👎.
+
+Задачи сегодня
+• Оценить новые Shorts в Telegram (/mlbb_yes /mlbb_no причина)
+• Анализ: почему одно видео залетело, другое нет (просмотры + hook + teamfight)
+• Другие игры (PUBG, Genshin, Standoff, WoT) — на паузе
+
+{cal}
+
+Команды: /mlbb_samples — прислать кандидатов сейчас"""
+
     game_list = ", ".join(GAME_LABELS.get(g, g) for g in load_game_ids())
     overnight = overnight_summary()
     running = "🔄 Сейчас на сервере идёт нарезка (catch-up/ночной батч)." if batch_running() else ""

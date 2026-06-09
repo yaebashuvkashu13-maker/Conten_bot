@@ -28,10 +28,9 @@ jobs:
             git fetch origin
             git checkout cursor/mlbb-video-pipeline-e712 || git checkout main
             git pull --ff-only
-            bash scripts/deploy_telegram_bot.sh
-            bash scripts/install_vk_mlbb_scheduler.sh
-            bash scripts/burst.sh
-            echo "=== deploy done ==="
+            bash scripts/install_mlbb_only_mode.sh
+            systemctl restart telegram-upload-bot 2>/dev/null || true
+            echo "=== MLBB-only deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
             pgrep -af telegram_upload_bot.py || true
             find /root/datasets/tiktok/mlbb -name '*.mp4' 2>/dev/null | wc -l

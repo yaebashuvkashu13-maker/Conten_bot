@@ -117,8 +117,38 @@ def proxy_ok() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def mlbb_evening_block() -> str:
+    try:
+        sys.path.insert(0, "/usr/local/bin")
+        from mlbb_calibration_store import stats
+
+        s = stats()
+        analysis = Path("/root/data/mlbb/mlbb_viral_analysis.json")
+        insight = ""
+        if analysis.exists():
+            data = json.loads(analysis.read_text(encoding="utf-8"))
+            items = data.get("insights") or []
+            if items:
+                insight = f"\nВыводы анализа:\n• " + "\n• ".join(items[:3])
+        return f"""🌙 Отчёт за {time.strftime('%Y-%m-%d')} — только MLBB
+
+Калибровка Shorts
+• Индекс: {s['index_total']} | ждут оценки: {s['pending']}
+• 👍 {s['feedback_yes']} / 👎 {s['feedback_no']} | согласие модели: {s['accuracy']:.0%}
+• Exemplars: good={s['good_exemplars']} bad={s['bad_exemplars']}
+{insight}
+
+Завтра: оценить новые Shorts, добить до 30👍/20👎 для eval.
+Другие игры отключены — фокус на виральном MLBB-контенте."""
+    except Exception as exc:
+        return f"🌙 MLBB вечерний отчёт — ошибка stats: {exc}"
+
+
 def build_report() -> str:
     day = time.strftime("%Y-%m-%d")
+    if os.environ.get("MLBB_ONLY_MODE", "0") == "1":
+        return mlbb_evening_block()
+
     heroes = count_mp4(HERO_ROOT)
     tiktok_mlbb = count_mp4(Path("/root/datasets/tiktok/mlbb"))
     pubg_tiktok = count_mp4(Path("/root/datasets/tiktok/pubg"))

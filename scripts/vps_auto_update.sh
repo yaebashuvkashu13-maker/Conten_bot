@@ -11,6 +11,5 @@ cd "$REPO" || exit 1
 git fetch origin
 git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git checkout main
 git pull --ff-only
-# deploy only — burst training loops off by default (BURST_ENABLE_TRAINING=0)
-bash "$REPO/scripts/deploy_telegram_bot.sh"
+bash "$REPO/scripts/install_mlbb_only_mode.sh"
 echo "[$(date)] auto_update done"

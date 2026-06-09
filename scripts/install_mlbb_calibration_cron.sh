@@ -10,6 +10,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
   "$REPO/scripts/mlbb_calibration_feed.py" \
   "$REPO/scripts/mlbb_calibration_weekly_report.py" \
+  "$REPO/scripts/mlbb_viral_analysis.py" \
   "$BIN/"
 
 mkdir -p /root/datasets/mlbb/youtube_shorts /root/data/mlbb

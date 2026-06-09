@@ -53,6 +53,14 @@ install -m 755 \
   scripts/pause_legacy_pipelines.sh \
   /usr/local/bin/
 
+if [[ -f /root/.video_bot.env ]]; then set -a; source /root/.video_bot.env; set +a; fi
+
+if [[ "${MLBB_ONLY_MODE:-0}" == "1" ]]; then
+  bash "$REPO/scripts/install_mlbb_only_mode.sh"
+  echo "highlight engine deployed (MLBB-only mode — no multi-game pipelines)"
+  exit 0
+fi
+
 bash /usr/local/bin/pause_legacy_pipelines.sh
 bash /usr/local/bin/vps_disk_cleanup.sh 2>/dev/null || true
 
