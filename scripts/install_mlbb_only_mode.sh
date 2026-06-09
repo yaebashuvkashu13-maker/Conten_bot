@@ -123,6 +123,8 @@ export MLBB_VOD_PROBE_LIMIT=20
 export MLBB_VOD_FULL_SCAN=1
 export MLBB_VOD_BOOTSTRAP=0
 export MLBB_VOD_SEGMENT_SEC=10
+export MLBB_SEEK_PREROLL=3
+export MLBB_FORCE_RERENDER=1
 export LOGO_FILE=/nonexistent/mlbb_calibration_no_logo.png
 flock -n /tmp/mlbb_vod_segment_feed.lock \
   python3 /usr/local/bin/mlbb_vod_segment_feed.py \

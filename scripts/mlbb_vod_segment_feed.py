@@ -208,37 +208,68 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
 
 
 def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
-    from smart_video_editor import render_segment, run_command
+    """
+    Cut montage-length window without logo.
+    Double-seek avoids frozen first ~2s (keyframe seek before -i).
+    """
+    from smart_video_editor import (
+        TARGET_HEIGHT,
+        TARGET_WIDTH,
+        OUTPUT_FPS,
+        detect_game_viewport_crop,
+        ffprobe_has_audio,
+        game_audio_filter_chain,
+        output_encode_args,
+        run_command,
+    )
 
-    # Calibration clips: no logo/watermark (owner rates raw montage window).
-    logo = Path("/nonexistent/mlbb_calibration_no_logo.png")
-    os.environ["LOGO_FILE"] = str(logo)
+    clip = _normalize_clip(clip, vod)
+    start = float(clip["start"])
+    dur = float(clip["input_duration"])
+    pre_roll = min(float(os.environ.get("MLBB_SEEK_PREROLL", "3")), max(0.0, start))
+    rough_seek = max(0.0, start - pre_roll)
+    fine_seek = pre_roll
+
+    crop = detect_game_viewport_crop(vod, start, dur)
+    crop_prefix = ""
+    if crop and len(crop) == 4:
+        x, y, w, h = crop
+        if w > 0 and h > 0:
+            crop_prefix = f"crop={w}:{h}:{x}:{y},"
+    vf = (
+        f"{crop_prefix}"
+        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p"
+    )
+
+    os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_dir = Path(tempfile.mkdtemp(prefix="mlbb-seg-"))
-    try:
-        seg_path = temp_dir / "seg.mp4"
-        clip = _normalize_clip(clip, vod)
-        render_segment(clip, seg_path, logo)
-        if not seg_path.exists():
-            return False
-        run_command(
-            [
-                "ffmpeg",
-                "-y",
-                "-v",
-                "error",
-                "-i",
-                str(seg_path),
-                "-c",
-                "copy",
-                str(out_path),
-            ]
-        )
-        return out_path.exists()
-    finally:
-        import shutil
-
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    has_audio = ffprobe_has_audio(vod)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{rough_seek:.3f}",
+        "-i",
+        str(vod),
+        "-ss",
+        f"{fine_seek:.3f}",
+        "-t",
+        f"{dur:.3f}",
+        "-vf",
+        vf,
+    ]
+    if has_audio:
+        cmd.extend(["-af", game_audio_filter_chain(1.0), "-map", "0:v:0", "-map", "0:a:0?"])
+    else:
+        cmd.extend(["-an"])
+    cmd.extend(output_encode_args())
+    cmd.append(str(out_path))
+    run_command(cmd)
+    return out_path.exists() and out_path.stat().st_size > 100_000
 
 
 def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_limit: int) -> list[dict]:
@@ -354,7 +385,8 @@ def main() -> int:
     for row in to_send:
         sid = row["segment_id"]
         out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
-        if not out.exists() or out.stat().st_size < 500_000:
+        force = os.environ.get("MLBB_FORCE_RERENDER", "1") == "1"
+        if force or not out.exists() or out.stat().st_size < 500_000:
             if not render_single_segment(vod, row["clip"], out):
                 continue
 
