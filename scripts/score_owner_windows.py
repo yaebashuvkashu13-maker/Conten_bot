@@ -186,6 +186,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.baseline:
+        os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
         profiles = PROFILES if not args.profile else (normalize_profile(args.profile),)
         csv_out = args.csv
         if csv_out is None:
