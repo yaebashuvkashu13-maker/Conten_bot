@@ -1176,6 +1176,8 @@ def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
 
 
 def _heatmap_stage0_starts(video_path: Path) -> list[float]:
+    if os.environ.get("HIGHLIGHT_HEATMAP", "1") != "1":
+        return []
     try:
         from youtube_heatmap_peaks import heatmap_peak_starts
 

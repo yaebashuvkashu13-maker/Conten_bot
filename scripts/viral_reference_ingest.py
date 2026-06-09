@@ -118,8 +118,6 @@ def search_youtube_shorts(query: str, *, limit: int, env: dict[str, str]) -> lis
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
-        "--match-filter",
-        "duration < 61 & duration > 3",
         "--print",
         "%(id)s\t%(title)s\t%(view_count)s\t%(duration)s\t%(webpage_url)s",
         "--no-download",
@@ -136,10 +134,12 @@ def search_youtube_shorts(query: str, *, limit: int, env: dict[str, str]) -> lis
             continue
         try:
             duration = float(dur or 0)
-            view_count = int(views or 0)
-        except ValueError:
+            view_count = int(float(views or 0))
+        except (ValueError, TypeError):
             continue
         if duration <= 3 or duration > 60:
+            continue
+        if NEGATIVE_TITLE.search(title):
             continue
         if len(entries) >= limit:
             break
