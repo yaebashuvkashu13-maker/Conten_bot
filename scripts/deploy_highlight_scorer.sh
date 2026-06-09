@@ -27,7 +27,7 @@ export OWNER_PREVIEW_REQUIRED=1
 export HIGHLIGHT_CLIP_DISABLED=0
 export INTELLICLIP_FUSION=0
 
-install -m 644 "$REPO/config/highlight_queries.yaml" /root/content_bot_ml/config/highlight_queries.yaml
+cp -f "$REPO/config/highlight_queries.yaml" /root/content_bot_ml/config/highlight_queries.yaml
 install -m 644 "$REPO/data/pubg_owner_labels.json" /root/data/mlbb/pubg_owner_labels.json 2>/dev/null || true
 
 install -m 755 \
