@@ -395,6 +395,10 @@ def process_game(
 
 
 def main() -> int:
+    if os.environ.get("MLBB_ONLY_MODE", "0") == "1":
+        logging.info("MLBB_ONLY_MODE=1 — overnight batch disabled")
+        return 0
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument(

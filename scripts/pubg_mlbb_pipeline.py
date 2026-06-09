@@ -164,11 +164,19 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
+    if os.environ.get("MLBB_ONLY_MODE", "0") == "1":
+        log("MLBB_ONLY_MODE=1 — pubg_mlbb_pipeline disabled")
+        return 0
+
     if PAUSE_FILE.exists() and "pubg_mlbb_pipeline.py" in PAUSE_FILE.read_text():
         log("paused by PAUSED_PIPELINES")
         return 0
 
     env = load_env()
+    if env.get("MLBB_ONLY_MODE", "0") == "1":
+        log("MLBB_ONLY_MODE=1 — pubg_mlbb_pipeline disabled")
+        return 0
+
     if not env.get("TG_BOT_TOKEN") or not env.get("TG_CHAT_ID"):
         log("REFUSED: pipeline, reason=missing_telegram_env, visual_passed=0/0")
         return 1

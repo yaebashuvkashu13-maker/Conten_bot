@@ -6,6 +6,12 @@ STATE=/root/data/mlbb/overnight_msk/state.json
 LOG=/root/data/mlbb/overnight_msk/watchdog.log
 exec >>"$LOG" 2>&1
 
+if [[ -f /root/.video_bot.env ]]; then set -a; source /root/.video_bot.env; set +a; fi
+if [[ "${MLBB_ONLY_MODE:-0}" == "1" ]]; then
+  echo "[$(date -Is)] SKIP overnight_watchdog: MLBB_ONLY_MODE=1"
+  exit 0
+fi
+
 if pgrep -f 'overnight_youtube_batch.py' >/dev/null; then
   exit 0
 fi

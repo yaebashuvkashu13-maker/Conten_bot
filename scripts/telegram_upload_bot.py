@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-09-mlbb-inline-buttons-v1'
+BOT_VERSION = '2026-06-09-mlbb-vod-segments-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -432,6 +432,37 @@ def send_message(chat_id: str | int, text: str):
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
+def _mlbb_apply_vseg_label(
+    chat_id: str | int,
+    segment_id: str,
+    *,
+    is_good: bool,
+    reason: str = '',
+) -> tuple[bool, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from mlbb_vod_segment_store import apply_owner_label, stats
+
+    ok, _label = apply_owner_label(
+        segment_id.strip(),
+        is_good=is_good,
+        reason=reason,
+        by_chat=str(chat_id),
+    )
+    s = stats()
+    if not ok:
+        return False, f'Не нашёл кусок {segment_id}. Запусти /mlbb_vod'
+    if is_good:
+        return True, (
+            f'✅ Ок — кусок {segment_id.strip()}\n'
+            f'Всего VOD: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+        )
+    return True, (
+        f'❌ Не ок — кусок {segment_id.strip()}\n'
+        f'Причина: {reason or "—"}\n'
+        f'Всего VOD: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+    )
+
+
 def _mlbb_apply_owner_label(
     chat_id: str | int,
     video_id: str,
@@ -490,15 +521,27 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    mode = ''
     is_good: bool | None = None
-    video_id = ''
+    item_id = ''
     reason = ''
     if data.startswith('mlbb_yes:'):
+        mode = 'shorts'
         is_good = True
-        video_id = data.split(':', 1)[1].strip()
+        item_id = data.split(':', 1)[1].strip()
     elif data.startswith('mlbb_no:'):
+        mode = 'shorts'
         is_good = False
-        video_id = data.split(':', 1)[1].strip()
+        item_id = data.split(':', 1)[1].strip()
+        reason = 'button_dislike'
+    elif data.startswith('mlbb_vseg_yes:'):
+        mode = 'vseg'
+        is_good = True
+        item_id = data.split(':', 1)[1].strip()
+    elif data.startswith('mlbb_vseg_no:'):
+        mode = 'vseg'
+        is_good = False
+        item_id = data.split(':', 1)[1].strip()
         reason = 'button_dislike'
     else:
         try:
@@ -508,8 +551,17 @@ def handle_callback_query(query: dict) -> None:
         return
 
     try:
-        ok, reply = _mlbb_apply_owner_label(chat_id, video_id, is_good=is_good, reason=reason)
-        alert = '✅ Хорошо' if is_good else '❌ Плохо'
+        if mode == 'vseg':
+            ok, reply = _mlbb_apply_vseg_label(chat_id, item_id, is_good=is_good, reason=reason)
+            from mlbb_vod_segment_store import labeled_keyboard_markup as vseg_markup
+
+            markup = vseg_markup('good' if is_good else 'bad')
+        else:
+            ok, reply = _mlbb_apply_owner_label(chat_id, item_id, is_good=is_good, reason=reason)
+            from mlbb_calibration_store import labeled_keyboard_markup as shorts_markup
+
+            markup = shorts_markup('good' if is_good else 'bad')
+        alert = '✅ Ок' if is_good else '❌ Не ок'
         if not ok:
             api_call(
                 'answerCallbackQuery',
@@ -522,21 +574,19 @@ def handle_callback_query(query: dict) -> None:
             {'callback_query_id': query_id, 'text': alert},
             timeout=15,
         )
-        from mlbb_calibration_store import labeled_keyboard_markup
-
         api_call(
             'editMessageReplyMarkup',
             {
                 'chat_id': chat_id,
                 'message_id': message_id,
-                'reply_markup': labeled_keyboard_markup('good' if is_good else 'bad'),
+                'reply_markup': markup,
             },
             timeout=15,
         )
         if not is_good:
             send_message(
                 chat_id,
-                f'{reply}\n\nМожешь уточнить причину ответом на это сообщение (необязательно).',
+                f'{reply}\n\nМожешь уточнить причину ответом (необязательно).',
             )
     except Exception as exc:
         logging.exception('mlbb callback failed data=%s', data)
@@ -2019,7 +2069,8 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
-        {'command': 'mlbb_samples', 'description': '5 MLBB Shorts на оценку (владелец)'},
+        {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
+        {'command': 'mlbb_vod', 'description': 'MLBB VOD — все куски отдельно (владелец)'},
         {'command': 'mlbb_yes', 'description': 'MLBB Shorts — хороший (#id)'},
         {'command': 'mlbb_no', 'description': 'MLBB Shorts — плохой (#id)'},
     ]
@@ -2382,12 +2433,22 @@ def handle_message(message: dict):
             daemon=True,
         ).start()
         return
+    if is_owner(chat_id) and cmd in ('/mlbb_vod', '/mlbb_segments'):
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from mlbb_vod_segment_feed import main as mlbb_vod_feed_main
+
+            send_message(chat_id, 'Сканирую MLBB VOD — пришлю все подходящие куски отдельно…')
+            threading.Thread(target=mlbb_vod_feed_main, daemon=True).start()
+        except Exception as exc:
+            send_message(chat_id, f'MLBB VOD feed error: {exc}')
+        return
     if is_owner(chat_id) and cmd in ('/mlbb_samples', '/mlbb_sample'):
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from mlbb_calibration_feed import main as mlbb_feed_main
 
-            send_message(chat_id, 'Подбираю 5 MLBB Shorts на оценку…')
+            send_message(chat_id, 'Подбираю MLBB Shorts на оценку…')
             threading.Thread(target=mlbb_feed_main, daemon=True).start()
         except Exception as exc:
             send_message(chat_id, f'MLBB feed error: {exc}')

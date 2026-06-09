@@ -6,6 +6,11 @@ LOG=/root/data/mlbb/overnight_msk/catchup.log
 mkdir -p /root/data/mlbb/overnight_msk
 
 exec >>"$LOG" 2>&1
+if [[ -f /root/.video_bot.env ]]; then set -a; source /root/.video_bot.env; set +a; fi
+if [[ "${MLBB_ONLY_MODE:-0}" == "1" ]]; then
+  echo "[$(date -Is)] SKIP overnight_catchup: MLBB_ONLY_MODE=1"
+  exit 0
+fi
 echo "[$(date -Is)] overnight_catchup start"
 
 if [[ -x /usr/local/bin/stop_competing_workers.sh ]]; then

@@ -6,6 +6,12 @@ LOG=/root/data/mlbb/pipeline_watchdog.log
 PAUSE=/root/data/mlbb/PAUSED_PIPELINES
 exec >>"$LOG" 2>&1
 
+if [[ -f /root/.video_bot.env ]]; then set -a; source /root/.video_bot.env; set +a; fi
+if [[ "${MLBB_ONLY_MODE:-0}" == "1" ]]; then
+  echo "[$(date -Is)] watchdog: MLBB_ONLY_MODE — skip pubg_mlbb restart"
+  exit 0
+fi
+
 if [[ -f "$PAUSE" ]] && grep -q 'pubg_mlbb_pipeline.py' "$PAUSE" 2>/dev/null; then
   echo "[$(date -Is)] watchdog: pubg_mlbb paused"
   exit 0
