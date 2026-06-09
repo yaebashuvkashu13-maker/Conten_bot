@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
-from mlbb_calibration_store import SHORTS_ROOT, upsert_candidate
+from mlbb_calibration_store import SHORTS_ROOT, pending_candidates, upsert_candidate
 from viral_scorer import hook_score
 from youtube_download import load_env, ytdlp_cmd, ytdlp_extra_args
 
@@ -74,6 +74,8 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
+        "--sleep-requests",
+        env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
         "--print",
         "%(id)s\t%(title)s\t%(view_count)s\t%(duration)s\t%(upload_date)s\t%(webpage_url)s",
         "--no-download",
@@ -128,6 +130,12 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         "mp4",
         "--dateafter",
         date_after,
+        "--sleep-requests",
+        env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
+        "--sleep-interval",
+        env.get("YTDLP_SLEEP_INTERVAL", "4"),
+        "--max-sleep-interval",
+        env.get("YTDLP_MAX_SLEEP_INTERVAL", "12"),
         "-o",
         template,
         "--no-playlist",
@@ -182,33 +190,73 @@ def main() -> int:
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--min-score", type=float, default=0.12)
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Throttled cron mode: 1 query, few downloads, long pauses",
+    )
+    parser.add_argument("--max-downloads", type=int, default=0, help="0 = no limit")
+    parser.add_argument("--download-delay", type=float, default=12.0)
+    parser.add_argument("--search-delay", type=float, default=5.0)
+    parser.add_argument(
+        "--skip-if-pending",
+        type=int,
+        default=0,
+        help="Skip YouTube if this many unevaluated candidates already queued",
+    )
     args = parser.parse_args()
+
+    if args.incremental:
+        if args.max_downloads <= 0:
+            args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "3"))
+        if args.max_per_query > 12:
+            args.max_per_query = 12
+        if args.skip_if_pending <= 0:
+            args.skip_if_pending = int(os.environ.get("MLBB_INGEST_SKIP_IF_PENDING", "12"))
 
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("CONTENT_BOT_REPO", "/root/content_bot_ml")
     env = {**os.environ, **load_env()}
     SHORTS_ROOT.mkdir(parents=True, exist_ok=True)
 
+    pending_n = len(pending_candidates(limit=9999))
+    if args.skip_if_pending > 0 and pending_n >= args.skip_if_pending:
+        print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
+        return 0
+
+    queries = list(SEARCH_QUERIES)
+    if args.incremental:
+        # Rotate one query per run — less search load on YouTube.
+        slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
+        queries = [queries[slot]]
+        print(f"incremental query={queries[0]} pending={pending_n}")
+
     seen: set[str] = set()
     pool: list[dict] = []
-    for query in SEARCH_QUERIES:
+    for query in queries:
         for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
             vid = row["video_id"]
             if vid in seen:
                 continue
             seen.add(vid)
             pool.append(row)
+        if args.search_delay > 0 and len(queries) > 1:
+            time.sleep(args.search_delay)
 
     pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
-    pool = pool[: args.max_per_query * len(SEARCH_QUERIES)]
+    cap = args.max_per_query * len(queries)
+    pool = pool[:cap]
 
-    saved = rejected = 0
+    saved = rejected = downloads = 0
     for row in pool:
+        if args.max_downloads > 0 and downloads >= args.max_downloads:
+            break
         vid = row["video_id"]
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid) or mp4
-            time.sleep(0.5)
+            downloads += 1
+            time.sleep(max(2.0, args.download_delay))
         if not mp4.exists():
             continue
 
@@ -235,8 +283,11 @@ def main() -> int:
         saved += 1
         print(f"OK {vid} score={feats['score']:.3f} views={row.get('view_count')} {row.get('title','')[:50]}")
 
-    print(f"SUMMARY saved={saved} rejected={rejected} pool={len(pool)} dir={SHORTS_ROOT}")
-    return 0 if saved else 1
+    print(
+        f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} "
+        f"pool={len(pool)} pending={pending_n} dir={SHORTS_ROOT}"
+    )
+    return 0
 
 
 if __name__ == "__main__":

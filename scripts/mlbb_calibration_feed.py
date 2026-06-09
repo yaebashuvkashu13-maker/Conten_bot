@@ -12,12 +12,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mlbb_calibration_store import mark_feed_sent, pending_candidates, stats
+from mlbb_calibration_store import DATA_MLBB, mark_feed_sent, pending_candidates, stats
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
-BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "5"))
+BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
+QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "21600"))  # 6h
+EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
 
 
 def send_video(token: str, chat_id: str, path: Path, caption: str) -> bool:
@@ -90,13 +92,25 @@ def main() -> int:
     picked = pending_candidates(limit=BATCH_SIZE)
     if not picked:
         s = stats()
-        send_message(
-            token,
-            chat_id,
-            "MLBB калибровка: нет новых кандидатов.\n"
-            f"В индексе: {s['index_total']}, ожидают оценки: {s['pending']}.\n"
-            "Запусти ingest: mlbb_youtube_shorts_ingest.py",
-        )
+        now = time.time()
+        last_notify = 0.0
+        if EMPTY_NOTIFY_PATH.exists():
+            try:
+                last_notify = float(json.loads(EMPTY_NOTIFY_PATH.read_text()).get("at", 0))
+            except (json.JSONDecodeError, ValueError, OSError):
+                last_notify = 0.0
+        if now - last_notify >= QUIET_EMPTY_SEC:
+            send_message(
+                token,
+                chat_id,
+                "MLBB калибровка: очередь пуста — ждём ingest с YouTube.\n"
+                f"Индекс: {s['index_total']}, в очереди: {s['pending']}.\n"
+                "Ingest идёт ~раз в 3ч (бережно к YouTube).",
+            )
+            EMPTY_NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
+            EMPTY_NOTIFY_PATH.write_text(json.dumps({"at": now}), encoding="utf-8")
+        else:
+            print(f"skip empty notify pending={s['pending']} quiet={QUIET_EMPTY_SEC}s")
         return 0
 
     send_message(
