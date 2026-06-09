@@ -189,6 +189,32 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_limit: int) -> list[dict]:
+    pool = discover_strict_candidates(vod, PROFILE, sig, set())[:probe_limit]
+    out: list[dict] = []
+    for clip in pool:
+        start = float(clip.get("start", 0))
+        sid = segment_id(vod, start)
+        if sid in labeled or sid in sent:
+            continue
+        ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(vod, PROFILE, [clip])
+        if not ok:
+            continue
+        metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
+        vis = visual_rows[0] if visual_rows else {}
+        out.append(
+            {
+                "segment_id": sid,
+                "clip": clip,
+                "start": start,
+                "score": float(clip.get("score") or metrics.get("viral_score") or 0),
+                "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
+                "visual_pass": vis.get("visual_pass", True),
+            }
+        )
+    return out
+
+
 def main() -> int:
     if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
         print("SKIP: MLBB_ONLY_MODE not set")
@@ -214,66 +240,40 @@ def main() -> int:
         send_message(token, chat_id, "MLBB VOD: нет файла E4Dsp53yvv4 на диске — положи VOD в /root/videos/")
         return 1
 
-    sig = file_sha256(vod)
+    dur = _ffprobe_duration(vod)
     labeled = labeled_ids()
     sent = load_feed_sent()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
-
-    pool = discover_strict_candidates(vod, PROFILE, sig, set())
-    pool = pool[:probe_limit]
-    dur = _ffprobe_duration(vod)
-    if dur < 120:
-        print(f"WARN short vod {vod.name} dur={dur:.0f}s — trying inbox full file")
-        full = pick_vod()
-        if full and full != vod and _ffprobe_duration(full) > dur:
-            vod = full
-            sig = file_sha256(vod)
-            pool = discover_strict_candidates(vod, PROFILE, sig, set())[:probe_limit]
+    full_scan = os.environ.get("MLBB_VOD_FULL_SCAN", "0") == "1"
 
     to_send: list[dict] = []
-    for clip in pool:
-        start = float(clip.get("start", 0))
-        sid = segment_id(vod, start)
+    for row in bootstrap_exemplar_segments():
+        sid = row["segment_id"]
         if sid in labeled or sid in sent:
             continue
-        ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(vod, PROFILE, [clip])
-        if not ok:
-            continue
-        metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
-        vis = visual_rows[0] if visual_rows else {}
-        to_send.append(
-            {
-                "segment_id": sid,
-                "clip": clip,
-                "start": start,
-                "score": float(clip.get("score") or metrics.get("viral_score") or 0),
-                "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
-                "visual_pass": vis.get("visual_pass", True),
-            }
-        )
+        to_send.append(row)
 
-    if not to_send:
-        for row in bootstrap_exemplar_segments():
-            sid = row["segment_id"]
-            if sid in labeled or sid in sent:
-                continue
-            to_send.append(row)
+    sig = file_sha256(vod)
+    if not to_send and full_scan:
+        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
 
     if not to_send:
         s = stats()
         send_message(
             token,
             chat_id,
-            f"MLBB VOD: сканирую {vod.name} ({int(dur // 60)} мин) — пока 0 кусков прошли фильтр.\n"
-            "Повтор через cron или /mlbb_vod. Скан полного VOD занимает 15–40 мин.",
+            f"MLBB VOD: все текущие куски уже отправлены или оценены.\n"
+            f"Полный VOD {vod.name} ({int(dur // 60)} мин) — автоскан ночью.\n"
+            f"Напиши /mlbb_vod позже или жди cron.",
         )
-        print(f"nothing to send pending={s['pending']} pool={len(pool)} vod={vod.name}")
+        print(f"nothing to send pending={s['pending']} vod={vod.name} full_scan={full_scan}")
         return 0
 
+    mode = "exemplar" if to_send[0].get("bootstrap") else "scan"
     send_message(
         token,
         chat_id,
-        f"MLBB VOD — {len(to_send)} кусков с {vod.name}\n"
+        f"MLBB VOD — {len(to_send)} кусков ({mode})\n"
         f"Каждый отдельно — жми 👍 Ок / 👎 Не ок под видео.\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
@@ -317,7 +317,7 @@ def main() -> int:
         time.sleep(1.5)
 
     mark_feed_sent(sent_ids)
-    print(f"sent={len(sent_ids)} from pool={len(pool)}")
+    print(f"sent={len(sent_ids)} mode={mode} vod={vod.name}")
     return 0
 
 
