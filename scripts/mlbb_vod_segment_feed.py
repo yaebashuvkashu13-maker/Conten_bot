@@ -102,29 +102,48 @@ def _registry_entry(path: Path, *, title: str = "", exhausted: bool = False) -> 
     }
 
 
+def _repair_registry_ids(registry: list[dict]) -> bool:
+    """Fix legacy truncated ids (yt_tp0aAJ22) so exhausted/skip logic works."""
+    changed = False
+    for row in registry:
+        path = Path(str(row.get("path", "")))
+        if not path.exists():
+            continue
+        correct = vod_youtube_id(path)
+        if row.get("id") != correct:
+            row["id"] = correct
+            changed = True
+    return changed
+
+
 def _ensure_registry(env: dict[str, str]) -> list[dict]:
     state = _load_state()
     registry: list[dict] = list(state.get("vods", []))
+    if _repair_registry_ids(registry):
+        log.info("repaired registry youtube ids")
     known = {r.get("id") for r in registry}
+    known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))
 
     # Bootstrap owner MLBB VOD + any we downloaded before.
     if INBOX.exists():
         for p in sorted(INBOX.glob("yt_*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
             vid = vod_youtube_id(p)
-            if vid in known or _ffprobe_duration(p) < 1800:
+            if str(p) in known_paths or vid in known:
                 continue
-            if vid in used or vid == "E4Dsp53yvv4":
-                from nightly_youtube_montage import fetch_video_meta
+            if _ffprobe_duration(p) < 600:
+                continue
+            from nightly_youtube_montage import fetch_video_meta
 
-                meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
-                title = str(meta.get("title") or p.stem)
-                if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
-                    registry.append(_registry_entry(p, title=title))
-                    known.add(vid)
+            meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
+            title = str(meta.get("title") or p.stem)
+            if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
+                registry.append(_registry_entry(p, title=title))
+                known.add(vid)
+                known_paths.add(str(p))
 
     state["vods"] = registry
-    state["used_youtube_ids"] = sorted(set(used) | known)
+    state["used_youtube_ids"] = sorted(set(used) | {r.get("id", "") for r in registry if r.get("id")})
     _save_state(state)
     return registry
 
@@ -139,11 +158,14 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
     return None
 
 
-def _mark_vod_exhausted(vod_id: str) -> None:
+def _mark_vod_exhausted(vod: Path) -> None:
+    vid = vod_youtube_id(vod)
     state = _load_state()
     for row in state.get("vods", []):
-        if row.get("id") == vod_id:
+        row_path = Path(str(row.get("path", "")))
+        if row.get("id") == vid or row_path == vod or row_path.name == vod.name:
             row["exhausted"] = True
+            row["id"] = vid
     _save_state(state)
 
 
@@ -744,10 +766,10 @@ def _process_vod_segments(
     _save_state(state)
 
     if sent_total == 0:
-        vid = vod_youtube_id(vod)
-        _mark_vod_exhausted(vid)
+        _mark_vod_exhausted(vod)
         if entry:
             entry["exhausted"] = True
+            entry["id"] = vod_youtube_id(vod)
         log.info("exhausted vod=%s", vod.name)
     else:
         log.info("sent=%s vod=%s", sent_total, vod.name)
