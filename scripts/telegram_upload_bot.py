@@ -2438,7 +2438,7 @@ def handle_message(message: dict):
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from mlbb_vod_segment_feed import main as mlbb_vod_feed_main
 
-            send_message(chat_id, 'Сканирую MLBB VOD (~10с куски, без логотипа) — займёт несколько минут…')
+            send_message(chat_id, 'Ищу новые куски MLBB (~10с). Если текущий стрим исчерпан — скачаю новый с YouTube.')
 
             def _vod_feed_worker() -> None:
                 os.environ['MLBB_VOD_FULL_SCAN'] = '1'
