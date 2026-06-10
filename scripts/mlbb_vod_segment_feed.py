@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 MLBB_TITLE_RE = re.compile(r"mobile legends|mlbb|bang bang|мобайл легенд", re.I)
+LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs day|knockout stage|grand finals", re.I)
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -140,27 +141,46 @@ def _mark_vod_exhausted(vod_id: str) -> None:
     _save_state(state)
 
 
+def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str]) -> list[dict]:
+    from nightly_youtube_montage import discover_candidates
+
+    min_sec = float(os.environ.get("MLBB_VOD_MIN_SEC", "600"))  # 10 min — полный матч
+    max_sec = float(os.environ.get("MLBB_VOD_MAX_SEC", "18000"))  # до 5 ч
+    queries = [
+        q.strip()
+        for q in os.environ.get(
+            "MLBB_VOD_SEARCH_QUERIES",
+            "MLBB mythic ranked full match gameplay,Mobile Legends solo rank full game,"
+            "MLBB teamfight savage ranked gameplay",
+        ).split(",")
+        if q.strip()
+    ]
+    raw = discover_candidates(env, queries=queries, min_sec=min_sec, max_sec=max_sec, search_limit=20)
+    out: list[dict] = []
+    for meta in raw:
+        title = str(meta.get("title") or "")
+        if LIVE_TITLE_RE.search(title):
+            continue
+        if meta.get("id") in used:
+            continue
+        if not MLBB_TITLE_RE.search(title):
+            continue
+        out.append(meta)
+    out.sort(key=lambda m: abs(float(m.get("duration") or 0) - 1500), reverse=False)
+    return out
+
+
 def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict]) -> Path | None:
-    from nightly_youtube_montage import discover_candidates, download_video, pick_candidate
+    from nightly_youtube_montage import download_video
 
     state = _load_state()
     used = set(state.get("used_youtube_ids", []))
     used.update(r.get("id", "") for r in registry if r.get("id"))
 
-    min_sec = float(os.environ.get("MLBB_VOD_MIN_SEC", "2700"))  # 45 min
-    max_sec = float(os.environ.get("MLBB_VOD_MAX_SEC", "10800"))  # 3 h
-    queries = [
-        q.strip()
-        for q in os.environ.get(
-            "MLBB_VOD_SEARCH_QUERIES",
-            "Mobile Legends Bang Bang live stream full,MLBB ranked gameplay full match",
-        ).split(",")
-        if q.strip()
-    ]
-    candidates = discover_candidates(env, queries=queries, min_sec=min_sec, max_sec=max_sec, search_limit=12)
-    pick = pick_candidate(candidates, used)
-    if not pick:
+    candidates = _discover_mlbb_vod_candidates(env, used)
+    if not candidates:
         return None
+    pick = candidates[0]
 
     path = download_video(pick, env)
     entry = _registry_entry(path, title=str(pick.get("title", ""))[:120])
