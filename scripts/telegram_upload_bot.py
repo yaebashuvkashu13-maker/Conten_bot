@@ -2443,7 +2443,8 @@ def handle_message(message: dict):
             def _vod_feed_worker() -> None:
                 os.environ['MLBB_VOD_FULL_SCAN'] = '1'
                 os.environ['MLBB_VOD_BOOTSTRAP'] = '0'
-                os.environ['MLBB_VOD_SEGMENT_SEC'] = '10'
+                os.environ['MLBB_VOD_SEGMENT_SEC'] = '15'
+                os.environ['HIGHLIGHT_WINDOW_SEC'] = '15'
                 os.environ['MLBB_SEEK_PREROLL'] = '3'
                 os.environ['MLBB_FORCE_RERENDER'] = '1'
                 os.environ['LOGO_FILE'] = '/nonexistent/mlbb_calibration_no_logo.png'

@@ -7,13 +7,17 @@ Owner rates with 👍 Ок / 👎 Не ок buttons — all passing segments, no
 
 from __future__ import annotations
 
+import fcntl
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 MLBB_TITLE_RE = re.compile(r"mobile legends|mlbb|bang bang|мобайл легенд", re.I)
@@ -41,8 +45,10 @@ from youtube_download import load_env
 ENV_PATH = Path("/root/.video_bot.env")
 PROFILE = "mobile_legends"
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
-SEGMENT_SEC = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", os.environ.get("HIGHLIGHT_WINDOW_SEC", "10")))
+SEGMENT_SEC = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", os.environ.get("HIGHLIGHT_WINDOW_SEC", "15")))
 STATE_PATH = Path("/root/data/mlbb/vod_segment_state.json")
+YTDLP_LOCK_PATH = Path("/tmp/mlbb_vod_ytdlp.lock")
+log = logging.getLogger("mlbb_vod_feed")
 
 def _ffprobe_duration(path: Path) -> float:
     proc = subprocess.run(
@@ -141,11 +147,31 @@ def _mark_vod_exhausted(vod_id: str) -> None:
     _save_state(state)
 
 
-def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str]) -> list[dict]:
+@contextmanager
+def _ytdlp_download_lock(blocking: bool = True):
+    """One yt-dlp download at a time — same idea as Shorts ingest flock."""
+    YTDLP_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = YTDLP_LOCK_PATH.open("w")
+    flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(handle.fileno(), flags)
+    except BlockingIOError:
+        handle.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, throttled: bool = False) -> list[dict]:
     from nightly_youtube_montage import discover_candidates
 
     min_sec = float(os.environ.get("MLBB_VOD_MIN_SEC", "600"))  # 10 min — полный матч
     max_sec = float(os.environ.get("MLBB_VOD_MAX_SEC", "18000"))  # до 5 ч
+    search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
     queries = [
         q.strip()
         for q in os.environ.get(
@@ -155,13 +181,28 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str]) -> list[d
         ).split(",")
         if q.strip()
     ]
-    raw = discover_candidates(env, queries=queries, min_sec=min_sec, max_sec=max_sec, search_limit=20)
+    if throttled and len(queries) > 1:
+        # One query per background pass — less YouTube pressure than full sweep.
+        queries = queries[:1]
+
+    raw: list[dict] = []
+    for idx, query in enumerate(queries):
+        if throttled and idx > 0:
+            time.sleep(search_delay)
+        batch = discover_candidates(env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=20)
+        raw.extend(batch)
+
     out: list[dict] = []
+    seen: set[str] = set()
     for meta in raw:
+        vid = str(meta.get("id") or "")
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
         title = str(meta.get("title") or "")
         if LIVE_TITLE_RE.search(title):
             continue
-        if meta.get("id") in used:
+        if vid in used:
             continue
         if not MLBB_TITLE_RE.search(title):
             continue
@@ -170,26 +211,151 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str]) -> list[d
     return out
 
 
-def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict]) -> Path | None:
-    from nightly_youtube_montage import download_video
+def _download_vod_ytdlp_throttled(url: str, env: dict[str, str]) -> Path:
+    from youtube_download import subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args, youtube_format_for_url
 
+    delay = float(os.environ.get("MLBB_VOD_DOWNLOAD_DELAY", "12"))
+    if delay > 0:
+        time.sleep(delay)
+    INBOX.mkdir(parents=True, exist_ok=True)
+    template = str(INBOX / "yt_%(id)s.%(ext)s")
+    cmd = ytdlp_cmd(env, use_proxy=False) + [
+        "--no-playlist",
+        "--restrict-filenames",
+        "--merge-output-format",
+        "mp4",
+        "-f",
+        youtube_format_for_url(url, env),
+        "--sleep-requests",
+        env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
+        "--sleep-interval",
+        env.get("YTDLP_SLEEP_INTERVAL", "4"),
+        "--max-sleep-interval",
+        env.get("YTDLP_MAX_SLEEP_INTERVAL", "12"),
+        *ytdlp_extra_args(env),
+        "-o",
+        template,
+        url,
+    ]
+    subprocess.run(
+        cmd,
+        check=True,
+        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+        env=subprocess_env_no_proxy(env),
+    )
+    files = sorted(INBOX.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
+    return files[0]
+
+
+def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttled: bool = True) -> Path | None:
     state = _load_state()
     used = set(state.get("used_youtube_ids", []))
     used.update(r.get("id", "") for r in registry if r.get("id"))
 
-    candidates = _discover_mlbb_vod_candidates(env, used)
+    candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
     if not candidates:
         return None
     pick = candidates[0]
 
-    path = download_video(pick, env)
+    with _ytdlp_download_lock(blocking=True) as acquired:
+        if not acquired:
+            log.warning("yt-dlp lock busy — skip download")
+            return None
+        path = _download_vod_ytdlp_throttled(str(pick.get("url") or f"https://www.youtube.com/watch?v={pick['id']}"), env)
+
     entry = _registry_entry(path, title=str(pick.get("title", ""))[:120])
     registry.append(entry)
+    state = _load_state()
     state["vods"] = registry
     state["used_youtube_ids"] = sorted(used | {pick["id"]})
     state["active_vod"] = path.name
+    state["pending_download"] = {}
     _save_state(state)
+    log.info("downloaded vod=%s title=%s", pick["id"], str(pick.get("title", ""))[:60])
     return path
+
+
+class VodPipelineDownloader:
+    """Background next-VOD download while current VOD is scanned/sent."""
+
+    def __init__(self, env: dict[str, str]):
+        self.env = env
+        self._thread: threading.Thread | None = None
+        self._ready: Path | None = None
+        self._error: str | None = None
+        self._running = False
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+
+    def busy(self) -> bool:
+        with self._lock:
+            return self._running or self._ready is not None
+
+    def start_if_idle(self, registry: list[dict]) -> None:
+        with self._lock:
+            if self._running or self._ready is not None:
+                return
+            self._running = True
+            self._done.clear()
+            reg_snapshot = list(registry)
+            self._thread = threading.Thread(
+                target=self._worker,
+                args=(reg_snapshot,),
+                daemon=True,
+                name="mlbb-vod-bg-dl",
+            )
+            self._thread.start()
+
+    def _worker(self, registry: list[dict]) -> None:
+        path: Path | None = None
+        err = ""
+        try:
+            state = _load_state()
+            if state.get("pending_download", {}).get("status") == "downloading":
+                log.info("another download already marked in state — skip bg")
+            else:
+                state["pending_download"] = {
+                    "status": "downloading",
+                    "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                _save_state(state)
+                path = _download_new_mlbb_vod(self.env, registry, throttled=True)
+        except Exception as exc:
+            err = str(exc)
+            log.exception("background vod download failed")
+        finally:
+            state = _load_state()
+            if path:
+                state["pending_download"] = {"status": "ready", "path": str(path)}
+            else:
+                state["pending_download"] = {"status": "failed", "error": err[:200]}
+            _save_state(state)
+            with self._lock:
+                self._ready = path
+                self._error = err or None
+                self._running = False
+            self._done.set()
+
+    def pop_ready(self) -> Path | None:
+        with self._lock:
+            ready = self._ready
+            self._ready = None
+            return ready
+
+    def wait_ready(self, timeout: float) -> Path | None:
+        deadline = time.time() + max(0.0, timeout)
+        while time.time() < deadline:
+            ready = self.pop_ready()
+            if ready:
+                return ready
+            with self._lock:
+                alive = self._running
+            if not alive:
+                return self.pop_ready()
+            time.sleep(min(5.0, deadline - time.time()))
+        return None
 
 
 def bootstrap_exemplar_segments() -> list[dict]:
@@ -384,7 +550,7 @@ def _send_segment_batch(
     to_send: list[dict],
     sig: str,
 ) -> int:
-    seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "10")))
+    seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
     send_message(
         token,
         chat_id,
@@ -430,17 +596,120 @@ def _send_segment_batch(
     return len(sent_ids)
 
 
+def _resolve_next_vod(
+    env: dict[str, str],
+    registry: list[dict],
+    downloader: VodPipelineDownloader,
+    *,
+    auto_download: bool,
+    token: str,
+    chat_id: str,
+    notify: bool,
+) -> tuple[Path | None, dict | None]:
+    entry = _pick_available_vod(registry)
+    if entry:
+        path = Path(str(entry["path"]))
+        if path.exists():
+            return path, entry
+
+    ready = downloader.pop_ready()
+    if ready and ready.exists():
+        registry[:] = _ensure_registry(env)
+        entry = _pick_available_vod(registry)
+        if entry:
+            return Path(str(entry["path"])), entry
+
+    if not auto_download:
+        return None, None
+
+    downloader.start_if_idle(registry)
+    ready = downloader.wait_ready(timeout=float(os.environ.get("MLBB_VOD_BG_WAIT_SEC", "120")))
+    if ready and ready.exists():
+        registry[:] = _ensure_registry(env)
+        entry = _pick_available_vod(registry)
+        if entry:
+            return Path(str(entry["path"])), entry
+
+    if notify:
+        send_message(token, chat_id, "📥 Качаю новый MLBB VOD с YouTube (с паузами, без бана)…")
+    vod = _download_new_mlbb_vod(env, registry, throttled=True)
+    if vod:
+        registry[:] = _ensure_registry(env)
+        entry = next((r for r in registry if r.get("id") == vod_youtube_id(vod)), None)
+        if notify:
+            title = str((entry or {}).get("title") or vod.name)
+            send_message(
+                token,
+                chat_id,
+                f"✅ Скачал: {title[:80]}\n"
+                f"Сканирую куски (~{int(_ffprobe_duration(vod) // 60)} мин стрима)…",
+            )
+        return vod, entry
+    return None, None
+
+
+def _process_vod_segments(
+    token: str,
+    chat_id: str,
+    vod: Path,
+    entry: dict | None,
+    *,
+    labeled: dict,
+    probe_limit: int,
+    downloader: VodPipelineDownloader,
+    registry: list[dict],
+) -> int:
+    """Drain all scorable segments from one VOD; kick off next download in parallel."""
+    downloader.start_if_idle(registry)
+    sent_total = 0
+    sig = file_sha256(vod)
+    sent = load_feed_sent()
+
+    while True:
+        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+        if not to_send:
+            break
+        n = _send_segment_batch(token, chat_id, vod, to_send, sig)
+        if n == 0:
+            log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
+            break
+        sent_total += n
+        sent = load_feed_sent()
+        downloader.start_if_idle(registry)
+
+    state = _load_state()
+    state["active_vod"] = vod.name
+    scanned = set(state.get("scanned_vods", []))
+    scanned.add(vod.name)
+    state["scanned_vods"] = sorted(scanned)
+    _save_state(state)
+
+    if sent_total == 0:
+        vid = vod_youtube_id(vod)
+        _mark_vod_exhausted(vid)
+        if entry:
+            entry["exhausted"] = True
+        log.info("exhausted vod=%s", vod.name)
+    else:
+        log.info("sent=%s vod=%s", sent_total, vod.name)
+    return sent_total
+
+
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
     if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
         print("SKIP: MLBB_ONLY_MODE not set")
         return 0
 
+    seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
     os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
     os.environ["LOGO_FILE"] = "/nonexistent/mlbb_calibration_no_logo.png"
-    os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", "10")
+    os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", seg_sec)
+    os.environ.setdefault("HIGHLIGHT_WINDOW_SEC", seg_sec)
 
     for key, val in strict_peak_env(PROFILE).items():
         os.environ[key] = val
@@ -453,55 +722,50 @@ def main() -> int:
         return 1
 
     labeled = labeled_ids()
-    sent = load_feed_sent()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"
+    max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "360"))
+    deadline = time.time() + max_min * 60
+    max_vods = int(os.environ.get("MLBB_VOD_PIPELINE_MAX_VODS", "4"))
+
     registry = _ensure_registry(env)
+    downloader = VodPipelineDownloader(env)
+    total_sent = 0
+    vods_done = 0
+    notified_download = False
 
-    for attempt in range(3):
-        entry = _pick_available_vod(registry)
-        vod: Path | None = Path(entry["path"]) if entry else None
+    while time.time() < deadline and vods_done < max_vods:
+        vod, entry = _resolve_next_vod(
+            env,
+            registry,
+            downloader,
+            auto_download=auto_download,
+            token=token,
+            chat_id=chat_id,
+            notify=not notified_download,
+        )
+        if vod is None:
+            if not notified_download and auto_download:
+                send_message(token, chat_id, "⚠️ Не нашёл новый MLBB стрим. Повторю на следующем запуске.")
+            break
+        notified_download = True
 
-        if vod is None or not vod.exists():
-            if not auto_download:
-                print("no vod and auto_download=0")
-                return 0
-            send_message(token, chat_id, "📥 Текущий стрим закончился — качаю новый MLBB VOD с YouTube…")
-            vod = _download_new_mlbb_vod(env, registry)
-            if not vod:
-                send_message(token, chat_id, "⚠️ Не нашёл новый MLBB стрим на YouTube. Повторю позже.")
-                return 1
-            title = next((r.get("title", "") for r in registry if r.get("id") == vod_youtube_id(vod)), vod.name)
-            send_message(
-                token,
-                chat_id,
-                f"✅ Скачал: {title[:80]}\n"
-                f"Сканирую и нарежу куски (~{int(_ffprobe_duration(vod) // 60)} мин стрима)…",
-            )
-            entry = next((r for r in registry if r.get("id") == vod_youtube_id(vod)), None)
+        n = _process_vod_segments(
+            token,
+            chat_id,
+            vod,
+            entry,
+            labeled=labeled,
+            probe_limit=probe_limit,
+            downloader=downloader,
+            registry=registry,
+        )
+        total_sent += n
+        vods_done += 1
+        registry[:] = _ensure_registry(env)
 
-        sig = file_sha256(vod)
-        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
-        if to_send:
-            n = _send_segment_batch(token, chat_id, vod, to_send, sig)
-            state = _load_state()
-            state["active_vod"] = vod.name
-            scanned = set(state.get("scanned_vods", []))
-            scanned.add(vod.name)
-            state["scanned_vods"] = sorted(scanned)
-            _save_state(state)
-            print(f"sent={n} vod={vod.name} attempt={attempt}")
-            return 0
-
-        vid = vod_youtube_id(vod)
-        _mark_vod_exhausted(vid)
-        if entry:
-            entry["exhausted"] = True
-        print(f"exhausted vod={vod.name} attempt={attempt} — try next/download")
-        # loop: pick next local or download on next iteration
-
-    send_message(token, chat_id, "⚠️ Не удалось найти новые куски — попробую снова на следующем cron.")
-    return 0
+    print(f"pipeline done sent={total_sent} vods={vods_done}")
+    return 0 if total_sent > 0 or vods_done > 0 else 0
 
 
 if __name__ == "__main__":
