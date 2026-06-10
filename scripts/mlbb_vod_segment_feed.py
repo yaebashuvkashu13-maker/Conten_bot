@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+MLBB_TITLE_RE = re.compile(r"mobile legends|mlbb|bang bang|мобайл легенд", re.I)
+INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -64,11 +68,15 @@ def _ffprobe_duration(path: Path) -> float:
 
 def _load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"active_vod": "", "scanned_vods": []}
+        return {"active_vod": "", "scanned_vods": [], "vods": [], "used_youtube_ids": []}
     try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {"active_vod": "", "scanned_vods": []}
+        return {"active_vod": "", "scanned_vods": [], "vods": [], "used_youtube_ids": []}
+    data.setdefault("vods", [])
+    data.setdefault("used_youtube_ids", [])
+    data.setdefault("scanned_vods", [])
+    return data
 
 
 def _save_state(state: dict) -> None:
@@ -76,41 +84,92 @@ def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def list_mlbb_vods() -> list[Path]:
-    """MLBB-only VODs (never PUBG/Standoff inbox files)."""
-    allow = [x.strip() for x in os.environ.get("MLBB_VOD_IDS", "E4Dsp53yvv4").split(",") if x.strip()]
-    rows: list[Path] = []
-    inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
-    if inbox.exists():
-        for p in inbox.glob("yt_*.mp4"):
-            if p.is_file() and any(vid in p.name for vid in allow):
-                rows.append(p)
-    for p in Path("/root/videos").glob("owner_mlbb_*.mp4"):
-        if p.is_file() and _ffprobe_duration(p) > 120:
-            rows.append(p)
-    rows.sort(key=lambda p: (p.stat().st_size, _ffprobe_duration(p)), reverse=True)
-    return rows
+def _registry_entry(path: Path, *, title: str = "", exhausted: bool = False) -> dict:
+    vid = vod_youtube_id(path)
+    return {
+        "id": vid,
+        "path": str(path),
+        "title": title or path.name,
+        "exhausted": exhausted,
+        "duration_min": int(_ffprobe_duration(path) // 60),
+    }
 
 
-def pick_vod(*, rotate: bool = False) -> Path | None:
-    """Pick full inbox VOD; rotate to next large file when rotate=True."""
-    vods = list_mlbb_vods()
-    if not vods:
-        return None
+def _ensure_registry(env: dict[str, str]) -> list[dict]:
     state = _load_state()
-    active = state.get("active_vod", "")
-    if rotate and len(vods) > 1 and active:
-        names = [p.name for p in vods]
-        try:
-            idx = names.index(active)
-            return vods[(idx + 1) % len(vods)]
-        except ValueError:
-            pass
-    if active:
-        for p in vods:
-            if p.name == active:
-                return p
-    return vods[0]
+    registry: list[dict] = list(state.get("vods", []))
+    known = {r.get("id") for r in registry}
+    used = set(state.get("used_youtube_ids", []))
+
+    # Bootstrap owner MLBB VOD + any we downloaded before.
+    if INBOX.exists():
+        for p in sorted(INBOX.glob("yt_*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
+            vid = vod_youtube_id(p)
+            if vid in known or _ffprobe_duration(p) < 1800:
+                continue
+            if vid in used or vid == "E4Dsp53yvv4":
+                from nightly_youtube_montage import fetch_video_meta
+
+                meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
+                title = str(meta.get("title") or p.stem)
+                if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
+                    registry.append(_registry_entry(p, title=title))
+                    known.add(vid)
+
+    state["vods"] = registry
+    state["used_youtube_ids"] = sorted(set(used) | known)
+    _save_state(state)
+    return registry
+
+
+def _pick_available_vod(registry: list[dict]) -> dict | None:
+    for row in registry:
+        if row.get("exhausted"):
+            continue
+        path = Path(str(row.get("path", "")))
+        if path.exists() and _ffprobe_duration(path) > 600:
+            return row
+    return None
+
+
+def _mark_vod_exhausted(vod_id: str) -> None:
+    state = _load_state()
+    for row in state.get("vods", []):
+        if row.get("id") == vod_id:
+            row["exhausted"] = True
+    _save_state(state)
+
+
+def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict]) -> Path | None:
+    from nightly_youtube_montage import discover_candidates, download_video, pick_candidate
+
+    state = _load_state()
+    used = set(state.get("used_youtube_ids", []))
+    used.update(r.get("id", "") for r in registry if r.get("id"))
+
+    min_sec = float(os.environ.get("MLBB_VOD_MIN_SEC", "2700"))  # 45 min
+    max_sec = float(os.environ.get("MLBB_VOD_MAX_SEC", "10800"))  # 3 h
+    queries = [
+        q.strip()
+        for q in os.environ.get(
+            "MLBB_VOD_SEARCH_QUERIES",
+            "Mobile Legends Bang Bang live stream full,MLBB ranked gameplay full match",
+        ).split(",")
+        if q.strip()
+    ]
+    candidates = discover_candidates(env, queries=queries, min_sec=min_sec, max_sec=max_sec, search_limit=12)
+    pick = pick_candidate(candidates, used)
+    if not pick:
+        return None
+
+    path = download_video(pick, env)
+    entry = _registry_entry(path, title=str(pick.get("title", ""))[:120])
+    registry.append(entry)
+    state["vods"] = registry
+    state["used_youtube_ids"] = sorted(used | {pick["id"]})
+    state["active_vod"] = path.name
+    _save_state(state)
+    return path
 
 
 def bootstrap_exemplar_segments() -> list[dict]:
@@ -298,88 +357,22 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
     return out
 
 
-def main() -> int:
-    if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
-        print("SKIP: MLBB_ONLY_MODE not set")
-        return 0
-
-    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
-    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
-    os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
-    os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
-
-    for key, val in strict_peak_env(PROFILE).items():
-        os.environ[key] = val
-
-    env = {**os.environ, **load_env(ENV_PATH)}
-    token = env.get("TG_BOT_TOKEN", "")
-    chat_id = env.get("TG_CHAT_ID", "")
-    if not token or not chat_id:
-        print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
-        return 1
-
-    vod = pick_vod()
-    if not vod or not vod.exists():
-        send_message(token, chat_id, "MLBB VOD: нет файла E4Dsp53yvv4 на диске — положи VOD в /root/videos/")
-        return 1
-
-    dur = _ffprobe_duration(vod)
-    labeled = labeled_ids()
-    sent = load_feed_sent()
-    probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "20"))
-    full_scan = os.environ.get("MLBB_VOD_FULL_SCAN", "1") == "1"
-    use_bootstrap = os.environ.get("MLBB_VOD_BOOTSTRAP", "0") == "1"
-    rotate_vod = os.environ.get("MLBB_VOD_ROTATE", "0") == "1"
-
-    if rotate_vod:
-        vod = pick_vod(rotate=True) or vod
-
-    os.environ["LOGO_FILE"] = "/nonexistent/mlbb_calibration_no_logo.png"
-    os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", "10")
-
-    to_send: list[dict] = []
-    if use_bootstrap:
-        for row in bootstrap_exemplar_segments():
-            sid = row["segment_id"]
-            if sid in labeled or sid in sent:
-                continue
-            to_send.append(row)
-
-    sig = file_sha256(vod)
-    if full_scan:
-        scanned = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
-        if scanned:
-            to_send = scanned
-        elif not to_send and rotate_vod:
-            alt = pick_vod(rotate=True)
-            if alt and alt != vod:
-                vod = alt
-                sig = file_sha256(vod)
-                to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
-
-    if not to_send:
-        s = stats()
-        send_message(
-            token,
-            chat_id,
-            f"MLBB VOD: все текущие куски уже отправлены или оценены.\n"
-            f"Полный VOD {vod.name} ({int(dur // 60)} мин) — автоскан ночью.\n"
-            f"Напиши /mlbb_vod позже или жди cron.",
-        )
-        print(f"nothing to send pending={s['pending']} vod={vod.name} full_scan={full_scan}")
-        return 0
-
-    mode = "scan"
+def _send_segment_batch(
+    token: str,
+    chat_id: str,
+    vod: Path,
+    to_send: list[dict],
+    sig: str,
+) -> int:
     seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "10")))
     send_message(
         token,
         chat_id,
-        f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с, без логотипа)\n"
-        f"Файл: {vod.name}\n"
-        f"Жми 👍 Ок / 👎 Не ок под каждым.\n"
+        f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
+        f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
+        f"👍 Ок / 👎 Не ок под каждым\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
-
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
     for row in to_send:
@@ -389,7 +382,6 @@ def main() -> int:
         if force or not out.exists() or out.stat().st_size < 500_000:
             if not render_single_segment(vod, row["clip"], out):
                 continue
-
         seg_dur = _ffprobe_duration(out)
         caption = (
             f"MLBB кусок #{sid}\n"
@@ -414,15 +406,81 @@ def main() -> int:
         )
         sent_ids.append(sid)
         time.sleep(1.5)
-
     mark_feed_sent(sent_ids)
-    state = _load_state()
-    state["active_vod"] = vod.name
-    scanned = set(state.get("scanned_vods", []))
-    scanned.add(vod.name)
-    state["scanned_vods"] = sorted(scanned)
-    _save_state(state)
-    print(f"sent={len(sent_ids)} mode={mode} vod={vod.name}")
+    return len(sent_ids)
+
+
+def main() -> int:
+    if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
+        print("SKIP: MLBB_ONLY_MODE not set")
+        return 0
+
+    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
+    os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
+    os.environ["LOGO_FILE"] = "/nonexistent/mlbb_calibration_no_logo.png"
+    os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", "10")
+
+    for key, val in strict_peak_env(PROFILE).items():
+        os.environ[key] = val
+
+    env = {**os.environ, **load_env(ENV_PATH)}
+    token = env.get("TG_BOT_TOKEN", "")
+    chat_id = env.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
+        return 1
+
+    labeled = labeled_ids()
+    sent = load_feed_sent()
+    probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
+    auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"
+    registry = _ensure_registry(env)
+
+    for attempt in range(3):
+        entry = _pick_available_vod(registry)
+        vod: Path | None = Path(entry["path"]) if entry else None
+
+        if vod is None or not vod.exists():
+            if not auto_download:
+                print("no vod and auto_download=0")
+                return 0
+            send_message(token, chat_id, "📥 Текущий стрим закончился — качаю новый MLBB VOD с YouTube…")
+            vod = _download_new_mlbb_vod(env, registry)
+            if not vod:
+                send_message(token, chat_id, "⚠️ Не нашёл новый MLBB стрим на YouTube. Повторю позже.")
+                return 1
+            title = next((r.get("title", "") for r in registry if r.get("id") == vod_youtube_id(vod)), vod.name)
+            send_message(
+                token,
+                chat_id,
+                f"✅ Скачал: {title[:80]}\n"
+                f"Сканирую и нарежу куски (~{int(_ffprobe_duration(vod) // 60)} мин стрима)…",
+            )
+            entry = next((r for r in registry if r.get("id") == vod_youtube_id(vod)), None)
+
+        sig = file_sha256(vod)
+        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+        if to_send:
+            n = _send_segment_batch(token, chat_id, vod, to_send, sig)
+            state = _load_state()
+            state["active_vod"] = vod.name
+            scanned = set(state.get("scanned_vods", []))
+            scanned.add(vod.name)
+            state["scanned_vods"] = sorted(scanned)
+            _save_state(state)
+            print(f"sent={n} vod={vod.name} attempt={attempt}")
+            return 0
+
+        vid = vod_youtube_id(vod)
+        _mark_vod_exhausted(vid)
+        if entry:
+            entry["exhausted"] = True
+        print(f"exhausted vod={vod.name} attempt={attempt} — try next/download")
+        # loop: pick next local or download on next iteration
+
+    send_message(token, chat_id, "⚠️ Не удалось найти новые куски — попробую снова на следующем cron.")
     return 0
 
 
