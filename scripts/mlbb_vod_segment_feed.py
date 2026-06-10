@@ -459,13 +459,24 @@ def send_message(token: str, chat_id: str, text: str) -> None:
     )
 
 
+def _vod_lead_sec() -> float:
+    """Start cut N seconds before scorer peak — owner wants setup before the fight."""
+    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "12"))
+
+
+def _apply_lead_start(start: float) -> float:
+    return max(0.0, start - _vod_lead_sec())
+
+
 def _normalize_clip(clip: dict, vod: Path) -> dict:
     from smart_video_editor import profile_action_clip_bounds
 
     _, clip_hi = profile_action_clip_bounds(PROFILE)
     dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", str(max(SEGMENT_SEC, clip_hi))))
+    start = _apply_lead_start(float(clip.get("start", 0)))
     return {
         **clip,
+        "start": start,
         "source_path": str(vod),
         "source_index": 0,
         "input_duration": dur,
@@ -588,7 +599,8 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
     pool = discover_strict_candidates(vod, PROFILE, sig, set())
     out: list[dict] = []
     for clip in pool:
-        start = float(clip.get("start", 0))
+        peak = float(clip.get("start", 0))
+        start = _apply_lead_start(peak)
         if any(abs(start - s) < min_gap for s in reserved):
             continue
         sid = segment_id(vod, start)
@@ -599,11 +611,13 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
         vis = visual_rows[0] if visual_rows else {}
+        lead_clip = {**clip, "start": start, "peak_start": peak}
         out.append(
             {
                 "segment_id": sid,
-                "clip": clip,
+                "clip": lead_clip,
                 "start": start,
+                "peak_start": peak,
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
                 "visual_pass": vis.get("visual_pass", True),
@@ -650,9 +664,11 @@ def _send_segment_batch(
             if not render_single_segment(vod, row["clip"], out):
                 continue
         seg_dur = _ffprobe_duration(out)
+        peak = int(row.get("peak_start", row["start"]))
         caption = (
             f"MLBB кусок #{sid}\n"
-            f"{vod_youtube_id(vod)} @ {int(row['start'])}s | {seg_dur:.0f}с\n"
+            f"{vod_youtube_id(vod)} @ {int(row['start'])}s"
+            f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
             f"score={row['score']:.3f} hook={row['hook_score']:.2f}\n"
             f"👍 Ок / 👎 Не ок"
         )
