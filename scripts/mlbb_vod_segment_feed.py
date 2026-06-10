@@ -517,13 +517,60 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 
+def _segment_gap_sec() -> float:
+    default = max(45.0, SEGMENT_SEC * 3.0)
+    return float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", os.environ.get("HIGHLIGHT_MIN_GAP_SEC", str(default))))
+
+
+def _used_starts_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> list[float]:
+    vid = vod_youtube_id(vod)
+    stem = vod.stem
+    starts: list[float] = []
+    for sid in labeled | sent:
+        tail = sid.rsplit("_", 1)[-1]
+        try:
+            start = float(tail)
+        except ValueError:
+            continue
+        if sid.startswith(f"{vid}_"):
+            starts.append(start)
+            continue
+        # legacy ids from old yt_-prefix parser (yt_tp0aAJ22_622)
+        if len(vid) >= 8 and vid[:8] in sid:
+            starts.append(start)
+            continue
+        if stem in sid or stem.removeprefix("yt_") in sid:
+            starts.append(start)
+    return starts
+
+
+def _dedupe_segments_by_gap(rows: list[dict], *, min_gap: float, reserved_starts: list[float]) -> list[dict]:
+    """Keep best-scoring clip per fight — no 614/622/624 duplicates from one teamfight."""
+    ranked = sorted(rows, key=lambda r: (r["score"], r["hook_score"]), reverse=True)
+    taken = list(reserved_starts)
+    chosen: list[dict] = []
+    for row in ranked:
+        start = float(row["start"])
+        if any(abs(start - s) < min_gap for s in taken):
+            continue
+        taken.append(start)
+        chosen.append(row)
+    chosen.sort(key=lambda r: r["start"])
+    return chosen
+
+
 def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_limit: int) -> list[dict]:
-    pool = discover_strict_candidates(vod, PROFILE, sig, set())[:probe_limit]
+    labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
+    min_gap = _segment_gap_sec()
+    reserved = _used_starts_for_vod(vod, labeled_set, sent)
+    pool = discover_strict_candidates(vod, PROFILE, sig, set())
     out: list[dict] = []
     for clip in pool:
         start = float(clip.get("start", 0))
+        if any(abs(start - s) < min_gap for s in reserved):
+            continue
         sid = segment_id(vod, start)
-        if sid in labeled or sid in sent:
+        if sid in labeled_set or sid in sent:
             continue
         ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(vod, PROFILE, [clip])
         if not ok:
@@ -540,7 +587,19 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "visual_pass": vis.get("visual_pass", True),
             }
         )
-    return out
+    deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_starts=reserved)
+    batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "8"))
+    if batch_cap > 0:
+        deduped = deduped[:batch_cap]
+    if len(out) > len(deduped):
+        log.info(
+            "dedupe vod=%s gap=%.0fs raw=%s unique=%s",
+            vod.name,
+            min_gap,
+            len(out),
+            len(deduped),
+        )
+    return deduped
 
 
 def _send_segment_batch(

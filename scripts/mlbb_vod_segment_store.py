@@ -40,8 +40,14 @@ def _write_json(path: Path, payload: dict | list) -> None:
 
 
 def vod_youtube_id(path: Path) -> str:
-    match = re.search(r"([A-Za-z0-9_-]{11})", path.stem)
-    return match.group(1) if match else path.stem[:24]
+    stem = path.stem
+    if stem.startswith("yt_") and len(stem) >= 14:
+        return stem[3:14]
+    match = re.search(r"(?:^|_)([A-Za-z0-9_-]{11})$", stem)
+    if match:
+        return match.group(1)
+    match = re.search(r"([A-Za-z0-9_-]{11})", stem)
+    return match.group(1) if match else stem[:24]
 
 
 def segment_id(vod_path: Path, start: float) -> str:
