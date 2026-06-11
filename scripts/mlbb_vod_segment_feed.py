@@ -73,6 +73,46 @@ def _ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
+def _ffprobe_fps(path: Path) -> float:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=avg_frame_rate,r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    for token in (proc.stdout or "").split():
+        if "/" in token:
+            num, den = token.split("/", 1)
+            try:
+                den_f = float(den)
+                if den_f > 0:
+                    fps = float(num) / den_f
+                    if fps > 1:
+                        return fps
+            except ValueError:
+                continue
+    return 30.0
+
+
+def _seek_preroll_sec(vod: Path, start: float) -> float:
+    base = float(os.environ.get("MLBB_SEEK_PREROLL", "8"))
+    if _ffprobe_fps(vod) >= 55.0:
+        base = max(base, float(os.environ.get("MLBB_SEEK_PREROLL_60FPS", "12")))
+    return min(base, max(0.0, start))
+
+
 def _load_state() -> dict:
     if not STATE_PATH.exists():
         return {"active_vod": "", "scanned_vods": [], "vods": [], "used_youtube_ids": []}
@@ -488,7 +528,7 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
 def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     """
     Cut montage-length window without logo.
-    Double-seek avoids frozen first ~2s (keyframe seek before -i).
+    Coarse seek + trim/atrim — fixes 60fps VOD freeze after ~2s (double -ss bug).
     """
     from smart_video_editor import (
         TARGET_HEIGHT,
@@ -504,9 +544,9 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     clip = _normalize_clip(clip, vod)
     start = float(clip["start"])
     dur = float(clip["input_duration"])
-    pre_roll = min(float(os.environ.get("MLBB_SEEK_PREROLL", "3")), max(0.0, start))
+    pre_roll = _seek_preroll_sec(vod, start)
     rough_seek = max(0.0, start - pre_roll)
-    fine_seek = pre_roll
+    trim_start = start - rough_seek
 
     crop = detect_game_viewport_crop(vod, start, dur)
     crop_prefix = ""
@@ -515,10 +555,11 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         if w > 0 and h > 0:
             crop_prefix = f"crop={w}:{h}:{x}:{y},"
     vf = (
+        f"trim=start={trim_start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
         f"{crop_prefix}"
         f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p"
+        f"fps={OUTPUT_FPS},format=yuv420p"
     )
 
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
@@ -529,19 +570,25 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         "-y",
         "-hwaccel",
         "none",
+        "-fflags",
+        "+genpts+discardcorrupt",
+        "-avoid_negative_ts",
+        "make_zero",
         "-ss",
         f"{rough_seek:.3f}",
         "-i",
         str(vod),
-        "-ss",
-        f"{fine_seek:.3f}",
-        "-t",
-        f"{dur:.3f}",
         "-vf",
         vf,
+        "-vsync",
+        "cfr",
     ]
     if has_audio:
-        cmd.extend(["-af", game_audio_filter_chain(1.0), "-map", "0:v:0", "-map", "0:a:0?"])
+        af = (
+            f"atrim=start={trim_start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
+            f"{game_audio_filter_chain(1.0)}"
+        )
+        cmd.extend(["-af", af, "-map", "0:v:0", "-map", "0:a:0?"])
     else:
         cmd.extend(["-an"])
     cmd.extend(output_encode_args())

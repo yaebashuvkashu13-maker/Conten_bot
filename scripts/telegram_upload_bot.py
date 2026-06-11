@@ -40,7 +40,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-09-mlbb-vod-nofreeze-v1'
+BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -2445,7 +2445,8 @@ def handle_message(message: dict):
                 os.environ['MLBB_VOD_BOOTSTRAP'] = '0'
                 os.environ['MLBB_VOD_SEGMENT_SEC'] = '15'
                 os.environ['HIGHLIGHT_WINDOW_SEC'] = '15'
-                os.environ['MLBB_SEEK_PREROLL'] = '3'
+                os.environ['MLBB_SEEK_PREROLL'] = '8'
+                os.environ['MLBB_SEEK_PREROLL_60FPS'] = '12'
                 os.environ['MLBB_FORCE_RERENDER'] = '1'
                 os.environ['LOGO_FILE'] = '/nonexistent/mlbb_calibration_no_logo.png'
                 mlbb_vod_feed_main()
