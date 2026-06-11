@@ -119,13 +119,21 @@ set +a
 export CONTENT_BOT_REPO=/root/content_bot_ml
 export HIGHLIGHT_HEATMAP=0
 export MLBB_ONLY_MODE=1
-export MLBB_VOD_PROBE_LIMIT=20
+export MLBB_VOD_SHORT_MODE=1
+export MLBB_VOD_MIN_SEC=900
+export MLBB_VOD_MAX_SEC=2700
+export MLBB_VOD_TARGET_DUR_SEC=1500
+export MLBB_VOD_SKIP_LONG_SEC=2700
+export MLBB_VOD_MIN_PEAK_SEC=420
+export MLBB_VOD_SEARCH_LIMIT=25
+export MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked match 20 minutes gameplay,Mobile Legends solo rank match gameplay,MLBB savage teamfight ranked short match"
+export MLBB_VOD_PROBE_LIMIT=30
 export MLBB_VOD_FULL_SCAN=1
 export MLBB_VOD_BOOTSTRAP=0
 export MLBB_VOD_SEGMENT_SEC=15
 export HIGHLIGHT_WINDOW_SEC=15
 export MLBB_VOD_SEGMENT_GAP_SEC=60
-export MLBB_VOD_BATCH_MAX=8
+export MLBB_VOD_BATCH_MAX=12
 export MLBB_SEEK_PREROLL=8
 export MLBB_SEEK_PREROLL_60FPS=12
 export MLBB_VOD_CHUNK_RENDER=1
@@ -137,10 +145,10 @@ export MLBB_PRESEND_FREEZE_MAX_START=3.0
 export MLBB_PRESEND_MIN_MOTION=0.014
 export MLBB_PRESEND_MIN_MINIMAP_DELTA=0.010
 export MLBB_FORCE_RERENDER=1
-export MLBB_VOD_PIPELINE_MAX_MIN=360
-export MLBB_VOD_PIPELINE_MAX_VODS=4
-export MLBB_VOD_SEARCH_DELAY=5
-export MLBB_VOD_DOWNLOAD_DELAY=12
+export MLBB_VOD_PIPELINE_MAX_MIN=300
+export MLBB_VOD_PIPELINE_MAX_VODS=8
+export MLBB_VOD_SEARCH_DELAY=4
+export MLBB_VOD_DOWNLOAD_DELAY=8
 export YTDLP_SLEEP_REQUESTS=1.5
 export YTDLP_SLEEP_INTERVAL=4
 export YTDLP_MAX_SLEEP_INTERVAL=12
@@ -155,7 +163,7 @@ chmod 755 "$WRAPPER_VOD"
 MARK_VOD="# mlbb-vod-segment-cron"
 TMP2=$(mktemp)
 crontab -l 2>/dev/null | grep -v "$MARK_VOD" >"$TMP2" || true
-echo "30 */2 * * * $WRAPPER_VOD $MARK_VOD" >>"$TMP2"
+echo "15 * * * * $WRAPPER_VOD $MARK_VOD" >>"$TMP2"
 crontab "$TMP2"
 rm -f "$TMP2"
 
@@ -205,6 +213,6 @@ echo "Cron:"
 crontab -l 2>/dev/null | grep -E 'mlbb|daily' || true
 echo "Remaining multi-game procs:"
 pgrep -af 'pubg_mlbb|overnight|viral_reference|eval_owner|score_owner|genshin|standoff|wot' || echo "(none)"
-echo "OK MLBB-only: VOD pipeline (every 2h, parallel download) + Shorts calibration"
+echo "OK MLBB-only: VOD pipeline (hourly, short 15-45min VODs) + Shorts calibration"
 echo "/etc/cron.d:"
 ls -la /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive 2>/dev/null || echo "(multi-game crons removed)"

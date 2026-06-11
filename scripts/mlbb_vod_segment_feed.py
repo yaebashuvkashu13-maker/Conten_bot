@@ -50,6 +50,39 @@ STATE_PATH = Path("/root/data/mlbb/vod_segment_state.json")
 YTDLP_LOCK_PATH = Path("/tmp/mlbb_vod_ytdlp.lock")
 log = logging.getLogger("mlbb_vod_feed")
 
+LONG_VOD_TITLE_RE = re.compile(
+    r"\b\d+\s*h(?:our|rs?)?\b|\buncut\b|full\s+stream|live\s+stream|"
+    r"час(?:ов)?\s+игр|полный\s+стрим",
+    re.I,
+)
+
+
+def _vod_min_sec() -> float:
+    return float(os.environ.get("MLBB_VOD_MIN_SEC", "900"))
+
+
+def _vod_max_sec() -> float:
+    return float(os.environ.get("MLBB_VOD_MAX_SEC", "2700"))
+
+
+def _vod_target_dur_sec() -> float:
+    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "1500"))
+
+
+def _vod_skip_long_sec() -> float:
+    return float(os.environ.get("MLBB_VOD_SKIP_LONG_SEC", str(_vod_max_sec())))
+
+
+def _vod_min_peak_sec() -> float:
+    """Skip laning/spawn — fights usually after ~7 min."""
+    return float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+
+
+def _vod_length_ok(path: Path, dur: float | None = None) -> bool:
+    length = dur if dur is not None else _ffprobe_duration(path)
+    return _vod_min_sec() <= length <= _vod_max_sec()
+
+
 def _ffprobe_duration(path: Path) -> float:
     proc = subprocess.run(
         [
@@ -171,12 +204,15 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
             vid = vod_youtube_id(p)
             if str(p) in known_paths or vid in known:
                 continue
-            if _ffprobe_duration(p) < 600:
+            dur = _ffprobe_duration(p)
+            if not _vod_length_ok(p, dur):
                 continue
             from nightly_youtube_montage import fetch_video_meta
 
             meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
             title = str(meta.get("title") or p.stem)
+            if LONG_VOD_TITLE_RE.search(title):
+                continue
             if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
                 registry.append(_registry_entry(p, title=title))
                 known.add(vid)
@@ -188,14 +224,48 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
     return registry
 
 
-def _pick_available_vod(registry: list[dict]) -> dict | None:
+def _auto_exhaust_oversized(registry: list[dict]) -> int:
+    """Drop 1–3 h streams from queue — short matches scan 5–10× faster."""
+    limit = _vod_skip_long_sec()
+    n = 0
     for row in registry:
         if row.get("exhausted"):
             continue
         path = Path(str(row.get("path", "")))
-        if path.exists() and _ffprobe_duration(path) > 600:
-            return row
-    return None
+        if not path.exists():
+            continue
+        dur = _ffprobe_duration(path)
+        if dur > limit:
+            row["exhausted"] = True
+            n += 1
+            log.info("auto-exhaust long vod id=%s dur_min=%.0f", row.get("id", path.name), dur / 60)
+    return n
+
+
+def _pick_available_vod(registry: list[dict]) -> dict | None:
+    target = _vod_target_dur_sec()
+    ranked: list[tuple[float, float, dict]] = []
+    for row in registry:
+        if row.get("exhausted"):
+            continue
+        path = Path(str(row.get("path", "")))
+        if not path.exists():
+            continue
+        dur = _ffprobe_duration(path)
+        if not _vod_length_ok(path, dur):
+            continue
+        ranked.append((abs(dur - target), dur, row))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    pick = ranked[0][2]
+    log.info(
+        "pick vod id=%s dur_min=%.0f target_min=%.0f",
+        pick.get("id", ""),
+        ranked[0][1] / 60,
+        target / 60,
+    )
+    return pick
 
 
 def _mark_vod_exhausted(vod: Path) -> None:
@@ -231,15 +301,17 @@ def _ytdlp_download_lock(blocking: bool = True):
 def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, throttled: bool = False) -> list[dict]:
     from nightly_youtube_montage import discover_candidates
 
-    min_sec = float(os.environ.get("MLBB_VOD_MIN_SEC", "600"))  # 10 min — полный матч
-    max_sec = float(os.environ.get("MLBB_VOD_MAX_SEC", "18000"))  # до 5 ч
+    min_sec = _vod_min_sec()
+    max_sec = _vod_max_sec()
+    target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
+    search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", "25"))
     queries = [
         q.strip()
         for q in os.environ.get(
             "MLBB_VOD_SEARCH_QUERIES",
-            "MLBB mythic ranked full match gameplay,Mobile Legends solo rank full game,"
-            "MLBB teamfight savage ranked gameplay",
+            "MLBB mythic ranked match 20 minutes gameplay,Mobile Legends solo rank match gameplay,"
+            "MLBB savage teamfight ranked short match",
         ).split(",")
         if q.strip()
     ]
@@ -251,7 +323,9 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     for idx, query in enumerate(queries):
         if throttled and idx > 0:
             time.sleep(search_delay)
-        batch = discover_candidates(env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=20)
+        batch = discover_candidates(
+            env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=search_limit
+        )
         raw.extend(batch)
 
     out: list[dict] = []
@@ -262,14 +336,17 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             continue
         seen.add(vid)
         title = str(meta.get("title") or "")
-        if LIVE_TITLE_RE.search(title):
+        dur = float(meta.get("duration") or 0)
+        if LIVE_TITLE_RE.search(title) or LONG_VOD_TITLE_RE.search(title):
             continue
         if vid in used:
             continue
         if not MLBB_TITLE_RE.search(title):
             continue
+        if dur < min_sec or dur > max_sec:
+            continue
         out.append(meta)
-    out.sort(key=lambda m: abs(float(m.get("duration") or 0) - 1500), reverse=False)
+    out.sort(key=lambda m: abs(float(m.get("duration") or 0) - target), reverse=False)
     return out
 
 
@@ -977,8 +1054,11 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
     reserved = _used_starts_for_vod(vod, labeled_set, sent)
     pool = discover_strict_candidates(vod, PROFILE, sig, set())
     out: list[dict] = []
+    min_peak = _vod_min_peak_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
+        if peak < min_peak:
+            continue
         start = _apply_lead_start(peak)
         if any(abs(start - s) < min_gap for s in reserved):
             continue
@@ -1229,6 +1309,10 @@ def main() -> int:
     max_vods = int(os.environ.get("MLBB_VOD_PIPELINE_MAX_VODS", "4"))
 
     registry = _ensure_registry(env)
+    if _auto_exhaust_oversized(registry):
+        state = _load_state()
+        state["vods"] = registry
+        _save_state(state)
     downloader = VodPipelineDownloader(env)
     total_sent = 0
     vods_done = 0
