@@ -595,6 +595,32 @@ def _extract_vod_chunk(vod: Path, rough_seek: float, chunk_dur: float, chunk_pat
     return chunk_path.exists() and chunk_path.stat().st_size > 100_000
 
 
+def _vod_audio_filter() -> str:
+    """Telegram-friendly audio — heavy game chain can desync after seek."""
+    if os.environ.get("MLBB_VOD_SIMPLE_AUDIO", "1") == "1":
+        return "aresample=44100,aformat=channel_layouts=stereo"
+    from smart_video_editor import game_audio_filter_chain
+
+    return game_audio_filter_chain(1.0)
+
+
+def _vod_encode_args() -> list[str]:
+    from smart_video_editor import OUTPUT_FPS, output_encode_args
+
+    gop = int(float(os.environ.get("MLBB_VOD_GOP_SEC", "1")) * OUTPUT_FPS)
+    return [
+        *output_encode_args(),
+        "-g",
+        str(gop),
+        "-keyint_min",
+        str(gop),
+        "-sc_threshold",
+        "0",
+        "-reset_timestamps",
+        "1",
+    ]
+
+
 def _render_from_chunk(
     chunk_path: Path,
     *,
@@ -609,8 +635,6 @@ def _render_from_chunk(
         TARGET_HEIGHT,
         TARGET_WIDTH,
         OUTPUT_FPS,
-        game_audio_filter_chain,
-        output_encode_args,
         run_command,
     )
 
@@ -636,10 +660,10 @@ def _render_from_chunk(
         vf,
     ]
     if has_audio:
-        cmd.extend(["-af", game_audio_filter_chain(1.0), "-map", "0:v:0", "-map", "0:a:0?"])
+        cmd.extend(["-af", _vod_audio_filter(), "-map", "0:v:0", "-map", "0:a:0?"])
     else:
         cmd.extend(["-an"])
-    cmd.extend(output_encode_args())
+    cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
     run_command(cmd)
     return out_path.exists() and out_path.stat().st_size > 100_000
@@ -655,8 +679,6 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         TARGET_WIDTH,
         OUTPUT_FPS,
         ffprobe_has_audio,
-        game_audio_filter_chain,
-        output_encode_args,
         run_command,
     )
 
@@ -718,12 +740,12 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     if has_audio:
         af = (
             f"atrim=start={trim_start:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
-            f"{game_audio_filter_chain(1.0)}"
+            f"{_vod_audio_filter()}"
         )
         cmd.extend(["-af", af, "-map", "0:v:0", "-map", "0:a:0?"])
     else:
         cmd.extend(["-an"])
-    cmd.extend(output_encode_args())
+    cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
     run_command(cmd)
     return out_path.exists() and out_path.stat().st_size > 100_000
