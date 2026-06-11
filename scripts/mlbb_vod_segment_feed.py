@@ -751,6 +751,174 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 
+def _presend_freeze_min_dur() -> float:
+    return float(os.environ.get("MLBB_PRESEND_FREEZE_MIN_DUR", "1.2"))
+
+
+def _presend_freeze_max_start() -> float:
+    return float(os.environ.get("MLBB_PRESEND_FREEZE_MAX_START", "3.0"))
+
+
+def _presend_min_motion() -> float:
+    return float(os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.014"))
+
+
+def _presend_min_minimap_delta() -> float:
+    return float(os.environ.get("MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.010"))
+
+
+def _parse_freezedetect(stderr: str) -> list[dict[str, float]]:
+    rows: list[dict[str, float]] = []
+    cur: dict[str, float] = {}
+    for line in stderr.splitlines():
+        if "freeze_start:" in line:
+            try:
+                cur = {"start": float(line.rsplit(":", 1)[-1].strip())}
+            except ValueError:
+                cur = {}
+        elif "freeze_duration:" in line and cur:
+            try:
+                cur["duration"] = float(line.rsplit(":", 1)[-1].strip())
+            except ValueError:
+                continue
+        elif "freeze_end:" in line and cur:
+            try:
+                cur["end"] = float(line.rsplit(":", 1)[-1].strip())
+            except ValueError:
+                continue
+            if "duration" not in cur and "start" in cur and "end" in cur:
+                cur["duration"] = max(0.0, cur["end"] - cur["start"])
+            rows.append(cur)
+            cur = {}
+    return rows
+
+
+def _detect_render_freeze(path: Path) -> tuple[bool, str, list[dict[str, float]]]:
+    """Reject clips that freeze early in Telegram playback."""
+    dur = _ffprobe_duration(path)
+    if dur < 1.0:
+        return False, "render_too_short", []
+    noise = float(os.environ.get("MLBB_PRESEND_FREEZE_NOISE", "0.003"))
+    min_dur = _presend_freeze_min_dur()
+    max_start = _presend_freeze_max_start()
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-i",
+            str(path),
+            "-vf",
+            f"freezedetect=n={noise}:d={min_dur}",
+            "-map",
+            "0:v:0",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=int(os.environ.get("MLBB_PRESEND_FREEZE_TIMEOUT", "120")),
+        env={k: v for k, v in os.environ.items() if "proxy" not in k.lower()},
+    )
+    freezes = _parse_freezedetect(proc.stderr or "")
+    for fr in freezes:
+        start = float(fr.get("start", 0.0))
+        fdur = float(fr.get("duration", 0.0))
+        if start <= max_start and fdur >= min_dur:
+            return (
+                False,
+                f"freeze@{start:.1f}s:{fdur:.1f}s",
+                freezes,
+            )
+        tail = max(0.0, dur - start)
+        if fdur >= max(min_dur, tail * 0.55):
+            return (
+                False,
+                f"freeze_tail@{start:.1f}s:{fdur:.1f}s",
+                freezes,
+            )
+    return True, "freeze_ok", freezes
+
+
+def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
+    """
+    Final gate on rendered mp4 + source window that will be sent.
+    Catches Telegram freeze, base spawn, idle lanes — after render.
+    """
+    from gameplay_gate import (
+        detect_game_viewport_crop,
+        score_segment_combat,
+        segment_looks_like_draft_or_queue,
+        segment_uniform_gameplay_ok,
+    )
+    from visual_action_check import extract_and_check_segment
+
+    report: dict = {"segment_id": row.get("segment_id", "")}
+    cut_start = float(row.get("start", 0))
+    peak_start = float(row.get("peak_start", cut_start))
+    dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15"))
+
+    ok, reason, freezes = _detect_render_freeze(rendered)
+    report["freezes"] = freezes
+    if not ok:
+        return False, reason, report
+
+    crop = detect_game_viewport_crop(vod, cut_start, dur)
+    report["crop"] = crop
+
+    for label, t0 in (("cut", cut_start), ("peak", peak_start)):
+        motion, mini, skill, _text = score_segment_combat(
+            vod, t0, dur, crop_box=crop, sample_frames=6
+        )
+        report[f"{label}_motion"] = round(motion, 4)
+        report[f"{label}_mini_delta"] = round(mini, 4)
+        report[f"{label}_skill_delta"] = round(skill, 4)
+        if segment_looks_like_draft_or_queue(vod, t0, dur, crop_box=crop):
+            return False, f"{label}_spawn_or_draft", report
+        if motion < _presend_min_motion() and mini < _presend_min_minimap_delta():
+            return False, f"{label}_idle_motion={motion:.4f}", report
+
+    uniform_ok, uniform_reason = segment_uniform_gameplay_ok(
+        vod, cut_start, dur, crop_box=crop, profile=PROFILE
+    )
+    report["uniform_reason"] = uniform_reason
+    if not uniform_ok:
+        return False, uniform_reason, report
+
+    vis = extract_and_check_segment(vod, cut_start, dur, PROFILE, crop_box=crop)
+    report["visual_pass"] = vis.get("visual_pass")
+    report["visual_fail"] = vis.get("fail_reason", "")
+    if not vis.get("visual_pass"):
+        return False, f"visual:{vis.get('fail_reason', 'fail')}", report
+
+    rend_motion, rend_mini, rend_skill, _ = score_segment_combat(
+        rendered, 0.0, min(dur, _ffprobe_duration(rendered)), sample_frames=6
+    )
+    report["render_motion"] = round(rend_motion, 4)
+    if rend_motion < _presend_min_motion() * 0.75:
+        return False, f"render_idle_motion={rend_motion:.4f}", report
+
+    report["pass_reason"] = row.get("pass_reason") or row.get("gate_reason") or "presend_ok"
+    return True, "presend_ok", report
+
+
+def _format_send_report(row: dict, check: dict) -> str:
+    peak = int(row.get("peak_start", row["start"]))
+    lines = [
+        f"score={row['score']:.4f} hook={row['hook_score']:.3f}",
+        f"gate={check.get('pass_reason', row.get('gate_reason', ''))}",
+        f"cut@{int(row['start'])}s peak@{peak}s",
+        (
+            f"motion cut={check.get('cut_motion', 0):.3f} "
+            f"peak={check.get('peak_motion', 0):.3f} "
+            f"render={check.get('render_motion', 0):.3f}"
+        ),
+    ]
+    if check.get("freezes"):
+        lines.append(f"freeze_scan={len(check['freezes'])}")
+    return "\n".join(lines)
+
+
 def _segment_gap_sec() -> float:
     default = max(45.0, SEGMENT_SEC * 3.0)
     return float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", os.environ.get("HIGHLIGHT_MIN_GAP_SEC", str(default))))
@@ -807,12 +975,15 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
         sid = segment_id(vod, start)
         if sid in labeled_set or sid in sent:
             continue
-        ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(vod, PROFILE, [clip])
+        lead_clip = {**clip, "start": start, "peak_start": peak}
+        ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
+            vod, PROFILE, [lead_clip]
+        )
         if not ok:
+            log.info("skip %s gate=%s", sid, reason)
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
         vis = visual_rows[0] if visual_rows else {}
-        lead_clip = {**clip, "start": start, "peak_start": peak}
         out.append(
             {
                 "segment_id": sid,
@@ -822,6 +993,9 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
                 "visual_pass": vis.get("visual_pass", True),
+                "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
+                "clip_score": float(metrics.get("clip_score") or 0),
+                "gate_reason": reason,
             }
         )
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_starts=reserved)
@@ -857,20 +1031,29 @@ def _send_segment_batch(
     )
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
+    skipped: list[str] = []
     for row in to_send:
         sid = row["segment_id"]
         out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
         force = os.environ.get("MLBB_FORCE_RERENDER", "1") == "1"
         if force or not out.exists() or out.stat().st_size < 500_000:
             if not render_single_segment(vod, row["clip"], out):
+                skipped.append(f"{sid}:render_fail")
                 continue
+        presend_ok, presend_reason, presend_report = _validate_before_send(vod, row, out)
+        if not presend_ok:
+            log.warning("presend REJECT %s reason=%s report=%s", sid, presend_reason, presend_report)
+            skipped.append(f"{sid}:{presend_reason}")
+            continue
         seg_dur = _ffprobe_duration(out)
         peak = int(row.get("peak_start", row["start"]))
+        report_line = _format_send_report(row, presend_report)
         caption = (
             f"MLBB кусок #{sid}\n"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s"
             f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
-            f"score={row['score']:.3f} hook={row['hook_score']:.2f}\n"
+            f"{report_line}\n"
+            f"✓ presend\n"
             f"👍 Ок / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
@@ -890,6 +1073,15 @@ def _send_segment_batch(
         )
         sent_ids.append(sid)
         time.sleep(1.5)
+    if skipped:
+        log.info("presend skipped=%s", "; ".join(skipped[:12]))
+    if not sent_ids and skipped:
+        send_message(
+            token,
+            chat_id,
+            f"⚠️ {vod_youtube_id(vod)}: {len(skipped)} кусков не прошли presend\n"
+            + "\n".join(skipped[:6]),
+        )
     mark_feed_sent(sent_ids)
     return len(sent_ids)
 
