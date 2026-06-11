@@ -525,16 +525,135 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
     }
 
 
+def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
+    from smart_video_editor import detect_game_viewport_crop
+
+    crop = detect_game_viewport_crop(vod, start, dur)
+    if not crop or len(crop) != 4:
+        return ""
+    x, y, w, h = crop
+    if w < 64 or h < 64:
+        return ""
+    return f"crop={w}:{h}:{x}:{y},"
+
+
+def _needs_chunk_render(vod: Path) -> bool:
+    if os.environ.get("MLBB_VOD_CHUNK_RENDER", "1") != "1":
+        return False
+    if _ffprobe_fps(vod) >= 55.0:
+        return True
+    if vod.stat().st_size > 900_000_000:
+        return True
+    return _ffprobe_duration(vod) > 2700
+
+
+def _extract_vod_chunk(vod: Path, rough_seek: float, chunk_dur: float, chunk_path: Path) -> bool:
+    """Stage 1: decode short window to CFR chunk — avoids 60fps seek corruption."""
+    from smart_video_editor import OUTPUT_FPS
+
+    chunk_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{rough_seek:.3f}",
+        "-i",
+        str(vod),
+        "-t",
+        f"{chunk_dur:.3f}",
+        "-vf",
+        f"fps={OUTPUT_FPS},format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.environ.get("MLBB_CHUNK_PRESET", "ultrafast"),
+        "-crf",
+        os.environ.get("MLBB_CHUNK_CRF", "20"),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(chunk_path),
+    ]
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            timeout=int(os.environ.get("MLBB_CHUNK_TIMEOUT_SEC", "600")),
+            env={k: v for k, v in os.environ.items() if "proxy" not in k.lower()},
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        log.warning("chunk extract failed vod=%s seek=%.1f: %s", vod.name, rough_seek, exc)
+        return False
+    return chunk_path.exists() and chunk_path.stat().st_size > 100_000
+
+
+def _render_from_chunk(
+    chunk_path: Path,
+    *,
+    trim_start: float,
+    dur: float,
+    crop_prefix: str,
+    out_path: Path,
+    has_audio: bool,
+) -> bool:
+    """Stage 2: accurate -ss on small CFR chunk — no freeze."""
+    from smart_video_editor import (
+        TARGET_HEIGHT,
+        TARGET_WIDTH,
+        OUTPUT_FPS,
+        game_audio_filter_chain,
+        output_encode_args,
+        run_command,
+    )
+
+    vf = (
+        f"{crop_prefix}"
+        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p"
+    )
+    os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hwaccel",
+        "none",
+        "-i",
+        str(chunk_path),
+        "-ss",
+        f"{trim_start:.3f}",
+        "-t",
+        f"{dur:.3f}",
+        "-vf",
+        vf,
+    ]
+    if has_audio:
+        cmd.extend(["-af", game_audio_filter_chain(1.0), "-map", "0:v:0", "-map", "0:a:0?"])
+    else:
+        cmd.extend(["-an"])
+    cmd.extend(output_encode_args())
+    cmd.append(str(out_path))
+    run_command(cmd)
+    return out_path.exists() and out_path.stat().st_size > 100_000
+
+
 def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     """
     Cut montage-length window without logo.
-    Coarse seek + trim/atrim — fixes 60fps VOD freeze after ~2s (double -ss bug).
+    Large/60fps VOD: two-stage chunk + accurate cut (no freeze).
     """
     from smart_video_editor import (
         TARGET_HEIGHT,
         TARGET_WIDTH,
         OUTPUT_FPS,
-        detect_game_viewport_crop,
         ffprobe_has_audio,
         game_audio_filter_chain,
         output_encode_args,
@@ -547,13 +666,31 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     pre_roll = _seek_preroll_sec(vod, start)
     rough_seek = max(0.0, start - pre_roll)
     trim_start = start - rough_seek
+    crop_prefix = _crop_filter_prefix(vod, start, dur)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    has_audio = ffprobe_has_audio(vod)
 
-    crop = detect_game_viewport_crop(vod, start, dur)
-    crop_prefix = ""
-    if crop and len(crop) == 4:
-        x, y, w, h = crop
-        if w > 0 and h > 0:
-            crop_prefix = f"crop={w}:{h}:{x}:{y},"
+    if _needs_chunk_render(vod):
+        chunk_dur = trim_start + dur + 3.0
+        with tempfile.NamedTemporaryFile(suffix=".chunk.mp4", delete=False) as tmp:
+            chunk_path = Path(tmp.name)
+        try:
+            if not _extract_vod_chunk(vod, rough_seek, chunk_dur, chunk_path):
+                log.warning("chunk render fallback vod=%s start=%.1f", vod.name, start)
+            else:
+                ok = _render_from_chunk(
+                    chunk_path,
+                    trim_start=trim_start,
+                    dur=dur,
+                    crop_prefix=crop_prefix,
+                    out_path=out_path,
+                    has_audio=has_audio,
+                )
+                if ok:
+                    return True
+        finally:
+            chunk_path.unlink(missing_ok=True)
+
     vf = (
         f"trim=start={trim_start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
         f"{crop_prefix}"
@@ -561,10 +698,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
         f"fps={OUTPUT_FPS},format=yuv420p"
     )
-
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    has_audio = ffprobe_has_audio(vod)
     cmd = [
         "ffmpeg",
         "-y",
@@ -580,8 +714,6 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         str(vod),
         "-vf",
         vf,
-        "-vsync",
-        "cfr",
     ]
     if has_audio:
         af = (
