@@ -767,11 +767,16 @@ def _presend_min_minimap_delta() -> float:
     return float(os.environ.get("MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.010"))
 
 
-def _parse_freezedetect(stderr: str) -> list[dict[str, float]]:
+def _parse_freezedetect(stderr: str, *, file_duration: float = 0.0) -> list[dict[str, float]]:
     rows: list[dict[str, float]] = []
     cur: dict[str, float] = {}
     for line in stderr.splitlines():
         if "freeze_start:" in line:
+            if cur and "start" in cur:
+                if "duration" not in cur:
+                    end = cur.get("end", file_duration)
+                    cur["duration"] = max(0.0, end - cur["start"])
+                rows.append(cur)
             try:
                 cur = {"start": float(line.rsplit(":", 1)[-1].strip())}
             except ValueError:
@@ -790,6 +795,11 @@ def _parse_freezedetect(stderr: str) -> list[dict[str, float]]:
                 cur["duration"] = max(0.0, cur["end"] - cur["start"])
             rows.append(cur)
             cur = {}
+    if cur and "start" in cur:
+        if "duration" not in cur:
+            end = cur.get("end", file_duration)
+            cur["duration"] = max(0.0, end - cur["start"]) if end > 0 else file_duration
+        rows.append(cur)
     return rows
 
 
@@ -820,7 +830,7 @@ def _detect_render_freeze(path: Path) -> tuple[bool, str, list[dict[str, float]]
         timeout=int(os.environ.get("MLBB_PRESEND_FREEZE_TIMEOUT", "120")),
         env={k: v for k, v in os.environ.items() if "proxy" not in k.lower()},
     )
-    freezes = _parse_freezedetect(proc.stderr or "")
+    freezes = _parse_freezedetect(proc.stderr or "", file_duration=dur)
     for fr in freezes:
         start = float(fr.get("start", 0.0))
         fdur = float(fr.get("duration", 0.0))
