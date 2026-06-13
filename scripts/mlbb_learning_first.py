@@ -154,8 +154,20 @@ def _bad_pad_sec() -> float:
     return float(os.environ.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"))
 
 
+def _segment_vod_id(row: dict) -> str:
+    vod_field = str(row.get("vod", "")).strip()
+    if vod_field:
+        from mlbb_vod_segment_store import vod_youtube_id
+
+        return vod_youtube_id(Path(vod_field))
+    sid = str(row.get("segment_id", ""))
+    if "_" in sid:
+        return sid.rsplit("_", 1)[0]
+    return sid[:11]
+
+
 def _extra_bad_cases() -> list[tuple[str, float, str]]:
-    """Two additional bad labels from vod_segment_labels (distinct VODs)."""
+    """Two additional bad labels from vod_segment_labels (distinct VODs, file on disk)."""
     if not _vseg_labels_path().exists():
         return []
     try:
@@ -168,8 +180,10 @@ def _extra_bad_cases() -> list[tuple[str, float, str]]:
         sid = str(row.get("segment_id", ""))
         if not sid or sid == "qa2iNyoPO2Q_508":
             continue
-        vid = sid.rsplit("_", 1)[0] if "_" in sid else sid[:11]
-        if vid in seen_vods:
+        vid = _segment_vod_id(row)
+        if len(vid) != 11 or vid in seen_vods:
+            continue
+        if resolve_vod(vid) is None:
             continue
         t_sec = float(row.get("start") or (sid.rsplit("_", 1)[-1] if "_" in sid else 0))
         out.append((vid, t_sec, sid))
