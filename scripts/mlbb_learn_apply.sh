@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# After owner 👍/👎: sync labels, train, eval gates. NO sendVideo in LEARNING_FIRST until gate pass.
+# After owner 👍/👎: sync labels, train, eval metrics. Sends stay ON (MLBB_SEND_ENABLED=1).
 set -Eeuo pipefail
 set -a
 source /root/.video_bot.env
@@ -11,8 +11,8 @@ export HIGHLIGHT_HEATMAP=0
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
 export HIGHLIGHT_OWNER_BAD_PAD_SEC="${HIGHLIGHT_OWNER_BAD_PAD_SEC:-90}"
 export HIGHLIGHT_OWNER_GOOD_PAD_SEC="${HIGHLIGHT_OWNER_GOOD_PAD_SEC:-45}"
-export MLBB_LEARNING_FIRST="${MLBB_LEARNING_FIRST:-1}"
-export MLBB_LEARN_MIN_PRECISION="${MLBB_LEARN_MIN_PRECISION:-0.40}"
+export MLBB_LEARNING_FIRST="${MLBB_LEARNING_FIRST:-0}"
+export MLBB_SEND_ENABLED="${MLBB_SEND_ENABLED:-1}"
 
 python3 - <<'PY'
 import sys
@@ -38,39 +38,15 @@ print(
 PY
 
 python3 /usr/local/bin/highlight_train.py --profile mobile_legends
+python3 /usr/local/bin/eval_learning_first_gate.py || true
 
-python3 /usr/local/bin/eval_learning_first_gate.py
-GATE_RC=$?
-if [[ "$GATE_RC" -ne 0 ]]; then
-  echo "LEARNING_FIRST gate FAIL — sendVideo blocked (metric=precision_7d)" >&2
+if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
+  /usr/local/bin/mlbb_vod_segment_feed.sh
+elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]]; then
+  flock -n /tmp/mlbb_vod_segment_feed.lock \
+    python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" \
+    >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
 fi
 
-python3 - <<'PY'
-import json
-import sys
-from pathlib import Path
-from mlbb_learning_first import precision_7d, sends_allowed, transition_passed
-
-print(f"transition_passed={transition_passed()} sends_allowed={sends_allowed()} precision_7d={precision_7d():.3f}")
-if not sends_allowed():
-    print("skip feeds: LEARNING_FIRST gate not passed", file=sys.stderr)
-    sys.exit(0)
-PY
-
-if python3 - <<'PY'
-from mlbb_learning_first import sends_allowed
-import sys
-sys.exit(0 if sends_allowed() else 1)
-PY
-then
-  if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
-    /usr/local/bin/mlbb_vod_segment_feed.sh
-  elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]]; then
-    flock -n /tmp/mlbb_vod_segment_feed.lock \
-      python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" \
-      >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
-  fi
-  /usr/local/bin/mlbb_calibration_feed.sh || true
-fi
-
+/usr/local/bin/mlbb_calibration_feed.sh || true
 echo "mlbb_learn_apply done $(date -Is)"

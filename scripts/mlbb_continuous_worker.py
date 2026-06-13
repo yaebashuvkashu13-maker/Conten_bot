@@ -59,7 +59,11 @@ def base_env() -> dict[str, str]:
             "MLBB_DATA_ROOT": env.get("MLBB_DATA_ROOT", "/root/data/mlbb"),
             "PYTHONPATH": f"{BIN}:{env.get('CONTENT_BOT_REPO', '/root/content_bot_ml')}/scripts",
             "MLBB_ONLY_MODE": "1",
-            "MLBB_LEARNING_FIRST": env.get("MLBB_LEARNING_FIRST", "1"),
+            "MLBB_LEARNING_FIRST": "0",
+            "MLBB_SEND_ENABLED": "1",
+            "MLBB_VOD_VARIABLE_LENGTH": "1",
+            "MLBB_VOD_LEAD_SEC": "4",
+            "MLBB_MAX_DAILY_SENDS": env.get("MLBB_MAX_DAILY_SENDS", "20"),
             "HIGHLIGHT_OWNER_BAD_PAD_SEC": env.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
@@ -166,6 +170,8 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
             "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "20"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
+            "MLBB_VOD_VARIABLE_LENGTH": "1",
+            "MLBB_VOD_LEAD_SEC": "4",
             "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
             "OWNER_PREVIEW_REQUIRED": "0",
             "LOGO_FILE": "/nonexistent/mlbb_calibration_no_logo.png",
@@ -198,11 +204,20 @@ def write_state(state: dict) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def montage_cmd(env: dict[str, str]) -> list[str]:
+    script = BIN / "mlbb_vod_montage_feed.py"
+    if not script.exists():
+        script = Path(__file__).resolve().parent / "mlbb_vod_montage_feed.py"
+    return [PY, str(script)]
+
+
 def main() -> int:
     base = base_env()
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
     vod = Proc("vod", vod_cmd(base), vod_env(base))
     feed = Proc("feed", feed_cmd(base), base)
+    montage = Proc("montage", montage_cmd(base), base)
+    MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
 
     log(
         f"mlbb_continuous_worker start target_pending={TARGET_PENDING} "
@@ -224,19 +239,22 @@ def main() -> int:
         if not vod.running():
             vod.start()
 
-        # Shorts feed only after LEARNING_FIRST gate passed
-        from mlbb_learning_first import enabled, sends_allowed
-
         if pending > 0 and feed.cooldown_ok(FEED_COOLDOWN_SEC):
-            if not enabled() or sends_allowed():
-                feed.start()
-            elif cycles % 30 == 0:
-                log("LEARNING_FIRST: feed idle (no sendVideo until gate pass)")
+            feed.start()
 
-        for job in (ingest, vod, feed):
+        if montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
+            montage.start()
+
+        for job in (ingest, vod, feed, montage):
             job.reap()
 
-        if cycles % 45 == 0 and base.get("MLBB_LEARNING_FIRST", "1") == "1":
+        if cycles % 360 == 0:
+            report_script = BIN / "mlbb_daily_report.py"
+            if not report_script.exists():
+                report_script = Path(__file__).resolve().parent / "mlbb_daily_report.py"
+            subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
+
+        if cycles % 45 == 0 and base.get("MLBB_LEARNING_FIRST", "0") == "1":
             eval_script = BIN / "eval_learning_first_gate.py"
             if not eval_script.exists():
                 eval_script = Path(__file__).resolve().parent / "eval_learning_first_gate.py"

@@ -43,6 +43,9 @@ install -m 755 \
   scripts/mlbb_learn_apply.sh \
   scripts/mlbb_baseline_report.py \
   scripts/mlbb_learning_first.py \
+  scripts/mlbb_fight_segment.py \
+  scripts/mlbb_vod_montage_feed.py \
+  scripts/mlbb_daily_report.py \
   scripts/eval_learning_first_gate.py \
   scripts/viral_reference_ingest.py \
   scripts/viral_reference_refresh.sh \

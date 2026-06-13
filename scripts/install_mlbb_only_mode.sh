@@ -25,7 +25,6 @@ pubg_tiktok_batch_10.py
 genshin_boss_rebuild.py
 mlbb_showcase_rebuild.py
 standoff_exemplar_ingest.py
-strict_montage_direct.py
 nightly_youtube_montage.py
 youtube_triple_montage.py
 smart_video_editor.py
@@ -46,7 +45,9 @@ pkill -f 'run_job_until_ok.sh /root/data/mlbb/action_showcase' 2>/dev/null || tr
 rm -f /var/lock/smart_video_editor.lock /var/lock/overnight_msk.lock 2>/dev/null || true
 
 touch "$ENV_FILE"
-for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0; do
+for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
+  MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 MLBB_VOD_VARIABLE_LENGTH=1 \
+  MLBB_VOD_LEAD_SEC=4 MLBB_MAX_DAILY_SENDS=20 HIGHLIGHT_OWNER_BAD_PAD_SEC=90; do
   key="${kv%%=*}"
   val="${kv#*=}"
   if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then

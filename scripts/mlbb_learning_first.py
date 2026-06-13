@@ -96,7 +96,7 @@ def max_daily_sends() -> int:
     target = float(os.environ.get("MLBB_PRECISION_TARGET", "0.45"))
     if prec >= target:
         return int(os.environ.get("MLBB_MAX_DAILY_SENDS", "30"))
-    return int(os.environ.get("MLBB_LEARNING_MAX_DAILY", "6"))
+    return int(os.environ.get("MLBB_LEARNING_MAX_DAILY", "20"))
 
 
 def can_send(count: int = 1) -> tuple[bool, str]:

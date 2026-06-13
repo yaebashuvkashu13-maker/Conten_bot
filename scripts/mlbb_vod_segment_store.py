@@ -29,7 +29,11 @@ def _data_mlbb() -> Path:
 
 
 def _segments_root() -> Path:
-    return Path(os.environ.get("MLBB_VOD__segments_root()", "/root/datasets/mlbb/vod_segments"))
+    return Path(os.environ.get("MLBB_VOD_SEGMENTS_ROOT", "/root/datasets/mlbb/vod_segments"))
+
+
+def segments_root() -> Path:
+    return _segments_root()
 
 
 def _index_path() -> Path:

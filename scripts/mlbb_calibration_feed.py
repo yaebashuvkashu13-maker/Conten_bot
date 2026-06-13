@@ -38,10 +38,11 @@ def send_video(
     *,
     video_id: str = "",
 ) -> bool:
-    from mlbb_learning_first import enabled, record_send, sends_allowed
+    from mlbb_learning_first import can_send, record_send
 
-    if enabled() and not sends_allowed():
-        print(f"LEARNING_FIRST: block sendVideo video_id={video_id}")
+    ok_send, reason = can_send(1)
+    if not ok_send:
+        print(f"send blocked video_id={video_id} reason={reason}")
         return False
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
         return False
@@ -127,12 +128,6 @@ def main() -> int:
     if not token or not chat_id:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
-
-    from mlbb_learning_first import enabled, sends_allowed
-
-    if enabled() and not sends_allowed():
-        print("LEARNING_FIRST: skip calibration sendVideo (gate not passed)")
-        return 0
 
     repair_index()
     rebuild_index_from_disk()

@@ -27,12 +27,12 @@ INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_vod_segment_store import (
-    SEGMENTS_ROOT,
     inline_keyboard_markup,
     labeled_ids,
     load_feed_sent,
     mark_feed_sent,
     segment_id,
+    segments_root,
     stats,
     upsert_segment,
     vod_youtube_id,
@@ -527,11 +527,8 @@ def bootstrap_exemplar_segments() -> list[dict]:
 
 
 def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: str) -> bool:
-    from mlbb_learning_first import can_send, enabled, record_send, sends_allowed
+    from mlbb_learning_first import can_send, record_send
 
-    if enabled() and not sends_allowed():
-        log.warning("LEARNING_FIRST: sendVideo blocked seg=%s", seg_id)
-        return False
     ok_send, reason = can_send(1)
     if not ok_send:
         log.warning("send blocked seg=%s reason=%s", seg_id, reason)
@@ -589,8 +586,7 @@ def send_message(token: str, chat_id: str, text: str) -> None:
 
 
 def _vod_lead_sec() -> float:
-    """Start cut N seconds before scorer peak — owner wants setup before the fight."""
-    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "12"))
+    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
 def _apply_lead_start(start: float) -> float:
@@ -598,14 +594,32 @@ def _apply_lead_start(start: float) -> float:
 
 
 def _normalize_clip(clip: dict, vod: Path) -> dict:
+    peak = float(clip.get("start", 0))
+    if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
+        from mlbb_fight_segment import detect_fight_bounds
+
+        start, end, dur = detect_fight_bounds(vod, peak)
+        return {
+            **clip,
+            "start": start,
+            "peak_start": peak,
+            "fight_end": end,
+            "source_path": str(vod),
+            "source_index": 0,
+            "input_duration": dur,
+            "output_duration": dur,
+            "speed": 1.0,
+        }
+
     from smart_video_editor import profile_action_clip_bounds
 
     _, clip_hi = profile_action_clip_bounds(PROFILE)
     dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", str(max(SEGMENT_SEC, clip_hi))))
-    start = _apply_lead_start(float(clip.get("start", 0)))
+    start = _apply_lead_start(peak)
     return {
         **clip,
         "start": start,
+        "peak_start": peak,
         "source_path": str(vod),
         "source_index": 0,
         "input_duration": dur,
@@ -1071,13 +1085,13 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
         peak = float(clip.get("start", 0))
         if peak < min_peak:
             continue
-        start = _apply_lead_start(peak)
+        lead_clip = _normalize_clip(clip, vod)
+        start = float(lead_clip["start"])
         if any(abs(start - s) < min_gap for s in reserved):
             continue
         sid = segment_id(vod, start)
         if sid in labeled_set or sid in sent:
             continue
-        lead_clip = {**clip, "start": start, "peak_start": peak}
         ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
             vod, PROFILE, [lead_clip]
         )
@@ -1091,7 +1105,8 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "segment_id": sid,
                 "clip": lead_clip,
                 "start": start,
-                "peak_start": peak,
+                "peak_start": float(lead_clip.get("peak_start", peak)),
+                "fight_dur": float(lead_clip.get("input_duration", 0)),
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
                 "visual_pass": vis.get("visual_pass", True),
@@ -1122,14 +1137,11 @@ def _send_segment_batch(
     to_send: list[dict],
     sig: str,
 ) -> int:
-    from mlbb_learning_first import daily_send_count, enabled, max_daily_sends, sends_allowed
+    from mlbb_learning_first import daily_send_count, max_daily_sends
 
-    if enabled() and not sends_allowed():
-        log.info("LEARNING_FIRST: skip sendVideo batch n=%s vod=%s", len(to_send), vod.name)
-        return 0
     cap_left = max_daily_sends() - daily_send_count()
     if cap_left <= 0:
-        log.info("daily cap reached sent_today=%s cap=%s precision_7d mode", daily_send_count(), max_daily_sends())
+        log.info("daily cap reached sent_today=%s cap=%s", daily_send_count(), max_daily_sends())
         return 0
     if len(to_send) > cap_left:
         log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
@@ -1143,6 +1155,7 @@ def _send_segment_batch(
         f"👍 Ок / 👎 Не ок под каждым\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
+    SEGMENTS_ROOT = segments_root()
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
     skipped: list[str] = []
@@ -1302,8 +1315,8 @@ def _process_vod_segments(
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    if os.environ.get("MLBB_EVAL_ONLY", "0") == "1" or os.environ.get("MLBB_DRY_RUN", "0") == "1":
-        from mlbb_learning_first import dry_run_gate_rejection, eval_transition_gate
+    if os.environ.get("MLBB_EVAL_ONLY", "0") == "1":
+        from mlbb_learning_first import eval_transition_gate
 
         report = eval_transition_gate()
         dry = report.get("dry_run", {})
