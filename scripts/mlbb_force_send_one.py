@@ -82,8 +82,9 @@ def main() -> int:
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
-    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "0"
-    os.environ["MLBB_VOD_SEGMENT_SEC"] = os.environ.get("MLBB_FORCE_SEGMENT_SEC", "16")
+    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "1"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
+    os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
     os.environ["HIGHLIGHT_HEATMAP"] = "0"
     os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
 
@@ -104,38 +105,34 @@ def main() -> int:
         return 2
 
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
-    dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "16"))
-    start = max(0.0, peak_t - lead)
     clip = {
         "source_path": str(VOD),
         "source_index": 0,
         "game_name": "MLBB",
-        "start": round(start, 3),
+        "start": round(peak_t, 3),
         "peak_start": round(peak_t, 3),
-        "input_duration": dur,
-        "output_duration": dur,
-        "speed": 1.0,
         "score": float(kill_meta.get("score", 0)),
         "highlight_metrics": {"pass_reason": kill_meta.get("reason", "kill_ui")},
         "gate_reason": f"kill_ui:{kill_meta.get('reason')}",
     }
 
-    from mlbb_vod_segment_feed import render_single_segment, send_message, send_video
+    from mlbb_vod_segment_feed import render_single_segment, send_message, send_video, _ffprobe_duration
     from mlbb_vod_segment_store import inline_keyboard_markup, segment_id, segments_root, upsert_segment
 
-    sid = segment_id(VOD, start)
+    sid = segment_id(VOD, peak_t)
     out = segments_root() / f"seg_{sid}.mp4"
-    print(f"render peak={peak_t:.1f}s start={start:.1f}s dur={dur}s -> {out.name}", flush=True)
+    print(f"render peak={peak_t:.1f}s -> {out.name}", flush=True)
     t0 = time.time()
     if not render_single_segment(VOD, clip, out):
         print("render failed", file=sys.stderr)
         return 3
-    print(f"render done in {time.time()-t0:.0f}s size={out.stat().st_size}", flush=True)
+    seg_dur = _ffprobe_duration(out)
+    print(f"render done in {time.time()-t0:.0f}s dur={seg_dur:.1f}s size={out.stat().st_size}", flush=True)
 
     row = {
         "segment_id": sid,
         "clip": clip,
-        "start": start,
+        "start": peak_t,
         "peak_start": peak_t,
         "score": clip["score"],
         "hook_score": 0.0,
@@ -146,7 +143,7 @@ def main() -> int:
     caption = (
         f"MLBB кусок #{sid}\n"
         f"🆕 kill UI logic\n"
-        f"{VOD.stem.replace('yt_', '')} @ {int(start)}s (пик {int(peak_t)}s)\n"
+        f"{VOD.stem.replace('yt_', '')} @ {int(peak_t)}s | {seg_dur:.0f}с\n"
         f"kill: {kill_meta.get('reason')} score={kill_meta.get('score')}\n"
         f"👍 Ок / 👎 Не ок"
     )
@@ -165,7 +162,7 @@ def main() -> int:
             "path": str(out),
             "vod": str(VOD),
             "vod_id": VOD.stem.replace("yt_", ""),
-            "start": start,
+            "start": peak_t,
             "score": clip["score"],
             "hook_score": 0.0,
             "sig": "force_kill_ui",

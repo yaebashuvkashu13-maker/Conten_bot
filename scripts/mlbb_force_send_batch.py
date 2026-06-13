@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Find MLBB kill-UI scenes (7–22s) and send a calibration batch to Telegram."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/bin")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+ENV_PATH = Path("/root/.video_bot.env")
+INBOX = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
+
+
+def _load_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            env.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+    return env
+
+
+def _ffprobe_duration(path: Path) -> float:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        return float((proc.stdout or "0").strip())
+    except ValueError:
+        return 0.0
+
+
+def _scan_kill_peaks(vod: Path) -> list[tuple[float, dict]]:
+    from mlbb_kill_ui import score_mlbb_kill_ui
+
+    duration = _ffprobe_duration(vod)
+    min_t = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+    coarse_step = float(os.environ.get("MLBB_FORCE_SCAN_STEP", "45"))
+    fine_step = float(os.environ.get("MLBB_FORCE_FINE_STEP", "8"))
+    end = max(min_t + 1, duration - 25)
+    hits: list[tuple[float, dict]] = []
+
+    t = min_t
+    while t <= end:
+        result = score_mlbb_kill_ui(vod, t, 12.0, sample_frames=3)
+        print(
+            f"scan {vod.name} t={t:.0f}s kill={result.has_kill_notification} "
+            f"score={result.score:.3f} {result.reason}",
+            flush=True,
+        )
+        if result.has_kill_notification:
+            hits.append((t, result.to_dict()))
+        t += coarse_step
+
+    refined: list[tuple[float, dict]] = []
+    seen: set[int] = set()
+    for peak_t, meta in hits:
+        for dt in (-fine_step, 0, fine_step):
+            t = round(peak_t + dt, 1)
+            key = int(t)
+            if key in seen:
+                continue
+            seen.add(key)
+            result = score_mlbb_kill_ui(vod, t, 12.0, sample_frames=3)
+            if result.has_kill_notification:
+                refined.append((t, result.to_dict()))
+                print(
+                    f"  fine t={t:.0f}s score={result.score:.3f} {result.reason}",
+                    flush=True,
+                )
+
+    refined.sort(key=lambda x: x[1].get("score", 0), reverse=True)
+    return refined
+
+
+def _dedupe_peaks(peaks: list[tuple[float, dict]], min_gap: float) -> list[tuple[float, dict]]:
+    chosen: list[tuple[float, dict]] = []
+    taken: list[float] = []
+    for t, meta in peaks:
+        if any(abs(t - s) < min_gap for s in taken):
+            continue
+        taken.append(t)
+        chosen.append((t, meta))
+    return chosen
+
+
+def _collect_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, dict]]:
+    from mlbb_kill_ui import scan_vod_kill_peaks
+
+    min_gap = float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", "45"))
+    skip_starts = {
+        float(x.strip())
+        for x in os.environ.get("MLBB_FORCE_SKIP_STARTS", "416").split(",")
+        if x.strip()
+    }
+    all_peaks: list[tuple[Path, float, dict]] = []
+    for vod in vods:
+        peaks = _dedupe_peaks(_scan_kill_peaks(vod), min_gap)
+        if len(peaks) < max(2, need // len(vods)):
+            for row in scan_vod_kill_peaks(vod, step_sec=30, limit=need * 2):
+                peaks.append((float(row["start_sec"]), row))
+        for peak_t, meta in peaks:
+            if any(abs(peak_t - s) < min_gap for s in skip_starts):
+                print(f"skip already-sent start~{int(peak_t)}s", flush=True)
+                continue
+            all_peaks.append((vod, peak_t, meta))
+        all_peaks.sort(key=lambda x: x[2].get("score", 0), reverse=True)
+        if len(all_peaks) >= need:
+            break
+    all_peaks.sort(key=lambda x: x[2].get("score", 0), reverse=True)
+    return _dedupe_by_vod_gap(all_peaks, min_gap)[:need]
+
+
+def _dedupe_by_vod_gap(
+    peaks: list[tuple[Path, float, dict]], min_gap: float
+) -> list[tuple[Path, float, dict]]:
+    chosen: list[tuple[Path, float, dict]] = []
+    taken: list[tuple[str, float]] = []
+    for vod, t, meta in peaks:
+        key = vod.name
+        if any(k == key and abs(t - s) < min_gap for k, s in taken):
+            continue
+        taken.append((key, t))
+        chosen.append((vod, t, meta))
+    return chosen
+
+
+def _pick_vods() -> list[Path]:
+    max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "700"))
+    explicit = os.environ.get("MLBB_FORCE_VOD", "").strip()
+    if explicit:
+        p = Path(explicit)
+        return [p] if p.exists() else []
+    vods = [p for p in INBOX.glob("yt_*.mp4") if p.stat().st_size <= max_mb * 1_000_000]
+    vods.sort(key=lambda p: p.stat().st_size)
+    extra = os.environ.get("MLBB_FORCE_EXTRA_VODS", "").strip()
+    if extra:
+        for name in extra.split(","):
+            p = INBOX / name.strip()
+            if p.exists() and p not in vods:
+                vods.append(p)
+    return vods
+
+
+def main() -> int:
+    os.environ.setdefault("PYTHONPATH", "/usr/local/bin")
+    os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
+    os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
+    os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
+    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "1"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
+    os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
+    os.environ["HIGHLIGHT_HEATMAP"] = "0"
+    os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
+
+    env = _load_env()
+    token = env.get("TG_BOT_TOKEN", "")
+    chat_id = env.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
+        return 1
+
+    batch_n = int(os.environ.get("MLBB_FORCE_BATCH_COUNT", "10"))
+    vods = _pick_vods()
+    if not vods:
+        print("no VODs found", file=sys.stderr)
+        return 1
+
+    print(f"batch={batch_n} vods={[v.name for v in vods]}", flush=True)
+    peaks = _collect_peaks(vods, batch_n)
+    if not peaks:
+        print("no kill UI peaks found", file=sys.stderr)
+        return 2
+    print(f"selected {len(peaks)} peaks", flush=True)
+
+    from mlbb_vod_segment_feed import (
+        render_single_segment,
+        send_message,
+        send_video,
+        _ffprobe_duration,
+        _normalize_clip,
+    )
+    from mlbb_vod_segment_store import segment_id, segments_root, upsert_segment
+
+    send_message(
+        token,
+        chat_id,
+        f"MLBB — {len(peaks)} сцен (7–22с, kill UI)\n"
+        f"👍 Ок / 👎 Не ок под каждым\n"
+        f"Если 10 хороших — идём дальше",
+    )
+
+    sent = 0
+    for vod, peak_t, kill_meta in peaks:
+        clip = {
+            "source_path": str(vod),
+            "source_index": 0,
+            "game_name": "MLBB",
+            "start": round(peak_t, 3),
+            "peak_start": round(peak_t, 3),
+            "score": float(kill_meta.get("score", 0)),
+            "highlight_metrics": {"pass_reason": kill_meta.get("reason", "kill_ui")},
+            "gate_reason": f"kill_ui:{kill_meta.get('reason')}",
+        }
+        norm = _normalize_clip(clip, vod)
+        start = float(norm["start"])
+        sid = segment_id(vod, start)
+        out = segments_root() / f"seg_{sid}.mp4"
+        print(f"render #{sent+1} peak={peak_t:.0f}s start={start:.0f}s -> {out.name}", flush=True)
+        t0 = time.time()
+        if not render_single_segment(vod, clip, out):
+            print(f"render failed {sid}", file=sys.stderr)
+            continue
+        seg_dur = _ffprobe_duration(out)
+        print(f"  done {time.time()-t0:.0f}s dur={seg_dur:.1f}s size={out.stat().st_size}", flush=True)
+
+        caption = (
+            f"MLBB кусок #{sid}\n"
+            f"{vod.stem.replace('yt_', '')} @ {int(start)}s (пик {int(peak_t)}s) | {seg_dur:.0f}с\n"
+            f"kill: {kill_meta.get('reason')} score={kill_meta.get('score'):.3f}\n"
+            f"👍 Ок / 👎 Не ок"
+        )
+        if not send_video(token, chat_id, out, caption, seg_id=sid):
+            print(f"telegram send failed {sid}", file=sys.stderr)
+            continue
+        upsert_segment(
+            {
+                "segment_id": sid,
+                "path": str(out),
+                "vod": str(vod),
+                "vod_id": vod.stem.replace("yt_", ""),
+                "start": start,
+                "peak_start": peak_t,
+                "score": clip["score"],
+                "hook_score": 0.0,
+                "sig": "force_kill_ui_batch",
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "kill_ui": kill_meta,
+                "duration": seg_dur,
+            }
+        )
+        sent += 1
+
+    print(json.dumps({"ok": True, "sent": sent, "requested": batch_n}, ensure_ascii=False))
+    return 0 if sent else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
