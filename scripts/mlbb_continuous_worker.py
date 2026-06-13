@@ -18,12 +18,7 @@ BIN = Path("/usr/local/bin")
 PY = sys.executable
 PAUSED_PIPELINES = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
-TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "30"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
-INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "8"))
-FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "3"))
-VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "90"))
-VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
 
 
 def log(msg: str) -> None:
@@ -182,8 +177,8 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_SHORT_MODE": "1",
             "MLBB_VOD_MIN_SEC": env.get("MLBB_VOD_MIN_SEC", "900"),
             "MLBB_VOD_MAX_SEC": env.get("MLBB_VOD_MAX_SEC", "2700"),
-            "MLBB_VOD_PIPELINE_MAX_MIN": str(VOD_SLICE_MIN),
-            "MLBB_VOD_PIPELINE_MAX_VODS": str(VOD_MAX_VODS),
+            "MLBB_VOD_PIPELINE_MAX_MIN": env.get("MLBB_VOD_SLICE_MIN", "90"),
+            "MLBB_VOD_PIPELINE_MAX_VODS": env.get("MLBB_VOD_SLICE_MAX_VODS", "8"),
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
             "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "40"),
             "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "40"),
@@ -232,6 +227,11 @@ def montage_cmd(env: dict[str, str]) -> list[str]:
 
 def main() -> int:
     base = base_env()
+    target_pending = int(base.get("MLBB_TARGET_PENDING", "40"))
+    vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
+    vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
+    ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "8"))
+    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "3"))
     if base.get("MLBB_SEND_ENABLED", "1") != "1":
         log("MLBB_SEND_ENABLED=0 — worker idle (no Telegram sends)")
         return 0
@@ -244,8 +244,8 @@ def main() -> int:
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
 
     log(
-        f"mlbb_continuous_worker start target_pending={TARGET_PENDING} "
-        f"vod_slice={VOD_SLICE_MIN}min batch={base.get('MLBB_CALIBRATION_BATCH')} "
+        f"mlbb_continuous_worker start target_pending={target_pending} "
+        f"vod_slice={vod_slice_min}min batch={base.get('MLBB_CALIBRATION_BATCH')} "
         f"montage={'on' if montage_enabled else 'off'}"
     )
     cycles = 0
@@ -253,9 +253,9 @@ def main() -> int:
     while True:
         cycles += 1
         pending = pending_shorts()
-        aggressive = pending < TARGET_PENDING
+        aggressive = pending < target_pending
 
-        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC):
+        if aggressive and ingest.cooldown_ok(ingest_cooldown):
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
@@ -263,7 +263,7 @@ def main() -> int:
         if not vod.running():
             vod.start()
 
-        if pending > 0 and feed.cooldown_ok(FEED_COOLDOWN_SEC):
+        if pending > 0 and feed.cooldown_ok(feed_cooldown):
             feed.start()
 
         if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):

@@ -218,8 +218,11 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         ),
         "--merge-output-format",
         "mp4",
-        "--dateafter",
-        date_after,
+    ]
+    if env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") != "1":
+        cmd.extend(["--dateafter", date_after])
+    cmd.extend(
+        [
         "--sleep-requests",
         env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
         "--sleep-interval",
@@ -231,7 +234,8 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         "--no-playlist",
         *ytdlp_extra_args(env),
         url,
-    ]
+        ]
+    )
     dest = out_dir / f"yt_{video_id}.mp4"
     if dest.exists():
         return dest
@@ -239,6 +243,9 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         cmd, capture_output=True, text=True, check=False, timeout=300, env=subprocess_env_no_proxy(env)
     )
     if proc.returncode != 0:
+        if env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1":
+            err = (proc.stderr or proc.stdout or "")[-200:]
+            print(f"download failed {video_id}: {err}", flush=True)
         return None
     if dest.exists():
         if not ensure_readable(dest):
@@ -423,6 +430,7 @@ def main() -> int:
         pool = deep[: cap * 2]
 
     saved = rejected = downloads = skipped_known = 0
+    min_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SCORE", "0.05" if burst else "0.12"))
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
@@ -447,7 +455,7 @@ def main() -> int:
                 continue
 
         feats = score_clip(mp4)
-        if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
+        if feats["score"] < min_score and not feats["rule_pass"] and not lenient:
             rejected += 1
             continue
         if not ok and lenient and feats["score"] < 0.05:
