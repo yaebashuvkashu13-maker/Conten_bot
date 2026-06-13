@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# After owner 👍/👎: sync labels, train, eval gate, rescan VOD + Shorts calibration.
+# After owner 👍/👎: sync labels, train, eval gates. NO sendVideo in LEARNING_FIRST until gate pass.
 set -Eeuo pipefail
 set -a
 source /root/.video_bot.env
@@ -11,6 +11,7 @@ export HIGHLIGHT_HEATMAP=0
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
 export HIGHLIGHT_OWNER_BAD_PAD_SEC="${HIGHLIGHT_OWNER_BAD_PAD_SEC:-90}"
 export HIGHLIGHT_OWNER_GOOD_PAD_SEC="${HIGHLIGHT_OWNER_GOOD_PAD_SEC:-45}"
+export MLBB_LEARNING_FIRST="${MLBB_LEARNING_FIRST:-1}"
 export MLBB_LEARN_MIN_PRECISION="${MLBB_LEARN_MIN_PRECISION:-0.40}"
 
 python3 - <<'PY'
@@ -38,39 +39,38 @@ PY
 
 python3 /usr/local/bin/highlight_train.py --profile mobile_legends
 
+python3 /usr/local/bin/eval_learning_first_gate.py
+GATE_RC=$?
+if [[ "$GATE_RC" -ne 0 ]]; then
+  echo "LEARNING_FIRST gate FAIL — sendVideo blocked (metric=precision_7d)" >&2
+fi
+
 python3 - <<'PY'
 import json
 import sys
 from pathlib import Path
+from mlbb_learning_first import precision_7d, sends_allowed, transition_passed
 
-labels_path = Path("/root/data/mlbb/vod_segment_labels.json")
-min_prec = float(__import__("os").environ.get("MLBB_LEARN_MIN_PRECISION", "0.40"))
-if labels_path.exists():
-    data = json.loads(labels_path.read_text(encoding="utf-8"))
-    fb = data.get("feedback", [])
-    yes = sum(1 for f in fb if f.get("owner_label") in ("yes", "good"))
-    no = sum(1 for f in fb if f.get("owner_label") in ("no", "bad"))
-    total = yes + no
-    prec = yes / total if total else 1.0
-    print(f"vseg_precision={prec:.3f} ({yes}/{total}) min={min_prec}")
-    if total >= 5 and prec < min_prec:
-        print(f"FAIL: precision {prec:.3f} < {min_prec}", file=sys.stderr)
-        sys.exit(1)
+print(f"transition_passed={transition_passed()} sends_allowed={sends_allowed()} precision_7d={precision_7d():.3f}")
+if not sends_allowed():
+    print("skip feeds: LEARNING_FIRST gate not passed", file=sys.stderr)
+    sys.exit(0)
 PY
 
-export EVAL_MIN_RECALL="${MLBB_EVAL_MIN_RECALL:-0.30}"
-export EVAL_MIN_BAD_PREC="${MLBB_EVAL_MIN_BAD_PREC:-0.55}"
-export EVAL_MIN_MONTAGE_SEGS="${MLBB_EVAL_MIN_MONTAGE_SEGS:-1}"
-export EVAL_MIN_LABELED_VODS="${MLBB_EVAL_MIN_LABELED_VODS:-1}"
-python3 /usr/local/bin/eval_highlight_model.py --profile mobile_legends --require-pass
-
-if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
-  /usr/local/bin/mlbb_vod_segment_feed.sh
-elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]]; then
-  flock -n /tmp/mlbb_vod_segment_feed.lock \
-    python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" \
-    >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
+if python3 - <<'PY'
+from mlbb_learning_first import sends_allowed
+import sys
+sys.exit(0 if sends_allowed() else 1)
+PY
+then
+  if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
+    /usr/local/bin/mlbb_vod_segment_feed.sh
+  elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]]; then
+    flock -n /tmp/mlbb_vod_segment_feed.lock \
+      python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" \
+      >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
+  fi
+  /usr/local/bin/mlbb_calibration_feed.sh || true
 fi
 
-/usr/local/bin/mlbb_calibration_feed.sh || true
 echo "mlbb_learn_apply done $(date -Is)"

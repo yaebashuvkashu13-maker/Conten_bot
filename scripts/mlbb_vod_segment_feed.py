@@ -527,6 +527,15 @@ def bootstrap_exemplar_segments() -> list[dict]:
 
 
 def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: str) -> bool:
+    from mlbb_learning_first import can_send, enabled, record_send, sends_allowed
+
+    if enabled() and not sends_allowed():
+        log.warning("LEARNING_FIRST: sendVideo blocked seg=%s", seg_id)
+        return False
+    ok_send, reason = can_send(1)
+    if not ok_send:
+        log.warning("send blocked seg=%s reason=%s", seg_id, reason)
+        return False
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
         return False
     url = f"https://api.telegram.org/bot{token}/sendVideo"
@@ -552,7 +561,10 @@ def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: st
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
     try:
-        return bool(json.loads(result.stdout).get("ok"))
+        sent = bool(json.loads(result.stdout).get("ok"))
+        if sent:
+            record_send(1)
+        return sent
     except json.JSONDecodeError:
         return False
 
@@ -1110,6 +1122,18 @@ def _send_segment_batch(
     to_send: list[dict],
     sig: str,
 ) -> int:
+    from mlbb_learning_first import daily_send_count, enabled, max_daily_sends, sends_allowed
+
+    if enabled() and not sends_allowed():
+        log.info("LEARNING_FIRST: skip sendVideo batch n=%s vod=%s", len(to_send), vod.name)
+        return 0
+    cap_left = max_daily_sends() - daily_send_count()
+    if cap_left <= 0:
+        log.info("daily cap reached sent_today=%s cap=%s precision_7d mode", daily_send_count(), max_daily_sends())
+        return 0
+    if len(to_send) > cap_left:
+        log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
+        to_send = to_send[:cap_left]
     seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
     send_message(
         token,
@@ -1277,6 +1301,18 @@ def _process_vod_segments(
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if os.environ.get("MLBB_EVAL_ONLY", "0") == "1" or os.environ.get("MLBB_DRY_RUN", "0") == "1":
+        from mlbb_learning_first import dry_run_gate_rejection, eval_transition_gate
+
+        report = eval_transition_gate()
+        dry = report.get("dry_run", {})
+        print(
+            f"eval_only all_pass={report['all_pass']} "
+            f"holdout={report['holdout'].get('precision')} "
+            f"dry_rejected={dry.get('rejected')}/{dry.get('tested')}"
+        )
+        return 0 if report["all_pass"] else 1
 
     if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
         print("SKIP: MLBB_ONLY_MODE not set")

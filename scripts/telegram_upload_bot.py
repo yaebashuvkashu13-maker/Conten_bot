@@ -475,10 +475,24 @@ def _mlbb_apply_vseg_label(
             f'✅ Ок — кусок {segment_id.strip()}\n'
             f'Всего VOD: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
         )
+    from mlbb_learning_first import dislike_feedback_report
+    from mlbb_vod_segment_store import find_segment
+
+    row = find_segment(segment_id.strip()) or {}
+    peak = float(row.get('peak_start') or row.get('start') or 0)
+    vid = str(row.get('vod_id') or segment_id.strip().rsplit('_', 1)[0])
+    owner_report = dislike_feedback_report(
+        segment_id.strip(),
+        vod_id=vid,
+        peak_sec=peak,
+        reason=reason,
+    )
+    notify_owner(owner_report)
     return True, (
         f'❌ Не ок — кусок {segment_id.strip()}\n'
         f'Причина: {reason or "—"}\n'
-        f'Всего VOD: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+        f'Всего VOD: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}\n\n'
+        f'{owner_report}'
     )
 
 

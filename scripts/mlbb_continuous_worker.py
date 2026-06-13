@@ -59,6 +59,8 @@ def base_env() -> dict[str, str]:
             "MLBB_DATA_ROOT": env.get("MLBB_DATA_ROOT", "/root/data/mlbb"),
             "PYTHONPATH": f"{BIN}:{env.get('CONTENT_BOT_REPO', '/root/content_bot_ml')}/scripts",
             "MLBB_ONLY_MODE": "1",
+            "MLBB_LEARNING_FIRST": env.get("MLBB_LEARNING_FIRST", "1"),
+            "HIGHLIGHT_OWNER_BAD_PAD_SEC": env.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         }
@@ -222,11 +224,28 @@ def main() -> int:
         if not vod.running():
             vod.start()
 
+        # Shorts feed only after LEARNING_FIRST gate passed
+        from mlbb_learning_first import enabled, sends_allowed
+
         if pending > 0 and feed.cooldown_ok(FEED_COOLDOWN_SEC):
-            feed.start()
+            if not enabled() or sends_allowed():
+                feed.start()
+            elif cycles % 30 == 0:
+                log("LEARNING_FIRST: feed idle (no sendVideo until gate pass)")
 
         for job in (ingest, vod, feed):
             job.reap()
+
+        if cycles % 45 == 0 and base.get("MLBB_LEARNING_FIRST", "1") == "1":
+            eval_script = BIN / "eval_learning_first_gate.py"
+            if not eval_script.exists():
+                eval_script = Path(__file__).resolve().parent / "eval_learning_first_gate.py"
+            subprocess.run(
+                [PY, str(eval_script)],
+                env=base,
+                timeout=3600,
+                check=False,
+            )
 
         if cycles % 15 == 0:
             write_state(

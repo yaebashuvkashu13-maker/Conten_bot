@@ -38,6 +38,11 @@ def send_video(
     *,
     video_id: str = "",
 ) -> bool:
+    from mlbb_learning_first import enabled, record_send, sends_allowed
+
+    if enabled() and not sends_allowed():
+        print(f"LEARNING_FIRST: block sendVideo video_id={video_id}")
+        return False
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
         return False
     url = f"https://api.telegram.org/bot{token}/sendVideo"
@@ -65,7 +70,10 @@ def send_video(
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         return False
-    return bool(payload.get("ok"))
+    ok = bool(payload.get("ok"))
+    if ok:
+        record_send(1)
+    return ok
 
 
 def send_message(
@@ -119,6 +127,12 @@ def main() -> int:
     if not token or not chat_id:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
+
+    from mlbb_learning_first import enabled, sends_allowed
+
+    if enabled() and not sends_allowed():
+        print("LEARNING_FIRST: skip calibration sendVideo (gate not passed)")
+        return 0
 
     repair_index()
     rebuild_index_from_disk()

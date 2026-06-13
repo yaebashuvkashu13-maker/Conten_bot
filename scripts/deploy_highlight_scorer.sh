@@ -42,6 +42,8 @@ install -m 755 \
   scripts/mlbb_vod_segment_store.py \
   scripts/mlbb_learn_apply.sh \
   scripts/mlbb_baseline_report.py \
+  scripts/mlbb_learning_first.py \
+  scripts/eval_learning_first_gate.py \
   scripts/viral_reference_ingest.py \
   scripts/viral_reference_refresh.sh \
   scripts/highlight_probe.py \
