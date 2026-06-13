@@ -88,8 +88,14 @@ def format_report(stats: dict) -> str:
 
 
 def send_telegram(text: str) -> bool:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    token = (
+        os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        or os.environ.get("TG_BOT_TOKEN", "").strip()
+    )
+    chat_id = (
+        os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+        or os.environ.get("TG_CHAT_ID", "").strip()
+    )
     if not token or not chat_id:
         print("telegram_skip: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID", file=sys.stderr)
         return False
