@@ -215,6 +215,20 @@ def _build_scene_clip(vod: Path, peak_t: float, kill_meta: dict) -> dict:
     }
 
 
+def _vod_title_from_state(vid: str) -> str:
+    state_path = Path(os.environ.get("MLBB_VOD_STATE", "/root/data/mlbb/vod_segment_state.json"))
+    if not state_path.exists():
+        return ""
+    try:
+        rows = json.loads(state_path.read_text(encoding="utf-8")).get("vods", [])
+    except (json.JSONDecodeError, OSError):
+        return ""
+    for row in rows:
+        if str(row.get("id", "")) == vid:
+            return str(row.get("title", "") or "")
+    return ""
+
+
 def _vod_title(path: Path) -> str:
     vid = path.stem.replace("yt_", "")
     meta = path.with_suffix(".meta.json")
@@ -225,6 +239,9 @@ def _vod_title(path: Path) -> str:
                 return str(title)
         except (json.JSONDecodeError, OSError):
             pass
+    title = _vod_title_from_state(vid)
+    if title:
+        return title
     try:
         proc = subprocess.run(
             [
@@ -271,14 +288,23 @@ def _looks_like_mlbb_vod(path: Path) -> bool:
 
 
 def _pick_vods() -> list[Path]:
+    blocked = _blocked_vod_ids()
     min_mb = float(os.environ.get("MLBB_FORCE_MIN_VOD_MB", "200"))
     max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "950"))
     explicit = os.environ.get("MLBB_FORCE_VOD", "").strip()
     if explicit:
         p = Path(explicit)
+        vid = p.stem.replace("yt_", "")
+        if vid in blocked:
+            print(f"skip blocked vod {vid}", flush=True)
+            return []
         return [p] if p.exists() and _looks_like_mlbb_vod(p) else []
     vods: list[Path] = []
     for p in INBOX.glob("yt_*.mp4"):
+        vid = p.stem.replace("yt_", "")
+        if vid in blocked:
+            print(f"skip blocked {p.name}", flush=True)
+            continue
         size_mb = p.stat().st_size / 1_000_000
         if size_mb < min_mb or size_mb > max_mb:
             continue
@@ -323,11 +349,13 @@ def main() -> int:
         return 1
 
     print(f"batch={batch_n} vods={[v.name for v in vods]}", flush=True)
-    peaks = _load_forced_peaks(vods, batch_n) or _collect_peaks(vods, batch_n)
+    forced_peaks = _load_forced_peaks(vods, batch_n)
+    peaks = forced_peaks or _collect_peaks(vods, batch_n)
+    trust_peaks = bool(forced_peaks) and os.environ.get("MLBB_FORCE_TRUST_PEAKS", "1") == "1"
     if not peaks:
         print("no kill UI peaks found", file=sys.stderr)
         return 2
-    print(f"selected {len(peaks)} peaks", flush=True)
+    print(f"selected {len(peaks)} peaks trust={trust_peaks}", flush=True)
 
     from mlbb_vod_segment_feed import render_single_segment, send_message, send_video, _ffprobe_duration
     from mlbb_vod_segment_store import segment_id, segments_root, upsert_segment
@@ -345,12 +373,13 @@ def main() -> int:
         clip = _build_scene_clip(vod, peak_t, kill_meta)
         start = float(clip["start"])
         dur = float(clip["input_duration"])
-        from mlbb_kill_ui import passes_mlbb_kill_gate
+        if not trust_peaks:
+            from mlbb_kill_ui import passes_mlbb_kill_gate
 
-        ok, gate_reason, gate = passes_mlbb_kill_gate(vod, start, dur)
-        if not ok:
-            print(f"SKIP peak={peak_t:.0f}s gate={gate_reason}", flush=True)
-            continue
+            ok, gate_reason, gate = passes_mlbb_kill_gate(vod, start, dur)
+            if not ok:
+                print(f"SKIP peak={peak_t:.0f}s gate={gate_reason}", flush=True)
+                continue
         sid = segment_id(vod, start)
         out = segments_root() / f"seg_{sid}.mp4"
         print(f"render #{sent+1} peak={peak_t:.0f}s start={start:.0f}s -> {out.name}", flush=True)
