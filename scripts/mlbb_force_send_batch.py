@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 ENV_PATH = Path("/root/.video_bot.env")
 INBOX = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
+BLOCKED_VODS_PATH = Path(os.environ.get("MLBB_BLOCKED_VODS", "/root/data/mlbb/blocked_vods.json"))
 
 
 def _load_env() -> dict[str, str]:
@@ -243,6 +244,16 @@ def _vod_title(path: Path) -> str:
     except (subprocess.SubprocessError, OSError):
         pass
     return ""
+
+
+def _blocked_vod_ids() -> set[str]:
+    if not BLOCKED_VODS_PATH.exists():
+        return set()
+    try:
+        data = json.loads(BLOCKED_VODS_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    return {str(v).replace("yt_", "") for v in data.get("vods", [])}
 
 
 def _looks_like_mlbb_vod(path: Path) -> bool:
