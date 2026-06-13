@@ -200,6 +200,7 @@ def score_mlbb_kill_ui(
     duration_sec: float,
     *,
     sample_frames: int | None = None,
+    strict: bool = False,
 ) -> KillUiResult:
     video_path = Path(video_path)
     sample_n = sample_frames or int(os.environ.get("MLBB_KILL_UI_SAMPLES", "8"))
@@ -215,8 +216,8 @@ def score_mlbb_kill_ui(
 
     ocr_text = ""
     keyword_hits = 0
-    skip_ocr = os.environ.get("MLBB_KILL_UI_SKIP_OCR", "0") == "1"
-    ocr_trigger = (announce_peak >= 0.04 or feed_peak >= 0.05) and not skip_ocr
+    skip_ocr = os.environ.get("MLBB_KILL_UI_SKIP_OCR", "0") == "1" and not strict
+    ocr_trigger = (announce_peak >= 0.04 or feed_peak >= 0.05 or strict) and not skip_ocr
     if ocr_trigger or os.environ.get("MLBB_KILL_UI_ALWAYS_OCR", "0") == "1":
         for frame in frames:
             text, hits = _ocr_kill_text(frame)
@@ -230,12 +231,22 @@ def score_mlbb_kill_ui(
     min_spike = float(os.environ.get("MLBB_KILL_ANNOUNCE_SPIKE_MIN", "0.075"))
     min_feed = float(os.environ.get("MLBB_KILL_FEED_MIN", "0.30"))
 
-    has_kill = keyword_hits > 0 or (
-        announce_peak >= min_color
-        and announce_spike >= min_spike
-        and score >= min_score * 0.75
-    )
-    has_kill = has_kill and score >= min_score * 0.65
+    if strict:
+        # Send gate: OCR kill text, or strong simultaneous banner + feed (not gold HUD alone).
+        has_kill = keyword_hits > 0 or (
+            announce_peak >= float(os.environ.get("MLBB_KILL_STRICT_ANNOUNCE_MIN", "0.15"))
+            and announce_spike >= float(os.environ.get("MLBB_KILL_STRICT_SPIKE_MIN", "0.10"))
+            and feed_peak >= float(os.environ.get("MLBB_KILL_STRICT_FEED_MIN", "0.32"))
+            and score >= min_score
+        )
+    else:
+        has_kill = keyword_hits > 0 or (
+            announce_peak >= min_color
+            and announce_spike >= min_spike
+            and feed_peak >= min_feed
+            and score >= min_score * 0.75
+        )
+    has_kill = has_kill and (keyword_hits > 0 or score >= min_score * 0.65)
 
     if keyword_hits:
         reason = f"kill_keyword={keyword_hits}"
@@ -283,16 +294,37 @@ def passes_mlbb_kill_gate(
         dummy = KillUiResult(1.0, True, 0, 0.0, 0.0, "", "disabled")
         return True, "kill_ui_disabled", dummy
 
-    result = score_mlbb_kill_ui(video_path, start_sec, duration_sec)
-    if result.has_kill_notification:
-        return True, result.reason, result
-    if combat_override_allowed(
-        center_motion=center_motion,
-        skill_delta=skill_delta,
-        minimap_delta=minimap_delta,
-    ):
-        return True, f"combat_override=motion{center_motion:.3f}", result
-    return False, result.reason, result
+    video_path = Path(video_path)
+    motion = center_motion
+    skill = skill_delta
+    mini = minimap_delta
+    if motion <= 0.0 and skill <= 0.0 and mini <= 0.0:
+        try:
+            from gameplay_gate import detect_game_viewport_crop, score_segment_combat
+
+            crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+            motion, mini, skill, _text = score_segment_combat(
+                video_path, start_sec, duration_sec, crop_box=crop, sample_frames=6
+            )
+        except ImportError:
+            pass
+
+    idle_motion = float(os.environ.get("MLBB_FIGHT_IDLE_MOTION", "0.028"))
+    min_motion = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+    min_skill = float(os.environ.get("MLBB_FIGHT_MIN_SKILL", "0.014"))
+    min_mini = float(os.environ.get("MLBB_FIGHT_MIN_MINIMAP", "0.016"))
+
+    if motion < idle_motion:
+        result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=5)
+        return False, f"idle_motion={motion:.3f}", result
+    if motion < min_motion or (skill < min_skill and mini < min_mini):
+        result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=5)
+        return False, f"laning_motion={motion:.3f}:skill{skill:.3f}:mini{mini:.3f}", result
+
+    result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=6)
+    if not result.has_kill_notification:
+        return False, result.reason, result
+    return True, result.reason, result
 
 
 def filter_starts_by_kill_ui(
@@ -311,8 +343,8 @@ def filter_starts_by_kill_ui(
     kept: list[tuple[float, float]] = []
     try:
         for start in starts:
-            result = score_mlbb_kill_ui(video_path, float(start), window_sec, sample_frames=3)
-            if result.has_kill_notification:
+            ok, _reason, result = passes_mlbb_kill_gate(video_path, float(start), window_sec)
+            if ok:
                 kept.append((float(start), result.score))
     finally:
         if prev_skip is None:

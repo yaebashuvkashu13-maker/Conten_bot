@@ -81,7 +81,7 @@ def main() -> int:
     os.environ.setdefault("PYTHONPATH", "/usr/local/bin")
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
-    os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
+    os.environ["MLBB_KILL_UI_SKIP_OCR"] = "0"
     os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "1"
     os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
     os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
@@ -119,6 +119,13 @@ def main() -> int:
     from mlbb_vod_segment_feed import render_single_segment, send_message, send_video, _ffprobe_duration
     from mlbb_vod_segment_store import inline_keyboard_markup, segment_id, segments_root, upsert_segment
 
+    from mlbb_kill_ui import passes_mlbb_kill_gate
+
+    ok, gate_reason, gate = passes_mlbb_kill_gate(VOD, peak_t, 15.0)
+    if not ok:
+        print(f"gate REJECT peak={peak_t:.0f}s reason={gate_reason}", file=sys.stderr)
+        return 5
+
     sid = segment_id(VOD, peak_t)
     out = segments_root() / f"seg_{sid}.mp4"
     print(f"render peak={peak_t:.1f}s -> {out.name}", flush=True)
@@ -138,7 +145,7 @@ def main() -> int:
         "hook_score": 0.0,
         "pass_reason": kill_meta.get("reason", ""),
     }
-    print("skip presend validation (force path)", flush=True)
+    print(f"gate OK: {gate_reason}", flush=True)
 
     caption = (
         f"MLBB кусок #{sid}\n"

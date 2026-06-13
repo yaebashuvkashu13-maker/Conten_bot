@@ -231,7 +231,7 @@ def main() -> int:
     os.environ.setdefault("PYTHONPATH", "/usr/local/bin")
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
-    os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
+    os.environ["MLBB_KILL_UI_SKIP_OCR"] = "0"
     os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "0"
     os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
     os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
@@ -273,6 +273,13 @@ def main() -> int:
     for vod, peak_t, kill_meta in peaks:
         clip = _build_scene_clip(vod, peak_t, kill_meta)
         start = float(clip["start"])
+        dur = float(clip["input_duration"])
+        from mlbb_kill_ui import passes_mlbb_kill_gate
+
+        ok, gate_reason, gate = passes_mlbb_kill_gate(vod, start, dur)
+        if not ok:
+            print(f"SKIP peak={peak_t:.0f}s gate={gate_reason}", flush=True)
+            continue
         sid = segment_id(vod, start)
         out = segments_root() / f"seg_{sid}.mp4"
         print(f"render #{sent+1} peak={peak_t:.0f}s start={start:.0f}s -> {out.name}", flush=True)
