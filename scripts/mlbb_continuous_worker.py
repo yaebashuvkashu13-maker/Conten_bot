@@ -231,7 +231,7 @@ def main() -> int:
     vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
     vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
     ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "8"))
-    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "3"))
+    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "180"))
     if base.get("MLBB_SEND_ENABLED", "1") != "1":
         log("MLBB_SEND_ENABLED=0 — worker idle (no Telegram sends)")
         return 0
@@ -263,7 +263,7 @@ def main() -> int:
         if not vod.running():
             vod.start()
 
-        if pending > 0 and feed.cooldown_ok(feed_cooldown):
+        if pending > 0 and not feed.running() and feed.cooldown_ok(feed_cooldown):
             feed.start()
 
         if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
