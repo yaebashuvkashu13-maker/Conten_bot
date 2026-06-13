@@ -106,6 +106,27 @@ def _dedupe_peaks(peaks: list[tuple[float, dict]], min_gap: float) -> list[tuple
     return chosen
 
 
+def _load_forced_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, dict]] | None:
+    peaks_file = os.environ.get("MLBB_FORCE_PEAKS_FILE", "").strip()
+    if not peaks_file:
+        return None
+    path = Path(peaks_file)
+    if not path.exists():
+        print(f"peaks file missing: {path}", file=sys.stderr)
+        return None
+    rows = json.loads(path.read_text())
+    out: list[tuple[Path, float, dict]] = []
+    vod_by_name = {v.name: v for v in vods}
+    for row in rows[:need]:
+        vod = vod_by_name.get(row["vod"]) or Path(row.get("vod_path", ""))
+        if not isinstance(vod, Path):
+            vod = Path(vod)
+        if not vod.exists():
+            continue
+        out.append((vod, float(row["peak"]), row.get("kill_ui", {"score": row.get("score", 0), "reason": row.get("reason", "")})))
+    return out
+
+
 def _collect_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, dict]]:
     from mlbb_kill_ui import scan_vod_kill_peaks
 
@@ -147,6 +168,39 @@ def _dedupe_by_vod_gap(
     return chosen
 
 
+def _fast_fight_bounds(peak_t: float, vod_dur: float, score: float) -> tuple[float, float, float]:
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    min_d = float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
+    max_d = float(os.environ.get("MLBB_FIGHT_MAX_SEC", "22"))
+    span = max_d - min_d
+    dur = min_d + span * min(1.0, max(0.0, score) / 0.45)
+    dur = round(max(min_d, min(max_d, dur)), 1)
+    start = max(0.0, peak_t - lead)
+    end = min(vod_dur, start + dur)
+    dur = round(end - start, 1)
+    return round(start, 2), round(end, 2), dur
+
+
+def _build_scene_clip(vod: Path, peak_t: float, kill_meta: dict) -> dict:
+    score = float(kill_meta.get("score", 0))
+    vod_dur = _ffprobe_duration(vod)
+    start, end, dur = _fast_fight_bounds(peak_t, vod_dur, score)
+    return {
+        "source_path": str(vod),
+        "source_index": 0,
+        "game_name": "MLBB",
+        "start": start,
+        "peak_start": round(peak_t, 3),
+        "fight_end": end,
+        "input_duration": dur,
+        "output_duration": dur,
+        "speed": 1.0,
+        "score": score,
+        "highlight_metrics": {"pass_reason": kill_meta.get("reason", "kill_ui")},
+        "gate_reason": f"kill_ui:{kill_meta.get('reason')}",
+    }
+
+
 def _pick_vods() -> list[Path]:
     min_mb = float(os.environ.get("MLBB_FORCE_MIN_VOD_MB", "200"))
     max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "950"))
@@ -178,7 +232,7 @@ def main() -> int:
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
-    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "1"
+    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "0"
     os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
     os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
     os.environ["HIGHLIGHT_HEATMAP"] = "0"
@@ -198,19 +252,13 @@ def main() -> int:
         return 1
 
     print(f"batch={batch_n} vods={[v.name for v in vods]}", flush=True)
-    peaks = _collect_peaks(vods, batch_n)
+    peaks = _load_forced_peaks(vods, batch_n) or _collect_peaks(vods, batch_n)
     if not peaks:
         print("no kill UI peaks found", file=sys.stderr)
         return 2
     print(f"selected {len(peaks)} peaks", flush=True)
 
-    from mlbb_vod_segment_feed import (
-        render_single_segment,
-        send_message,
-        send_video,
-        _ffprobe_duration,
-        _normalize_clip,
-    )
+    from mlbb_vod_segment_feed import render_single_segment, send_message, send_video, _ffprobe_duration
     from mlbb_vod_segment_store import segment_id, segments_root, upsert_segment
 
     send_message(
@@ -223,18 +271,8 @@ def main() -> int:
 
     sent = 0
     for vod, peak_t, kill_meta in peaks:
-        clip = {
-            "source_path": str(vod),
-            "source_index": 0,
-            "game_name": "MLBB",
-            "start": round(peak_t, 3),
-            "peak_start": round(peak_t, 3),
-            "score": float(kill_meta.get("score", 0)),
-            "highlight_metrics": {"pass_reason": kill_meta.get("reason", "kill_ui")},
-            "gate_reason": f"kill_ui:{kill_meta.get('reason')}",
-        }
-        norm = _normalize_clip(clip, vod)
-        start = float(norm["start"])
+        clip = _build_scene_clip(vod, peak_t, kill_meta)
+        start = float(clip["start"])
         sid = segment_id(vod, start)
         out = segments_root() / f"seg_{sid}.mp4"
         print(f"render #{sent+1} peak={peak_t:.0f}s start={start:.0f}s -> {out.name}", flush=True)
