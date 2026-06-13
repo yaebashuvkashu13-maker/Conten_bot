@@ -432,6 +432,24 @@ def send_message(chat_id: str | int, text: str):
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
+def _schedule_mlbb_retrain() -> None:
+    """Retrain MLBB scorer from owner 👍/👎 without blocking Telegram."""
+    script = Path('/usr/local/bin/mlbb_learn_apply.sh')
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'mlbb_learn_apply.sh'
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ['bash', str(script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        logging.exception('mlbb retrain schedule failed')
+
+
 def _mlbb_apply_vseg_label(
     chat_id: str | int,
     segment_id: str,
@@ -451,6 +469,7 @@ def _mlbb_apply_vseg_label(
     s = stats()
     if not ok:
         return False, f'Не нашёл кусок {segment_id}. Запусти /mlbb_vod'
+    _schedule_mlbb_retrain()
     if is_good:
         return True, (
             f'✅ Ок — кусок {segment_id.strip()}\n'
@@ -482,6 +501,7 @@ def _mlbb_apply_owner_label(
     s = stats()
     if not ok:
         return False, f'Не нашёл id={video_id} в индексе Shorts. Сначала /mlbb_samples'
+    _schedule_mlbb_retrain()
     if is_good:
         return True, (
             f'✅ Записал good exemplar #{video_id.strip()}\n'

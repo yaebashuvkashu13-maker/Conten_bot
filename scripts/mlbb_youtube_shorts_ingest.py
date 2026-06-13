@@ -21,7 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
-from mlbb_calibration_store import SHORTS_ROOT, pending_candidates, repair_index, upsert_candidate
+from mlbb_calibration_store import (
+    SHORTS_ROOT,
+    pending_candidates,
+    rebuild_index_from_disk,
+    repair_index,
+    upsert_candidate,
+)
 from viral_scorer import hook_score
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
@@ -227,6 +233,9 @@ def main() -> int:
     pruned = repair_index()
     if pruned:
         print(f"repair_index removed={pruned}")
+    rebuilt = rebuild_index_from_disk()
+    if rebuilt:
+        print(f"rebuild_index_from_disk added={rebuilt}")
 
     pending_n = len(pending_candidates(limit=9999))
     if args.skip_if_pending > 0 and pending_n >= args.skip_if_pending:

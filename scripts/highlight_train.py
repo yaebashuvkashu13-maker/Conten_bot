@@ -44,6 +44,7 @@ def _repo_root() -> Path:
 
 REPO = _repo_root()
 INBOX = Path(os.environ.get("HIGHLIGHT_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
+DATA_MLBB = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
 
 
 def labels_path_for(profile: str) -> Path:
@@ -63,6 +64,45 @@ def resolve_vod(video_id: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def load_mlbb_owner_calibration(profile: str) -> list[tuple[Path, float, int]]:
+    """Shorts 👍/👎 + VOD segment 👍/👎 from Telegram calibration stores."""
+    if normalize_profile(profile) != "mobile_legends":
+        return []
+    out: list[tuple[Path, float, int]] = []
+
+    cal_path = DATA_MLBB / "calibration_labels.json"
+    if cal_path.exists():
+        try:
+            data = json.loads(cal_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        for row in data.get("good", []):
+            path = Path(str(row.get("path", "")))
+            if path.exists():
+                out.append((path, 0.15, 1))
+        for row in data.get("bad", []):
+            path = Path(str(row.get("path", "")))
+            if path.exists():
+                out.append((path, 0.15, 0))
+
+    vseg_path = DATA_MLBB / "vod_segment_labels.json"
+    if vseg_path.exists():
+        try:
+            vdata = json.loads(vseg_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            vdata = {}
+        for row in vdata.get("good", []):
+            path = Path(str(row.get("path", "")))
+            if path.exists():
+                out.append((path, 0.5, 1))
+        for row in vdata.get("bad", []):
+            path = Path(str(row.get("path", "")))
+            if path.exists():
+                out.append((path, 0.5, 0))
+
+    return out
 
 
 def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
@@ -118,13 +158,19 @@ def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
     for vod, start, label in load_all_owner_samples(profile):
         X.append(extract_features(vod, start, profile))
         y.append(label)
+    for vod, start, label in load_mlbb_owner_calibration(profile):
+        X.append(extract_features(vod, start, profile))
+        y.append(label)
 
     exemplar_root = REPO / "data" / "highlight_exemplars" / profile
+    exemplar_cap = max_exemplar
+    if profile == "mobile_legends":
+        exemplar_cap = int(os.environ.get("MLBB_TRAIN_MAX_EXEMPLARS", "200"))
     for label_name, cls in (("good", 1), ("bad", 0)):
         folder = exemplar_root / label_name
         if not folder.exists():
             continue
-        for clip in sorted(folder.glob("*.mp4"))[:max_exemplar]:
+        for clip in sorted(folder.glob("*.mp4"))[:exemplar_cap]:
             X.append(extract_features(clip, 0.5, profile))
             y.append(cls)
 

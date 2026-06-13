@@ -1,0 +1,39 @@
+"""Tests for MLBB calibration index rebuild."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from mlbb_calibration_store import rebuild_index_from_disk  # noqa: E402
+
+
+def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    mp4 = shorts / "yt_abcdefghijk.mp4"
+    mp4.write_bytes(b"x" * 20_000)
+    index = tmp_path / "index.json"
+    labels = tmp_path / "labels.json"
+    index.write_text(json.dumps({"candidates": []}))
+    labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+
+    monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
+    monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
+    monkeypatch.setattr(store, "INDEX_PATH", index)
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+
+    n = rebuild_index_from_disk()
+    assert n == 1
+    data = json.loads(index.read_text())
+    assert len(data["candidates"]) == 1
+    assert data["candidates"][0]["video_id"] == "abcdefghijk"

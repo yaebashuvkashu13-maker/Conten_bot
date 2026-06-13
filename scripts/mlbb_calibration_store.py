@@ -303,6 +303,39 @@ def _expected_path(video_id: str) -> Path:
     return SHORTS_ROOT / f"yt_{video_id}.mp4"
 
 
+def rebuild_index_from_disk(*, rescore: bool = False) -> int:
+    """Re-register Shorts already on disk so owner can keep labeling after repair/prune."""
+    added = 0
+    if not SHORTS_ROOT.exists():
+        return 0
+    labeled = labeled_ids()
+    for mp4 in sorted(SHORTS_ROOT.glob("yt_*.mp4")):
+        if mp4.stat().st_size < 10_000:
+            continue
+        vid = id_from_path(mp4)
+        if vid in labeled:
+            continue
+        row = find_candidate(vid) or {}
+        if row.get("video_id") == vid and not rescore:
+            upsert_candidate({**row, "path": str(mp4), "video_id": vid, "id": vid})
+            added += 1
+            continue
+        upsert_candidate(
+            {
+                "video_id": vid,
+                "id": vid,
+                "path": str(mp4),
+                "title": row.get("title", vid),
+                "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
+                "score": float(row.get("score") or 0.12),
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "source": "disk_rebuild",
+            }
+        )
+        added += 1
+    return added
+
+
 def repair_index() -> int:
     """Drop corrupt rows (path/video_id mismatch) and duplicate video_ids."""
     data = load_index()
