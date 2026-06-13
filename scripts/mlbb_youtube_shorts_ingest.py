@@ -41,14 +41,17 @@ SEARCH_QUERIES = (
 )
 
 STREAMER_SHORTS_FEEDS = (
+    # Owner-curated MLBB gameplay (Chou / ranked streamers)
+    "https://www.youtube.com/@hanz.legends/shorts",
+    "https://www.youtube.com/@silent_chou/shorts",
+    "https://www.youtube.com/@officiallazychouu/shorts",
+    "https://www.youtube.com/@rikkchoou/shorts",
+    "https://www.youtube.com/@kyro-plays-o/shorts",
+    "https://www.youtube.com/@run-yss/shorts",
+    # Extra ranked gameplay sources
     "https://www.youtube.com/@Betosky/shorts",
     "https://www.youtube.com/@JessNoLimit/shorts",
     "https://www.youtube.com/@Insectos/shorts",
-    "https://www.youtube.com/@akosidogie/shorts",
-    "https://www.youtube.com/@Elginnn/shorts",
-    "https://www.youtube.com/@Wise_/shorts",
-    "https://www.youtube.com/@OhMyV33nus/shorts",
-    "https://www.youtube.com/@Kairi/shorts",
 )
 
 NEGATIVE_TITLE = re.compile(
