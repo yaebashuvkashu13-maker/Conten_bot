@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import sys
-import urllib.parse
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -100,10 +99,21 @@ def send_telegram(text: str) -> bool:
         print("telegram_skip: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID", file=sys.stderr)
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
-    req = urllib.request.Request(url, data=payload, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.status == 200
+    payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+            return bool(body.get("ok"))
+    except Exception as exc:
+        print(f"telegram_error: {exc}", file=sys.stderr)
+        return False
 
 
 def main() -> int:
