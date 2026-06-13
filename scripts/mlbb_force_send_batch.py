@@ -5,10 +5,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+MLBB_TITLE_RE = re.compile(
+    r"mobile legends|mlbb|bang bang|мобайл легенд|mobilelegend",
+    re.I,
+)
+NON_MLBB_TITLE_RE = re.compile(
+    r"\bpubg\b|playerunknown|metro royale|metroroyale|standoff|genshin|world of tanks|\bwot\b",
+    re.I,
+)
 
 sys.path.insert(0, "/usr/local/bin")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -204,13 +214,58 @@ def _build_scene_clip(vod: Path, peak_t: float, kill_meta: dict) -> dict:
     }
 
 
+def _vod_title(path: Path) -> str:
+    vid = path.stem.replace("yt_", "")
+    meta = path.with_suffix(".meta.json")
+    if meta.exists():
+        try:
+            title = json.loads(meta.read_text()).get("title", "")
+            if title:
+                return str(title)
+        except (json.JSONDecodeError, OSError):
+            pass
+    try:
+        proc = subprocess.run(
+            [
+                "yt-dlp",
+                "--print",
+                "title",
+                "--no-download",
+                f"https://www.youtube.com/watch?v={vid}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if proc.returncode == 0 and (proc.stdout or "").strip():
+            return proc.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return ""
+
+
+def _looks_like_mlbb_vod(path: Path) -> bool:
+    title = _vod_title(path)
+    if not title:
+        print(f"skip {path.name}: no title metadata", flush=True)
+        return False
+    if NON_MLBB_TITLE_RE.search(title):
+        print(f"skip {path.name}: non-MLBB title={title[:100]}", flush=True)
+        return False
+    if not MLBB_TITLE_RE.search(title):
+        print(f"skip {path.name}: missing MLBB markers title={title[:100]}", flush=True)
+        return False
+    return True
+
+
 def _pick_vods() -> list[Path]:
     min_mb = float(os.environ.get("MLBB_FORCE_MIN_VOD_MB", "200"))
     max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "950"))
     explicit = os.environ.get("MLBB_FORCE_VOD", "").strip()
     if explicit:
         p = Path(explicit)
-        return [p] if p.exists() else []
+        return [p] if p.exists() and _looks_like_mlbb_vod(p) else []
     vods: list[Path] = []
     for p in INBOX.glob("yt_*.mp4"):
         size_mb = p.stat().st_size / 1_000_000
@@ -218,6 +273,8 @@ def _pick_vods() -> list[Path]:
             continue
         dur = _ffprobe_duration(p)
         if dur < float(os.environ.get("MLBB_FORCE_MIN_VOD_SEC", "600")):
+            continue
+        if not _looks_like_mlbb_vod(p):
             continue
         vods.append(p)
     vods.sort(key=lambda p: p.stat().st_size)
