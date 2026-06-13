@@ -23,6 +23,7 @@ from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
+    labeled_ids,
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
@@ -263,13 +264,45 @@ def main() -> int:
 
     pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
     cap = args.max_per_query * len(queries)
-    pool = pool[:cap]
+    pool = pool[: cap * 3]  # extra headroom — many rows already labeled
 
-    saved = rejected = downloads = 0
+    known = labeled_ids()
+    sent_pending = {str(r.get("video_id", "")) for r in pending_candidates(limit=9999)}
+    fresh_pool: list[dict] = []
+    for row in pool:
+        vid = row["video_id"]
+        if vid in known:
+            continue
+        if vid in sent_pending:
+            continue
+        fresh_pool.append(row)
+    pool = fresh_pool[:cap]
+
+    if not pool and args.incremental:
+        deep: list[dict] = []
+        for query in queries:
+            for row in search_shorts(
+                query,
+                limit=max(args.max_per_query * 4, 40),
+                env=env,
+                days=args.days,
+            ):
+                vid = row["video_id"]
+                if vid in known or vid in sent_pending:
+                    continue
+                deep.append(row)
+            if args.search_delay > 0:
+                time.sleep(args.search_delay)
+        pool = deep[: cap * 2]
+
+    saved = rejected = downloads = skipped_known = 0
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
         vid = row["video_id"]
+        if vid in known:
+            skipped_known += 1
+            continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid) or mp4
@@ -309,7 +342,7 @@ def main() -> int:
         print(f"OK {vid} score={feats['score']:.3f} views={row.get('view_count')} {row.get('title','')[:50]}")
 
     print(
-        f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} "
+        f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} skipped_known={skipped_known} "
         f"pool={len(pool)} pending={pending_n} dir={SHORTS_ROOT}"
     )
     return 0

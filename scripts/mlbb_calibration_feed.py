@@ -17,6 +17,7 @@ from mlbb_calibration_store import (
     inline_keyboard_markup,
     mark_feed_sent,
     pending_candidates,
+    rebuild_index_from_disk,
     repair_index,
     stats,
 )
@@ -25,7 +26,7 @@ from youtube_download import load_env
 ENV_PATH = Path("/root/.video_bot.env")
 BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
-QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "21600"))  # 6h
+QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "7200"))  # 2h
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
 
 
@@ -120,6 +121,7 @@ def main() -> int:
         return 1
 
     repair_index()
+    rebuild_index_from_disk()
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
@@ -143,6 +145,29 @@ def main() -> int:
     picked = unique
     if not picked:
         s = stats()
+        if s["pending"] == 0 and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1":
+            ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
+            if not ingest.exists():
+                ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ingest),
+                    "--incremental",
+                    "--max-downloads",
+                    "8",
+                    "--max-per-query",
+                    "20",
+                ],
+                env={**env, "MLBB_INGEST_SKIP_IF_PENDING": "0"},
+                timeout=600,
+                check=False,
+            )
+            rebuild_index_from_disk()
+            picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+            s = stats()
+
+    if not picked:
         now = time.time()
         last_notify = 0.0
         if EMPTY_NOTIFY_PATH.exists():
@@ -150,13 +175,14 @@ def main() -> int:
                 last_notify = float(json.loads(EMPTY_NOTIFY_PATH.read_text()).get("at", 0))
             except (json.JSONDecodeError, ValueError, OSError):
                 last_notify = 0.0
+        s = stats()
         if now - last_notify >= QUIET_EMPTY_SEC:
             send_message(
                 token,
                 chat_id,
-                "MLBB калибровка: очередь пуста — ждём ingest с YouTube.\n"
+                "MLBB калибровка: очередь пуста — ingest ищет новые Shorts.\n"
                 f"Индекс: {s['index_total']}, в очереди: {s['pending']}.\n"
-                "Ingest идёт ~раз в 3ч (бережно к YouTube).",
+                "Continuous worker качает и режет VOD параллельно.",
             )
             EMPTY_NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
             EMPTY_NOTIFY_PATH.write_text(json.dumps({"at": now}), encoding="utf-8")

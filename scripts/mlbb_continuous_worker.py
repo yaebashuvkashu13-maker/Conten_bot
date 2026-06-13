@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""MLBB 24/7 worker — ingest, VOD segment scan, calibration feed in parallel.
+
+One long-lived process replaces sparse cron. While VOD scenes are cut/scored,
+YouTube Shorts ingest runs in a separate subprocess (network-bound vs CPU-bound).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+LOG = Path(os.environ.get("MLBB_CONTINUOUS_LOG", "/root/data/mlbb/mlbb_continuous_worker.log"))
+ENV_FILE = Path("/root/.video_bot.env")
+BIN = Path("/usr/local/bin")
+PY = sys.executable
+
+# How many unevaluated Shorts we want queued for owner 👍/👎
+TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "6"))
+LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
+INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "45"))
+FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "20"))
+VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "6"))
+VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "1"))
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+    print(line, end="")
+
+
+def load_env_file() -> dict[str, str]:
+    env = dict(os.environ)
+    if not ENV_FILE.exists():
+        return env
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        env.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+    return env
+
+
+def base_env() -> dict[str, str]:
+    env = load_env_file()
+    env.update(
+        {
+            "CONTENT_BOT_REPO": env.get("CONTENT_BOT_REPO", "/root/content_bot_ml"),
+            "MLBB_DATA_ROOT": env.get("MLBB_DATA_ROOT", "/root/data/mlbb"),
+            "PYTHONPATH": f"{BIN}:{env.get('CONTENT_BOT_REPO', '/root/content_bot_ml')}/scripts",
+            "MLBB_ONLY_MODE": "1",
+            "HIGHLIGHT_HEATMAP": "0",
+            "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
+        }
+    )
+    for key in list(env):
+        if "proxy" in key.lower():
+            env.pop(key, None)
+    return env
+
+
+class Proc:
+    def __init__(self, name: str, cmd: list[str], env: dict[str, str]):
+        self.name = name
+        self.cmd = cmd
+        self.env = env
+        self.proc: subprocess.Popen | None = None
+        self.last_start = 0.0
+
+    def running(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self) -> bool:
+        if self.running():
+            return False
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        out = open(LOG, "a", encoding="utf-8")
+        self.proc = subprocess.Popen(
+            self.cmd,
+            env=self.env,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self.last_start = time.time()
+        log(f"START {self.name} pid={self.proc.pid}")
+        return True
+
+    def reap(self) -> int | None:
+        if not self.proc:
+            return None
+        rc = self.proc.poll()
+        if rc is None:
+            return None
+        log(f"DONE {self.name} rc={rc}")
+        self.proc = None
+        return rc
+
+    def cooldown_ok(self, sec: float) -> bool:
+        return (time.time() - self.last_start) >= sec or not self.running()
+
+
+def pending_shorts() -> int:
+    from mlbb_calibration_store import pending_candidates, rebuild_index_from_disk
+
+    rebuild_index_from_disk()
+    return len(pending_candidates(limit=9999))
+
+
+def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
+    script = BIN / "mlbb_youtube_shorts_ingest.py"
+    if not script.exists():
+        script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
+    max_dl = "10" if aggressive else "5"
+    max_q = "24" if aggressive else "12"
+    return [
+        PY,
+        str(script),
+        "--incremental",
+        "--max-downloads",
+        max_dl,
+        "--max-per-query",
+        max_q,
+        "--download-delay",
+        "8",
+        "--search-delay",
+        "3",
+    ]
+
+
+def vod_cmd(env: dict[str, str]) -> list[str]:
+    script = BIN / "mlbb_vod_segment_feed.py"
+    if not script.exists():
+        script = Path(__file__).resolve().parent / "mlbb_vod_segment_feed.py"
+    return [PY, str(script)]
+
+
+def feed_cmd(env: dict[str, str]) -> list[str]:
+    script = BIN / "mlbb_calibration_feed.py"
+    if not script.exists():
+        script = Path(__file__).resolve().parent / "mlbb_calibration_feed.py"
+    return [PY, str(script)]
+
+
+def vod_env(base: dict[str, str]) -> dict[str, str]:
+    env = dict(base)
+    env.update(
+        {
+            "MLBB_VOD_SHORT_MODE": "1",
+            "MLBB_VOD_MIN_SEC": env.get("MLBB_VOD_MIN_SEC", "900"),
+            "MLBB_VOD_MAX_SEC": env.get("MLBB_VOD_MAX_SEC", "2700"),
+            "MLBB_VOD_PIPELINE_MAX_MIN": str(VOD_SLICE_MIN),
+            "MLBB_VOD_PIPELINE_MAX_VODS": str(VOD_MAX_VODS),
+            "MLBB_VOD_AUTO_DOWNLOAD": "1",
+            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "20"),
+            "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
+            "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
+            "OWNER_PREVIEW_REQUIRED": "0",
+            "LOGO_FILE": "/nonexistent/mlbb_calibration_no_logo.png",
+            "YTDLP_SLEEP_REQUESTS": "1.5",
+            "YTDLP_SLEEP_INTERVAL": "3",
+            "YTDLP_MAX_SLEEP_INTERVAL": "10",
+        }
+    )
+    return env
+
+
+def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
+    env = dict(base)
+    env.update(
+        {
+            "MLBB_CALIBRATION_LENIENT": "1",
+            "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
+            "YTDLP_SLEEP_REQUESTS": "1.2",
+            "YTDLP_SLEEP_INTERVAL": "3",
+            "YTDLP_MAX_SLEEP_INTERVAL": "10",
+        }
+    )
+    return env
+
+
+def write_state(state: dict) -> None:
+    path = Path(os.environ.get("MLBB_CONTINUOUS_STATE", "/root/data/mlbb/mlbb_continuous_state.json"))
+    state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def main() -> int:
+    base = base_env()
+    ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
+    vod = Proc("vod", vod_cmd(base), vod_env(base))
+    feed = Proc("feed", feed_cmd(base), base)
+
+    log(
+        f"mlbb_continuous_worker start target_pending={TARGET_PENDING} "
+        f"vod_slice={VOD_SLICE_MIN}min loop={LOOP_SEC}s"
+    )
+    cycles = 0
+
+    while True:
+        cycles += 1
+        pending = pending_shorts()
+        aggressive = pending < TARGET_PENDING
+
+        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC):
+            ingest.cmd = ingest_cmd(base, aggressive=aggressive)
+            ingest.env = ingest_env(base, aggressive=aggressive)
+            ingest.start()
+
+        # VOD scan/cut always — downloader inside feed runs parallel to scoring
+        if not vod.running():
+            vod.start()
+
+        if pending > 0 and feed.cooldown_ok(FEED_COOLDOWN_SEC):
+            feed.start()
+
+        for job in (ingest, vod, feed):
+            job.reap()
+
+        if cycles % 15 == 0:
+            write_state(
+                {
+                    "pending_shorts": pending,
+                    "ingest_running": ingest.running(),
+                    "vod_running": vod.running(),
+                    "feed_running": feed.running(),
+                    "cycles": cycles,
+                }
+            )
+
+        time.sleep(LOOP_SEC)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
