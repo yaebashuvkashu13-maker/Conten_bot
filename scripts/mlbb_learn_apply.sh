@@ -6,10 +6,14 @@ source /root/.video_bot.env
 set +a
 export CONTENT_BOT_REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 export MLBB_DATA_ROOT="${MLBB_DATA_ROOT:-/root/data/mlbb}"
+export PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO}/scripts:${PYTHONPATH:-}"
 export HIGHLIGHT_HEATMAP=0
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
 
 python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, "/usr/local/bin")
 from mlbb_calibration_store import rebuild_index_from_disk, stats
 n = rebuild_index_from_disk()
 s = stats()
