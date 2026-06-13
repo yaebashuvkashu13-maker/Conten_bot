@@ -62,11 +62,34 @@ NEGATIVE_TITLE = re.compile(
     r"(#ad\b|sponsored|giveaway|promo\b|free\s+diamond|skin\s+gratis|"
     r"log\s*in\s+mlbb|mailbox|official\s+event|allstar|collab|cctv|"
     r"tutorial|guide|tips|funny|meme|intro|reaction|dance|tiktok|"
-    r"rank\s+push\s+only|lobby|menu|event|login|diamond|free\s+skin)",
+    r"rank\s+push\s+only|lobby|menu|event|login|diamond|free\s+skin|"
+    r"sound\s*effect|sfx\b|notification\s*sound|ringtone|audio\s*only|"
+    r"kill\s*sound|voice\s*line|ost\b|music\s*only|wallpaper|thumbnail)",
     re.I,
 )
 
 PROFILE = "mobile_legends"
+
+
+def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Reject static slides, SFX compilations, and non-gameplay before owner send."""
+    from gameplay_gate import is_gameplay_video, score_segment_combat
+
+    label = title or path.stem
+    if NEGATIVE_TITLE.search(label):
+        return False, "negative_title"
+    dur = _ffprobe_duration(path)
+    window = min(15.0, max(4.0, dur * 0.9))
+    motion, mini, skill, center_text = score_segment_combat(path, 0.0, window)
+    min_motion = float(os.environ.get("MLBB_SHORTS_MIN_MOTION", "0.016"))
+    if motion < min_motion and mini < float(os.environ.get("MLBB_SHORTS_MIN_MINIMAP", "0.008")):
+        return False, f"static_motion={motion:.3f}"
+    if center_text > 0.32 and motion < min_motion * 1.15:
+        return False, f"text_slide={center_text:.3f}"
+    ok, _gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
+    if not ok and motion < min_motion * 1.25:
+        return False, f"not_gameplay:{reason}"
+    return True, "ok"
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -444,6 +467,16 @@ def main() -> int:
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
+            continue
+
+        if NEGATIVE_TITLE.search(row.get("title", "")):
+            rejected += 1
+            continue
+
+        gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
+        if not gate_ok:
+            print(f"REJECT {vid} gate={gate_reason}", flush=True)
+            rejected += 1
             continue
 
         ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
