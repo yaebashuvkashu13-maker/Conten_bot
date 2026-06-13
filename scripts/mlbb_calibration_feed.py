@@ -251,18 +251,20 @@ def _run_feed() -> int:
         if not path.exists():
             continue
         vid = str(row.get("video_id", ""))
-        try:
-            from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
+        min_send_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0.05"))
+        if float(row.get("score") or 0) < min_send_score:
+            print(f"skip send {vid} low_score={row.get('score')}", flush=True)
+            mark_feed_sent([vid], paths=[path])
+            continue
+        from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
 
-            gate_ok, gate_reason = passes_shorts_calibration_gate(
-                path, title=str(row.get("title", ""))
-            )
-            if not gate_ok:
-                print(f"skip send {vid} gate={gate_reason}", flush=True)
-                mark_feed_sent([vid], paths=[path])
-                continue
-        except ImportError:
-            pass
+        gate_ok, gate_reason = passes_shorts_calibration_gate(
+            path, title=str(row.get("title", ""))
+        )
+        if not gate_ok:
+            print(f"skip send {vid} gate={gate_reason}", flush=True)
+            mark_feed_sent([vid], paths=[path])
+            continue
         header = batch_header if delivered == 0 else ""
         caption = format_caption(row, idx, len(picked), header=header)
         ok = send_video(token, chat_id, path, caption, video_id=vid)

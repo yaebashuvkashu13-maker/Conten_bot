@@ -84,11 +84,23 @@ def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool
     min_motion = float(os.environ.get("MLBB_SHORTS_MIN_MOTION", "0.016"))
     if motion < min_motion and mini < float(os.environ.get("MLBB_SHORTS_MIN_MINIMAP", "0.008")):
         return False, f"static_motion={motion:.3f}"
+    if center_text > float(os.environ.get("MLBB_SHORTS_MAX_CENTER_TEXT", "0.38")):
+        return False, f"text_heavy={center_text:.3f}"
     if center_text > 0.32 and motion < min_motion * 1.15:
         return False, f"text_slide={center_text:.3f}"
-    ok, _gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
-    if not ok and motion < min_motion * 1.25:
+    ok, gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
+    if not ok:
         return False, f"not_gameplay:{reason}"
+    if motion < float(os.environ.get("MLBB_SHORTS_MIN_GAMEPLAY_MOTION", "0.028")):
+        return False, f"low_action={motion:.3f}"
+    try:
+        from mlbb_kill_ui import score_mlbb_kill_ui
+
+        kill = score_mlbb_kill_ui(path, 0.15, window, sample_frames=4)
+        if not kill.has_kill_notification and motion < min_motion * 1.6:
+            return False, f"no_kill_ui:{kill.reason}"
+    except ImportError:
+        pass
     return True, "ok"
 
 
