@@ -1,0 +1,11 @@
+numpy
+opencv-python-headless
+pytesseract
+PyYAML
+pandas
+scikit-learn
+joblib
+yt-dlp
+
+[dev]
+pytest

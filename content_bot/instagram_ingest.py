@@ -76,6 +76,7 @@ def fetch_source_posts_with_options(
         entries = [info]
 
     posts = [_entry_to_post(source, entry) for entry in entries]
+    # yt-dlp returns newest-first; reverse → oldest first (stable cron order).
     posts.reverse()
     return posts
 
