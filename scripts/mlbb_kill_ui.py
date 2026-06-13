@@ -232,13 +232,8 @@ def score_mlbb_kill_ui(
     min_feed = float(os.environ.get("MLBB_KILL_FEED_MIN", "0.30"))
 
     if strict:
-        # Send gate: OCR kill text, or strong simultaneous banner + feed (not gold HUD alone).
-        has_kill = keyword_hits > 0 or (
-            announce_peak >= float(os.environ.get("MLBB_KILL_STRICT_ANNOUNCE_MIN", "0.15"))
-            and announce_spike >= float(os.environ.get("MLBB_KILL_STRICT_SPIKE_MIN", "0.10"))
-            and feed_peak >= float(os.environ.get("MLBB_KILL_STRICT_FEED_MIN", "0.32"))
-            and score >= min_score
-        )
+        # Send gate: must read kill text (Savage/Maniac/slain/etc.) on screen.
+        has_kill = keyword_hits > 0 and score >= min_score * 0.5
     else:
         has_kill = keyword_hits > 0 or (
             announce_peak >= min_color
