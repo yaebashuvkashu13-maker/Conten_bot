@@ -67,6 +67,75 @@ def _owner_labels_path(profile: str) -> Path | None:
     return path if path.exists() else None
 
 
+def _vod_segment_labels_path() -> Path:
+    return Path(
+        os.environ.get(
+            "MLBB_VOD_SEGMENT_LABELS",
+            str(Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")) / "vod_segment_labels.json"),
+        )
+    )
+
+
+def _video_id_from_path(video_path: Path) -> str:
+    stem = video_path.stem
+    if stem.startswith("yt_") and len(stem) > 3:
+        return stem[3:]
+    return stem
+
+
+def _owner_label_pad(label: str) -> float:
+    if label == "bad":
+        return float(os.environ.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"))
+    if label == "good":
+        return float(os.environ.get("HIGHLIGHT_OWNER_GOOD_PAD_SEC", "45"))
+    return float(os.environ.get("HIGHLIGHT_SOFT_BAD_PAD_SEC", "60"))
+
+
+def _labels_from_vod_segment_store(video_path: Path, profile: str) -> list[dict]:
+    """Owner 👍/👎 on sent VOD clips — must block/rescore on next scan."""
+    if normalize_profile(profile) != "mobile_legends":
+        return []
+    path = _vod_segment_labels_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    vid = _video_id_from_path(video_path)
+    out: list[dict] = []
+    for bucket, label in (("good", "good"), ("bad", "bad")):
+        for row in data.get(bucket, []):
+            sid = str(row.get("segment_id", ""))
+            vod_field = str(row.get("vod", ""))
+            row_vid = ""
+            if vod_field:
+                vp = Path(vod_field)
+                row_vid = vp.stem[3:] if vp.stem.startswith("yt_") else vp.stem
+            elif "_" in sid:
+                row_vid = sid.rsplit("_", 1)[0]
+            if row_vid != vid:
+                continue
+            time_sec = row.get("peak_start")
+            if time_sec is None:
+                time_sec = row.get("start")
+            if time_sec is None and "_" in sid:
+                try:
+                    time_sec = float(sid.rsplit("_", 1)[-1])
+                except ValueError:
+                    continue
+            if time_sec is None:
+                continue
+            out.append(
+                {
+                    "time_sec": float(time_sec),
+                    "label": label,
+                    "source": "vod_segment_labels",
+                }
+            )
+    return out
+
+
 QUERY_CONFIG = Path(
     os.environ.get("HIGHLIGHT_QUERY_CONFIG", str(REPO_ROOT / "config" / "highlight_queries.yaml"))
 )
@@ -120,15 +189,17 @@ def classifier_path_for_profile(profile: str) -> Path:
 
 
 def _labels_for_vod(video_path: Path, profile: str) -> list[dict]:
+    rows: list[dict] = []
     labels_path = _owner_labels_path(profile)
-    if labels_path is None or not labels_path.exists():
-        return []
-    try:
-        data = json.loads(labels_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
-    return list(data.get("videos", {}).get(vid, []))
+    if labels_path is not None and labels_path.exists():
+        try:
+            data = json.loads(labels_path.read_text(encoding="utf-8"))
+            vid = _video_id_from_path(video_path)
+            rows.extend(list(data.get("videos", {}).get(vid, [])))
+        except (json.JSONDecodeError, OSError):
+            pass
+    rows.extend(_labels_from_vod_segment_store(video_path, profile))
+    return rows
 
 
 def vod_has_owner_labels(video_path: Path, profile: str) -> bool:
@@ -170,13 +241,13 @@ def _filter_bad_label_starts(
     *,
     pad_sec: float | None = None,
 ) -> list[float]:
-    pad = pad_sec if pad_sec is not None else float(os.environ.get("HIGHLIGHT_SOFT_BAD_PAD_SEC", "60"))
+    pad = pad_sec if pad_sec is not None else _owner_label_pad("bad")
     kept: list[float] = []
     for start in starts:
         if segment_overlaps_owner_label(
             video_path, start, WINDOW_SEC, profile, label="bad", pad_sec=pad
         ):
-            log.info("soft anchor exclude bad label near start=%.1f", start)
+            log.info("soft anchor exclude bad label near start=%.1f pad=%.0f", start, pad)
             continue
         kept.append(start)
     return kept
@@ -463,12 +534,16 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
         return tuple()
     model, preprocess, _, device = _clip_bundle()
     paths = sorted(folder.glob("*.mp4")) + sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.png"))
+    paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    max_n = int(os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "0"))
+    if max_n > 0:
+        paths = paths[:max_n]
     embs: list[np.ndarray] = []
     from gameplay_gate import _read_frame_at
 
     from smart_video_editor import ffprobe_duration
 
-    for path in paths[:24]:
+    for path in paths:
         frames_to_encode: list = []
         if path.suffix.lower() in (".jpg", ".png"):
             import cv2
@@ -489,6 +564,11 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
                 emb = emb / emb.norm(dim=-1, keepdim=True)
             embs.append(emb.cpu().numpy()[0])
     return tuple(embs)
+
+
+def clear_exemplar_cache() -> None:
+    _exemplar_embeddings.cache_clear()
+    _clip_bundle.cache_clear()
 
 
 def _hist_vector(frame: np.ndarray) -> np.ndarray:
@@ -712,7 +792,8 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
             emb = (emb / emb.norm(dim=-1, keepdim=True)).cpu().numpy()[0]
         sim_good = float(np.mean(good_mat @ emb))
         sim_bad = float(np.mean(bad_mat @ emb))
-        clip_s = sim_good - sim_bad
+        bad_lambda = float(os.environ.get("HIGHLIGHT_BAD_EXEMPLAR_LAMBDA", "0.5"))
+        clip_s = sim_good - bad_lambda * sim_bad
         scores.append(clip_s)
         frame_rows.append(
             {
@@ -1043,7 +1124,7 @@ def score_candidate_window(
             m.heatmap_intensity = 0.0
 
     if segment_overlaps_owner_label(
-        video_path, start_sec, duration_sec, profile, label="bad", pad_sec=60.0
+        video_path, start_sec, duration_sec, profile, label="bad", pad_sec=_owner_label_pad("bad")
     ):
         m.rule_pass = False
         m.pass_reason = "owner_bad_window"
@@ -1075,6 +1156,16 @@ def score_candidate_window(
             + m.center_motion * 0.05
             + min(m.ocr_hits, 3) * 0.02
         )
+        if segment_overlaps_owner_label(
+            video_path,
+            start_sec,
+            duration_sec,
+            profile,
+            label="good",
+            pad_sec=_owner_label_pad("good"),
+        ):
+            boost = float(os.environ.get("HIGHLIGHT_GOOD_SOFT_BOOST", "0.25"))
+            m.combined_score *= 1.0 + boost
     else:
         m.combined_score = 0.0
         gate_reason = m.pass_reason or rule_reason
@@ -1162,16 +1253,7 @@ def _owner_anchor_stage1_starts(video_path: Path, profile: str) -> list[float]:
 
 def _owner_anchor_starts(video_path: Path, profile: str) -> list[float]:
     profile = normalize_profile(profile)
-    labels_path = _owner_labels_path(profile)
-    if labels_path is None:
-        return []
-    try:
-        data = json.loads(labels_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
-    rows = data.get("videos", {}).get(vid, [])
-    pad = float(os.environ.get("HIGHLIGHT_OWNER_PAD_SEC", "120"))
+    rows = _labels_for_vod(video_path, profile)
     return [float(r["time_sec"]) for r in rows if r.get("label") == "good" and "time_sec" in r]
 
 

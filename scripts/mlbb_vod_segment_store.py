@@ -11,18 +11,52 @@ import subprocess
 import time
 from pathlib import Path
 
-REPO = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
-DATA_MLBB = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
-SEGMENTS_ROOT = Path(os.environ.get("MLBB_VOD_SEGMENTS_ROOT", "/root/datasets/mlbb/vod_segments"))
-INDEX_PATH = Path(os.environ.get("MLBB_VOD_SEGMENT_INDEX", str(DATA_MLBB / "vod_segment_index.json")))
-LABELS_PATH = Path(os.environ.get("MLBB_VOD_SEGMENT_LABELS", str(DATA_MLBB / "vod_segment_labels.json")))
-FEED_SENT_PATH = Path(os.environ.get("MLBB_VOD_FEED_SENT", str(DATA_MLBB / "vod_segment_feed_sent.json")))
-EXEMPLAR_ROOT = Path(
-    os.environ.get(
-        "HIGHLIGHT_EXEMPLAR_ROOT",
-        str(REPO / "data" / "highlight_exemplars"),
+def _repo_root() -> Path:
+    env = os.environ.get("CONTENT_BOT_REPO", "").strip()
+    if env:
+        return Path(env)
+    root = Path(__file__).resolve().parent.parent
+    if root.name == "bin" or str(root) == "/usr/local":
+        return Path("/root/content_bot_ml")
+    return root
+
+
+REPO = _repo_root()
+
+
+def _data_mlbb() -> Path:
+    return Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
+
+
+def _segments_root() -> Path:
+    return Path(os.environ.get("MLBB_VOD__segments_root()", "/root/datasets/mlbb/vod_segments"))
+
+
+def _index_path() -> Path:
+    return Path(os.environ.get("MLBB_VOD_SEGMENT_INDEX", str(_data_mlbb() / "vod_segment_index.json")))
+
+
+def _labels_path() -> Path:
+    return Path(os.environ.get("MLBB_VOD_SEGMENT_LABELS", str(_data_mlbb() / "vod_segment_labels.json")))
+
+
+def _owner_labels_path() -> Path:
+    return Path(
+        os.environ.get("MLBB_OWNER_LABELS_PATH", str(_data_mlbb() / "mobile_legends_owner_labels.json"))
     )
-)
+
+
+def _feed_sent_path() -> Path:
+    return Path(os.environ.get("MLBB_VOD_FEED_SENT", str(_data_mlbb() / "vod_segment_feed_sent.json")))
+
+
+def _exemplar_root() -> Path:
+    return Path(
+        os.environ.get(
+            "HIGHLIGHT_EXEMPLAR_ROOT",
+            str(_repo_root() / "data" / "highlight_exemplars"),
+        )
+    )
 
 
 def _read_json(path: Path, default: dict | list) -> dict | list:
@@ -55,7 +89,7 @@ def segment_id(vod_path: Path, start: float) -> str:
 
 
 def load_index() -> dict:
-    data = _read_json(INDEX_PATH, {"segments": [], "updated_at": ""})
+    data = _read_json(_index_path(), {"segments": [], "updated_at": ""})
     if not isinstance(data, dict):
         return {"segments": [], "updated_at": ""}
     data.setdefault("segments", [])
@@ -64,7 +98,7 @@ def load_index() -> dict:
 
 def save_index(data: dict) -> None:
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(INDEX_PATH, data)
+    _write_json(_index_path(), data)
 
 
 def upsert_segment(row: dict) -> None:
@@ -83,7 +117,7 @@ def upsert_segment(row: dict) -> None:
 
 
 def load_labels() -> dict:
-    data = _read_json(LABELS_PATH, {"good": [], "bad": [], "feedback": []})
+    data = _read_json(_labels_path(), {"good": [], "bad": [], "feedback": []})
     if not isinstance(data, dict):
         return {"good": [], "bad": [], "feedback": []}
     for key in ("good", "bad", "feedback"):
@@ -93,11 +127,11 @@ def load_labels() -> dict:
 
 def save_labels(data: dict) -> None:
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(LABELS_PATH, data)
+    _write_json(_labels_path(), data)
 
 
 def load_feed_sent() -> set[str]:
-    raw = _read_json(FEED_SENT_PATH, {"sent_ids": []})
+    raw = _read_json(_feed_sent_path(), {"sent_ids": []})
     if not isinstance(raw, dict):
         return set()
     return set(str(x) for x in raw.get("sent_ids", []))
@@ -107,7 +141,7 @@ def mark_feed_sent(ids: list[str]) -> None:
     sent = load_feed_sent()
     sent.update(str(x) for x in ids if x)
     _write_json(
-        FEED_SENT_PATH,
+        _feed_sent_path(),
         {"sent_ids": sorted(sent), "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")},
     )
 
@@ -138,14 +172,102 @@ def find_segment(segment_id_str: str) -> dict | None:
     for row in load_index().get("segments", []):
         if row.get("segment_id") == sid:
             return row
-    direct = SEGMENTS_ROOT / f"seg_{sid}.mp4"
+    direct = _segments_root() / f"seg_{sid}.mp4"
     if direct.exists():
         return {"segment_id": sid, "path": str(direct), "start": 0, "score": 0}
     return None
 
 
+def _peak_time_sec(row: dict) -> float:
+    peak = row.get("peak_start")
+    if peak is not None:
+        return float(peak)
+    return float(row.get("start", 0))
+
+
+def _vod_id_from_row(row: dict, segment_id_str: str) -> str:
+    vod_field = str(row.get("vod", "")).strip()
+    if vod_field:
+        return vod_youtube_id(Path(vod_field))
+    if "_" in segment_id_str:
+        return segment_id_str.rsplit("_", 1)[0]
+    return segment_id_str[:11]
+
+
+def load_owner_labels_json() -> dict:
+    data = _read_json(_owner_labels_path(), {"videos": {}})
+    if not isinstance(data, dict):
+        return {"videos": {}}
+    data.setdefault("videos", {})
+    return data
+
+
+def save_owner_labels_json(data: dict) -> None:
+    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_json(_owner_labels_path(), data)
+
+
+def append_owner_label_json(
+    vod_id: str,
+    time_sec: float,
+    label: str,
+    *,
+    note: str = "",
+    source: str = "vod_segment",
+) -> None:
+    """Append hard-negative / gold anchor to mobile_legends_owner_labels.json."""
+    vid = vod_id.strip()
+    if not vid or label not in ("good", "bad"):
+        return
+    data = load_owner_labels_json()
+    videos: dict = data.setdefault("videos", {})
+    rows: list[dict] = list(videos.get(vid, []))
+    key = (round(float(time_sec), 1), label)
+    seen = {(round(float(r.get("time_sec", 0)), 1), r.get("label")) for r in rows if "time_sec" in r}
+    if key in seen:
+        return
+    entry: dict = {
+        "time_sec": round(float(time_sec), 1),
+        "label": label,
+        "source": source,
+    }
+    if note:
+        entry["note"] = note[:200]
+    rows.append(entry)
+    videos[vid] = rows
+    save_owner_labels_json(data)
+
+
+def backfill_owner_labels_from_vod_segments() -> int:
+    """One-shot sync: all vod_segment_labels → owner_labels.json (dedupe by time+label)."""
+    labels = load_labels()
+    added = 0
+    index_rows = {r.get("segment_id"): r for r in load_index().get("segments", [])}
+    for bucket, label in (("good", "good"), ("bad", "bad")):
+        for entry in labels.get(bucket, []):
+            sid = str(entry.get("segment_id", ""))
+            if not sid:
+                continue
+            idx_row = index_rows.get(sid, {})
+            merged = {**idx_row, **entry}
+            vid = _vod_id_from_row(merged, sid)
+            t_sec = _peak_time_sec(merged)
+            before = len(load_owner_labels_json().get("videos", {}).get(vid, []))
+            append_owner_label_json(
+                vid,
+                t_sec,
+                label,
+                note=str(entry.get("reason") or ""),
+                source="vod_segment_backfill",
+            )
+            after = len(load_owner_labels_json().get("videos", {}).get(vid, []))
+            if after > before:
+                added += 1
+    return added
+
+
 def copy_exemplar(src: Path, label: str, sid: str) -> Path | None:
-    dest_dir = EXEMPLAR_ROOT / "mobile_legends" / label
+    dest_dir = _exemplar_root() / "mobile_legends" / label
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"vod_{sid}.mp4"
     if dest.exists():
@@ -169,7 +291,7 @@ def apply_owner_label(
         return False, f"unknown_segment:{segment_id_str}"
     path = Path(row.get("path", ""))
     if not path.exists():
-        path = SEGMENTS_ROOT / f"seg_{segment_id_str}.mp4"
+        path = _segments_root() / f"seg_{segment_id_str}.mp4"
     if not path.exists():
         return False, f"file_missing:{segment_id_str}"
 
@@ -207,7 +329,18 @@ def apply_owner_label(
             entry["exemplar"] = str(exemplar)
 
     save_labels(labels)
-    return True, "good" if is_good else "bad"
+
+    label_name = "good" if is_good else "bad"
+    vid = _vod_id_from_row(row, segment_id_str)
+    peak_sec = _peak_time_sec(row)
+    append_owner_label_json(
+        vid,
+        peak_sec,
+        label_name,
+        note=reason,
+        source="vod_segment",
+    )
+    return True, label_name
 
 
 def inline_keyboard_markup(segment_id_str: str) -> dict:
