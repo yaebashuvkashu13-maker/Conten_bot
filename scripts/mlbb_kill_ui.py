@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MLBB kill-notification UI detector (Savage/Maniac/kill feed)."""
+"""MLBB kill-notification UI detector (Savage/Maniac/Double/Triple kill feed)."""
 
 from __future__ import annotations
 
@@ -17,11 +17,75 @@ import cv2
 import numpy as np
 
 MLBB_KILL_KEYWORDS = re.compile(
-    r"(savage|maniac|legendary|triple|double|wipe|wiped|first\s*blood|"
-    r"pentakill|killing\s*spree|shutdown|\bace\b|team\s*wipe|slain|"
-    r"has\s*been\s*slain|\bkill(?:ed|ing)?\b)",
+    r"(savage|maniac|legendary|triple\s*kill|double\s*kill|quadra\s*kill|penta\s*kill|"
+    r"triple|double|wipe|wiped|first\s*blood|pentakill|killing\s*spree|shutdown|\bace\b|"
+    r"team\s*wipe|slain|has\s*been\s*slain|\bkill(?:ed|ing)?\b|"
+    r"беспощадн|маньяк|двойн\w*\s*убий|тройн\w*\s*убий|убийств)",
     re.I,
 )
+
+# Explicit tiers — double/triple are first-class (not only Savage/Maniac).
+MLBB_KILL_LABEL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("double_kill", re.compile(r"double\s*kill|doub?le\s*k[il1]{2}|dbl\s*kill|двойн\w*\s*убий", re.I)),
+    ("triple_kill", re.compile(r"triple\s*kill|tripl?e\s*k[il1]{2}|trpl\s*kill|тройн\w*\s*убий", re.I)),
+    ("quadra_kill", re.compile(r"quadra\s*kill|quad\s*kill", re.I)),
+    ("penta_kill", re.compile(r"penta\s*kill|pentakill", re.I)),
+    ("savage", re.compile(r"\bsavage\b|беспощадн", re.I)),
+    ("maniac", re.compile(r"\bmaniac\b|маньяк", re.I)),
+    ("legendary", re.compile(r"legendary|легендар", re.I)),
+    ("ace", re.compile(r"\bace\b|team\s*wipe|wipe|wiped", re.I)),
+    ("first_blood", re.compile(r"first\s*blood|первая\s*кров", re.I)),
+    ("shutdown", re.compile(r"shut\s*down|shutdown", re.I)),
+    ("killing_spree", re.compile(r"killing\s*spree", re.I)),
+    ("slain", re.compile(r"slain|has\s*been\s*slain|убийств|\bkill(?:ed|ing)?\b", re.I)),
+]
+
+_MULTIKILL_LABELS = frozenset({"double_kill", "triple_kill", "quadra_kill", "penta_kill"})
+
+
+def _normalize_ocr_text(text: str) -> str:
+    """Fix common OCR misreads in kill banners."""
+    t = text.replace("0", "o").replace("1", "l").replace("|", "l")
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
+
+def _match_kill_keywords(text: str) -> tuple[int, str]:
+    """Return (hit_count, primary_label). Prefer multi-kill / high-tier labels."""
+    if not text:
+        return 0, ""
+    normalized = _normalize_ocr_text(text)
+    matched: list[str] = []
+    for label, pattern in MLBB_KILL_LABEL_PATTERNS:
+        if pattern.search(normalized) or pattern.search(text):
+            matched.append(label)
+    if matched:
+        for preferred in (
+            "triple_kill",
+            "double_kill",
+            "quadra_kill",
+            "penta_kill",
+            "savage",
+            "maniac",
+            "legendary",
+            "ace",
+        ):
+            if preferred in matched:
+                return len(matched), preferred
+        return len(matched), matched[0]
+    legacy = len(MLBB_KILL_KEYWORDS.findall(normalized))
+    if legacy:
+        return legacy, "kill_text"
+    return 0, ""
+
+
+def _ocr_langs() -> str:
+    return os.environ.get("MLBB_KILL_OCR_LANGS", "eng+rus")
+
+
+def _ocr_psm_modes() -> list[str]:
+    raw = os.environ.get("MLBB_KILL_OCR_PSM", "7,6,11")
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
 
 @dataclass(slots=True)
@@ -126,7 +190,7 @@ def _sample_frames(
 
 
 def _announce_color_score(frame: np.ndarray) -> float:
-    """Gold/white kill announcement banner in the top-center zone."""
+    """Kill announcement banner in top-center (gold/white + multi-kill blue/orange)."""
     small = cv2.resize(frame, (320, 180))
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     h, w = small.shape[:2]
@@ -135,7 +199,9 @@ def _announce_color_score(frame: np.ndarray) -> float:
         return 0.0
     gold = cv2.inRange(zone, np.array([8, 110, 150]), np.array([38, 255, 255]))
     white = cv2.inRange(zone, np.array([0, 0, 215]), np.array([180, 45, 255]))
-    combined = cv2.bitwise_or(gold, white)
+    cyan = cv2.inRange(zone, np.array([85, 90, 140]), np.array([105, 255, 255]))
+    orange = cv2.inRange(zone, np.array([8, 120, 160]), np.array([22, 255, 255]))
+    combined = cv2.bitwise_or(cv2.bitwise_or(gold, white), cv2.bitwise_or(cyan, orange))
     ratio = float(np.count_nonzero(combined)) / float(combined.size)
     return min(1.0, ratio * 10.0)
 
@@ -163,11 +229,11 @@ def _kill_feed_spike(frames: list[np.ndarray]) -> float:
     return min(1.0, peak * 2.8 + max(0.0, peak - mean) * 1.5)
 
 
-def _ocr_kill_text(frame: np.ndarray) -> tuple[str, int]:
+def _ocr_kill_text(frame: np.ndarray) -> tuple[str, int, str]:
     try:
         import pytesseract
     except ImportError:
-        return "", 0
+        return "", 0, ""
 
     small = cv2.resize(frame, (480, 270))
     h, w = small.shape[:2]
@@ -177,21 +243,30 @@ def _ocr_kill_text(frame: np.ndarray) -> tuple[str, int]:
     ]
     merged = ""
     hits = 0
+    label = ""
+    langs = _ocr_langs()
     for zone in zones:
         if zone.size == 0:
             continue
         gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
         gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        text = pytesseract.image_to_string(
-            gray,
-            config="--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789! ",
-        )
-        text = " ".join(text.split())
-        merged = f"{merged} {text}".strip()
-        hits = max(hits, len(MLBB_KILL_KEYWORDS.findall(text)))
+        for psm in _ocr_psm_modes():
+            text = pytesseract.image_to_string(
+                gray,
+                lang=langs,
+                config=f"--psm {psm}",
+            )
+            text = " ".join(text.split())
+            if not text:
+                continue
+            merged = f"{merged} {text}".strip()
+            zone_hits, zone_label = _match_kill_keywords(text)
+            if zone_hits > hits or (zone_hits == hits and zone_label in _MULTIKILL_LABELS):
+                hits = zone_hits
+                label = zone_label
     if hits == 0 and merged:
-        hits = len(MLBB_KILL_KEYWORDS.findall(merged))
-    return merged[:160], hits
+        hits, label = _match_kill_keywords(merged)
+    return merged[:160], hits, label
 
 
 def score_mlbb_kill_ui(
@@ -216,23 +291,27 @@ def score_mlbb_kill_ui(
 
     ocr_text = ""
     keyword_hits = 0
+    keyword_label = ""
     skip_ocr = os.environ.get("MLBB_KILL_UI_SKIP_OCR", "0") == "1" and not strict
     ocr_trigger = (announce_peak >= 0.04 or feed_peak >= 0.05 or strict) and not skip_ocr
     if ocr_trigger or os.environ.get("MLBB_KILL_UI_ALWAYS_OCR", "0") == "1":
         for frame in frames:
-            text, hits = _ocr_kill_text(frame)
+            text, hits, label = _ocr_kill_text(frame)
             if text:
                 ocr_text = text
-            keyword_hits = max(keyword_hits, hits)
+            if hits > keyword_hits or (hits == keyword_hits and label in _MULTIKILL_LABELS):
+                keyword_hits = hits
+                keyword_label = label
 
     score = announce_spike * 0.55 + announce_peak * 0.20 + feed_peak * 0.15 + min(keyword_hits * 0.18, 0.30)
     min_score = float(os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14"))
     min_color = float(os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08"))
     min_spike = float(os.environ.get("MLBB_KILL_ANNOUNCE_SPIKE_MIN", "0.075"))
     min_feed = float(os.environ.get("MLBB_KILL_FEED_MIN", "0.30"))
+    multikill_ocr = keyword_label in _MULTIKILL_LABELS
 
     if strict:
-        # Send gate: must read kill text (Savage/Maniac/slain/etc.) on screen.
+        # Send gate: OCR reads double/triple/savage/maniac/etc. on the banner.
         has_kill = keyword_hits > 0 and score >= min_score * 0.5
     else:
         has_kill = keyword_hits > 0 or (
@@ -241,9 +320,13 @@ def score_mlbb_kill_ui(
             and feed_peak >= min_feed
             and score >= min_score * 0.75
         )
+        if multikill_ocr and announce_peak >= min_color * 0.85:
+            has_kill = True
     has_kill = has_kill and (keyword_hits > 0 or score >= min_score * 0.65)
 
-    if keyword_hits:
+    if keyword_label:
+        reason = f"kill_keyword={keyword_label}"
+    elif keyword_hits:
         reason = f"kill_keyword={keyword_hits}"
     elif announce_peak >= min_color and announce_spike >= min_spike:
         reason = f"announce_spike={announce_spike:.3f}:peak{announce_peak:.3f}"
