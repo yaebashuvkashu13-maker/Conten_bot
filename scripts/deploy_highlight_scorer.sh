@@ -39,6 +39,9 @@ install -m 755 \
   scripts/eval_owner_labels.py \
   scripts/eval_highlight_model.py \
   scripts/score_owner_windows.py \
+  scripts/mlbb_vod_segment_store.py \
+  scripts/mlbb_learn_apply.sh \
+  scripts/mlbb_baseline_report.py \
   scripts/viral_reference_ingest.py \
   scripts/viral_reference_refresh.sh \
   scripts/highlight_probe.py \
