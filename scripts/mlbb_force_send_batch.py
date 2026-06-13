@@ -169,6 +169,8 @@ def _dedupe_by_vod_gap(
 
 
 def _fast_fight_bounds(peak_t: float, vod_dur: float, score: float) -> tuple[float, float, float]:
+    from mlbb_fight_segment import apply_head_trim
+
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     min_d = float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
     max_d = float(os.environ.get("MLBB_FIGHT_MAX_SEC", "22"))
@@ -178,7 +180,8 @@ def _fast_fight_bounds(peak_t: float, vod_dur: float, score: float) -> tuple[flo
     start = max(0.0, peak_t - lead)
     end = min(vod_dur, start + dur)
     dur = round(end - start, 1)
-    return round(start, 2), round(end, 2), dur
+    start, dur = apply_head_trim(start, dur, vod_dur)
+    return round(start, 2), round(start + dur, 2), dur
 
 
 def _build_scene_clip(vod: Path, peak_t: float, kill_meta: dict) -> dict:
