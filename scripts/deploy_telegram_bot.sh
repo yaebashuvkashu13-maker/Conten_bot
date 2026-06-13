@@ -36,6 +36,13 @@ install_scripts() {
     video_frame_io.py \
     gameplay_gate.py \
     smart_video_editor.py \
+    mlbb_shorts_montage.py \
+    mlbb_shorts_pipeline.py \
+    hourly_new_sources_montage.py \
+    install_mlbb_shorts_cron.sh \
+    source_freshness.py \
+    strict_segment_gate.py \
+    visual_action_check.py \
     publish_ready_montage.py \
     daily_morning_plan.py \
     daily_evening_report.py \
@@ -76,6 +83,9 @@ if [[ -x "$DEST/disable_legacy_publish_crons.sh" ]]; then
 fi
 if [[ -x "$DEST/install_daily_ops_cron.sh" ]]; then
   bash "$DEST/install_daily_ops_cron.sh"
+fi
+if [[ -x "$DEST/install_mlbb_shorts_cron.sh" ]]; then
+  bash "$DEST/install_mlbb_shorts_cron.sh"
 fi
 if [[ -x "$DEST/install_pipeline_watchdog_cron.sh" ]]; then
   bash "$DEST/install_pipeline_watchdog_cron.sh"

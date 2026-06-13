@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Full highlight stack sync to VPS /usr/local/bin
+# MLBB shorts stack sync to VPS /usr/local/bin
 set -Eeuo pipefail
 REPO="${REPO:-/root/content_bot_ml}"
-BRANCH="${BRANCH:-cursor/mlbb-video-pipeline-e712}"
+BRANCH="${BRANCH:-cursor/mlbb-shorts-pipeline-266d}"
 
 cd "$REPO"
 git fetch origin "$BRANCH"
@@ -11,59 +11,41 @@ git pull --ff-only origin "$BRANCH"
 
 echo "GIT=$(git log -1 --oneline)"
 
-pip3 install --break-system-packages -q torch panns-inference open-clip-torch Pillow scikit-learn joblib 2>/dev/null || true
+mkdir -p /root/data/mlbb/youtube_shorts/inbox
 
-# Disk hygiene
-rm -rf /root/.cache/pip 2>/dev/null || true
-find /root/videos -name '*.mp4' -mtime +2 -size +80M -delete 2>/dev/null || true
-
-export HF_HOME=/root/data/mlbb/hf_cache
-export HIGHLIGHT_EXEMPLAR_ROOT=/root/content_bot_ml/data/highlight_exemplars
-export CONTENT_BOT_REPO=/root/content_bot_ml
-export PUBG_OWNER_LABELS_PATH=/root/content_bot_ml/data/pubg_owner_labels.json
-export HIGHLIGHT_SCORER=1
-export HIGHLIGHT_USE_OWNER_ANCHORS=0
-export HIGHLIGHT_QUERY_CONFIG=/root/content_bot_ml/config/highlight_queries.yaml
-export OWNER_PREVIEW_REQUIRED=1
-
-install -m 644 config/highlight_queries.yaml /root/content_bot_ml/config/highlight_queries.yaml
+export MLBB_SHORT_MAX_SEC=180
+export MLBB_SHORTS_PER_CYCLE=3
+export MLBB_SHORTS_BATCH_SIZE=4
+export OWNER_PREVIEW_REQUIRED=0
+export MLBB_SHORTS_AUTO_SEND=1
 
 install -m 755 \
-  scripts/youtube_heatmap_peaks.py \
-  scripts/viral_scorer.py \
-  scripts/intelliclip_scorer.py \
-  scripts/highlight_scorer.py \
-  scripts/visual_action_check.py \
-  scripts/deploy_highlight_scorer.sh \
-  scripts/vps_disk_cleanup.sh \
-  scripts/highlight_train.py \
-  scripts/highlight_probe.py \
-  scripts/highlight_bootstrap_exemplars.py \
-  scripts/highlight_bootstrap_panns_peaks.py \
-  scripts/strict_montage_direct.py \
-  scripts/pubg_brawl_direct.py \
-  scripts/segment_preview.py \
-  scripts/pubg_mlbb_pipeline.py \
+  scripts/mlbb_shorts_montage.py \
+  scripts/mlbb_shorts_pipeline.py \
+  scripts/hourly_new_sources_montage.py \
   scripts/smart_video_editor.py \
-  scripts/pause_legacy_pipelines.sh \
-  scripts/deploy_highlight_scorer.sh \
+  scripts/telegram_upload_bot.py \
+  scripts/visual_action_check.py \
+  scripts/strict_segment_gate.py \
+  scripts/montage_env.py \
+  scripts/source_freshness.py \
+  scripts/install_mlbb_shorts_cron.sh \
+  scripts/pipeline_watchdog.sh \
   /usr/local/bin/
 
-# Stop stuck full-VOD scans
+# Stop long-VOD pipelines (MLBB shorts only)
 pkill -f 'pubg_mlbb_pipeline.py' 2>/dev/null || true
-pkill -f 'run_job_until_ok.sh /root/data/mlbb/pubg_mlbb_pipeline' 2>/dev/null || true
-bash /usr/local/bin/pause_legacy_pipelines.sh
+pkill -f 'overnight_youtube_batch.py' 2>/dev/null || true
+if [[ -x /usr/local/bin/pause_legacy_pipelines.sh ]]; then
+  bash /usr/local/bin/pause_legacy_pipelines.sh
+fi
+echo "pubg_mlbb_pipeline.py" >> /root/data/mlbb/PAUSED_PIPELINES 2>/dev/null || true
 
-python3 /usr/local/bin/highlight_bootstrap_exemplars.py --game pubg --vod yt_n97cHIR9Qow.mp4 || true
-python3 /usr/local/bin/highlight_bootstrap_panns_peaks.py --game pubg --vod yt_FpMs48XOnq0.mp4 --min-panns 0.35 --top 10 || true
-mv /usr/local/data/highlight_exemplars/pubg /root/content_bot_ml/data/highlight_exemplars/ 2>/dev/null || true
+bash /usr/local/bin/install_mlbb_shorts_cron.sh
 
-grep -c calibrated_pann_gun_min /usr/local/bin/highlight_scorer.py
-python3 -c "import panns_inference; print('panns_ok')"
+systemctl restart telegram-upload-bot 2>/dev/null || true
 
-nohup /usr/local/bin/run_job_until_ok.sh \
-  /root/data/mlbb/pubg_mlbb_pipeline.log \
-  python3 /usr/local/bin/pubg_mlbb_pipeline.py --reset \
-  >>/root/data/mlbb/pubg_mlbb_pipeline.log 2>&1 &
+nohup python3 /usr/local/bin/mlbb_shorts_pipeline.py --montages 3 \
+  >>/root/data/mlbb/mlbb_shorts_pipeline.log 2>&1 &
 
-echo "SYNC_OK branch=$BRANCH"
+echo "SYNC_OK branch=$BRANCH mlbb_shorts_only"

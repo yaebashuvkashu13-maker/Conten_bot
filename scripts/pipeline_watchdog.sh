@@ -70,3 +70,22 @@ restart_if_needed \
   "pubg_mlbb_pipeline.py" \
   "/root/data/mlbb/pubg_mlbb_pipeline.log" \
   "--resume"
+
+# MLBB shorts: kick if idle (cron every 20m; this catches missed runs)
+if [[ ! -f "$PAUSE" ]] || ! grep -q 'mlbb_shorts_pipeline.py' "$PAUSE" 2>/dev/null; then
+  if ! pgrep -f 'mlbb_shorts_pipeline.py' >/dev/null && ! pgrep -f 'smart_video_editor.py' >/dev/null; then
+    last_log="$LOG"
+    stale=1
+    if [[ -f /root/data/mlbb/mlbb_shorts_pipeline.log ]]; then
+      age=$(( $(date +%s) - $(stat -c %Y /root/data/mlbb/mlbb_shorts_pipeline.log 2>/dev/null || echo 0) ))
+      if (( age < 1200 )); then
+        stale=0
+      fi
+    fi
+    if (( stale )); then
+      echo "[$(date -Is)] watchdog: start mlbb_shorts_pipeline"
+      nohup python3 /usr/local/bin/mlbb_shorts_pipeline.py --montages 2 \
+        >>/root/data/mlbb/mlbb_shorts_pipeline.log 2>&1 &
+    fi
+  fi
+fi

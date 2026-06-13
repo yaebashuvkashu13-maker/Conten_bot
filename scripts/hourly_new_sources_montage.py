@@ -1,112 +1,34 @@
 #!/usr/bin/env python3
-"""Build montages only from NEW sources (recent TikTok + fresh Telegram uploads)."""
+"""Build MLBB montages from NEW short sources only (TikTok, Telegram, YouTube Shorts)."""
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
-import tempfile
-import time
+import sys
 from pathlib import Path
 
-from source_freshness import filter_new_sources, mark_used
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-TIKTOK_ROOT = Path("/root/datasets/tiktok/mlbb")
-TELEGRAM_PENDING = Path("/root/telegram_uploads/pending")
-OUTPUT_DIR = Path("/root/videos")
-STATE_PATH = Path("/root/data/mlbb/last_new_sources_cycle.json")
-MAX_AGE_HOURS = float(os.environ.get("SOURCE_MAX_AGE_HOURS", "36"))
-MAX_SOURCES = int(os.environ.get("NEW_SOURCE_MAX_PER_CYCLE", "12"))
-
-
-def gather_candidate_paths() -> list[Path]:
-    paths: list[Path] = []
-    if TIKTOK_ROOT.exists():
-        paths.extend(sorted(TIKTOK_ROOT.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True))
-    if TELEGRAM_PENDING.exists():
-        for chat_dir in TELEGRAM_PENDING.iterdir():
-            if not chat_dir.is_dir():
-                continue
-            paths.extend(chat_dir.glob("*.mp4"))
-    return paths
-
-
-def build_queue(paths: list[Path], chat_id: str) -> Path:
-    fd, queue_path = tempfile.mkstemp(prefix="new-sources-", suffix=".txt", dir="/tmp")
-    with os.fdopen(fd, "w") as handle:
-        for path in paths:
-            # This is a freshness montage across mixed sources; do not label as a specific hero.
-            handle.write(f"{path}|MLBB new sources|{chat_id}\n")
-    return Path(queue_path)
+from mlbb_shorts_montage import run_cycle
 
 
 def main() -> int:
     chat_id = os.environ.get("TG_CHAT_ID", "")
-    if not chat_id:
+    token = os.environ.get("TG_BOT_TOKEN", "")
+    if not chat_id or not token:
         print("[new-sources] TG_CHAT_ID missing")
         return 1
 
-    all_paths = gather_candidate_paths()
-    new_paths = filter_new_sources(all_paths, max_age_hours=MAX_AGE_HOURS)[:MAX_SOURCES]
-    if not new_paths:
-        print("[new-sources] no fresh unused videos, skip montage")
-        STATE_PATH.write_text(
-            json.dumps(
-                {
-                    "skipped": True,
-                    "reason": "no_new_sources",
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                indent=2,
-            )
-        )
+    max_m = int(os.environ.get("MLBB_SHORTS_PER_CYCLE", "2"))
+    result = run_cycle(chat_id=chat_id, token=token, max_montages=max_m)
+    if result.get("skipped"):
+        print(f"[new-sources] skip: {result.get('reason')} shorts={result.get('short_candidates', 0)}")
         return 0
-
-    queue_path = build_queue(new_paths, chat_id)
-    env = os.environ.copy()
-    env.update(
-        {
-            "QUEUE_FILE": str(queue_path),
-            "MAX_SOURCES": str(len(new_paths)),
-            "SEND_TELEGRAM": "1",
-            "OUTPUT_DIR": str(OUTPUT_DIR),
-            "STRICT_GAMEPLAY": "1",
-            "TARGET_DURATION": "45",
-            "MIN_FINAL_DURATION": "33",
-            "MAX_FINAL_DURATION": "57",
-            "MIN_HIGHLIGHTS": "3",
-            "MAX_HIGHLIGHTS": "4",
-            "SMART_ADD_MUSIC": "0",
-            "SMART_GAME_AUDIO_ONLY": "1",
-            "SMART_MIN_HUD": "17",
-            "SMART_MIN_HUD_FRAME_RATE": "0.65",
-            "SMART_MIN_CENTER_MOTION": "0.018",
-            "SMART_MAX_CHAT_PANEL": "0.15",
-            "SMART_MIN_BIN_MOTION": "0.014",
-            "BLUR_NICKNAME": "0",
-        }
+    print(
+        f"[new-sources] ok={result.get('montages_ok')} fail={result.get('montages_fail')} "
+        f"shorts={result.get('short_candidates')}"
     )
-    try:
-        result = subprocess.run(["/usr/local/bin/smart_video_editor.py"], env=env, check=False)
-        if result.returncode == 0:
-            mark_used(new_paths)
-        STATE_PATH.write_text(
-            json.dumps(
-                {
-                    "skipped": False,
-                    "sources": [str(p) for p in new_paths],
-                    "count": len(new_paths),
-                    "returncode": result.returncode,
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                indent=2,
-            )
-        )
-        print(f"[new-sources] processed {len(new_paths)} files, rc={result.returncode}")
-        return result.returncode
-    finally:
-        queue_path.unlink(missing_ok=True)
+    return 0 if result.get("montages_ok", 0) > 0 else 1
 
 
 if __name__ == "__main__":

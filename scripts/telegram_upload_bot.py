@@ -38,7 +38,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
-BOT_VERSION = '2026-06-07-youtube-shorts-v4'
+BOT_VERSION = '2026-06-07-mlbb-shorts-v5'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -1430,8 +1430,46 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
             return
 
         source_paths = [Path(line.split('|', 1)[0]) for line in lines]
-        make_timeout = smart_make_timeout_sec(source_paths, env)
+        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
         max_dur = max((ffprobe_duration_sec(p) for p in source_paths), default=0.0)
+
+        # MLBB: only short sources (Shorts/TikTok ≤3 min) — fast path with auto-send
+        if not is_pubg_chat(chat_id) and profile in ('mobile_legends', 'mlbb'):
+            short_max = float(env.get('MLBB_SHORT_MAX_SEC', '180'))
+            if max_dur > short_max:
+                send_message(
+                    chat_id,
+                    f'Сейчас работаем только с **короткими** MLBB-роликами (до {int(short_max // 60)} мин): '
+                    'YouTube Shorts, TikTok или файл до ~20 МБ. Длинные стримы не обрабатываем.',
+                )
+                return
+            if not limited:
+                send_message(
+                    chat_id,
+                    'Принял MLBB (короткий исходник). Собираю 3–4 клипа → ~33–57 сек, обычно 1–5 мин.',
+                )
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from mlbb_shorts_montage import run_cycle
+
+            token = env.get('TG_BOT_TOKEN', os.environ.get('TG_BOT_TOKEN', ''))
+            result = run_cycle(
+                chat_id=str(chat_id),
+                token=token,
+                only_paths=source_paths,
+                max_montages=1,
+            )
+            if result.get('montages_ok', 0) > 0:
+                mark_used(source_paths, chat_id=chat_id)
+                archive_processed(chat_id, lines)
+                if not limited:
+                    send_message(chat_id, 'Готово — ролик отправлен в этот чат.')
+            else:
+                detail = (result.get('details') or [{}])[-1].get('detail', result.get('reason', 'fail'))
+                err_hint = _smart_edit_failure_hint(1, str(detail), chat_id)
+                send_message(chat_id, f'Не удалось собрать монтаж. {err_hint or detail}')
+            return
+
+        make_timeout = smart_make_timeout_sec(source_paths, env)
         if not limited:
             game_hint = 'PUBG' if is_pubg_chat(chat_id) else 'MLBB'
             long_note = ''
@@ -1452,7 +1490,6 @@ def process_chat_batch(chat_id: str, only_paths: list[Path] | None = None):
         run_env['QUEUE_FILE'] = tmp_queue_path
         run_env['MAX_SOURCES'] = str(len(lines))
         run_env.setdefault('TARGET_DURATION', env.get('SMART_TARGET_DURATION', '40'))
-        profile = game_profile_for_chat(chat_id) or 'mobile_legends'
         run_env['DEFAULT_GAME_PROFILE'] = profile
         run_env['QUEUE_GAME_PROFILE'] = profile
         try:
