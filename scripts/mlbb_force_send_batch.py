@@ -126,16 +126,18 @@ def _load_forced_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, d
         print(f"peaks file missing: {path}", file=sys.stderr)
         return None
     rows = json.loads(path.read_text())
+    min_gap = float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", "45"))
     out: list[tuple[Path, float, dict]] = []
     vod_by_name = {v.name: v for v in vods}
-    for row in rows[:need]:
+    for row in rows:
         vod = vod_by_name.get(row["vod"]) or Path(row.get("vod_path", ""))
         if not isinstance(vod, Path):
             vod = Path(vod)
         if not vod.exists():
             continue
         out.append((vod, float(row["peak"]), row.get("kill_ui", {"score": row.get("score", 0), "reason": row.get("reason", "")})))
-    return out
+    out = _dedupe_by_vod_gap(out, min_gap)
+    return out[:need]
 
 
 def _collect_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, dict]]:
@@ -212,6 +214,7 @@ def _build_scene_clip(vod: Path, peak_t: float, kill_meta: dict) -> dict:
         "score": score,
         "highlight_metrics": {"pass_reason": kill_meta.get("reason", "kill_ui")},
         "gate_reason": f"kill_ui:{kill_meta.get('reason')}",
+        "preserve_duration": True,
     }
 
 
@@ -329,7 +332,7 @@ def main() -> int:
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["MLBB_KILL_UI_SKIP_OCR"] = "0"
-    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "0"
+    os.environ["MLBB_VOD_VARIABLE_LENGTH"] = "1"
     os.environ["MLBB_FIGHT_MIN_SEC"] = os.environ.get("MLBB_FIGHT_MIN_SEC", "7")
     os.environ["MLBB_FIGHT_MAX_SEC"] = os.environ.get("MLBB_FIGHT_MAX_SEC", "22")
     os.environ["HIGHLIGHT_HEATMAP"] = "0"
@@ -351,7 +354,7 @@ def main() -> int:
     print(f"batch={batch_n} vods={[v.name for v in vods]}", flush=True)
     forced_peaks = _load_forced_peaks(vods, batch_n)
     peaks = forced_peaks or _collect_peaks(vods, batch_n)
-    trust_peaks = bool(forced_peaks) and os.environ.get("MLBB_FORCE_TRUST_PEAKS", "1") == "1"
+    trust_peaks = bool(forced_peaks) and os.environ.get("MLBB_FORCE_TRUST_PEAKS", "0") == "1"
     if not peaks:
         print("no kill UI peaks found", file=sys.stderr)
         return 2
