@@ -148,12 +148,21 @@ def _dedupe_by_vod_gap(
 
 
 def _pick_vods() -> list[Path]:
-    max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "700"))
+    min_mb = float(os.environ.get("MLBB_FORCE_MIN_VOD_MB", "200"))
+    max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "950"))
     explicit = os.environ.get("MLBB_FORCE_VOD", "").strip()
     if explicit:
         p = Path(explicit)
         return [p] if p.exists() else []
-    vods = [p for p in INBOX.glob("yt_*.mp4") if p.stat().st_size <= max_mb * 1_000_000]
+    vods: list[Path] = []
+    for p in INBOX.glob("yt_*.mp4"):
+        size_mb = p.stat().st_size / 1_000_000
+        if size_mb < min_mb or size_mb > max_mb:
+            continue
+        dur = _ffprobe_duration(p)
+        if dur < float(os.environ.get("MLBB_FORCE_MIN_VOD_SEC", "600")):
+            continue
+        vods.append(p)
     vods.sort(key=lambda p: p.stat().st_size)
     extra = os.environ.get("MLBB_FORCE_EXTRA_VODS", "").strip()
     if extra:
