@@ -24,7 +24,7 @@ from mlbb_calibration_store import (
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
-BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
+BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "6"))
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
 QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "7200"))  # 2h
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"

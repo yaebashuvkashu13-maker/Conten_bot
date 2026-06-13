@@ -1116,7 +1116,7 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
             }
         )
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_starts=reserved)
-    batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "8"))
+    batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "30"))
     if batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):

@@ -62,9 +62,10 @@ def main() -> int:
         f"Отправки сегодня: {sent_today}/{cap}\n"
         f"precision_7d: {prec:.0%} (цель 45%)\n"
         f"Метки VOD: 👍{vs['feedback_yes']} 👎{vs['feedback_no']}\n"
+        f"hook_min: {os.environ.get('VIRAL_MLBB_HOOK_MIN', '?')} | batch до {os.environ.get('MLBB_VOD_BATCH_MAX', '30')}\n"
         f"Variable fight cuts: {os.environ.get('MLBB_VOD_VARIABLE_LENGTH', '1')}\n"
         f"LEARNING_FIRST: {lf} | sendVideo: {sends}\n"
-        "Режим: MLBB-only, бои 7-22с, монтаж 33-57с"
+        "Silver: YouTube Shorts → CLIP + hook порог каждые 6 мин"
     )
     print(text)
     if "--telegram" in sys.argv and send_telegram(text):

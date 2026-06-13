@@ -22,12 +22,12 @@ BIN = Path("/usr/local/bin")
 PY = sys.executable
 
 # How many unevaluated Shorts we want queued for owner 👍/👎
-TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "6"))
+TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "12"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
-INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "45"))
-FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "20"))
-VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "6"))
-VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "1"))
+INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "20"))
+FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "10"))
+VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "45"))
+VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "6"))
 
 
 def log(msg: str) -> None:
@@ -63,7 +63,9 @@ def base_env() -> dict[str, str]:
             "MLBB_SEND_ENABLED": "1",
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_LEAD_SEC": "4",
-            "MLBB_MAX_DAILY_SENDS": env.get("MLBB_MAX_DAILY_SENDS", "20"),
+            "MLBB_MAX_DAILY_SENDS": env.get("MLBB_MAX_DAILY_SENDS", "150"),
+            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "30"),
+            "MLBB_CALIBRATION_BATCH": env.get("MLBB_CALIBRATION_BATCH", "6"),
             "HIGHLIGHT_OWNER_BAD_PAD_SEC": env.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
@@ -127,8 +129,8 @@ def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
     script = BIN / "mlbb_youtube_shorts_ingest.py"
     if not script.exists():
         script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
-    max_dl = "10" if aggressive else "5"
-    max_q = "24" if aggressive else "12"
+    max_dl = "25" if aggressive else "8"
+    max_q = "40" if aggressive else "16"
     return [
         PY,
         str(script),
@@ -168,7 +170,8 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_PIPELINE_MAX_MIN": str(VOD_SLICE_MIN),
             "MLBB_VOD_PIPELINE_MAX_VODS": str(VOD_MAX_VODS),
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
-            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "20"),
+            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "40"),
+            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "30"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_LEAD_SEC": "4",
@@ -247,6 +250,15 @@ def main() -> int:
 
         for job in (ingest, vod, feed, montage):
             job.reap()
+
+        if cycles % 90 == 0:
+            sync_script = BIN / "mlbb_viral_threshold_sync.py"
+            if not sync_script.exists():
+                sync_script = Path(__file__).resolve().parent / "mlbb_viral_threshold_sync.py"
+            subprocess.run([PY, str(sync_script)], env=base, timeout=120, check=False)
+            ingest.cmd = ingest_cmd(base, aggressive=True)
+            ingest.env = ingest_env(base, aggressive=True)
+            ingest.start()
 
         if cycles % 360 == 0:
             report_script = BIN / "mlbb_daily_report.py"
