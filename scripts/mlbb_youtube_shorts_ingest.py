@@ -38,6 +38,10 @@ SEARCH_QUERIES = (
     "mobile legends streamer ranked teamfight",
     "mlbb solo rank maniac gameplay",
     "mlbb live gameplay highlights",
+    "mlbb double kill triple kill savage",
+    "mlbb teamfight shorts",
+    "mobile legends savage maniac shorts",
+    "mlbb mythic rank fight",
 )
 
 STREAMER_SHORTS_FEEDS = (
@@ -311,7 +315,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.incremental:
+    burst = os.environ.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1"
+    if args.incremental and burst:
+        if args.max_downloads <= 0:
+            args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "40"))
+        args.max_per_query = int(os.environ.get("MLBB_INGEST_MAX_PER_QUERY", str(args.max_per_query)))
+        args.skip_if_pending = 0
+        args.download_delay = float(os.environ.get("MLBB_INGEST_DOWNLOAD_DELAY", "5"))
+        args.search_delay = float(os.environ.get("MLBB_INGEST_SEARCH_DELAY", "2"))
+    elif args.incremental:
         if args.max_downloads <= 0:
             args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "3"))
         if args.max_per_query > 12:
@@ -336,19 +348,23 @@ def main() -> int:
         return 0
 
     queries = list(SEARCH_QUERIES)
-    if args.incremental:
+    if args.incremental and not burst:
         # Rotate one query per run — less search load on YouTube.
         slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
         queries = [queries[slot]]
         print(f"incremental query={queries[0]} pending={pending_n}")
+    elif burst:
+        print(f"calibration_burst queries={len(queries)} pending={pending_n}")
 
     seen: set[str] = set()
     pool: list[dict] = []
     channel_feeds = list(STREAMER_SHORTS_FEEDS)
-    if args.incremental and channel_feeds:
+    if args.incremental and channel_feeds and not burst:
         slot = int(time.time() // 7200) % len(channel_feeds)
         channel_feeds = [channel_feeds[slot]]
         print(f"incremental channel={channel_feeds[0]}")
+    elif burst:
+        print(f"calibration_burst channels={len(channel_feeds)}")
     for channel_url in channel_feeds:
         for row in fetch_streamer_shorts(
             channel_url, limit=args.max_per_query, env=env, days=args.days
@@ -375,13 +391,16 @@ def main() -> int:
     pool = pool[: cap * 3]  # extra headroom — many rows already labeled
 
     known = labeled_ids()
+    from mlbb_calibration_store import load_feed_sent
+
+    already_sent = load_feed_sent()["ids"]
     sent_pending = {str(r.get("video_id", "")) for r in pending_candidates(limit=9999)}
     fresh_pool: list[dict] = []
     for row in pool:
         vid = row["video_id"]
         if vid in known:
             continue
-        if vid in sent_pending:
+        if vid in sent_pending or vid in already_sent:
             continue
         fresh_pool.append(row)
     pool = fresh_pool[:cap]
@@ -396,7 +415,7 @@ def main() -> int:
                 days=args.days,
             ):
                 vid = row["video_id"]
-                if vid in known or vid in sent_pending:
+                if vid in known or vid in sent_pending or vid in already_sent:
                     continue
                 deep.append(row)
             if args.search_delay > 0:
