@@ -46,6 +46,8 @@ install -m 755 \
   scripts/mlbb_fight_segment.py \
   scripts/mlbb_vod_montage_feed.py \
   scripts/mlbb_daily_report.py \
+  scripts/mlbb_silver_bootstrap.py \
+  scripts/mlbb_silver_bootstrap.sh \
   scripts/eval_learning_first_gate.py \
   scripts/viral_reference_ingest.py \
   scripts/viral_reference_refresh.sh \

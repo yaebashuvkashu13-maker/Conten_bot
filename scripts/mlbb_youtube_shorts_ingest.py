@@ -36,6 +36,12 @@ SEARCH_QUERIES = (
     "mlbb teamfight shorts",
     "mlbb savage shorts",
     "mobile legends highlights shorts",
+    "mlbb triple kill shorts",
+    "mlbb mythic rank fight shorts",
+    "mobile legends esports highlights shorts",
+    "mlbb onic alter ego shorts",
+    "mlbb chou savage shorts",
+    "mlbb m7 highlights shorts",
 )
 
 NEGATIVE_TITLE = re.compile(

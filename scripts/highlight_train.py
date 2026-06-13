@@ -135,6 +135,16 @@ def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
 
 def extract_features(vod: Path, start: float, profile: str) -> list[float]:
     m = score_candidate_window(vod, start, WINDOW_SEC, profile)
+    if normalize_profile(profile) == "mobile_legends":
+        # PUBG gunshot features are noise for MLBB — use HUD motion + CLIP + hook.
+        return [
+            max(0.0, float(m.clip_score)),
+            float(m.minimap_delta),
+            float(m.skill_delta),
+            float(m.center_motion),
+            float(m.hook_score),
+            float(m.visual_dynamics),
+        ]
     return [
         m.panns_gunshot,
         m.panns_machine_gun,

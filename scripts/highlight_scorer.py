@@ -1145,8 +1145,13 @@ def score_candidate_window(
     clf_ok = m.classifier_prob >= CLASSIFIER_MIN
     if not classifier_available(profile) and m.rule_pass and m.visual_pass:
         clf_ok = True
-    if profile == "mobile_legends" and m.rule_pass and m.visual_pass:
-        # LR meta-model is PUBG-biased; trust HUD + CLIP + owner exemplars for MLBB.
+    if (
+        profile == "mobile_legends"
+        and m.rule_pass
+        and m.visual_pass
+        and os.environ.get("MLBB_USE_CLASSIFIER", "0") != "1"
+    ):
+        # Legacy bypass when no MLBB-trained classifier is active.
         clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (

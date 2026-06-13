@@ -227,6 +227,28 @@ def main() -> int:
         f"vod_slice={VOD_SLICE_MIN}min loop={LOOP_SEC}s"
     )
     cycles = 0
+    pending = pending_shorts()
+
+    bootstrap_script = BIN / "mlbb_silver_bootstrap.py"
+    if not bootstrap_script.exists():
+        bootstrap_script = Path(__file__).resolve().parent / "mlbb_silver_bootstrap.py"
+    if bootstrap_script.exists() and pending < 6:
+        log(f"startup silver bootstrap pending={pending}")
+        subprocess.run(
+            [
+                PY,
+                str(bootstrap_script),
+                "--youtube-downloads",
+                base.get("MLBB_SILVER_YT_DOWNLOADS", "15"),
+                "--viral-downloads",
+                "0",
+                "--telegram",
+            ],
+            env=base,
+            timeout=7200,
+            check=False,
+        )
+        pending = pending_shorts()
 
     while True:
         cycles += 1
