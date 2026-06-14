@@ -425,6 +425,22 @@ def apply_owner_label(
         if exemplar:
             entry["exemplar"] = str(exemplar)
 
+    try:
+        from mlbb_scene_library import register_shorts_label
+
+        register_shorts_label(
+            path=path,
+            video_id=vid,
+            is_good=is_good,
+            row=row,
+            reason=reason,
+            by_chat=by_chat,
+            archive_path=str(entry.get("training_archive") or ""),
+            exemplar_path=str(entry.get("exemplar") or ""),
+        )
+    except ImportError:
+        pass
+
     save_labels(labels)
     return True, "good" if is_good else "bad"
 
