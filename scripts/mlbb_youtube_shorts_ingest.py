@@ -60,9 +60,7 @@ OWNER_CURATED_FEEDS = (
 GENERAL_MLBB_FEEDS = (
     "https://www.youtube.com/@Betosky/shorts",
     "https://www.youtube.com/@JessNoLimit/shorts",
-    "https://www.youtube.com/@Insectos/shorts",
     "https://www.youtube.com/@akosidogie/shorts",
-    "https://www.youtube.com/@Elginnn/shorts",
 )
 
 STREAMER_SHORTS_FEEDS = OWNER_CURATED_FEEDS + GENERAL_MLBB_FEEDS
@@ -1101,7 +1099,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 time.sleep(args.search_delay)
 
     if search_first:
-        _collect_channels()
+        if len(pool) >= min_pool * 3:
+            print(f"skip_channels pool={len(pool)} (search enough)", flush=True)
+        else:
+            _collect_channels()
     elif queries:
         _collect_search()
 

@@ -61,6 +61,8 @@ def save_index(data: dict) -> None:
 
 
 def upsert_candidate(row: dict) -> None:
+    if is_stub_candidate(row) and not row.get("ingest_verified"):
+        return
     path = Path(str(row.get("path", "")))
     if path.name.startswith("yt_"):
         row = {**row, "video_id": id_from_path(path), "id": id_from_path(path)}
