@@ -274,7 +274,7 @@ def _run_feed() -> int:
             send_message(
                 token,
                 chat_id,
-                "MLBB калибровка: очередь пуста — ingest ищет новые Shorts.\n"
+                "MLBB калибровка: очередь пуста — ingest ищет Shorts и MLBB-клипы (до 20 мин).\n"
                 f"Индекс: {s['index_total']}, в очереди: {s['pending']}.\n"
                 "Continuous worker качает и режет VOD параллельно.",
             )

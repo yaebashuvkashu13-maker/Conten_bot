@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-MLBB-only: ingest YouTube Shorts (≤60s, 2026+) for owner calibration.
+MLBB-only: ingest YouTube Shorts and MLBB highlight clips for owner calibration.
 
-Upload window: from MLBB_SHORTS_MIN_UPLOAD_DATE (default 20260101) + rolling days.
-Owner 👍 copies full Short into training_archive/YYYY/shorts/ for reuse.
-
-Searches: mobile legends highlights, mlbb teamfight, mlbb savage
-Filters: gameplay_gate, highlight_scorer (mobile_legends)
-Output: /root/datasets/mlbb/youtube_shorts/ + data/mlbb/youtube_shorts_index.json
+Duration: MLBB_SHORTS_MIN_DURATION_SEC .. MLBB_SHORTS_MAX_DURATION_SEC (default 3s–20min).
+Long clips are trimmed to ~45s for Telegram; full file kept for training archive on 👍.
 """
 
 from __future__ import annotations
@@ -109,6 +105,39 @@ MLBB_POSITIVE_TITLE = re.compile(
 
 def _title_looks_mlbb(title: str) -> bool:
     return bool(MLBB_POSITIVE_TITLE.search(title or ""))
+
+
+def shorts_min_duration_sec(env: dict[str, str] | None = None) -> float:
+    env = env or dict(os.environ)
+    return float(env.get("MLBB_SHORTS_MIN_DURATION_SEC", "3"))
+
+
+def shorts_max_duration_sec(env: dict[str, str] | None = None) -> float:
+    env = env or dict(os.environ)
+    return float(env.get("MLBB_SHORTS_MAX_DURATION_SEC", "1200"))
+
+
+def shorts_short_max_sec(env: dict[str, str] | None = None) -> float:
+    """Clips at or below this length use Shorts-style opening trim (default 60s)."""
+    env = env or dict(os.environ)
+    return float(env.get("MLBB_SHORTS_SHORT_MAX_SEC", "60"))
+
+
+def duration_in_ingest_range(duration: float, env: dict[str, str] | None = None) -> bool:
+    return shorts_min_duration_sec(env) < duration <= shorts_max_duration_sec(env)
+
+
+def streamer_channel_urls() -> list[str]:
+    urls = list(STREAMER_SHORTS_FEEDS)
+    if os.environ.get("MLBB_SHORTS_INCLUDE_VIDEOS_TAB", "1") == "1":
+        extra: list[str] = []
+        for url in STREAMER_SHORTS_FEEDS:
+            if url.endswith("/shorts"):
+                videos = url[: -len("/shorts")] + "/videos"
+                if videos not in urls and videos not in extra:
+                    extra.append(videos)
+        urls.extend(extra)
+    return urls
 
 
 def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
@@ -388,6 +417,57 @@ def _opening_window_junk(
     return False
 
 
+def find_best_long_clip_start(path: Path) -> tuple[float, str]:
+    """Pick best ~45s window in long MLBB uploads (kill peak or combat scan)."""
+    from mlbb_kill_ui import scan_vod_kill_peaks
+
+    dur = _ffprobe_duration(path)
+    short_max = shorts_short_max_sec()
+    if dur <= short_max:
+        return find_best_shorts_start(path)
+
+    min_peak = float(os.environ.get("MLBB_CALIB_SCAN_MIN_SEC", "20"))
+    step = float(os.environ.get("MLBB_CALIB_SCAN_STEP_SEC", "25"))
+    window = float(os.environ.get("MLBB_CALIB_SCAN_WINDOW_SEC", "10"))
+    peaks = scan_vod_kill_peaks(
+        path,
+        min_peak_sec=min_peak,
+        step_sec=step,
+        window_sec=window,
+        limit=int(os.environ.get("MLBB_CALIB_SCAN_LIMIT", "8")),
+    )
+    if peaks:
+        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        start = max(0.0, float(peaks[0]["start_sec"]) - lead)
+        return round(start, 2), "kill_peak"
+
+    crop = None
+    from gameplay_gate import detect_game_viewport_crop, score_segment_combat
+
+    crop = detect_game_viewport_crop(path, 0.0, min(dur, 30.0))
+    probe = float(os.environ.get("MLBB_LONG_CLIP_PROBE", "4.0"))
+    step_combat = float(os.environ.get("MLBB_LONG_CLIP_STEP", "20"))
+    scan_end = min(dur * 0.85, float(os.environ.get("MLBB_LONG_CLIP_SCAN_SEC", "600")))
+    best_start = -1.0
+    best_score = -1.0
+    t = 0.0
+    while t < scan_end:
+        window_sec = min(probe, max(2.5, dur - t - 0.2))
+        if window_sec < 2.5:
+            break
+        motion, mini, skill, _text = score_segment_combat(
+            path, t, window_sec, crop_box=crop, sample_frames=4
+        )
+        score = motion + mini + skill
+        if score > best_score:
+            best_score = score
+            best_start = t
+        t += step_combat
+    if best_start >= 0 and best_score > 0.02:
+        return round(best_start, 2), "combat_scan"
+    return -1.0, "no_clip_in_long"
+
+
 def find_best_shorts_start(path: Path) -> tuple[float, str]:
     """
     Skip junk at t=0 (intro/lobby/menu). Returns (start_sec, reason).
@@ -488,18 +568,22 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
 
 
 def resolve_shorts_send_path(path: Path) -> tuple[Path | None, float, str]:
-    """Pick file to send — trim opening junk when needed."""
+    """Pick file to send — trim to best clip (Shorts opening or long-video peak)."""
     if os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1" and os.environ.get(
         "MLBB_SHORTS_TRIM_OPENING", "1"
     ) != "1":
         return path, 0.0, "lenient_no_trim"
     if os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1":
         return path, 0.0, "trim_disabled"
-    start, reason = find_best_shorts_start(path)
+    dur = _ffprobe_duration(path)
+    if dur > shorts_short_max_sec():
+        start, reason = find_best_long_clip_start(path)
+    else:
+        start, reason = find_best_shorts_start(path)
     if start < 0:
         return None, 0.0, reason
     min_trim = float(os.environ.get("MLBB_SHORTS_MIN_TRIM_SEND", "0.35"))
-    if start < min_trim:
+    if start < min_trim and dur <= shorts_short_max_sec():
         return path, 0.0, reason
     trimmed = trim_short_mp4(path, start)
     if trimmed is None:
@@ -612,7 +696,7 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
             view_count = int(float(views or 0))
         except (ValueError, TypeError):
             continue
-        if duration <= 3 or duration > 60:
+        if not duration_in_ingest_range(duration, env):
             continue
         if NEGATIVE_TITLE.search(title):
             continue
@@ -625,7 +709,7 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
                 "view_count": view_count,
                 "duration": duration,
                 "upload_date": upload_date,
-                "url": url or f"https://www.youtube.com/shorts/{vid}",
+                "url": url or f"https://www.youtube.com/watch?v={vid}",
                 "search_query": channel_url,
                 "source_type": "streamer_channel",
             }
@@ -640,8 +724,10 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
 
     cutoff = shorts_upload_cutoff(env, days=days)
     search_n = max(limit * 8, 80)
+    max_d = shorts_max_duration_sec(env)
+    suffix = " #shorts" if max_d <= shorts_short_max_sec(env) else ""
     cmd = ytdlp_cmd(env, use_proxy=False) + [
-        f"ytsearch{search_n}:{query} #shorts",
+        f"ytsearch{search_n}:{query}{suffix}",
         "--flat-playlist",
         "--sleep-requests",
         env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
@@ -668,7 +754,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
             view_count = int(float(views or 0))
         except (ValueError, TypeError):
             continue
-        if duration <= 3 or duration > 60:
+        if not duration_in_ingest_range(duration, env):
             continue
         if NEGATIVE_TITLE.search(title):
             continue
@@ -679,7 +765,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
                 "view_count": view_count,
                 "duration": duration,
                 "upload_date": upload_date,
-                "url": url or f"https://www.youtube.com/shorts/{vid}",
+                "url": url or f"https://www.youtube.com/watch?v={vid}",
                 "search_query": query,
             }
         )
@@ -724,7 +810,7 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
     if dest.exists():
         return dest
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=300, env=subprocess_env_no_proxy(env)
+        cmd, capture_output=True, text=True, check=False, timeout=int(env.get("MLBB_SHORTS_DOWNLOAD_TIMEOUT_SEC", "900")), env=subprocess_env_no_proxy(env)
     )
     if proc.returncode != 0:
         if env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1":
@@ -890,7 +976,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
     seen: set[str] = set()
     pool: list[dict] = []
-    channel_feeds = list(STREAMER_SHORTS_FEEDS)
+    channel_feeds = streamer_channel_urls()
     if args.incremental and channel_feeds and not burst:
         slot = int(time.time() // 7200) % len(channel_feeds)
         channel_feeds = [channel_feeds[slot]]
@@ -1007,7 +1093,15 @@ def _run_ingest(args: argparse.Namespace) -> int:
             rejected += 1
             continue
 
-        kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4)
+        dur = _ffprobe_duration(mp4)
+        clip_start = 0.15
+        if dur > shorts_short_max_sec():
+            clip_start, clip_reason = find_best_long_clip_start(mp4)
+            if clip_start < 0:
+                print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
+                rejected += 1
+                continue
+        kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
         if not kill_ok:
             print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
             rejected += 1
