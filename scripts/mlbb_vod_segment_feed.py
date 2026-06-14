@@ -812,6 +812,7 @@ def _render_from_chunk(
         cmd.extend(["-af", _vod_audio_filter(), "-map", "0:v:0", "-map", "0:a:0?"])
     else:
         cmd.extend(["-an"])
+    cmd.extend(["-t", f"{dur:.3f}"])
     cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
     run_command(cmd)
@@ -899,6 +900,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         cmd.extend(["-af", af, "-map", "0:v:0", "-map", "0:a:0?"])
     else:
         cmd.extend(["-an"])
+    cmd.extend(["-t", f"{dur:.3f}"])
     cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
     run_command(cmd)

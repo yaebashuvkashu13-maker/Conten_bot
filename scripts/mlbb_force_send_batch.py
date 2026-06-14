@@ -445,7 +445,7 @@ def main() -> int:
     send_message(
         token,
         chat_id,
-        f"MLBB — {len(peaks)} сцен (7–22с, kill UI)\n"
+        f"MLBB — {len(peaks)} сцен ({int(os.environ.get('MLBB_FIGHT_MAX_SEC', os.environ.get('MLBB_VOD_SEGMENT_SEC', '15')))}с, kill UI)\n"
         f"👍 Ок / 👎 Не ок под каждым\n"
         f"Если 10 хороших — идём дальше",
     )
