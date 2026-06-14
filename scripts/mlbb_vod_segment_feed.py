@@ -819,6 +819,57 @@ def _render_from_chunk(
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 
+def _use_simple_render(clip: dict, dur: float) -> bool:
+    if os.environ.get("MLBB_VOD_SIMPLE_RENDER", "0") == "1":
+        return True
+    if clip.get("preserve_duration"):
+        return True
+    return dur >= float(os.environ.get("MLBB_VOD_SIMPLE_RENDER_MIN_SEC", "18"))
+
+
+def _render_simple_segment(
+    vod: Path,
+    *,
+    start: float,
+    dur: float,
+    crop_prefix: str,
+    out_path: Path,
+    has_audio: bool,
+) -> bool:
+    """Single accurate -ss/-t — avoids double-seek buffer truncation on 20–30s clips."""
+    from smart_video_editor import TARGET_HEIGHT, TARGET_WIDTH, OUTPUT_FPS, run_command
+
+    vf = (
+        f"{crop_prefix}"
+        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"fps={OUTPUT_FPS},format=yuv420p"
+    )
+    os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{start:.3f}",
+        "-t",
+        f"{dur:.3f}",
+        "-i",
+        str(vod),
+        "-vf",
+        vf,
+    ]
+    if has_audio:
+        cmd.extend(["-af", _vod_audio_filter(), "-map", "0:v:0", "-map", "0:a:0?"])
+    else:
+        cmd.extend(["-an"])
+    cmd.extend(_vod_encode_args())
+    cmd.append(str(out_path))
+    run_command(cmd)
+    return out_path.exists() and out_path.stat().st_size > 100_000
+
+
 def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     """
     Cut montage-length window without logo.
@@ -841,6 +892,16 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     crop_prefix = _crop_filter_prefix(vod, start, dur)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     has_audio = ffprobe_has_audio(vod)
+
+    if _use_simple_render(clip, dur):
+        return _render_simple_segment(
+            vod,
+            start=start,
+            dur=dur,
+            crop_prefix=crop_prefix,
+            out_path=out_path,
+            has_audio=has_audio,
+        )
 
     if _needs_chunk_render(vod):
         chunk_dur = trim_start + dur + 3.0
