@@ -19,6 +19,7 @@ PY = sys.executable
 PAUSED_PIPELINES = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
 PIDFILE = Path(os.environ.get("MLBB_CONTINUOUS_PID", "/root/data/mlbb/mlbb_continuous_worker.pid"))
+VOD_LOCK = Path(os.environ.get("MLBB_VOD_FEED_LOCK", "/root/data/mlbb/vod_segment_feed.lock"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 
 
@@ -127,6 +128,58 @@ def pending_shorts() -> int:
         return 0
 
 
+def vod_feed_running_externally() -> bool:
+    if not VOD_LOCK.exists():
+        return False
+    try:
+        pid = int(VOD_LOCK.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def hourly_status(base: dict[str, str]) -> None:
+    token = base.get("TG_BOT_TOKEN", "")
+    chat_id = base.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        from mlbb_calibration_store import stats
+
+        s = stats()
+        pending = pending_shorts()
+        state_path = Path(os.environ.get("MLBB_CONTINUOUS_STATE", "/root/data/mlbb/mlbb_continuous_state.json"))
+        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+        text = (
+            f"📊 MLBB farm status\n"
+            f"pending Shorts: {pending}\n"
+            f"👍 {s.get('feedback_yes', 0)} 👎 {s.get('feedback_no', 0)}\n"
+            f"worker cycles: {state.get('cycles', '?')}\n"
+            f"ingest: {'on' if state.get('ingest_running') else 'off'} | "
+            f"vod: {'on' if state.get('vod_running') else 'off'} | "
+            f"feed: {'on' if state.get('feed_running') else 'off'}"
+        )
+        subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--noproxy",
+                "*",
+                "-F",
+                f"chat_id={chat_id}",
+                "-F",
+                f"text={text[:3900]}",
+                f"https://api.telegram.org/bot{token}/sendMessage",
+            ],
+            env={k: v for k, v in base.items() if "proxy" not in k.lower()},
+            check=False,
+            timeout=30,
+        )
+    except Exception as exc:
+        log(f"hourly_status skipped: {exc}")
+
+
 def pipeline_paused(name: str) -> bool:
     if os.environ.get("MLBB_SKIP_MONTAGE", "1") == "1" and name == "montage":
         return True
@@ -194,6 +247,10 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_FULL_FRAME": "1",
             "SMART_CROP_WEBCAM": "0",
+            "MLBB_VOD_KILL_FIRST": "1",
+            "MLBB_REQUIRE_KILL_UI": "1",
+            "MLBB_FORCE_MAX_LIVE_VOD_SEC": "2700",
+            "MLBB_FORCE_MAX_LIVE_VOD_FPS": "55",
             "MLBB_VOD_LEAD_SEC": "4",
             "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
             "OWNER_PREVIEW_REQUIRED": "0",
@@ -241,7 +298,8 @@ def main() -> int:
     vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
     vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
     ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "8"))
-    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "180"))
+    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "120"))
+    vod_cooldown = float(base.get("MLBB_VOD_COOLDOWN_SEC", "300"))
     if base.get("MLBB_SEND_ENABLED", "1") != "1":
         log("MLBB_SEND_ENABLED=0 — worker idle (no Telegram sends)")
         return 0
@@ -273,7 +331,11 @@ def main() -> int:
                 ingest.env = ingest_env(base, aggressive=aggressive)
                 ingest.start()
 
-            if not vod.running():
+            if (
+                not vod.running()
+                and not vod_feed_running_externally()
+                and vod.cooldown_ok(vod_cooldown)
+            ):
                 vod.start()
 
             if pending > 0 and not feed.running() and feed.cooldown_ok(feed_cooldown):
@@ -284,6 +346,9 @@ def main() -> int:
 
             for job in (ingest, vod, feed, montage):
                 job.reap()
+
+            if cycles % 900 == 0:
+                hourly_status(base)
 
             if cycles % 90 == 0:
                 sync_script = BIN / "mlbb_viral_threshold_sync.py"
@@ -304,7 +369,7 @@ def main() -> int:
                     {
                         "pending_shorts": pending,
                         "ingest_running": ingest.running(),
-                        "vod_running": vod.running(),
+                        "vod_running": vod.running() or vod_feed_running_externally(),
                         "feed_running": feed.running(),
                         "cycles": cycles,
                         "worker_pid": os.getpid(),

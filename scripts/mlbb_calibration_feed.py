@@ -132,6 +132,14 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
 
 def _acquire_lock() -> object | None:
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if LOCK_PATH.exists():
+        try:
+            old_pid = int(LOCK_PATH.read_text(encoding="utf-8").strip())
+            os.kill(old_pid, 0)
+        except ProcessLookupError:
+            LOCK_PATH.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            LOCK_PATH.unlink(missing_ok=True)
     handle = LOCK_PATH.open("a+", encoding="utf-8")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
