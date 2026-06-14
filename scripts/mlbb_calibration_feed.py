@@ -252,9 +252,15 @@ def _run_feed() -> int:
             continue
         vid = str(row.get("video_id", ""))
         min_send_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0.05"))
-        if float(row.get("score") or 0) < min_send_score:
-            print(f"skip send {vid} low_score={row.get('score')}", flush=True)
-            mark_feed_sent([vid], paths=[path])
+        score = float(row.get("score") or 0)
+        if score < min_send_score:
+            from mlbb_youtube_shorts_ingest import score_clip
+
+            feats = score_clip(path)
+            score = float(feats.get("score") or 0)
+            row = {**row, **feats}
+        if score < min_send_score:
+            print(f"skip send {vid} low_score={score}", flush=True)
             continue
         from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
 
