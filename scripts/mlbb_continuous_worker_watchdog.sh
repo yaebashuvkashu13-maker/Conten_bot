@@ -51,6 +51,16 @@ restart_worker() {
   nohup python3 "$WORKER" >> "$LOG" 2>&1 &
   echo $! > "$PIDFILE"
   echo "[$(date -Is)] started pid=$(cat "$PIDFILE")" >> "$WLOG"
+  if [[ -f /root/.video_bot.env ]]; then
+    # shellcheck disable=SC1091
+    source /root/.video_bot.env
+    if [[ -n "${TG_BOT_TOKEN:-}" && -n "${TG_CHAT_ID:-}" ]]; then
+      curl -sS --noproxy '*' \
+        -F "chat_id=${TG_CHAT_ID}" \
+        -F "text=⚠️ MLBB worker restarted: ${reason}" \
+        "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 pid="$(worker_pid || true)"

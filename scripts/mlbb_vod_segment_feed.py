@@ -81,10 +81,11 @@ def _vod_min_peak_sec() -> float:
 
 
 def _blocked_vod_ids() -> set[str]:
-    if not BLOCKED_VODS_PATH.exists():
+    path = Path(os.environ.get("MLBB_BLOCKED_VODS", str(BLOCKED_VODS_PATH)))
+    if not path.exists():
         return set()
     try:
-        data = json.loads(BLOCKED_VODS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return set()
     return {str(v).replace("yt_", "") for v in data.get("vods", [])}
