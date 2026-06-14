@@ -567,7 +567,9 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
     return None
 
 
-def resolve_shorts_send_path(path: Path) -> tuple[Path | None, float, str]:
+def resolve_shorts_send_path(
+    path: Path, *, clip_start: float | None = None
+) -> tuple[Path | None, float, str]:
     """Pick file to send — trim to best clip (Shorts opening or long-video peak)."""
     if os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1" and os.environ.get(
         "MLBB_SHORTS_TRIM_OPENING", "1"
@@ -576,7 +578,9 @@ def resolve_shorts_send_path(path: Path) -> tuple[Path | None, float, str]:
     if os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1":
         return path, 0.0, "trim_disabled"
     dur = _ffprobe_duration(path)
-    if dur > shorts_short_max_sec():
+    if clip_start is not None and clip_start >= 0:
+        start, reason = clip_start, "cached_clip"
+    elif dur > shorts_short_max_sec():
         start, reason = find_best_long_clip_start(path)
     else:
         start, reason = find_best_shorts_start(path)
@@ -662,6 +666,13 @@ def _ffprobe_duration(path: Path) -> float:
 
 
 
+def _log_ytdlp_fail(proc, label: str) -> None:
+    if proc.returncode == 0:
+        return
+    err = (proc.stderr or proc.stdout or "").strip()[-500:]
+    print(f"ytdlp_fail {label} rc={proc.returncode} {err}", flush=True)
+
+
 def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
@@ -682,6 +693,7 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
     proc = subprocess.run(
         cmd, capture_output=True, text=True, check=False, timeout=240, env=subprocess_env_no_proxy(env)
     )
+    _log_ytdlp_fail(proc, channel_url)
     entries: list[dict] = []
     for line in (proc.stdout or "").splitlines():
         parts = line.split("\t")
@@ -743,6 +755,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
     proc = subprocess.run(
         cmd, capture_output=True, text=True, check=False, timeout=180, env=subprocess_env_no_proxy(env)
     )
+    _log_ytdlp_fail(proc, query)
     entries: list[dict] = []
     for line in (proc.stdout or "").splitlines():
         parts = line.split("\t")
@@ -1031,7 +1044,8 @@ def _run_ingest(args: argparse.Namespace) -> int:
             time.sleep(args.search_delay)
 
     pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
-    cap = args.max_per_query * len(queries)
+    cap_sources = max(len(queries), len(channel_feeds), 1)
+    cap = args.max_per_query * cap_sources
     pool = pool[: cap * 3]  # extra headroom — many rows already labeled
 
     known = labeled_ids()
@@ -1077,8 +1091,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
-            mp4 = download_short(row["url"], SHORTS_ROOT, env, vid) or mp4
-            downloads += 1
+            got = download_short(row["url"], SHORTS_ROOT, env, vid)
+            if got and got.exists():
+                mp4 = got
+                downloads += 1
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
             continue
@@ -1097,46 +1113,62 @@ def _run_ingest(args: argparse.Namespace) -> int:
             rejected += 1
             continue
 
-        id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
-        if not id_ok:
-            print(f"REJECT {vid} identity={id_reason}", flush=True)
-            rejected += 1
-            continue
-
-        act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
-        if not act_ok:
-            print(f"REJECT {vid} activity={act_reason}", flush=True)
-            rejected += 1
-            continue
-
-        gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(mp4, title=row.get("title", ""))
-        if not gp_ok:
-            print(f"REJECT {vid} gameplay={gp_reason}", flush=True)
-            rejected += 1
-            continue
-
-        ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(mp4, title=row.get("title", ""))
-        if not ver_ok:
-            print(f"REJECT {vid} verify={ver_reason}", flush=True)
-            rejected += 1
-            continue
-
-        dur = _ffprobe_duration(mp4)
+        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         clip_start = 0.15
-        if dur > shorts_short_max_sec():
-            clip_start, clip_reason = find_best_long_clip_start(mp4)
-            if clip_start < 0:
-                print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
+        if lenient:
+            act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
+            if not act_ok:
+                print(f"REJECT {vid} activity={act_reason}", flush=True)
                 rejected += 1
                 continue
-        kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
-        if not kill_ok:
-            print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
-            rejected += 1
-            continue
+            if file_dur > shorts_short_max_sec():
+                clip_start, clip_reason = find_best_long_clip_start(mp4)
+                if clip_start < 0:
+                    print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
+                    rejected += 1
+                    continue
+            kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
+            if not kill_ok:
+                print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
+                rejected += 1
+                continue
+        else:
+            id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
+            if not id_ok:
+                print(f"REJECT {vid} identity={id_reason}", flush=True)
+                rejected += 1
+                continue
 
-        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-        if not lenient:
+            act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
+            if not act_ok:
+                print(f"REJECT {vid} activity={act_reason}", flush=True)
+                rejected += 1
+                continue
+
+            gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(mp4, title=row.get("title", ""))
+            if not gp_ok:
+                print(f"REJECT {vid} gameplay={gp_reason}", flush=True)
+                rejected += 1
+                continue
+
+            ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(mp4, title=row.get("title", ""))
+            if not ver_ok:
+                print(f"REJECT {vid} verify={ver_reason}", flush=True)
+                rejected += 1
+                continue
+
+            if file_dur > shorts_short_max_sec():
+                clip_start, clip_reason = find_best_long_clip_start(mp4)
+                if clip_start < 0:
+                    print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
+                    rejected += 1
+                    continue
+            kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
+            if not kill_ok:
+                print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
+                rejected += 1
+                continue
+
             gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
             if not gate_ok:
                 print(f"REJECT {vid} gate={gate_reason}", flush=True)
@@ -1144,11 +1176,11 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 continue
 
         feats = score_clip(mp4)
-        if int(feats.get("rule_pass") or 0) != 1:
+        if int(feats.get("rule_pass") or 0) != 1 and not lenient:
             print(f"REJECT {vid} rule_pass=0 {feats.get('pass_reason','')}", flush=True)
             rejected += 1
             continue
-        if feats["score"] < min_score and not feats["rule_pass"] and not lenient:
+        if feats["score"] < min_score and not lenient:
             rejected += 1
             continue
 
@@ -1157,6 +1189,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 **row,
                 **feats,
                 "path": str(mp4),
+                "clip_start_sec": clip_start,
                 "gameplay_pass": 1,
                 "identity_pass": 1,
                 "ingest_verified": 1,

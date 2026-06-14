@@ -230,20 +230,8 @@ def find_candidate(video_id: str) -> dict | None:
         path = Path(str(row.get("path", "")))
         if row_vid == vid or str(row.get("id", "")) == vid:
             return row
-        if str(row_vid).startswith(vid):
-            return row
         if path.name.startswith("yt_") and id_from_path(path) == vid:
             return row
-    # Fallback: file on disk (owner pasted correct filename id)
-    direct = SHORTS_ROOT / f"yt_{vid}.mp4"
-    if direct.exists():
-        return {
-            "video_id": vid,
-            "path": str(direct),
-            "title": vid,
-            "url": f"https://www.youtube.com/watch?v={vid}",
-            "score": 0.0,
-        }
     return None
 
 
@@ -396,7 +384,7 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
 
 
 def repair_index() -> int:
-    """Drop corrupt rows (path/video_id mismatch) and duplicate video_ids."""
+    """Drop corrupt rows, duplicates, and legacy stub entries."""
     data = load_index()
     rows = data.get("candidates", [])
     best: dict[str, dict] = {}
@@ -404,6 +392,9 @@ def repair_index() -> int:
     for row in rows:
         vid = str(row.get("video_id", "")).strip()
         if not vid or len(vid) != 11:
+            removed += 1
+            continue
+        if is_stub_candidate(row):
             removed += 1
             continue
         path = Path(row.get("path", ""))
@@ -423,6 +414,9 @@ def repair_index() -> int:
     return old_n - len(data["candidates"])
 
 
+_LAST_INDEX_REPAIR = 0.0
+
+
 def is_stub_candidate(row: dict) -> bool:
     """Legacy disk file without YouTube ingest metadata (title=id, score=0)."""
     vid = str(row.get("video_id") or row.get("id") or "").strip()
@@ -438,8 +432,14 @@ def is_stub_candidate(row: dict) -> bool:
     return False
 
 
-def pending_candidates(*, limit: int = 50) -> list[dict]:
-    repair_index()
+def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
+    global _LAST_INDEX_REPAIR
+    if repair:
+        interval = float(os.environ.get("MLBB_INDEX_REPAIR_SEC", "90"))
+        now = time.time()
+        if now - _LAST_INDEX_REPAIR >= interval:
+            repair_index()
+            _LAST_INDEX_REPAIR = now
     migrate_labels_from_paths()
     labeled = labeled_ids()
     sent = load_feed_sent()

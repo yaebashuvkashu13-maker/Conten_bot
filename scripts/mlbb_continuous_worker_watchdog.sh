@@ -68,6 +68,7 @@ if [[ -n "$pid" ]]; then
   if state_stale; then
     if pgrep -f 'mlbb_youtube_shorts_ingest.py' >/dev/null \
       || pgrep -f 'mlbb_calibration_feed.py' >/dev/null \
+      || pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null \
       || pgrep -f 'mlbb_purge_bad_shorts_queue.py' >/dev/null; then
       echo "[$(date -Is)] skip restart: heavy MLBB job still running" >> "$WLOG"
       exit 0

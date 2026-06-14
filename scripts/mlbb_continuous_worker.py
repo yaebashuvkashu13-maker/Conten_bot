@@ -24,6 +24,7 @@ VOD_LOCK = Path(os.environ.get("MLBB_VOD_FEED_LOCK", "/root/data/mlbb/vod_segmen
 INGEST_LOCK = Path(os.environ.get("MLBB_SHORTS_INGEST_LOCK", "/root/data/mlbb/youtube_shorts_ingest.lock"))
 FEED_LOCK = Path(os.environ.get("MLBB_CALIBRATION_FEED_LOCK", "/root/data/mlbb/calibration_feed.lock"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
+_LAST_INDEX_REBUILD = 0.0
 
 
 def log(msg: str) -> None:
@@ -122,12 +123,17 @@ class Proc:
 
 
 def pending_shorts() -> int:
+    global _LAST_INDEX_REBUILD
     from mlbb_calibration_store import pending_candidates, rebuild_index_from_disk
 
-    try:
-        rebuild_index_from_disk()
-    except Exception as exc:
-        log(f"rebuild_index_from_disk skipped: {exc}")
+    interval = float(os.environ.get("MLBB_INDEX_REBUILD_SEC", "120"))
+    now = time.time()
+    if now - _LAST_INDEX_REBUILD >= interval:
+        try:
+            rebuild_index_from_disk()
+        except Exception as exc:
+            log(f"rebuild_index_from_disk skipped: {exc}")
+        _LAST_INDEX_REBUILD = now
     try:
         return len(pending_candidates(limit=9999))
     except Exception as exc:

@@ -21,7 +21,6 @@ from mlbb_calibration_store import (
     pending_candidates,
     rebuild_index_from_disk,
     reject_candidate,
-    repair_index,
     stats,
 )
 from youtube_download import load_env
@@ -212,8 +211,8 @@ def _run_feed() -> int:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
 
-    repair_index()
-    rebuild_index_from_disk()
+    if os.environ.get("MLBB_FEED_REBUILD", "0") == "1":
+        rebuild_index_from_disk()
     _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "10")))
     print(f"pick pending batch={BATCH_SIZE}", flush=True)
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
@@ -237,30 +236,6 @@ def _run_feed() -> int:
         if len(unique) >= BATCH_SIZE:
             break
     picked = unique
-    if not picked:
-        s = stats()
-        if s["pending"] == 0 and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1":
-            ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
-            if not ingest.exists():
-                ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(ingest),
-                    "--incremental",
-                    "--max-downloads",
-                    "8",
-                    "--max-per-query",
-                    "20",
-                ],
-                env={**env, "MLBB_INGEST_SKIP_IF_PENDING": "0"},
-                timeout=600,
-                check=False,
-            )
-            rebuild_index_from_disk()
-            picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
-            s = stats()
-
     if not picked:
         now = time.time()
         last_notify = 0.0
@@ -307,7 +282,9 @@ def _run_feed() -> int:
         from mlbb_youtube_shorts_ingest import resolve_shorts_send_path, verify_shorts_send_file
 
         print(f"check send {vid}", flush=True)
-        send_path, trim_start, open_reason = resolve_shorts_send_path(path)
+        cached_start = row.get("clip_start_sec")
+        clip_start = float(cached_start) if cached_start is not None else None
+        send_path, trim_start, open_reason = resolve_shorts_send_path(path, clip_start=clip_start)
         if send_path is None:
             print(f"skip send {vid} opening={open_reason}", flush=True)
             reject_candidate(vid, reason=open_reason, path=path)

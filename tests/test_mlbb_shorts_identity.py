@@ -48,3 +48,4 @@ def test_reject_candidate_removes_from_index(tmp_path: Path, monkeypatch: pytest
     labels = store.load_labels()
     assert any(r.get("video_id") == vid for r in labels["bad"])
     assert vid in store.load_feed_sent()["ids"]
+
