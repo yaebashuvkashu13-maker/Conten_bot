@@ -303,6 +303,14 @@ def _expected_path(video_id: str) -> Path:
     return SHORTS_ROOT / f"yt_{video_id}.mp4"
 
 
+def _is_merged_short(path: Path) -> bool:
+    """Skip yt-dlp partials like yt_{id}.f299.mp4 (race during merge)."""
+    stem = path.stem
+    if not stem.startswith("yt_"):
+        return False
+    return ".f" in stem[3:]
+
+
 def rebuild_index_from_disk(*, rescore: bool = False) -> int:
     """Re-register Shorts already on disk so owner can keep labeling after repair/prune."""
     added = 0
@@ -310,7 +318,13 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
         return 0
     labeled = labeled_ids()
     for mp4 in sorted(SHORTS_ROOT.glob("yt_*.mp4")):
-        if mp4.stat().st_size < 10_000:
+        if _is_merged_short(mp4):
+            continue
+        try:
+            size = mp4.stat().st_size
+        except OSError:
+            continue
+        if size < 10_000:
             continue
         vid = id_from_path(mp4)
         if vid in labeled:

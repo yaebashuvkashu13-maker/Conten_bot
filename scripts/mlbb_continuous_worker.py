@@ -115,7 +115,10 @@ class Proc:
 def pending_shorts() -> int:
     from mlbb_calibration_store import pending_candidates, rebuild_index_from_disk
 
-    rebuild_index_from_disk()
+    try:
+        rebuild_index_from_disk()
+    except OSError as exc:
+        log(f"rebuild_index_from_disk skipped: {exc}")
     return len(pending_candidates(limit=9999))
 
 
