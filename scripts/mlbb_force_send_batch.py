@@ -63,6 +63,54 @@ def _ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
+def _ffprobe_fps(vod: Path) -> float:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(vod),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    raw = (proc.stdout or "30/1").strip().splitlines()[0]
+    if "/" in raw:
+        num, den = raw.split("/", 1)
+        try:
+            den_f = float(den)
+            return float(num) / den_f if den_f else 30.0
+        except ValueError:
+            pass
+    try:
+        return float(raw)
+    except ValueError:
+        return 30.0
+
+
+def _vod_unreliable_for_render(path: Path) -> bool:
+    """Long 60fps live VODs often produce frozen Telegram clips."""
+    max_live_sec = float(os.environ.get("MLBB_FORCE_MAX_LIVE_VOD_SEC", "2700"))
+    max_live_fps = float(os.environ.get("MLBB_FORCE_MAX_LIVE_VOD_FPS", "55"))
+    dur = _ffprobe_duration(path)
+    fps = _ffprobe_fps(path)
+    if dur > max_live_sec and fps >= max_live_fps:
+        print(
+            f"skip unreliable live VOD {path.name}: dur={dur:.0f}s fps={fps:.1f}",
+            flush=True,
+        )
+        return True
+    return False
+
+
 def _scan_kill_peaks(vod: Path) -> list[tuple[float, dict]]:
     from mlbb_kill_ui import score_mlbb_kill_ui
 
@@ -140,6 +188,8 @@ def _load_forced_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, d
         if not vod.exists():
             print(f"skip peak vod missing {row.get('vod')}", flush=True)
             continue
+        if _vod_unreliable_for_render(vod):
+            continue
         if not _looks_like_mlbb_vod(vod):
             continue
         out.append((vod, float(row["peak"]), row.get("kill_ui", {"score": row.get("score", 0), "reason": row.get("reason", "")})))
@@ -158,6 +208,8 @@ def _collect_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, dict]
     }
     all_peaks: list[tuple[Path, float, dict]] = []
     for vod in vods:
+        if _vod_unreliable_for_render(vod):
+            continue
         peaks = _dedupe_peaks(_scan_kill_peaks(vod), min_gap)
         if len(peaks) < max(2, need // len(vods)):
             for row in scan_vod_kill_peaks(vod, step_sec=30, limit=need * 2):
@@ -333,6 +385,8 @@ def _pick_vods() -> list[Path]:
             continue
         if not _looks_like_mlbb_vod(p):
             continue
+        if _vod_unreliable_for_render(p):
+            continue
         vods.append(p)
     vods.sort(key=lambda p: p.stat().st_size)
     extra = os.environ.get("MLBB_FORCE_EXTRA_VODS", "").strip()
@@ -379,7 +433,13 @@ def main() -> int:
         return 2
     print(f"selected {len(peaks)} peaks trust={trust_peaks}", flush=True)
 
-    from mlbb_vod_segment_feed import render_single_segment, send_message, send_video, _ffprobe_duration
+    from mlbb_vod_segment_feed import (
+        _detect_render_freeze,
+        render_single_segment,
+        send_message,
+        send_video,
+        _ffprobe_duration,
+    )
     from mlbb_vod_segment_store import segment_id, segments_root, upsert_segment
 
     send_message(
@@ -411,6 +471,12 @@ def main() -> int:
             continue
         seg_dur = _ffprobe_duration(out)
         print(f"  done {time.time()-t0:.0f}s dur={seg_dur:.1f}s size={out.stat().st_size}", flush=True)
+
+        freeze_ok, freeze_reason, _freezes = _detect_render_freeze(out)
+        if not freeze_ok:
+            print(f"SKIP freeze {sid}: {freeze_reason}", flush=True)
+            out.unlink(missing_ok=True)
+            continue
 
         caption = (
             f"MLBB кусок #{sid}\n"
