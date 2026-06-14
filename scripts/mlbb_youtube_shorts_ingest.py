@@ -73,16 +73,30 @@ NEGATIVE_TITLE = re.compile(
 PROFILE = "mobile_legends"
 
 
+MLBB_POSITIVE_TITLE = re.compile(
+    r"(mobile\s*legends|\bmlbb\b|bang\s*bang|savage|maniac|mythic|ranked|teamfight|"
+    r"double\s*kill|triple\s*kill|chou|gusion|fanny|ling|brody|beatrix)",
+    re.I,
+)
+
+
+def _title_looks_mlbb(title: str) -> bool:
+    return bool(MLBB_POSITIVE_TITLE.search(title or ""))
+
+
 def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     """Mandatory MLBB-only check — always run before owner send (even in lenient mode)."""
     from gameplay_gate import (
         is_gameplay_video,
+        path_blocked_by_calibration,
         score_segment_combat,
         segment_minimap_presence_rate,
         source_has_valid_gameplay_window,
     )
 
     label = title or path.stem
+    if path_blocked_by_calibration(path):
+        return False, "calibration_bad"
     if NEGATIVE_TITLE.search(label):
         return False, "negative_title"
     min_heuristic = float(os.environ.get("MLBB_SHORTS_MIN_GAMEPLAY_HEURISTIC", "0.78"))
@@ -203,11 +217,21 @@ def passes_mlbb_shorts_gameplay_gate(path: Path, *, title: str = "") -> tuple[bo
 
 def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     """MLBB scorer + HUD verify — blocks other MOBAs that mimic generic minimap layout."""
-    from gameplay_gate import source_has_valid_gameplay_window
+    from gameplay_gate import (
+        detect_game_viewport_crop,
+        reject_example_similarity,
+        source_has_valid_gameplay_window,
+    )
 
     dur = _ffprobe_duration(path)
     window = min(WINDOW_SEC, max(4.0, dur * 0.85))
     start = 0.15
+    crop = detect_game_viewport_crop(path, start, window)
+    reject_sim = reject_example_similarity(path, start, window, crop_box=crop)
+    max_reject = float(os.environ.get("MLBB_SHORTS_MAX_REJECT_SIM", "0.72"))
+    if reject_sim >= max_reject:
+        return False, f"reject_example_sim={reject_sim:.2f}"
+
     m = score_candidate_window(path, start, window, PROFILE)
 
     if not m.visual_pass:
@@ -219,7 +243,7 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
         return False, f"hud_not_mlbb mini={m.minimap_delta:.3f} skill={m.skill_delta:.3f}"
 
     min_clip = float(os.environ.get("MLBB_SHORTS_MIN_CLIP_SCORE", "0.03"))
-    min_combined = float(os.environ.get("MLBB_SHORTS_MIN_COMBINED", "0.11"))
+    min_combined = float(os.environ.get("MLBB_SHORTS_MIN_COMBINED", "0.14"))
     if m.clip_score < min_clip and m.combined_score < min_combined:
         return False, f"exemplar_miss clip={m.clip_score:.3f} combined={m.combined_score:.3f}"
 
@@ -240,12 +264,17 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
     except ImportError:
         pass
 
-    if not m.rule_pass:
-        if has_kill or m.combined_score >= min_combined:
-            return True, "ok_soft"
-        return False, f"not_mlbb_fight:{m.pass_reason} kill={kill_score:.2f}"
+    strict = os.environ.get("MLBB_SHORTS_STRICT_VERIFY", "1") == "1"
+    require_kill = os.environ.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1") == "1"
 
-    if not has_kill and m.combined_score < min_combined * 0.85:
+    if strict and not m.rule_pass:
+        return False, f"rule_fail:{m.pass_reason} kill={kill_score:.2f}"
+
+    if require_kill and not has_kill:
+        if m.combined_score < float(os.environ.get("MLBB_SHORTS_MIN_COMBINED_NO_KILL", "0.22")):
+            return False, f"no_kill_ui combined={m.combined_score:.3f}"
+
+    if not has_kill and m.combined_score < min_combined:
         return False, f"weak_combat combined={m.combined_score:.3f}"
 
     return True, "ok"
@@ -598,6 +627,12 @@ def main() -> int:
         print(f"incremental channel={channel_feeds[0]}")
     elif burst:
         print(f"calibration_burst channels={len(channel_feeds)}")
+
+    streamer_only = os.environ.get("MLBB_SHORTS_STREAMER_ONLY", "1") == "1"
+    if streamer_only:
+        queries = []
+        print(f"streamer_only=1 channels={len(channel_feeds)} (no ytsearch)")
+
     for channel_url in channel_feeds:
         for row in fetch_streamer_shorts(
             channel_url, limit=args.max_per_query, env=env, days=args.days
@@ -613,6 +648,8 @@ def main() -> int:
         for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
             vid = row["video_id"]
             if vid in seen:
+                continue
+            if not _title_looks_mlbb(str(row.get("title", ""))):
                 continue
             seen.add(vid)
             pool.append(row)
