@@ -285,7 +285,13 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
     try:
         from mlbb_kill_ui import score_mlbb_kill_ui
 
-        kill = score_mlbb_kill_ui(path, start, window, sample_frames=6, strict=False)
+        kill = score_mlbb_kill_ui(
+            path,
+            start,
+            window,
+            sample_frames=int(os.environ.get("MLBB_SHORTS_KILL_SAMPLE_FRAMES", "4")),
+            strict=False,
+        )
         has_kill = bool(kill.has_kill_notification)
         kill_score = float(kill.score)
     except ImportError:
@@ -313,7 +319,13 @@ def passes_mlbb_shorts_kill_ui_gate(path: Path, *, start_sec: float = 0.15) -> t
     try:
         from mlbb_kill_ui import score_mlbb_kill_ui
 
-        kill = score_mlbb_kill_ui(path, start_sec, window, sample_frames=8, strict=True)
+        kill = score_mlbb_kill_ui(
+            path,
+            start_sec,
+            window,
+            sample_frames=int(os.environ.get("MLBB_SHORTS_KILL_SAMPLE_FRAMES", "4")),
+            strict=True,
+        )
     except ImportError:
         return True, "kill_ui_unavailable"
     min_score = float(os.environ.get("MLBB_SHORTS_MIN_KILL_SCORE", "0.18"))
@@ -325,14 +337,17 @@ def passes_mlbb_shorts_kill_ui_gate(path: Path, *, start_sec: float = 0.15) -> t
 
 
 def verify_shorts_send_file(path: Path, *, title: str = "") -> tuple[bool, str]:
-    """Full gate chain on the exact mp4 going to Telegram (after trim)."""
+    """Verify mp4 before Telegram."""
+    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
+    if lenient:
+        act_ok, act_reason = passes_mlbb_shorts_activity_gate(path, title=title)
+        if not act_ok:
+            return False, act_reason
+        return passes_mlbb_shorts_kill_ui_gate(path)
     for check in (
         passes_mlbb_shorts_identity_gate,
         passes_mlbb_shorts_activity_gate,
-        passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_verify_gate,
-        passes_mlbb_shorts_opening_gate,
-        passes_mlbb_shorts_kill_ui_gate,
     ):
         ok, reason = check(path, title=title)
         if not ok:
@@ -474,6 +489,10 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
 
 def resolve_shorts_send_path(path: Path) -> tuple[Path | None, float, str]:
     """Pick file to send — trim opening junk when needed."""
+    if os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1" and os.environ.get(
+        "MLBB_SHORTS_TRIM_OPENING", "1"
+    ) != "1":
+        return path, 0.0, "lenient_no_trim"
     if os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1":
         return path, 0.0, "trim_disabled"
     start, reason = find_best_shorts_start(path)

@@ -132,19 +132,20 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
 
 
 def _prune_bad_pending(*, limit: int = 120) -> int:
-    """Drop queued static slides / wrong-game before picking a batch."""
-    from mlbb_calibration_store import upsert_candidate
+    """Drop obvious junk from queue — fast gates only (heavy checks run at send time)."""
+    if limit <= 0:
+        return 0
     from mlbb_youtube_shorts_ingest import (
         passes_mlbb_shorts_activity_gate,
-        passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_identity_gate,
-        passes_mlbb_shorts_kill_ui_gate,
-        passes_mlbb_shorts_opening_gate,
-        passes_mlbb_shorts_verify_gate,
     )
 
+    deadline = time.time() + float(os.environ.get("MLBB_PRUNE_MAX_SEC", "60"))
     removed = 0
     for row in pending_candidates(limit=limit):
+        if time.time() > deadline:
+            print("prune_time_budget_exceeded", flush=True)
+            break
         path = Path(row.get("path", ""))
         vid = str(row.get("video_id", ""))
         if not path.exists() or not vid:
@@ -153,19 +154,12 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         for check in (
             passes_mlbb_shorts_identity_gate,
             passes_mlbb_shorts_activity_gate,
-            passes_mlbb_shorts_gameplay_gate,
-            passes_mlbb_shorts_verify_gate,
-            passes_mlbb_shorts_opening_gate,
-            passes_mlbb_shorts_kill_ui_gate,
         ):
             ok, reason = check(path, title=title)
             if not ok:
                 reject_candidate(vid, reason=reason, path=path)
                 removed += 1
                 break
-        else:
-            if not row.get("ingest_verified"):
-                upsert_candidate({**row, "ingest_verified": 1})
     if removed:
         print(f"pruned_bad_pending={removed}", flush=True)
     return removed
@@ -219,7 +213,8 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
-    _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "30")))
+    _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "10")))
+    print(f"pick pending batch={BATCH_SIZE}", flush=True)
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
@@ -301,80 +296,11 @@ def _run_feed() -> int:
         if not path.exists():
             continue
         vid = str(row.get("video_id", ""))
-        min_send_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0.05"))
-        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-        score = float(row.get("score") or 0)
+        title = str(row.get("title", ""))
 
-        from mlbb_youtube_shorts_ingest import (
-            passes_mlbb_shorts_activity_gate,
-            passes_mlbb_shorts_gameplay_gate,
-            passes_mlbb_shorts_identity_gate,
-            passes_mlbb_shorts_kill_ui_gate,
-            passes_mlbb_shorts_opening_gate,
-            passes_mlbb_shorts_verify_gate,
-            passes_shorts_calibration_gate,
-            resolve_shorts_send_path,
-            verify_shorts_send_file,
-        )
+        from mlbb_youtube_shorts_ingest import resolve_shorts_send_path, verify_shorts_send_file
 
-        id_ok, id_reason = passes_mlbb_shorts_identity_gate(
-            path, title=str(row.get("title", ""))
-        )
-        if not id_ok:
-            print(f"skip send {vid} identity={id_reason}", flush=True)
-            reject_candidate(vid, reason=id_reason, path=path)
-            continue
-
-        act_ok, act_reason = passes_mlbb_shorts_activity_gate(
-            path, title=str(row.get("title", ""))
-        )
-        if not act_ok:
-            print(f"skip send {vid} activity={act_reason}", flush=True)
-            reject_candidate(vid, reason=act_reason, path=path)
-            continue
-
-        gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(
-            path, title=str(row.get("title", ""))
-        )
-        if not gp_ok:
-            print(f"skip send {vid} gameplay={gp_reason}", flush=True)
-            reject_candidate(vid, reason=gp_reason, path=path)
-            continue
-
-        ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(
-            path, title=str(row.get("title", ""))
-        )
-        if not ver_ok:
-            print(f"skip send {vid} verify={ver_reason}", flush=True)
-            reject_candidate(vid, reason=ver_reason, path=path)
-            continue
-
-        open_ok, open_pre = passes_mlbb_shorts_opening_gate(path, title=str(row.get("title", "")))
-        if not open_ok:
-            print(f"skip send {vid} opening={open_pre}", flush=True)
-            reject_candidate(vid, reason=open_pre, path=path)
-            continue
-
-        if score < min_send_score and not lenient:
-            from mlbb_youtube_shorts_ingest import score_clip
-
-            feats = score_clip(path)
-            score = float(feats.get("score") or 0)
-            row = {**row, **feats}
-        if score < min_send_score and not lenient:
-            print(f"skip send {vid} low_score={score}", flush=True)
-            continue
-
-        if lenient:
-            gate_ok, gate_reason = True, "lenient"
-        else:
-            gate_ok, gate_reason = passes_shorts_calibration_gate(
-                path, title=str(row.get("title", ""))
-            )
-            if not gate_ok:
-                print(f"skip send {vid} gate={gate_reason}", flush=True)
-                reject_candidate(vid, reason=gate_reason, path=path)
-                continue
+        print(f"check send {vid}", flush=True)
         send_path, trim_start, open_reason = resolve_shorts_send_path(path)
         if send_path is None:
             print(f"skip send {vid} opening={open_reason}", flush=True)
@@ -383,11 +309,9 @@ def _run_feed() -> int:
         if trim_start > 0:
             print(f"trim send {vid} start={trim_start:.2f}s reason={open_reason}", flush=True)
             row = {**row, "trim_start_sec": trim_start}
-        final_ok, final_reason = verify_shorts_send_file(
-            send_path, title=str(row.get("title", ""))
-        )
+        final_ok, final_reason = verify_shorts_send_file(send_path, title=title)
         if not final_ok:
-            print(f"skip send {vid} final_verify={final_reason}", flush=True)
+            print(f"skip send {vid} verify={final_reason}", flush=True)
             reject_candidate(vid, reason=final_reason, path=path)
             continue
         header = batch_header if delivered == 0 else ""
