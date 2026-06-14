@@ -63,8 +63,9 @@ Critical:
 
 ## Quality gates
 
-1. **MLBB identity gate** (always on, even in lenient send) — minimap + gameplay HUD; blocks wrong-game Shorts
-2. Kill UI detector + OCR keywords
+1. **MLBB identity gate** (always on) — minimap HUD + wrong-game block
+2. **Activity gate** (always on) — rejects static image + music slides (HUD must move)
+3. Kill UI detector + OCR keywords
 2. Variable fight length 7–22s
 3. Presend: freeze detect + motion + spawn check
 4. Owner 👎 → zone blocked in `mobile_legends_owner_labels.json`
