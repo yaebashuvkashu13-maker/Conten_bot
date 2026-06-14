@@ -421,6 +421,21 @@ def repair_index() -> int:
     return old_n - len(data["candidates"])
 
 
+def is_stub_candidate(row: dict) -> bool:
+    """Legacy disk file without YouTube ingest metadata (title=id, score=0)."""
+    vid = str(row.get("video_id") or row.get("id") or "").strip()
+    title = str(row.get("title") or "").strip()
+    if not vid or len(vid) != 11:
+        return True
+    if row.get("ingest_verified"):
+        return False
+    if title == vid or not title:
+        return True
+    if float(row.get("score") or 0) <= 0 and not row.get("ingested_at"):
+        return True
+    return False
+
+
 def pending_candidates(*, limit: int = 50) -> list[dict]:
     repair_index()
     migrate_labels_from_paths()
@@ -439,6 +454,8 @@ def pending_candidates(*, limit: int = 50) -> list[dict]:
             continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
+            continue
+        if is_stub_candidate(row):
             continue
         seen_vids.add(vid)
         seen_paths.add(path_key)

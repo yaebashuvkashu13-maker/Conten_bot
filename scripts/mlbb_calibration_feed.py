@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mlbb_calibration_store import (
     DATA_MLBB,
     inline_keyboard_markup,
+    is_stub_candidate,
     mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
@@ -297,6 +298,11 @@ def _run_feed() -> int:
             continue
         vid = str(row.get("video_id", ""))
         title = str(row.get("title", ""))
+
+        if is_stub_candidate(row):
+            print(f"skip send {vid} stub=legacy_no_ingest", flush=True)
+            reject_candidate(vid, reason="stub_no_ingest", path=path)
+            continue
 
         from mlbb_youtube_shorts_ingest import resolve_shorts_send_path, verify_shorts_send_file
 
