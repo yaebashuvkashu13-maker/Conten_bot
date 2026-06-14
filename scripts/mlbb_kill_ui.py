@@ -346,6 +346,13 @@ def score_mlbb_kill_ui(
     )
 
 
+def _calibration_lenient() -> bool:
+    return (
+        os.environ.get("MLBB_VOD_CALIBRATION_LENIENT", "0") == "1"
+        or os.environ.get("MLBB_CALIBRATION_LENIENT", "0") == "1"
+    )
+
+
 def combat_override_allowed(
     *,
     center_motion: float,
@@ -399,15 +406,20 @@ def passes_mlbb_kill_gate(
         result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=5)
         return False, f"laning_motion={motion:.3f}:skill{skill:.3f}:mini{mini:.3f}", result
 
-    lenient = os.environ.get("MLBB_VOD_CALIBRATION_LENIENT", "0") == "1"
+    lenient = _calibration_lenient()
     use_strict = not lenient and os.environ.get("MLBB_CALIBRATION_LENIENT", "1") != "1"
     result = score_mlbb_kill_ui(
         video_path, start_sec, duration_sec, strict=use_strict, sample_frames=6
     )
-    if not result.has_kill_notification and lenient and result.score >= float(
-        os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14")
-    ) * 0.55:
-        return True, f"lenient:{result.reason}", result
+    min_score = float(os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14"))
+    if not result.has_kill_notification and lenient:
+        min_spike = float(os.environ.get("MLBB_KILL_ANNOUNCE_SPIKE_MIN", "0.075"))
+        if result.score >= min_score * 0.55:
+            return True, f"lenient:{result.reason}", result
+        if result.announce_color_peak >= float(os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08")):
+            spike = max(0.0, result.announce_color_peak - min_spike)
+            if result.score >= min_score * 0.45 and spike >= min_spike * 0.6:
+                return True, f"lenient_spike:{result.reason}", result
     if not result.has_kill_notification:
         return False, result.reason, result
     return True, result.reason, result
@@ -466,21 +478,50 @@ def scan_vod_kill_peaks(
     if duration <= window_sec + 1.0:
         return []
 
+    lenient = _calibration_lenient()
+    min_score = float(os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14"))
+    prev_skip = os.environ.get("MLBB_KILL_UI_SKIP_OCR")
+    if os.environ.get("MLBB_KILL_SCAN_SKIP_OCR", "1" if lenient else "0") == "1":
+        os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
+
     peaks: list[dict[str, Any]] = []
     start = min_peak_sec
-    while start + window_sec <= duration - 20.0 and len(peaks) < limit:
-        result = score_mlbb_kill_ui(video_path, start, window_sec, sample_frames=5)
-        if result.has_kill_notification:
-            peaks.append(
-                {
-                    "start_sec": round(start, 2),
-                    "duration_sec": round(window_sec, 2),
-                    **result.to_dict(),
-                }
-            )
-        start += step_sec
+    try:
+        while start + window_sec <= duration - 20.0 and len(peaks) < limit:
+            result = score_mlbb_kill_ui(video_path, start, window_sec, sample_frames=4)
+            keep = result.has_kill_notification
+            if not keep and lenient:
+                keep = result.score >= min_score * 0.5
+                if not keep and result.announce_color_peak >= float(
+                    os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08")
+                ):
+                    keep = result.score >= min_score * 0.4
+            if keep:
+                peaks.append(
+                    {
+                        "start_sec": round(start, 2),
+                        "duration_sec": round(window_sec, 2),
+                        **result.to_dict(),
+                    }
+                )
+            start += step_sec
+    finally:
+        if prev_skip is None:
+            os.environ.pop("MLBB_KILL_UI_SKIP_OCR", None)
+        else:
+            os.environ["MLBB_KILL_UI_SKIP_OCR"] = prev_skip
+
     peaks.sort(key=lambda row: row["score"], reverse=True)
-    return peaks[:limit]
+    seen: list[float] = []
+    deduped: list[dict[str, Any]] = []
+    gap = float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", "45"))
+    for row in peaks:
+        t = float(row["start_sec"])
+        if any(abs(t - s) < gap for s in seen):
+            continue
+        seen.append(t)
+        deduped.append(row)
+    return deduped[:limit]
 
 
 def build_parser() -> argparse.ArgumentParser:
