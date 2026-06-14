@@ -129,7 +129,7 @@ def apply_shorts_label(
 
 
 def parse_callback_data(data: str) -> tuple[str, bool | None, str, str]:
-    """Return (mode, is_good, item_id, reason). mode: shorts|vseg|noop|unknown."""
+    """Return (mode, is_good, item_id, reason). mode: shorts|vseg|hq_shorts|hq_vseg|noop|unknown."""
     if data == "mlbb_noop":
         return "noop", None, "", ""
     if data.startswith("mlbb_yes:"):
@@ -140,7 +140,64 @@ def parse_callback_data(data: str) -> tuple[str, bool | None, str, str]:
         return "vseg", True, data.split(":", 1)[1].strip(), ""
     if data.startswith("mlbb_vseg_no:"):
         return "vseg", False, data.split(":", 1)[1].strip(), "button_dislike"
+    if data.startswith("mlbb_hq_shorts:"):
+        return "hq_shorts", None, data.split(":", 1)[1].strip(), ""
+    if data.startswith("mlbb_hq_vseg:"):
+        return "hq_vseg", None, data.split(":", 1)[1].strip(), ""
     return "unknown", None, "", ""
+
+
+def send_hq_document(chat_id: str | int, path: Path, *, caption: str = "") -> bool:
+    """Send original mp4 as file (Telegram preserves quality up to 2GB)."""
+    if not path.exists() or path.stat().st_size < 2048:
+        return False
+    token = bot_token()
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    cmd = [
+        "curl",
+        "-sS",
+        "-m",
+        "600",
+        "-F",
+        f"chat_id={chat_id}",
+        "-F",
+        f"document=@{path}",
+    ]
+    if caption:
+        cmd.extend(["-F", f"caption={caption[:900]}"])
+    cmd.append(url)
+    clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
+    result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=610)
+    try:
+        return bool(json.loads(result.stdout or "{}").get("ok"))
+    except json.JSONDecodeError:
+        return False
+
+
+def send_shorts_hq(chat_id: str | int, video_id: str) -> tuple[bool, str]:
+    from mlbb_calibration_store import SHORTS_ROOT, find_candidate_or_labeled
+
+    vid = video_id.strip()
+    row = find_candidate_or_labeled(vid) or {}
+    path = Path(str(row.get("path", "")))
+    if not path.exists():
+        path = SHORTS_ROOT / f"yt_{vid}.mp4"
+    if not path.exists():
+        return False, f"Файл #{vid} не найден на сервере."
+    title = str(row.get("title") or vid)
+    ok = send_hq_document(chat_id, path, caption=f"HQ #{vid}\n{title[:120]}")
+    return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ (лимит Telegram?)")
+
+
+def send_vseg_hq(chat_id: str | int, segment_id: str) -> tuple[bool, str]:
+    from mlbb_vod_segment_store import find_segment
+
+    row = find_segment(segment_id.strip()) or {}
+    path = Path(str(row.get("path", "")))
+    if not path.exists():
+        return False, f"Кусок {segment_id} не найден."
+    ok = send_hq_document(chat_id, path, caption=f"HQ segment {segment_id}")
+    return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ")
 
 
 def handle_callback_query(query: dict, *, api=_api_call) -> None:
@@ -173,6 +230,29 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
         except Exception:
             pass
         return
+    if mode in ("hq_shorts", "hq_vseg"):
+        try:
+            if mode == "hq_shorts":
+                ok, reply = send_shorts_hq(chat_id, item_id)
+            else:
+                ok, reply = send_vseg_hq(chat_id, item_id)
+            api(
+                "answerCallbackQuery",
+                {
+                    "callback_query_id": query_id,
+                    "text": reply[:180],
+                    "show_alert": not ok,
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            log.exception("hq send failed: %s", exc)
+            api(
+                "answerCallbackQuery",
+                {"callback_query_id": query_id, "text": str(exc)[:180], "show_alert": True},
+                timeout=15,
+            )
+        return
     if mode == "unknown" or is_good is None:
         try:
             api("answerCallbackQuery", {"callback_query_id": query_id}, timeout=15)
@@ -185,12 +265,12 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
             ok, reply = apply_vseg_label(chat_id, item_id, is_good=is_good, reason=reason)
             from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
 
-            markup = markup_fn("good" if is_good else "bad")
+            markup = markup_fn("good" if is_good else "bad", segment_id=item_id)
         else:
             ok, reply = apply_shorts_label(chat_id, item_id, is_good=is_good, reason=reason)
             from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
 
-            markup = markup_fn("good" if is_good else "bad")
+            markup = markup_fn("good" if is_good else "bad", video_id=item_id)
 
         if not ok:
             api(

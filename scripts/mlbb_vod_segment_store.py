@@ -369,9 +369,13 @@ def inline_keyboard_markup(segment_id_str: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str) -> dict:
+def labeled_keyboard_markup(label: str, *, segment_id: str = "") -> dict:
     mark = "✅ Ок" if label == "good" else "❌ Не ок"
-    return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
+    row: list[dict] = []
+    if label == "good" and segment_id:
+        row.append({"text": "📥 HQ", "callback_data": f"mlbb_hq_vseg:{segment_id.strip()}"})
+    row.append({"text": mark, "callback_data": "mlbb_noop"})
+    return {"inline_keyboard": [row]}
 
 
 def stats() -> dict:

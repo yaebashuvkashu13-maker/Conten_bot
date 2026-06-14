@@ -399,7 +399,15 @@ def passes_mlbb_kill_gate(
         result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=5)
         return False, f"laning_motion={motion:.3f}:skill{skill:.3f}:mini{mini:.3f}", result
 
-    result = score_mlbb_kill_ui(video_path, start_sec, duration_sec, strict=True, sample_frames=6)
+    lenient = os.environ.get("MLBB_VOD_CALIBRATION_LENIENT", "0") == "1"
+    use_strict = not lenient and os.environ.get("MLBB_CALIBRATION_LENIENT", "1") != "1"
+    result = score_mlbb_kill_ui(
+        video_path, start_sec, duration_sec, strict=use_strict, sample_frames=6
+    )
+    if not result.has_kill_notification and lenient and result.score >= float(
+        os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14")
+    ) * 0.55:
+        return True, f"lenient:{result.reason}", result
     if not result.has_kill_notification:
         return False, result.reason, result
     return True, result.reason, result

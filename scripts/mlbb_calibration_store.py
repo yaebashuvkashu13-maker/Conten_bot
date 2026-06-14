@@ -486,6 +486,10 @@ def repair_index() -> int:
             continue
         if is_stub_candidate(row):
             removed += 1
+            try:
+                _expected_path(vid).unlink(missing_ok=True)
+            except OSError:
+                pass
             continue
         path = Path(row.get("path", ""))
         expected = _expected_path(vid)
@@ -607,6 +611,15 @@ def inline_keyboard_markup(video_id: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str) -> dict:
+def labeled_keyboard_markup(label: str, *, video_id: str = "", segment_id: str = "") -> dict:
     mark = "✅ Хорошо" if label == "good" else "❌ Плохо"
-    return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
+    row: list[dict] = []
+    if label == "good" and video_id:
+        vid = video_id.strip()
+        if vid.startswith("yt_"):
+            vid = vid[3:]
+        row.append({"text": "📥 HQ", "callback_data": f"mlbb_hq_shorts:{vid}"})
+    if label == "good" and segment_id:
+        row.append({"text": "📥 HQ", "callback_data": f"mlbb_hq_vseg:{segment_id.strip()}"})
+    row.append({"text": mark, "callback_data": "mlbb_noop"})
+    return {"inline_keyboard": [row]}

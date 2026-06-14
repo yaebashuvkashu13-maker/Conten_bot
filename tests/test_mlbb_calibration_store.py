@@ -16,6 +16,8 @@ def test_parse_callback_data() -> None:
     mode, good, sid, reason = parse_callback_data("mlbb_vseg_no:0nvW7JiFr0o_576")
     assert mode == "vseg" and good is False and sid == "0nvW7JiFr0o_576"
     assert reason == "button_dislike"
+    mode, good, vid, _ = parse_callback_data("mlbb_hq_shorts:abc123")
+    assert mode == "hq_shorts" and good is None and vid == "abc123"
 
 
 def test_pending_excludes_labeled(monkeypatch, tmp_path: Path) -> None:

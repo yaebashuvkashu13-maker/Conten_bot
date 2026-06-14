@@ -164,6 +164,30 @@ def feed_running_externally() -> bool:
     return _lock_pid_alive(FEED_LOCK)
 
 
+def heavy_job_running() -> bool:
+    return (
+        ingest_running_externally()
+        or vod_feed_running_externally()
+    )
+
+
+def should_start_ingest(*, pending: int, target_pending: int) -> bool:
+    """On 4-core hosts, avoid ingest OCR while VOD scan runs unless queue is empty."""
+    if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
+        return True
+    if not vod_feed_running_externally():
+        return True
+    return pending < int(os.environ.get("MLBB_INGEST_FORCE_PENDING", "3"))
+
+
+def should_start_vod(*, pending: int) -> bool:
+    if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
+        return True
+    if not ingest_running_externally():
+        return True
+    return pending >= int(os.environ.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "8"))
+
+
 def kill_stale_ingest() -> None:
     """Free ingest lock if a previous run hung (blocks worker for hours)."""
     if not INGEST_LOCK.exists():
@@ -333,6 +357,7 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_FULL_FRAME": "1",
             "SMART_CROP_WEBCAM": "0",
             "MLBB_VOD_KILL_FIRST": "1",
+            "MLBB_VOD_CALIBRATION_LENIENT": env.get("MLBB_VOD_CALIBRATION_LENIENT", "1"),
             "MLBB_REQUIRE_KILL_UI": "1",
             "MLBB_FORCE_MAX_LIVE_VOD_SEC": "2700",
             "MLBB_FORCE_MAX_LIVE_VOD_FPS": "55",
@@ -432,6 +457,7 @@ def main() -> int:
 
             if (
                 aggressive
+                and should_start_ingest(pending=pending, target_pending=target_pending)
                 and not ingest.running()
                 and not ingest_running_externally()
                 and ingest.cooldown_ok(ingest_cooldown)
@@ -442,17 +468,21 @@ def main() -> int:
                 ingest.start()
 
             if (
-                not vod.running()
+                should_start_vod(pending=pending)
+                and not vod.running()
                 and not vod_feed_running_externally()
                 and vod.cooldown_ok(vod_cooldown)
             ):
                 vod.start()
 
+            feed_wait = feed_cooldown
+            if pending > 0:
+                feed_wait = float(base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90"))
             if (
                 pending > 0
                 and not feed.running()
                 and not feed_running_externally()
-                and feed.cooldown_ok(feed_cooldown)
+                and feed.cooldown_ok(feed_wait)
             ):
                 feed.start()
 
@@ -480,6 +510,12 @@ def main() -> int:
                     subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
 
             if cycles % 15 == 0:
+                try:
+                    from mlbb_calibration_store import repair_index
+
+                    repair_index()
+                except Exception as exc:
+                    log(f"repair_index skipped: {exc}")
                 write_state(
                     {
                         "pending_shorts": pending,
