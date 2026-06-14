@@ -127,7 +127,7 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"
         f"#id {vid}\n"
-        f"Нажми 👍 или 👎 под видео"
+        f"Нажми 📥 Скачать оригинал или 👎 под видео"
     )
 
 
@@ -146,6 +146,8 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         if time.time() > deadline:
             print("prune_time_budget_exceeded", flush=True)
             break
+        if row.get("ingest_verified"):
+            continue
         path = Path(row.get("path", ""))
         vid = str(row.get("video_id", ""))
         if not path.exists() or not vid:
@@ -262,7 +264,7 @@ def _run_feed() -> int:
     s = stats()
     batch_header = (
         f"MLBB Shorts — {len(picked)} на оценку | 👍{s['feedback_yes']} 👎{s['feedback_no']}\n"
-        "Под роликом — кнопки 👍 / 👎"
+        "Под роликом — 📥 Скачать оригинал / 👎"
     )
 
     sent_ids: list[str] = []
@@ -292,7 +294,10 @@ def _run_feed() -> int:
         if trim_start > 0:
             print(f"trim send {vid} start={trim_start:.2f}s reason={open_reason}", flush=True)
             row = {**row, "trim_start_sec": trim_start}
-        final_ok, final_reason = verify_shorts_send_file(send_path, title=title)
+        if row.get("ingest_verified"):
+            final_ok, final_reason = True, "ingest_verified"
+        else:
+            final_ok, final_reason = verify_shorts_send_file(send_path, title=title)
         if not final_ok:
             print(f"skip send {vid} verify={final_reason}", flush=True)
             reject_candidate(vid, reason=final_reason, path=path)
