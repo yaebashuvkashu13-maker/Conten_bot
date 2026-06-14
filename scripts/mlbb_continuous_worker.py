@@ -164,6 +164,40 @@ def feed_running_externally() -> bool:
     return _lock_pid_alive(FEED_LOCK)
 
 
+def kill_stale_ingest() -> None:
+    """Free ingest lock if a previous run hung (blocks worker for hours)."""
+    if not INGEST_LOCK.exists():
+        return
+    try:
+        pid = int(INGEST_LOCK.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+    except (ProcessLookupError, ValueError, OSError):
+        INGEST_LOCK.unlink(missing_ok=True)
+        return
+    max_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "2400")) + 300
+    age = max_sec + 1.0
+    try:
+        stat = os.stat(f"/proc/{pid}")
+        age = time.time() - stat.st_mtime
+    except OSError:
+        INGEST_LOCK.unlink(missing_ok=True)
+        return
+    if age < max_sec:
+        return
+    log(f"kill stale ingest pid={pid} age_sec={age:.0f}")
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+    time.sleep(2)
+    try:
+        os.kill(pid, 0)
+        os.kill(pid, 9)
+    except OSError:
+        pass
+    INGEST_LOCK.unlink(missing_ok=True)
+
+
 def acquire_worker_lock() -> object | None:
     import fcntl
 
@@ -322,6 +356,11 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_SHORTS_CALIBRATION_BURST": "1" if aggressive else env.get("MLBB_SHORTS_CALIBRATION_BURST", "0"),
             "MLBB_SHORTS_STREAMER_ONLY": env.get("MLBB_SHORTS_STREAMER_ONLY", "0"),
             "MLBB_SHORTS_SEARCH_FALLBACK": env.get("MLBB_SHORTS_SEARCH_FALLBACK", "1"),
+            "MLBB_SEARCH_BEFORE_STREAMERS": env.get("MLBB_SEARCH_BEFORE_STREAMERS", "1"),
+            "MLBB_OWNER_CHANNELS_LAST": env.get("MLBB_OWNER_CHANNELS_LAST", "1"),
+            "MLBB_OWNER_CHANNEL_LIMIT": env.get("MLBB_OWNER_CHANNEL_LIMIT", "2"),
+            "MLBB_INGEST_FULL_SWEEP_PENDING": env.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"),
+            "MLBB_INGEST_MAX_RUN_SEC": env.get("MLBB_INGEST_MAX_RUN_SEC", "2400"),
             "MLBB_STREAMER_REQUIRE_MLBB_TITLE": env.get("MLBB_STREAMER_REQUIRE_MLBB_TITLE", "1"),
                 "MLBB_SHORTS_MIN_UPLOAD_DATE": env.get("MLBB_SHORTS_MIN_UPLOAD_DATE", "20260101"),
                 "MLBB_SHORTS_MAX_DURATION_SEC": env.get("MLBB_SHORTS_MAX_DURATION_SEC", "1200"),
@@ -397,6 +436,7 @@ def main() -> int:
                 and not ingest_running_externally()
                 and ingest.cooldown_ok(ingest_cooldown)
             ):
+                kill_stale_ingest()
                 ingest.cmd = ingest_cmd(base, aggressive=aggressive)
                 ingest.env = ingest_env(base, aggressive=aggressive)
                 ingest.start()

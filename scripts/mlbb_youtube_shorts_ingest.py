@@ -24,7 +24,9 @@ from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     DATA_MLBB,
     SHORTS_ROOT,
+    ingest_skip_ids,
     labeled_ids,
+    mark_ingest_skip,
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
@@ -35,29 +37,35 @@ from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp
 from youtube_video_fix import ensure_readable
 
 SEARCH_QUERIES = (
-    "mlbb ranked gameplay savage",
-    "mobile legends streamer ranked teamfight",
-    "mlbb solo rank maniac gameplay",
-    "mlbb live gameplay highlights",
+    "mlbb ranked gameplay savage 2026",
+    "mobile legends mythic rank teamfight gameplay",
+    "mlbb solo rank maniac double kill",
+    "mobile legends bang bang ranked match highlights",
+    "mlbb savage maniac shorts gameplay",
+    "mlbb teamfight ranked epic comeback",
+    "mobile legends streamer ranked gameplay",
     "mlbb double kill triple kill savage",
-    "mlbb teamfight shorts",
-    "mobile legends savage maniac shorts",
-    "mlbb mythic rank fight",
 )
 
-STREAMER_SHORTS_FEEDS = (
-    # Owner-curated MLBB gameplay (Chou / ranked streamers)
+# Owner-pasted Chou / curated channels — searched last (often already labeled/sent).
+OWNER_CURATED_FEEDS = (
     "https://www.youtube.com/@hanz.legends/shorts",
     "https://www.youtube.com/@silent_chou/shorts",
     "https://www.youtube.com/@officiallazychouu/shorts",
     "https://www.youtube.com/@rikkchoou/shorts",
     "https://www.youtube.com/@kyro-plays-o/shorts",
     "https://www.youtube.com/@run-yss/shorts",
-    # Extra ranked gameplay sources
+)
+
+GENERAL_MLBB_FEEDS = (
     "https://www.youtube.com/@Betosky/shorts",
     "https://www.youtube.com/@JessNoLimit/shorts",
     "https://www.youtube.com/@Insectos/shorts",
+    "https://www.youtube.com/@akosidogie/shorts",
+    "https://www.youtube.com/@Elginnn/shorts",
 )
+
+STREAMER_SHORTS_FEEDS = OWNER_CURATED_FEEDS + GENERAL_MLBB_FEEDS
 
 NEGATIVE_TITLE = re.compile(
     r"(#ad\b|sponsored|giveaway|promo\b|free\s+diamond|skin\s+gratis|"
@@ -128,16 +136,39 @@ def duration_in_ingest_range(duration: float, env: dict[str, str] | None = None)
 
 
 def streamer_channel_urls() -> list[str]:
-    urls = list(STREAMER_SHORTS_FEEDS)
+    owner_last = os.environ.get("MLBB_OWNER_CHANNELS_LAST", "1") == "1"
+    include_owner = os.environ.get("MLBB_OWNER_CHANNELS_DISABLED", "0") != "1"
+    if owner_last:
+        base = list(GENERAL_MLBB_FEEDS)
+        if include_owner:
+            base.extend(OWNER_CURATED_FEEDS)
+    else:
+        base = list(OWNER_CURATED_FEEDS) + list(GENERAL_MLBB_FEEDS) if include_owner else list(GENERAL_MLBB_FEEDS)
+    urls = list(base)
     if os.environ.get("MLBB_SHORTS_INCLUDE_VIDEOS_TAB", "1") == "1":
         extra: list[str] = []
-        for url in STREAMER_SHORTS_FEEDS:
+        for url in base:
             if url.endswith("/shorts"):
                 videos = url[: -len("/shorts")] + "/videos"
                 if videos not in urls and videos not in extra:
                     extra.append(videos)
         urls.extend(extra)
     return urls
+
+
+def _limit_owner_channel_feeds(feeds: list[str], *, limit: int) -> list[str]:
+    if limit <= 0 or os.environ.get("MLBB_OWNER_CHANNELS_DISABLED", "0") == "1":
+        owner_markers = tuple(u.replace("/shorts", "") for u in OWNER_CURATED_FEEDS)
+        return [u for u in feeds if not any(m in u for m in owner_markers)]
+    owner_markers = tuple(u.replace("/shorts", "") for u in OWNER_CURATED_FEEDS)
+    general: list[str] = []
+    owner: list[str] = []
+    for url in feeds:
+        if any(m in url for m in owner_markers):
+            owner.append(url)
+        else:
+            general.append(url)
+    return general + owner[: max(limit * 2, limit)]
 
 
 def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
@@ -985,63 +1016,94 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
         return 0
 
+    full_sweep = pending_n < int(os.environ.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"))
+    if full_sweep:
+        print(f"full_sweep=1 pending={pending_n}", flush=True)
+
     queries = list(SEARCH_QUERIES)
-    if args.incremental and not burst:
+    if args.incremental and not burst and not full_sweep:
         # Rotate one query per run — less search load on YouTube.
         slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
         queries = [queries[slot]]
         print(f"incremental query={queries[0]} pending={pending_n}")
-    elif burst:
-        print(f"calibration_burst queries={len(queries)} pending={pending_n}")
+    elif burst or full_sweep:
+        print(f"{'calibration_burst' if burst else 'full_sweep'} queries={len(queries)} pending={pending_n}")
 
     seen: set[str] = set()
     pool: list[dict] = []
     channel_feeds = streamer_channel_urls()
-    if args.incremental and channel_feeds and not burst:
+    if args.incremental and channel_feeds and not burst and not full_sweep:
         slot = int(time.time() // 7200) % len(channel_feeds)
         channel_feeds = [channel_feeds[slot]]
         print(f"incremental channel={channel_feeds[0]}")
-    elif burst:
-        print(f"calibration_burst channels={len(channel_feeds)}")
+    elif burst or full_sweep:
+        owner_limit = int(os.environ.get("MLBB_OWNER_CHANNEL_LIMIT", "2"))
+        channel_feeds = _limit_owner_channel_feeds(channel_feeds, limit=owner_limit)
+        print(f"{'calibration_burst' if burst else 'full_sweep'} channels={len(channel_feeds)}")
 
     streamer_only = os.environ.get("MLBB_SHORTS_STREAMER_ONLY", "0") == "1"
     if streamer_only:
         queries = []
         print(f"streamer_only=1 channels={len(channel_feeds)} (no ytsearch yet)")
 
-    for channel_url in channel_feeds:
-        for row in fetch_streamer_shorts(
-            channel_url, limit=args.max_per_query, env=env, days=args.days
-        ):
-            vid = row["video_id"]
-            if vid in seen:
-                continue
-            seen.add(vid)
-            pool.append(row)
-        if args.search_delay > 0:
-            time.sleep(args.search_delay)
+    skip_ids = ingest_skip_ids()
+    search_first = os.environ.get("MLBB_SEARCH_BEFORE_STREAMERS", "1") == "1"
+
+    def _collect_search() -> None:
+        for query in queries:
+            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
+                vid = row["video_id"]
+                if vid in seen or vid in skip_ids:
+                    continue
+                if not _title_looks_mlbb(str(row.get("title", ""))):
+                    continue
+                seen.add(vid)
+                pool.append(row)
+            if args.search_delay > 0 and len(queries) > 1:
+                time.sleep(args.search_delay)
+
+    def _collect_channels() -> None:
+        for channel_url in channel_feeds:
+            for row in fetch_streamer_shorts(
+                channel_url, limit=args.max_per_query, env=env, days=args.days
+            ):
+                vid = row["video_id"]
+                if vid in seen or vid in skip_ids:
+                    continue
+                seen.add(vid)
+                pool.append(row)
+            if args.search_delay > 0:
+                time.sleep(args.search_delay)
+
+    if search_first:
+        _collect_search()
+    else:
+        _collect_channels()
 
     min_pool = int(os.environ.get("MLBB_SHORTS_MIN_POOL", "8"))
     search_fallback = os.environ.get("MLBB_SHORTS_SEARCH_FALLBACK", "1") == "1"
-    if search_fallback and len(pool) < min_pool:
+    if search_fallback and len(pool) < min_pool and queries:
         fallback_queries = list(SEARCH_QUERIES) if not queries else queries
         print(
             f"search_fallback pool={len(pool)}<{min_pool} queries={len(fallback_queries)}",
             flush=True,
         )
-        queries = fallback_queries
+        for query in fallback_queries:
+            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
+                vid = row["video_id"]
+                if vid in seen or vid in skip_ids:
+                    continue
+                if not _title_looks_mlbb(str(row.get("title", ""))):
+                    continue
+                seen.add(vid)
+                pool.append(row)
+            if args.search_delay > 0:
+                time.sleep(args.search_delay)
 
-    for query in queries:
-        for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
-            vid = row["video_id"]
-            if vid in seen:
-                continue
-            if not _title_looks_mlbb(str(row.get("title", ""))):
-                continue
-            seen.add(vid)
-            pool.append(row)
-        if args.search_delay > 0 and len(queries) > 1:
-            time.sleep(args.search_delay)
+    if search_first:
+        _collect_channels()
+    elif queries:
+        _collect_search()
 
     pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
     cap_sources = max(len(queries), len(channel_feeds), 1)
@@ -1056,16 +1118,16 @@ def _run_ingest(args: argparse.Namespace) -> int:
     fresh_pool: list[dict] = []
     for row in pool:
         vid = row["video_id"]
-        if vid in known:
+        if vid in skip_ids or vid in known:
             continue
         if vid in sent_pending or vid in already_sent:
             continue
         fresh_pool.append(row)
     pool = fresh_pool[:cap]
 
-    if not pool and args.incremental:
+    if not pool and (args.incremental or full_sweep):
         deep: list[dict] = []
-        for query in queries:
+        for query in list(SEARCH_QUERIES):
             for row in search_shorts(
                 query,
                 limit=max(args.max_per_query * 4, 40),
@@ -1073,7 +1135,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 days=args.days,
             ):
                 vid = row["video_id"]
-                if vid in known or vid in sent_pending or vid in already_sent:
+                if vid in skip_ids or vid in known or vid in sent_pending or vid in already_sent:
                     continue
                 deep.append(row)
             if args.search_delay > 0:
@@ -1082,7 +1144,23 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
     saved = rejected = downloads = skipped_known = 0
     min_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SCORE", "0.05" if burst else "0.12"))
+    run_started = time.time()
+    max_run_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "2400"))
+
+    def _reject(vid: str, reason: str, path: Path | None = None) -> None:
+        nonlocal rejected
+        rejected += 1
+        mark_ingest_skip(vid, reason)
+        if path and path.exists() and os.environ.get("MLBB_INGEST_DELETE_REJECTED", "1") == "1":
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
     for row in pool:
+        if time.time() - run_started > max_run_sec:
+            print("ingest_max_run_exceeded", flush=True)
+            break
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
         vid = row["video_id"]
@@ -1095,22 +1173,22 @@ def _run_ingest(args: argparse.Namespace) -> int:
             if got and got.exists():
                 mp4 = got
                 downloads += 1
+            else:
+                _reject(vid, "download_failed")
+                continue
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
+            _reject(vid, "missing_file")
             continue
 
         file_dur = _ffprobe_duration(mp4)
         if file_dur > 0 and not duration_in_ingest_range(file_dur, env):
             print(f"REJECT {vid} duration={file_dur:.0f}s out_of_range", flush=True)
-            rejected += 1
-            try:
-                mp4.unlink()
-            except OSError:
-                pass
+            _reject(vid, "duration_out_of_range", mp4)
             continue
 
         if NEGATIVE_TITLE.search(row.get("title", "")):
-            rejected += 1
+            _reject(vid, "negative_title", mp4)
             continue
 
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
@@ -1119,69 +1197,69 @@ def _run_ingest(args: argparse.Namespace) -> int:
             act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
             if not act_ok:
                 print(f"REJECT {vid} activity={act_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"activity:{act_reason}", mp4)
                 continue
             if file_dur > shorts_short_max_sec():
                 clip_start, clip_reason = find_best_long_clip_start(mp4)
                 if clip_start < 0:
                     print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
-                    rejected += 1
+                    _reject(vid, f"long_clip:{clip_reason}", mp4)
                     continue
             kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
             if not kill_ok:
                 print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"kill_ui:{kill_reason}", mp4)
                 continue
         else:
             id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
             if not id_ok:
                 print(f"REJECT {vid} identity={id_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"identity:{id_reason}", mp4)
                 continue
 
             act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
             if not act_ok:
                 print(f"REJECT {vid} activity={act_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"activity:{act_reason}", mp4)
                 continue
 
             gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(mp4, title=row.get("title", ""))
             if not gp_ok:
                 print(f"REJECT {vid} gameplay={gp_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"gameplay:{gp_reason}", mp4)
                 continue
 
             ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(mp4, title=row.get("title", ""))
             if not ver_ok:
                 print(f"REJECT {vid} verify={ver_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"verify:{ver_reason}", mp4)
                 continue
 
             if file_dur > shorts_short_max_sec():
                 clip_start, clip_reason = find_best_long_clip_start(mp4)
                 if clip_start < 0:
                     print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
-                    rejected += 1
+                    _reject(vid, f"long_clip:{clip_reason}", mp4)
                     continue
             kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
             if not kill_ok:
                 print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"kill_ui:{kill_reason}", mp4)
                 continue
 
             gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
             if not gate_ok:
                 print(f"REJECT {vid} gate={gate_reason}", flush=True)
-                rejected += 1
+                _reject(vid, f"gate:{gate_reason}", mp4)
                 continue
 
         feats = score_clip(mp4)
         if int(feats.get("rule_pass") or 0) != 1 and not lenient:
             print(f"REJECT {vid} rule_pass=0 {feats.get('pass_reason','')}", flush=True)
-            rejected += 1
+            _reject(vid, "rule_pass", mp4)
             continue
         if feats["score"] < min_score and not lenient:
-            rejected += 1
+            _reject(vid, "low_score", mp4)
             continue
 
         upsert_candidate(

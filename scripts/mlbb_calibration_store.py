@@ -23,6 +23,7 @@ EXEMPLAR_ROOT = Path(
 )
 
 INDEX_PATH = Path(os.environ.get("MLBB_SHORTS_INDEX", str(DATA_MLBB / "youtube_shorts_index.json")))
+INGEST_SKIP_PATH = Path(os.environ.get("MLBB_INGEST_SKIP_PATH", str(DATA_MLBB / "ingest_skip_ids.json")))
 LABELS_PATH = Path(os.environ.get("MLBB_CALIBRATION_LABELS", str(DATA_MLBB / "calibration_labels.json")))
 FEED_SENT_PATH = Path(os.environ.get("MLBB_FEED_SENT", str(DATA_MLBB / "calibration_feed_sent.json")))
 REPO_LABELS_PATH = REPO / "data" / "mlbb" / "calibration_labels.json"
@@ -97,6 +98,57 @@ def id_from_path(path: Path) -> str:
     if stem.startswith("yt_") and len(stem) > 3:
         return stem[3:]
     return stem
+
+
+def _normalize_vid(video_id: str) -> str:
+    vid = video_id.strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    return vid
+
+
+def load_ingest_skip() -> dict[str, str]:
+    raw = _read_json(INGEST_SKIP_PATH, {"ids": {}, "updated_at": ""})
+    ids = raw.get("ids", {})
+    if not isinstance(ids, dict):
+        return {}
+    return {str(k): str(v) for k, v in ids.items()}
+
+
+def mark_ingest_skip(video_id: str, reason: str = "") -> None:
+    """Remember ids that failed download/gates so ingest stops retrying them."""
+    vid = _normalize_vid(video_id)
+    if not vid or len(vid) != 11:
+        return
+    data = _read_json(INGEST_SKIP_PATH, {"ids": {}, "updated_at": ""})
+    ids = data.setdefault("ids", {})
+    if not isinstance(ids, dict):
+        ids = {}
+        data["ids"] = ids
+    ids[vid] = reason or ids.get(vid) or "skip"
+    if len(ids) > 5000:
+        for key in list(ids.keys())[:2500]:
+            ids.pop(key, None)
+    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_json(INGEST_SKIP_PATH, data)
+
+
+def ingest_skip_ids() -> set[str]:
+    """All video ids ingest should not retry (labeled, sent, rejected, unavailable)."""
+    skip = set(load_ingest_skip().keys())
+    skip.update(labeled_ids().keys())
+    skip.update(load_feed_sent()["ids"])
+    ds_path = Path(os.environ.get("MLBB_DOWNLOAD_STATE", str(DATA_MLBB / "download_state.json")))
+    if ds_path.exists():
+        try:
+            ds = json.loads(ds_path.read_text(encoding="utf-8"))
+            for key in ("rejected_ids", "downloaded_ids"):
+                for item in ds.get(key, []):
+                    if isinstance(item, str) and len(item) == 11:
+                        skip.add(item)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return skip
 
 
 def load_feed_sent() -> dict[str, set[str]]:
@@ -220,6 +272,42 @@ def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, 
     return False
 
 
+def find_labeled_row(video_id: str) -> dict | None:
+    """Row from owner labels/history — for 👍/👎 on clips no longer in index."""
+    vid = _normalize_vid(video_id)
+    labels = load_labels()
+    for section in ("feedback", "good", "bad"):
+        for row in labels.get(section, []):
+            row_vid = str(row.get("video_id") or row.get("id") or "").strip()
+            path = Path(str(row.get("path", "")))
+            file_vid = id_from_path(path) if path.name.startswith("yt_") else row_vid
+            if row_vid == vid or file_vid == vid:
+                return row
+    return None
+
+
+def find_candidate_or_labeled(video_id: str) -> dict | None:
+    row = find_candidate(video_id)
+    if row and not is_stub_candidate(row):
+        return row
+    row = find_labeled_row(video_id)
+    if row:
+        return row
+    vid = _normalize_vid(video_id)
+    direct = SHORTS_ROOT / f"yt_{vid}.mp4"
+    if direct.exists() and direct.stat().st_size > 10_000:
+        prev = find_labeled_row(vid) or {}
+        return {
+            "video_id": vid,
+            "id": vid,
+            "path": str(direct),
+            "title": prev.get("title", ""),
+            "url": prev.get("url", f"https://www.youtube.com/watch?v={vid}"),
+            "score": prev.get("score", 0),
+        }
+    return None
+
+
 def find_candidate(video_id: str) -> dict | None:
     vid = video_id.strip()
     if vid.startswith("yt_"):
@@ -271,7 +359,7 @@ def apply_owner_label(
     reason: str = "",
     by_chat: str = "",
 ) -> tuple[bool, str]:
-    row = find_candidate(video_id)
+    row = find_candidate_or_labeled(video_id)
     if not row:
         return False, f"unknown_id:{video_id}"
 

@@ -110,7 +110,9 @@ def apply_shorts_label(
     ok, _label = apply_owner_label(vid, is_good=is_good, reason=reason, by_chat=str(chat_id))
     s = stats()
     if not ok:
-        return False, f"Не нашёл id={vid} в индексе Shorts. Сначала /mlbb_samples"
+        if str(_label).startswith("file_missing"):
+            return False, f"Файл #{vid} уже удалён с сервера."
+        return False, f"Не нашёл #{vid}. Возможно, это старое сообщение — дождись новой партии от бота."
     schedule_mlbb_retrain()
     if is_good:
         return (

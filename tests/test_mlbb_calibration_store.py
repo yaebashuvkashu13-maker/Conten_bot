@@ -66,3 +66,8 @@ def test_pending_excludes_labeled(monkeypatch, tmp_path: Path) -> None:
     assert vid in labeled
     pending2 = pending_candidates(limit=10)
     assert not any(r["video_id"] == vid for r in pending2)
+
+    # Owner can still relabel after index row is removed.
+    store.save_index({"candidates": [], "updated_at": ""})
+    ok, _ = apply_owner_label(vid, is_good=False, by_chat="1", reason="retest")
+    assert ok
