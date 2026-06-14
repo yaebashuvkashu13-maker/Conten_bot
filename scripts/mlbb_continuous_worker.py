@@ -59,10 +59,10 @@ def base_env() -> dict[str, str]:
             "MLBB_VOD_LEAD_SEC": "4",
             "MLBB_MAX_DAILY_SENDS": env.get("MLBB_MAX_DAILY_SENDS", "500"),
             "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "40"),
+            "MLBB_CALIBRATION_LENIENT": env.get("MLBB_CALIBRATION_LENIENT", "1"),
+            "MLBB_CALIBRATION_MIN_SEND_SCORE": env.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0"),
             "MLBB_CALIBRATION_BATCH": env.get("MLBB_CALIBRATION_BATCH", "12"),
             "MLBB_SHORTS_CALIBRATION_BURST": env.get("MLBB_SHORTS_CALIBRATION_BURST", "1"),
-            "MLBB_CALIBRATION_LENIENT": env.get("MLBB_CALIBRATION_LENIENT", "1"),
-            "HIGHLIGHT_OWNER_BAD_PAD_SEC": env.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         }

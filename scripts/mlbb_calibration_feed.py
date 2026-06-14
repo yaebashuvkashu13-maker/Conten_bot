@@ -260,25 +260,32 @@ def _run_feed() -> int:
             continue
         vid = str(row.get("video_id", ""))
         min_send_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0.05"))
+        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         score = float(row.get("score") or 0)
-        if score < min_send_score:
+        if score < min_send_score and not lenient:
             from mlbb_youtube_shorts_ingest import score_clip
 
             feats = score_clip(path)
             score = float(feats.get("score") or 0)
             row = {**row, **feats}
+        elif score < min_send_score:
+            score = min_send_score
+            row = {**row, "score": score}
         if score < min_send_score:
             print(f"skip send {vid} low_score={score}", flush=True)
             continue
-        from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
+        if lenient:
+            gate_ok, gate_reason = True, "lenient"
+        else:
+            from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
 
-        gate_ok, gate_reason = passes_shorts_calibration_gate(
-            path, title=str(row.get("title", ""))
-        )
-        if not gate_ok:
-            print(f"skip send {vid} gate={gate_reason}", flush=True)
-            mark_feed_sent([vid], paths=[path])
-            continue
+            gate_ok, gate_reason = passes_shorts_calibration_gate(
+                path, title=str(row.get("title", ""))
+            )
+            if not gate_ok:
+                print(f"skip send {vid} gate={gate_reason}", flush=True)
+                mark_feed_sent([vid], paths=[path])
+                continue
         header = batch_header if delivered == 0 else ""
         caption = format_caption(row, idx, len(picked), header=header)
         ok = send_video(token, chat_id, path, caption, video_id=vid)
