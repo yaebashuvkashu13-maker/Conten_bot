@@ -20,6 +20,7 @@ install -m 755 "$REPO/scripts/mlbb_vod_segment_store.py" "$BIN/mlbb_vod_segment_
 install -m 755 "$REPO/scripts/mlbb_telegram_handlers.py" "$BIN/mlbb_telegram_handlers.py"
 install -m 755 "$REPO/scripts/mlbb_telegram_send.py" "$BIN/mlbb_telegram_send.py"
 install -m 755 "$REPO/scripts/mlbb_daily_report.py" "$BIN/mlbb_daily_report.py"
+install -m 755 "$REPO/scripts/mlbb_training_archive.py" "$BIN/mlbb_training_archive.py"
 install -m 755 "$REPO/scripts/mlbb_purge_bad_shorts_queue.py" "$BIN/mlbb_purge_bad_shorts_queue.py"
 
 if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-1}" == "1" ]]; then

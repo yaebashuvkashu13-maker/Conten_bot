@@ -21,8 +21,26 @@ telegram_upload_bot.py           → 👍/👎 callbacks (uses mlbb_telegram_han
 | `/root/.video_bot.env` | Secrets (TG_BOT_TOKEN, TG_CHAT_ID) |
 | `/root/data/mlbb/` | State, labels, indexes |
 | `/root/datasets/mlbb/vod_segments/` | Rendered VOD clips |
-| `/root/datasets/mlbb/youtube_shorts/` | Downloaded Shorts |
+| `/root/datasets/mlbb/youtube_shorts/` | Downloaded Shorts (2026+) |
+| `/root/datasets/mlbb/training_archive/2026/shorts/` | Full Shorts on owner 👍 (reuse) |
+| `/root/datasets/mlbb/training_archive/2026/vod_segments/` | VOD clips on owner 👍 |
+| `/root/data/mlbb/training_archive_index.jsonl` | Archive index |
 | `/root/data/mlbb/youtube_nightly/inbox/` | MLBB VOD inbox |
+
+## Training archive (reuse liked clips)
+
+Ingest downloads Shorts uploaded **from 2026-01-01** (`MLBB_SHORTS_MIN_UPLOAD_DATE`).
+
+When you press 👍:
+- **Shorts** → full mp4 copied to `/root/datasets/mlbb/training_archive/2026/shorts/yt_{id}.mp4`
+- **VOD segment** → `/root/datasets/mlbb/training_archive/2026/vod_segments/seg_{id}.mp4`
+- Index append: `/root/data/mlbb/training_archive_index.jsonl`
+
+List archived Shorts:
+
+```bash
+ls /root/datasets/mlbb/training_archive/2026/shorts/
+```
 
 ## Deploy
 

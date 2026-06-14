@@ -326,6 +326,19 @@ def apply_owner_label(
         exemplar = copy_exemplar(path, "good", vid)
         if exemplar:
             entry["exemplar"] = str(exemplar)
+        try:
+            from mlbb_training_archive import archive_short
+
+            archived = archive_short(
+                path,
+                vid,
+                upload_date=str(row.get("upload_date", "")),
+                title=str(row.get("title", "")),
+            )
+            if archived:
+                entry["training_archive"] = str(archived)
+        except ImportError:
+            pass
     else:
         labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
         labels["good"] = [g for g in labels.get("good", []) if not _same_file(g)]

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-MLBB-only: ingest top YouTube Shorts (≤60s, ~90 days) for owner calibration.
+MLBB-only: ingest YouTube Shorts (≤60s, 2026+) for owner calibration.
+
+Upload window: from MLBB_SHORTS_MIN_UPLOAD_DATE (default 20260101) + rolling days.
+Owner 👍 copies full Short into training_archive/YYYY/shorts/ for reuse.
 
 Searches: mobile legends highlights, mlbb teamfight, mlbb savage
 Filters: gameplay_gate, highlight_scorer (mobile_legends)
@@ -71,6 +74,28 @@ NEGATIVE_TITLE = re.compile(
 )
 
 PROFILE = "mobile_legends"
+
+
+def shorts_upload_cutoff(env: dict[str, str] | None = None, *, days: int | None = None) -> str:
+    """Earliest allowed upload date YYYYMMDD — 2026 floor + rolling window."""
+    env = env or dict(os.environ)
+    min_date = str(env.get("MLBB_SHORTS_MIN_UPLOAD_DATE", "20260101")).strip()
+    day_n = days if days is not None else int(env.get("MLBB_SHORTS_INGEST_DAYS", "365"))
+    rolling = (datetime.now(timezone.utc) - timedelta(days=day_n)).strftime("%Y%m%d")
+    if min_date.isdigit() and len(min_date) == 8:
+        return max(min_date, rolling)
+    return rolling
+
+
+def shorts_ytdlp_date_after(env: dict[str, str] | None = None) -> str | None:
+    """yt-dlp --dateafter; None = skip filter."""
+    env = env or dict(os.environ)
+    if env.get("MLBB_SHORTS_SKIP_DATE_FILTER", "0") == "1":
+        return None
+    explicit = str(env.get("MLBB_SHORTS_DATE_AFTER", "")).strip()
+    if explicit.isdigit() and len(explicit) == 8:
+        return explicit
+    return shorts_upload_cutoff(env)
 
 
 MLBB_POSITIVE_TITLE = re.compile(
@@ -354,7 +379,7 @@ def _ffprobe_duration(path: Path) -> float:
 def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+    cutoff = shorts_upload_cutoff(env, days=days)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         channel_url,
         "--flat-playlist",
@@ -409,7 +434,7 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
 def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+    cutoff = shorts_upload_cutoff(env, days=days)
     search_n = max(limit * 8, 80)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
@@ -464,7 +489,7 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
 
     out_dir.mkdir(parents=True, exist_ok=True)
     template = str(out_dir / "yt_%(id)s.%(ext)s")
-    date_after = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y%m%d")
+    date_after = shorts_ytdlp_date_after(env)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
         env.get(
@@ -474,7 +499,7 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
         "--merge-output-format",
         "mp4",
     ]
-    if env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") != "1":
+    if date_after:
         cmd.extend(["--dateafter", date_after])
     cmd.extend(
         [
@@ -558,7 +583,7 @@ def score_clip(path: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
-    parser.add_argument("--days", type=int, default=90)
+    parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_INGEST_DAYS", "365")))
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--min-score", type=float, default=0.12)
     parser.add_argument(

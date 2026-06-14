@@ -28,6 +28,8 @@ def test_pending_excludes_labeled(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts_root))
     monkeypatch.setenv("CONTENT_BOT_REPO", str(tmp_path))
     monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(tmp_path / "exemplars"))
+    monkeypatch.setenv("MLBB_TRAINING_ARCHIVE_ROOT", str(tmp_path / "archive"))
+    monkeypatch.setenv("MLBB_TRAINING_ARCHIVE", "1")
 
     import mlbb_calibration_store as store
 

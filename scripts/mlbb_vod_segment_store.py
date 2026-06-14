@@ -324,6 +324,16 @@ def apply_owner_label(
         exemplar = copy_exemplar(path, "good", segment_id_str)
         if exemplar:
             entry["exemplar"] = str(exemplar)
+        try:
+            from mlbb_training_archive import archive_vod_segment
+
+            peak = float(row.get("peak_start") or row.get("start") or 0)
+            vod_id = str(row.get("vod_id") or row.get("vod") or segment_id_str.rsplit("_", 1)[0])
+            archived = archive_vod_segment(path, segment_id_str, vod_id=vod_id, peak_sec=peak)
+            if archived:
+                entry["training_archive"] = str(archived)
+        except ImportError:
+            pass
     else:
         labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
         labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
