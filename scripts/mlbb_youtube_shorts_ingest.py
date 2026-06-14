@@ -64,7 +64,9 @@ NEGATIVE_TITLE = re.compile(
     r"tutorial|guide|tips|funny|meme|intro|reaction|dance|tiktok|"
     r"rank\s+push\s+only|lobby|menu|event|login|diamond|free\s+skin|"
     r"sound\s*effect|sfx\b|notification\s*sound|ringtone|audio\s*only|"
-    r"kill\s*sound|voice\s*line|ost\b|music\s*only|wallpaper|thumbnail)",
+    r"kill\s*sound|voice\s*line|ost\b|music\s*only|wallpaper|thumbnail|"
+    r"hero\s*(reveal|showcase|preview|intro|spawn|appearance)|skin\s*reveal|"
+    r"character\s*preview|cinematic|new\s*hero|spawn\s*preview|hero\s*spawn)",
     re.I,
 )
 
@@ -130,6 +132,59 @@ def passes_mlbb_shorts_activity_gate(path: Path, *, title: str = "") -> tuple[bo
         if m2 < min_motion * 0.9 and max(mini2, skill2) < min_hud_delta:
             return False, f"static_mid motion={m2:.3f}"
 
+    # Hero spawn cinematic: character animates but minimap/skills stay frozen.
+    cinematic_motion = float(os.environ.get("MLBB_ACTIVITY_CINEMATIC_MOTION", "0.014"))
+    if motion >= cinematic_motion and hud_delta < min_hud_delta * 0.8:
+        return False, f"cinematic_hud_dead motion={motion:.3f} hud_delta={hud_delta:.4f}"
+
+    return True, "ok"
+
+
+def passes_mlbb_shorts_gameplay_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Reject hero spawn preview, showcase, lobby — not live teamfight."""
+    from gameplay_gate import (
+        detect_game_viewport_crop,
+        score_segment_combat,
+        segment_looks_like_draft_or_queue,
+        segment_looks_like_hero_showcase,
+        segment_looks_like_promo_or_cinematic,
+        segment_minimap_presence_rate,
+    )
+
+    label = title or path.stem
+    dur = _ffprobe_duration(path)
+    window = min(15.0, max(5.0, dur * 0.92))
+    crop = detect_game_viewport_crop(path, 0.0, window)
+
+    if segment_looks_like_hero_showcase(
+        path, 0.0, window, crop_box=crop, sample_frames=6
+    ):
+        return False, "hero_showcase"
+
+    if segment_looks_like_promo_or_cinematic(
+        path, 0.0, window, crop_box=crop, sample_frames=6
+    ):
+        return False, "promo_cinematic"
+
+    if segment_looks_like_draft_or_queue(path, 0.0, window, crop_box=crop):
+        return False, "spawn_or_draft"
+
+    motion, mini, skill, _center_text = score_segment_combat(
+        path, 0.0, window, crop_box=crop, sample_frames=8
+    )
+    hud_delta = max(mini, skill)
+    min_motion = float(os.environ.get("MLBB_GAMEPLAY_MIN_MOTION", "0.020"))
+    min_hud_delta = float(os.environ.get("MLBB_GAMEPLAY_MIN_HUD_DELTA", "0.005"))
+    if motion >= min_motion * 0.6 and hud_delta < min_hud_delta * 0.85:
+        return False, f"hero_spawn_cinematic motion={motion:.3f} hud={hud_delta:.4f}"
+
+    mini_pres = segment_minimap_presence_rate(
+        path, 0.0, window, crop_box=crop, sample_frames=5
+    )
+    if mini_pres < float(os.environ.get("MLBB_GAMEPLAY_MIN_MINIMAP_PRES", "0.68")):
+        if motion < min_motion * 1.1 or hud_delta < min_hud_delta * 1.2:
+            return False, f"weak_match mini_pres={mini_pres:.2f}"
+
     return True, "ok"
 
 
@@ -144,6 +199,10 @@ def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool
     act_ok, act_reason = passes_mlbb_shorts_activity_gate(path, title=title)
     if not act_ok:
         return False, act_reason
+
+    gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(path, title=title)
+    if not gp_ok:
+        return False, gp_reason
 
     label = title or path.stem
     dur = _ffprobe_duration(path)
@@ -559,6 +618,12 @@ def main() -> int:
         act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
         if not act_ok:
             print(f"REJECT {vid} activity={act_reason}", flush=True)
+            rejected += 1
+            continue
+
+        gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(mp4, title=row.get("title", ""))
+        if not gp_ok:
+            print(f"REJECT {vid} gameplay={gp_reason}", flush=True)
             rejected += 1
             continue
 

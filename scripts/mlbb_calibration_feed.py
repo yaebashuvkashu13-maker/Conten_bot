@@ -135,6 +135,7 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
     """Drop queued static slides / wrong-game before picking a batch."""
     from mlbb_youtube_shorts_ingest import (
         passes_mlbb_shorts_activity_gate,
+        passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_identity_gate,
     )
 
@@ -145,7 +146,11 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         if not path.exists() or not vid:
             continue
         title = str(row.get("title", ""))
-        for check in (passes_mlbb_shorts_identity_gate, passes_mlbb_shorts_activity_gate):
+        for check in (
+            passes_mlbb_shorts_identity_gate,
+            passes_mlbb_shorts_activity_gate,
+            passes_mlbb_shorts_gameplay_gate,
+        ):
             ok, reason = check(path, title=title)
             if not ok:
                 reject_candidate(vid, reason=reason, path=path)
@@ -292,6 +297,7 @@ def _run_feed() -> int:
 
         from mlbb_youtube_shorts_ingest import (
             passes_mlbb_shorts_activity_gate,
+            passes_mlbb_shorts_gameplay_gate,
             passes_mlbb_shorts_identity_gate,
             passes_shorts_calibration_gate,
         )
@@ -310,6 +316,14 @@ def _run_feed() -> int:
         if not act_ok:
             print(f"skip send {vid} activity={act_reason}", flush=True)
             reject_candidate(vid, reason=act_reason, path=path)
+            continue
+
+        gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(
+            path, title=str(row.get("title", ""))
+        )
+        if not gp_ok:
+            print(f"skip send {vid} gameplay={gp_reason}", flush=True)
+            reject_candidate(vid, reason=gp_reason, path=path)
             continue
 
         if score < min_send_score and not lenient:
