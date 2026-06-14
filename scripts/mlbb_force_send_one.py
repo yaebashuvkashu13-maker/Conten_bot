@@ -152,7 +152,7 @@ def main() -> int:
         f"🆕 kill UI logic\n"
         f"{VOD.stem.replace('yt_', '')} @ {int(peak_t)}s | {seg_dur:.0f}с\n"
         f"kill: {kill_meta.get('reason')} score={kill_meta.get('score')}\n"
-        f"👍 Ок / 👎 Не ок"
+        f"📥 Скачать оригинал / 👎 Не ок"
     )
     send_message(
         token,

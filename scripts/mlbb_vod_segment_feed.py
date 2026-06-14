@@ -2,7 +2,7 @@
 """
 MLBB VOD calibration: send every suitable segment as its own clip (no montage merge).
 
-Owner rates with 👍 Ок / 👎 Не ок buttons — all passing segments, no 3-clip cap.
+Owner rates with 📥 Скачать оригинал / 👎 Не ок buttons — all passing segments, no 3-clip cap.
 """
 
 from __future__ import annotations
@@ -1341,7 +1341,7 @@ def _send_segment_batch(
         chat_id,
         f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
         f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
-        f"👍 Ок / 👎 Не ок под каждым\n"
+        f"📥 Скачать оригинал / 👎 Не ок под каждым\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
     )
     SEGMENTS_ROOT = segments_root()
@@ -1371,7 +1371,7 @@ def _send_segment_batch(
             f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
             f"{report_line}\n"
             f"✓ presend\n"
-            f"👍 Ок / 👎 Не ок"
+            f"📥 Скачать оригинал / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
             send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")

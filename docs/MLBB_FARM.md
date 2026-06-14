@@ -94,8 +94,10 @@ Critical:
 ## Telegram callbacks
 
 Button formats:
-- Shorts: `mlbb_yes:{video_id}` / `mlbb_no:{video_id}`
-- VOD: `mlbb_vseg_yes:{segment_id}` / `mlbb_vseg_no:{segment_id}`
+- Shorts: `mlbb_hq_shorts:{video_id}` (📥 Скачать оригинал → send HQ + mark good) / `mlbb_no:{video_id}` (👎)
+- VOD: `mlbb_hq_vseg:{segment_id}` / `mlbb_vseg_no:{segment_id}`
+- Legacy (old messages): `mlbb_yes:` / `mlbb_vseg_yes:` still parsed but new sends use download button only
+- `MLBB_HQ_AUTO_ON_GOOD=0` — no automatic HQ send; only on button press
 
 Handler module: `scripts/mlbb_telegram_handlers.py`
 

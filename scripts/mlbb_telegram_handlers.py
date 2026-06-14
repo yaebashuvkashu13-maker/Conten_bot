@@ -149,8 +149,60 @@ def parse_callback_data(data: str) -> tuple[str, bool | None, str, str]:
     return "unknown", None, "", ""
 
 
-def _hq_auto_on_good() -> bool:
-    return os.environ.get("MLBB_HQ_AUTO_ON_GOOD", "1") == "1"
+def _handle_download_original(
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+    mode: str,
+    item_id: str,
+    api,
+) -> None:
+    """Send HQ file on button press; record 👍 only after successful send."""
+
+    def _worker() -> None:
+        try:
+            if mode == "hq_vseg":
+                ok, reply = send_vseg_hq(chat_id, item_id)
+                if ok:
+                    apply_vseg_label(chat_id, item_id, is_good=True, reason="download_original")
+                    from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
+
+                    markup = markup_fn("good", segment_id=item_id)
+                else:
+                    send_message(f"⚠️ {reply}", chat_id=str(chat_id))
+                    return
+            else:
+                ok, reply = send_shorts_hq(chat_id, item_id)
+                if ok:
+                    apply_shorts_label(chat_id, item_id, is_good=True, reason="download_original")
+                    from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
+
+                    markup = markup_fn("good", video_id=item_id)
+                else:
+                    send_message(f"⚠️ {reply}", chat_id=str(chat_id))
+                    return
+            api(
+                "editMessageReplyMarkup",
+                {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
+                timeout=15,
+            )
+        except Exception:
+            log.exception("download original failed mode=%s id=%s", mode, item_id)
+
+    try:
+        api(
+            "answerCallbackQuery",
+            {"callback_query_id": query_id, "text": "Отправляю оригинал…"},
+            timeout=15,
+        )
+    except Exception:
+        pass
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"mlbb-dl-{mode}-{item_id[:12]}",
+    ).start()
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -309,24 +361,6 @@ def send_vseg_hq(chat_id: str | int, segment_id: str) -> tuple[bool, str]:
     return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ (лимит Telegram?)")
 
 
-def _auto_send_hq_after_good(chat_id: str | int, mode: str, item_id: str) -> None:
-    if not _hq_auto_on_good():
-        return
-
-    def _worker() -> None:
-        try:
-            if mode == "vseg":
-                ok, reply = send_vseg_hq(chat_id, item_id)
-            else:
-                ok, reply = send_shorts_hq(chat_id, item_id)
-            if not ok:
-                send_message(f"⚠️ HQ не отправился: {reply}", chat_id=str(chat_id))
-        except Exception:
-            log.exception("auto hq send failed mode=%s id=%s", mode, item_id)
-
-    threading.Thread(target=_worker, daemon=True, name=f"mlbb-hq-{mode}-{item_id[:12]}").start()
-
-
 def handle_callback_query(query: dict, *, api=_api_call) -> None:
     """Process Telegram callback_query for MLBB 👍/👎 buttons."""
     query_id = query.get("id")
@@ -359,18 +393,13 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
         return
     if mode in ("hq_shorts", "hq_vseg"):
         try:
-            if mode == "hq_shorts":
-                ok, reply = send_shorts_hq(chat_id, item_id)
-            else:
-                ok, reply = send_vseg_hq(chat_id, item_id)
-            api(
-                "answerCallbackQuery",
-                {
-                    "callback_query_id": query_id,
-                    "text": reply[:180],
-                    "show_alert": not ok,
-                },
-                timeout=15,
+            _handle_download_original(
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                mode=mode,
+                item_id=item_id,
+                api=api,
             )
         except Exception as exc:
             log.exception("hq send failed: %s", exc)
@@ -411,9 +440,7 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
             "answerCallbackQuery",
             {
                 "callback_query_id": query_id,
-                "text": ("✅ Ок • отправляю HQ…" if is_good and _hq_auto_on_good() else "✅ Ок")
-                if is_good
-                else "❌ Не ок",
+                "text": "✅ Ок" if is_good else "❌ Не ок",
             },
             timeout=15,
         )
@@ -422,8 +449,6 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
             {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
             timeout=15,
         )
-        if is_good:
-            _auto_send_hq_after_good(chat_id, mode, item_id)
     except Exception as exc:
         log.exception("callback failed data=%s: %s", data, exc)
         try:

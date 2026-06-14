@@ -446,7 +446,7 @@ def main() -> int:
         token,
         chat_id,
         f"MLBB — {len(peaks)} сцен ({int(os.environ.get('MLBB_FIGHT_MAX_SEC', os.environ.get('MLBB_VOD_SEGMENT_SEC', '15')))}с, kill UI)\n"
-        f"👍 Ок / 👎 Не ок под каждым\n"
+        f"📥 Скачать оригинал / 👎 Не ок под каждым\n"
         f"Если 10 хороших — идём дальше",
     )
 
@@ -482,7 +482,7 @@ def main() -> int:
             f"MLBB кусок #{sid}\n"
             f"{vod.stem.replace('yt_', '')} @ {int(start)}s (пик {int(peak_t)}s) | {seg_dur:.0f}с\n"
             f"kill: {kill_meta.get('reason')} score={kill_meta.get('score'):.3f}\n"
-            f"👍 Ок / 👎 Не ок"
+            f"📥 Скачать оригинал / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
             print(f"telegram send failed {sid}", file=sys.stderr)
