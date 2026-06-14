@@ -270,6 +270,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_CALIBRATION_LENIENT": "1",
             "MLBB_SHORTS_CALIBRATION_BURST": "1" if aggressive else env.get("MLBB_SHORTS_CALIBRATION_BURST", "0"),
             "MLBB_SHORTS_STREAMER_ONLY": env.get("MLBB_SHORTS_STREAMER_ONLY", "1"),
+            "MLBB_STREAMER_REQUIRE_MLBB_TITLE": env.get("MLBB_STREAMER_REQUIRE_MLBB_TITLE", "1"),
             "MLBB_SHORTS_MIN_UPLOAD_DATE": env.get("MLBB_SHORTS_MIN_UPLOAD_DATE", "20260101"),
             "MLBB_SHORTS_INGEST_DAYS": env.get("MLBB_SHORTS_INGEST_DAYS", "365"),
             "MLBB_TRAINING_ARCHIVE": env.get("MLBB_TRAINING_ARCHIVE", "1"),

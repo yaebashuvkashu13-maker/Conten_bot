@@ -133,10 +133,12 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
 
 def _prune_bad_pending(*, limit: int = 120) -> int:
     """Drop queued static slides / wrong-game before picking a batch."""
+    from mlbb_calibration_store import upsert_candidate
     from mlbb_youtube_shorts_ingest import (
         passes_mlbb_shorts_activity_gate,
         passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_identity_gate,
+        passes_mlbb_shorts_kill_ui_gate,
         passes_mlbb_shorts_opening_gate,
         passes_mlbb_shorts_verify_gate,
     )
@@ -153,12 +155,17 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
             passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_gameplay_gate,
             passes_mlbb_shorts_verify_gate,
+            passes_mlbb_shorts_opening_gate,
+            passes_mlbb_shorts_kill_ui_gate,
         ):
             ok, reason = check(path, title=title)
             if not ok:
                 reject_candidate(vid, reason=reason, path=path)
                 removed += 1
                 break
+        else:
+            if not row.get("ingest_verified"):
+                upsert_candidate({**row, "ingest_verified": 1})
     if removed:
         print(f"pruned_bad_pending={removed}", flush=True)
     return removed
@@ -212,7 +219,7 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
-    _prune_bad_pending(limit=120)
+    _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "500")))
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
@@ -302,10 +309,12 @@ def _run_feed() -> int:
             passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_gameplay_gate,
             passes_mlbb_shorts_identity_gate,
+            passes_mlbb_shorts_kill_ui_gate,
             passes_mlbb_shorts_opening_gate,
             passes_mlbb_shorts_verify_gate,
             passes_shorts_calibration_gate,
             resolve_shorts_send_path,
+            verify_shorts_send_file,
         )
 
         id_ok, id_reason = passes_mlbb_shorts_identity_gate(
@@ -374,6 +383,13 @@ def _run_feed() -> int:
         if trim_start > 0:
             print(f"trim send {vid} start={trim_start:.2f}s reason={open_reason}", flush=True)
             row = {**row, "trim_start_sec": trim_start}
+        final_ok, final_reason = verify_shorts_send_file(
+            send_path, title=str(row.get("title", ""))
+        )
+        if not final_ok:
+            print(f"skip send {vid} final_verify={final_reason}", flush=True)
+            reject_candidate(vid, reason=final_reason, path=path)
+            continue
         header = batch_header if delivered == 0 else ""
         caption = format_caption(row, idx, len(picked), header=header)
         if trim_start > 0:

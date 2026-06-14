@@ -296,12 +296,45 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
         return False, f"rule_fail:{m.pass_reason} kill={kill_score:.2f}"
 
     if require_kill and not has_kill:
-        if m.combined_score < float(os.environ.get("MLBB_SHORTS_MIN_COMBINED_NO_KILL", "0.22")):
-            return False, f"no_kill_ui combined={m.combined_score:.3f}"
+        return False, f"mlbb_kill_required score={kill_score:.2f} combined={m.combined_score:.3f}"
 
-    if not has_kill and m.combined_score < min_combined:
+    if m.combined_score < min_combined:
         return False, f"weak_combat combined={m.combined_score:.3f}"
 
+    return True, "ok"
+
+
+def passes_mlbb_shorts_kill_ui_gate(path: Path, *, start_sec: float = 0.15) -> tuple[bool, str]:
+    """Hard MLBB discriminator — Savage/Maniac/kill feed OCR (other MOBAs fail)."""
+    dur = _ffprobe_duration(path)
+    window = min(WINDOW_SEC, max(4.0, dur * 0.85))
+    try:
+        from mlbb_kill_ui import score_mlbb_kill_ui
+
+        kill = score_mlbb_kill_ui(path, start_sec, window, sample_frames=8, strict=True)
+    except ImportError:
+        return True, "kill_ui_unavailable"
+    min_score = float(os.environ.get("MLBB_SHORTS_MIN_KILL_SCORE", "0.18"))
+    if kill.has_kill_notification:
+        return True, kill.reason or "kill_ok"
+    if float(kill.score) >= min_score:
+        return True, f"kill_score={kill.score:.2f}"
+    return False, f"no_mlbb_kill_ui:{kill.reason} score={kill.score:.2f}"
+
+
+def verify_shorts_send_file(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Full gate chain on the exact mp4 going to Telegram (after trim)."""
+    for check in (
+        passes_mlbb_shorts_identity_gate,
+        passes_mlbb_shorts_activity_gate,
+        passes_mlbb_shorts_gameplay_gate,
+        passes_mlbb_shorts_verify_gate,
+        passes_mlbb_shorts_opening_gate,
+        passes_mlbb_shorts_kill_ui_gate,
+    ):
+        ok, reason = check(path, title=title)
+        if not ok:
+            return False, reason
     return True, "ok"
 
 
@@ -561,6 +594,8 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
         if duration <= 3 or duration > 60:
             continue
         if NEGATIVE_TITLE.search(title):
+            continue
+        if os.environ.get("MLBB_STREAMER_REQUIRE_MLBB_TITLE", "1") == "1" and not _title_looks_mlbb(title):
             continue
         entries.append(
             {
@@ -910,6 +945,12 @@ def main() -> int:
             rejected += 1
             continue
 
+        kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4)
+        if not kill_ok:
+            print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
+            rejected += 1
+            continue
+
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         if not lenient:
             gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
@@ -934,6 +975,7 @@ def main() -> int:
                 "path": str(mp4),
                 "gameplay_pass": 1,
                 "identity_pass": 1,
+                "ingest_verified": 1,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
         )

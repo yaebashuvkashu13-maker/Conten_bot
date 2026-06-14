@@ -388,19 +388,8 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
             upsert_candidate({**row, "path": str(mp4), "video_id": vid, "id": vid})
             added += 1
             continue
-        upsert_candidate(
-            {
-                "video_id": vid,
-                "id": vid,
-                "path": str(mp4),
-                "title": row.get("title", vid),
-                "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
-                "score": float(row.get("score") or 0.12),
-                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "disk_rebuild",
-            }
-        )
-        added += 1
+        # Unknown disk files must go through ingest gates — never fake score=0.12 into queue.
+        continue
     return added
 
 
