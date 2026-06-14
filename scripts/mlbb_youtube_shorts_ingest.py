@@ -75,16 +75,29 @@ PROFILE = "mobile_legends"
 
 def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     """Mandatory MLBB-only check — always run before owner send (even in lenient mode)."""
-    from gameplay_gate import is_gameplay_video, score_segment_combat, segment_minimap_presence_rate
+    from gameplay_gate import (
+        is_gameplay_video,
+        score_segment_combat,
+        segment_minimap_presence_rate,
+        source_has_valid_gameplay_window,
+    )
 
     label = title or path.stem
     if NEGATIVE_TITLE.search(label):
         return False, "negative_title"
-    ok, _gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
+    min_heuristic = float(os.environ.get("MLBB_SHORTS_MIN_GAMEPLAY_HEURISTIC", "0.78"))
+    ok, gscore, reason = is_gameplay_video(
+        path, csv_lookup={}, description=label, min_score=min_heuristic
+    )
     if not ok:
         return False, f"not_mlbb:{reason}"
     dur = _ffprobe_duration(path)
     window = min(12.0, max(4.0, dur * 0.85))
+    ok_win, win_reason = source_has_valid_gameplay_window(
+        path, profile=PROFILE, windows=3, window_sec=min(10.0, window)
+    )
+    if not ok_win:
+        return False, f"not_live_match:{win_reason}"
     motion, mini, _skill, center_text = score_segment_combat(path, 0.0, window)
     min_motion = float(os.environ.get("MLBB_IDENTITY_MIN_MOTION", "0.012"))
     min_mini = float(os.environ.get("MLBB_IDENTITY_MIN_MINIMAP", "0.006"))
@@ -188,6 +201,56 @@ def passes_mlbb_shorts_gameplay_gate(path: Path, *, title: str = "") -> tuple[bo
     return True, "ok"
 
 
+def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """MLBB scorer + HUD verify — blocks other MOBAs that mimic generic minimap layout."""
+    from gameplay_gate import source_has_valid_gameplay_window
+
+    dur = _ffprobe_duration(path)
+    window = min(WINDOW_SEC, max(4.0, dur * 0.85))
+    start = 0.15
+    m = score_candidate_window(path, start, window, PROFILE)
+
+    if not m.visual_pass:
+        return False, f"visual:{m.pass_reason or 'fail'}"
+
+    min_mini = float(os.environ.get("MLBB_VERIFY_MIN_MINIMAP", "0.011"))
+    min_skill = float(os.environ.get("MLBB_VERIFY_MIN_SKILL", "0.0065"))
+    if m.minimap_delta < min_mini or m.skill_delta < min_skill:
+        return False, f"hud_not_mlbb mini={m.minimap_delta:.3f} skill={m.skill_delta:.3f}"
+
+    min_clip = float(os.environ.get("MLBB_SHORTS_MIN_CLIP_SCORE", "0.03"))
+    min_combined = float(os.environ.get("MLBB_SHORTS_MIN_COMBINED", "0.11"))
+    if m.clip_score < min_clip and m.combined_score < min_combined:
+        return False, f"exemplar_miss clip={m.clip_score:.3f} combined={m.combined_score:.3f}"
+
+    ok_win, win_reason = source_has_valid_gameplay_window(
+        path, profile=PROFILE, windows=4, window_sec=min(10.0, window)
+    )
+    if not ok_win:
+        return False, f"montage_fail:{win_reason}"
+
+    has_kill = False
+    kill_score = 0.0
+    try:
+        from mlbb_kill_ui import score_mlbb_kill_ui
+
+        kill = score_mlbb_kill_ui(path, start, window, sample_frames=6, strict=False)
+        has_kill = bool(kill.has_kill_notification)
+        kill_score = float(kill.score)
+    except ImportError:
+        pass
+
+    if not m.rule_pass:
+        if has_kill or m.combined_score >= min_combined:
+            return True, "ok_soft"
+        return False, f"not_mlbb_fight:{m.pass_reason} kill={kill_score:.2f}"
+
+    if not has_kill and m.combined_score < min_combined * 0.85:
+        return False, f"weak_combat combined={m.combined_score:.3f}"
+
+    return True, "ok"
+
+
 def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     """Reject static slides, SFX compilations, and non-gameplay before owner send."""
     from gameplay_gate import score_segment_combat
@@ -203,6 +266,10 @@ def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool
     gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(path, title=title)
     if not gp_ok:
         return False, gp_reason
+
+    ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(path, title=title)
+    if not ver_ok:
+        return False, ver_reason
 
     label = title or path.stem
     dur = _ffprobe_duration(path)
@@ -624,6 +691,12 @@ def main() -> int:
         gp_ok, gp_reason = passes_mlbb_shorts_gameplay_gate(mp4, title=row.get("title", ""))
         if not gp_ok:
             print(f"REJECT {vid} gameplay={gp_reason}", flush=True)
+            rejected += 1
+            continue
+
+        ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(mp4, title=row.get("title", ""))
+        if not ver_ok:
+            print(f"REJECT {vid} verify={ver_reason}", flush=True)
             rejected += 1
             continue
 

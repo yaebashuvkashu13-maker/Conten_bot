@@ -137,6 +137,7 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         passes_mlbb_shorts_activity_gate,
         passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_identity_gate,
+        passes_mlbb_shorts_verify_gate,
     )
 
     removed = 0
@@ -150,6 +151,7 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
             passes_mlbb_shorts_identity_gate,
             passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_gameplay_gate,
+            passes_mlbb_shorts_verify_gate,
         ):
             ok, reason = check(path, title=title)
             if not ok:
@@ -299,6 +301,7 @@ def _run_feed() -> int:
             passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_gameplay_gate,
             passes_mlbb_shorts_identity_gate,
+            passes_mlbb_shorts_verify_gate,
             passes_shorts_calibration_gate,
         )
 
@@ -324,6 +327,14 @@ def _run_feed() -> int:
         if not gp_ok:
             print(f"skip send {vid} gameplay={gp_reason}", flush=True)
             reject_candidate(vid, reason=gp_reason, path=path)
+            continue
+
+        ver_ok, ver_reason = passes_mlbb_shorts_verify_gate(
+            path, title=str(row.get("title", ""))
+        )
+        if not ver_ok:
+            print(f"skip send {vid} verify={ver_reason}", flush=True)
+            reject_candidate(vid, reason=ver_reason, path=path)
             continue
 
         if score < min_send_score and not lenient:

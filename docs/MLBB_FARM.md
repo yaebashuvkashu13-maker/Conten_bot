@@ -66,7 +66,8 @@ Critical:
 1. **MLBB identity gate** (always on) — minimap HUD + wrong-game block
 2. **Activity gate** (always on) — static image + music slides
 3. **Gameplay gate** (always on) — hero spawn preview, showcase, lobby/draft
-4. Kill UI detector + OCR keywords
+4. **Verify gate** (always on) — MLBB scorer + HUD + exemplar match (blocks other MOBAs)
+5. Kill UI detector + OCR keywords
 2. Variable fight length 7–22s
 3. Presend: freeze detect + motion + spawn check
 4. Owner 👎 → zone blocked in `mobile_legends_owner_labels.json`
