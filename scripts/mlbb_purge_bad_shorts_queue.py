@@ -13,6 +13,7 @@ from mlbb_youtube_shorts_ingest import (
     passes_mlbb_shorts_activity_gate,
     passes_mlbb_shorts_gameplay_gate,
     passes_mlbb_shorts_identity_gate,
+    passes_mlbb_shorts_opening_gate,
     passes_mlbb_shorts_verify_gate,
 )
 
@@ -21,6 +22,7 @@ CHECKS = (
     passes_mlbb_shorts_activity_gate,
     passes_mlbb_shorts_gameplay_gate,
     passes_mlbb_shorts_verify_gate,
+    passes_mlbb_shorts_opening_gate,
 )
 
 

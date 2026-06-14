@@ -305,6 +305,154 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
     return True, "ok"
 
 
+def _opening_window_junk(
+    path: Path,
+    start_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None,
+    window_sec: float,
+) -> bool:
+    from gameplay_gate import (
+        score_segment_combat,
+        segment_looks_like_draft_or_queue,
+        segment_opens_with_training,
+        segment_minimap_presence_rate,
+    )
+
+    if segment_opens_with_training(path, start_sec, crop_box=crop_box):
+        return True
+    if segment_looks_like_draft_or_queue(path, start_sec, window_sec, crop_box=crop_box):
+        return True
+    motion, mini, skill, center_text = score_segment_combat(
+        path, start_sec, window_sec, crop_box=crop_box, sample_frames=4
+    )
+    if motion < float(os.environ.get("MLBB_OPENING_MIN_MOTION", "0.016")) and max(mini, skill) < 0.0045:
+        return True
+    if center_text > float(os.environ.get("MLBB_OPENING_MAX_TEXT", "0.36")) and motion < 0.02:
+        return True
+    mini_pres = segment_minimap_presence_rate(
+        path, start_sec, window_sec, crop_box=crop_box, sample_frames=3
+    )
+    if mini_pres < float(os.environ.get("MLBB_OPENING_MIN_MINIMAP_PRES", "0.50")):
+        return True
+    return False
+
+
+def find_best_shorts_start(path: Path) -> tuple[float, str]:
+    """
+    Skip junk at t=0 (intro/lobby/menu). Returns (start_sec, reason).
+    start_sec < 0 means no clean opening found.
+    """
+    from gameplay_gate import detect_game_viewport_crop, score_segment_combat, segment_minimap_presence_rate
+
+    dur = _ffprobe_duration(path)
+    if dur < 4.5:
+        return 0.0, "short_ok"
+    crop = detect_game_viewport_crop(path, 0.0, min(dur, 12.0))
+    probe = float(os.environ.get("MLBB_SHORTS_OPENING_PROBE", "3.5"))
+    step = float(os.environ.get("MLBB_SHORTS_OPENING_STEP", "0.45"))
+    max_skip = min(float(os.environ.get("MLBB_SHORTS_MAX_OPENING_SKIP", "7.5")), dur * 0.42)
+    min_motion = float(os.environ.get("MLBB_OPENING_MIN_MOTION", "0.016"))
+
+    best_start = -1.0
+    best_score = -1.0
+    t = 0.0
+    while t <= max_skip + 1e-6:
+        window = min(probe, max(2.5, dur - t - 0.15))
+        if window < 2.5:
+            break
+        if not _opening_window_junk(path, t, crop_box=crop, window_sec=window):
+            motion, mini, skill, _text = score_segment_combat(
+                path, t, window, crop_box=crop, sample_frames=5
+            )
+            mini_pres = segment_minimap_presence_rate(
+                path, t, window, crop_box=crop, sample_frames=3
+            )
+            if motion >= min_motion and mini_pres >= float(os.environ.get("MLBB_OPENING_MIN_MINIMAP_PRES", "0.50")):
+                score = motion + mini + skill + mini_pres
+                if score > best_score:
+                    best_score = score
+                    best_start = t
+        t += step
+
+    if best_start >= 0:
+        if best_start <= 0.2:
+            return 0.0, "ok"
+        return round(best_start, 2), f"skip_opening@{best_start:.1f}s"
+
+    if _opening_window_junk(path, 0.0, crop_box=crop, window_sec=min(probe, dur * 0.5)):
+        return -1.0, "bad_opening"
+    return 0.0, "ok"
+
+
+def passes_mlbb_shorts_opening_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    start, reason = find_best_shorts_start(path)
+    if start < 0:
+        return False, reason
+    return True, reason
+
+
+def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
+    """Trim junk head; cache under MLBB_CALIBRATION_TRIM_DIR."""
+    import subprocess
+
+    dur = _ffprobe_duration(src)
+    remain = max(3.0, dur - start_sec - 0.08)
+    max_out = float(os.environ.get("MLBB_SHORTS_TRIM_MAX_SEC", "58"))
+    out_dur = min(remain, max_out)
+    trim_dir = Path(os.environ.get("MLBB_CALIBRATION_TRIM_DIR", "/root/data/mlbb/calibration_trimmed"))
+    trim_dir.mkdir(parents=True, exist_ok=True)
+    tag = int(round(start_sec * 10))
+    dest = trim_dir / f"{src.stem}_from{tag}{src.suffix}"
+    if dest.exists() and dest.stat().st_size > 2048:
+        return dest
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-ss",
+        f"{start_sec:.3f}",
+        "-i",
+        str(src),
+        "-t",
+        f"{out_dur:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.environ.get("MLBB_SHORTS_TRIM_PRESET", "veryfast"),
+        "-crf",
+        os.environ.get("MLBB_SHORTS_TRIM_CRF", "23"),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180)
+    if proc.returncode == 0 and dest.exists() and dest.stat().st_size > 2048:
+        return dest
+    return None
+
+
+def resolve_shorts_send_path(path: Path) -> tuple[Path | None, float, str]:
+    """Pick file to send — trim opening junk when needed."""
+    if os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1":
+        return path, 0.0, "trim_disabled"
+    start, reason = find_best_shorts_start(path)
+    if start < 0:
+        return None, 0.0, reason
+    min_trim = float(os.environ.get("MLBB_SHORTS_MIN_TRIM_SEND", "0.35"))
+    if start < min_trim:
+        return path, 0.0, reason
+    trimmed = trim_short_mp4(path, start)
+    if trimmed is None:
+        return None, 0.0, "trim_failed"
+    return trimmed, start, reason
+
+
 def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     """Reject static slides, SFX compilations, and non-gameplay before owner send."""
     from gameplay_gate import score_segment_combat

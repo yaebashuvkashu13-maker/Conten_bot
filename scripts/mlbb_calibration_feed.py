@@ -137,6 +137,7 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         passes_mlbb_shorts_activity_gate,
         passes_mlbb_shorts_gameplay_gate,
         passes_mlbb_shorts_identity_gate,
+        passes_mlbb_shorts_opening_gate,
         passes_mlbb_shorts_verify_gate,
     )
 
@@ -301,8 +302,10 @@ def _run_feed() -> int:
             passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_gameplay_gate,
             passes_mlbb_shorts_identity_gate,
+            passes_mlbb_shorts_opening_gate,
             passes_mlbb_shorts_verify_gate,
             passes_shorts_calibration_gate,
+            resolve_shorts_send_path,
         )
 
         id_ok, id_reason = passes_mlbb_shorts_identity_gate(
@@ -337,6 +340,12 @@ def _run_feed() -> int:
             reject_candidate(vid, reason=ver_reason, path=path)
             continue
 
+        open_ok, open_pre = passes_mlbb_shorts_opening_gate(path, title=str(row.get("title", "")))
+        if not open_ok:
+            print(f"skip send {vid} opening={open_pre}", flush=True)
+            reject_candidate(vid, reason=open_pre, path=path)
+            continue
+
         if score < min_send_score and not lenient:
             from mlbb_youtube_shorts_ingest import score_clip
 
@@ -357,9 +366,19 @@ def _run_feed() -> int:
                 print(f"skip send {vid} gate={gate_reason}", flush=True)
                 reject_candidate(vid, reason=gate_reason, path=path)
                 continue
+        send_path, trim_start, open_reason = resolve_shorts_send_path(path)
+        if send_path is None:
+            print(f"skip send {vid} opening={open_reason}", flush=True)
+            reject_candidate(vid, reason=open_reason, path=path)
+            continue
+        if trim_start > 0:
+            print(f"trim send {vid} start={trim_start:.2f}s reason={open_reason}", flush=True)
+            row = {**row, "trim_start_sec": trim_start}
         header = batch_header if delivered == 0 else ""
         caption = format_caption(row, idx, len(picked), header=header)
-        ok = send_video(token, chat_id, path, caption, video_id=vid)
+        if trim_start > 0:
+            caption = f"{caption}\n✂️ trimmed {trim_start:.1f}s junk head"
+        ok = send_video(token, chat_id, send_path, caption, video_id=vid)
         if not ok:
             ok = send_message(
                 token,
