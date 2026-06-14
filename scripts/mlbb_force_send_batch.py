@@ -346,6 +346,8 @@ def _pick_vods() -> list[Path]:
 
 def main() -> int:
     os.environ.setdefault("PYTHONPATH", "/usr/local/bin")
+    os.environ.setdefault("MLBB_VOD_FULL_FRAME", "1")
+    os.environ.setdefault("SMART_CROP_WEBCAM", "0")
     os.environ["MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["SMART_MLBB_REQUIRE_KILL_UI"] = "1"
     os.environ["MLBB_KILL_UI_SKIP_OCR"] = "0"

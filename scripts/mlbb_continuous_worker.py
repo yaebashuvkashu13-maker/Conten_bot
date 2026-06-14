@@ -192,6 +192,8 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "40"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
+            "MLBB_VOD_FULL_FRAME": "1",
+            "SMART_CROP_WEBCAM": "0",
             "MLBB_VOD_LEAD_SEC": "4",
             "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
             "OWNER_PREVIEW_REQUIRED": "0",
