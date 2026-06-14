@@ -130,10 +130,17 @@ def _load_forced_peaks(vods: list[Path], need: int) -> list[tuple[Path, float, d
     out: list[tuple[Path, float, dict]] = []
     vod_by_name = {v.name: v for v in vods}
     for row in rows:
-        vod = vod_by_name.get(row["vod"]) or Path(row.get("vod_path", ""))
+        vod = vod_by_name.get(row["vod"])
+        if vod is None:
+            name = str(row.get("vod", "")).strip()
+            candidate = INBOX / name if name and not name.startswith("/") else Path(name)
+            vod = candidate if candidate.exists() else Path(row.get("vod_path", ""))
         if not isinstance(vod, Path):
             vod = Path(vod)
         if not vod.exists():
+            print(f"skip peak vod missing {row.get('vod')}", flush=True)
+            continue
+        if not _looks_like_mlbb_vod(vod):
             continue
         out.append((vod, float(row["peak"]), row.get("kill_ui", {"score": row.get("score", 0), "reason": row.get("reason", "")})))
     out = _dedupe_by_vod_gap(out, min_gap)
@@ -290,8 +297,18 @@ def _looks_like_mlbb_vod(path: Path) -> bool:
     return True
 
 
-def _pick_vods() -> list[Path]:
+def _excluded_vod_ids() -> set[str]:
     blocked = _blocked_vod_ids()
+    extra = {
+        v.strip().replace("yt_", "")
+        for v in os.environ.get("MLBB_FORCE_EXCLUDE_VODS", "").split(",")
+        if v.strip()
+    }
+    return blocked | extra
+
+
+def _pick_vods() -> list[Path]:
+    blocked = _excluded_vod_ids()
     min_mb = float(os.environ.get("MLBB_FORCE_MIN_VOD_MB", "200"))
     max_mb = float(os.environ.get("MLBB_FORCE_MAX_VOD_MB", "950"))
     explicit = os.environ.get("MLBB_FORCE_VOD", "").strip()

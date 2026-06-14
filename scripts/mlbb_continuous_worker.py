@@ -18,6 +18,7 @@ BIN = Path("/usr/local/bin")
 PY = sys.executable
 PAUSED_PIPELINES = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
+PIDFILE = Path(os.environ.get("MLBB_CONTINUOUS_PID", "/root/data/mlbb/mlbb_continuous_worker.pid"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 
 
@@ -117,9 +118,13 @@ def pending_shorts() -> int:
 
     try:
         rebuild_index_from_disk()
-    except OSError as exc:
+    except Exception as exc:
         log(f"rebuild_index_from_disk skipped: {exc}")
-    return len(pending_candidates(limit=9999))
+    try:
+        return len(pending_candidates(limit=9999))
+    except Exception as exc:
+        log(f"pending_candidates error: {exc}")
+        return 0
 
 
 def pipeline_paused(name: str) -> bool:
@@ -247,58 +252,64 @@ def main() -> int:
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
 
     log(
-        f"mlbb_continuous_worker start target_pending={target_pending} "
+        f"mlbb_continuous_worker start pid={os.getpid()} target_pending={target_pending} "
         f"vod_slice={vod_slice_min}min batch={base.get('MLBB_CALIBRATION_BATCH')} "
         f"montage={'on' if montage_enabled else 'off'}"
     )
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     cycles = 0
 
     while True:
-        cycles += 1
-        pending = pending_shorts()
-        aggressive = pending < target_pending
+        try:
+            cycles += 1
+            pending = pending_shorts()
+            aggressive = pending < target_pending
 
-        if aggressive and ingest.cooldown_ok(ingest_cooldown):
-            ingest.cmd = ingest_cmd(base, aggressive=aggressive)
-            ingest.env = ingest_env(base, aggressive=aggressive)
-            ingest.start()
+            if aggressive and ingest.cooldown_ok(ingest_cooldown):
+                ingest.cmd = ingest_cmd(base, aggressive=aggressive)
+                ingest.env = ingest_env(base, aggressive=aggressive)
+                ingest.start()
 
-        if not vod.running():
-            vod.start()
+            if not vod.running():
+                vod.start()
 
-        if pending > 0 and not feed.running() and feed.cooldown_ok(feed_cooldown):
-            feed.start()
+            if pending > 0 and not feed.running() and feed.cooldown_ok(feed_cooldown):
+                feed.start()
 
-        if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
-            montage.start()
+            if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
+                montage.start()
 
-        for job in (ingest, vod, feed, montage):
-            job.reap()
+            for job in (ingest, vod, feed, montage):
+                job.reap()
 
-        if cycles % 90 == 0:
-            sync_script = BIN / "mlbb_viral_threshold_sync.py"
-            if not sync_script.exists():
-                sync_script = Path(__file__).resolve().parent / "mlbb_viral_threshold_sync.py"
-            if sync_script.exists():
-                subprocess.run([PY, str(sync_script)], env=base, timeout=120, check=False)
+            if cycles % 90 == 0:
+                sync_script = BIN / "mlbb_viral_threshold_sync.py"
+                if not sync_script.exists():
+                    sync_script = Path(__file__).resolve().parent / "mlbb_viral_threshold_sync.py"
+                if sync_script.exists():
+                    subprocess.run([PY, str(sync_script)], env=base, timeout=120, check=False)
 
-        if cycles % 360 == 0:
-            report_script = BIN / "mlbb_daily_report.py"
-            if not report_script.exists():
-                report_script = Path(__file__).resolve().parent / "mlbb_daily_report.py"
-            if report_script.exists():
-                subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
+            if cycles % 360 == 0:
+                report_script = BIN / "mlbb_daily_report.py"
+                if not report_script.exists():
+                    report_script = Path(__file__).resolve().parent / "mlbb_daily_report.py"
+                if report_script.exists():
+                    subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
 
-        if cycles % 15 == 0:
-            write_state(
-                {
-                    "pending_shorts": pending,
-                    "ingest_running": ingest.running(),
-                    "vod_running": vod.running(),
-                    "feed_running": feed.running(),
-                    "cycles": cycles,
-                }
-            )
+            if cycles % 15 == 0:
+                write_state(
+                    {
+                        "pending_shorts": pending,
+                        "ingest_running": ingest.running(),
+                        "vod_running": vod.running(),
+                        "feed_running": feed.running(),
+                        "cycles": cycles,
+                        "worker_pid": os.getpid(),
+                    }
+                )
+        except Exception as exc:
+            log(f"loop error: {type(exc).__name__}: {exc}")
 
         time.sleep(LOOP_SEC)
 

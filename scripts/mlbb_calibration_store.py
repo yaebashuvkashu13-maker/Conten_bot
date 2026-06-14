@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 REPO = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
 DATA_MLBB = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
 SHORTS_ROOT = Path(os.environ.get("MLBB_SHORTS_ROOT", "/root/datasets/mlbb/youtube_shorts"))
+YT_SHORT_FILE_RE = re.compile(r"^yt_[\w-]{11}\.mp4$")
 EXEMPLAR_ROOT = Path(
     os.environ.get(
         "HIGHLIGHT_EXEMPLAR_ROOT",
@@ -318,6 +320,8 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
         return 0
     labeled = labeled_ids()
     for mp4 in sorted(SHORTS_ROOT.glob("yt_*.mp4")):
+        if not YT_SHORT_FILE_RE.match(mp4.name):
+            continue
         if _is_merged_short(mp4):
             continue
         try:
