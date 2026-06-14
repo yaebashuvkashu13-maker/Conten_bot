@@ -432,8 +432,8 @@ def main() -> int:
     target_pending = int(base.get("MLBB_TARGET_PENDING", "40"))
     vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
     vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
-    ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "180"))
-    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "300"))
+    base_ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "180"))
+    base_feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "300"))
     vod_cooldown = float(base.get("MLBB_VOD_COOLDOWN_SEC", "300"))
     if base.get("MLBB_SEND_ENABLED", "1") != "1":
         log("MLBB_SEND_ENABLED=0 — worker idle (no Telegram sends)")
@@ -449,6 +449,7 @@ def main() -> int:
     montage = Proc("montage", montage_cmd(base), base)
     montage_enabled = not pipeline_paused("montage")
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
+    last_tier = -1
 
     log(
         f"mlbb_continuous_worker start pid={os.getpid()} target_pending={target_pending} "
@@ -465,6 +466,19 @@ def main() -> int:
             pending = pending_shorts()
             aggressive = pending < target_pending
 
+            try:
+                from mlbb_calibration_tier import apply_tier
+
+                tier, tier_env = apply_tier(base, pending=pending)
+            except ImportError:
+                tier, tier_env = 1, dict(base)
+            if tier != last_tier:
+                log(f"calibration tier={tier} pending={pending}")
+                last_tier = tier
+            ingest_cooldown = float(tier_env.get("MLBB_INGEST_COOLDOWN_SEC", base_ingest_cooldown))
+            feed_cooldown = float(tier_env.get("MLBB_FEED_COOLDOWN_SEC", base_feed_cooldown))
+            vod.env = {**vod_env(base), **tier_env}
+
             if (
                 aggressive
                 and should_start_ingest(pending=pending, target_pending=target_pending)
@@ -474,7 +488,7 @@ def main() -> int:
             ):
                 kill_stale_ingest()
                 ingest.cmd = ingest_cmd(base, aggressive=aggressive)
-                ingest.env = ingest_env(base, aggressive=aggressive)
+                ingest.env = {**ingest_env(base, aggressive=aggressive), **tier_env}
                 ingest.start()
 
             if (
@@ -487,13 +501,14 @@ def main() -> int:
 
             feed_wait = feed_cooldown
             if pending > 0:
-                feed_wait = float(base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90"))
+                feed_wait = float(tier_env.get("MLBB_FEED_COOLDOWN_PENDING_SEC", base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90")))
             if (
                 pending > 0
                 and not feed.running()
                 and not feed_running_externally()
                 and feed.cooldown_ok(feed_wait)
             ):
+                feed.env = {**base, **tier_env}
                 feed.start()
 
             if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
@@ -529,6 +544,7 @@ def main() -> int:
                 write_state(
                     {
                         "pending_shorts": pending,
+                        "calibration_tier": tier,
                         "ingest_running": ingest.running() or ingest_running_externally(),
                         "vod_running": vod.running() or vod_feed_running_externally(),
                         "feed_running": feed.running() or feed_running_externally(),

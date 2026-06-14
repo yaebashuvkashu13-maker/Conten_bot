@@ -16,6 +16,7 @@ install -m 755 "$REPO/scripts/mlbb_force_send_batch.py" "$BIN/mlbb_force_send_ba
 install -m 755 "$REPO/scripts/mlbb_force_send_one.py" "$BIN/mlbb_force_send_one.py"
 install -m 755 "$REPO/scripts/mlbb_vod_segment_feed.py" "$BIN/mlbb_vod_segment_feed.py"
 install -m 755 "$REPO/scripts/mlbb_vod_segment_store.py" "$BIN/mlbb_vod_segment_store.py"
+install -m 755 "$REPO/scripts/mlbb_calibration_tier.py" "$BIN/mlbb_calibration_tier.py"
 install -m 755 "$REPO/scripts/mlbb_telegram_handlers.py" "$BIN/mlbb_telegram_handlers.py"
 install -m 755 "$REPO/scripts/mlbb_telegram_send.py" "$BIN/mlbb_telegram_send.py"
 install -m 755 "$REPO/scripts/mlbb_daily_report.py" "$BIN/mlbb_daily_report.py"

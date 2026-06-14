@@ -372,6 +372,8 @@ def passes_mlbb_shorts_verify_gate(path: Path, *, title: str = "") -> tuple[bool
 
 def passes_mlbb_shorts_kill_ui_gate(path: Path, *, start_sec: float = 0.15) -> tuple[bool, str]:
     """Hard MLBB discriminator — Savage/Maniac/kill feed OCR (other MOBAs fail)."""
+    if os.environ.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1") != "1":
+        return True, "kill_ui_skipped"
     dur = _ffprobe_duration(path)
     window = min(WINDOW_SEC, max(4.0, dur * 0.85))
     try:
@@ -1208,9 +1210,13 @@ def _run_ingest(args: argparse.Namespace) -> int:
             if file_dur > shorts_short_max_sec():
                 clip_start, clip_reason = find_best_long_clip_start(mp4)
                 if clip_start < 0:
-                    print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
-                    _reject(vid, f"long_clip:{clip_reason}", mp4)
-                    continue
+                    if os.environ.get("MLBB_INGEST_SKIP_LONG_CLIP_REJECT", "0") == "1":
+                        clip_start = 0.15
+                        clip_reason = "tier_skip_long_reject"
+                    else:
+                        print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
+                        _reject(vid, f"long_clip:{clip_reason}", mp4)
+                        continue
             kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
             if not kill_ok:
                 print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
@@ -1282,10 +1288,17 @@ def _run_ingest(args: argparse.Namespace) -> int:
         )
         saved += 1
         print(f"OK {vid} score={feats['score']:.3f} views={row.get('view_count')} {row.get('title','')[:50]}")
+        try:
+            from mlbb_calibration_tier import note_ingest_saved
 
+            note_ingest_saved(count=1)
+        except ImportError:
+            pass
+
+    tier = os.environ.get("MLBB_CALIBRATION_TIER", "?")
     print(
         f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} skipped_known={skipped_known} "
-        f"pool={len(pool)} pending={pending_n} dir={SHORTS_ROOT}"
+        f"pool={len(pool)} pending={pending_n} tier={tier} dir={SHORTS_ROOT}"
     )
     return 0
 

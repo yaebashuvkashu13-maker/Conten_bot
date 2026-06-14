@@ -153,10 +153,14 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         if not path.exists() or not vid:
             continue
         title = str(row.get("title", ""))
-        for check in (
-            passes_mlbb_shorts_identity_gate,
-            passes_mlbb_shorts_activity_gate,
-        ):
+        try:
+            from mlbb_calibration_tier import prune_identity_enabled
+        except ImportError:
+            prune_identity_enabled = lambda: True  # noqa: E731
+        checks = [passes_mlbb_shorts_activity_gate]
+        if prune_identity_enabled():
+            checks.insert(0, passes_mlbb_shorts_identity_gate)
+        for check in checks:
             ok, reason = check(path, title=title)
             if not ok:
                 reject_candidate(vid, reason=reason, path=path)
