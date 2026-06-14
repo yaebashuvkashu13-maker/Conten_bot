@@ -1106,7 +1106,12 @@ def _run_ingest(args: argparse.Namespace) -> int:
     elif queries:
         _collect_search()
 
-    pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
+    pool.sort(
+        key=lambda r: (
+            float(r.get("duration") or 9999),
+            -int(r.get("view_count") or 0),
+        )
+    )
     cap_sources = max(len(queries), len(channel_feeds), 1)
     cap = args.max_per_query * cap_sources
     pool = pool[: cap * 3]  # extra headroom — many rows already labeled
