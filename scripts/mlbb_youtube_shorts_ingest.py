@@ -746,6 +746,10 @@ def main() -> int:
                 continue
 
         feats = score_clip(mp4)
+        if int(feats.get("rule_pass") or 0) != 1:
+            print(f"REJECT {vid} rule_pass=0 {feats.get('pass_reason','')}", flush=True)
+            rejected += 1
+            continue
         if feats["score"] < min_score and not feats["rule_pass"] and not lenient:
             rejected += 1
             continue
