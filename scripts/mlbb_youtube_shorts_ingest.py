@@ -71,13 +71,40 @@ NEGATIVE_TITLE = re.compile(
 PROFILE = "mobile_legends"
 
 
-def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
-    """Reject static slides, SFX compilations, and non-gameplay before owner send."""
-    from gameplay_gate import is_gameplay_video, score_segment_combat
+def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Mandatory MLBB-only check — always run before owner send (even in lenient mode)."""
+    from gameplay_gate import is_gameplay_video, score_segment_combat, segment_minimap_presence_rate
 
     label = title or path.stem
     if NEGATIVE_TITLE.search(label):
         return False, "negative_title"
+    ok, _gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
+    if not ok:
+        return False, f"not_mlbb:{reason}"
+    dur = _ffprobe_duration(path)
+    window = min(12.0, max(4.0, dur * 0.85))
+    motion, mini, _skill, center_text = score_segment_combat(path, 0.0, window)
+    min_motion = float(os.environ.get("MLBB_IDENTITY_MIN_MOTION", "0.012"))
+    min_mini = float(os.environ.get("MLBB_IDENTITY_MIN_MINIMAP", "0.006"))
+    if mini < min_mini and motion < min_motion:
+        return False, f"no_mlbb_hud mini={mini:.3f} motion={motion:.3f}"
+    if center_text > float(os.environ.get("MLBB_IDENTITY_MAX_CENTER_TEXT", "0.42")):
+        return False, f"text_heavy={center_text:.3f}"
+    mini_pres = segment_minimap_presence_rate(path, 0.0, window, sample_frames=3)
+    if mini_pres < float(os.environ.get("MLBB_IDENTITY_MIN_MINIMAP_PRESENCE", "0.55")):
+        return False, f"no_minimap={mini_pres:.2f}"
+    return True, "ok"
+
+
+def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Reject static slides, SFX compilations, and non-gameplay before owner send."""
+    from gameplay_gate import score_segment_combat
+
+    id_ok, id_reason = passes_mlbb_shorts_identity_gate(path, title=title)
+    if not id_ok:
+        return False, id_reason
+
+    label = title or path.stem
     dur = _ffprobe_duration(path)
     window = min(15.0, max(4.0, dur * 0.9))
     motion, mini, skill, center_text = score_segment_combat(path, 0.0, window)
@@ -88,9 +115,6 @@ def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool
         return False, f"text_heavy={center_text:.3f}"
     if center_text > 0.32 and motion < min_motion * 1.15:
         return False, f"text_slide={center_text:.3f}"
-    ok, gscore, reason = is_gameplay_video(path, csv_lookup={}, description=label)
-    if not ok:
-        return False, f"not_gameplay:{reason}"
     if motion < float(os.environ.get("MLBB_SHORTS_MIN_GAMEPLAY_MOTION", "0.028")):
         return False, f"low_action={motion:.3f}"
     try:
@@ -485,25 +509,22 @@ def main() -> int:
             rejected += 1
             continue
 
-        gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
-        if not gate_ok:
-            print(f"REJECT {vid} gate={gate_reason}", flush=True)
+        id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
+        if not id_ok:
+            print(f"REJECT {vid} identity={id_reason}", flush=True)
             rejected += 1
             continue
 
-        ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-        hard_reject = reason in ("promo_text", "csv_lookup")
-        if not ok:
-            if hard_reject or not lenient:
+        if not lenient:
+            gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
+            if not gate_ok:
+                print(f"REJECT {vid} gate={gate_reason}", flush=True)
                 rejected += 1
                 continue
 
         feats = score_clip(mp4)
         if feats["score"] < min_score and not feats["rule_pass"] and not lenient:
-            rejected += 1
-            continue
-        if not ok and lenient and feats["score"] < 0.05:
             rejected += 1
             continue
 
@@ -512,9 +533,8 @@ def main() -> int:
                 **row,
                 **feats,
                 "path": str(mp4),
-                "gameplay_pass": int(ok),
-                "gameplay_score": round(float(gscore), 4),
-                "gameplay_reason": reason,
+                "gameplay_pass": 1,
+                "identity_pass": 1,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
         )

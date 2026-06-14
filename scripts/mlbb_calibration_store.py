@@ -126,6 +126,43 @@ def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
     )
 
 
+def reject_candidate(video_id: str, *, reason: str = "", path: Path | None = None) -> None:
+    """Drop non-MLBB / bad queue rows so they are not sent again."""
+    vid = str(video_id).strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    data = load_index()
+    data["candidates"] = [
+        row for row in data.get("candidates", []) if str(row.get("video_id", "")) != vid
+    ]
+    save_index(data)
+    mark_feed_sent([vid], paths=[path] if path else None)
+
+    labels = load_labels()
+    file_path = path or _expected_path(vid)
+    entry = {
+        "video_id": vid,
+        "id": vid,
+        "path": str(file_path),
+        "title": vid,
+        "reason": reason or "auto_reject",
+        "source": "auto_reject",
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    def _same_file(row: dict) -> bool:
+        p = Path(str(row.get("path", "")))
+        return id_from_path(p) == vid if p.name.startswith("yt_") else row.get("video_id") == vid
+
+    labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
+    labels["bad"].append(entry)
+    labels["feedback"] = [f for f in labels.get("feedback", []) if not _same_file(f)]
+    labels["feedback"].append({**entry, "owner_label": "no", "model_score": 0})
+    save_labels(labels)
+    if file_path.exists():
+        copy_exemplar(file_path, "bad", vid)
+
+
 def migrate_labels_from_paths() -> int:
     """Fix legacy rows where video_id != filename (duplicate-bug era)."""
     labels = load_labels()

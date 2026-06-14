@@ -19,6 +19,7 @@ from mlbb_calibration_store import (
     mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
+    reject_candidate,
     repair_index,
     stats,
 )
@@ -262,29 +263,39 @@ def _run_feed() -> int:
         min_send_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0.05"))
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         score = float(row.get("score") or 0)
+
+        from mlbb_youtube_shorts_ingest import (
+            passes_mlbb_shorts_identity_gate,
+            passes_shorts_calibration_gate,
+        )
+
+        id_ok, id_reason = passes_mlbb_shorts_identity_gate(
+            path, title=str(row.get("title", ""))
+        )
+        if not id_ok:
+            print(f"skip send {vid} identity={id_reason}", flush=True)
+            reject_candidate(vid, reason=id_reason, path=path)
+            continue
+
         if score < min_send_score and not lenient:
             from mlbb_youtube_shorts_ingest import score_clip
 
             feats = score_clip(path)
             score = float(feats.get("score") or 0)
             row = {**row, **feats}
-        elif score < min_send_score:
-            score = min_send_score
-            row = {**row, "score": score}
-        if score < min_send_score:
+        if score < min_send_score and not lenient:
             print(f"skip send {vid} low_score={score}", flush=True)
             continue
+
         if lenient:
             gate_ok, gate_reason = True, "lenient"
         else:
-            from mlbb_youtube_shorts_ingest import passes_shorts_calibration_gate
-
             gate_ok, gate_reason = passes_shorts_calibration_gate(
                 path, title=str(row.get("title", ""))
             )
             if not gate_ok:
                 print(f"skip send {vid} gate={gate_reason}", flush=True)
-                mark_feed_sent([vid], paths=[path])
+                reject_candidate(vid, reason=gate_reason, path=path)
                 continue
         header = batch_header if delivered == 0 else ""
         caption = format_caption(row, idx, len(picked), header=header)
