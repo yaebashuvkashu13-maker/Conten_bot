@@ -93,6 +93,43 @@ def passes_mlbb_shorts_identity_gate(path: Path, *, title: str = "") -> tuple[bo
     mini_pres = segment_minimap_presence_rate(path, 0.0, window, sample_frames=3)
     if mini_pres < float(os.environ.get("MLBB_IDENTITY_MIN_MINIMAP_PRESENCE", "0.55")):
         return False, f"no_minimap={mini_pres:.2f}"
+    hud_delta = max(mini, _skill)
+    min_hud_delta = float(os.environ.get("MLBB_IDENTITY_MIN_HUD_DELTA", "0.004"))
+    if hud_delta < min_hud_delta and motion < float(os.environ.get("MLBB_IDENTITY_MIN_MOTION", "0.012")) * 1.2:
+        return False, f"static_hud motion={motion:.3f} hud_delta={hud_delta:.4f}"
+    return True, "ok"
+
+
+def passes_mlbb_shorts_activity_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """Reject static image + music slides — mandatory before owner send."""
+    from gameplay_gate import score_segment_combat, segment_music_bed_score
+
+    dur = _ffprobe_duration(path)
+    window = min(15.0, max(5.0, dur * 0.92))
+    motion, mini, skill, center_text = score_segment_combat(path, 0.0, window, sample_frames=8)
+    min_motion = float(os.environ.get("MLBB_ACTIVITY_MIN_MOTION", "0.018"))
+    min_hud_delta = float(os.environ.get("MLBB_ACTIVITY_MIN_HUD_DELTA", "0.0045"))
+    hud_delta = max(mini, skill)
+
+    if motion < min_motion and hud_delta < min_hud_delta:
+        return False, f"static_slide motion={motion:.3f} hud_delta={hud_delta:.4f}"
+
+    bed = segment_music_bed_score(path, 0.0, window)
+    max_bed = float(os.environ.get("MLBB_SHORTS_MAX_MUSIC_BED", "0.42"))
+    if bed >= max_bed and motion < min_motion * 1.25:
+        return False, f"music_slide bed={bed:.2f} motion={motion:.3f}"
+
+    if center_text > 0.28 and motion < min_motion and hud_delta < min_hud_delta * 1.5:
+        return False, f"text_slide text={center_text:.2f}"
+
+    if dur > 7.0:
+        mid = max(0.5, dur * 0.25)
+        m2, mini2, skill2, _ct2 = score_segment_combat(
+            path, mid, min(10.0, dur - mid - 0.2), sample_frames=6
+        )
+        if m2 < min_motion * 0.9 and max(mini2, skill2) < min_hud_delta:
+            return False, f"static_mid motion={m2:.3f}"
+
     return True, "ok"
 
 
@@ -103,6 +140,10 @@ def passes_shorts_calibration_gate(path: Path, *, title: str = "") -> tuple[bool
     id_ok, id_reason = passes_mlbb_shorts_identity_gate(path, title=title)
     if not id_ok:
         return False, id_reason
+
+    act_ok, act_reason = passes_mlbb_shorts_activity_gate(path, title=title)
+    if not act_ok:
+        return False, act_reason
 
     label = title or path.stem
     dur = _ffprobe_duration(path)
@@ -512,6 +553,12 @@ def main() -> int:
         id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
         if not id_ok:
             print(f"REJECT {vid} identity={id_reason}", flush=True)
+            rejected += 1
+            continue
+
+        act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
+        if not act_ok:
+            print(f"REJECT {vid} activity={act_reason}", flush=True)
             rejected += 1
             continue
 

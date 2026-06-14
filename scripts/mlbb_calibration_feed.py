@@ -131,6 +131,31 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
     )
 
 
+def _prune_bad_pending(*, limit: int = 120) -> int:
+    """Drop queued static slides / wrong-game before picking a batch."""
+    from mlbb_youtube_shorts_ingest import (
+        passes_mlbb_shorts_activity_gate,
+        passes_mlbb_shorts_identity_gate,
+    )
+
+    removed = 0
+    for row in pending_candidates(limit=limit):
+        path = Path(row.get("path", ""))
+        vid = str(row.get("video_id", ""))
+        if not path.exists() or not vid:
+            continue
+        title = str(row.get("title", ""))
+        for check in (passes_mlbb_shorts_identity_gate, passes_mlbb_shorts_activity_gate):
+            ok, reason = check(path, title=title)
+            if not ok:
+                reject_candidate(vid, reason=reason, path=path)
+                removed += 1
+                break
+    if removed:
+        print(f"pruned_bad_pending={removed}", flush=True)
+    return removed
+
+
 def _acquire_lock() -> object | None:
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     if LOCK_PATH.exists():
@@ -179,6 +204,7 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
+    _prune_bad_pending(limit=120)
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
@@ -265,6 +291,7 @@ def _run_feed() -> int:
         score = float(row.get("score") or 0)
 
         from mlbb_youtube_shorts_ingest import (
+            passes_mlbb_shorts_activity_gate,
             passes_mlbb_shorts_identity_gate,
             passes_shorts_calibration_gate,
         )
@@ -275,6 +302,14 @@ def _run_feed() -> int:
         if not id_ok:
             print(f"skip send {vid} identity={id_reason}", flush=True)
             reject_candidate(vid, reason=id_reason, path=path)
+            continue
+
+        act_ok, act_reason = passes_mlbb_shorts_activity_gate(
+            path, title=str(row.get("title", ""))
+        )
+        if not act_ok:
+            print(f"skip send {vid} activity={act_reason}", flush=True)
+            reject_candidate(vid, reason=act_reason, path=path)
             continue
 
         if score < min_send_score and not lenient:
