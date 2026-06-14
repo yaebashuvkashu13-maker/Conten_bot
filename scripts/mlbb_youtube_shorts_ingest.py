@@ -666,11 +666,12 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
     import subprocess
 
     cutoff = shorts_upload_cutoff(env, days=days)
+    playlist_n = max(limit * 3, 40)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         channel_url,
         "--flat-playlist",
-        "--playlistend",
-        str(max(limit * 3, 40)),
+        "-I",
+        f"1:{playlist_n}",
         "--sleep-requests",
         env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
         "--print",
@@ -693,10 +694,13 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
             continue
         try:
             duration = float(dur or 0)
+        except (ValueError, TypeError):
+            duration = 0.0
+        try:
             view_count = int(float(views or 0))
         except (ValueError, TypeError):
-            continue
-        if not duration_in_ingest_range(duration, env):
+            view_count = 0
+        if duration > 0 and not duration_in_ingest_range(duration, env):
             continue
         if NEGATIVE_TITLE.search(title):
             continue
@@ -751,10 +755,13 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
             continue
         try:
             duration = float(dur or 0)
+        except (ValueError, TypeError):
+            duration = 0.0
+        try:
             view_count = int(float(views or 0))
         except (ValueError, TypeError):
-            continue
-        if not duration_in_ingest_range(duration, env):
+            view_count = 0
+        if duration > 0 and not duration_in_ingest_range(duration, env):
             continue
         if NEGATIVE_TITLE.search(title):
             continue
@@ -984,10 +991,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
     elif burst:
         print(f"calibration_burst channels={len(channel_feeds)}")
 
-    streamer_only = os.environ.get("MLBB_SHORTS_STREAMER_ONLY", "1") == "1"
+    streamer_only = os.environ.get("MLBB_SHORTS_STREAMER_ONLY", "0") == "1"
     if streamer_only:
         queries = []
-        print(f"streamer_only=1 channels={len(channel_feeds)} (no ytsearch)")
+        print(f"streamer_only=1 channels={len(channel_feeds)} (no ytsearch yet)")
 
     for channel_url in channel_feeds:
         for row in fetch_streamer_shorts(
@@ -1000,6 +1007,17 @@ def _run_ingest(args: argparse.Namespace) -> int:
             pool.append(row)
         if args.search_delay > 0:
             time.sleep(args.search_delay)
+
+    min_pool = int(os.environ.get("MLBB_SHORTS_MIN_POOL", "8"))
+    search_fallback = os.environ.get("MLBB_SHORTS_SEARCH_FALLBACK", "1") == "1"
+    if search_fallback and len(pool) < min_pool:
+        fallback_queries = list(SEARCH_QUERIES) if not queries else queries
+        print(
+            f"search_fallback pool={len(pool)}<{min_pool} queries={len(fallback_queries)}",
+            flush=True,
+        )
+        queries = fallback_queries
+
     for query in queries:
         for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
             vid = row["video_id"]
@@ -1063,6 +1081,16 @@ def _run_ingest(args: argparse.Namespace) -> int:
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
+            continue
+
+        file_dur = _ffprobe_duration(mp4)
+        if file_dur > 0 and not duration_in_ingest_range(file_dur, env):
+            print(f"REJECT {vid} duration={file_dur:.0f}s out_of_range", flush=True)
+            rejected += 1
+            try:
+                mp4.unlink()
+            except OSError:
+                pass
             continue
 
         if NEGATIVE_TITLE.search(row.get("title", "")):
