@@ -19,7 +19,10 @@ PY = sys.executable
 PAUSED_PIPELINES = Path("/root/data/mlbb/PAUSED_PIPELINES")
 
 PIDFILE = Path(os.environ.get("MLBB_CONTINUOUS_PID", "/root/data/mlbb/mlbb_continuous_worker.pid"))
+WORKER_LOCK = Path(os.environ.get("MLBB_CONTINUOUS_LOCK", "/root/data/mlbb/mlbb_continuous_worker.lock"))
 VOD_LOCK = Path(os.environ.get("MLBB_VOD_FEED_LOCK", "/root/data/mlbb/vod_segment_feed.lock"))
+INGEST_LOCK = Path(os.environ.get("MLBB_SHORTS_INGEST_LOCK", "/root/data/mlbb/youtube_shorts_ingest.lock"))
+FEED_LOCK = Path(os.environ.get("MLBB_CALIBRATION_FEED_LOCK", "/root/data/mlbb/calibration_feed.lock"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 
 
@@ -111,7 +114,11 @@ class Proc:
         return rc
 
     def cooldown_ok(self, sec: float) -> bool:
-        return (time.time() - self.last_start) >= sec or not self.running()
+        if self.running():
+            return False
+        if self.last_start <= 0:
+            return True
+        return (time.time() - self.last_start) >= sec
 
 
 def pending_shorts() -> int:
@@ -128,15 +135,53 @@ def pending_shorts() -> int:
         return 0
 
 
-def vod_feed_running_externally() -> bool:
-    if not VOD_LOCK.exists():
+def _lock_pid_alive(lock_path: Path) -> bool:
+    if not lock_path.exists():
         return False
     try:
-        pid = int(VOD_LOCK.read_text(encoding="utf-8").strip())
+        pid = int(lock_path.read_text(encoding="utf-8").strip())
         os.kill(pid, 0)
         return True
     except (OSError, ValueError):
         return False
+
+
+def vod_feed_running_externally() -> bool:
+    return _lock_pid_alive(VOD_LOCK)
+
+
+def ingest_running_externally() -> bool:
+    return _lock_pid_alive(INGEST_LOCK)
+
+
+def feed_running_externally() -> bool:
+    return _lock_pid_alive(FEED_LOCK)
+
+
+def acquire_worker_lock() -> object | None:
+    import fcntl
+
+    WORKER_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    if WORKER_LOCK.exists():
+        try:
+            old_pid = int(WORKER_LOCK.read_text(encoding="utf-8").strip())
+            os.kill(old_pid, 0)
+        except ProcessLookupError:
+            WORKER_LOCK.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            WORKER_LOCK.unlink(missing_ok=True)
+    handle = WORKER_LOCK.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        log("skip worker: another mlbb_continuous_worker is running")
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
 
 
 def hourly_status(base: dict[str, str]) -> None:
@@ -197,7 +242,7 @@ def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
     if not script.exists():
         script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
     burst = env.get("MLBB_SHORTS_CALIBRATION_BURST", "1") == "1"
-    max_dl = env.get("MLBB_INGEST_MAX_DOWNLOADS", "40" if burst else "15")
+    max_dl = env.get("MLBB_INGEST_MAX_DOWNLOADS", "8" if burst else "15")
     max_q = env.get("MLBB_INGEST_MAX_PER_QUERY", "40" if burst else "20")
     delay = env.get("MLBB_INGEST_DOWNLOAD_DELAY", "5" if burst else "8")
     return [
@@ -304,11 +349,15 @@ def main() -> int:
     target_pending = int(base.get("MLBB_TARGET_PENDING", "40"))
     vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
     vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
-    ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "8"))
-    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "120"))
+    ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "180"))
+    feed_cooldown = float(base.get("MLBB_FEED_COOLDOWN_SEC", "300"))
     vod_cooldown = float(base.get("MLBB_VOD_COOLDOWN_SEC", "300"))
     if base.get("MLBB_SEND_ENABLED", "1") != "1":
         log("MLBB_SEND_ENABLED=0 — worker idle (no Telegram sends)")
+        return 0
+
+    lock_handle = acquire_worker_lock()
+    if lock_handle is None:
         return 0
 
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
@@ -333,7 +382,12 @@ def main() -> int:
             pending = pending_shorts()
             aggressive = pending < target_pending
 
-            if aggressive and ingest.cooldown_ok(ingest_cooldown):
+            if (
+                aggressive
+                and not ingest.running()
+                and not ingest_running_externally()
+                and ingest.cooldown_ok(ingest_cooldown)
+            ):
                 ingest.cmd = ingest_cmd(base, aggressive=aggressive)
                 ingest.env = ingest_env(base, aggressive=aggressive)
                 ingest.start()
@@ -345,7 +399,12 @@ def main() -> int:
             ):
                 vod.start()
 
-            if pending > 0 and not feed.running() and feed.cooldown_ok(feed_cooldown):
+            if (
+                pending > 0
+                and not feed.running()
+                and not feed_running_externally()
+                and feed.cooldown_ok(feed_cooldown)
+            ):
                 feed.start()
 
             if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
@@ -375,9 +434,9 @@ def main() -> int:
                 write_state(
                     {
                         "pending_shorts": pending,
-                        "ingest_running": ingest.running(),
+                        "ingest_running": ingest.running() or ingest_running_externally(),
                         "vod_running": vod.running() or vod_feed_running_externally(),
-                        "feed_running": feed.running(),
+                        "feed_running": feed.running() or feed_running_externally(),
                         "cycles": cycles,
                         "worker_pid": os.getpid(),
                     }

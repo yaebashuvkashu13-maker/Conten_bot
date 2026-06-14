@@ -7,7 +7,7 @@ LOG="/root/data/mlbb/mlbb_continuous_worker.log"
 WLOG="/root/data/mlbb/logs/mlbb_continuous_watchdog.log"
 PIDFILE="/root/data/mlbb/mlbb_continuous_worker.pid"
 STATE="/root/data/mlbb/mlbb_continuous_state.json"
-STALE_SEC="${MLBB_WORKER_STALE_SEC:-600}"
+STALE_SEC="${MLBB_WORKER_STALE_SEC:-1800}"
 
 mkdir -p "$(dirname "$WLOG")"
 
@@ -66,6 +66,12 @@ restart_worker() {
 pid="$(worker_pid || true)"
 if [[ -n "$pid" ]]; then
   if state_stale; then
+    if pgrep -f 'mlbb_youtube_shorts_ingest.py' >/dev/null \
+      || pgrep -f 'mlbb_calibration_feed.py' >/dev/null \
+      || pgrep -f 'mlbb_purge_bad_shorts_queue.py' >/dev/null; then
+      echo "[$(date -Is)] skip restart: heavy MLBB job still running" >> "$WLOG"
+      exit 0
+    fi
     kill "$pid" 2>/dev/null || true
     sleep 1
     restart_worker "stale_state"

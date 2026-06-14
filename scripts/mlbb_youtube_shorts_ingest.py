@@ -13,6 +13,7 @@ Output: /root/datasets/mlbb/youtube_shorts/ + data/mlbb/youtube_shorts_index.jso
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import re
 import sys
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gameplay_gate import is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
+    DATA_MLBB,
     SHORTS_ROOT,
     labeled_ids,
     pending_candidates,
@@ -763,6 +765,33 @@ def score_clip(path: Path) -> dict:
     }
 
 
+INGEST_LOCK = Path(os.environ.get("MLBB_SHORTS_INGEST_LOCK", str(DATA_MLBB / "youtube_shorts_ingest.lock")))
+
+
+def _acquire_ingest_lock() -> object | None:
+    INGEST_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    if INGEST_LOCK.exists():
+        try:
+            old_pid = int(INGEST_LOCK.read_text(encoding="utf-8").strip())
+            os.kill(old_pid, 0)
+        except ProcessLookupError:
+            INGEST_LOCK.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            INGEST_LOCK.unlink(missing_ok=True)
+    handle = INGEST_LOCK.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        print("skip ingest: another youtube_shorts_ingest is running", flush=True)
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
@@ -785,10 +814,24 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    lock_handle = _acquire_ingest_lock()
+    if lock_handle is None:
+        return 0
+    try:
+        return _run_ingest(args)
+    finally:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_handle.close()
+
+
+def _run_ingest(args: argparse.Namespace) -> int:
     burst = os.environ.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1"
     if args.incremental and burst:
         if args.max_downloads <= 0:
-            args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "40"))
+            args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "8"))
         args.max_per_query = int(os.environ.get("MLBB_INGEST_MAX_PER_QUERY", str(args.max_per_query)))
         args.skip_if_pending = 0
         args.download_delay = float(os.environ.get("MLBB_INGEST_DOWNLOAD_DELAY", "5"))

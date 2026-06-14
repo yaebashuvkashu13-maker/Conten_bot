@@ -23,7 +23,7 @@ install -m 755 "$REPO/scripts/mlbb_daily_report.py" "$BIN/mlbb_daily_report.py"
 install -m 755 "$REPO/scripts/mlbb_training_archive.py" "$BIN/mlbb_training_archive.py"
 install -m 755 "$REPO/scripts/mlbb_purge_bad_shorts_queue.py" "$BIN/mlbb_purge_bad_shorts_queue.py"
 
-if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-1}" == "1" ]]; then
+if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-0}" == "1" ]]; then
   python3 "$BIN/mlbb_purge_bad_shorts_queue.py" || true
 fi
 

@@ -219,7 +219,7 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
-    _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "500")))
+    _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "30")))
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
