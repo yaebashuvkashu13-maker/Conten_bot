@@ -13,6 +13,8 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -147,6 +149,104 @@ def parse_callback_data(data: str) -> tuple[str, bool | None, str, str]:
     return "unknown", None, "", ""
 
 
+def _hq_auto_on_good() -> bool:
+    return os.environ.get("MLBB_HQ_AUTO_ON_GOOD", "1") == "1"
+
+
+def _ffprobe_duration(path: Path) -> float:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        return float((proc.stdout or "0").strip())
+    except ValueError:
+        return 0.0
+
+
+def _segment_duration(row: dict) -> float:
+    path = Path(str(row.get("path", "")))
+    if path.exists():
+        dur = _ffprobe_duration(path)
+        if dur > 0:
+            return dur
+    for key in ("duration", "input_duration", "output_duration"):
+        if row.get(key):
+            return float(row[key])
+    return float(os.environ.get("MLBB_CALIBRATION_CLIP_SEC", "30"))
+
+
+def _cut_vod_hq(vod: Path, start: float, dur: float, out: Path) -> bool:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    base = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{start:.3f}",
+        "-t",
+        f"{dur:.3f}",
+        "-i",
+        str(vod),
+        "-movflags",
+        "+faststart",
+    ]
+    for cmd in (
+        [*base, "-c", "copy", str(out)],
+        [
+            *base,
+            "-c:v",
+            "libx264",
+            "-crf",
+            os.environ.get("MLBB_HQ_CRF", "17"),
+            "-preset",
+            os.environ.get("MLBB_HQ_PRESET", "fast"),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(out),
+        ],
+    ):
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+        if out.exists() and out.stat().st_size > 2048:
+            return True
+        log.warning("hq cut failed vod=%s start=%.1f cmd=%s err=%s", vod.name, start, cmd[-3], proc.stderr[:200])
+    return False
+
+
+def resolve_vseg_hq_path(segment_id: str) -> tuple[Path | None, bool]:
+    """Return HQ path; second value True when caller should delete the temp file."""
+    from mlbb_vod_segment_store import find_segment
+
+    row = find_segment(segment_id.strip()) or {}
+    vod = Path(str(row.get("vod", "")))
+    start = float(row.get("start", 0))
+    dur = _segment_duration(row)
+    if vod.exists() and os.environ.get("MLBB_HQ_SOURCE_VOD", "1") == "1":
+        out = Path(tempfile.gettempdir()) / f"hq_{segment_id.strip()}.mp4"
+        if _cut_vod_hq(vod, start, dur, out):
+            return out, True
+    path = Path(str(row.get("path", "")))
+    if path.exists():
+        return path, False
+    return None, False
+
+
 def send_hq_document(chat_id: str | int, path: Path, *, caption: str = "") -> bool:
     """Send original mp4 as file (Telegram preserves quality up to 2GB)."""
     if not path.exists() or path.stat().st_size < 2048:
@@ -156,6 +256,8 @@ def send_hq_document(chat_id: str | int, path: Path, *, caption: str = "") -> bo
     cmd = [
         "curl",
         "-sS",
+        "--noproxy",
+        "*",
         "-m",
         "600",
         "-F",
@@ -169,9 +271,14 @@ def send_hq_document(chat_id: str | int, path: Path, *, caption: str = "") -> bo
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=610)
     try:
-        return bool(json.loads(result.stdout or "{}").get("ok"))
+        payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
+        log.error("hq send invalid json stdout=%r stderr=%r", result.stdout[:300], result.stderr[:300])
         return False
+    if not payload.get("ok"):
+        log.error("hq send failed path=%s size=%s resp=%s", path, path.stat().st_size, payload)
+        return False
+    return True
 
 
 def send_shorts_hq(chat_id: str | int, video_id: str) -> tuple[bool, str]:
@@ -190,14 +297,34 @@ def send_shorts_hq(chat_id: str | int, video_id: str) -> tuple[bool, str]:
 
 
 def send_vseg_hq(chat_id: str | int, segment_id: str) -> tuple[bool, str]:
-    from mlbb_vod_segment_store import find_segment
+    sid = segment_id.strip()
+    path, is_temp = resolve_vseg_hq_path(sid)
+    if not path:
+        return False, f"Кусок {sid} не найден."
+    try:
+        ok = send_hq_document(chat_id, path, caption=f"HQ segment {sid}")
+    finally:
+        if is_temp:
+            path.unlink(missing_ok=True)
+    return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ (лимит Telegram?)")
 
-    row = find_segment(segment_id.strip()) or {}
-    path = Path(str(row.get("path", "")))
-    if not path.exists():
-        return False, f"Кусок {segment_id} не найден."
-    ok = send_hq_document(chat_id, path, caption=f"HQ segment {segment_id}")
-    return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ")
+
+def _auto_send_hq_after_good(chat_id: str | int, mode: str, item_id: str) -> None:
+    if not _hq_auto_on_good():
+        return
+
+    def _worker() -> None:
+        try:
+            if mode == "vseg":
+                ok, reply = send_vseg_hq(chat_id, item_id)
+            else:
+                ok, reply = send_shorts_hq(chat_id, item_id)
+            if not ok:
+                send_message(f"⚠️ HQ не отправился: {reply}", chat_id=str(chat_id))
+        except Exception:
+            log.exception("auto hq send failed mode=%s id=%s", mode, item_id)
+
+    threading.Thread(target=_worker, daemon=True, name=f"mlbb-hq-{mode}-{item_id[:12]}").start()
 
 
 def handle_callback_query(query: dict, *, api=_api_call) -> None:
@@ -282,7 +409,12 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
 
         api(
             "answerCallbackQuery",
-            {"callback_query_id": query_id, "text": "✅ Ок" if is_good else "❌ Не ок"},
+            {
+                "callback_query_id": query_id,
+                "text": ("✅ Ок • отправляю HQ…" if is_good and _hq_auto_on_good() else "✅ Ок")
+                if is_good
+                else "❌ Не ок",
+            },
             timeout=15,
         )
         api(
@@ -290,6 +422,8 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
             {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
             timeout=15,
         )
+        if is_good:
+            _auto_send_hq_after_good(chat_id, mode, item_id)
     except Exception as exc:
         log.exception("callback failed data=%s: %s", data, exc)
         try:
