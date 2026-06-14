@@ -21,6 +21,7 @@ install -m 755 "$REPO/scripts/mlbb_telegram_handlers.py" "$BIN/mlbb_telegram_han
 install -m 755 "$REPO/scripts/mlbb_telegram_send.py" "$BIN/mlbb_telegram_send.py"
 install -m 755 "$REPO/scripts/mlbb_daily_report.py" "$BIN/mlbb_daily_report.py"
 install -m 755 "$REPO/scripts/mlbb_training_archive.py" "$BIN/mlbb_training_archive.py"
+install -m 755 "$REPO/scripts/mlbb_purge_legacy_shorts_disk.py" "$BIN/mlbb_purge_legacy_shorts_disk.py"
 install -m 755 "$REPO/scripts/mlbb_purge_bad_shorts_queue.py" "$BIN/mlbb_purge_bad_shorts_queue.py"
 
 if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-0}" == "1" ]]; then

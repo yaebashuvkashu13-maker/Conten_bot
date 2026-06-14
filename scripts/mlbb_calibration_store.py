@@ -385,6 +385,8 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
             continue
         row = find_candidate(vid) or {}
         if row.get("video_id") == vid and not rescore:
+            if is_stub_candidate(row):
+                continue
             upsert_candidate({**row, "path": str(mp4), "video_id": vid, "id": vid})
             added += 1
             continue
