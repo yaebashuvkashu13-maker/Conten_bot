@@ -190,8 +190,41 @@ def should_start_vod(*, pending: int) -> bool:
     return pending >= int(os.environ.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "8"))
 
 
+def kill_stale_lock(lock_path: Path, *, name: str, max_age_sec: float) -> None:
+    """Kill process holding lock if lock file is older than max_age_sec."""
+    if not lock_path.exists():
+        return
+    try:
+        pid = int(lock_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+    except (ProcessLookupError, ValueError, OSError):
+        lock_path.unlink(missing_ok=True)
+        return
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except OSError:
+        lock_path.unlink(missing_ok=True)
+        return
+    if age < max_age_sec:
+        return
+    log(f"kill stale {name} pid={pid} lock_age_sec={age:.0f}")
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+    time.sleep(1)
+    try:
+        os.kill(pid, 0)
+        os.kill(pid, 9)
+    except OSError:
+        pass
+    lock_path.unlink(missing_ok=True)
+
+
 def kill_stale_ingest() -> None:
     """Free ingest lock if a previous run hung (blocks worker for hours)."""
+    stale_sec = float(os.environ.get("MLBB_INGEST_STALE_SEC", "900"))
+    kill_stale_lock(INGEST_LOCK, name="ingest", max_age_sec=stale_sec)
     if not INGEST_LOCK.exists():
         return
     try:
@@ -203,11 +236,16 @@ def kill_stale_ingest() -> None:
     max_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "2400")) + 300
     age = max_sec + 1.0
     try:
-        stat = os.stat(f"/proc/{pid}")
-        age = time.time() - stat.st_mtime
-    except OSError:
-        INGEST_LOCK.unlink(missing_ok=True)
-        return
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            start_ticks = int(fh.read().split()[21])
+        clk_tck = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+        age = time.time() - (start_ticks / clk_tck)
+    except (OSError, ValueError, IndexError):
+        try:
+            age = time.time() - INGEST_LOCK.stat().st_mtime
+        except OSError:
+            INGEST_LOCK.unlink(missing_ok=True)
+            return
     if age < max_sec:
         return
     log(f"kill stale ingest pid={pid} age_sec={age:.0f}")
@@ -222,6 +260,11 @@ def kill_stale_ingest() -> None:
     except OSError:
         pass
     INGEST_LOCK.unlink(missing_ok=True)
+
+
+def kill_stale_feed() -> None:
+    stale_sec = float(os.environ.get("MLBB_FEED_STALE_SEC", "300"))
+    kill_stale_lock(FEED_LOCK, name="feed", max_age_sec=stale_sec)
 
 
 def acquire_worker_lock() -> object | None:
@@ -508,6 +551,7 @@ def main() -> int:
                 and not feed_running_externally()
                 and feed.cooldown_ok(feed_wait)
             ):
+                kill_stale_feed()
                 feed.env = {**base, **tier_env}
                 feed.start()
 
@@ -536,9 +580,14 @@ def main() -> int:
 
             if cycles % 15 == 0:
                 try:
-                    from mlbb_calibration_store import repair_index
+                    from mlbb_calibration_store import repair_index, rescue_unindexed_shorts
 
                     repair_index()
+                    if pending == 0:
+                        rescued = rescue_unindexed_shorts(limit=4)
+                        if rescued:
+                            pending = pending_shorts()
+                            log(f"rescued {rescued} disk shorts pending={pending}")
                 except Exception as exc:
                     log(f"repair_index skipped: {exc}")
                 write_state(

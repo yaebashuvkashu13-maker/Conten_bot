@@ -1222,7 +1222,7 @@ def _collect_kill_first_segments(
         if not ok:
             log.info("kill-first skip %s gate=%s", sid, gate_reason)
             continue
-        score = float(peak_row.get("score", gate.get("score", 0)))
+        score = float(peak_row.get("score", getattr(gate, "score", 0)))
         clip = {
             "source_path": str(vod),
             "source_index": 0,

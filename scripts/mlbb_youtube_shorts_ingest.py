@@ -1201,6 +1201,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         clip_start = 0.15
+        fast_long = os.environ.get("MLBB_INGEST_SKIP_LONG_CLIP_REJECT", "0") == "1"
         if lenient:
             act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
             if not act_ok:
@@ -1208,20 +1209,21 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 _reject(vid, f"activity:{act_reason}", mp4)
                 continue
             if file_dur > shorts_short_max_sec():
-                clip_start, clip_reason = find_best_long_clip_start(mp4)
-                if clip_start < 0:
-                    if os.environ.get("MLBB_INGEST_SKIP_LONG_CLIP_REJECT", "0") == "1":
-                        clip_start = 0.15
-                        clip_reason = "tier_skip_long_reject"
-                    else:
+                if fast_long:
+                    clip_start = min(20.0, max(0.15, file_dur * 0.06))
+                    print(f"fast_long {vid} start={clip_start:.1f}s dur={file_dur:.0f}", flush=True)
+                else:
+                    clip_start, clip_reason = find_best_long_clip_start(mp4)
+                    if clip_start < 0:
                         print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
                         _reject(vid, f"long_clip:{clip_reason}", mp4)
                         continue
-            kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
-            if not kill_ok:
-                print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
-                _reject(vid, f"kill_ui:{kill_reason}", mp4)
-                continue
+            if os.environ.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1") == "1":
+                kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
+                if not kill_ok:
+                    print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
+                    _reject(vid, f"kill_ui:{kill_reason}", mp4)
+                    continue
         else:
             id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
             if not id_ok:
