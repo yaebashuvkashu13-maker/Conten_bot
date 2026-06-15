@@ -638,7 +638,7 @@ def main() -> int:
             feed_wait = feed_cooldown
             if pending > 0:
                 feed_wait = float(tier_env.get("MLBB_FEED_COOLDOWN_PENDING_SEC", base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90")))
-            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "120"))
+            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "300"))
             run_feed = pending > 0 or (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
             if (
                 run_feed

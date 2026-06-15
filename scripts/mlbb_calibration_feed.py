@@ -15,8 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_calibration_store import (
     DATA_MLBB,
+    _pending_excluded,
     inline_keyboard_markup,
     is_stub_candidate,
+    labeled_ids,
+    load_feed_sent,
     mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
@@ -526,6 +529,12 @@ def _run_feed() -> int:
             continue
 
         from mlbb_youtube_shorts_ingest import resolve_shorts_send_path, verify_shorts_send_file
+
+        labeled = labeled_ids()
+        sent = load_feed_sent()
+        if _pending_excluded(vid, path, labeled, sent):
+            print(f"skip send {vid} already_sent_unlabeled", flush=True)
+            continue
 
         print(f"check send {vid}", flush=True)
         cached_start = row.get("clip_start_sec")

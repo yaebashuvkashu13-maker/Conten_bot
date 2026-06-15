@@ -298,20 +298,20 @@ def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> b
 
 
 def _pending_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> bool:
-    """Pending queue: labeled always out; sent-but-unlabeled can resend after cooldown."""
+    """Pending queue: exclude labeled; sent-but-unlabeled wait for rating (optional resend after days)."""
     file_id = id_from_path(path)
     if vid in labeled or file_id in labeled:
         return True
-    resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "2"))
     in_sent = vid in sent["ids"] or file_id in sent["ids"] or file_id in sent["file_ids"]
     if not in_sent:
         return False
+    resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "48"))
     if resend_h <= 0:
-        return False
+        return True
     at = sent.get("at") or {}
     last = float(at.get(vid) or at.get(file_id) or 0)
     if last <= 0:
-        return False
+        return True
     return (time.time() - last) < resend_h * 3600.0
 
 

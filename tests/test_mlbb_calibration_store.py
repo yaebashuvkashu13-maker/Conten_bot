@@ -69,6 +69,25 @@ def test_pending_excludes_labeled(monkeypatch, tmp_path: Path) -> None:
     pending2 = pending_candidates(limit=10)
     assert not any(r["video_id"] == vid for r in pending2)
 
+    # Sent-but-unlabeled must not re-enter pending (no duplicate Telegram batches).
+    vid2 = "sentvid12345"
+    clip2 = shorts_root / f"yt_{vid2}.mp4"
+    clip2.write_bytes(b"y" * 20_000)
+    upsert_candidate(
+        {
+            "video_id": vid2,
+            "path": str(clip2),
+            "title": "sent clip",
+            "url": f"https://youtube.com/shorts/{vid2}",
+            "score": 0.4,
+            "ingest_verified": 1,
+        }
+    )
+    store.mark_feed_sent([vid2], paths=[clip2])
+    monkeypatch.setenv("MLBB_RESEND_UNLABELED_HOURS", "0")
+    pending3 = pending_candidates(limit=10)
+    assert not any(r["video_id"] == vid2 for r in pending3)
+
     # Owner can still relabel after index row is removed.
     store.save_index({"candidates": [], "updated_at": ""})
     ok, _ = apply_owner_label(vid, is_good=False, by_chat="1", reason="retest")
