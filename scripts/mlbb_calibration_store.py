@@ -159,28 +159,45 @@ def ingest_pool_skip_ids() -> set[str]:
     return skip
 
 
-def load_feed_sent() -> dict[str, set[str]]:
-    raw = _read_json(FEED_SENT_PATH, {"sent_ids": [], "sent_file_ids": []})
+def load_feed_sent() -> dict[str, set[str] | dict[str, float]]:
+    raw = _read_json(FEED_SENT_PATH, {"sent_ids": [], "sent_file_ids": [], "sent_at": {}})
     if not isinstance(raw, dict):
-        return {"ids": set(), "file_ids": set()}
+        return {"ids": set(), "file_ids": set(), "at": {}}
+    at_raw = raw.get("sent_at", {})
+    at: dict[str, float] = {}
+    if isinstance(at_raw, dict):
+        for k, v in at_raw.items():
+            try:
+                at[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
     return {
         "ids": set(str(x) for x in raw.get("sent_ids", [])),
         "file_ids": set(str(x) for x in raw.get("sent_file_ids", [])),
+        "at": at,
     }
 
 
 def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
     sent = load_feed_sent()
+    now = time.time()
     sent["ids"].update(str(x) for x in ids if x)
+    at = dict(sent.get("at") or {})
+    for vid in ids:
+        if vid:
+            at[str(vid)] = now
     for path in paths or []:
         if path.exists() or path.name.startswith("yt_"):
-            sent["file_ids"].add(id_from_path(path))
-            sent["ids"].add(id_from_path(path))
+            fid = id_from_path(path)
+            sent["file_ids"].add(fid)
+            sent["ids"].add(fid)
+            at[fid] = now
     _write_json(
         FEED_SENT_PATH,
         {
             "sent_ids": sorted(sent["ids"]),
             "sent_file_ids": sorted(sent["file_ids"]),
+            "sent_at": {k: at[k] for k in sorted(sent["ids"]) if k in at},
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
@@ -269,7 +286,7 @@ def labeled_ids() -> dict[str, str]:
     return out
 
 
-def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str]]) -> bool:
+def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> bool:
     file_id = id_from_path(path)
     if vid in labeled or file_id in labeled:
         return True
@@ -278,6 +295,24 @@ def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, 
     if file_id in sent["file_ids"]:
         return True
     return False
+
+
+def _pending_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> bool:
+    """Pending queue: labeled always out; sent-but-unlabeled can resend after cooldown."""
+    file_id = id_from_path(path)
+    if vid in labeled or file_id in labeled:
+        return True
+    resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "2"))
+    in_sent = vid in sent["ids"] or file_id in sent["ids"] or file_id in sent["file_ids"]
+    if not in_sent:
+        return False
+    if resend_h <= 0:
+        return False
+    at = sent.get("at") or {}
+    last = float(at.get(vid) or at.get(file_id) or 0)
+    if last <= 0:
+        return False
+    return (time.time() - last) < resend_h * 3600.0
 
 
 def find_labeled_row(video_id: str) -> dict | None:
@@ -669,7 +704,7 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         if not path.exists():
             continue
         vid = id_from_path(path)
-        if _is_excluded(vid, path, labeled, sent) or vid in seen_vids:
+        if _pending_excluded(vid, path, labeled, sent) or vid in seen_vids:
             continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
