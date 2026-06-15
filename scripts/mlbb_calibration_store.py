@@ -613,20 +613,35 @@ def ready_for_eval(*, min_yes: int = 30, min_no: int = 20) -> bool:
 
 
 def inline_keyboard_markup(video_id: str) -> dict:
-    """Telegram inline keyboard: скачать оригинал / 👎 under calibration Shorts."""
+    """Telegram inline keyboard: 👍 / 👎 under calibration Shorts."""
     vid = str(video_id).strip()
     if vid.startswith("yt_"):
         vid = vid[3:]
     return {
         "inline_keyboard": [
             [
-                {"text": "📥 Скачать оригинал", "callback_data": f"mlbb_hq_shorts:{vid}"},
+                {"text": "👍", "callback_data": f"mlbb_yes:{vid}"},
                 {"text": "👎", "callback_data": f"mlbb_no:{vid}"},
             ]
         ]
     }
 
 
+def good_download_keyboard_markup(video_id: str) -> dict:
+    """After 👍 — offer HQ download."""
+    vid = str(video_id).strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    return {
+        "inline_keyboard": [
+            [{"text": "📥 Скачать оригинал", "callback_data": f"mlbb_hq_shorts:{vid}"}]
+        ]
+    }
+
+
 def labeled_keyboard_markup(label: str, *, video_id: str = "", segment_id: str = "") -> dict:
-    mark = "✅ Отправлено" if label == "good" else "❌ Плохо"
+    if label == "good":
+        mark = "✅ Отправлено"
+    else:
+        mark = "❌ Плохо"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}

@@ -487,7 +487,7 @@ def main() -> int:
                 and ingest.cooldown_ok(ingest_cooldown)
             ):
                 kill_stale_ingest()
-                ingest.cmd = ingest_cmd(base, aggressive=aggressive)
+                ingest.cmd = ingest_cmd({**base, **tier_env}, aggressive=aggressive)
                 ingest.env = {**ingest_env(base, aggressive=aggressive), **tier_env}
                 ingest.start()
 

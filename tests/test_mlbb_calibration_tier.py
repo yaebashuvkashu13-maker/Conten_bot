@@ -20,11 +20,11 @@ def test_resolve_tier_escalates_when_empty(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(tier_mod, "STATE_PATH", tmp_path / "tier_state.json")
     now = 10_000.0
     state = {"empty_since": now - 200.0}
-    assert tier_mod.resolve_tier(pending=0, state=state, now=now) == 1
-    state = {"empty_since": now - 400.0}
     assert tier_mod.resolve_tier(pending=0, state=state, now=now) == 2
-    state = {"empty_since": now - 500.0}
+    state = {"empty_since": now - 400.0}
     assert tier_mod.resolve_tier(pending=0, state=state, now=now) == 3
+    state = {"empty_since": now - 100.0}
+    assert tier_mod.resolve_tier(pending=2, state=state, now=now) == 1
 
 
 def test_tier_env_relaxes_kill_at_starvation() -> None:

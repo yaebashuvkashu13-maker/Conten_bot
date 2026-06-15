@@ -158,30 +158,26 @@ def _handle_download_original(
     item_id: str,
     api,
 ) -> None:
-    """Send HQ file on button press; record 👍 only after successful send."""
+    """Send HQ file on button press (👍 label already recorded)."""
 
     def _worker() -> None:
         try:
             if mode == "hq_vseg":
                 ok, reply = send_vseg_hq(chat_id, item_id)
-                if ok:
-                    apply_vseg_label(chat_id, item_id, is_good=True, reason="download_original")
-                    from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
-
-                    markup = markup_fn("good", segment_id=item_id)
-                else:
+                if not ok:
                     send_message(f"⚠️ {reply}", chat_id=str(chat_id))
                     return
+                from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
+
+                markup = markup_fn("good", segment_id=item_id)
             else:
                 ok, reply = send_shorts_hq(chat_id, item_id)
-                if ok:
-                    apply_shorts_label(chat_id, item_id, is_good=True, reason="download_original")
-                    from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
-
-                    markup = markup_fn("good", video_id=item_id)
-                else:
+                if not ok:
                     send_message(f"⚠️ {reply}", chat_id=str(chat_id))
                     return
+                from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
+
+                markup = markup_fn("good", video_id=item_id)
             api(
                 "editMessageReplyMarkup",
                 {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
@@ -419,14 +415,24 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
     try:
         if mode == "vseg":
             ok, reply = apply_vseg_label(chat_id, item_id, is_good=is_good, reason=reason)
-            from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
+            if is_good:
+                from mlbb_vod_segment_store import good_download_keyboard_markup as markup_fn
 
-            markup = markup_fn("good" if is_good else "bad", segment_id=item_id)
+                markup = markup_fn(item_id)
+            else:
+                from mlbb_vod_segment_store import labeled_keyboard_markup as markup_fn
+
+                markup = markup_fn("bad", segment_id=item_id)
         else:
             ok, reply = apply_shorts_label(chat_id, item_id, is_good=is_good, reason=reason)
-            from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
+            if is_good:
+                from mlbb_calibration_store import good_download_keyboard_markup as markup_fn
 
-            markup = markup_fn("good" if is_good else "bad", video_id=item_id)
+                markup = markup_fn(item_id)
+            else:
+                from mlbb_calibration_store import labeled_keyboard_markup as markup_fn
+
+                markup = markup_fn("bad", video_id=item_id)
 
         if not ok:
             api(

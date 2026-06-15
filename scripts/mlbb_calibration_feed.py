@@ -127,7 +127,7 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"
         f"#id {vid}\n"
-        f"Нажми 📥 Скачать оригинал или 👎 под видео"
+        f"Нажми 👍 если ок, 👎 если нет"
     )
 
 
@@ -268,7 +268,7 @@ def _run_feed() -> int:
     s = stats()
     batch_header = (
         f"MLBB Shorts — {len(picked)} на оценку | 👍{s['feedback_yes']} 👎{s['feedback_no']}\n"
-        "Под роликом — 📥 Скачать оригинал / 👎"
+        "Под роликом — 👍 / 👎"
     )
 
     sent_ids: list[str] = []

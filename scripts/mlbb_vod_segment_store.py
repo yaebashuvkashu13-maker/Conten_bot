@@ -378,15 +378,27 @@ def inline_keyboard_markup(segment_id_str: str) -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "📥 Скачать оригинал", "callback_data": f"mlbb_hq_vseg:{sid}"},
+                {"text": "👍 Ок", "callback_data": f"mlbb_vseg_yes:{sid}"},
                 {"text": "👎 Не ок", "callback_data": f"mlbb_vseg_no:{sid}"},
             ]
         ]
     }
 
 
+def good_download_keyboard_markup(segment_id_str: str) -> dict:
+    sid = segment_id_str.strip()
+    return {
+        "inline_keyboard": [
+            [{"text": "📥 Скачать оригинал", "callback_data": f"mlbb_hq_vseg:{sid}"}]
+        ]
+    }
+
+
 def labeled_keyboard_markup(label: str, *, segment_id: str = "") -> dict:
-    mark = "✅ Отправлено" if label == "good" else "❌ Не ок"
+    if label == "good":
+        mark = "✅ Отправлено"
+    else:
+        mark = "❌ Не ок"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
 
 
