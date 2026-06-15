@@ -7,8 +7,17 @@ REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 ENV="/root/.video_bot.env"
 
 cd "$REPO"
-git pull --ff-only origin cursor/content-farm-fixes-1a63 || true
-bash "$REPO/deploy/mlbb_deploy.sh"
+git fetch origin cursor/content-farm-fixes-1a63 2>/dev/null || true
+BRANCH="origin/cursor/content-farm-fixes-1a63"
+for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
+  mlbb_youtube_shorts_ingest.py mlbb_health_guard.py mlbb_pipeline_health.py \
+  youtube_download.py mlbb_learning_first.py; do
+  if git show "${BRANCH}:scripts/${f}" >/dev/null 2>&1; then
+    git show "${BRANCH}:scripts/${f}" > "$BIN/${f}"
+    chmod 755 "$BIN/${f}"
+  fi
+done
+bash "$REPO/deploy/mlbb_deploy.sh" 2>/dev/null || true
 
 for kv in \
   MLBB_STEADY_MODE=1 \
