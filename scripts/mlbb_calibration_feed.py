@@ -241,6 +241,13 @@ def _run_feed() -> int:
         unique.append(row)
         if len(unique) >= BATCH_SIZE:
             break
+    unique.sort(
+        key=lambda r: (
+            Path(str(r.get("path", ""))).stat().st_size
+            if Path(str(r.get("path", ""))).exists()
+            else 10**12
+        )
+    )
     picked = unique
     if not picked:
         now = time.time()
@@ -290,7 +297,12 @@ def _run_feed() -> int:
         print(f"check send {vid}", flush=True)
         cached_start = row.get("clip_start_sec")
         clip_start = float(cached_start) if cached_start is not None else None
-        send_path, trim_start, open_reason = resolve_shorts_send_path(path, clip_start=clip_start)
+        try:
+            send_path, trim_start, open_reason = resolve_shorts_send_path(path, clip_start=clip_start)
+        except subprocess.TimeoutExpired:
+            print(f"skip send {vid} trim_timeout", flush=True)
+            reject_candidate(vid, reason="trim_timeout", path=path)
+            continue
         if send_path is None:
             print(f"skip send {vid} opening={open_reason}", flush=True)
             reject_candidate(vid, reason=open_reason, path=path)

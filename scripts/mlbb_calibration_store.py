@@ -493,7 +493,7 @@ def rescue_unindexed_shorts(*, limit: int = 6) -> int:
     """Register downloaded mp4 stuck on disk (ingest hung before upsert)."""
     if not SHORTS_ROOT.exists():
         return 0
-    from mlbb_youtube_shorts_ingest import passes_mlbb_shorts_activity_gate, score_clip
+    from mlbb_youtube_shorts_ingest import passes_mlbb_shorts_activity_gate
 
     labeled = labeled_ids()
     sent = load_feed_sent()
@@ -505,24 +505,27 @@ def rescue_unindexed_shorts(*, limit: int = 6) -> int:
             continue
         if mp4.stat().st_size < 10_000:
             continue
+        if mp4.stat().st_size > int(os.environ.get("MLBB_RESCUE_MAX_BYTES", str(120 * 1024 * 1024))):
+            continue
         vid = id_from_path(mp4)
         if vid in labeled or vid in sent["ids"] or vid in ingest_skip_ids():
             continue
-        if find_candidate(vid) and not is_stub_candidate(find_candidate(vid) or {}):
+        existing = find_candidate(vid) or {}
+        if existing.get("ingest_verified") and not is_stub_candidate(existing):
             continue
         act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4)
         if not act_ok:
             continue
-        feats = score_clip(mp4)
+        score = float(existing.get("score") or 0.35)
         upsert_candidate(
             {
+                **existing,
                 "video_id": vid,
                 "path": str(mp4),
-                "title": str((find_candidate(vid) or {}).get("title") or vid),
-                "url": f"https://www.youtube.com/watch?v={vid}",
-                "score": feats.get("score", 0.3),
-                **feats,
-                "clip_start_sec": 0.15,
+                "title": str(existing.get("title") or vid),
+                "url": existing.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                "score": score,
+                "clip_start_sec": float(existing.get("clip_start_sec") or 0.15),
                 "gameplay_pass": 1,
                 "identity_pass": 1,
                 "ingest_verified": 1,
@@ -530,7 +533,7 @@ def rescue_unindexed_shorts(*, limit: int = 6) -> int:
             }
         )
         rescued += 1
-        print(f"rescued_disk {vid} score={feats.get('score', 0):.3f}", flush=True)
+        print(f"rescued_disk {vid} score={score:.3f}", flush=True)
     return rescued
 
 

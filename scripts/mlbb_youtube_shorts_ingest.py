@@ -567,7 +567,9 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
     dest = trim_dir / f"{src.stem}_from{tag}{src.suffix}"
     if dest.exists() and dest.stat().st_size > 2048:
         return dest
-    cmd = [
+    size_mb = src.stat().st_size / (1024 * 1024)
+    timeout = min(600, max(90, int(size_mb * 3)))
+    base = [
         "ffmpeg",
         "-y",
         "-v",
@@ -578,23 +580,29 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
         str(src),
         "-t",
         f"{out_dur:.3f}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        os.environ.get("MLBB_SHORTS_TRIM_PRESET", "veryfast"),
-        "-crf",
-        os.environ.get("MLBB_SHORTS_TRIM_CRF", "23"),
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
         "-movflags",
         "+faststart",
-        str(dest),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180)
-    if proc.returncode == 0 and dest.exists() and dest.stat().st_size > 2048:
-        return dest
+    for cmd in (
+        [*base, "-c", "copy", str(dest)],
+        [
+            *base,
+            "-c:v",
+            "libx264",
+            "-preset",
+            os.environ.get("MLBB_SHORTS_TRIM_PRESET", "veryfast"),
+            "-crf",
+            os.environ.get("MLBB_SHORTS_TRIM_CRF", "23"),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            str(dest),
+        ],
+    ):
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
+        if proc.returncode == 0 and dest.exists() and dest.stat().st_size > 2048:
+            return dest
     return None
 
 
