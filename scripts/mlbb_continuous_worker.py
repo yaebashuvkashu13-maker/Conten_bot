@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -118,6 +119,21 @@ class Proc:
         self.proc = None
         return rc
 
+    def stop(self) -> None:
+        if not self.proc or self.proc.poll() is not None:
+            self.proc = None
+            return
+        pid = self.proc.pid
+        log(f"STOP {self.name} pid={pid}")
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+        self.proc = None
+
     def cooldown_ok(self, sec: float) -> bool:
         if self.running():
             return False
@@ -177,6 +193,8 @@ def heavy_job_running() -> bool:
 
 def should_start_ingest(*, pending: int, target_pending: int) -> bool:
     """On 4-core hosts, avoid ingest OCR while VOD scan runs unless queue is empty."""
+    if os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
+        return True
     if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
         return True
     if not vod_feed_running_externally():
@@ -184,7 +202,9 @@ def should_start_ingest(*, pending: int, target_pending: int) -> bool:
     return pending < int(os.environ.get("MLBB_INGEST_FORCE_PENDING", "3"))
 
 
-def should_start_vod(*, pending: int) -> bool:
+def should_start_vod(*, pending: int, target_pending: int) -> bool:
+    if os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
+        return False
     if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
         return True
     if not ingest_running_externally():
@@ -223,8 +243,41 @@ def kill_stale_lock(lock_path: Path, *, name: str, max_age_sec: float) -> None:
     lock_path.unlink(missing_ok=True)
 
 
+def kill_orphan_ingest() -> None:
+    """Kill duplicate ingest workers — only the lock holder should run."""
+    holder: int | None = None
+    if INGEST_LOCK.exists():
+        try:
+            holder = int(INGEST_LOCK.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            holder = None
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        for line in (out.stdout or "").split():
+            try:
+                pid = int(line.strip())
+            except ValueError:
+                continue
+            if holder is not None and pid == holder:
+                continue
+            log(f"kill orphan ingest pid={pid}")
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
 def kill_stale_ingest() -> None:
     """Free ingest lock if a previous run hung (blocks worker for hours)."""
+    kill_orphan_ingest()
     stale_sec = float(os.environ.get("MLBB_INGEST_STALE_SEC", "900"))
     kill_stale_lock(INGEST_LOCK, name="ingest", max_age_sec=stale_sec)
     if not INGEST_LOCK.exists():
@@ -435,6 +488,8 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_CALIBRATION_LENIENT": "1",
             "MLBB_SHORTS_CALIBRATION_BURST": "1" if aggressive else env.get("MLBB_SHORTS_CALIBRATION_BURST", "0"),
             "MLBB_SHORTS_STREAMER_ONLY": env.get("MLBB_SHORTS_STREAMER_ONLY", "0"),
+            "MLBB_SHORTS_ONLY": env.get("MLBB_SHORTS_ONLY", "1" if aggressive else "0"),
+            "MLBB_SHORTS_FOCUS": env.get("MLBB_SHORTS_FOCUS", "1" if aggressive else "0"),
             "MLBB_SHORTS_SEARCH_FALLBACK": env.get("MLBB_SHORTS_SEARCH_FALLBACK", "1"),
             "MLBB_SEARCH_BEFORE_STREAMERS": env.get("MLBB_SEARCH_BEFORE_STREAMERS", "1"),
             "MLBB_OWNER_CHANNELS_LAST": env.get("MLBB_OWNER_CHANNELS_LAST", "1"),
@@ -537,12 +592,20 @@ def main() -> int:
                 ingest.start()
 
             if (
-                should_start_vod(pending=pending)
+                should_start_vod(pending=pending, target_pending=target_pending)
                 and not vod.running()
                 and not vod_feed_running_externally()
                 and vod.cooldown_ok(vod_cooldown)
             ):
                 vod.start()
+            elif (
+                os.environ.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) == "1"
+                and pending < target_pending
+                and (vod.running() or vod_feed_running_externally())
+            ):
+                if vod.running():
+                    vod.stop()
+                kill_stale_lock(VOD_LOCK, name="vod_shorts_focus", max_age_sec=0)
 
             feed_wait = feed_cooldown
             if pending > 0:
@@ -586,7 +649,7 @@ def main() -> int:
 
                     repair_index()
                     if pending == 0:
-                        rescued = rescue_unindexed_shorts(limit=4)
+                        rescued = rescue_unindexed_shorts(limit=int(os.environ.get("MLBB_RESCUE_LIMIT", "12")))
                         if rescued:
                             pending = pending_shorts()
                             log(f"rescued {rescued} disk shorts pending={pending}")

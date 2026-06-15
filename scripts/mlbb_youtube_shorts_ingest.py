@@ -47,6 +47,22 @@ SEARCH_QUERIES = (
     "mlbb double kill triple kill savage",
 )
 
+# High-volume YouTube Shorts search (always with #shorts suffix when MLBB_SHORTS_ONLY=1).
+SHORTS_FORMAT_QUERIES = (
+    "mobile legends bang bang",
+    "mlbb savage",
+    "mlbb maniac",
+    "mlbb ranked gameplay",
+    "mlbb teamfight",
+    "mlbb highlights",
+    "mobile legends mythic",
+    "mlbb double kill",
+    "mlbb savage gameplay",
+    "mobile legends ranked",
+    "mlbb epic savage",
+    "mlbb pentakill",
+)
+
 # Vertical Shorts / phone recordings — always searched with #shorts suffix.
 VERTICAL_SHORTS_QUERIES = (
     "mlbb savage",
@@ -128,9 +144,33 @@ def shorts_min_duration_sec(env: dict[str, str] | None = None) -> float:
     return float(env.get("MLBB_SHORTS_MIN_DURATION_SEC", "3"))
 
 
+def shorts_only_mode(env: dict[str, str] | None = None) -> bool:
+    env = env or dict(os.environ)
+    return env.get("MLBB_SHORTS_ONLY", "0") == "1"
+
+
 def shorts_max_duration_sec(env: dict[str, str] | None = None) -> float:
     env = env or dict(os.environ)
-    return float(env.get("MLBB_SHORTS_MAX_DURATION_SEC", "1200"))
+    cap = float(env.get("MLBB_SHORTS_MAX_DURATION_SEC", "1200"))
+    if shorts_only_mode(env):
+        cap = min(cap, shorts_short_max_sec(env))
+    return cap
+
+
+def shorts_relax_title(env: dict[str, str] | None = None) -> bool:
+    env = env or dict(os.environ)
+    return env.get("MLBB_SHORTS_RELAX_TITLE", "0") == "1"
+
+
+def shorts_fast_score(env: dict[str, str] | None = None) -> bool:
+    env = env or dict(os.environ)
+    return env.get("MLBB_SHORTS_FAST_SCORE", "0") == "1" or shorts_only_mode(env)
+
+
+def _title_ok_for_pool(title: str, env: dict[str, str] | None = None) -> bool:
+    if shorts_relax_title(env):
+        return not NEGATIVE_TITLE.search(title or "")
+    return _title_looks_mlbb(title)
 
 
 def shorts_short_max_sec(env: dict[str, str] | None = None) -> float:
@@ -153,7 +193,10 @@ def streamer_channel_urls() -> list[str]:
     else:
         base = list(OWNER_CURATED_FEEDS) + list(GENERAL_MLBB_FEEDS) if include_owner else list(GENERAL_MLBB_FEEDS)
     urls = list(base)
-    if os.environ.get("MLBB_SHORTS_INCLUDE_VIDEOS_TAB", "1") == "1":
+    include_videos_tab = os.environ.get("MLBB_SHORTS_INCLUDE_VIDEOS_TAB", "1") == "1"
+    if shorts_only_mode():
+        include_videos_tab = False
+    if include_videos_tab:
         extra: list[str] = []
         for url in base:
             if url.endswith("/shorts"):
@@ -790,7 +833,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int, for
     cutoff = shorts_upload_cutoff(env, days=days)
     search_n = max(limit * 8, 80)
     max_d = shorts_max_duration_sec(env)
-    suffix = " #shorts" if force_shorts or max_d <= shorts_short_max_sec(env) else ""
+    suffix = " #shorts" if force_shorts or shorts_only_mode(env) or max_d <= shorts_short_max_sec(env) else ""
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query}{suffix}",
         "--flat-playlist",
@@ -894,7 +937,29 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
     return None
 
 
-def score_clip(path: Path) -> dict:
+def score_clip(path: Path, *, env: dict[str, str] | None = None) -> dict:
+    env = env or dict(os.environ)
+    if shorts_fast_score(env):
+        dur = _ffprobe_duration(path)
+        window = min(30.0, max(4.0, dur * 0.85))
+        hook, hook_meta = hook_score(path, 0.15, PROFILE, duration_sec=window)
+        act_ok, _ = passes_mlbb_shorts_activity_gate(path)
+        score = hook * 0.55 + (0.30 if act_ok else 0.0)
+        return {
+            "score": round(score, 4),
+            "kill_ui_score": 0.0,
+            "kill_ui_pass": 0,
+            "kill_ui_reason": "fast_score",
+            "combat_score": round(score, 4),
+            "clip_score": 0.0,
+            "hook_score": round(hook, 4),
+            "panns_gun_max": 0.0,
+            "minimap_delta": 0.0,
+            "skill_delta": 0.0,
+            "rule_pass": int(act_ok),
+            "pass_reason": "fast_shorts",
+            "hook_menu": hook_meta.get("menu_overlay", 0),
+        }
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     dur = _ffprobe_duration(path)
@@ -1038,7 +1103,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
     if full_sweep:
         print(f"full_sweep=1 pending={pending_n}", flush=True)
 
-    queries = list(SEARCH_QUERIES)
+    queries = list(SHORTS_FORMAT_QUERIES if shorts_only_mode(env) else SEARCH_QUERIES)
     if args.incremental and not burst and not full_sweep:
         # Rotate one query per run — less search load on YouTube.
         slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
@@ -1086,18 +1151,18 @@ def _run_ingest(args: argparse.Namespace) -> int:
                     vid = row["video_id"]
                     if vid in seen or vid in skip_ids:
                         continue
-                    if not _title_looks_mlbb(str(row.get("title", ""))):
+                    if not _title_ok_for_pool(str(row.get("title", "")), env):
                         continue
                     seen.add(vid)
                     pool.append(row)
                 if args.search_delay > 0:
                     time.sleep(args.search_delay)
         for query in queries:
-            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
+            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days, force_shorts=shorts_only_mode(env)):
                 vid = row["video_id"]
                 if vid in seen or vid in skip_ids:
                     continue
-                if not _title_looks_mlbb(str(row.get("title", ""))):
+                if not _title_ok_for_pool(str(row.get("title", "")), env):
                     continue
                 seen.add(vid)
                 pool.append(row)
@@ -1131,11 +1196,11 @@ def _run_ingest(args: argparse.Namespace) -> int:
             flush=True,
         )
         for query in fallback_queries:
-            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
+            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days, force_shorts=shorts_only_mode(env)):
                 vid = row["video_id"]
                 if vid in seen or vid in skip_ids:
                     continue
-                if not _title_looks_mlbb(str(row.get("title", ""))):
+                if not _title_ok_for_pool(str(row.get("title", "")), env):
                     continue
                 seen.add(vid)
                 pool.append(row)
@@ -1177,20 +1242,26 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
     if not pool and (args.incremental or full_sweep):
         deep: list[dict] = []
-        for query in list(SEARCH_QUERIES):
+        deep_queries = list(SHORTS_FORMAT_QUERIES if shorts_only_mode(env) else SEARCH_QUERIES)
+        for query in deep_queries:
             for row in search_shorts(
                 query,
-                limit=max(args.max_per_query * 4, 40),
+                limit=max(args.max_per_query * 4, 60),
                 env=env,
                 days=args.days,
+                force_shorts=shorts_only_mode(env),
             ):
                 vid = row["video_id"]
                 if vid in skip_ids or vid in known or vid in sent_pending or vid in already_sent:
+                    continue
+                if not _title_ok_for_pool(str(row.get("title", "")), env):
                     continue
                 deep.append(row)
             if args.search_delay > 0:
                 time.sleep(args.search_delay)
         pool = deep[: cap * 2]
+        if pool:
+            print(f"deep_search pool={len(pool)} shorts_only={int(shorts_only_mode(env))}", flush=True)
 
     saved = rejected = downloads = skipped_known = 0
     min_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SCORE", "0.05" if burst else "0.12"))
@@ -1218,6 +1289,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
             skipped_known += 1
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
+        meta_dur = float(row.get("duration") or 0)
+        if meta_dur > 0 and not duration_in_ingest_range(meta_dur, env):
+            _reject(vid, "meta_duration_out_of_range")
+            continue
         if not mp4.exists() and not args.skip_download:
             got = download_short(row["url"], SHORTS_ROOT, env, vid)
             if got and got.exists():
@@ -1252,6 +1327,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 _reject(vid, f"activity:{act_reason}", mp4)
                 continue
             if file_dur > shorts_short_max_sec():
+                if shorts_only_mode(env):
+                    print(f"REJECT {vid} duration={file_dur:.0f}s shorts_only", flush=True)
+                    _reject(vid, "too_long_for_shorts", mp4)
+                    continue
                 if fast_long:
                     clip_start = min(20.0, max(0.15, file_dur * 0.06))
                     clip_reason = "fast_long"
@@ -1311,7 +1390,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 _reject(vid, f"gate:{gate_reason}", mp4)
                 continue
 
-        feats = score_clip(mp4)
+        feats = score_clip(mp4, env=env)
         if int(feats.get("rule_pass") or 0) != 1 and not lenient:
             print(f"REJECT {vid} rule_pass=0 {feats.get('pass_reason','')}", flush=True)
             _reject(vid, "rule_pass", mp4)

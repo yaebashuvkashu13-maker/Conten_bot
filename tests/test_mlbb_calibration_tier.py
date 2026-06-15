@@ -29,4 +29,7 @@ def test_resolve_tier_escalates_when_empty(monkeypatch, tmp_path: Path) -> None:
 
 def test_tier_env_relaxes_kill_at_starvation() -> None:
     assert tier_env(3)["MLBB_SHORTS_REQUIRE_KILL_UI"] == "0"
+    assert tier_env(3)["MLBB_SHORTS_ONLY"] == "1"
+    assert tier_env(3)["MLBB_SHORTS_MAX_DURATION_SEC"] == "60"
+    assert tier_env(2)["MLBB_SHORTS_FAST_SCORE"] == "1"
     assert tier_env(0)["MLBB_CALIBRATION_LENIENT"] == "0"
