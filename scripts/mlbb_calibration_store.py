@@ -171,8 +171,26 @@ def load_feed_sent() -> dict[str, set[str] | dict[str, float]]:
                 at[str(k)] = float(v)
             except (TypeError, ValueError):
                 continue
+    ids = set(str(x) for x in raw.get("sent_ids", []))
+    # Legacy rows: sent_ids without sent_at were excluded forever — backfill once.
+    if ids and os.environ.get("MLBB_BACKFILL_SENT_AT", "1") == "1":
+        missing = [vid for vid in ids if vid not in at]
+        if missing:
+            default_age_h = float(os.environ.get("MLBB_BACKFILL_SENT_AGE_HOURS", "72"))
+            ts = time.time() - default_age_h * 3600.0
+            for vid in missing:
+                at[vid] = ts
+            _write_json(
+                FEED_SENT_PATH,
+                {
+                    "sent_ids": sorted(ids),
+                    "sent_file_ids": sorted(str(x) for x in raw.get("sent_file_ids", [])),
+                    "sent_at": {k: at[k] for k in sorted(ids) if k in at},
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
     return {
-        "ids": set(str(x) for x in raw.get("sent_ids", [])),
+        "ids": ids,
         "file_ids": set(str(x) for x in raw.get("sent_file_ids", [])),
         "at": at,
     }
@@ -297,7 +315,14 @@ def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> b
     return False
 
 
-def _pending_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> bool:
+def _pending_excluded(
+    vid: str,
+    path: Path,
+    labeled: dict[str, str],
+    sent: dict,
+    *,
+    queue_starved: bool = False,
+) -> bool:
     """Pending queue: exclude labeled; sent-but-unlabeled wait for rating (optional resend after days)."""
     file_id = id_from_path(path)
     if vid in labeled or file_id in labeled:
@@ -306,18 +331,14 @@ def _pending_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict)
     if not in_sent:
         return False
     resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "48"))
-    try:
-        pending_n = len(pending_candidates(limit=500, repair=False))
-    except Exception:
-        pending_n = 1
-    if pending_n == 0:
+    if queue_starved:
         resend_h = min(resend_h, float(os.environ.get("MLBB_RESEND_STARVED_HOURS", "12")))
     if resend_h <= 0:
         return True
     at = sent.get("at") or {}
     last = float(at.get(vid) or at.get(file_id) or 0)
     if last <= 0:
-        return True
+        return not queue_starved
     return (time.time() - last) < resend_h * 3600.0
 
 
@@ -778,6 +799,17 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
     labeled = labeled_ids()
     sent = load_feed_sent()
     rows = load_index().get("candidates", [])
+    queue_starved = True
+    for row in rows:
+        path = _expected_path(str(row.get("video_id", "")))
+        if not path.exists() or is_stub_candidate(row):
+            continue
+        vid = id_from_path(path)
+        if vid in labeled:
+            continue
+        if vid not in sent["ids"] and id_from_path(path) not in sent["ids"]:
+            queue_starved = False
+            break
     out: list[dict] = []
     seen_vids: set[str] = set()
     seen_paths: set[str] = set()
@@ -786,7 +818,7 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         if not path.exists():
             continue
         vid = id_from_path(path)
-        if _pending_excluded(vid, path, labeled, sent) or vid in seen_vids:
+        if _pending_excluded(vid, path, labeled, sent, queue_starved=queue_starved) or vid in seen_vids:
             continue
         path_key = str(path.resolve())
         if path_key in seen_paths:

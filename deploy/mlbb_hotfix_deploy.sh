@@ -27,11 +27,14 @@ for kv in \
   MLBB_LEARNING_FIRST=0 \
   MLBB_DISK_INDEX_SEC=90 \
   MLBB_RESCUE_LIMIT=24 \
+  MLBB_BACKFILL_SENT_AT=1 \
+  MLBB_BACKFILL_SENT_AGE_HOURS=72 \
   MLBB_RESEND_UNLABELED_HOURS=48 \
   MLBB_RESEND_STARVED_HOURS=12 \
   MLBB_ZERO_PENDING_RECOVERY_SEC=900 \
   MLBB_RECOVERY_COOLDOWN_SEC=600 \
   YTDLP_PROXY=; do
+  key="${kv%%=*}"; val="${kv#*=}"
   if grep -q "^${key}=" "$ENV" 2>/dev/null; then
     sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
   else
