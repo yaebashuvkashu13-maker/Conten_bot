@@ -477,6 +477,14 @@ def _run_feed() -> int:
                 continue
             if path.name != f"yt_{vid}.mp4":
                 continue
+            row = enrich_row_metadata(row)
+            from mlbb_channel_blocklist import is_blocked_candidate
+
+            blocked, block_reason = is_blocked_candidate(row)
+            if blocked:
+                reject_candidate(vid, reason=block_reason, path=path)
+                print(f"skip pick {vid} {block_reason}", flush=True)
+                continue
             seen_vids.add(vid)
             seen_paths.add(path_key)
             unique.append(row)
@@ -539,6 +547,14 @@ def _run_feed() -> int:
         vid = str(row.get("video_id", ""))
         row = enrich_row_metadata(row)
         title = str(row.get("title", ""))
+
+        from mlbb_channel_blocklist import is_blocked_candidate
+
+        blocked, block_reason = is_blocked_candidate(row)
+        if blocked:
+            print(f"skip send {vid} {block_reason}", flush=True)
+            reject_candidate(vid, reason=block_reason, path=path)
+            continue
 
         if is_stub_candidate(row):
             print(f"skip send {vid} stub=legacy_no_ingest", flush=True)

@@ -10,7 +10,7 @@ cd "$REPO"
 git fetch origin cursor/content-farm-fixes-1a63 2>/dev/null || true
 BRANCH="origin/cursor/content-farm-fixes-1a63"
 for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
-  mlbb_youtube_shorts_ingest.py mlbb_health_guard.py mlbb_pipeline_health.py \
+  mlbb_youtube_shorts_ingest.py mlbb_channel_blocklist.py mlbb_health_guard.py mlbb_pipeline_health.py \
   youtube_download.py mlbb_learning_first.py; do
   if git show "${BRANCH}:scripts/${f}" >/dev/null 2>&1; then
     git show "${BRANCH}:scripts/${f}" > "$BIN/${f}"

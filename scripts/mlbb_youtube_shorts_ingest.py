@@ -34,6 +34,7 @@ from mlbb_calibration_store import (
     repair_index,
     upsert_candidate,
 )
+from mlbb_channel_blocklist import filter_channel_feeds, is_blocked_candidate, is_blocked_feed_url
 from viral_scorer import hook_score
 from youtube_download import load_env, run_ytdlp, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 from youtube_video_fix import ensure_readable
@@ -87,7 +88,6 @@ OWNER_CURATED_FEEDS = (
 
 GENERAL_MLBB_FEEDS = (
     "https://www.youtube.com/@Betosky/shorts",
-    "https://www.youtube.com/@JessNoLimit/shorts",
     "https://www.youtube.com/@akosidogie/shorts",
 )
 
@@ -101,6 +101,7 @@ NEGATIVE_TITLE = re.compile(
     r"sound\s*effect|sfx\b|notification\s*sound|ringtone|audio\s*only|"
     r"kill\s*sound|voice\s*line|ost\b|music\s*only|wallpaper|thumbnail|"
     r"hero\s*(reveal|showcase|preview|intro|spawn|appearance)|skin\s*reveal|"
+    r"review\s+skin|skin\s+review|kualitas.*skin|skin\s+epic\s+terbaru|"
     r"character\s*preview|cinematic|new\s*hero|spawn\s*preview|hero\s*spawn)",
     re.I,
 )
@@ -206,7 +207,7 @@ def streamer_channel_urls() -> list[str]:
                 if videos not in urls and videos not in extra:
                     extra.append(videos)
         urls.extend(extra)
-    return urls
+    return filter_channel_feeds(urls)
 
 
 def _limit_owner_channel_feeds(feeds: list[str], *, limit: int) -> list[str]:
@@ -770,6 +771,10 @@ def _log_ytdlp_fail(proc, label: str) -> None:
 def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
+    if is_blocked_feed_url(channel_url, env):
+        print(f"skip_blocked_channel {channel_url}", flush=True)
+        return []
+
     cutoff = shorts_upload_cutoff(env, days=days)
     playlist_n = max(limit * 3, 40)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
@@ -1204,6 +1209,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
                         continue
                     if not _title_ok_for_pool(str(row.get("title", "")), env):
                         continue
+                    blocked, _reason = is_blocked_candidate(row, env)
+                    if blocked:
+                        continue
                     seen.add(vid)
                     pool.append(row)
                 if args.search_delay > 0:
@@ -1214,6 +1222,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 if vid in seen or vid in skip_ids:
                     continue
                 if not _title_ok_for_pool(str(row.get("title", "")), env):
+                    continue
+                blocked, _reason = is_blocked_candidate(row, env)
+                if blocked:
                     continue
                 seen.add(vid)
                 pool.append(row)
@@ -1252,6 +1263,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 if vid in seen or vid in skip_ids:
                     continue
                 if not _title_ok_for_pool(str(row.get("title", "")), env):
+                    continue
+                blocked, _reason = is_blocked_candidate(row, env)
+                if blocked:
                     continue
                 seen.add(vid)
                 pool.append(row)
@@ -1365,6 +1379,11 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
         if NEGATIVE_TITLE.search(row.get("title", "")):
             _reject(vid, "negative_title", mp4)
+            continue
+
+        blocked, block_reason = is_blocked_candidate(row, env)
+        if blocked:
+            _reject(vid, block_reason, mp4)
             continue
 
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
