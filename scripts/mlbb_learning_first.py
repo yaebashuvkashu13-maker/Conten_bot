@@ -46,7 +46,7 @@ def _save_state(state: dict) -> None:
 
 
 def enabled() -> bool:
-    return os.environ.get("MLBB_LEARNING_FIRST", "1") == "1"
+    return os.environ.get("MLBB_LEARNING_FIRST", "0") == "1"
 
 
 def max_daily_sends() -> int:

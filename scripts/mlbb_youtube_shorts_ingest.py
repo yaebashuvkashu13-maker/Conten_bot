@@ -1076,6 +1076,10 @@ def main() -> int:
 
 def _run_ingest(args: argparse.Namespace) -> int:
     burst = os.environ.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1"
+    starvation = os.environ.get("MLBB_STARVATION_INGEST", "0") == "1"
+    if starvation:
+        burst = True
+        os.environ["MLBB_SHORTS_CALIBRATION_BURST"] = "1"
     if args.incremental and burst:
         if args.max_downloads <= 0:
             args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "8"))
@@ -1121,8 +1125,13 @@ def _run_ingest(args: argparse.Namespace) -> int:
         slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
         queries = [queries[slot]]
         print(f"incremental query={queries[0]} pending={pending_n}")
-    elif burst or full_sweep:
-        print(f"{'calibration_burst' if burst else 'full_sweep'} queries={len(queries)} pending={pending_n}")
+    elif burst or full_sweep or starvation:
+        if starvation:
+            args.max_downloads = max(args.max_downloads, int(os.environ.get("MLBB_STARVATION_MAX_DOWNLOADS", "30")))
+            args.max_per_query = max(args.max_per_query, int(os.environ.get("MLBB_STARVATION_MAX_PER_QUERY", "40")))
+            args.days = max(args.days, int(os.environ.get("MLBB_STARVATION_INGEST_DAYS", "730")))
+        label = "starvation_ingest" if starvation else ("calibration_burst" if burst else "full_sweep")
+        print(f"{label} queries={len(queries)} pending={pending_n} days={args.days}")
 
     seen: set[str] = set()
     pool: list[dict] = []
@@ -1131,10 +1140,13 @@ def _run_ingest(args: argparse.Namespace) -> int:
         slot = int(time.time() // 7200) % len(channel_feeds)
         channel_feeds = [channel_feeds[slot]]
         print(f"incremental channel={channel_feeds[0]}")
-    elif burst or full_sweep:
+    elif burst or full_sweep or starvation:
         owner_limit = int(os.environ.get("MLBB_OWNER_CHANNEL_LIMIT", "2"))
+        if starvation:
+            owner_limit = max(owner_limit, int(os.environ.get("MLBB_STARVATION_CHANNEL_LIMIT", "6")))
         channel_feeds = _limit_owner_channel_feeds(channel_feeds, limit=owner_limit)
-        print(f"{'calibration_burst' if burst else 'full_sweep'} channels={len(channel_feeds)}")
+        label = "starvation_ingest" if starvation else ("calibration_burst" if burst else "full_sweep")
+        print(f"{label} channels={len(channel_feeds)}")
 
     streamer_only = os.environ.get("MLBB_SHORTS_STREAMER_ONLY", "0") == "1"
     if streamer_only:

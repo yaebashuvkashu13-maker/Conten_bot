@@ -14,9 +14,16 @@ for kv in \
   MLBB_SHORTS_ONLY=1 \
   MLBB_SHORTS_FOCUS=1 \
   MLBB_SHORTS_MAX_DURATION_SEC=60 \
-  MLBB_FEED_EMPTY_RUN_SEC=120 \
-  MLBB_DISK_INDEX_SEC=90 \
-  MLBB_RESCUE_LIMIT=16; do
+  MLBB_CALIBRATION_BATCH=6 \
+  MLBB_FEED_COOLDOWN_SEC=90 \
+  MLBB_FEED_COOLDOWN_PENDING_SEC=60 \
+  MLBB_FEED_EMPTY_RUN_SEC=60 \
+  MLBB_LEARNING_FIRST=0 \
+  MLBB_STARVATION_PENDING=3 \
+  MLBB_STARVATION_INGEST_SEC=120 \
+  MLBB_DISK_INDEX_SEC=60 \
+  MLBB_RESCUE_LIMIT=24 \
+  MLBB_RESEND_UNLABELED_HOURS=48; do
   key="${kv%%=*}"; val="${kv#*=}"
   if grep -q "^${key}=" "$ENV" 2>/dev/null; then
     sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
@@ -36,7 +43,7 @@ rm -f /root/data/mlbb/youtube_shorts_ingest.lock /root/data/mlbb/vod_segment_fee
 echo "=== index disk shorts ==="
 PYTHONPATH="$BIN" python3 -c "
 from mlbb_calibration_store import index_unlabeled_disk_shorts, pending_candidates
-n = index_unlabeled_disk_shorts(limit=24)
+n = index_unlabeled_disk_shorts(limit=32)
 print('indexed', n, 'pending', len(pending_candidates(limit=99)))
 "
 

@@ -28,6 +28,8 @@ LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 _LAST_INDEX_REBUILD = 0.0
 _LAST_DISK_INDEX = 0.0
 _LAST_EMPTY_FEED = 0.0
+_LAST_STARVATION_INGEST = 0.0
+_PENDING_ZERO_SINCE = 0.0
 
 
 def log(msg: str) -> None:
@@ -577,7 +579,7 @@ def main() -> int:
     montage_enabled = not pipeline_paused("montage")
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
     last_tier = -1
-    global _LAST_EMPTY_FEED
+    global _LAST_EMPTY_FEED, _LAST_STARVATION_INGEST, _PENDING_ZERO_SINCE
 
     log(
         f"mlbb_continuous_worker start pid={os.getpid()} target_pending={target_pending} "
@@ -593,6 +595,13 @@ def main() -> int:
             cycles += 1
             pending = pending_shorts()
             aggressive = pending < target_pending
+            now = time.time()
+            starve_pending = int(os.environ.get("MLBB_STARVATION_PENDING", "3"))
+            if pending < starve_pending:
+                if _PENDING_ZERO_SINCE <= 0:
+                    _PENDING_ZERO_SINCE = now
+            else:
+                _PENDING_ZERO_SINCE = 0.0
 
             try:
                 from mlbb_calibration_tier import apply_tier
@@ -607,16 +616,30 @@ def main() -> int:
             feed_cooldown = float(tier_env.get("MLBB_FEED_COOLDOWN_SEC", base_feed_cooldown))
             vod.env = {**vod_env(base), **tier_env}
 
+            starved_for = (now - _PENDING_ZERO_SINCE) if _PENDING_ZERO_SINCE > 0 else 0.0
+            starvation = pending < starve_pending
+            force_ingest = False
+            starve_ingest_sec = float(os.environ.get("MLBB_STARVATION_INGEST_SEC", "120"))
+            if starvation and starved_for >= starve_ingest_sec:
+                if now - _LAST_STARVATION_INGEST >= starve_ingest_sec:
+                    force_ingest = True
+                    log(f"starvation ingest pending={pending} starved_for={starved_for:.0f}s")
+
             if (
-                aggressive
+                (aggressive or force_ingest)
                 and should_start_ingest(pending=pending, target_pending=target_pending)
                 and not ingest.running()
                 and not ingest_running_externally()
-                and ingest.cooldown_ok(ingest_cooldown)
+                and (ingest.cooldown_ok(ingest_cooldown) or force_ingest)
             ):
                 kill_stale_ingest()
-                ingest.cmd = ingest_cmd({**base, **tier_env}, aggressive=aggressive)
-                ingest.env = {**ingest_env(base, aggressive=aggressive), **tier_env}
+                ingest.cmd = ingest_cmd({**base, **tier_env}, aggressive=aggressive or force_ingest)
+                ingest_env_map = {**ingest_env(base, aggressive=aggressive or force_ingest), **tier_env}
+                if force_ingest:
+                    ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
+                    ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
+                    _LAST_STARVATION_INGEST = now
+                ingest.env = ingest_env_map
                 ingest.start()
 
             if (
@@ -637,8 +660,17 @@ def main() -> int:
 
             feed_wait = feed_cooldown
             if pending > 0:
-                feed_wait = float(tier_env.get("MLBB_FEED_COOLDOWN_PENDING_SEC", base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90")))
-            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "300"))
+                feed_wait = float(
+                    tier_env.get(
+                        "MLBB_FEED_COOLDOWN_PENDING_SEC",
+                        base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "60"),
+                    )
+                )
+                if starvation:
+                    feed_wait = min(feed_wait, 45.0)
+            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "60"))
+            if starvation:
+                empty_feed_sec = min(empty_feed_sec, 45.0)
             run_feed = pending > 0 or (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
             if (
                 run_feed
@@ -650,6 +682,9 @@ def main() -> int:
                 feed_env = {**base, **tier_env}
                 if pending == 0:
                     feed_env["MLBB_FEED_REBUILD"] = "1"
+                if starvation:
+                    feed_env["MLBB_FEED_REBUILD"] = "1"
+                    feed_env["MLBB_DISK_INDEX_LIMIT"] = os.environ.get("MLBB_STARVATION_DISK_LIMIT", "32")
                 feed.env = feed_env
                 feed.start()
                 if pending == 0:
@@ -692,6 +727,7 @@ def main() -> int:
                 write_state(
                     {
                         "pending_shorts": pending,
+                        "starved_for_sec": int(starved_for) if starvation else 0,
                         "calibration_tier": tier,
                         "ingest_running": ingest.running() or ingest_running_externally(),
                         "vod_running": vod.running() or vod_feed_running_externally(),

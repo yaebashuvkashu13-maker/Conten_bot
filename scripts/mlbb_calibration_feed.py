@@ -456,34 +456,46 @@ def _run_feed() -> int:
             print(f"feed_disk_index added={indexed}", flush=True)
     _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "10")))
     print(f"pick pending batch={BATCH_SIZE}", flush=True)
-    picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
-    # Guarantee unique files — never send the same mp4 twice in one batch.
-    unique: list[dict] = []
-    seen_paths: set[str] = set()
-    seen_vids: set[str] = set()
-    for row in picked:
-        vid = str(row.get("video_id", ""))
-        path = Path(row.get("path", ""))
-        if not vid or vid in seen_vids:
-            continue
-        path_key = str(path.resolve()) if path.exists() else ""
-        if not path_key or path_key in seen_paths:
-            continue
-        if path.name != f"yt_{vid}.mp4":
-            continue
-        seen_vids.add(vid)
-        seen_paths.add(path_key)
-        unique.append(row)
-        if len(unique) >= BATCH_SIZE:
-            break
-    unique.sort(
-        key=lambda r: (
-            Path(str(r.get("path", ""))).stat().st_size
-            if Path(str(r.get("path", ""))).exists()
-            else 10**12
+
+    def _pick_batch() -> list[dict]:
+        picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+        unique: list[dict] = []
+        seen_paths: set[str] = set()
+        seen_vids: set[str] = set()
+        for row in picked:
+            vid = str(row.get("video_id", ""))
+            path = Path(row.get("path", ""))
+            if not vid or vid in seen_vids:
+                continue
+            path_key = str(path.resolve()) if path.exists() else ""
+            if not path_key or path_key in seen_paths:
+                continue
+            if path.name != f"yt_{vid}.mp4":
+                continue
+            seen_vids.add(vid)
+            seen_paths.add(path_key)
+            unique.append(row)
+            if len(unique) >= BATCH_SIZE:
+                break
+        unique.sort(
+            key=lambda r: (
+                Path(str(r.get("path", ""))).stat().st_size
+                if Path(str(r.get("path", ""))).exists()
+                else 10**12
+            )
         )
-    )
-    picked = unique
+        return unique
+
+    picked = _pick_batch()
+    if not picked:
+        from mlbb_calibration_store import index_unlabeled_disk_shorts, rebuild_index_from_disk
+
+        rebuild_index_from_disk()
+        added = index_unlabeled_disk_shorts(limit=int(os.environ.get("MLBB_DISK_INDEX_LIMIT", "24")))
+        if added:
+            print(f"feed_retry_disk_index added={added}", flush=True)
+        picked = _pick_batch()
+
     if not picked:
         now = time.time()
         last_notify = 0.0
@@ -497,9 +509,9 @@ def _run_feed() -> int:
             send_message(
                 token,
                 chat_id,
-                "MLBB калибровка: очередь пуста — ingest ищет Shorts и MLBB-клипы (до 20 мин).\n"
+                "MLBB калибровка: очередь пуста — ingest ищет новые Shorts (без повторов).\n"
                 f"Индекс: {s['index_total']}, в очереди: {s['pending']}.\n"
-                "Continuous worker качает и режет VOD параллельно.",
+                "Уже отправленные без 👍/👎 не шлём повторно — ждём новые загрузки.",
             )
             EMPTY_NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
             EMPTY_NOTIFY_PATH.write_text(json.dumps({"at": now}), encoding="utf-8")
