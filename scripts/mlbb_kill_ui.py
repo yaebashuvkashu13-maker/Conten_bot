@@ -191,7 +191,11 @@ def _sample_frames(
 
 def _announce_color_score(frame: np.ndarray) -> float:
     """Kill announcement banner in top-center (gold/white + multi-kill blue/orange)."""
-    small = cv2.resize(frame, (320, 180))
+    try:
+        from video_orientation import resize_for_kill_ui
+    except ImportError:
+        resize_for_kill_ui = lambda f: cv2.resize(f, (320, 180))  # type: ignore
+    small = resize_for_kill_ui(frame)
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     h, w = small.shape[:2]
     zone = hsv[int(h * 0.02) : int(h * 0.30), int(w * 0.18) : int(w * 0.82)]
@@ -213,7 +217,11 @@ def _kill_feed_spike(frames: list[np.ndarray]) -> float:
     deltas: list[float] = []
     prev_feed: np.ndarray | None = None
     for frame in frames:
-        small = cv2.resize(frame, (320, 180))
+        try:
+            from video_orientation import resize_for_kill_ui
+        except ImportError:
+            resize_for_kill_ui = lambda f: cv2.resize(f, (320, 180))  # type: ignore
+        small = resize_for_kill_ui(frame)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         feed = gray[int(h * 0.04) : int(h * 0.42), int(w * 0.02) : int(w * 0.34)]
@@ -235,7 +243,11 @@ def _ocr_kill_text(frame: np.ndarray) -> tuple[str, int, str]:
     except ImportError:
         return "", 0, ""
 
-    small = cv2.resize(frame, (480, 270))
+    try:
+        from video_orientation import resize_for_kill_ui
+    except ImportError:
+        resize_for_kill_ui = lambda f: cv2.resize(f, (480, 270))  # type: ignore
+    small = resize_for_kill_ui(frame)
     h, w = small.shape[:2]
     zones = [
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.12) : int(w * 0.88)],

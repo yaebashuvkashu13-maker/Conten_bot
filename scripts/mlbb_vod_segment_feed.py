@@ -667,7 +667,15 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
 
 
 def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
-    # Calibration: keep full 16:9 — skill buttons sit on the right edge.
+    try:
+        from video_orientation import is_portrait_video
+    except ImportError:
+        is_portrait_video = lambda _p: False  # type: ignore
+
+    # Native portrait gameplay — keep full 9:16 frame.
+    if is_portrait_video(vod):
+        return ""
+    # Landscape calibration: keep full 16:9 — skill buttons sit on the right edge.
     if os.environ.get("MLBB_VOD_FULL_FRAME", "1") == "1":
         return ""
     from smart_video_editor import detect_game_viewport_crop
@@ -679,6 +687,23 @@ def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
     if w < 64 or h < 64:
         return ""
     return f"crop={w}:{h}:{x}:{y},"
+
+
+def _scale_pad_vf(crop_prefix: str, source: Path, *, trailing: str) -> str:
+    try:
+        from video_orientation import target_render_size
+
+        tw, th = target_render_size(source)
+    except ImportError:
+        from smart_video_editor import TARGET_HEIGHT, TARGET_WIDTH
+
+        tw, th = int(TARGET_WIDTH), int(TARGET_HEIGHT)
+    return (
+        f"{crop_prefix}"
+        f"scale={tw}:{th}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"{trailing}"
+    )
 
 
 def _needs_chunk_render(vod: Path) -> bool:
@@ -773,6 +798,7 @@ def _vod_encode_args() -> list[str]:
 def _render_from_chunk(
     chunk_path: Path,
     *,
+    source: Path,
     trim_start: float,
     dur: float,
     crop_prefix: str,
@@ -780,18 +806,12 @@ def _render_from_chunk(
     has_audio: bool,
 ) -> bool:
     """Stage 2: accurate -ss on small CFR chunk — no freeze."""
-    from smart_video_editor import (
-        TARGET_HEIGHT,
-        TARGET_WIDTH,
-        OUTPUT_FPS,
-        run_command,
-    )
+    from smart_video_editor import OUTPUT_FPS, run_command
 
-    vf = (
-        f"{crop_prefix}"
-        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p"
+    vf = _scale_pad_vf(
+        crop_prefix,
+        source,
+        trailing=f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p",
     )
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     cmd = [
@@ -837,14 +857,9 @@ def _render_simple_segment(
     has_audio: bool,
 ) -> bool:
     """Single accurate -ss/-t — avoids double-seek buffer truncation on 20–30s clips."""
-    from smart_video_editor import TARGET_HEIGHT, TARGET_WIDTH, OUTPUT_FPS, run_command
+    from smart_video_editor import OUTPUT_FPS, run_command
 
-    vf = (
-        f"{crop_prefix}"
-        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},format=yuv420p"
-    )
+    vf = _scale_pad_vf(crop_prefix, vod, trailing=f"fps={OUTPUT_FPS},format=yuv420p")
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     cmd = [
         "ffmpeg",
@@ -875,13 +890,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     Cut montage-length window without logo.
     Large/60fps VOD: two-stage chunk + accurate cut (no freeze).
     """
-    from smart_video_editor import (
-        TARGET_HEIGHT,
-        TARGET_WIDTH,
-        OUTPUT_FPS,
-        ffprobe_has_audio,
-        run_command,
-    )
+    from smart_video_editor import OUTPUT_FPS, ffprobe_has_audio, run_command
 
     clip = _normalize_clip(clip, vod)
     start = float(clip["start"])
@@ -913,6 +922,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
             else:
                 ok = _render_from_chunk(
                     chunk_path,
+                    source=vod,
                     trim_start=trim_start,
                     dur=dur,
                     crop_prefix=crop_prefix,
@@ -926,10 +936,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
 
     vf = (
         f"trim=start={trim_start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
-        f"{crop_prefix}"
-        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},format=yuv420p"
+        + _scale_pad_vf(crop_prefix, vod, trailing=f"fps={OUTPUT_FPS},format=yuv420p")
     )
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     coarse_pad = float(os.environ.get("MLBB_CHUNK_COARSE_PAD", "10"))

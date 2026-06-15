@@ -47,6 +47,16 @@ SEARCH_QUERIES = (
     "mlbb double kill triple kill savage",
 )
 
+# Vertical Shorts / phone recordings — always searched with #shorts suffix.
+VERTICAL_SHORTS_QUERIES = (
+    "mlbb savage",
+    "mobile legends maniac",
+    "mlbb ranked gameplay",
+    "mlbb double kill savage",
+    "mobile legends mythic rank",
+    "mlbb teamfight savage",
+)
+
 # Owner-pasted Chou / curated channels — searched last (often already labeled/sent).
 OWNER_CURATED_FEEDS = (
     "https://www.youtube.com/@hanz.legends/shorts",
@@ -774,13 +784,13 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
     return entries
 
 
-def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
+def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int, force_shorts: bool = False) -> list[dict]:
     import subprocess
 
     cutoff = shorts_upload_cutoff(env, days=days)
     search_n = max(limit * 8, 80)
     max_d = shorts_max_duration_sec(env)
-    suffix = " #shorts" if max_d <= shorts_short_max_sec(env) else ""
+    suffix = " #shorts" if force_shorts or max_d <= shorts_short_max_sec(env) else ""
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query}{suffix}",
         "--flat-playlist",
@@ -1058,6 +1068,30 @@ def _run_ingest(args: argparse.Namespace) -> int:
     search_first = os.environ.get("MLBB_SEARCH_BEFORE_STREAMERS", "1") == "1"
 
     def _collect_search() -> None:
+        vertical_on = os.environ.get("MLBB_SHORTS_VERTICAL", "1") == "1"
+        if vertical_on:
+            vqueries = list(VERTICAL_SHORTS_QUERIES)
+            if args.incremental and not burst and not full_sweep:
+                vslot = int(time.time() // 5400) % len(vqueries)
+                vqueries = [vqueries[vslot]]
+            print(f"vertical_shorts queries={len(vqueries)}", flush=True)
+            for query in vqueries:
+                for row in search_shorts(
+                    query,
+                    limit=args.max_per_query,
+                    env=env,
+                    days=args.days,
+                    force_shorts=True,
+                ):
+                    vid = row["video_id"]
+                    if vid in seen or vid in skip_ids:
+                        continue
+                    if not _title_looks_mlbb(str(row.get("title", ""))):
+                        continue
+                    seen.add(vid)
+                    pool.append(row)
+                if args.search_delay > 0:
+                    time.sleep(args.search_delay)
         for query in queries:
             for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
                 vid = row["video_id"]

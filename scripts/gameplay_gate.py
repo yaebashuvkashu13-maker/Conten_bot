@@ -92,6 +92,18 @@ def load_csv_lookup(csv_path: Path) -> dict[str, bool]:
     return lookup
 
 
+PROFILE = "mobile_legends"
+
+
+def _analysis_resize(frame: np.ndarray) -> np.ndarray:
+    try:
+        from video_orientation import resize_for_analysis
+
+        return resize_for_analysis(frame)
+    except ImportError:
+        return cv2.resize(frame, (320, 180))
+
+
 def extract_video_id(path: Path, description: str = "") -> str | None:
     text = f"{path.name} {description} {path}"
     match = re.search(r"(\d{10,22})", text)
@@ -99,7 +111,12 @@ def extract_video_id(path: Path, description: str = "") -> str | None:
 
 
 def _frame_hud_metrics(frame: np.ndarray) -> tuple[float, float, float]:
-    small = cv2.resize(frame, (160, 90))
+    try:
+        from video_orientation import resize_for_analysis
+    except ImportError:
+        resize_for_analysis = lambda f: cv2.resize(f, (320, 180))  # type: ignore
+
+    small = resize_for_analysis(frame)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     minimap = gray[int(h * 0.72) : h, 0 : int(w * 0.28)]
@@ -109,7 +126,7 @@ def _frame_hud_metrics(frame: np.ndarray) -> tuple[float, float, float]:
 
 
 def _band_overlay_text_score(frame: np.ndarray, y0: float, y1: float) -> float:
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     band = gray[int(h * y0) : int(h * y1), int(w * 0.05) : int(w * 0.95)]
@@ -292,7 +309,7 @@ def detect_horizontal_content_crop(
 
 def _corner_webcam_score(frame: np.ndarray, corner: str) -> float:
     """Higher = more likely a persistent face-cam PIP in a corner."""
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     h, w = small.shape[:2]
     boxes = {
         "bl": (0, int(h * 0.62), int(w * 0.28), h - int(h * 0.62)),
@@ -427,7 +444,7 @@ def score_left_chat_panel(
         if crop_box is not None:
             x, y, w, h = crop_box
             frame = frame[y : y + h, x : x + w]
-        small = cv2.resize(frame, (320, 180))
+        small = _analysis_resize(frame)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         left_band = gray[int(h * 0.10) : int(h * 0.88), 0 : int(w * 0.38)]
@@ -637,7 +654,7 @@ def _reject_reference_histograms() -> list[np.ndarray]:
 
 
 def _center_band_hist(frame: np.ndarray) -> np.ndarray:
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     band = small[int(180 * 0.28) : int(180 * 0.72), int(320 * 0.08) : int(320 * 0.92)]
     if band.size == 0:
         return np.zeros((1, 1), dtype=np.float32)
@@ -711,7 +728,7 @@ def score_segment_combat(
         if crop_box is not None:
             x, y, w, h = crop_box
             frame = frame[y : y + h, x : x + w]
-        small = cv2.resize(frame, (320, 180))
+        small = _analysis_resize(frame)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         center = gray[int(h * 0.22) : int(h * 0.68), int(w * 0.12) : int(w * 0.88)]
@@ -973,7 +990,7 @@ def segment_looks_like_pubg_loot_or_walk(
 
 def _genshin_boss_bar_score(frame: np.ndarray) -> float:
     """Boss HP bar at top center — red/orange horizontal strip (0..1)."""
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     top = small[0 : int(180 * 0.13), int(320 * 0.12) : int(320 * 0.88)]
     if top.size == 0:
         return 0.0
@@ -1015,7 +1032,7 @@ def score_genshin_boss_likelihood(
             x, y, w, h = crop_box
             frame = frame[y : y + h, x : x + w]
         bar_scores.append(_genshin_boss_bar_score(frame))
-        small = cv2.resize(frame, (320, 180))
+        small = _analysis_resize(frame)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         center = gray[int(h * 0.18) : int(h * 0.72), int(w * 0.10) : int(w * 0.90)]
@@ -1421,7 +1438,7 @@ def _frame_looks_like_promo_template(frame: np.ndarray) -> bool:
     """Single frame: TikTok skin promo / stacked template, not live match HUD."""
     top_text = _band_overlay_text_score(frame, 0.0, 0.22)
     bottom_text = _band_overlay_text_score(frame, 0.76, 1.0)
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     top = gray[0 : int(h * 0.18), :]
@@ -1459,7 +1476,7 @@ def _frame_looks_like_hero_showcase(frame: np.ndarray) -> bool:
     mini, skill, _top = _frame_hud_metrics(frame)
     if mini >= 9.2 and skill >= 8.2:
         return False
-    small = cv2.resize(frame, (320, 180))
+    small = _analysis_resize(frame)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     center = gray[int(h * 0.14) : int(h * 0.86), int(w * 0.06) : int(w * 0.94)]
