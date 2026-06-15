@@ -642,8 +642,11 @@ def main() -> int:
             starve_ingest_sec = float(os.environ.get("MLBB_STARVATION_INGEST_SEC", "120"))
             if starvation and starved_for >= starve_ingest_sec:
                 if now - _LAST_STARVATION_INGEST >= starve_ingest_sec:
-                    force_ingest = True
-                    log(f"starvation ingest pending={pending} starved_for={starved_for:.0f}s")
+                    if not ingest.running() and not ingest_running_externally():
+                        force_ingest = True
+                        log(f"starvation ingest pending={pending} starved_for={starved_for:.0f}s")
+                    else:
+                        _LAST_STARVATION_INGEST = now
 
             refill_pending = pending < target_pending
             if (
