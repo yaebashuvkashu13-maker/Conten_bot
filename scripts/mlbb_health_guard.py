@@ -206,6 +206,34 @@ def recover(*, reason: str, env: dict[str, str] | None = None) -> list[str]:
     return actions
 
 
+def _disk_status(env: dict[str, str]) -> dict:
+    """Check disk/inode headroom for overnight stability."""
+    import shutil
+
+    paths = [
+        Path(env.get("MLBB_DATA_ROOT", str(DATA))),
+        Path(env.get("MLBB_SHORTS_ROOT", "/root/datasets/mlbb/youtube_shorts")),
+    ]
+    worst_pct = 0.0
+    details: list[str] = []
+    for p in paths:
+        try:
+            usage = shutil.disk_usage(p if p.exists() else p.parent)
+            pct = usage.used / usage.total * 100.0 if usage.total else 0.0
+            worst_pct = max(worst_pct, pct)
+            details.append(f"{p.name}:{pct:.0f}%")
+        except OSError:
+            continue
+    warn_pct = float(env.get("MLBB_DISK_WARN_PCT", "88"))
+    crit_pct = float(env.get("MLBB_DISK_CRIT_PCT", "95"))
+    level = "ok"
+    if worst_pct >= crit_pct:
+        level = "critical"
+    elif worst_pct >= warn_pct:
+        level = "warn"
+    return {"level": level, "used_pct": round(worst_pct, 1), "details": details}
+
+
 def check(env: dict[str, str] | None = None) -> dict:
     from mlbb_pipeline_health import needs_recovery, silence_sec, snapshot
 
@@ -213,12 +241,16 @@ def check(env: dict[str, str] | None = None) -> dict:
     pending = _pending_count()
     health = snapshot()
     need, why = needs_recovery(pending=pending)
+    disk = _disk_status(env)
+    if disk["level"] == "critical" and not need:
+        need, why = True, f"disk_critical:{disk['used_pct']}%"
     out = {
         "pending": pending,
         "silence_sec": int(silence_sec()),
         "need_recovery": need,
         "reason": why,
         "health": health,
+        "disk": disk,
     }
     return out
 

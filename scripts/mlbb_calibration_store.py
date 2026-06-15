@@ -745,10 +745,11 @@ def uncertainty_score(row: dict) -> float:
     return min(1.0, base)
 
 
-def _pending_sort_key(row: dict) -> tuple[float, float]:
+def _pending_sort_key(row: dict) -> tuple[float, float, float]:
+    hud_boost = float(row.get("hud_learning_boost") or 0)
     if os.environ.get("MLBB_ACTIVE_LEARNING", "1") == "1":
-        return (uncertainty_score(row), float(row.get("score") or 0))
-    return (float(row.get("score") or 0), uncertainty_score(row))
+        return (uncertainty_score(row) + hud_boost, float(row.get("score") or 0), hud_boost)
+    return (float(row.get("score") or 0) + hud_boost, uncertainty_score(row), hud_boost)
 
 
 def ingest_gate_stats() -> dict:

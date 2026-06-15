@@ -1,0 +1,30 @@
+{
+  "root": "/workspace/data/pubg/ui_refs",
+  "frames": [
+    "/workspace/data/pubg/ui_refs/frames/ref_00.jpg",
+    "/workspace/data/pubg/ui_refs/frames/ref_01.jpg",
+    "/workspace/data/pubg/ui_refs/frames/ref_02.jpg"
+  ],
+  "crops": [
+    "/workspace/data/pubg/ui_refs/crops/ref_00/minimap.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_00/joystick.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_00/fire_button.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_00/kill_feed.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_00/player_count.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_00/health_bar.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/minimap.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/joystick.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/fire_button.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/kill_feed.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/player_count.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_01/health_bar.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/minimap.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/joystick.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/fire_button.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/kill_feed.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/player_count.png",
+    "/workspace/data/pubg/ui_refs/crops/ref_02/health_bar.png"
+  ],
+  "layout": "/workspace/data/pubg/ui_refs/layout.json",
+  "updated_at": "2026-06-15 21:20:20"
+}

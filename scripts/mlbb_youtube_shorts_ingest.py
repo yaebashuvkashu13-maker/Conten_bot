@@ -1469,10 +1469,20 @@ def _run_ingest(args: argparse.Namespace) -> int:
             _reject(vid, "low_score", mp4)
             continue
 
+        hud_meta: dict = {}
+        try:
+            from mlbb_hud_signals import analyze_hud_signals, hud_learning_boost
+
+            hud = analyze_hud_signals(mp4, title=str(row.get("title", "")), start_sec=clip_start)
+            hud_meta = {**hud.to_dict(), "hud_learning_boost": round(hud_learning_boost(hud), 4)}
+        except Exception:
+            hud_meta = {}
+
         upsert_candidate(
             {
                 **row,
                 **feats,
+                **hud_meta,
                 "path": str(mp4),
                 "clip_start_sec": clip_start,
                 "pass_reason": clip_reason if lenient else feats.get("pass_reason", ""),
