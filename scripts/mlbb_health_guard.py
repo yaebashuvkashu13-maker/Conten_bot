@@ -169,6 +169,19 @@ def recover(*, reason: str, env: dict[str, str] | None = None) -> list[str]:
             except (ProcessLookupError, ValueError, OSError):
                 lock.unlink(missing_ok=True)
                 actions.append(f"cleared_lock:{lock.name}")
+            else:
+                try:
+                    age = time.time() - lock.stat().st_mtime
+                except OSError:
+                    age = 0.0
+                stale = float(env.get("MLBB_INGEST_STALE_SEC" if "ingest" in lock.name else "MLBB_FEED_STALE_SEC", "600"))
+                if age > stale:
+                    try:
+                        os.kill(pid, 15)
+                    except OSError:
+                        pass
+                    lock.unlink(missing_ok=True)
+                    actions.append(f"killed_stale:{lock.name}")
 
     added = _index_disk(env)
     actions.append(f"disk_index={added}")
