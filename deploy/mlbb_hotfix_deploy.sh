@@ -46,6 +46,10 @@ for kv in \
   MLBB_STEADY_INGEST_QUERIES=2 \
   YTDLP_PLAYER_CLIENTS=web,android,ios,mweb \
   YTDLP_403_RETRY_DELAY=4 \
+  MLBB_STEADY_MIN_SEND_PENDING=1 \
+  MLBB_STEADY_FORCE_SEND_SILENCE_SEC=900 \
+  MLBB_VOD_DISABLED=1 \
+  MLBB_PENDING_BLOCKED_RECOVERY_SEC=600 \
   MLBB_RECOVERY_COOLDOWN_SEC=600 \
   YTDLP_PROXY=; do
   key="${kv%%=*}"; val="${kv#*=}"
@@ -53,6 +57,13 @@ for kv in \
     sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
   else
     echo "${key}=${val}" >> "$ENV"
+  fi
+done
+
+# Disable dead proxy vars (break yt-dlp / curl when inherited).
+for key in PROXY_URL HTTP_PROXY HTTPS_PROXY SOCKS5_PROXY; do
+  if grep -q "^${key}=" "$ENV" 2>/dev/null; then
+    sed -i "s|^${key}=|#${key}=|" "$ENV"
   fi
 done
 

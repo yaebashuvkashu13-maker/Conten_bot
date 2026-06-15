@@ -1074,11 +1074,15 @@ def main() -> int:
 
 
 def _run_ingest(args: argparse.Namespace) -> int:
+    steady = os.environ.get("MLBB_STEADY_MODE", "1") == "1"
     burst = os.environ.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1"
     starvation = os.environ.get("MLBB_STARVATION_INGEST", "0") == "1"
-    if starvation:
+    if starvation and not steady:
         burst = True
         os.environ["MLBB_SHORTS_CALIBRATION_BURST"] = "1"
+    elif starvation and steady:
+        burst = False
+        os.environ["MLBB_SHORTS_CALIBRATION_BURST"] = "0"
     if args.incremental and burst:
         if args.max_downloads <= 0:
             args.max_downloads = int(os.environ.get("MLBB_INGEST_MAX_DOWNLOADS", "8"))

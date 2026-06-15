@@ -669,12 +669,16 @@ def main() -> int:
                 if force_ingest:
                     ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
                     ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
+                    if steady:
+                        ingest_env_map["MLBB_SHORTS_CALIBRATION_BURST"] = "0"
                     _LAST_STARVATION_INGEST = now
                 ingest.env = ingest_env_map
                 ingest.start()
 
             if (
-                should_start_vod(pending=pending, target_pending=target_pending)
+                base.get("MLBB_VOD_DISABLED", "0") != "1"
+                and base.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) != "1"
+                and should_start_vod(pending=pending, target_pending=target_pending)
                 and not vod.running()
                 and not vod_feed_running_externally()
                 and vod.cooldown_ok(vod_cooldown)

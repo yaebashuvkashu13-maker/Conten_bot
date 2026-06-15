@@ -95,17 +95,25 @@ def silence_sec() -> float:
 
 
 def should_send_feed_steady(*, pending: int, batch_size: int) -> tuple[bool, str]:
-    """Steady pacing: send only when buffer ready and interval elapsed."""
+    """Steady pacing: send partial batches; never block forever on pending < batch."""
     if not steady_mode():
         return True, "steady_off"
-    if pending < batch_size:
-        return False, f"pending={pending}<{batch_size}"
+    if pending <= 0:
+        return False, "pending=0"
+    min_pending = int(os.environ.get("MLBB_STEADY_MIN_SEND_PENDING", "1"))
+    if pending < min_pending:
+        return False, f"pending={pending}<{min_pending}"
+    silence = silence_sec()
+    max_s = max_silence_sec()
+    # Long silence — send whatever is queued (even 1 clip).
+    if silence >= float(os.environ.get("MLBB_STEADY_FORCE_SEND_SILENCE_SEC", str(max_s * 0.25))):
+        return True, f"steady_silence={silence:.0f}s"
     last = last_feed_delivered_at()
     interval = steady_feed_interval_sec()
     if last > 0:
         since = time.time() - last
-        if since < interval:
-            return False, f"steady_wait={interval - since:.0f}s"
+        if since < interval and pending < batch_size:
+            return False, f"steady_wait={interval - since:.0f}s pending={pending}<{batch_size}"
     return True, "ok"
 
 
@@ -136,8 +144,23 @@ def needs_recovery(*, pending: int) -> tuple[bool, str]:
             if empty_streak >= int(os.environ.get("MLBB_EMPTY_FEED_RECOVERY", "8")):
                 return True, f"empty_feed_streak={empty_streak}"
 
+    # Pending but feed blocked (steady wait) — recover after queue wait.
+    if pending > 0 and pending < int(os.environ.get("MLBB_CALIBRATION_BATCH", "4")):
+        blocked_since = float(data.get("pending_blocked_since") or 0.0)
+        if blocked_since <= 0:
+            data["pending_blocked_since"] = now
+            _write(data)
+        elif (now - blocked_since) > float(os.environ.get("MLBB_PENDING_BLOCKED_RECOVERY_SEC", "900")):
+            return True, f"pending_blocked_{pending}_for_{now - blocked_since:.0f}s"
+    elif pending >= int(os.environ.get("MLBB_CALIBRATION_BATCH", "4")):
+        if data.get("pending_blocked_since"):
+            data.pop("pending_blocked_since", None)
+            _write(data)
+
     last_recovery = float(data.get("last_recovery_at") or 0.0)
     if last_recovery > 0 and (now - last_recovery) < float(os.environ.get("MLBB_RECOVERY_COOLDOWN_SEC", "600")):
-        return False, "recovery_cooldown"
+        # Silence / blocked-queue recovery bypasses cooldown.
+        if silence < max_s * 0.5 and not data.get("pending_blocked_since"):
+            return False, "recovery_cooldown"
 
     return False, "ok"
