@@ -1243,6 +1243,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
         lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
         clip_start = 0.15
+        clip_reason = "opening"
         fast_long = os.environ.get("MLBB_INGEST_SKIP_LONG_CLIP_REJECT", "0") == "1"
         if lenient:
             act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4, title=row.get("title", ""))
@@ -1253,6 +1254,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
             if file_dur > shorts_short_max_sec():
                 if fast_long:
                     clip_start = min(20.0, max(0.15, file_dur * 0.06))
+                    clip_reason = "fast_long"
                     print(f"fast_long {vid} start={clip_start:.1f}s dur={file_dur:.0f}", flush=True)
                 else:
                     clip_start, clip_reason = find_best_long_clip_start(mp4)
@@ -1324,6 +1326,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 **feats,
                 "path": str(mp4),
                 "clip_start_sec": clip_start,
+                "pass_reason": clip_reason if lenient else feats.get("pass_reason", ""),
                 "gameplay_pass": 1,
                 "identity_pass": 1,
                 "ingest_verified": 1,

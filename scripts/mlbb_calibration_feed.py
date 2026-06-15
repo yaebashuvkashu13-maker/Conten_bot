@@ -306,19 +306,82 @@ def send_message(
         return False
 
 
-def format_caption(row: dict, idx: int, total: int, *, header: str = "") -> str:
+def _fmt_mmss(sec: float) -> str:
+    sec = max(0, int(sec))
+    m, s = divmod(sec, 60)
+    return f"{m}:{s:02d}"
+
+
+def _effective_watch_start(row: dict) -> float:
+    for key in ("trim_start_sec", "clip_start_sec"):
+        val = row.get(key)
+        if val is None:
+            continue
+        try:
+            start = float(val)
+        except (TypeError, ValueError):
+            continue
+        if start >= 0.5:
+            return start
+    return 0.0
+
+
+def _trim_reason_human(reason: str, row: dict) -> str:
+    code = (reason or str(row.get("send_reason") or row.get("pass_reason") or "")).strip()
+    low = code.lower()
+    if "kill" in low or code == "kill_peak":
+        return "kill / teamfight"
+    if code in ("cached_clip", "fast_long_skip_scan"):
+        return "момент, который выбрал бот"
+    if "opening" in low or "junk" in low:
+        return "после интро"
+    if "combat" in low or "peak" in low:
+        return "пик экшена"
+    if code:
+        return code.replace("_", " ")
+    return "геймплей"
+
+
+def _youtube_url_at(video_id: str, start_sec: float) -> str:
+    vid = str(video_id).strip()
+    base = f"https://www.youtube.com/watch?v={vid}"
+    if start_sec >= 1:
+        return f"{base}&t={int(start_sec)}s"
+    return base
+
+
+def _watch_moment_block(row: dict, *, send_dur: float = 0.0) -> str:
+    start = _effective_watch_start(row)
+    clip_max = float(os.environ.get("MLBB_SHORTS_TRIM_MAX_SEC", "58"))
+    window = min(clip_max, send_dur) if send_dur > 0 else clip_max
+    reason = _trim_reason_human(str(row.get("send_reason") or ""), row)
+    vid = str(row.get("video_id") or row.get("id") or "")
+    if start < 1:
+        return (
+            f"▶️ Смотри с начала (~{int(window)}с) — {reason}\n"
+            f"🔗 {_youtube_url_at(vid, 0)}\n"
+        )
+    end = start + window
+    return (
+        f"▶️ Смотри с {_fmt_mmss(start)} до ~{_fmt_mmss(end)} — {reason}\n"
+        f"🔗 {_youtube_url_at(vid, start)}\n"
+    )
+
+
+def format_caption(row: dict, idx: int, total: int, *, header: str = "", send_dur: float = 0.0) -> str:
     row = enrich_row_metadata(row)
     vid = row.get("video_id", "")
     prefix = f"{header}\n" if header else ""
     channel = str(row.get("channel") or "").strip()
     channel_line = f"канал: {channel}\n" if channel else ""
+    watch = _watch_moment_block(row, send_dur=send_dur)
     return (
         f"{prefix}MLBB калибровка {idx}/{total}\n"
+        f"{watch}"
         f"score={float(row.get('score', 0)):.3f} | hook={float(row.get('hook_score', 0)):.2f}\n"
         f"views={int(row.get('view_count') or 0)}\n"
         f"{channel_line}"
         f"{row.get('title', '')[:120]}\n"
-        f"{row.get('url', '')}\n"
         f"#id {vid}\n"
         f"Нажми 👍 если ок, 👎 если нет"
     )
@@ -335,8 +398,8 @@ def format_link_fallback_caption(
 ) -> str:
     row = enrich_row_metadata(row)
     vid = str(row.get("video_id", ""))
-    dur = _probe_duration_sec(send_path)
-    dur_line = f"длительность: {int(dur)}с\n" if dur > 0 else ""
+    send_dur = _probe_duration_sec(send_path)
+    watch = _watch_moment_block(row, send_dur=send_dur)
     try:
         size_line = f"файл на сервере: {_human_bytes(send_path.stat().st_size)}\n"
     except OSError:
@@ -345,13 +408,13 @@ def format_link_fallback_caption(
     return (
         f"{prefix}⚠️ Видео в Telegram не загрузилось\n"
         f"Причина: {fail_reason}\n\n"
-        f"Смотри превью и открой ссылку — это тот клип, который бот хотел оценить:\n"
+        f"{watch}"
+        f"Это тот фрагмент, который бот хотел оценить:\n"
         f"{row.get('title', vid)[:140]}\n"
-        f"{dur_line}{size_line}"
+        f"{size_line}"
         f"score={float(row.get('score', 0)):.3f}\n"
-        f"{row.get('url', f'https://www.youtube.com/watch?v={vid}')}\n"
         f"#id {vid} ({idx}/{total})\n"
-        f"Нажми 👍 если по превью/ссылке ок, 👎 если нет"
+        f"Нажми 👍 если момент ок, 👎 если нет"
     )
 
 
@@ -534,7 +597,11 @@ def _run_feed() -> int:
             continue
         if trim_start > 0:
             print(f"trim send {vid} start={trim_start:.2f}s reason={open_reason}", flush=True)
-            row = {**row, "trim_start_sec": trim_start}
+            row = {**row, "trim_start_sec": trim_start, "send_reason": open_reason}
+        elif open_reason:
+            row = {**row, "send_reason": open_reason}
+        if row.get("clip_start_sec") is None and trim_start > 0:
+            row = {**row, "clip_start_sec": trim_start}
         if row.get("ingest_verified"):
             final_ok, final_reason = True, "ingest_verified"
         else:
@@ -544,9 +611,8 @@ def _run_feed() -> int:
             reject_candidate(vid, reason=final_reason, path=path)
             continue
         header = batch_header if delivered == 0 else ""
-        caption = format_caption(row, idx, len(picked), header=header)
-        if trim_start > 0:
-            caption = f"{caption}\n✂️ trimmed {trim_start:.1f}s junk head"
+        send_dur = _probe_duration_sec(send_path)
+        caption = format_caption(row, idx, len(picked), header=header, send_dur=send_dur)
         ok, fail_reason = send_video_best_effort(token, chat_id, send_path, caption, video_id=vid)
         if not ok:
             fallback = format_link_fallback_caption(
