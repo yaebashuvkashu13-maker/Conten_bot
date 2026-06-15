@@ -23,11 +23,14 @@ except ImportError:
     from video_frame_io import prefer_ffmpeg_decode, video_pixel_size
 
 REJECT_EXAMPLES_DIR = Path("/root/data/mlbb/reject_examples")
+HERO_REFS_ROOT = Path(os.environ.get("MLBB_HERO_REFS_ROOT", "/root/datasets/mlbb/hero_refs"))
 CALIBRATION_LABELS_PATH = Path("/root/data/mlbb/calibration_labels.json")
 _CALIBRATION_CACHE: dict | None = None
 _CALIBRATION_MTIME: float = 0.0
 _REJECT_REF_HISTS: list[np.ndarray] | None = None
 _REJECT_REF_MTIME: float = 0.0
+_HERO_REF_HISTS: list[np.ndarray] | None = None
+_HERO_REF_MTIME: float = 0.0
 
 PROMO_PATTERNS = re.compile(
     r"(#ad\b|sponsored|giveaway|promo\b|free\s+diamond|skin\s+gratis|"
@@ -673,6 +676,62 @@ def reject_example_similarity(
 ) -> float:
     """0..1 — higher means frame looks like owner /bad examples."""
     refs = _reject_reference_histograms()
+    if not refs:
+        return 0.0
+    return _frame_hist_similarity(video_path, start_sec, duration_sec, refs, crop_box=crop_box)
+
+
+def _hero_refs_mtime() -> float:
+    if not HERO_REFS_ROOT.exists():
+        return 0.0
+    latest = 0.0
+    for path in HERO_REFS_ROOT.rglob("*"):
+        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+            latest = max(latest, path.stat().st_mtime)
+    return latest
+
+
+def _hero_reference_histograms() -> list[np.ndarray]:
+    global _HERO_REF_HISTS, _HERO_REF_MTIME
+    mtime = _hero_refs_mtime()
+    if _HERO_REF_HISTS is not None and mtime == _HERO_REF_MTIME:
+        return _HERO_REF_HISTS
+    hists: list[np.ndarray] = []
+    if HERO_REFS_ROOT.exists():
+        for path in sorted(HERO_REFS_ROOT.rglob("*")):
+            if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+                continue
+            img = cv2.imread(str(path))
+            if img is None:
+                continue
+            hists.append(_center_band_hist(img))
+    _HERO_REF_HISTS = hists
+    _HERO_REF_MTIME = mtime
+    return hists
+
+
+def hero_ref_similarity(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> float:
+    """0..1 — higher means frame resembles hero splash / skin reveal refs."""
+    refs = _hero_reference_histograms()
+    if not refs:
+        return 0.0
+    return _frame_hist_similarity(video_path, start_sec, duration_sec, refs, crop_box=crop_box)
+
+
+def _frame_hist_similarity(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    refs: list[np.ndarray],
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> float:
     if not refs:
         return 0.0
     cap = cv2.VideoCapture(str(video_path))
@@ -1505,6 +1564,11 @@ def segment_looks_like_hero_showcase(
     crop_box: tuple[int, int, int, int] | None = None,
     sample_frames: int = 4,
 ) -> bool:
+    if os.environ.get("MLBB_HERO_REF_GATE", "1") == "1":
+        max_sim = float(os.environ.get("MLBB_HERO_REF_MAX_SIM", "0.78"))
+        sim = hero_ref_similarity(video_path, start_sec, duration_sec, crop_box=crop_box)
+        if sim >= max_sim:
+            return True
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened() and not prefer_ffmpeg_decode(video_path):
         return True

@@ -684,6 +684,82 @@ def is_stub_candidate(row: dict) -> bool:
     return False
 
 
+def uncertainty_score(row: dict) -> float:
+    """Higher = more informative for owner labeling (active learning)."""
+    threshold = float(os.environ.get("MLBB_UNCERTAINTY_THRESHOLD", "0.35"))
+    score = float(row.get("score") or row.get("model_score") or 0)
+    # Closer to decision boundary → higher uncertainty.
+    spread = max(threshold, 0.12)
+    base = 1.0 - min(abs(score - threshold) / spread, 1.0)
+
+    identity = int(row.get("identity_pass") or 0)
+    gameplay = int(row.get("gameplay_pass") or 0)
+    rule = int(row.get("rule_pass") or 0)
+    gates = [identity, gameplay, rule]
+    if gates and any(gates) and not all(gates):
+        base += 0.22
+
+    clf_prob = row.get("classifier_prob")
+    if clf_prob is not None:
+        base += 0.18 * (1.0 - min(abs(float(clf_prob) - threshold) / spread, 1.0))
+
+    kill = row.get("kill_ui_score")
+    if kill is not None:
+        kill_f = float(kill)
+        if 0.08 <= kill_f <= 0.22:
+            base += 0.08
+
+    return min(1.0, base)
+
+
+def _pending_sort_key(row: dict) -> tuple[float, float]:
+    if os.environ.get("MLBB_ACTIVE_LEARNING", "1") == "1":
+        return (uncertainty_score(row), float(row.get("score") or 0))
+    return (float(row.get("score") or 0), uncertainty_score(row))
+
+
+def ingest_gate_stats() -> dict:
+    """Reject reasons from ingest_skip_ids — for daily owner report."""
+    skip = load_ingest_skip()
+    by_gate: dict[str, int] = {}
+    for reason in skip.values():
+        text = str(reason or "unknown")
+        gate = text.split(":", 1)[0] if ":" in text else text.split("_", 1)[0]
+        gate = gate[:32] or "unknown"
+        by_gate[gate] = by_gate.get(gate, 0) + 1
+    top = sorted(by_gate.items(), key=lambda kv: kv[1], reverse=True)[:6]
+    return {"total_skipped": len(skip), "by_gate": by_gate, "top": top}
+
+
+def feedback_week_stats() -> dict[str, int]:
+    """👍/👎 counts in the last 7 days."""
+    try:
+        from mlbb_learning_first import feedback_week_counts
+
+        return feedback_week_counts()
+    except ImportError:
+        pass
+    labels = load_labels()
+    yes = no = 0
+    cutoff = time.time() - 7 * 86400
+    for row in labels.get("feedback", []):
+        label = row.get("owner_label")
+        if label not in ("yes", "good", "no", "bad"):
+            continue
+        at = str(row.get("at", ""))
+        try:
+            ts = time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
+        except (ValueError, OSError):
+            continue
+        if ts < cutoff:
+            continue
+        if label in ("yes", "good"):
+            yes += 1
+        else:
+            no += 1
+    return {"yes": yes, "no": no, "total": yes + no}
+
+
 def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
     global _LAST_INDEX_REPAIR
     if repair:
@@ -713,8 +789,10 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
             continue
         seen_vids.add(vid)
         seen_paths.add(path_key)
-        out.append({**row, "video_id": vid, "id": vid, "path": str(path)})
-    out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+        enriched = {**row, "video_id": vid, "id": vid, "path": str(path)}
+        enriched["uncertainty"] = round(uncertainty_score(enriched), 4)
+        out.append(enriched)
+    out.sort(key=_pending_sort_key, reverse=True)
     return out[:limit]
 
 

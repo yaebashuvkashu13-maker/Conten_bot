@@ -62,6 +62,32 @@ def learning_stats() -> dict:
         return {"sent_today": 0, "cap": 500, "precision_7d": 0.0, "learning_first": False, "sends_allowed": True}
 
 
+def _gate_reject_line() -> str:
+    try:
+        from mlbb_calibration_store import ingest_gate_stats
+
+        gs = ingest_gate_stats()
+        top = gs.get("top") or []
+        if not top:
+            return "gate rejects: —"
+        parts = [f"{name}={count}" for name, count in top[:4]]
+        return f"gate rejects ({gs.get('total_skipped', 0)}): " + ", ".join(parts)
+    except Exception:
+        return "gate rejects: —"
+
+
+def _week_thumbs_line(calib: dict) -> str:
+    try:
+        from mlbb_calibration_store import feedback_week_stats
+
+        wk = feedback_week_stats()
+        return f"👍/нед Shorts: {wk.get('yes', 0)}👍 {wk.get('no', 0)}👎"
+    except Exception:
+        yes = calib.get("feedback_yes", 0)
+        no = calib.get("feedback_no", 0)
+        return f"👍/нед Shorts: {yes}👍 {no}👎 (all-time fallback)"
+
+
 def build_report(env: dict | None = None) -> str:
     import os
 
@@ -84,11 +110,18 @@ def build_report(env: dict | None = None) -> str:
     except Exception:
         pass
 
+    shorts_focus = os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1"
+    vod_line = "off (shorts focus)" if shorts_focus and calib.get("pending", 99) < int(
+        os.environ.get("MLBB_TARGET_PENDING", "40")
+    ) else ("on" if state.get("vod_running") else "off")
+
     return (
         "📋 MLBB Bot — дневной статус\n"
         f"Worker: {worker_line}\n"
         f"Отправки сегодня: {ls['sent_today']}/{ls['cap']}\n"
         f"precision_7d: {ls['precision_7d']:.0%}\n"
+        f"{_week_thumbs_line(calib)}\n"
+        f"{_gate_reject_line()}\n"
         f"Метки VOD: 👍{vs['feedback_yes']} 👎{vs['feedback_no']}\n"
         f"Метки Shorts: 👍{calib.get('feedback_yes', 0)} 👎{calib.get('feedback_no', 0)} "
         f"pending={calib.get('pending', '?')}\n"
@@ -96,7 +129,7 @@ def build_report(env: dict | None = None) -> str:
         f"batch={os.environ.get('MLBB_VOD_BATCH_MAX', '40')}\n"
         f"pending Shorts queue: {state.get('pending_shorts', '?')}\n"
         f"pipelines: ingest={'on' if state.get('ingest_running') else 'off'} "
-        f"vod={'on' if state.get('vod_running') else 'off'} "
+        f"vod={vod_line} "
         f"feed={'on' if state.get('feed_running') else 'off'}"
     )
 

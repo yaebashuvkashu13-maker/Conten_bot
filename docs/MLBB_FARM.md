@@ -42,6 +42,32 @@ List archived Shorts:
 ls /root/datasets/mlbb/training_archive/2026/shorts/
 ```
 
+## Training loop (owner 👍/👎)
+
+```
+Owner feedback → mlbb_telegram_handlers
+  → labels + exemplars + training_archive
+  → schedule_mlbb_retrain() (debounced: every 10 labels or 6h)
+  → mlbb_learn_apply.sh → mlbb_train_classifier.py
+  → data/mlbb/highlight_classifier_mobile_legends.joblib
+```
+
+Manual retrain:
+
+```bash
+bash scripts/mlbb_learn_apply.sh
+python3 scripts/mlbb_train_classifier.py
+```
+
+Hero reference pack (showcase gate):
+
+```bash
+python3 scripts/mlbb_hero_refs_download.py
+# → /root/datasets/mlbb/hero_refs/{hero_id}/icon.png
+```
+
+Active learning: `MLBB_ACTIVE_LEARNING=1` sorts pending queue by model uncertainty (clips near score threshold first).
+
 ## Deploy
 
 ```bash

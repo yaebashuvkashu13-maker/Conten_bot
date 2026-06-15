@@ -42,7 +42,20 @@ def _api_call(method: str, payload: dict | None = None, *, timeout: int = 60) ->
     return result["result"]
 
 
-def schedule_mlbb_retrain() -> None:
+def schedule_mlbb_retrain(*, force: bool = False) -> None:
+    """Debounced retrain — every N labels or MLBB_RETRAIN_MIN_HOURS, not every 👍."""
+    try:
+        from mlbb_learning_first import record_label_for_retrain, should_run_retrain
+
+        record_label_for_retrain()
+        ok, reason = should_run_retrain(force=force)
+        if not ok:
+            log.debug("mlbb retrain deferred: %s", reason)
+            return
+        log.info("mlbb retrain scheduled: %s", reason)
+    except ImportError:
+        pass
+
     for script in (
         Path("/usr/local/bin/mlbb_learn_apply.sh"),
         Path(__file__).resolve().parent / "mlbb_learn_apply.sh",
