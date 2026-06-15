@@ -9,7 +9,32 @@ mlbb_continuous_worker (24/7)
 ├── mlbb_youtube_shorts_ingest   → Shorts calibration queue
 ├── mlbb_vod_segment_feed        → VOD kill-first scan → render → presend → send
 ├── mlbb_calibration_feed        → Send Shorts batches to owner
-└── mlbb_continuous_worker_watchdog.sh (cron */5)
+└── mlbb_continuous_worker_watchdog.sh (cron */2) + mlbb_health_guard.py (auto-recovery)
+
+## Steady mode (default)
+
+Avoids burst-then-silence:
+
+| Parameter | Meaning |
+|-----------|---------|
+| `MLBB_STEADY_MODE=1` | Fixed pacing, no tier-3 flood |
+| `MLBB_STEADY_FEED_INTERVAL_SEC=720` | ~4 clips every 12 min when queue has buffer |
+| `MLBB_STEADY_INGEST_COOLDOWN_SEC=300` | Background ingest every 5 min while pending < target |
+| `MLBB_MAX_SILENCE_SEC=5400` | Auto-recovery if no delivery 90 min |
+| `MLBB_RESEND_UNLABELED_HOURS=48` | No duplicate sends (same clip) |
+
+Autonomic recovery (`mlbb_health_guard.py`): clears stale locks, disk index, starvation ingest, forced feed — **no manual revive**.
+
+```bash
+python3 /usr/local/bin/mlbb_health_guard.py --check
+python3 /usr/local/bin/mlbb_health_guard.py --recover
+```
+
+Cron:
+
+```cron
+*/2 * * * * /usr/local/bin/mlbb_continuous_worker_watchdog.sh
+```
 
 telegram_upload_bot.py           → 👍/👎 callbacks (uses mlbb_telegram_handlers)
 ```
@@ -76,10 +101,10 @@ git pull
 bash deploy/mlbb_deploy.sh
 ```
 
-Cron (watchdog every 5 min):
+Cron (watchdog every 2 min + auto-recovery):
 
 ```cron
-*/5 * * * * /usr/local/bin/mlbb_continuous_worker_watchdog.sh
+*/2 * * * * /usr/local/bin/mlbb_continuous_worker_watchdog.sh
 ```
 
 ## Manual commands

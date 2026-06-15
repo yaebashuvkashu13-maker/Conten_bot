@@ -71,9 +71,13 @@ restart_worker() {
   fi
 }
 
-# Подзатыльник зависшим ingest/feed/vod/orphans
+# Подзатыльник зависшим ingest/feed/vod/orphans + autonomic recovery
+GUARD_PY="/usr/local/bin/mlbb_health_guard.py"
 if [[ -f "$WATCHDOG_PY" ]]; then
   python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
+fi
+if [[ -f "$GUARD_PY" ]]; then
+  python3 "$GUARD_PY" --recover >> "$WLOG" 2>&1 || true
 fi
 
 pid="$(worker_pid || true)"

@@ -601,6 +601,12 @@ def _run_feed() -> int:
         time.sleep(0.4)
 
     print(f"sent={delivered}")
+    try:
+        from mlbb_pipeline_health import record_feed_delivery
+
+        record_feed_delivery(delivered=delivered)
+    except ImportError:
+        pass
     return 0
 
 

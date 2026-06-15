@@ -74,8 +74,12 @@ def base_env() -> dict[str, str]:
             "MLBB_SHORTS_VERTICAL": env.get("MLBB_SHORTS_VERTICAL", "1"),
             "MLBB_PORTRAIT_RENDER": env.get("MLBB_PORTRAIT_RENDER", "1"),
             "MLBB_CALIBRATION_MIN_SEND_SCORE": env.get("MLBB_CALIBRATION_MIN_SEND_SCORE", "0"),
-            "MLBB_CALIBRATION_BATCH": env.get("MLBB_CALIBRATION_BATCH", "12"),
-            "MLBB_SHORTS_CALIBRATION_BURST": env.get("MLBB_SHORTS_CALIBRATION_BURST", "1"),
+            "MLBB_CALIBRATION_BATCH": env.get("MLBB_CALIBRATION_BATCH", "4"),
+            "MLBB_STEADY_MODE": env.get("MLBB_STEADY_MODE", "1"),
+            "MLBB_SHORTS_CALIBRATION_BURST": env.get(
+                "MLBB_SHORTS_CALIBRATION_BURST",
+                "0" if env.get("MLBB_STEADY_MODE", "1") == "1" else "1",
+            ),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         }
@@ -430,14 +434,19 @@ def pipeline_paused(name: str) -> bool:
     return script in paused
 
 
-def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
+def ingest_cmd(env: dict[str, str], *, aggressive: bool, steady: bool = False) -> list[str]:
     script = BIN / "mlbb_youtube_shorts_ingest.py"
     if not script.exists():
         script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
-    burst = env.get("MLBB_SHORTS_CALIBRATION_BURST", "1") == "1"
-    max_dl = env.get("MLBB_INGEST_MAX_DOWNLOADS", "8" if burst else "15")
-    max_q = env.get("MLBB_INGEST_MAX_PER_QUERY", "40" if burst else "20")
-    delay = env.get("MLBB_INGEST_DOWNLOAD_DELAY", "5" if burst else "8")
+    burst = env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1" and not steady
+    if steady:
+        max_dl = env.get("MLBB_STEADY_INGEST_MAX_DOWNLOADS", "4")
+        max_q = env.get("MLBB_STEADY_INGEST_MAX_PER_QUERY", "20")
+        delay = env.get("MLBB_STEADY_INGEST_DOWNLOAD_DELAY", "4")
+    else:
+        max_dl = env.get("MLBB_INGEST_MAX_DOWNLOADS", "8" if burst else "15")
+        max_q = env.get("MLBB_INGEST_MAX_PER_QUERY", "40" if burst else "20")
+        delay = env.get("MLBB_INGEST_DOWNLOAD_DELAY", "5" if burst else "8")
     return [
         PY,
         str(script),
@@ -558,7 +567,7 @@ def montage_cmd(env: dict[str, str]) -> list[str]:
 
 def main() -> int:
     base = base_env()
-    target_pending = int(base.get("MLBB_TARGET_PENDING", "40"))
+    target_pending = int(base.get("MLBB_TARGET_PENDING", "12"))
     vod_slice_min = int(base.get("MLBB_VOD_SLICE_MIN", "90"))
     vod_max_vods = int(base.get("MLBB_VOD_SLICE_MAX_VODS", "8"))
     base_ingest_cooldown = float(base.get("MLBB_INGEST_COOLDOWN_SEC", "180"))
@@ -607,6 +616,11 @@ def main() -> int:
                 from mlbb_calibration_tier import apply_tier
 
                 tier, tier_env = apply_tier(base, pending=pending)
+                if base.get("MLBB_STEADY_MODE", "1") == "1":
+                    tier = min(tier, int(base.get("MLBB_STEADY_MAX_TIER", "2")))
+                    from mlbb_calibration_tier import tier_env as _tier_env
+
+                    tier_env = {**base, **_tier_env(tier), "MLBB_CALIBRATION_TIER": str(tier)}
             except ImportError:
                 tier, tier_env = 1, dict(base)
             if tier != last_tier:
@@ -615,9 +629,12 @@ def main() -> int:
             ingest_cooldown = float(tier_env.get("MLBB_INGEST_COOLDOWN_SEC", base_ingest_cooldown))
             feed_cooldown = float(tier_env.get("MLBB_FEED_COOLDOWN_SEC", base_feed_cooldown))
             vod.env = {**vod_env(base), **tier_env}
+            steady = base.get("MLBB_STEADY_MODE", "1") == "1"
+            if steady:
+                ingest_cooldown = float(base.get("MLBB_STEADY_INGEST_COOLDOWN_SEC", "300"))
 
             starved_for = (now - _PENDING_ZERO_SINCE) if _PENDING_ZERO_SINCE > 0 else 0.0
-            starvation = pending < starve_pending
+            starvation = pending < starve_pending and not steady
             force_ingest = False
             starve_ingest_sec = float(os.environ.get("MLBB_STARVATION_INGEST_SEC", "120"))
             if starvation and starved_for >= starve_ingest_sec:
@@ -625,16 +642,27 @@ def main() -> int:
                     force_ingest = True
                     log(f"starvation ingest pending={pending} starved_for={starved_for:.0f}s")
 
+            refill_pending = pending < target_pending
             if (
-                (aggressive or force_ingest)
+                (refill_pending or force_ingest)
                 and should_start_ingest(pending=pending, target_pending=target_pending)
                 and not ingest.running()
                 and not ingest_running_externally()
                 and (ingest.cooldown_ok(ingest_cooldown) or force_ingest)
             ):
                 kill_stale_ingest()
-                ingest.cmd = ingest_cmd({**base, **tier_env}, aggressive=aggressive or force_ingest)
-                ingest_env_map = {**ingest_env(base, aggressive=aggressive or force_ingest), **tier_env}
+                ingest.cmd = ingest_cmd(
+                    {**base, **tier_env},
+                    aggressive=refill_pending and not steady,
+                    steady=steady,
+                )
+                ingest_env_map = {
+                    **ingest_env(base, aggressive=refill_pending and not steady),
+                    **tier_env,
+                }
+                if steady:
+                    ingest_env_map["MLBB_SHORTS_CALIBRATION_BURST"] = "0"
+                    ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
                 if force_ingest:
                     ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
                     ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
@@ -659,7 +687,20 @@ def main() -> int:
                 kill_stale_lock(VOD_LOCK, name="vod_shorts_focus", max_age_sec=0)
 
             feed_wait = feed_cooldown
-            if pending > 0:
+            batch_size = int(base.get("MLBB_CALIBRATION_BATCH", "4"))
+            feed_allowed = True
+            feed_block_reason = ""
+            if steady:
+                try:
+                    from mlbb_pipeline_health import should_send_feed_steady
+
+                    feed_allowed, feed_block_reason = should_send_feed_steady(
+                        pending=pending,
+                        batch_size=batch_size,
+                    )
+                except ImportError:
+                    pass
+            if pending > 0 and not steady:
                 feed_wait = float(
                     tier_env.get(
                         "MLBB_FEED_COOLDOWN_PENDING_SEC",
@@ -668,15 +709,20 @@ def main() -> int:
                 )
                 if starvation:
                     feed_wait = min(feed_wait, 45.0)
-            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "60"))
+            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "120"))
             if starvation:
                 empty_feed_sec = min(empty_feed_sec, 45.0)
-            run_feed = pending > 0 or (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
+            run_feed = (pending > 0 and feed_allowed) or (
+                pending == 0 and (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
+            )
+            if pending > 0 and steady and not feed_allowed:
+                if cycles % 30 == 0:
+                    log(f"steady feed wait: {feed_block_reason} pending={pending}")
             if (
                 run_feed
                 and not feed.running()
                 and not feed_running_externally()
-                and feed.cooldown_ok(feed_wait if pending > 0 else 30)
+                and feed.cooldown_ok(30 if steady else (feed_wait if pending > 0 else 30))
             ):
                 kill_stale_feed()
                 feed_env = {**base, **tier_env}
@@ -728,6 +774,8 @@ def main() -> int:
                     {
                         "pending_shorts": pending,
                         "starved_for_sec": int(starved_for) if starvation else 0,
+                        "steady_mode": steady,
+                        "feed_block_reason": feed_block_reason if steady else "",
                         "calibration_tier": tier,
                         "ingest_running": ingest.running() or ingest_running_externally(),
                         "vod_running": vod.running() or vod_feed_running_externally(),

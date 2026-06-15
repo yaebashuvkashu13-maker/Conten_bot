@@ -1450,6 +1450,13 @@ def _run_ingest(args: argparse.Namespace) -> int:
         f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} skipped_known={skipped_known} "
         f"pool={len(pool)} pending={pending_n} tier={tier} dir={SHORTS_ROOT}"
     )
+    if saved > 0:
+        try:
+            from mlbb_pipeline_health import record_ingest_saved
+
+            record_ingest_saved(count=saved)
+        except ImportError:
+            pass
     return 0
 
 

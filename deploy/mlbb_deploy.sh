@@ -27,7 +27,12 @@ install -m 755 "$REPO/scripts/mlbb_training_archive.py" "$BIN/mlbb_training_arch
 install -m 755 "$REPO/scripts/mlbb_scene_library.py" "$BIN/mlbb_scene_library.py"
 install -m 755 "$REPO/scripts/mlbb_scene_library_backfill.py" "$BIN/mlbb_scene_library_backfill.py"
 install -m 755 "$REPO/scripts/mlbb_purge_legacy_shorts_disk.py" "$BIN/mlbb_purge_legacy_shorts_disk.py"
-install -m 755 "$REPO/scripts/mlbb_purge_bad_shorts_queue.py" "$BIN/mlbb_purge_bad_shorts_queue.py"
+install -m 755 "$REPO/scripts/mlbb_pipeline_health.py" "$BIN/mlbb_pipeline_health.py"
+install -m 755 "$REPO/scripts/mlbb_health_guard.py" "$BIN/mlbb_health_guard.py"
+install -m 755 "$REPO/scripts/mlbb_learning_first.py" "$BIN/mlbb_learning_first.py"
+install -m 755 "$REPO/scripts/mlbb_learn_apply.sh" "$BIN/mlbb_learn_apply.sh"
+install -m 755 "$REPO/scripts/mlbb_train_classifier.py" "$BIN/mlbb_train_classifier.py"
+install -m 755 "$REPO/scripts/mlbb_hero_refs_download.py" "$BIN/mlbb_hero_refs_download.py"
 
 if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-0}" == "1" ]]; then
   python3 "$BIN/mlbb_purge_bad_shorts_queue.py" || true
