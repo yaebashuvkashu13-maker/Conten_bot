@@ -517,13 +517,29 @@ def rescue_unindexed_shorts(*, limit: int = 6) -> int:
         if not act_ok:
             continue
         score = float(existing.get("score") or 0.35)
+        title = str(existing.get("title") or vid)
+        url = existing.get("url") or f"https://www.youtube.com/watch?v={vid}"
+        if title == vid or len(title) <= 12:
+            try:
+                import json as _json
+                import urllib.request as _urllib
+
+                oembed_url = (
+                    f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
+                )
+                with _urllib.urlopen(oembed_url, timeout=10) as resp:
+                    meta = _json.loads(resp.read().decode())
+                if meta.get("title"):
+                    title = str(meta["title"])
+            except Exception:
+                pass
         upsert_candidate(
             {
                 **existing,
                 "video_id": vid,
                 "path": str(mp4),
-                "title": str(existing.get("title") or vid),
-                "url": existing.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                "title": title,
+                "url": url,
                 "score": score,
                 "clip_start_sec": float(existing.get("clip_start_sec") or 0.15),
                 "gameplay_pass": 1,
