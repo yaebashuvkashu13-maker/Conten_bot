@@ -48,10 +48,11 @@ def _log(msg: str) -> None:
 
 def proc_age_sec(pid: int) -> float:
     try:
+        uptime = float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
         with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
             start_ticks = int(fh.read().split()[21])
         clk = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-        return time.time() - (start_ticks / clk)
+        return max(0.0, uptime - (start_ticks / clk))
     except (OSError, ValueError, IndexError):
         return -1.0
 
