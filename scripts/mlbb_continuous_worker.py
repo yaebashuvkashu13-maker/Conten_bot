@@ -505,7 +505,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_SHORTS_STRICT_VERIFY": env.get("MLBB_SHORTS_STRICT_VERIFY", "1"),
             "MLBB_SHORTS_REQUIRE_KILL_UI": env.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1"),
             "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "999"),
-            "YTDLP_SLEEP_REQUESTS": "1.2",
+            "YTDLP_SLEEP_REQUESTS": "0.5" if aggressive else "1.2",
             "YTDLP_SLEEP_INTERVAL": "3",
             "YTDLP_MAX_SLEEP_INTERVAL": "10",
         }

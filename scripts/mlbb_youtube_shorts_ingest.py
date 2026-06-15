@@ -831,7 +831,13 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int, for
     import subprocess
 
     cutoff = shorts_upload_cutoff(env, days=days)
-    search_n = max(limit * 8, 80)
+    if shorts_only_mode(env):
+        mult = int(env.get("MLBB_SHORTS_SEARCH_MULT", "4"))
+        floor = int(env.get("MLBB_SHORTS_SEARCH_FLOOR", "80"))
+        cap = int(env.get("MLBB_SHORTS_SEARCH_CAP", "120"))
+        search_n = min(max(limit * mult, floor), cap)
+    else:
+        search_n = max(limit * 8, 80)
     max_d = shorts_max_duration_sec(env)
     suffix = " #shorts" if force_shorts or shorts_only_mode(env) or max_d <= shorts_short_max_sec(env) else ""
     cmd = ytdlp_cmd(env, use_proxy=False) + [

@@ -86,6 +86,8 @@ TIER_OVERRIDES: dict[int, dict[str, str]] = {
         "MLBB_INGEST_SEARCH_DELAY": "0",
         "MLBB_SHORTS_INGEST_DAYS": "730",
         "MLBB_SHORTS_MIN_POOL": "4",
+        "YTDLP_SLEEP_REQUESTS": "0.4",
+        "MLBB_SHORTS_SEARCH_CAP": "100",
     },
 }
 
