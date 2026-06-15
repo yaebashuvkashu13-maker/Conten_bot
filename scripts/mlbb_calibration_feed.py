@@ -445,7 +445,12 @@ def _run_feed() -> int:
         return 1
 
     if os.environ.get("MLBB_FEED_REBUILD", "0") == "1":
+        from mlbb_calibration_store import index_unlabeled_disk_shorts, rebuild_index_from_disk
+
         rebuild_index_from_disk()
+        indexed = index_unlabeled_disk_shorts(limit=int(os.environ.get("MLBB_DISK_INDEX_LIMIT", "24")))
+        if indexed:
+            print(f"feed_disk_index added={indexed}", flush=True)
     _prune_bad_pending(limit=int(os.environ.get("MLBB_PRUNE_PENDING_LIMIT", "10")))
     print(f"pick pending batch={BATCH_SIZE}", flush=True)
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))

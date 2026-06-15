@@ -25,6 +25,8 @@ from mlbb_calibration_store import (
     DATA_MLBB,
     SHORTS_ROOT,
     ingest_skip_ids,
+    ingest_pool_skip_ids,
+    index_unlabeled_disk_shorts,
     labeled_ids,
     mark_ingest_skip,
     pending_candidates,
@@ -1100,6 +1102,10 @@ def _run_ingest(args: argparse.Namespace) -> int:
     if rebuilt:
         print(f"rebuild_index_from_disk added={rebuilt}")
 
+    disk_n = index_unlabeled_disk_shorts(limit=int(os.environ.get("MLBB_DISK_INDEX_LIMIT", "24")))
+    if disk_n:
+        print(f"disk_index added={disk_n} pending={len(pending_candidates(limit=9999))}", flush=True)
+
     pending_n = len(pending_candidates(limit=9999))
     if args.skip_if_pending > 0 and pending_n >= args.skip_if_pending:
         print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
@@ -1135,7 +1141,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
         queries = []
         print(f"streamer_only=1 channels={len(channel_feeds)} (no ytsearch yet)")
 
-    skip_ids = ingest_skip_ids()
+    skip_ids = ingest_pool_skip_ids()
     search_first = os.environ.get("MLBB_SEARCH_BEFORE_STREAMERS", "1") == "1"
 
     def _collect_search() -> None:

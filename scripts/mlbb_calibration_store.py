@@ -137,9 +137,7 @@ def mark_ingest_skip(video_id: str, reason: str = "") -> None:
 
 def ingest_skip_ids() -> set[str]:
     """All video ids ingest should not retry (labeled, sent, rejected, unavailable)."""
-    skip = set(load_ingest_skip().keys())
-    skip.update(labeled_ids().keys())
-    skip.update(load_feed_sent()["ids"])
+    skip = ingest_pool_skip_ids()
     ds_path = Path(os.environ.get("MLBB_DOWNLOAD_STATE", str(DATA_MLBB / "download_state.json")))
     if ds_path.exists():
         try:
@@ -150,6 +148,14 @@ def ingest_skip_ids() -> set[str]:
                         skip.add(item)
         except (json.JSONDecodeError, OSError):
             pass
+    return skip
+
+
+def ingest_pool_skip_ids() -> set[str]:
+    """Ids to exclude from YouTube search pool — not every historical download."""
+    skip = set(load_ingest_skip().keys())
+    skip.update(labeled_ids().keys())
+    skip.update(load_feed_sent()["ids"])
     return skip
 
 
@@ -491,27 +497,64 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
 
 def rescue_unindexed_shorts(*, limit: int = 6) -> int:
     """Register downloaded mp4 stuck on disk (ingest hung before upsert)."""
+    return index_unlabeled_disk_shorts(limit=limit)
+
+
+def index_unlabeled_disk_shorts(*, limit: int = 24, max_sec: float | None = None) -> int:
+    """Index unlabeled Shorts already on disk so feed can send without re-download."""
     if not SHORTS_ROOT.exists():
         return 0
-    from mlbb_youtube_shorts_ingest import passes_mlbb_shorts_activity_gate
+    import subprocess
 
+    from mlbb_youtube_shorts_ingest import passes_mlbb_shorts_activity_gate, shorts_short_max_sec
+
+    max_dur = float(max_sec if max_sec is not None else os.environ.get("MLBB_SHORTS_MAX_DURATION_SEC", "60"))
+    if os.environ.get("MLBB_SHORTS_ONLY", "0") == "1":
+        max_dur = min(max_dur, shorts_short_max_sec())
     labeled = labeled_ids()
     sent = load_feed_sent()
-    rescued = 0
+    added = 0
     for mp4 in sorted(SHORTS_ROOT.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
-        if rescued >= limit:
+        if added >= limit:
             break
         if not YT_SHORT_FILE_RE.match(mp4.name) or _is_merged_short(mp4):
             continue
-        if mp4.stat().st_size < 10_000:
+        try:
+            size = mp4.stat().st_size
+        except OSError:
             continue
-        if mp4.stat().st_size > int(os.environ.get("MLBB_RESCUE_MAX_BYTES", str(120 * 1024 * 1024))):
+        if size < 10_000 or size > int(os.environ.get("MLBB_RESCUE_MAX_BYTES", str(80 * 1024 * 1024))):
             continue
         vid = id_from_path(mp4)
-        if vid in labeled or vid in sent["ids"] or vid in ingest_skip_ids():
+        if vid in labeled or vid in sent["ids"]:
             continue
         existing = find_candidate(vid) or {}
         if existing.get("ingest_verified") and not is_stub_candidate(existing):
+            if vid not in labeled and vid not in sent["ids"]:
+                upsert_candidate({**existing, "path": str(mp4), "video_id": vid, "id": vid})
+                added += 1
+            continue
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(mp4),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        try:
+            dur = float((proc.stdout or "0").strip() or 0)
+        except ValueError:
+            dur = 0.0
+        if dur > 0 and dur > max_dur:
             continue
         act_ok, act_reason = passes_mlbb_shorts_activity_gate(mp4)
         if not act_ok:
@@ -548,9 +591,9 @@ def rescue_unindexed_shorts(*, limit: int = 6) -> int:
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
         )
-        rescued += 1
-        print(f"rescued_disk {vid} score={score:.3f}", flush=True)
-    return rescued
+        added += 1
+        print(f"indexed_disk {vid} dur={dur:.0f}s score={score:.3f}", flush=True)
+    return added
 
 
 def repair_index() -> int:

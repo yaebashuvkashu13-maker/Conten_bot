@@ -26,6 +26,8 @@ INGEST_LOCK = Path(os.environ.get("MLBB_SHORTS_INGEST_LOCK", "/root/data/mlbb/yo
 FEED_LOCK = Path(os.environ.get("MLBB_CALIBRATION_FEED_LOCK", "/root/data/mlbb/calibration_feed.lock"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 _LAST_INDEX_REBUILD = 0.0
+_LAST_DISK_INDEX = 0.0
+_LAST_EMPTY_FEED = 0.0
 
 
 def log(msg: str) -> None:
@@ -142,20 +144,32 @@ class Proc:
         return (time.time() - self.last_start) >= sec
 
 
-def pending_shorts() -> int:
-    global _LAST_INDEX_REBUILD
-    from mlbb_calibration_store import pending_candidates, rebuild_index_from_disk
 
-    interval = float(os.environ.get("MLBB_INDEX_REBUILD_SEC", "120"))
+def pending_shorts() -> int:
+    global _LAST_INDEX_REBUILD, _LAST_DISK_INDEX
+    from mlbb_calibration_store import index_unlabeled_disk_shorts, pending_candidates, rebuild_index_from_disk
+
     now = time.time()
-    if now - _LAST_INDEX_REBUILD >= interval:
+    rebuild_interval = float(os.environ.get("MLBB_INDEX_REBUILD_SEC", "120"))
+    if now - _LAST_INDEX_REBUILD >= rebuild_interval:
         try:
             rebuild_index_from_disk()
         except Exception as exc:
             log(f"rebuild_index_from_disk skipped: {exc}")
         _LAST_INDEX_REBUILD = now
+
+    disk_interval = float(os.environ.get("MLBB_DISK_INDEX_SEC", "90"))
+    if now - _LAST_DISK_INDEX >= disk_interval:
+        try:
+            added = index_unlabeled_disk_shorts(limit=int(os.environ.get("MLBB_RESCUE_LIMIT", "16")))
+            if added:
+                log(f"disk_index added={added}")
+        except Exception as exc:
+            log(f"disk_index skipped: {exc}")
+        _LAST_DISK_INDEX = now
+
     try:
-        return len(pending_candidates(limit=9999))
+        return len(pending_candidates(limit=500, repair=False))
     except Exception as exc:
         log(f"pending_candidates error: {exc}")
         return 0
@@ -550,6 +564,7 @@ def main() -> int:
     montage_enabled = not pipeline_paused("montage")
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
     last_tier = -1
+    global _LAST_EMPTY_FEED
 
     log(
         f"mlbb_continuous_worker start pid={os.getpid()} target_pending={target_pending} "
@@ -610,15 +625,22 @@ def main() -> int:
             feed_wait = feed_cooldown
             if pending > 0:
                 feed_wait = float(tier_env.get("MLBB_FEED_COOLDOWN_PENDING_SEC", base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", "90")))
+            empty_feed_sec = float(os.environ.get("MLBB_FEED_EMPTY_RUN_SEC", "120"))
+            run_feed = pending > 0 or (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
             if (
-                pending > 0
+                run_feed
                 and not feed.running()
                 and not feed_running_externally()
-                and feed.cooldown_ok(feed_wait)
+                and feed.cooldown_ok(feed_wait if pending > 0 else 30)
             ):
                 kill_stale_feed()
-                feed.env = {**base, **tier_env}
+                feed_env = {**base, **tier_env}
+                if pending == 0:
+                    feed_env["MLBB_FEED_REBUILD"] = "1"
+                feed.env = feed_env
                 feed.start()
+                if pending == 0:
+                    _LAST_EMPTY_FEED = time.time()
 
             if montage_enabled and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
@@ -645,14 +667,9 @@ def main() -> int:
 
             if cycles % 15 == 0:
                 try:
-                    from mlbb_calibration_store import repair_index, rescue_unindexed_shorts
+                    from mlbb_calibration_store import repair_index
 
                     repair_index()
-                    if pending == 0:
-                        rescued = rescue_unindexed_shorts(limit=int(os.environ.get("MLBB_RESCUE_LIMIT", "12")))
-                        if rescued:
-                            pending = pending_shorts()
-                            log(f"rescued {rescued} disk shorts pending={pending}")
                 except Exception as exc:
                     log(f"repair_index skipped: {exc}")
                 write_state(
