@@ -64,14 +64,16 @@ def enrich_row_metadata(row: dict) -> dict:
         return row
     out = dict(row)
     if not out.get("url"):
-        out["url"] = f"https://www.youtube.com/watch?v={vid}"
+        out["url"] = f"https://youtu.be/{vid}"
     if title and title != vid and len(title) > 12:
+        out["url"] = _watch_link(out)
         return out
     meta = _youtube_oembed(vid)
     if meta.get("title"):
         out["title"] = str(meta["title"])
     if meta.get("author_name") and not out.get("channel"):
         out["channel"] = str(meta["author_name"])
+    out["url"] = _watch_link(out)
     return out
 
 
@@ -306,12 +308,6 @@ def send_message(
         return False
 
 
-def _fmt_mmss(sec: float) -> str:
-    sec = max(0, int(sec))
-    m, s = divmod(sec, 60)
-    return f"{m}:{s:02d}"
-
-
 def _effective_watch_start(row: dict) -> float:
     for key in ("trim_start_sec", "clip_start_sec"):
         val = row.get(key)
@@ -326,46 +322,18 @@ def _effective_watch_start(row: dict) -> float:
     return 0.0
 
 
-def _trim_reason_human(reason: str, row: dict) -> str:
-    code = (reason or str(row.get("send_reason") or row.get("pass_reason") or "")).strip()
-    low = code.lower()
-    if "kill" in low or code == "kill_peak":
-        return "kill / teamfight"
-    if code in ("cached_clip", "fast_long_skip_scan"):
-        return "момент, который выбрал бот"
-    if "opening" in low or "junk" in low:
-        return "после интро"
-    if "combat" in low or "peak" in low:
-        return "пик экшена"
-    if code:
-        return code.replace("_", " ")
-    return "геймплей"
-
-
 def _youtube_url_at(video_id: str, start_sec: float) -> str:
     vid = str(video_id).strip()
-    base = f"https://www.youtube.com/watch?v={vid}"
     if start_sec >= 1:
-        return f"{base}&t={int(start_sec)}s"
-    return base
+        return f"https://youtu.be/{vid}?t={int(start_sec)}"
+    return f"https://youtu.be/{vid}"
 
 
-def _watch_moment_block(row: dict, *, send_dur: float = 0.0) -> str:
+def _watch_link(row: dict) -> str:
+    """Deep link — opens YouTube at the exact moment the bot selected."""
+    vid = str(row.get("video_id") or row.get("id") or "").strip()
     start = _effective_watch_start(row)
-    clip_max = float(os.environ.get("MLBB_SHORTS_TRIM_MAX_SEC", "58"))
-    window = min(clip_max, send_dur) if send_dur > 0 else clip_max
-    reason = _trim_reason_human(str(row.get("send_reason") or ""), row)
-    vid = str(row.get("video_id") or row.get("id") or "")
-    if start < 1:
-        return (
-            f"▶️ Смотри с начала (~{int(window)}с) — {reason}\n"
-            f"🔗 {_youtube_url_at(vid, 0)}\n"
-        )
-    end = start + window
-    return (
-        f"▶️ Смотри с {_fmt_mmss(start)} до ~{_fmt_mmss(end)} — {reason}\n"
-        f"🔗 {_youtube_url_at(vid, start)}\n"
-    )
+    return _youtube_url_at(vid, start)
 
 
 def format_caption(row: dict, idx: int, total: int, *, header: str = "", send_dur: float = 0.0) -> str:
@@ -374,10 +342,10 @@ def format_caption(row: dict, idx: int, total: int, *, header: str = "", send_du
     prefix = f"{header}\n" if header else ""
     channel = str(row.get("channel") or "").strip()
     channel_line = f"канал: {channel}\n" if channel else ""
-    watch = _watch_moment_block(row, send_dur=send_dur)
+    watch = _watch_link(row)
     return (
         f"{prefix}MLBB калибровка {idx}/{total}\n"
-        f"{watch}"
+        f"{watch}\n"
         f"score={float(row.get('score', 0)):.3f} | hook={float(row.get('hook_score', 0)):.2f}\n"
         f"views={int(row.get('view_count') or 0)}\n"
         f"{channel_line}"
@@ -399,7 +367,7 @@ def format_link_fallback_caption(
     row = enrich_row_metadata(row)
     vid = str(row.get("video_id", ""))
     send_dur = _probe_duration_sec(send_path)
-    watch = _watch_moment_block(row, send_dur=send_dur)
+    watch = _watch_link(row)
     try:
         size_line = f"файл на сервере: {_human_bytes(send_path.stat().st_size)}\n"
     except OSError:
@@ -408,8 +376,7 @@ def format_link_fallback_caption(
     return (
         f"{prefix}⚠️ Видео в Telegram не загрузилось\n"
         f"Причина: {fail_reason}\n\n"
-        f"{watch}"
-        f"Это тот фрагмент, который бот хотел оценить:\n"
+        f"{watch}\n"
         f"{row.get('title', vid)[:140]}\n"
         f"{size_line}"
         f"score={float(row.get('score', 0)):.3f}\n"
