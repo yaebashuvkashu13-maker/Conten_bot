@@ -17,7 +17,7 @@ for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_work
     chmod 755 "$BIN/${f}"
   fi
 done
-bash "$REPO/deploy/mlbb_deploy.sh" 2>/dev/null || true
+# Do NOT run mlbb_deploy.sh here — server repo may be stale and overwrites /usr/local/bin.
 
 for kv in \
   MLBB_STEADY_MODE=1 \
@@ -49,6 +49,7 @@ for kv in \
   MLBB_STEADY_MIN_SEND_PENDING=1 \
   MLBB_STEADY_FORCE_SEND_SILENCE_SEC=900 \
   MLBB_VOD_DISABLED=1 \
+  MLBB_FEED_PRUNE_IDENTITY=0 \
   MLBB_PENDING_BLOCKED_RECOVERY_SEC=600 \
   MLBB_RECOVERY_COOLDOWN_SEC=600 \
   YTDLP_PROXY=; do

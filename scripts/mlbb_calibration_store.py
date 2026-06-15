@@ -219,6 +219,12 @@ def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
+    try:
+        from mlbb_pipeline_health import record_feed_delivery
+
+        record_feed_delivery(delivered=len([x for x in ids if x]))
+    except ImportError:
+        pass
 
 
 def reject_candidate(video_id: str, *, reason: str = "", path: Path | None = None) -> None:

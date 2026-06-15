@@ -370,9 +370,14 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         passes_mlbb_shorts_identity_gate,
     )
 
+    batch = int(os.environ.get("MLBB_CALIBRATION_BATCH", "4"))
+    queue = pending_candidates(limit=limit, repair=False)
+    if len(queue) < batch:
+        return 0  # never prune thin queue — would starve feed
+
     deadline = time.time() + float(os.environ.get("MLBB_PRUNE_MAX_SEC", "60"))
     removed = 0
-    for row in pending_candidates(limit=limit):
+    for row in queue:
         if time.time() > deadline:
             print("prune_time_budget_exceeded", flush=True)
             break
@@ -388,7 +393,7 @@ def _prune_bad_pending(*, limit: int = 120) -> int:
         except ImportError:
             prune_identity_enabled = lambda: True  # noqa: E731
         checks = [passes_mlbb_shorts_activity_gate]
-        if prune_identity_enabled():
+        if prune_identity_enabled() and os.environ.get("MLBB_CALIBRATION_LENIENT", "0") != "1":
             checks.insert(0, passes_mlbb_shorts_identity_gate)
         for check in checks:
             ok, reason = check(path, title=title)
