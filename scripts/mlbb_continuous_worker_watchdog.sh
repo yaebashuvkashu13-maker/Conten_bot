@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# Restart mlbb_continuous_worker if dead or heartbeat stale (>10 min).
+# Watchdog: nudge stuck jobs + restart mlbb_continuous_worker if dead/stale.
 set -euo pipefail
 
 WORKER="/usr/local/bin/mlbb_continuous_worker.py"
+WATCHDOG_PY="/usr/local/bin/mlbb_job_watchdog.py"
 LOG="/root/data/mlbb/mlbb_continuous_worker.log"
 WLOG="/root/data/mlbb/logs/mlbb_continuous_watchdog.log"
 PIDFILE="/root/data/mlbb/mlbb_continuous_worker.pid"
 STATE="/root/data/mlbb/mlbb_continuous_state.json"
-STALE_SEC="${MLBB_WORKER_STALE_SEC:-1800}"
+STALE_SEC="${MLBB_WORKER_STALE_SEC:-600}"
+ENV_FILE="/root/.video_bot.env"
 
 mkdir -p "$(dirname "$WLOG")"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ENV_FILE"
+  set +a
+fi
+
+log() {
+  echo "[$(date -Is)] $*" >> "$WLOG"
+}
 
 worker_pid() {
   local pid=""
@@ -45,33 +57,31 @@ PY
 
 restart_worker() {
   local reason="$1"
-  echo "[$(date -Is)] restart continuous_worker reason=${reason}" >> "$WLOG"
+  log "restart continuous_worker reason=${reason}"
   pkill -f "python3 /usr/local/bin/mlbb_continuous_worker.py" 2>/dev/null || true
   sleep 1
   nohup python3 "$WORKER" >> "$LOG" 2>&1 &
   echo $! > "$PIDFILE"
-  echo "[$(date -Is)] started pid=$(cat "$PIDFILE")" >> "$WLOG"
-  if [[ -f /root/.video_bot.env ]]; then
-    # shellcheck disable=SC1091
-    source /root/.video_bot.env
-    if [[ -n "${TG_BOT_TOKEN:-}" && -n "${TG_CHAT_ID:-}" ]]; then
-      curl -sS --noproxy '*' \
-        -F "chat_id=${TG_CHAT_ID}" \
-        -F "text=⚠️ MLBB worker restarted: ${reason}" \
-        "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" >/dev/null 2>&1 || true
-    fi
+  log "started pid=$(cat "$PIDFILE")"
+  if [[ -n "${TG_BOT_TOKEN:-}" && -n "${TG_CHAT_ID:-}" ]]; then
+    curl -sS --noproxy '*' \
+      -F "chat_id=${TG_CHAT_ID}" \
+      -F "text=⚠️ MLBB worker restarted: ${reason}" \
+      "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" >/dev/null 2>&1 || true
   fi
 }
+
+# Подзатыльник зависшим ingest/feed/vod/orphans
+if [[ -f "$WATCHDOG_PY" ]]; then
+  python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
+fi
 
 pid="$(worker_pid || true)"
 if [[ -n "$pid" ]]; then
   if state_stale; then
-    if pgrep -f 'mlbb_youtube_shorts_ingest.py' >/dev/null \
-      || pgrep -f 'mlbb_calibration_feed.py' >/dev/null \
-      || pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null \
-      || pgrep -f 'mlbb_purge_bad_shorts_queue.py' >/dev/null; then
-      echo "[$(date -Is)] skip restart: heavy MLBB job still running" >> "$WLOG"
-      exit 0
+    log "worker stale pid=${pid} — nudge then restart"
+    if [[ -f "$WATCHDOG_PY" ]]; then
+      python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
     fi
     kill "$pid" 2>/dev/null || true
     sleep 1

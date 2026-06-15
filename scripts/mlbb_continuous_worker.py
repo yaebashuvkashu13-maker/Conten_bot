@@ -92,6 +92,22 @@ class Proc:
         self.proc: subprocess.Popen | None = None
         self.last_start = 0.0
 
+    def max_runtime_sec(self) -> float:
+        defaults = {"ingest": 900.0, "feed": 420.0, "vod": 1200.0, "montage": 3600.0}
+        key = f"MLBB_{self.name.upper()}_MAX_RUN_SEC"
+        return float(self.env.get(key, os.environ.get(key, str(defaults.get(self.name, 600.0)))))
+
+    def maybe_nudge_timeout(self) -> bool:
+        if not self.running() or self.last_start <= 0:
+            return False
+        age = time.time() - self.last_start
+        limit = self.max_runtime_sec()
+        if age < limit:
+            return False
+        log(f"nudge timeout {self.name} pid={self.proc.pid} age_sec={age:.0f} max={limit:.0f}")
+        self.stop()
+        return True
+
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
@@ -291,49 +307,46 @@ def kill_orphan_ingest() -> None:
 
 def kill_stale_ingest() -> None:
     """Free ingest lock if a previous run hung (blocks worker for hours)."""
-    kill_orphan_ingest()
-    stale_sec = float(os.environ.get("MLBB_INGEST_STALE_SEC", "900"))
-    kill_stale_lock(INGEST_LOCK, name="ingest", max_age_sec=stale_sec)
-    if not INGEST_LOCK.exists():
-        return
     try:
-        pid = int(INGEST_LOCK.read_text(encoding="utf-8").strip())
-        os.kill(pid, 0)
-    except (ProcessLookupError, ValueError, OSError):
-        INGEST_LOCK.unlink(missing_ok=True)
-        return
-    max_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "2400")) + 300
-    age = max_sec + 1.0
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
-            start_ticks = int(fh.read().split()[21])
-        clk_tck = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-        age = time.time() - (start_ticks / clk_tck)
-    except (OSError, ValueError, IndexError):
-        try:
-            age = time.time() - INGEST_LOCK.stat().st_mtime
-        except OSError:
-            INGEST_LOCK.unlink(missing_ok=True)
-            return
-    if age < max_sec:
-        return
-    log(f"kill stale ingest pid={pid} age_sec={age:.0f}")
-    try:
-        os.kill(pid, 15)
-    except OSError:
-        pass
-    time.sleep(2)
-    try:
-        os.kill(pid, 0)
-        os.kill(pid, 9)
-    except OSError:
-        pass
-    INGEST_LOCK.unlink(missing_ok=True)
+        from mlbb_job_watchdog import nudge_lock, kill_orphans
+
+        nudge_lock(
+            "ingest",
+            INGEST_LOCK,
+            "mlbb_youtube_shorts_ingest.py",
+            float(os.environ.get("MLBB_INGEST_STALE_SEC", "900")),
+        )
+        kill_orphans("mlbb_youtube_shorts_ingest.py", INGEST_LOCK)
+    except ImportError:
+        kill_orphan_ingest()
+        stale_sec = float(os.environ.get("MLBB_INGEST_STALE_SEC", "900"))
+        kill_stale_lock(INGEST_LOCK, name="ingest", max_age_sec=stale_sec)
 
 
 def kill_stale_feed() -> None:
-    stale_sec = float(os.environ.get("MLBB_FEED_STALE_SEC", "300"))
-    kill_stale_lock(FEED_LOCK, name="feed", max_age_sec=stale_sec)
+    try:
+        from mlbb_job_watchdog import nudge_lock
+
+        nudge_lock(
+            "feed",
+            FEED_LOCK,
+            "mlbb_calibration_feed.py",
+            float(os.environ.get("MLBB_FEED_STALE_SEC", "300")),
+        )
+    except ImportError:
+        stale_sec = float(os.environ.get("MLBB_FEED_STALE_SEC", "300"))
+        kill_stale_lock(FEED_LOCK, name="feed", max_age_sec=stale_sec)
+
+
+def nudge_stale_jobs() -> None:
+    try:
+        from mlbb_job_watchdog import nudge_all
+
+        acts = nudge_all()
+        if acts:
+            log("nudge " + " ".join(acts))
+    except Exception as exc:
+        log(f"nudge_stale_jobs skipped: {exc}")
 
 
 def acquire_worker_lock() -> object | None:
@@ -509,7 +522,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_OWNER_CHANNELS_LAST": env.get("MLBB_OWNER_CHANNELS_LAST", "1"),
             "MLBB_OWNER_CHANNEL_LIMIT": env.get("MLBB_OWNER_CHANNEL_LIMIT", "2"),
             "MLBB_INGEST_FULL_SWEEP_PENDING": env.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"),
-            "MLBB_INGEST_MAX_RUN_SEC": env.get("MLBB_INGEST_MAX_RUN_SEC", "2400"),
+            "MLBB_INGEST_MAX_RUN_SEC": env.get("MLBB_INGEST_MAX_RUN_SEC", "900"),
             "MLBB_STREAMER_REQUIRE_MLBB_TITLE": env.get("MLBB_STREAMER_REQUIRE_MLBB_TITLE", "1"),
                 "MLBB_SHORTS_MIN_UPLOAD_DATE": env.get("MLBB_SHORTS_MIN_UPLOAD_DATE", "20260101"),
                 "MLBB_SHORTS_MAX_DURATION_SEC": env.get("MLBB_SHORTS_MAX_DURATION_SEC", "1200"),
@@ -646,7 +659,11 @@ def main() -> int:
                 montage.start()
 
             for job in (ingest, vod, feed, montage):
+                job.maybe_nudge_timeout()
                 job.reap()
+
+            if cycles % 30 == 0:
+                nudge_stale_jobs()
 
             if cycles % 900 == 0:
                 hourly_status(base)

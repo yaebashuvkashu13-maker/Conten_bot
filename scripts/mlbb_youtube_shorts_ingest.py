@@ -1278,7 +1278,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
     saved = rejected = downloads = skipped_known = 0
     min_score = float(os.environ.get("MLBB_CALIBRATION_MIN_SCORE", "0.05" if burst else "0.12"))
     run_started = time.time()
-    max_run_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "2400"))
+    max_run_sec = float(os.environ.get("MLBB_INGEST_MAX_RUN_SEC", "900"))
 
     def _reject(vid: str, reason: str, path: Path | None = None) -> None:
         nonlocal rejected

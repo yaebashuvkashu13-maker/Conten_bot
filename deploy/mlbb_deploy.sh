@@ -7,6 +7,7 @@ BIN="/usr/local/bin"
 
 install -m 755 "$REPO/scripts/mlbb_continuous_worker.py" "$BIN/mlbb_continuous_worker.py"
 install -m 755 "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" "$BIN/mlbb_continuous_worker_watchdog.sh"
+install -m 755 "$REPO/scripts/mlbb_job_watchdog.py" "$BIN/mlbb_job_watchdog.py"
 install -m 755 "$REPO/scripts/mlbb_calibration_feed.py" "$BIN/mlbb_calibration_feed.py"
 install -m 755 "$REPO/scripts/mlbb_calibration_store.py" "$BIN/mlbb_calibration_store.py"
 install -m 755 "$REPO/scripts/mlbb_youtube_shorts_ingest.py" "$BIN/mlbb_youtube_shorts_ingest.py"
