@@ -32,7 +32,7 @@ install -m 755 "$REPO/scripts/mlbb_health_guard.py" "$BIN/mlbb_health_guard.py"
 install -m 755 "$REPO/scripts/mlbb_learning_first.py" "$BIN/mlbb_learning_first.py"
 install -m 755 "$REPO/scripts/mlbb_learn_apply.sh" "$BIN/mlbb_learn_apply.sh"
 install -m 755 "$REPO/scripts/mlbb_train_classifier.py" "$BIN/mlbb_train_classifier.py"
-install -m 755 "$REPO/scripts/mlbb_hero_refs_download.py" "$BIN/mlbb_hero_refs_download.py"
+install -m 644 "$REPO/scripts/youtube_download.py" "$BIN/youtube_download.py"
 
 if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-0}" == "1" ]]; then
   python3 "$BIN/mlbb_purge_bad_shorts_queue.py" || true

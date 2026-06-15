@@ -122,6 +122,11 @@ def needs_recovery(*, pending: int) -> tuple[bool, str]:
     if last_feed_delivered_at() > 0 and silence >= max_s:
         return True, f"no_delivery_{silence:.0f}s"
 
+    if pending == 0:
+        last_run = float(data.get("last_feed_run_at") or 0.0)
+        if last_run > 0 and (now - last_run) > float(os.environ.get("MLBB_ZERO_PENDING_RECOVERY_SEC", "900")):
+            return True, f"pending_zero_{now - last_run:.0f}s"
+
     last_ingest = float(data.get("last_ingest_save_at") or 0.0)
     if pending < int(os.environ.get("MLBB_STEADY_MIN_PENDING", "4")):
         if last_ingest > 0 and (now - last_ingest) > float(os.environ.get("MLBB_INGEST_STALL_SEC", "1800")):
@@ -132,7 +137,7 @@ def needs_recovery(*, pending: int) -> tuple[bool, str]:
                 return True, f"empty_feed_streak={empty_streak}"
 
     last_recovery = float(data.get("last_recovery_at") or 0.0)
-    if last_recovery > 0 and (now - last_recovery) < float(os.environ.get("MLBB_RECOVERY_COOLDOWN_SEC", "900")):
+    if last_recovery > 0 and (now - last_recovery) < float(os.environ.get("MLBB_RECOVERY_COOLDOWN_SEC", "600")):
         return False, "recovery_cooldown"
 
     return False, "ok"

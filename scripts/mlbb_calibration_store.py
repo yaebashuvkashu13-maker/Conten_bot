@@ -306,6 +306,12 @@ def _pending_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict)
     if not in_sent:
         return False
     resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "48"))
+    try:
+        pending_n = len(pending_candidates(limit=500, repair=False))
+    except Exception:
+        pending_n = 1
+    if pending_n == 0:
+        resend_h = min(resend_h, float(os.environ.get("MLBB_RESEND_STARVED_HOURS", "12")))
     if resend_h <= 0:
         return True
     at = sent.get("at") or {}
