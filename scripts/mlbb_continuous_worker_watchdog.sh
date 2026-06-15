@@ -8,7 +8,9 @@ LOG="/root/data/mlbb/mlbb_continuous_worker.log"
 WLOG="/root/data/mlbb/logs/mlbb_continuous_watchdog.log"
 PIDFILE="/root/data/mlbb/mlbb_continuous_worker.pid"
 STATE="/root/data/mlbb/mlbb_continuous_state.json"
-STALE_SEC="${MLBB_WORKER_STALE_SEC:-600}"
+STALE_SEC="${MLBB_WORKER_STALE_SEC:-300}"
+TELEGRAM_BOT="/usr/local/bin/telegram_upload_bot.py"
+TELEGRAM_LOG="/root/data/mlbb/telegram_upload_bot.log"
 ENV_FILE="/root/.video_bot.env"
 
 mkdir -p "$(dirname "$WLOG")"
@@ -77,7 +79,13 @@ if [[ -f "$WATCHDOG_PY" ]]; then
   python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
 fi
 if [[ -f "$GUARD_PY" ]]; then
-  python3 "$GUARD_PY" --recover >> "$WLOG" 2>&1 || true
+  PYTHONPATH="/usr/local/bin" python3 "$GUARD_PY" --recover >> "$WLOG" 2>&1 || true
+fi
+
+# Telegram callback bot (👍/👎) — restart if dead
+if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
+  log "restart telegram_upload_bot"
+  nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
 fi
 
 pid="$(worker_pid || true)"

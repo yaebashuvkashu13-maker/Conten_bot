@@ -37,11 +37,19 @@ def steady_mode() -> bool:
     return os.environ.get("MLBB_STEADY_MODE", "1") == "1"
 
 
+def learning_spam_mode() -> bool:
+    return os.environ.get("MLBB_LEARNING_SPAM_MODE", "0") == "1"
+
+
 def steady_feed_interval_sec() -> float:
+    if learning_spam_mode():
+        return float(os.environ.get("MLBB_STEADY_FEED_INTERVAL_SEC", "1680"))
     return float(os.environ.get("MLBB_STEADY_FEED_INTERVAL_SEC", "720"))
 
 
 def max_silence_sec() -> float:
+    if learning_spam_mode():
+        return float(os.environ.get("MLBB_MAX_SILENCE_SEC", "1800"))
     return float(os.environ.get("MLBB_MAX_SILENCE_SEC", "5400"))
 
 

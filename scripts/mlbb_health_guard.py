@@ -195,7 +195,8 @@ def recover(*, reason: str, env: dict[str, str] | None = None) -> list[str]:
         actions.append(f"pending_after_ingest={pending}")
 
     batch = int(env.get("MLBB_CALIBRATION_BATCH", "4"))
-    if pending >= batch:
+    min_feed = int(env.get("MLBB_STEADY_MIN_SEND_PENDING", "1"))
+    if pending >= min(min_feed, batch):
         if _run_feed(env):
             actions.append("feed_forced")
 
