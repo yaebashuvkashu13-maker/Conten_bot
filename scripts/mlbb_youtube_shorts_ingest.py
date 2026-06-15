@@ -35,7 +35,7 @@ from mlbb_calibration_store import (
     upsert_candidate,
 )
 from viral_scorer import hook_score
-from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
+from youtube_download import load_env, run_ytdlp, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 from youtube_video_fix import ensure_readable
 
 SEARCH_QUERIES = (
@@ -784,9 +784,7 @@ def fetch_streamer_shorts(channel_url: str, *, limit: int, env: dict[str, str], 
         "--no-download",
         *ytdlp_extra_args(env),
     ]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=240, env=subprocess_env_no_proxy(env)
-    )
+    proc = run_ytdlp(cmd, env, timeout=240, label=channel_url)
     _log_ytdlp_fail(proc, channel_url)
     entries: list[dict] = []
     for line in (proc.stdout or "").splitlines():
@@ -852,9 +850,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int, for
         "--no-download",
         *ytdlp_extra_args(env),
     ]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=180, env=subprocess_env_no_proxy(env)
-    )
+    proc = run_ytdlp(cmd, env, timeout=180, label=query)
     _log_ytdlp_fail(proc, query)
     entries: list[dict] = []
     for line in (proc.stdout or "").splitlines():
@@ -929,8 +925,11 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) 
     dest = out_dir / f"yt_{video_id}.mp4"
     if dest.exists():
         return dest
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=int(env.get("MLBB_SHORTS_DOWNLOAD_TIMEOUT_SEC", "900")), env=subprocess_env_no_proxy(env)
+    proc = run_ytdlp(
+        cmd,
+        env,
+        timeout=int(env.get("MLBB_SHORTS_DOWNLOAD_TIMEOUT_SEC", "900")),
+        label=video_id,
     )
     if proc.returncode != 0:
         if env.get("MLBB_SHORTS_CALIBRATION_BURST", "0") == "1":
@@ -1115,17 +1114,41 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
         return 0
 
-    full_sweep = pending_n < int(os.environ.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"))
+    steady = os.environ.get("MLBB_STEADY_MODE", "1") == "1"
+    full_sweep_pending = int(os.environ.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"))
+    if steady and not starvation and not burst:
+        full_sweep = False
+    else:
+        full_sweep = pending_n < full_sweep_pending
     if full_sweep:
         print(f"full_sweep=1 pending={pending_n}", flush=True)
 
     queries = list(SHORTS_FORMAT_QUERIES if shorts_only_mode(env) else SEARCH_QUERIES)
-    if args.incremental and not burst and not full_sweep:
+    if steady and not burst and not starvation:
+        slot = int(time.time() // 1800) % len(queries)
+        n_q = int(os.environ.get("MLBB_STEADY_INGEST_QUERIES", "2"))
+        queries = [queries[(slot + i) % len(queries)] for i in range(min(n_q, len(queries)))]
+        args.search_delay = max(args.search_delay, float(os.environ.get("MLBB_STEADY_INGEST_SEARCH_DELAY", "5")))
+        print(f"steady_ingest queries={len(queries)} pending={pending_n}", flush=True)
+    elif args.incremental and not burst and not full_sweep:
         # Rotate one query per run — less search load on YouTube.
         slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
         queries = [queries[slot]]
         print(f"incremental query={queries[0]} pending={pending_n}")
     elif burst or full_sweep or starvation:
+        if steady and starvation:
+            n_q = int(os.environ.get("MLBB_STEADY_STARVATION_QUERIES", "4"))
+            slot = int(time.time() // 900) % len(queries)
+            queries = [queries[(slot + i) % len(queries)] for i in range(min(n_q, len(queries)))]
+            args.search_delay = max(args.search_delay, float(os.environ.get("MLBB_STEADY_INGEST_SEARCH_DELAY", "5")))
+            args.max_downloads = min(
+                args.max_downloads,
+                int(os.environ.get("MLBB_STEADY_STARVATION_MAX_DOWNLOADS", "6")),
+            )
+            args.max_per_query = min(
+                args.max_per_query,
+                int(os.environ.get("MLBB_STEADY_STARVATION_MAX_PER_QUERY", "15")),
+            )
         if starvation:
             args.max_downloads = max(args.max_downloads, int(os.environ.get("MLBB_STARVATION_MAX_DOWNLOADS", "30")))
             args.max_per_query = max(args.max_per_query, int(os.environ.get("MLBB_STARVATION_MAX_PER_QUERY", "40")))

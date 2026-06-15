@@ -78,16 +78,16 @@ def _run_ingest(env: dict[str, str], *, starvation: bool = False) -> bool:
         "--download-delay",
         env.get("MLBB_STEADY_INGEST_DOWNLOAD_DELAY", "4"),
         "--search-delay",
-        "2",
+        env.get("MLBB_STEADY_INGEST_SEARCH_DELAY", "5"),
     ]
     run_env = {
         **env,
         "MLBB_SHORTS_CALIBRATION_BURST": "0",
         "MLBB_INGEST_SKIP_IF_PENDING": "0",
+        "MLBB_STEADY_MODE": "1",
     }
     if starvation:
         run_env["MLBB_STARVATION_INGEST"] = "1"
-        run_env["MLBB_SHORTS_CALIBRATION_BURST"] = "1"
     try:
         subprocess.run(cmd, env=run_env, timeout=int(env.get("MLBB_HEALTH_INGEST_TIMEOUT", "840")), check=False)
         return True

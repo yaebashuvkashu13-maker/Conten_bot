@@ -124,7 +124,7 @@ def needs_recovery(*, pending: int) -> tuple[bool, str]:
 
     if pending == 0:
         last_run = float(data.get("last_feed_run_at") or 0.0)
-        if last_run > 0 and (now - last_run) > float(os.environ.get("MLBB_ZERO_PENDING_RECOVERY_SEC", "900")):
+        if last_run > 0 and (now - last_run) > float(os.environ.get("MLBB_ZERO_PENDING_RECOVERY_SEC", "300")):
             return True, f"pending_zero_{now - last_run:.0f}s"
 
     last_ingest = float(data.get("last_ingest_save_at") or 0.0)

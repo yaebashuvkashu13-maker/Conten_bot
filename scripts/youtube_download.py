@@ -153,6 +153,65 @@ def ytdlp_cmd(env: dict[str, str], *, use_proxy: bool | None = None) -> list[str
     return cmd
 
 
+def _ytdlp_is_403(proc: subprocess.CompletedProcess[str]) -> bool:
+    if proc.returncode == 0:
+        return False
+    err = f"{proc.stderr or ''}{proc.stdout or ''}"
+    return "403" in err or "Forbidden" in err
+
+
+def ytdlp_player_client_fallbacks(env: dict[str, str]) -> list[str]:
+    raw = env.get("YTDLP_PLAYER_CLIENTS", "web,android,ios,mweb")
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
+def _inject_player_client(cmd: list[str], client: str) -> list[str]:
+    out = [arg for arg in cmd if not str(arg).startswith("youtube:player_client=")]
+    for i, arg in enumerate(out):
+        if arg == "--extractor-args" and i + 1 < len(out):
+            merged = f"{out[i + 1]},youtube:player_client={client}"
+            return out[:i] + ["--extractor-args", merged] + out[i + 2 :]
+    return out + ["--extractor-args", f"youtube:player_client={client}"]
+
+
+def run_ytdlp(
+    cmd: list[str],
+    env: dict[str, str],
+    *,
+    timeout: float = 180,
+    label: str = "",
+) -> subprocess.CompletedProcess[str]:
+    """Run yt-dlp; on HTTP 403 retry with alternate YouTube player clients."""
+    base_env = subprocess_env_no_proxy(env)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+        env=base_env,
+    )
+    if proc.returncode == 0 or not _ytdlp_is_403(proc):
+        return proc
+    retry_delay = float(env.get("YTDLP_403_RETRY_DELAY", "4"))
+    for client in ytdlp_player_client_fallbacks(env):
+        time.sleep(retry_delay)
+        retry_cmd = _inject_player_client(cmd, client)
+        proc = subprocess.run(
+            retry_cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            env=base_env,
+        )
+        if proc.returncode == 0:
+            return proc
+        if not _ytdlp_is_403(proc):
+            break
+    return proc
+
+
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     env = {**os.environ, **(env or load_env())}
     url = normalize_youtube_url(url)

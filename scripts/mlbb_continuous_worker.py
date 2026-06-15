@@ -458,7 +458,7 @@ def ingest_cmd(env: dict[str, str], *, aggressive: bool, steady: bool = False) -
         "--download-delay",
         str(delay),
         "--search-delay",
-        env.get("MLBB_INGEST_SEARCH_DELAY", "2" if burst else "3"),
+        env.get("MLBB_STEADY_INGEST_SEARCH_DELAY" if steady else "MLBB_INGEST_SEARCH_DELAY", "5" if steady else "2" if burst else "3"),
     ]
 
 
@@ -634,7 +634,10 @@ def main() -> int:
                 ingest_cooldown = float(base.get("MLBB_STEADY_INGEST_COOLDOWN_SEC", "300"))
 
             starved_for = (now - _PENDING_ZERO_SINCE) if _PENDING_ZERO_SINCE > 0 else 0.0
-            starvation = pending < starve_pending and not steady
+            steady_starve_sec = float(os.environ.get("MLBB_STEADY_STARVATION_SEC", "300"))
+            starvation = pending < starve_pending and (
+                not steady or starved_for >= steady_starve_sec
+            )
             force_ingest = False
             starve_ingest_sec = float(os.environ.get("MLBB_STARVATION_INGEST_SEC", "120"))
             if starvation and starved_for >= starve_ingest_sec:
