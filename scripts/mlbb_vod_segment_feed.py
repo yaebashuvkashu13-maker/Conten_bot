@@ -41,6 +41,7 @@ from montage_env import strict_peak_env
 from preview_gate import validate_clips_before_preview
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from youtube_download import load_env
+from youtube_watch_link import youtube_watch_url
 
 ENV_PATH = Path("/root/.video_bot.env")
 PROFILE = "mobile_legends"
@@ -1143,11 +1144,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
 
 def _format_send_report(row: dict, check: dict) -> str:
-    peak = int(row.get("peak_start", row["start"]))
     lines = [
         f"score={row['score']:.4f} hook={row['hook_score']:.3f}",
         f"gate={check.get('pass_reason', row.get('gate_reason', ''))}",
-        f"cut@{int(row['start'])}s peak@{peak}s",
         (
             f"motion cut={check.get('cut_motion', 0):.3f} "
             f"peak={check.get('peak_motion', 0):.3f} "
@@ -1370,12 +1369,12 @@ def _send_segment_batch(
             skipped.append(f"{sid}:{presend_reason}")
             continue
         seg_dur = _ffprobe_duration(out)
-        peak = int(row.get("peak_start", row["start"]))
         report_line = _format_send_report(row, presend_report)
+        watch = youtube_watch_url(vod_youtube_id(vod), float(row["start"]))
         caption = (
             f"MLBB кусок #{sid}\n"
-            f"{vod_youtube_id(vod)} @ {int(row['start'])}s"
-            f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
+            f"{watch}\n"
+            f"кусок {seg_dur:.0f}с\n"
             f"{report_line}\n"
             f"✓ presend\n"
             f"👍 Ок / 👎 Не ок"

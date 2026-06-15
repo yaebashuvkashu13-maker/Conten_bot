@@ -24,6 +24,7 @@ from mlbb_calibration_store import (
     stats,
 )
 from youtube_download import load_env
+from youtube_watch_link import youtube_watch_url_from_row as _watch_link
 
 ENV_PATH = Path("/root/.video_bot.env")
 BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "6"))
@@ -306,34 +307,6 @@ def send_message(
         return bool(json.loads(result.stdout or "{}").get("ok"))
     except json.JSONDecodeError:
         return False
-
-
-def _effective_watch_start(row: dict) -> float:
-    for key in ("trim_start_sec", "clip_start_sec"):
-        val = row.get(key)
-        if val is None:
-            continue
-        try:
-            start = float(val)
-        except (TypeError, ValueError):
-            continue
-        if start >= 0.5:
-            return start
-    return 0.0
-
-
-def _youtube_url_at(video_id: str, start_sec: float) -> str:
-    vid = str(video_id).strip()
-    if start_sec >= 1:
-        return f"https://youtu.be/{vid}?t={int(start_sec)}"
-    return f"https://youtu.be/{vid}"
-
-
-def _watch_link(row: dict) -> str:
-    """Deep link — opens YouTube at the exact moment the bot selected."""
-    vid = str(row.get("video_id") or row.get("id") or "").strip()
-    start = _effective_watch_start(row)
-    return _youtube_url_at(vid, start)
 
 
 def format_caption(row: dict, idx: int, total: int, *, header: str = "", send_dur: float = 0.0) -> str:
