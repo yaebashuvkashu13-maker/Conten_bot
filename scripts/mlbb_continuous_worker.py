@@ -254,19 +254,20 @@ def should_start_ingest(*, pending: int, target_pending: int) -> bool:
     return pending < int(os.environ.get("MLBB_INGEST_FORCE_PENDING", "3"))
 
 
-def should_start_vod(*, pending: int, target_pending: int) -> bool:
-    if os.environ.get("MLBB_VOD_PARALLEL", "0") != "1":
-        if os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
+def should_start_vod(*, pending: int, target_pending: int, base: dict[str, str] | None = None) -> bool:
+    cfg = base or load_env_file()
+    if cfg.get("MLBB_VOD_PARALLEL", "0") != "1":
+        if cfg.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
             return False
-    elif os.environ.get("MLBB_VOD_DISABLED", "0") == "1":
+    elif cfg.get("MLBB_VOD_DISABLED", "0") == "1":
         return False
-    if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
+    if cfg.get("MLBB_ONE_HEAVY_JOB", os.environ.get("MLBB_ONE_HEAVY_JOB", "1")) != "1":
         return True
     if not ingest_running_externally():
         return True
-    pause_at = int(os.environ.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "6"))
-    if os.environ.get("MLBB_VOD_PARALLEL", "0") == "1":
-        pause_at = int(os.environ.get("MLBB_VOD_PARALLEL_MIN_PENDING", "4"))
+    pause_at = int(cfg.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "6"))
+    if cfg.get("MLBB_VOD_PARALLEL", "0") == "1":
+        pause_at = int(cfg.get("MLBB_VOD_PARALLEL_MIN_PENDING", "0"))
     return pending >= pause_at
 
 
@@ -706,20 +707,20 @@ def main() -> int:
                 ingest.env = ingest_env_map
                 ingest.start()
 
-            vod_parallel = os.environ.get("MLBB_VOD_PARALLEL", base.get("MLBB_VOD_PARALLEL", "0")) == "1"
+            vod_parallel = base.get("MLBB_VOD_PARALLEL", tier_env.get("MLBB_VOD_PARALLEL", "0")) == "1"
             shorts_focus = base.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) == "1"
             if (
                 base.get("MLBB_VOD_DISABLED", "0") != "1"
                 and (not shorts_focus or vod_parallel)
-                and should_start_vod(pending=pending, target_pending=target_pending)
+                and should_start_vod(pending=pending, target_pending=target_pending, base=base)
                 and not vod.running()
                 and not vod_feed_running_externally()
                 and vod.cooldown_ok(vod_cooldown)
             ):
                 vod.start()
             elif (
-                os.environ.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) == "1"
-                and os.environ.get("MLBB_VOD_PARALLEL", "0") != "1"
+                shorts_focus
+                and not vod_parallel
                 and pending < target_pending
                 and (vod.running() or vod_feed_running_externally())
             ):
