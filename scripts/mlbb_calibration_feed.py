@@ -561,7 +561,11 @@ def _run_feed() -> int:
             reject_candidate(vid, reason="stub_no_ingest", path=path)
             continue
 
-        from mlbb_youtube_shorts_ingest import resolve_shorts_send_path, verify_shorts_send_file
+        from mlbb_youtube_shorts_ingest import (
+            passes_shorts_late_action_gate,
+            resolve_shorts_send_path,
+            verify_shorts_send_file,
+        )
 
         labeled = labeled_ids()
         sent = load_feed_sent()
@@ -591,6 +595,9 @@ def _run_feed() -> int:
             row = {**row, "clip_start_sec": trim_start}
         if row.get("ingest_verified"):
             final_ok, final_reason = True, "ingest_verified"
+            late_ok, late_reason = passes_shorts_late_action_gate(path, title=title)
+            if not late_ok:
+                final_ok, final_reason = False, late_reason
         else:
             final_ok, final_reason = verify_shorts_send_file(send_path, title=title)
         if not final_ok:

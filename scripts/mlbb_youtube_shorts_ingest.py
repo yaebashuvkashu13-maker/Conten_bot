@@ -102,6 +102,8 @@ NEGATIVE_TITLE = re.compile(
     r"kill\s*sound|voice\s*line|ost\b|music\s*only|wallpaper|thumbnail|"
     r"hero\s*(reveal|showcase|preview|intro|spawn|appearance)|skin\s*reveal|"
     r"review\s+skin|skin\s+review|kualitas.*skin|skin\s+epic\s+terbaru|"
+    r"siapa\s+yang\s+menang|who\s+wins|quien\s+gana|menang\s*\?|"
+    r"which\s+hero|hero\s+vs|vs\s+.*\?|poll|vote\s+for|"
     r"character\s*preview|cinematic|new\s*hero|spawn\s*preview|hero\s*spawn)",
     re.I,
 )
@@ -454,6 +456,9 @@ def passes_mlbb_shorts_kill_ui_gate(path: Path, *, start_sec: float = 0.15) -> t
 
 def verify_shorts_send_file(path: Path, *, title: str = "") -> tuple[bool, str]:
     """Verify mp4 before Telegram."""
+    late_ok, late_reason = passes_shorts_late_action_gate(path, title=title)
+    if not late_ok:
+        return False, late_reason
     lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
     if lenient:
         act_ok, act_reason = passes_mlbb_shorts_activity_gate(path, title=title)
@@ -602,6 +607,100 @@ def find_best_shorts_start(path: Path) -> tuple[float, str]:
     return 0.0, "ok"
 
 
+def _action_timeline_scores(
+    path: Path,
+    *,
+    sample_windows: int | None = None,
+) -> list[tuple[float, float]]:
+    """Combat score per time window across the full clip."""
+    from gameplay_gate import detect_game_viewport_crop, score_segment_combat
+
+    dur = _ffprobe_duration(path)
+    if dur < 4.0:
+        return [(0.0, 0.0)]
+    n = sample_windows or max(5, min(12, int(dur / 4.5)))
+    window = min(4.0, max(2.5, dur / max(n, 2)))
+    crop = detect_game_viewport_crop(path, 0.0, min(dur, 15.0))
+    scores: list[tuple[float, float]] = []
+    for i in range(n):
+        if n == 1:
+            t = 0.0
+        else:
+            t = i * max(0.0, dur - window - 0.1) / (n - 1)
+        motion, mini, skill, center_text = score_segment_combat(
+            path, t, window, crop_box=crop, sample_frames=4
+        )
+        scores.append((t, float(motion + mini + skill + center_text * 0.15)))
+    return scores
+
+
+def passes_shorts_late_action_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
+    """
+    Reject clips where combat/HUD wakes up only in the last seconds
+    (poll intros, hero showcase, dead lobby before one play).
+    """
+    if os.environ.get("MLBB_REJECT_LATE_ACTION", "1") != "1":
+        return True, "late_action_allowed"
+    if NEGATIVE_TITLE.search(title or ""):
+        return False, "negative_title_poll"
+
+    dur = _ffprobe_duration(path)
+    if dur < 8.0:
+        return True, "short_clip"
+
+    timeline = _action_timeline_scores(path)
+    if not timeline:
+        return True, "no_timeline"
+
+    peak_t, peak_score = max(timeline, key=lambda x: x[1])
+    early = [s for t, s in timeline if t < dur * 0.68]
+    early_avg = float(sum(early) / len(early)) if early else 0.0
+    peak_ratio = peak_t / dur if dur > 0 else 0.0
+
+    min_peak = float(os.environ.get("MLBB_LATE_ACTION_MIN_PEAK", "0.032"))
+    peak_min_ratio = float(os.environ.get("MLBB_LATE_ACTION_PEAK_MIN_RATIO", "0.70"))
+    early_max_ratio = float(os.environ.get("MLBB_LATE_ACTION_EARLY_MAX_RATIO", "0.32"))
+
+    if peak_score < min_peak:
+        return True, "low_peak_skip"
+
+    if peak_ratio >= peak_min_ratio and early_avg < peak_score * early_max_ratio:
+        tail = dur - peak_t
+        min_tail = float(os.environ.get("MLBB_LATE_ACTION_MIN_TAIL_SEC", "4.0"))
+        if tail < min_tail:
+            return False, f"late_action_tail={tail:.1f}s peak@{peak_t:.1f}/{dur:.1f}s"
+        return False, f"late_action_only peak@{peak_t:.1f}/{dur:.1f}s early={early_avg:.3f}"
+
+    return True, "ok"
+
+
+def find_combat_peak_trim_start(path: Path) -> tuple[float, str]:
+    """Trim to combat peak when opening is dead but tail has real action."""
+    if os.environ.get("MLBB_SHORTS_TRIM_LATE_PEAK", "1") != "1":
+        return find_best_shorts_start(path)
+
+    dur = _ffprobe_duration(path)
+    if dur < 10.0:
+        return find_best_shorts_start(path)
+
+    timeline = _action_timeline_scores(path)
+    if not timeline:
+        return find_best_shorts_start(path)
+
+    peak_t, peak_score = max(timeline, key=lambda x: x[1])
+    early = [s for t, s in timeline if t < dur * 0.55]
+    early_avg = float(sum(early) / len(early)) if early else 0.0
+    min_peak = float(os.environ.get("MLBB_LATE_ACTION_MIN_PEAK", "0.032"))
+
+    if peak_t > dur * 0.45 and peak_score >= min_peak and early_avg < peak_score * 0.4:
+        lead = float(os.environ.get("MLBB_LATE_PEAK_LEAD_SEC", "2.5"))
+        start = max(0.0, peak_t - lead)
+        if start >= float(os.environ.get("MLBB_SHORTS_MIN_TRIM_SEND", "0.35")):
+            return round(start, 2), f"late_peak@{peak_t:.1f}s"
+
+    return find_best_shorts_start(path)
+
+
 def passes_mlbb_shorts_opening_gate(path: Path, *, title: str = "") -> tuple[bool, str]:
     start, reason = find_best_shorts_start(path)
     if start < 0:
@@ -666,19 +765,23 @@ def resolve_shorts_send_path(
     path: Path, *, clip_start: float | None = None
 ) -> tuple[Path | None, float, str]:
     """Pick file to send — trim to best clip (Shorts opening or long-video peak)."""
-    if os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1" and os.environ.get(
-        "MLBB_SHORTS_TRIM_OPENING", "1"
-    ) != "1":
-        return path, 0.0, "lenient_no_trim"
-    if os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1":
-        return path, 0.0, "trim_disabled"
     dur = _ffprobe_duration(path)
+    if clip_start is None:
+        late_ok, late_reason = passes_shorts_late_action_gate(path)
+        if not late_ok:
+            return None, 0.0, late_reason
+
+    trim_disabled = os.environ.get("MLBB_SHORTS_TRIM_OPENING", "1") != "1"
+    if os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1" and trim_disabled:
+        return path, 0.0, "lenient_no_trim"
+    if trim_disabled:
+        return path, 0.0, "trim_disabled"
     if clip_start is not None and clip_start >= 0:
         start, reason = clip_start, "cached_clip"
     elif dur > shorts_short_max_sec():
         start, reason = find_best_long_clip_start(path)
     else:
-        start, reason = find_best_shorts_start(path)
+        start, reason = find_combat_peak_trim_start(path)
     if start < 0:
         return None, 0.0, reason
     min_trim = float(os.environ.get("MLBB_SHORTS_MIN_TRIM_SEND", "0.35"))
@@ -1395,6 +1498,11 @@ def _run_ingest(args: argparse.Namespace) -> int:
             if not act_ok:
                 print(f"REJECT {vid} activity={act_reason}", flush=True)
                 _reject(vid, f"activity:{act_reason}", mp4)
+                continue
+            late_ok, late_reason = passes_shorts_late_action_gate(mp4, title=row.get("title", ""))
+            if not late_ok:
+                print(f"REJECT {vid} late_action={late_reason}", flush=True)
+                _reject(vid, late_reason, mp4)
                 continue
             if file_dur > shorts_short_max_sec():
                 if shorts_only_mode(env):
