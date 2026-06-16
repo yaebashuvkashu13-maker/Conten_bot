@@ -337,7 +337,8 @@ def _pending_excluded(
     if not in_sent:
         return False
     resend_h = float(os.environ.get("MLBB_RESEND_UNLABELED_HOURS", "48"))
-    if queue_starved:
+    if queue_starved and os.environ.get("MLBB_RESEND_STARVED_HOURS"):
+        # Optional: allow earlier resend when explicitly configured.
         resend_h = min(resend_h, float(os.environ.get("MLBB_RESEND_STARVED_HOURS", "12")))
     if resend_h <= 0:
         return True
