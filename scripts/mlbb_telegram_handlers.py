@@ -38,6 +38,12 @@ def _api_call(method: str, payload: dict | None = None, *, timeout: int = 60) ->
     with opener.open(req, timeout=timeout) as resp:
         result = json.loads(resp.read().decode())
     if not result.get("ok"):
+        desc = str(result.get("description", ""))
+        # Harmless when markup already updated or message too old to edit.
+        if method == "editMessageReplyMarkup" and any(
+            x in desc.lower() for x in ("not modified", "message is not modified", "message to edit not found")
+        ):
+            return {}
         raise RuntimeError(f"Telegram API error for {method}: {result}")
     return result["result"]
 
@@ -426,6 +432,16 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
         return
 
     try:
+        # Telegram drops callbacks after ~30s — ack immediately, then save label.
+        api(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": query_id,
+                "text": "Принято…" if is_good else "Записал 👎",
+            },
+            timeout=10,
+        )
+
         if mode == "vseg":
             ok, reply = apply_vseg_label(chat_id, item_id, is_good=is_good, reason=reason)
             if is_good:
@@ -438,6 +454,9 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
                 markup = markup_fn("bad", segment_id=item_id)
         else:
             ok, reply = apply_shorts_label(chat_id, item_id, is_good=is_good, reason=reason)
+            if not ok:
+                send_message(reply, chat_id=str(chat_id))
+                return
             if is_good:
                 from mlbb_calibration_store import good_download_keyboard_markup as markup_fn
 
@@ -447,27 +466,18 @@ def handle_callback_query(query: dict, *, api=_api_call) -> None:
 
                 markup = markup_fn("bad", video_id=item_id)
 
-        if not ok:
-            api(
-                "answerCallbackQuery",
-                {"callback_query_id": query_id, "text": reply[:180], "show_alert": True},
-                timeout=15,
-            )
+        if mode == "vseg" and not ok:
+            send_message(reply, chat_id=str(chat_id))
             return
 
-        api(
-            "answerCallbackQuery",
-            {
-                "callback_query_id": query_id,
-                "text": "✅ Ок" if is_good else "❌ Не ок",
-            },
-            timeout=15,
-        )
-        api(
-            "editMessageReplyMarkup",
-            {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
-            timeout=15,
-        )
+        try:
+            api(
+                "editMessageReplyMarkup",
+                {"chat_id": chat_id, "message_id": message_id, "reply_markup": markup},
+                timeout=15,
+            )
+        except Exception as exc:
+            log.warning("edit markup failed data=%s: %s", data, exc)
     except Exception as exc:
         log.exception("callback failed data=%s: %s", data, exc)
         try:

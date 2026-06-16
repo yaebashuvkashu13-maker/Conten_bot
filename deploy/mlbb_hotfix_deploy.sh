@@ -13,6 +13,7 @@ for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_work
   mlbb_youtube_shorts_ingest.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
   pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py mlbb_emergency_prime.py \
+  mlbb_telegram_handlers.py mlbb_telegram_send.py \
   youtube_download.py mlbb_learning_first.py; do
   if git show "${BRANCH}:scripts/${f}" >/dev/null 2>&1; then
     git show "${BRANCH}:scripts/${f}" > "$BIN/${f}"

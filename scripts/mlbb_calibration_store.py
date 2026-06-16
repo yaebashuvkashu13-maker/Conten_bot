@@ -454,12 +454,12 @@ def copy_exemplar(src: Path, label: str, video_id: str) -> Path | None:
         "copy",
         str(dest),
     ]
-    proc = subprocess.run(cmd, capture_output=True, check=False, timeout=120)
+    proc = subprocess.run(cmd, capture_output=True, check=False, timeout=15)
     if proc.returncode == 0 and dest.exists():
         return dest
     try:
         shutil.copy2(src, dest)
-        return dest
+        return dest if dest.exists() else None
     except OSError:
         return None
 
@@ -511,9 +511,12 @@ def apply_owner_label(
         labels["good"] = [g for g in labels.get("good", []) if not _same_file(g)]
         labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
         labels["good"].append(entry)
-        exemplar = copy_exemplar(path, "good", vid)
-        if exemplar:
-            entry["exemplar"] = str(exemplar)
+        try:
+            exemplar = copy_exemplar(path, "good", vid)
+            if exemplar:
+                entry["exemplar"] = str(exemplar)
+        except Exception:
+            pass
         try:
             from mlbb_training_archive import archive_short
 
@@ -525,15 +528,18 @@ def apply_owner_label(
             )
             if archived:
                 entry["training_archive"] = str(archived)
-        except ImportError:
+        except Exception:
             pass
     else:
         labels["bad"] = [b for b in labels.get("bad", []) if not _same_file(b)]
         labels["good"] = [g for g in labels.get("good", []) if not _same_file(g)]
         labels["bad"].append(entry)
-        exemplar = copy_exemplar(path, "bad", vid)
-        if exemplar:
-            entry["exemplar"] = str(exemplar)
+        try:
+            exemplar = copy_exemplar(path, "bad", vid)
+            if exemplar:
+                entry["exemplar"] = str(exemplar)
+        except Exception:
+            pass
 
     try:
         from mlbb_scene_library import register_shorts_label
@@ -548,7 +554,7 @@ def apply_owner_label(
             archive_path=str(entry.get("training_archive") or ""),
             exemplar_path=str(entry.get("exemplar") or ""),
         )
-    except ImportError:
+    except Exception:
         pass
 
     save_labels(labels)
