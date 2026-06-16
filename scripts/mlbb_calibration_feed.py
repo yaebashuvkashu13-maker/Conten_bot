@@ -21,7 +21,9 @@ from mlbb_calibration_store import (
     labeled_ids,
     load_feed_sent,
     mark_feed_sent,
+    mark_ingest_skip,
     pending_candidates,
+    pending_send_context,
     rebuild_index_from_disk,
     reject_candidate,
     stats,
@@ -540,6 +542,8 @@ def _run_feed() -> int:
 
     sent_ids: list[str] = []
     delivered = 0
+    skipped_unsendable = 0
+    labeled_ctx, sent_ctx, queue_starved = pending_send_context()
     for idx, row in enumerate(picked, start=1):
         path = Path(row.get("path", ""))
         if not path.exists():
@@ -567,10 +571,12 @@ def _run_feed() -> int:
             verify_shorts_send_file,
         )
 
-        labeled = labeled_ids()
-        sent = load_feed_sent()
-        if _pending_excluded(vid, path, labeled, sent):
+        labeled = labeled_ctx
+        sent = sent_ctx
+        if _pending_excluded(vid, path, labeled, sent, queue_starved=queue_starved):
             print(f"skip send {vid} already_sent_unlabeled", flush=True)
+            skipped_unsendable += 1
+            mark_ingest_skip(vid, "already_sent_unlabeled")
             continue
 
         print(f"check send {vid}", flush=True)
@@ -628,11 +634,11 @@ def _run_feed() -> int:
             print(f"delivery failed video_id={vid}", flush=True)
         time.sleep(0.4)
 
-    print(f"sent={delivered}")
+    print(f"sent={delivered} skipped_unsendable={skipped_unsendable}")
     try:
         from mlbb_pipeline_health import record_feed_delivery
 
-        record_feed_delivery(delivered=delivered)
+        record_feed_delivery(delivered=delivered, skipped_unsendable=skipped_unsendable)
     except ImportError:
         pass
     return 0

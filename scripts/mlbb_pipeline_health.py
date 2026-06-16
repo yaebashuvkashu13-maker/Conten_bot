@@ -57,7 +57,7 @@ def snapshot() -> dict:
     return dict(_read())
 
 
-def record_feed_delivery(*, delivered: int) -> None:
+def record_feed_delivery(*, delivered: int, skipped_unsendable: int = 0) -> None:
     data = _read()
     now = time.time()
     if delivered > 0:
@@ -66,9 +66,16 @@ def record_feed_delivery(*, delivered: int) -> None:
         data["total_batches"] = int(data.get("total_batches", 0)) + 1
         data["total_delivered"] = int(data.get("total_delivered", 0)) + int(delivered)
         data["consecutive_empty_feeds"] = 0
+        data["consecutive_unsendable_feeds"] = 0
     else:
         data["last_feed_empty_at"] = now
         data["consecutive_empty_feeds"] = int(data.get("consecutive_empty_feeds", 0)) + 1
+        if skipped_unsendable > 0:
+            data["consecutive_unsendable_feeds"] = int(data.get("consecutive_unsendable_feeds", 0)) + 1
+            data["last_feed_unsendable_at"] = now
+            data["last_feed_unsendable_count"] = int(skipped_unsendable)
+        else:
+            data["consecutive_unsendable_feeds"] = 0
     data["last_feed_run_at"] = now
     _write(data)
 
@@ -137,6 +144,10 @@ def needs_recovery(*, pending: int) -> tuple[bool, str]:
 
     if last_feed_delivered_at() > 0 and silence >= max_s:
         return True, f"no_delivery_{silence:.0f}s"
+
+    unsendable_streak = int(data.get("consecutive_unsendable_feeds") or 0)
+    if unsendable_streak >= int(os.environ.get("MLBB_UNSENDABLE_FEED_RECOVERY", "5")):
+        return True, f"unsendable_feed_streak={unsendable_streak}"
 
     if pending == 0:
         last_run = float(data.get("last_feed_run_at") or 0.0)

@@ -39,6 +39,19 @@ def test_steady_feed_pacing(tmp_path: Path, monkeypatch) -> None:
     assert ok2  # interval elapsed — send partial batch
 
 
+def test_unsendable_feed_recovery(tmp_path: Path, monkeypatch) -> None:
+    health = tmp_path / "health.json"
+    monkeypatch.setenv("MLBB_PIPELINE_HEALTH", str(health))
+    monkeypatch.setenv("MLBB_UNSENDABLE_FEED_RECOVERY", "3")
+    mph = _load_health()
+
+    for _ in range(3):
+        mph.record_feed_delivery(delivered=0, skipped_unsendable=2)
+    need, reason = mph.needs_recovery(pending=1)
+    assert need
+    assert "unsendable_feed_streak" in reason
+
+
 def test_needs_recovery_on_silence(tmp_path: Path, monkeypatch) -> None:
     health = tmp_path / "health.json"
     monkeypatch.setenv("MLBB_PIPELINE_HEALTH", str(health))

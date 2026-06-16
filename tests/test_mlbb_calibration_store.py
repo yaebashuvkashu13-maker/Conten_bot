@@ -141,6 +141,78 @@ def test_ingest_gate_stats(monkeypatch, tmp_path: Path) -> None:
     assert stats["by_gate"].get("kill_ui") == 1
 
 
+def test_sent_without_timestamp_stays_excluded(monkeypatch, tmp_path: Path) -> None:
+    store = _setup_store(monkeypatch, tmp_path)
+    shorts_root = store.SHORTS_ROOT
+    vid = "notimestamp1"
+    clip = _add_clip(store, shorts_root, vid, score=0.5)
+    store._write_json(
+        store.FEED_SENT_PATH,
+        {
+            "sent_ids": [vid],
+            "sent_file_ids": [],
+            "sent_at": {},
+            "updated_at": "",
+        },
+    )
+    monkeypatch.setenv("MLBB_BACKFILL_SENT_AT", "0")
+    monkeypatch.setenv("MLBB_RESEND_UNLABELED_HOURS", "48")
+    pending = store.pending_candidates(limit=10, repair=False)
+    assert not any(r["video_id"] == vid for r in pending)
+
+
+def test_queue_starved_resend_matches_pending_and_send(monkeypatch, tmp_path: Path) -> None:
+    store = _setup_store(monkeypatch, tmp_path)
+    shorts_root = store.SHORTS_ROOT
+    vid = "starvedvid1"
+    clip = _add_clip(store, shorts_root, vid, score=0.55)
+
+    store.mark_feed_sent([vid], paths=[clip])
+    sent = store.load_feed_sent()
+    sent["at"][vid] = time.time() - 20 * 3600
+    store._write_json(
+        store.FEED_SENT_PATH,
+        {
+            "sent_ids": sorted(sent["ids"]),
+            "sent_file_ids": sorted(sent["file_ids"]),
+            "sent_at": sent["at"],
+            "updated_at": "",
+        },
+    )
+
+    monkeypatch.setenv("MLBB_RESEND_UNLABELED_HOURS", "48")
+    monkeypatch.setenv("MLBB_RESEND_STARVED_HOURS", "12")
+    labeled, sent_loaded, queue_starved = store.pending_send_context()
+    assert queue_starved is True
+    pending = store.pending_candidates(limit=10, repair=False)
+    in_pending = any(r["video_id"] == vid for r in pending)
+    excluded_send = store._pending_excluded(
+        vid, clip, labeled, sent_loaded, queue_starved=queue_starved
+    )
+    assert in_pending == (not excluded_send)
+
+
+def test_backfill_recent_keeps_sent_out_of_pending(monkeypatch, tmp_path: Path) -> None:
+    store = _setup_store(monkeypatch, tmp_path)
+    shorts_root = store.SHORTS_ROOT
+    vid = "backfillvid12"
+    _add_clip(store, shorts_root, vid, score=0.44)
+    store._write_json(
+        store.FEED_SENT_PATH,
+        {
+            "sent_ids": [vid],
+            "sent_file_ids": [],
+            "sent_at": {},
+            "updated_at": "",
+        },
+    )
+    monkeypatch.setenv("MLBB_BACKFILL_SENT_AT", "1")
+    monkeypatch.setenv("MLBB_BACKFILL_SENT_AGE_HOURS", "0")
+    monkeypatch.setenv("MLBB_RESEND_UNLABELED_HOURS", "48")
+    pending = store.pending_candidates(limit=10, repair=False)
+    assert not any(r["video_id"] == vid for r in pending)
+
+
 def test_retrain_debounce(monkeypatch, tmp_path: Path) -> None:
     state_path = tmp_path / "mlbb_retrain_state.json"
     monkeypatch.setenv("MLBB_RETRAIN_STATE", str(state_path))

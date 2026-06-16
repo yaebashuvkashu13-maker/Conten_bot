@@ -99,7 +99,7 @@ class Proc:
         self.last_start = 0.0
 
     def max_runtime_sec(self) -> float:
-        defaults = {"ingest": 900.0, "feed": 420.0, "vod": 1200.0, "montage": 3600.0}
+        defaults = {"ingest": 600.0, "feed": 420.0, "vod": 1200.0, "montage": 3600.0}
         key = f"MLBB_{self.name.upper()}_MAX_RUN_SEC"
         return float(self.env.get(key, os.environ.get(key, str(defaults.get(self.name, 600.0)))))
 

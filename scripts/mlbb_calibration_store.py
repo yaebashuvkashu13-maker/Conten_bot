@@ -176,7 +176,8 @@ def load_feed_sent() -> dict[str, set[str] | dict[str, float]]:
     if ids and os.environ.get("MLBB_BACKFILL_SENT_AT", "1") == "1":
         missing = [vid for vid in ids if vid not in at]
         if missing:
-            default_age_h = float(os.environ.get("MLBB_BACKFILL_SENT_AGE_HOURS", "72"))
+            # Default age=0 → treat as just sent so legacy rows stay out of pending until resend window.
+            default_age_h = float(os.environ.get("MLBB_BACKFILL_SENT_AGE_HOURS", "0"))
             ts = time.time() - default_age_h * 3600.0
             for vid in missing:
                 at[vid] = ts
@@ -308,6 +309,38 @@ def labeled_ids() -> dict[str, str]:
         elif label in ("no", "bad"):
             add_row(row, "bad")
     return out
+
+
+def compute_queue_starved(
+    rows: list[dict] | None = None,
+    *,
+    labeled: dict[str, str] | None = None,
+    sent: dict | None = None,
+) -> bool:
+    """True when every on-disk unlabeled clip was already sent — enables starved resend rules."""
+    labeled = labeled if labeled is not None else labeled_ids()
+    sent = sent if sent is not None else load_feed_sent()
+    if rows is None:
+        rows = load_index().get("candidates", [])
+    for row in rows:
+        path = _expected_path(str(row.get("video_id", "")))
+        if not path.exists() or is_stub_candidate(row):
+            continue
+        vid = id_from_path(path)
+        if vid in labeled:
+            continue
+        if vid not in sent["ids"] and id_from_path(path) not in sent["ids"]:
+            return False
+    return True
+
+
+def pending_send_context() -> tuple[dict[str, str], dict, bool]:
+    """Shared labeled/sent/starved state for pending queue and feed send checks."""
+    labeled = labeled_ids()
+    sent = load_feed_sent()
+    rows = load_index().get("candidates", [])
+    queue_starved = compute_queue_starved(rows, labeled=labeled, sent=sent)
+    return labeled, sent, queue_starved
 
 
 def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> bool:
@@ -806,20 +839,8 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
             repair_index()
             _LAST_INDEX_REPAIR = now
     migrate_labels_from_paths()
-    labeled = labeled_ids()
-    sent = load_feed_sent()
+    labeled, sent, queue_starved = pending_send_context()
     rows = load_index().get("candidates", [])
-    queue_starved = True
-    for row in rows:
-        path = _expected_path(str(row.get("video_id", "")))
-        if not path.exists() or is_stub_candidate(row):
-            continue
-        vid = id_from_path(path)
-        if vid in labeled:
-            continue
-        if vid not in sent["ids"] and id_from_path(path) not in sent["ids"]:
-            queue_starved = False
-            break
     out: list[dict] = []
     seen_vids: set[str] = set()
     seen_paths: set[str] = set()
@@ -842,6 +863,11 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         out.append(enriched)
     out.sort(key=_pending_sort_key, reverse=True)
     return out[:limit]
+
+
+def sendable_pending_count(*, limit: int = 500, repair: bool = False) -> int:
+    """Clips the feed can actually deliver (same exclusion rules as pending_candidates)."""
+    return len(pending_candidates(limit=limit, repair=repair))
 
 
 def stats() -> dict:
@@ -871,7 +897,8 @@ def stats() -> dict:
         "good_exemplars": good_ex,
         "bad_exemplars": bad_ex,
         "index_total": len(load_index().get("candidates", [])),
-        "pending": len(pending_candidates(limit=9999)),
+        "pending": sendable_pending_count(limit=9999),
+        "queue_starved": compute_queue_starved(),
     }
 
 
