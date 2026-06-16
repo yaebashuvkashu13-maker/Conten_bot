@@ -97,9 +97,41 @@ class KillUiResult:
     kill_feed_activity: float
     ocr_snippet: str
     reason: str
+    keyword_label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _multikill_required() -> bool:
+    return os.environ.get("MLBB_REQUIRE_MULTIKILL", "0") == "1"
+
+
+def is_multikill_label(label: str) -> bool:
+    norm = label.strip().lower().replace(" ", "_")
+    return norm in _MULTIKILL_LABELS or norm in {
+        "double kill",
+        "triple kill",
+        "quadra kill",
+        "penta kill",
+    }
+
+
+def result_is_multikill(result: KillUiResult | dict[str, Any]) -> bool:
+    if isinstance(result, KillUiResult):
+        label = result.keyword_label
+        reason = result.reason
+    else:
+        label = str(result.get("keyword_label", ""))
+        reason = str(result.get("reason", ""))
+    if is_multikill_label(label):
+        return True
+    if reason.startswith("kill_keyword="):
+        return is_multikill_label(reason.split("=", 1)[1])
+    if reason.lower().startswith("yolo="):
+        yolo = reason.split("=", 1)[1].lower()
+        return any(x in yolo for x in ("double", "triple", "quadra", "penta"))
+    return False
 
 
 def _import_frame_helpers():
@@ -293,7 +325,7 @@ def score_mlbb_kill_ui(
     sample_n = sample_frames or int(os.environ.get("MLBB_KILL_UI_SAMPLES", "8"))
     frames = _sample_frames(video_path, start_sec, duration_sec, sample_n)
     if not frames:
-        return KillUiResult(0.0, False, 0, 0.0, 0.0, "", "no_frames")
+        return KillUiResult(0.0, False, 0, 0.0, 0.0, "", "no_frames", "")
 
     color_scores = [_announce_color_score(frame) for frame in frames]
     announce_peak = float(max(color_scores))
@@ -382,6 +414,7 @@ def score_mlbb_kill_ui(
         kill_feed_activity=round(feed_peak, 4),
         ocr_snippet=ocr_text,
         reason=reason,
+        keyword_label=keyword_label,
     )
 
 
@@ -415,7 +448,7 @@ def passes_mlbb_kill_gate(
     minimap_delta: float = 0.0,
 ) -> tuple[bool, str, KillUiResult]:
     if os.environ.get("MLBB_REQUIRE_KILL_UI", "1") != "1":
-        dummy = KillUiResult(1.0, True, 0, 0.0, 0.0, "", "disabled")
+        dummy = KillUiResult(1.0, True, 0, 0.0, 0.0, "", "disabled", "")
         return True, "kill_ui_disabled", dummy
 
     video_path = Path(video_path)
@@ -461,6 +494,8 @@ def passes_mlbb_kill_gate(
                 return True, f"lenient_spike:{result.reason}", result
     if not result.has_kill_notification:
         return False, result.reason, result
+    if _multikill_required() and not result_is_multikill(result):
+        return False, f"no_multikill:{result.reason}", result
     return True, result.reason, result
 
 
@@ -503,8 +538,8 @@ def scan_vod_kill_peaks(
     """Fast kill-UI guided scan for long MLBB VODs."""
     video_path = Path(video_path)
     window_sec = window_sec or float(os.environ.get("MLBB_KILL_SCAN_WINDOW_SEC", "12"))
-    step_sec = step_sec or float(os.environ.get("MLBB_KILL_SCAN_STEP_SEC", "45"))
-    min_peak_sec = min_peak_sec or float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+    step_sec = step_sec or float(os.environ.get("MLBB_KILL_SCAN_STEP_SEC", "30"))
+    min_peak_sec = min_peak_sec or float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "120"))
     limit = limit or int(os.environ.get("MLBB_KILL_SCAN_LIMIT", "48"))
 
     cap = cv2.VideoCapture(str(video_path))
@@ -516,6 +551,9 @@ def scan_vod_kill_peaks(
     duration = frame_count / fps if frame_count > 0 else 0.0
     if duration <= window_sec + 1.0:
         return []
+
+    scaled_peak = min(min_peak_sec, max(45.0, duration * 0.08))
+    min_peak_sec = scaled_peak
 
     lenient = _calibration_lenient()
     min_score = float(os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14"))
@@ -536,6 +574,9 @@ def scan_vod_kill_peaks(
                 ):
                     keep = result.score >= min_score * 0.4
             if keep:
+                if _multikill_required() and not result_is_multikill(result):
+                    start += step_sec
+                    continue
                 peaks.append(
                     {
                         "start_sec": round(start, 2),

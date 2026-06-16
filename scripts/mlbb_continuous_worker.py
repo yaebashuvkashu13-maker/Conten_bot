@@ -255,13 +255,19 @@ def should_start_ingest(*, pending: int, target_pending: int) -> bool:
 
 
 def should_start_vod(*, pending: int, target_pending: int) -> bool:
-    if os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
+    if os.environ.get("MLBB_VOD_PARALLEL", "0") != "1":
+        if os.environ.get("MLBB_SHORTS_FOCUS", "0") == "1" and pending < target_pending:
+            return False
+    elif os.environ.get("MLBB_VOD_DISABLED", "0") == "1":
         return False
     if os.environ.get("MLBB_ONE_HEAVY_JOB", "1") != "1":
         return True
     if not ingest_running_externally():
         return True
-    return pending >= int(os.environ.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "8"))
+    pause_at = int(os.environ.get("MLBB_VOD_PAUSE_WHEN_SHORTS_PENDING", "6"))
+    if os.environ.get("MLBB_VOD_PARALLEL", "0") == "1":
+        pause_at = int(os.environ.get("MLBB_VOD_PARALLEL_MIN_PENDING", "4"))
+    return pending >= pause_at
 
 
 def kill_stale_lock(lock_path: Path, *, name: str, max_age_sec: float) -> None:
@@ -498,32 +504,33 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
         return env
     env.update(
         {
-            "MLBB_VOD_SHORT_MODE": "1",
-            "MLBB_VOD_MIN_SEC": env.get("MLBB_VOD_MIN_SEC", "900"),
-            "MLBB_VOD_MAX_SEC": env.get("MLBB_VOD_MAX_SEC", "2700"),
-            "MLBB_VOD_PIPELINE_MAX_MIN": env.get("MLBB_VOD_SLICE_MIN", "90"),
-            "MLBB_VOD_PIPELINE_MAX_VODS": env.get("MLBB_VOD_SLICE_MAX_VODS", "8"),
+            "MLBB_VOD_MIN_SEC": env.get("MLBB_VOD_MIN_SEC", "300"),
+            "MLBB_VOD_MAX_SEC": env.get("MLBB_VOD_MAX_SEC", "1200"),
+            "MLBB_VOD_TARGET_DUR_SEC": env.get("MLBB_VOD_TARGET_DUR_SEC", "600"),
+            "MLBB_VOD_PIPELINE_MAX_MIN": env.get("MLBB_VOD_SLICE_MIN", "120"),
+            "MLBB_VOD_PIPELINE_MAX_VODS": env.get("MLBB_VOD_SLICE_MAX_VODS", "4"),
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
-            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "40"),
-            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "40"),
+            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "24"),
+            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "4"),
+            "MLBB_VOD_MAX_CLIPS_PER_RUN": env.get("MLBB_VOD_MAX_CLIPS_PER_RUN", "15"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_FULL_FRAME": "1",
             "SMART_CROP_WEBCAM": "0",
             "MLBB_VOD_KILL_FIRST": "1",
-            "MLBB_VOD_CALIBRATION_LENIENT": env.get("MLBB_VOD_CALIBRATION_LENIENT", "1"),
-            "MLBB_CALIBRATION_CLIP_SEC": env.get("MLBB_CALIBRATION_CLIP_SEC", "30"),
-            "MLBB_CALIBRATION_CLIP_LEAD_SEC": env.get("MLBB_CALIBRATION_CLIP_LEAD_SEC", "15"),
-            "MLBB_FIGHT_MIN_SEC": env.get("MLBB_CALIBRATION_CLIP_SEC", env.get("MLBB_FIGHT_MIN_SEC", "30")),
-            "MLBB_FIGHT_MAX_SEC": env.get("MLBB_CALIBRATION_CLIP_SEC", env.get("MLBB_FIGHT_MAX_SEC", "30")),
+            "MLBB_VOD_CALIBRATION_LENIENT": env.get("MLBB_VOD_CALIBRATION_LENIENT", "0"),
+            "MLBB_FIGHT_UNTIL_END": env.get("MLBB_FIGHT_UNTIL_END", "1"),
+            "MLBB_FIGHT_MIN_SEC": env.get("MLBB_FIGHT_MIN_SEC", "10"),
+            "MLBB_FIGHT_MAX_SEC": env.get("MLBB_FIGHT_MAX_SEC", "90"),
+            "MLBB_VOD_LEAD_SEC": env.get("MLBB_VOD_LEAD_SEC", "4"),
+            "MLBB_VOD_MIN_PEAK_SEC": env.get("MLBB_VOD_MIN_PEAK_SEC", "120"),
+            "MLBB_REQUIRE_MULTIKILL": env.get("MLBB_REQUIRE_MULTIKILL", "1"),
+            "MLBB_KILL_SCAN_SKIP_OCR": env.get("MLBB_KILL_SCAN_SKIP_OCR", "0"),
+            "MLBB_KILL_SCAN_STEP_SEC": env.get("MLBB_KILL_SCAN_STEP_SEC", "30"),
             "MLBB_VOD_SIMPLE_RENDER_MIN_SEC": env.get("MLBB_VOD_SIMPLE_RENDER_MIN_SEC", "18"),
             "MLBB_REQUIRE_KILL_UI": "1",
             "MLBB_FORCE_MAX_LIVE_VOD_SEC": "2700",
             "MLBB_FORCE_MAX_LIVE_VOD_FPS": "55",
-            "MLBB_VOD_LEAD_SEC": env.get(
-                "MLBB_VOD_LEAD_SEC",
-                env.get("MLBB_CALIBRATION_CLIP_LEAD_SEC", "15"),
-            ),
             "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
             "OWNER_PREVIEW_REQUIRED": "0",
             "LOGO_FILE": "/nonexistent/mlbb_calibration_no_logo.png",
@@ -710,6 +717,7 @@ def main() -> int:
                 vod.start()
             elif (
                 os.environ.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) == "1"
+                and os.environ.get("MLBB_VOD_PARALLEL", "0") != "1"
                 and pending < target_pending
                 and (vod.running() or vod_feed_running_externally())
             ):

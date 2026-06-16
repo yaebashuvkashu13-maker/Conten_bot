@@ -61,15 +61,15 @@ LONG_VOD_TITLE_RE = re.compile(
 
 
 def _vod_min_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MIN_SEC", "900"))
+    return float(os.environ.get("MLBB_VOD_MIN_SEC", "300"))
 
 
 def _vod_max_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MAX_SEC", "2700"))
+    return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
 
 
 def _vod_target_dur_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "1500"))
+    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "600"))
 
 
 def _vod_skip_long_sec() -> float:
@@ -77,8 +77,8 @@ def _vod_skip_long_sec() -> float:
 
 
 def _vod_min_peak_sec() -> float:
-    """Skip laning/spawn — fights usually after ~7 min."""
-    return float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+    """Skip laning/spawn — scaled down for 5–20 min matches."""
+    return float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "120"))
 
 
 def _blocked_vod_ids() -> set[str]:
@@ -342,8 +342,8 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         q.strip()
         for q in os.environ.get(
             "MLBB_VOD_SEARCH_QUERIES",
-            "MLBB mythic ranked match 20 minutes gameplay,Mobile Legends solo rank match gameplay,"
-            "MLBB savage teamfight ranked short match",
+            "MLBB VOD ranked match 10 minutes gameplay,MLBB mythic ranked 15 minutes teamfight,"
+            "Mobile Legends solo rank match gameplay highlights,MLBB savage double kill ranked",
         ).split(",")
         if q.strip()
     ]
@@ -1205,7 +1205,7 @@ def _collect_kill_first_segments(
 ) -> list[dict]:
     """Fast path: kill UI peaks → variable fight bounds (7–22s)."""
     from mlbb_fight_segment import detect_fight_bounds
-    from mlbb_kill_ui import passes_mlbb_kill_gate, scan_vod_kill_peaks
+    from mlbb_kill_ui import passes_mlbb_kill_gate, result_is_multikill, scan_vod_kill_peaks
 
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
@@ -1217,6 +1217,8 @@ def _collect_kill_first_segments(
     for peak_row in peaks:
         peak_t = float(peak_row.get("start_sec", 0))
         if peak_t < min_peak:
+            continue
+        if os.environ.get("MLBB_REQUIRE_MULTIKILL", "0") == "1" and not result_is_multikill(peak_row):
             continue
         start, end, dur = detect_fight_bounds(vod, peak_t)
         if any(abs(start - s) < min_gap for s in reserved):
@@ -1342,10 +1344,16 @@ def _send_segment_batch(
         log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
         to_send = to_send[:cap_left]
     seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
+    avg_dur = int(
+        round(
+            sum(float(r.get("fight_dur", r.get("clip", {}).get("output_duration", seg_sec))) for r in to_send)
+            / max(1, len(to_send))
+        )
+    )
     send_message(
         token,
         chat_id,
-        f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
+        f"MLBB VOD — {len(to_send)} хайлайтов (~{avg_dur}с, двойное убийство+)\n"
         f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
         f"👍 Ок / 👎 Не ок под каждым\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
@@ -1477,11 +1485,17 @@ def _process_vod_segments(
     sent_total = 0
     sig = file_sha256(vod)
     sent = load_feed_sent()
+    max_clips = int(os.environ.get("MLBB_VOD_MAX_CLIPS_PER_RUN", "15"))
 
     while True:
+        if max_clips > 0 and sent_total >= max_clips:
+            log.info("vod clip cap reached sent=%s cap=%s vod=%s", sent_total, max_clips, vod.name)
+            break
         to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
         if not to_send:
             break
+        if max_clips > 0 and sent_total + len(to_send) > max_clips:
+            to_send = to_send[: max_clips - sent_total]
         n = _send_segment_batch(token, chat_id, vod, to_send, sig)
         if n == 0:
             log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
@@ -1594,8 +1608,12 @@ def _run_vod_pipeline() -> int:
     total_sent = 0
     vods_done = 0
     notified_download = False
+    max_total_clips = int(os.environ.get("MLBB_VOD_MAX_CLIPS_PER_RUN", "15"))
 
     while time.time() < deadline and vods_done < max_vods:
+        if max_total_clips > 0 and total_sent >= max_total_clips:
+            log.info("pipeline clip cap reached sent=%s cap=%s", total_sent, max_total_clips)
+            break
         vod, entry = _resolve_next_vod(
             env,
             registry,
@@ -1623,6 +1641,9 @@ def _run_vod_pipeline() -> int:
         )
         total_sent += n
         vods_done += 1
+        if max_total_clips > 0 and total_sent >= max_total_clips:
+            log.info("pipeline clip cap after vod=%s sent=%s", vod.name, total_sent)
+            break
         registry[:] = _ensure_registry(env)
 
     print(f"pipeline done sent={total_sent} vods={vods_done}")

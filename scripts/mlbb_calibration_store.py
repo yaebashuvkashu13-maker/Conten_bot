@@ -428,6 +428,8 @@ def find_candidate(video_id: str) -> dict | None:
     for row in data.get("candidates", []):
         row_vid = str(row.get("video_id", ""))
         path = Path(str(row.get("path", "")))
+        if not str(row.get("path", "")).strip() or not path.name.startswith("yt_"):
+            path = Path("")
         if row_vid == vid or str(row.get("id", "")) == vid:
             return row
         if path.name.startswith("yt_") and id_from_path(path) == vid:
