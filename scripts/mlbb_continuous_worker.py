@@ -706,9 +706,11 @@ def main() -> int:
                 ingest.env = ingest_env_map
                 ingest.start()
 
+            vod_parallel = os.environ.get("MLBB_VOD_PARALLEL", base.get("MLBB_VOD_PARALLEL", "0")) == "1"
+            shorts_focus = base.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) == "1"
             if (
                 base.get("MLBB_VOD_DISABLED", "0") != "1"
-                and base.get("MLBB_SHORTS_FOCUS", tier_env.get("MLBB_SHORTS_FOCUS", "0")) != "1"
+                and (not shorts_focus or vod_parallel)
                 and should_start_vod(pending=pending, target_pending=target_pending)
                 and not vod.running()
                 and not vod_feed_running_externally()
