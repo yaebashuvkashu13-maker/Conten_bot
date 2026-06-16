@@ -1226,6 +1226,20 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
         return 0
 
+    tier_raw = str(os.environ.get("MLBB_CALIBRATION_TIER", "0")).strip()
+    try:
+        tier_n = int(float(tier_raw))
+    except ValueError:
+        tier_n = 0
+    require_kill_ui = os.environ.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1") == "1"
+    # When queue is starved, allow non-kill clips if HUD/minimap indicates real fight.
+    starved_relax = pending_n <= int(os.environ.get("MLBB_STARVED_PENDING_RELAX", "0")) and tier_n >= int(
+        os.environ.get("MLBB_STARVED_RELAX_TIER", "2")
+    )
+    if starved_relax and require_kill_ui:
+        require_kill_ui = False
+        print(f"starved_relax kill_ui=off pending={pending_n} tier={tier_n}", flush=True)
+
     steady = os.environ.get("MLBB_STEADY_MODE", "1") == "1"
     full_sweep_pending = int(os.environ.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"))
     if steady and not starvation and not burst:
@@ -1519,12 +1533,29 @@ def _run_ingest(args: argparse.Namespace) -> int:
                         print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
                         _reject(vid, f"long_clip:{clip_reason}", mp4)
                         continue
-            if os.environ.get("MLBB_SHORTS_REQUIRE_KILL_UI", "1") == "1":
+            if require_kill_ui:
                 kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
                 if not kill_ok:
                     print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
                     _reject(vid, f"kill_ui:{kill_reason}", mp4)
                     continue
+            else:
+                # Soft substitute: accept non-kill clips only if combat signals are strong.
+                try:
+                    from mlbb_hud_signals import analyze_hud_signals
+
+                    hud = analyze_hud_signals(mp4, title=str(row.get("title", "")), start_sec=clip_start)
+                    min_ci = float(os.environ.get("MLBB_STARVED_MIN_COMBAT", "0.62"))
+                    min_tf = float(os.environ.get("MLBB_STARVED_MIN_TEAMFIGHT", "0.55"))
+                    if hud.combat_intensity < min_ci and hud.teamfight_density < min_tf:
+                        _reject(
+                            vid,
+                            f"starved_no_kill_low_combat ci={hud.combat_intensity:.2f} tf={hud.teamfight_density:.2f}",
+                            mp4,
+                        )
+                        continue
+                except Exception:
+                    pass
         else:
             id_ok, id_reason = passes_mlbb_shorts_identity_gate(mp4, title=row.get("title", ""))
             if not id_ok:
@@ -1556,11 +1587,12 @@ def _run_ingest(args: argparse.Namespace) -> int:
                     print(f"REJECT {vid} long_clip={clip_reason}", flush=True)
                     _reject(vid, f"long_clip:{clip_reason}", mp4)
                     continue
-            kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
-            if not kill_ok:
-                print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
-                _reject(vid, f"kill_ui:{kill_reason}", mp4)
-                continue
+            if require_kill_ui:
+                kill_ok, kill_reason = passes_mlbb_shorts_kill_ui_gate(mp4, start_sec=clip_start)
+                if not kill_ok:
+                    print(f"REJECT {vid} kill_ui={kill_reason}", flush=True)
+                    _reject(vid, f"kill_ui:{kill_reason}", mp4)
+                    continue
 
             gate_ok, gate_reason = passes_shorts_calibration_gate(mp4, title=row.get("title", ""))
             if not gate_ok:
