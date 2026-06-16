@@ -39,6 +39,8 @@ class HudSignals:
     replay_likelihood: float = 0.0
     live_match_likelihood: float = 0.0
     event_density: float = 0.0
+    teamfight_density: float = 0.0
+    clash_score: float = 0.0
 
     def to_dict(self) -> dict:
         return {k: round(float(v), 4) for k, v in asdict(self).items()}
@@ -219,6 +221,21 @@ def analyze_hud_signals(
             + top_hud_activity * 1.5,
         )
     )
+
+    teamfight_density = 0.0
+    clash_score = 0.0
+    if profile == "mobile_legends" and os.environ.get("MLBB_MINIMAP_ANALYZE", "1") == "1":
+        try:
+            from mlbb_minimap_analyze import score_minimap_teamfight
+
+            mini = score_minimap_teamfight(path, start_sec, window, sample_frames=6)
+            teamfight_density = mini.teamfight_density
+            clash_score = mini.clash_score
+            combat_intensity = min(1.0, combat_intensity + teamfight_density * 0.25)
+            event_density = max(event_density, teamfight_density)
+        except Exception:
+            pass
+
     return HudSignals(
         minimap_activity=minimap_activity,
         joystick_activity=joystick_activity,
@@ -228,12 +245,15 @@ def analyze_hud_signals(
         replay_likelihood=replay_likelihood,
         live_match_likelihood=live_match_likelihood,
         event_density=event_density,
+        teamfight_density=teamfight_density,
+        clash_score=clash_score,
     )
 
 
 def hud_learning_boost(signals: HudSignals) -> float:
     """Soft rank boost for active-learning queue — prefer live ranked fights."""
     boost = signals.combat_intensity * 0.15 + signals.live_match_likelihood * 0.12
+    boost += signals.teamfight_density * 0.08 + signals.clash_score * 0.06
     boost -= signals.replay_likelihood * 0.08
     return float(boost)
 

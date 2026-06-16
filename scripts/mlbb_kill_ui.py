@@ -316,6 +316,29 @@ def score_mlbb_kill_ui(
                 keyword_label = label
 
     score = announce_spike * 0.55 + announce_peak * 0.20 + feed_peak * 0.15 + min(keyword_hits * 0.18, 0.30)
+
+    yolo_label = ""
+    if os.environ.get("MLBB_YOLO_EPIC_UI", "1") == "1":
+        try:
+            from mlbb_yolo_epic_ui import score_yolo_epic_ui_on_frames
+
+            yolo = score_yolo_epic_ui_on_frames(frames)
+            if yolo.score > 0:
+                score = max(score, yolo.score)
+                if yolo.best_label:
+                    yolo_label = yolo.best_label
+                    if yolo.best_label in (
+                        "Savage",
+                        "Maniac",
+                        "Triple Kill",
+                        "Double Kill",
+                        "Legendary",
+                    ):
+                        keyword_label = yolo.best_label.replace(" ", "_").lower()
+                        keyword_hits = max(keyword_hits, 2)
+        except Exception:
+            pass
+
     min_score = float(os.environ.get("MLBB_KILL_UI_MIN_SCORE", "0.14"))
     min_color = float(os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08"))
     min_spike = float(os.environ.get("MLBB_KILL_ANNOUNCE_SPIKE_MIN", "0.075"))
@@ -334,9 +357,13 @@ def score_mlbb_kill_ui(
         )
         if multikill_ocr and announce_peak >= min_color * 0.85:
             has_kill = True
+    if yolo_label and score >= min_score * 0.55:
+        has_kill = True
     has_kill = has_kill and (keyword_hits > 0 or score >= min_score * 0.65)
 
-    if keyword_label:
+    if yolo_label:
+        reason = f"yolo={yolo_label}"
+    elif keyword_label:
         reason = f"kill_keyword={keyword_label}"
     elif keyword_hits:
         reason = f"kill_keyword={keyword_hits}"
