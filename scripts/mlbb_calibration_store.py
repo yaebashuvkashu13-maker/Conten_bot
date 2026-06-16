@@ -579,8 +579,12 @@ def ensure_shorts_source_path(video_id: str, env: dict | None = None) -> Path | 
 
     vid = _normalize_vid(video_id)
     row = find_candidate_or_labeled(vid) or {}
-    for candidate in (Path(str(row.get("path", ""))), _expected_path(vid)):
-        if candidate.exists() and candidate.stat().st_size > 2048:
+    candidates: list[Path] = [_expected_path(vid)]
+    row_path = Path(str(row.get("path", "")))
+    if str(row.get("path", "")).strip() and row_path.name.startswith("yt_"):
+        candidates.insert(0, row_path)
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 2048:
             return candidate
     if env is None:
         env = {}
