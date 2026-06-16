@@ -709,21 +709,26 @@ def passes_mlbb_shorts_opening_gate(path: Path, *, title: str = "") -> tuple[boo
 
 
 def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
-    """Trim junk head; cache under MLBB_CALIBRATION_TRIM_DIR."""
+    """Trim junk head/tail; cache under MLBB_CALIBRATION_TRIM_DIR."""
     import subprocess
 
+    from mlbb_shorts_montage import build_ffmpeg_filters, compute_send_duration, mini_montage_enabled
+
     dur = _ffprobe_duration(src)
-    remain = max(3.0, dur - start_sec - 0.08)
-    max_out = float(os.environ.get("MLBB_SHORTS_TRIM_MAX_SEC", "58"))
-    out_dur = min(remain, max_out)
+    out_dur, dur_reason = compute_send_duration(src, start_sec)
+    if out_dur <= 0.5:
+        return None
     trim_dir = Path(os.environ.get("MLBB_CALIBRATION_TRIM_DIR", "/root/data/mlbb/calibration_trimmed"))
     trim_dir.mkdir(parents=True, exist_ok=True)
     tag = int(round(start_sec * 10))
-    dest = trim_dir / f"{src.stem}_from{tag}{src.suffix}"
+    dur_tag = int(round(out_dur * 10))
+    montage_tag = "m" if mini_montage_enabled() else "c"
+    dest = trim_dir / f"{src.stem}_from{tag}_d{dur_tag}_{montage_tag}{src.suffix}"
     if dest.exists() and dest.stat().st_size > 2048:
         return dest
     size_mb = src.stat().st_size / (1024 * 1024)
     timeout = min(600, max(90, int(size_mb * 3)))
+    vf, af = build_ffmpeg_filters(out_dur)
     base = [
         "ffmpeg",
         "-y",
@@ -738,23 +743,30 @@ def trim_short_mp4(src: Path, start_sec: float) -> Path | None:
         "-movflags",
         "+faststart",
     ]
+    encode = [
+        *base,
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.environ.get("MLBB_SHORTS_TRIM_PRESET", "veryfast"),
+        "-crf",
+        os.environ.get("MLBB_SHORTS_TRIM_CRF", "23"),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+    ]
+    if vf:
+        encode.extend(["-vf", vf])
+    if af:
+        encode.extend(["-af", af])
+    encode.append(str(dest))
     for cmd in (
-        [*base, "-c", "copy", str(dest)],
-        [
-            *base,
-            "-c:v",
-            "libx264",
-            "-preset",
-            os.environ.get("MLBB_SHORTS_TRIM_PRESET", "veryfast"),
-            "-crf",
-            os.environ.get("MLBB_SHORTS_TRIM_CRF", "23"),
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            str(dest),
-        ],
+        [*base, "-c", "copy", str(dest)] if not (vf or af) else None,
+        encode,
     ):
+        if cmd is None:
+            continue
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
         if proc.returncode == 0 and dest.exists() and dest.stat().st_size > 2048:
             return dest

@@ -10,7 +10,7 @@ cd "$REPO"
 git fetch origin cursor/content-farm-fixes-1a63 2>/dev/null || true
 BRANCH="origin/cursor/content-farm-fixes-1a63"
 for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
-  mlbb_youtube_shorts_ingest.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
+  mlbb_youtube_shorts_ingest.py mlbb_shorts_montage.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
   pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py mlbb_emergency_prime.py \
   mlbb_telegram_handlers.py mlbb_telegram_send.py \
@@ -24,7 +24,7 @@ done
 
 for kv in \
   MLBB_STEADY_MODE=1 \
-  MLBB_LEARNING_SPAM_MODE=1 \
+  MLBB_LEARNING_SPAM_MODE=0 \
   MLBB_LEARNING_FIRST=0 \
   MLBB_SEND_ENABLED=1 \
   MLBB_SHORTS_ONLY=1 \
@@ -32,12 +32,18 @@ for kv in \
   MLBB_SHORTS_MAX_DURATION_SEC=60 \
   MLBB_SHORTS_CALIBRATION_BURST=0 \
   MLBB_SHORTS_TRIM_OPENING=1 \
+  MLBB_SHORTS_MINI_MONTAGE=1 \
+  MLBB_SHORTS_TRIM_TAIL=1 \
+  MLBB_SHORTS_SEND_MAX_SEC=28 \
+  MLBB_SHORTS_SEND_MIN_SEC=8 \
+  MLBB_SHORTS_FADE_IN_SEC=0.12 \
+  MLBB_SHORTS_FADE_OUT_SEC=0.15 \
   MLBB_REJECT_LATE_ACTION=1 \
   MLBB_CALIBRATION_LENIENT=1 \
-  MLBB_CALIBRATION_BATCH=2 \
-  MLBB_TARGET_PENDING=20 \
-  MLBB_STEADY_FEED_INTERVAL_SEC=1680 \
-  MLBB_STEADY_FORCE_SEND_SILENCE_SEC=900 \
+  MLBB_CALIBRATION_BATCH=1 \
+  MLBB_TARGET_PENDING=12 \
+  MLBB_STEADY_FEED_INTERVAL_SEC=2400 \
+  MLBB_STEADY_FORCE_SEND_SILENCE_SEC=1200 \
   MLBB_STEADY_MIN_SEND_PENDING=1 \
   MLBB_STEADY_INGEST_COOLDOWN_SEC=180 \
   MLBB_STEADY_INGEST_MAX_DOWNLOADS=6 \
