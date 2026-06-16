@@ -349,15 +349,13 @@ def send_hq_document(chat_id: str | int, path: Path, *, caption: str = "") -> bo
 
 
 def send_shorts_hq(chat_id: str | int, video_id: str) -> tuple[bool, str]:
-    from mlbb_calibration_store import SHORTS_ROOT, find_candidate_or_labeled
+    from mlbb_calibration_store import ensure_shorts_source_path, find_candidate_or_labeled
 
     vid = video_id.strip()
+    path = ensure_shorts_source_path(vid)
+    if path is None or not path.exists():
+        return False, f"Файл #{vid} не найден на сервере и не скачался с YouTube."
     row = find_candidate_or_labeled(vid) or {}
-    path = Path(str(row.get("path", "")))
-    if not path.exists():
-        path = SHORTS_ROOT / f"yt_{vid}.mp4"
-    if not path.exists():
-        return False, f"Файл #{vid} не найден на сервере."
     title = str(row.get("title") or vid)
     ok = send_hq_document(chat_id, path, caption=f"HQ #{vid}\n{title[:120]}")
     return (True, "Отправил HQ-файл") if ok else (False, "Не удалось отправить HQ (лимит Telegram?)")

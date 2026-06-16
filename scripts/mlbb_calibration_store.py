@@ -473,6 +473,18 @@ def apply_owner_label(
 ) -> tuple[bool, str]:
     row = find_candidate_or_labeled(video_id)
     if not row:
+        path = ensure_shorts_source_path(video_id)
+        if path and path.exists():
+            vid = _normalize_vid(video_id)
+            row = {
+                "video_id": vid,
+                "id": vid,
+                "path": str(path),
+                "title": "",
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "score": 0,
+            }
+    if not row:
         return False, f"unknown_id:{video_id}"
 
     path = Path(row.get("path", ""))
@@ -559,6 +571,37 @@ def apply_owner_label(
 
     save_labels(labels)
     return True, "good" if is_good else "bad"
+
+
+def ensure_shorts_source_path(video_id: str, env: dict | None = None) -> Path | None:
+    """Return local mp4; re-download from YouTube when missing (HQ / stale Telegram send)."""
+    from mlbb_youtube_shorts_ingest import download_short
+
+    vid = _normalize_vid(video_id)
+    row = find_candidate_or_labeled(vid) or {}
+    for candidate in (Path(str(row.get("path", ""))), _expected_path(vid)):
+        if candidate.exists() and candidate.stat().st_size > 2048:
+            return candidate
+    if env is None:
+        env = {}
+        env_path = Path(os.environ.get("MLBB_ENV_FILE", "/root/.video_bot.env"))
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip().strip('"').strip("'")
+    env = {**env}
+    env["MLBB_SHORTS_SKIP_DATE_FILTER"] = "1"
+    env.setdefault(
+        "YOUTUBE_SHORTS_FORMAT",
+        env.get(
+            "YOUTUBE_HQ_FORMAT",
+            "bv*[vcodec^=avc1]+ba/bv*+ba/b[height<=1080]/b",
+        ),
+    )
+    url = str(row.get("url") or f"https://www.youtube.com/watch?v={vid}")
+    return download_short(url, SHORTS_ROOT, env, vid)
 
 
 def _expected_path(video_id: str) -> Path:
