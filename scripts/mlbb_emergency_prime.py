@@ -46,6 +46,7 @@ def _base_env() -> dict[str, str]:
     env.setdefault("MLBB_SHORTS_ONLY", "1")
     env.setdefault("MLBB_SHORTS_REQUIRE_KILL_UI", "0")
     env.setdefault("MLBB_CALIBRATION_LENIENT", "1")
+    env.setdefault("MLBB_SHORTS_SKIP_DATE_FILTER", "1")
     env["PATH"] = subprocess_env_no_proxy(env)["PATH"]
     return env
 
@@ -87,6 +88,8 @@ def prime_queue(*, max_downloads: int = 4, run_feed: bool = True) -> dict:
             downloaded += 1
             continue
         url = row.get("url") or f"https://www.youtube.com/shorts/{vid}"
+        if "/shorts/" not in url and "watch?v=" not in url:
+            url = f"https://www.youtube.com/shorts/{vid}"
         got = download_short(url, shorts_root, env, vid)
         if got and got.exists():
             downloaded += 1

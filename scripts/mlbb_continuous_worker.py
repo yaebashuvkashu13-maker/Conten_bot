@@ -689,6 +689,7 @@ def main() -> int:
                     ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
                     ingest_env_map["MLBB_SHORTS_REQUIRE_KILL_UI"] = "0"
                     ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
+                    ingest_env_map["MLBB_SHORTS_SKIP_DATE_FILTER"] = "1"
                 if force_ingest:
                     ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
                     ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
