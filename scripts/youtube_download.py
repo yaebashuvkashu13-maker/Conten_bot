@@ -93,6 +93,9 @@ def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
         "--fragment-retries",
         env.get("YOUTUBE_FRAGMENT_RETRIES", "10"),
     ]
+    remote = (env.get("YTDLP_REMOTE_COMPONENTS") or "ejs:github").strip()
+    if remote:
+        args += ["--remote-components", remote]
     cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
     if cookies and Path(cookies).exists():
         args += ["--cookies", cookies]
@@ -107,8 +110,20 @@ def subprocess_env_no_proxy(base: dict[str, str] | None = None) -> dict[str, str
         if "proxy" in key.lower():
             continue
         out[key] = val
-    if "PATH" not in out:
-        out["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    path_parts = [
+        out.get("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")),
+        "/usr/local/bin",
+        "/root/.deno/bin",
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for part in path_parts:
+        for p in part.split(":"):
+            p = p.strip()
+            if p and p not in seen:
+                seen.add(p)
+                ordered.append(p)
+    out["PATH"] = ":".join(ordered)
     return out
 
 
@@ -161,7 +176,12 @@ def _ytdlp_is_403(proc: subprocess.CompletedProcess[str]) -> bool:
 
 
 def ytdlp_player_client_fallbacks(env: dict[str, str]) -> list[str]:
-    raw = env.get("YTDLP_PLAYER_CLIENTS", "web,android,ios,mweb")
+    cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
+    if cookies and Path(cookies).exists():
+        # android/ios skip when cookies are set — web+mweb first.
+        raw = env.get("YTDLP_PLAYER_CLIENTS", "web,mweb,tv,android,ios")
+    else:
+        raw = env.get("YTDLP_PLAYER_CLIENTS", "web,android,ios,mweb")
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 

@@ -63,7 +63,8 @@ for kv in \
   MLBB_DISK_INDEX_SEC=90 \
   MLBB_RESCUE_LIMIT=24 \
   MLBB_BACKFILL_SENT_AT=1 \
-  YTDLP_PLAYER_CLIENTS=web,android,ios,mweb \
+  YTDLP_REMOTE_COMPONENTS=ejs:github \
+  YTDLP_PLAYER_CLIENTS=web,mweb,tv,android,ios \
   YTDLP_403_RETRY_DELAY=4 \
   YTDLP_PROXY=; do
   key="${kv%%=*}"; val="${kv#*=}"
@@ -84,6 +85,13 @@ done
 # Cron: watchdog + health guard every 2 min
 CRON_LINE='*/2 * * * * /usr/local/bin/mlbb_continuous_worker_watchdog.sh'
 ( crontab -l 2>/dev/null | grep -v mlbb_continuous_worker_watchdog || true; echo "$CRON_LINE" ) | crontab -
+
+# yt-dlp needs deno + EJS solver for YouTube n-challenge (Jun 2026).
+if ! command -v deno >/dev/null 2>&1; then
+  apt-get update -qq 2>/dev/null || true
+  apt-get install -y -qq unzip curl 2>/dev/null || true
+  curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh 2>/dev/null || true
+fi
 
 echo "=== stop heavy jobs ==="
 pkill -f mlbb_vod_segment_feed.py 2>/dev/null || true
