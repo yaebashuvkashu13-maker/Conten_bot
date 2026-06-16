@@ -84,6 +84,18 @@ def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
     )
 
 
+def ytdlp_match_filter(env: dict[str, str]) -> str:
+    """yt-dlp --match-filter to skip long VODs masquerading as Shorts."""
+    override = (env.get("YTDLP_MATCH_FILTER") or "").strip()
+    if override:
+        return override
+    if env.get("MLBB_SHORTS_ONLY", "0") != "1":
+        return ""
+    max_d = float(env.get("MLBB_SHORTS_SHORT_MAX_SEC", env.get("MLBB_SHORTS_MAX_DURATION_SEC", "60")))
+    min_d = float(env.get("MLBB_SHORTS_MIN_DURATION_SEC", "3"))
+    return f"duration < {max_d} & duration > {min_d}"
+
+
 def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
     args = [
         "--socket-timeout",
@@ -99,6 +111,9 @@ def ytdlp_extra_args(env: dict[str, str]) -> list[str]:
     cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
     if cookies and Path(cookies).exists():
         args += ["--cookies", cookies]
+    match_filter = ytdlp_match_filter(env)
+    if match_filter:
+        args += ["--match-filter", match_filter]
     return args
 
 

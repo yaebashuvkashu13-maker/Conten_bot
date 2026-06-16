@@ -82,8 +82,24 @@ def base_env() -> dict[str, str]:
             ),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
+            "YTDLP_REMOTE_COMPONENTS": env.get("YTDLP_REMOTE_COMPONENTS", "ejs:github"),
         }
     )
+    path_parts = [
+        env.get("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")),
+        str(BIN),
+        "/usr/local/bin",
+        "/root/.deno/bin",
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for part in path_parts:
+        for p in part.split(":"):
+            p = p.strip()
+            if p and p not in seen:
+                seen.add(p)
+                ordered.append(p)
+    env["PATH"] = ":".join(ordered)
     for key in list(env):
         if "proxy" in key.lower():
             env.pop(key, None)
