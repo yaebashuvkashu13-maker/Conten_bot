@@ -344,7 +344,9 @@ def _pending_excluded(
     at = sent.get("at") or {}
     last = float(at.get(vid) or at.get(file_id) or 0)
     if last <= 0:
-        return not queue_starved
+        # If it's in sent[] but has no timestamp, treat as already sent and exclude.
+        # Otherwise the feed can get stuck repeatedly selecting the same clip.
+        return True
     return (time.time() - last) < resend_h * 3600.0
 
 
