@@ -12,7 +12,7 @@ BRANCH="origin/cursor/content-farm-fixes-1a63"
 for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
   mlbb_youtube_shorts_ingest.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
-  pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py \
+  pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py mlbb_emergency_prime.py \
   youtube_download.py mlbb_learning_first.py; do
   if git show "${BRANCH}:scripts/${f}" >/dev/null 2>&1; then
     git show "${BRANCH}:scripts/${f}" > "$BIN/${f}"
@@ -42,7 +42,11 @@ for kv in \
   MLBB_STEADY_INGEST_MAX_DOWNLOADS=6 \
   MLBB_STEADY_INGEST_SEARCH_DELAY=5 \
   MLBB_STEADY_INGEST_QUERIES=2 \
-  MLBB_STEADY_MIN_PENDING=6 \
+  MLBB_STEADY_MIN_PENDING=2 \
+  MLBB_STEADY_STARVATION_SEC=60 \
+  MLBB_EMERGENCY_MAX_DOWNLOADS=4 \
+  MLBB_EMERGENCY_SKIP_IF_PENDING=2 \
+  MLBB_FULL_SWEEP_MIN_PENDING=4 \
   MLBB_STEADY_MAX_TIER=2 \
   MLBB_MAX_SILENCE_SEC=1800 \
   MLBB_ZERO_PENDING_RECOVERY_SEC=120 \

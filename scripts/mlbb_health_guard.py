@@ -194,6 +194,22 @@ def recover(*, reason: str, env: dict[str, str] | None = None) -> list[str]:
         pending = _pending_count()
         actions.append(f"pending_after_ingest={pending}")
 
+    if pending == 0:
+        try:
+            from mlbb_emergency_prime import prime_queue
+
+            prime = prime_queue(
+                max_downloads=int(env.get("MLBB_EMERGENCY_MAX_DOWNLOADS", "4")),
+                run_feed=True,
+            )
+            actions.append(
+                f"emergency_prime dl={prime.get('downloaded', 0)} idx={prime.get('indexed', 0)} "
+                f"pending={prime.get('pending_after', 0)}"
+            )
+            pending = _pending_count()
+        except Exception as exc:
+            actions.append(f"emergency_prime_error={exc}")
+
     batch = int(env.get("MLBB_CALIBRATION_BATCH", "4"))
     min_feed = int(env.get("MLBB_STEADY_MIN_SEND_PENDING", "1"))
     if pending >= min(min_feed, batch):

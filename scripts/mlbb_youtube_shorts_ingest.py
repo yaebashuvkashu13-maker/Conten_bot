@@ -1242,7 +1242,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
     steady = os.environ.get("MLBB_STEADY_MODE", "1") == "1"
     full_sweep_pending = int(os.environ.get("MLBB_INGEST_FULL_SWEEP_PENDING", "8"))
-    if steady and not starvation and not burst:
+    if steady and not starvation and not burst and pending_n >= int(
+        os.environ.get("MLBB_FULL_SWEEP_MIN_PENDING", "4")
+    ):
         full_sweep = False
     else:
         full_sweep = pending_n < full_sweep_pending

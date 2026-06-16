@@ -650,9 +650,9 @@ def main() -> int:
                 ingest_cooldown = float(base.get("MLBB_STEADY_INGEST_COOLDOWN_SEC", "300"))
 
             starved_for = (now - _PENDING_ZERO_SINCE) if _PENDING_ZERO_SINCE > 0 else 0.0
-            steady_starve_sec = float(os.environ.get("MLBB_STEADY_STARVATION_SEC", "300"))
+            steady_starve_sec = float(os.environ.get("MLBB_STEADY_STARVATION_SEC", "60"))
             starvation = pending < starve_pending and (
-                not steady or starved_for >= steady_starve_sec
+                not steady or starved_for >= steady_starve_sec or pending == 0
             )
             force_ingest = False
             starve_ingest_sec = float(os.environ.get("MLBB_STARVATION_INGEST_SEC", "120"))
@@ -684,6 +684,10 @@ def main() -> int:
                 }
                 if steady:
                     ingest_env_map["MLBB_SHORTS_CALIBRATION_BURST"] = "0"
+                    ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
+                if pending == 0 or pending < starve_pending:
+                    ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
+                    ingest_env_map["MLBB_SHORTS_REQUIRE_KILL_UI"] = "0"
                     ingest_env_map["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
                 if force_ingest:
                     ingest_env_map["MLBB_STARVATION_INGEST"] = "1"
