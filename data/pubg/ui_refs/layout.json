@@ -1,0 +1,52 @@
+{
+  "profile": "pubg_mobile",
+  "resolution_note": "ROIs are fractions of frame width/height",
+  "regions": {
+    "minimap": {
+      "x0": 0.78,
+      "y0": 0.02,
+      "x1": 0.98,
+      "y1": 0.22
+    },
+    "joystick": {
+      "x0": 0.62,
+      "y0": 0.68,
+      "x1": 0.98,
+      "y1": 0.98
+    },
+    "fire_button": {
+      "x0": 0.68,
+      "y0": 0.52,
+      "x1": 0.96,
+      "y1": 0.72
+    },
+    "kill_feed": {
+      "x0": 0.02,
+      "y0": 0.12,
+      "x1": 0.28,
+      "y1": 0.45
+    },
+    "player_count": {
+      "x0": 0.38,
+      "y0": 0.0,
+      "x1": 0.62,
+      "y1": 0.07
+    },
+    "health_bar": {
+      "x0": 0.04,
+      "y0": 0.88,
+      "x1": 0.38,
+      "y1": 0.96
+    }
+  },
+  "detection_hints": {
+    "chicken_dinner": "center overlay + winner text",
+    "squad_wipe": "kill feed spike + player count drop",
+    "sniper": "scope overlay center + gunfire audio"
+  },
+  "datasets": [
+    "https://universe.roboflow.com/pubg-mobile/peace-game",
+    "https://universe.roboflow.com/big-pubg/big-pubgs",
+    "https://ieee-dataport.org/documents/guigraphical-user-interface-elements-video-games-shooter-games"
+  ]
+}

@@ -13,6 +13,10 @@ dependencies = [
   "yt-dlp",
 ]
 
+[project.optional-dependencies]
+mlbb = ["pytest>=8.0"]
+dev = ["pytest>=8.0"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

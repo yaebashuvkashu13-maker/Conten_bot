@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Deploy MLBB scripts from repo clone to /usr/local/bin
+set -euo pipefail
+
+REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
+BIN="/usr/local/bin"
+
+install -m 755 "$REPO/scripts/mlbb_continuous_worker.py" "$BIN/mlbb_continuous_worker.py"
+install -m 755 "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" "$BIN/mlbb_continuous_worker_watchdog.sh"
+install -m 755 "$REPO/scripts/mlbb_job_watchdog.py" "$BIN/mlbb_job_watchdog.py"
+install -m 755 "$REPO/scripts/mlbb_calibration_feed.py" "$BIN/mlbb_calibration_feed.py"
+install -m 755 "$REPO/scripts/mlbb_calibration_store.py" "$BIN/mlbb_calibration_store.py"
+install -m 755 "$REPO/scripts/mlbb_youtube_shorts_ingest.py" "$BIN/mlbb_youtube_shorts_ingest.py"
+install -m 755 "$REPO/scripts/mlbb_kill_ui.py" "$BIN/mlbb_kill_ui.py"
+install -m 644 "$REPO/scripts/mlbb_fight_segment.py" "$BIN/mlbb_fight_segment.py"
+install -m 755 "$REPO/scripts/mlbb_force_send_batch.py" "$BIN/mlbb_force_send_batch.py"
+install -m 755 "$REPO/scripts/mlbb_force_send_one.py" "$BIN/mlbb_force_send_one.py"
+install -m 755 "$REPO/scripts/mlbb_vod_segment_feed.py" "$BIN/mlbb_vod_segment_feed.py"
+install -m 755 "$REPO/scripts/mlbb_vod_segment_store.py" "$BIN/mlbb_vod_segment_store.py"
+install -m 755 "$REPO/scripts/video_orientation.py" "$BIN/video_orientation.py"
+install -m 644 "$REPO/scripts/youtube_watch_link.py" "$BIN/youtube_watch_link.py"
+install -m 755 "$REPO/scripts/mlbb_calibration_tier.py" "$BIN/mlbb_calibration_tier.py"
+install -m 755 "$REPO/scripts/mlbb_telegram_handlers.py" "$BIN/mlbb_telegram_handlers.py"
+install -m 755 "$REPO/scripts/mlbb_telegram_send.py" "$BIN/mlbb_telegram_send.py"
+install -m 755 "$REPO/scripts/mlbb_daily_report.py" "$BIN/mlbb_daily_report.py"
+install -m 755 "$REPO/scripts/mlbb_training_archive.py" "$BIN/mlbb_training_archive.py"
+install -m 755 "$REPO/scripts/mlbb_scene_library.py" "$BIN/mlbb_scene_library.py"
+install -m 755 "$REPO/scripts/mlbb_scene_library_backfill.py" "$BIN/mlbb_scene_library_backfill.py"
+install -m 755 "$REPO/scripts/mlbb_purge_legacy_shorts_disk.py" "$BIN/mlbb_purge_legacy_shorts_disk.py"
+install -m 755 "$REPO/scripts/mlbb_pipeline_health.py" "$BIN/mlbb_pipeline_health.py"
+install -m 755 "$REPO/scripts/mlbb_health_guard.py" "$BIN/mlbb_health_guard.py"
+install -m 755 "$REPO/scripts/mlbb_learning_first.py" "$BIN/mlbb_learning_first.py"
+install -m 755 "$REPO/scripts/mlbb_learn_apply.sh" "$BIN/mlbb_learn_apply.sh"
+install -m 755 "$REPO/scripts/mlbb_train_classifier.py" "$BIN/mlbb_train_classifier.py"
+install -m 644 "$REPO/scripts/youtube_download.py" "$BIN/youtube_download.py"
+
+if [[ "${MLBB_DEPLOY_PURGE_QUEUE:-0}" == "1" ]]; then
+  python3 "$BIN/mlbb_purge_bad_shorts_queue.py" || true
+fi
+
+echo "deployed MLBB scripts to $BIN"
