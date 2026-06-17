@@ -8,6 +8,32 @@ from pathlib import Path
 
 import numpy as np
 
+_ANALYSIS_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _cached_analyze_video(vod: Path) -> dict:
+    """Per-VOD cache keyed by path + mtime — avoid re-analyzing on every kill peak."""
+    resolved = vod.resolve()
+    try:
+        mtime = resolved.stat().st_mtime
+    except OSError:
+        from smart_video_editor import analyze_video
+
+        return analyze_video(vod)
+    key = str(resolved)
+    cached = _ANALYSIS_CACHE.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    from smart_video_editor import analyze_video
+
+    analysis = analyze_video(vod)
+    _ANALYSIS_CACHE[key] = (mtime, analysis)
+    return analysis
+
+
+def clear_analysis_cache() -> None:
+    _ANALYSIS_CACHE.clear()
+
 
 def _fight_min_sec() -> float:
     return float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
@@ -61,14 +87,12 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
     Returns (start_sec, end_sec, duration_sec).
     With MLBB_FIGHT_UNTIL_END=1: start at peak-lead (default 4s), end when combat fades.
     """
-    from smart_video_editor import analyze_video
-
     min_d = _fight_min_sec()
     max_d = _fight_max_sec()
     lead = _lead_sec()
     until_end = fight_until_end_enabled()
 
-    analysis = analyze_video(vod)
+    analysis = _cached_analyze_video(vod)
     win = float(analysis.get("window_seconds", 2.0))
     file_dur = float(analysis.get("duration", 0.0))
     bins = int(analysis.get("bins", 0))

@@ -64,17 +64,15 @@ def _exemplar_root() -> Path:
 
 
 def _read_json(path: Path, default: dict | list) -> dict | list:
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return default
+    from json_atomic_store import read_json
+
+    return read_json(path, default)
 
 
 def _write_json(path: Path, payload: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    from json_atomic_store import atomic_write_json
+
+    atomic_write_json(path, payload)
 
 
 def vod_youtube_id(path: Path) -> str:
@@ -106,18 +104,21 @@ def save_index(data: dict) -> None:
 
 
 def upsert_segment(row: dict) -> None:
-    data = load_index()
-    rows: list[dict] = data["segments"]
+    from json_atomic_store import locked_update_json
+
     sid = str(row.get("segment_id", ""))
-    replaced = False
-    for i, existing in enumerate(rows):
-        if existing.get("segment_id") == sid:
-            rows[i] = {**existing, **row}
-            replaced = True
-            break
-    if not replaced:
-        rows.append(row)
-    save_index(data)
+
+    def _upd(data: dict) -> dict:
+        rows: list[dict] = data.setdefault("segments", [])
+        for i, existing in enumerate(rows):
+            if existing.get("segment_id") == sid:
+                rows[i] = {**existing, **row}
+                break
+        else:
+            rows.append(row)
+        return data
+
+    locked_update_json(_index_path(), {"segments": [], "updated_at": ""}, _upd)
 
 
 def load_labels() -> dict:
@@ -131,7 +132,9 @@ def load_labels() -> dict:
 
 def save_labels(data: dict) -> None:
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(_labels_path(), data)
+    from json_atomic_store import locked_update_json
+
+    locked_update_json(_labels_path(), {"good": [], "bad": [], "feedback": []}, lambda _: data)
 
 
 def load_feed_sent() -> set[str]:
@@ -142,12 +145,42 @@ def load_feed_sent() -> set[str]:
 
 
 def mark_feed_sent(ids: list[str]) -> None:
-    sent = load_feed_sent()
-    sent.update(str(x) for x in ids if x)
-    _write_json(
-        _feed_sent_path(),
-        {"sent_ids": sorted(sent), "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")},
-    )
+    from json_atomic_store import locked_update_json
+
+    def _upd(raw: dict) -> dict:
+        sent = set(str(x) for x in raw.get("sent_ids", []))
+        sent.update(str(x) for x in ids if x)
+        return {"sent_ids": sorted(sent), "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+    locked_update_json(_feed_sent_path(), {"sent_ids": []}, _upd)
+
+
+def record_presend_reject(
+    segment_id_str: str,
+    *,
+    reason: str,
+    vod: str = "",
+    start: float = 0.0,
+    score: float = 0.0,
+) -> None:
+    """Soft-negative from presend gate — feeds owner calibration without sending."""
+    labels = load_labels()
+    entry = {
+        "segment_id": segment_id_str,
+        "path": "",
+        "vod": vod,
+        "start": start,
+        "score": score,
+        "reason": f"presend:{reason}"[:200],
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source": "presend_reject",
+    }
+    labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
+    labels["bad"].append(entry)
+    feedback = {**entry, "owner_label": "no"}
+    labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
+    labels["feedback"].append(feedback)
+    save_labels(labels)
 
 
 def labeled_ids() -> dict[str, str]:

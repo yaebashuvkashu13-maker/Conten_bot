@@ -891,18 +891,30 @@ def classifier_probability(metrics: HighlightMetrics, profile: str | None = None
     clf = _load_classifier(profile or metrics.profile)
     if clf is None:
         return 0.0
-    feats = np.array(
-        [
+    prof = normalize_profile(profile or metrics.profile)
+    if prof == "mobile_legends":
+        from mlbb_classifier_features import (
+            classifier_schema_compatible,
+            mlbb_classifier_feature_vector,
+        )
+
+        if not classifier_schema_compatible(clf):
+            return 0.0
+        feats = np.array([mlbb_classifier_feature_vector(metrics)], dtype=np.float64)
+    else:
+        feats = np.array(
             [
-                metrics.panns_gunshot,
-                metrics.panns_machine_gun,
-                metrics.panns_explosion,
-                metrics.clip_score,
-                metrics.center_motion,
-                metrics.boss_bar,
-            ]
-        ]
-    )
+                [
+                    metrics.panns_gunshot,
+                    metrics.panns_machine_gun,
+                    metrics.panns_explosion,
+                    metrics.clip_score,
+                    metrics.center_motion,
+                    metrics.boss_bar,
+                ]
+            ],
+            dtype=np.float64,
+        )
     try:
         if hasattr(clf, "predict_proba"):
             return float(clf.predict_proba(feats)[0][1])
@@ -1172,16 +1184,21 @@ def score_candidate_window(
     if not classifier_available(profile) and m.rule_pass and m.visual_pass:
         clf_ok = True
     if profile == "mobile_legends" and m.rule_pass and m.visual_pass:
-        # LR meta-model is PUBG-biased; trust HUD + CLIP + owner exemplars for MLBB.
+        # LR must use MLBB feature schema; incompatible models return prob=0.
         clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
-        m.combined_score = (
-            m.panns_gun_max * 0.45
-            + max(m.clip_score, 0) * 0.35
-            + m.classifier_prob * 0.15
-            + m.center_motion * 0.05
-            + min(m.ocr_hits, 3) * 0.02
-        )
+        if profile == "mobile_legends":
+            from mlbb_classifier_features import mlbb_combined_score
+
+            m.combined_score = mlbb_combined_score(m, classifier_prob=m.classifier_prob)
+        else:
+            m.combined_score = (
+                m.panns_gun_max * 0.45
+                + max(m.clip_score, 0) * 0.35
+                + m.classifier_prob * 0.15
+                + m.center_motion * 0.05
+                + min(m.ocr_hits, 3) * 0.02
+            )
         if segment_overlaps_owner_label(
             video_path,
             start_sec,

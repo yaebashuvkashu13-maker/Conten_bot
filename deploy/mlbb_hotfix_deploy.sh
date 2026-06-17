@@ -5,6 +5,14 @@ set -euo pipefail
 BIN="/usr/local/bin"
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 ENV="/root/.video_bot.env"
+EXPECTED_BRANCH="${MLBB_DEPLOY_BRANCH:-cursor/content-farm-fixes-1a63}"
+REQUIRED_BIN=(
+  mlbb_vod_segment_feed.py
+  mlbb_kill_ui.py
+  mlbb_fight_structure.py
+  mlbb_classifier_features.py
+  json_atomic_store.py
+)
 
 cd "$REPO"
 git fetch origin cursor/content-farm-fixes-1a63 2>/dev/null || true
@@ -15,9 +23,10 @@ for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_work
   mlbb_youtube_shorts_ingest.py mlbb_shorts_montage.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
   mlbb_fight_segment.py mlbb_fight_structure.py mlbb_vod_segment_feed.py mlbb_vod_segment_store.py \
+  mlbb_classifier_features.py json_atomic_store.py mlbb_train_classifier.py \
   pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py mlbb_emergency_prime.py \
   mlbb_telegram_handlers.py mlbb_telegram_send.py \
-  youtube_download.py mlbb_learning_first.py gameplay_gate.py; do
+  youtube_download.py mlbb_learning_first.py gameplay_gate.py highlight_scorer.py; do
   if git show "${BRANCH}:scripts/${f}" >/dev/null 2>&1; then
     git show "${BRANCH}:scripts/${f}" > "$BIN/${f}"
     chmod 755 "$BIN/${f}"
@@ -27,6 +36,16 @@ if git show "${BRANCH}:scripts/mlbb_continuous_worker_watchdog.sh" >/dev/null 2>
   git show "${BRANCH}:scripts/mlbb_continuous_worker_watchdog.sh" > "$BIN/mlbb_continuous_worker_watchdog.sh"
   chmod 755 "$BIN/mlbb_continuous_worker_watchdog.sh"
 fi
+
+echo "=== verify deploy branch + required modules ==="
+current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+echo "repo_branch=${current_branch} expected=${EXPECTED_BRANCH}"
+for f in "${REQUIRED_BIN[@]}"; do
+  if [[ ! -f "$BIN/$f" ]]; then
+    echo "FATAL: missing $BIN/$f" >&2
+    exit 1
+  fi
+done
 # Do NOT run mlbb_deploy.sh here — server repo may be stale and overwrites /usr/local/bin.
 
 for kv in \

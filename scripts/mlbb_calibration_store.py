@@ -30,21 +30,17 @@ REPO_LABELS_PATH = REPO / "data" / "mlbb" / "calibration_labels.json"
 
 
 def _read_json(path: Path, default: dict | list) -> dict | list:
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return default
+    from json_atomic_store import read_json
+
+    return read_json(path, default)
 
 
 def _write_json(path: Path, payload: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    from json_atomic_store import atomic_write_json
+
+    atomic_write_json(path, payload)
     if path != REPO_LABELS_PATH and REPO_LABELS_PATH.parent.exists():
-        REPO_LABELS_PATH.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        atomic_write_json(REPO_LABELS_PATH, payload)
 
 
 def load_index() -> dict:

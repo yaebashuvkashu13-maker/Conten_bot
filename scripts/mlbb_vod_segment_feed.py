@@ -1530,6 +1530,18 @@ def _send_segment_batch(
         presend_ok, presend_reason, presend_report = _validate_before_send(vod, row, out)
         if not presend_ok:
             log.warning("presend REJECT %s reason=%s report=%s", sid, presend_reason, presend_report)
+            try:
+                from mlbb_vod_segment_store import record_presend_reject
+
+                record_presend_reject(
+                    sid,
+                    reason=presend_reason,
+                    vod=str(vod),
+                    start=float(row.get("start", 0)),
+                    score=float(row.get("score", 0)),
+                )
+            except Exception as exc:
+                log.debug("presend label skip %s: %s", sid, exc)
             out.unlink(missing_ok=True)
             skipped.append(f"{sid}:{presend_reason}")
             continue
