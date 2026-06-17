@@ -26,6 +26,7 @@ sleep 2
 echo "VOD worker paused" | tee -a "$LOG"
 
 # 3) Mission
+export PYTHONUNBUFFERED=1
 export YOUTUBE_SHORTS_FORMAT_HQ="${YOUTUBE_SHORTS_FORMAT_HQ:-bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best}"
 set -a
 # shellcheck source=/dev/null

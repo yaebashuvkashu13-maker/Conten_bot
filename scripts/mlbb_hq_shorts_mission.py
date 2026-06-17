@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from mlbb_calibration_store import SHORTS_ROOT
 from mlbb_youtube_shorts_ingest import NEGATIVE_TITLE, PROFILE, SEARCH_QUERIES, search_shorts
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
@@ -172,10 +173,14 @@ def send_message(token: str, chat_id: str, text: str) -> None:
     )
 
 
+MISSION_QUERIES = SEARCH_QUERIES[:4]
+
+
 def collect_pool(env: dict[str, str], *, per_query: int) -> list[dict]:
     seen: set[str] = set()
     pool: list[dict] = []
-    for query in SEARCH_QUERIES:
+    for query in MISSION_QUERIES:
+        print(f"search {query}", flush=True)
         for row in search_shorts(query, limit=per_query, env=env, days=120):
             vid = row["video_id"]
             if vid in seen:
@@ -185,6 +190,23 @@ def collect_pool(env: dict[str, str], *, per_query: int) -> list[dict]:
         time.sleep(2)
     pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
     return pool
+
+
+def existing_hq_files(sent_ids: set[str], *, min_height: int) -> list[tuple[Path, dict]]:
+    """Reuse already-downloaded shorts if they pass HQ gate."""
+    found: list[tuple[Path, dict]] = []
+    for root in (SHORTS_ROOT, MISSION_ROOT):
+        if not root.exists():
+            continue
+        for path in sorted(root.glob("yt_*.mp4")):
+            vid = path.stem.replace("yt_", "", 1)
+            if not vid or vid in sent_ids:
+                continue
+            q = probe_quality(path)
+            ok, reason = quality_ok(q, min_height=min_height, min_bitrate_kbps=0)
+            if ok:
+                found.append((path, {"video_id": vid, "title": path.name, "url": f"https://youtube.com/shorts/{vid}", "view_count": 0, "_quality": reason}))
+    return found
 
 
 def main() -> int:
@@ -220,7 +242,35 @@ def main() -> int:
     )
 
     pool = collect_pool(env, per_query=args.per_query)
-    print(f"pool={len(pool)} need={need}")
+    print(f"pool={len(pool)} need={need}", flush=True)
+
+    # Try local HQ files first (fast path)
+    for path, row in existing_hq_files(sent_ids, min_height=args.min_height):
+        if len(sent_ids) >= args.target:
+            break
+        vid = row["video_id"]
+        q = probe_quality(path)
+        _, reason = quality_ok(q, min_height=args.min_height, min_bitrate_kbps=args.min_bitrate_kbps)
+        n = len(sent_ids) + 1
+        caption = (
+            f"HQ Short {n}/{args.target}\n"
+            f"{reason} | {path.stat().st_size // 1024}KB (local)\n"
+            f"{row.get('title', '')[:100]}\n"
+            f"{row.get('url', '')}"
+        )
+        if not send_video(token, chat_id, path, caption):
+            continue
+        sent_ids.add(vid)
+        state.setdefault("downloaded", {})[vid] = {"path": str(path), "quality": q}
+        state["sent_ids"] = sorted(sent_ids)
+        save_state(state)
+        print(f"SENT local {n}/{args.target} {vid} {reason}", flush=True)
+        time.sleep(2)
+
+    need = max(0, args.target - len(sent_ids))
+    if need <= 0:
+        send_message(token, chat_id, f"✅ HQ Shorts миссия завершена: {args.target}/{args.target}.")
+        return 0
 
     for row in pool:
         if len(sent_ids) >= args.target:
