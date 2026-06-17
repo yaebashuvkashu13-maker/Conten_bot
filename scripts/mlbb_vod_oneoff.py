@@ -26,9 +26,46 @@ from mlbb_vod_segment_feed import (
 )
 from mlbb_vod_segment_store import labeled_ids, vod_youtube_id
 from nightly_youtube_montage import fetch_video_meta
-from youtube_download import download_one, load_env, normalize_youtube_url
+from youtube_download import load_env, normalize_youtube_url, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
 ENV_PATH = Path("/root/.video_bot.env")
+
+
+def download_vod_exact(url: str, dest: Path, env: dict[str, str]) -> Path:
+    """Download one VOD to exact path (no shorts duration filter, no wrong-file fallback)."""
+    url = normalize_youtube_url(url)
+    vid = _video_id(url)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    template = str(dest.parent / f"yt_{vid}.%(ext)s")
+    fmt = env.get(
+        "YOUTUBE_FORMAT",
+        "bv*[height<=1080][vcodec^=avc1]+ba/bv*[height<=1080]+ba/b[height<=1080]/b",
+    )
+    cmd = ytdlp_cmd(env, use_proxy=False) + [
+        "--no-playlist",
+        "--restrict-filenames",
+        "--merge-output-format",
+        "mp4",
+        "-f",
+        fmt,
+        "--match-filter",
+        "duration >= 300",
+        *ytdlp_extra_args(env),
+        "-o",
+        template,
+        url,
+    ]
+    subprocess.run(
+        cmd,
+        check=True,
+        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+        env=subprocess_env_no_proxy(env),
+    )
+    if not dest.exists() or dest.stat().st_size < 500_000:
+        raise RuntimeError(f"download failed or too small: {dest}")
+    if vod_youtube_id(dest) != vid:
+        raise RuntimeError(f"wrong file after download: {dest.name} expected {vid}")
+    return dest
 
 
 def _video_id(url: str) -> str:
