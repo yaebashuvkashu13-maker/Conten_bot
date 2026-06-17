@@ -453,9 +453,16 @@ def pipeline_paused(name: str) -> bool:
     if not PAUSED_PIPELINES.exists():
         return False
     paused = PAUSED_PIPELINES.read_text(encoding="utf-8")
-    script = f"{name.replace('montage', 'mlbb_vod_montage_feed.py')}"
-    if name == "montage":
+    if name == "ingest":
+        script = "mlbb_youtube_shorts_ingest.py"
+    elif name == "feed":
+        script = "mlbb_calibration_feed.py"
+    elif name == "vod":
+        script = "mlbb_vod_segment_feed.py"
+    elif name == "montage":
         script = "mlbb_vod_montage_feed.py"
+    else:
+        script = name
     return script in paused
 
 

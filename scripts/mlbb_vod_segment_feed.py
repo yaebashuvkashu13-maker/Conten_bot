@@ -156,6 +156,7 @@ def _discover_vod_ytsearch_fallback(
     return out
 
 
+def _vod_min_sec() -> float:
     return float(os.environ.get("MLBB_VOD_MIN_SEC", "300"))
 
 
