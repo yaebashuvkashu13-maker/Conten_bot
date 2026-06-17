@@ -544,6 +544,54 @@ def filter_starts_by_kill_ui(
     return [round(row[0], 1) for row in kept[:limit]]
 
 
+def _two_pass_scan_enabled() -> bool:
+    return os.environ.get("MLBB_KILL_SCAN_TWO_PASS", "1") == "1"
+
+
+def _scan_window_keep(result: KillUiResult, *, lenient: bool, min_score: float) -> bool:
+    keep = result.has_kill_notification
+    if not keep and lenient:
+        keep = result.score >= min_score * 0.5
+        if not keep and result.announce_color_peak >= float(
+            os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08")
+        ):
+            keep = result.score >= min_score * 0.4
+    return keep
+
+
+def _scan_peak_acceptable(result: KillUiResult, keep: bool) -> bool:
+    if not keep:
+        return False
+    if _multikill_required() and not result_is_multikill(result):
+        return False
+    return True
+
+
+def _should_run_second_pass(result: KillUiResult, keep: bool) -> bool:
+    """Second half of a step block when first half missed multikill (or any kill)."""
+    if _scan_peak_acceptable(result, keep):
+        return False
+    if _multikill_required():
+        return True
+    return not keep
+
+
+def _append_scan_peak(
+    peaks: list[dict[str, Any]],
+    *,
+    start: float,
+    window_sec: float,
+    result: KillUiResult,
+) -> None:
+    peaks.append(
+        {
+            "start_sec": round(start, 2),
+            "duration_sec": round(window_sec, 2),
+            **result.to_dict(),
+        }
+    )
+
+
 def scan_vod_kill_peaks(
     video_path: Path | str,
     *,
@@ -552,9 +600,14 @@ def scan_vod_kill_peaks(
     min_peak_sec: float | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Fast kill-UI guided scan for long MLBB VODs."""
+    """Fast kill-UI guided scan for long MLBB VODs.
+
+    Default two-pass (MLBB_KILL_SCAN_TWO_PASS=1): within each step block (30s),
+    scan the first window_sec (15s); if no double/triple+ banner, scan the second
+    half of the block — no blind zones, ~2x windows only when the first half misses.
+    """
     video_path = Path(video_path)
-    window_sec = window_sec or float(os.environ.get("MLBB_KILL_SCAN_WINDOW_SEC", "12"))
+    window_sec = window_sec or float(os.environ.get("MLBB_KILL_SCAN_WINDOW_SEC", "15"))
     step_sec = step_sec or float(os.environ.get("MLBB_KILL_SCAN_STEP_SEC", "30"))
     min_peak_sec = min_peak_sec or float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "120"))
     limit = limit or int(os.environ.get("MLBB_KILL_SCAN_LIMIT", "48"))
@@ -579,29 +632,26 @@ def scan_vod_kill_peaks(
         os.environ["MLBB_KILL_UI_SKIP_OCR"] = "1"
 
     peaks: list[dict[str, Any]] = []
-    start = min_peak_sec
+    two_pass = _two_pass_scan_enabled() and step_sec >= window_sec * 2.0 - 0.01
+    block = min_peak_sec
     try:
-        while start + window_sec <= duration - 20.0 and len(peaks) < limit:
-            result = score_mlbb_kill_ui(video_path, start, window_sec, sample_frames=4)
-            keep = result.has_kill_notification
-            if not keep and lenient:
-                keep = result.score >= min_score * 0.5
-                if not keep and result.announce_color_peak >= float(
-                    os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08")
-                ):
-                    keep = result.score >= min_score * 0.4
-            if keep:
-                if _multikill_required() and not result_is_multikill(result):
-                    start += step_sec
-                    continue
-                peaks.append(
-                    {
-                        "start_sec": round(start, 2),
-                        "duration_sec": round(window_sec, 2),
-                        **result.to_dict(),
-                    }
-                )
-            start += step_sec
+        while block + window_sec <= duration - 20.0 and len(peaks) < limit:
+            result = score_mlbb_kill_ui(video_path, block, window_sec, sample_frames=4)
+            keep = _scan_window_keep(result, lenient=lenient, min_score=min_score)
+            if _scan_peak_acceptable(result, keep):
+                _append_scan_peak(peaks, start=block, window_sec=window_sec, result=result)
+                if len(peaks) >= limit:
+                    break
+
+            if two_pass and _should_run_second_pass(result, keep):
+                start2 = block + window_sec
+                if start2 + window_sec <= duration - 20.0 and len(peaks) < limit:
+                    result2 = score_mlbb_kill_ui(video_path, start2, window_sec, sample_frames=4)
+                    keep2 = _scan_window_keep(result2, lenient=lenient, min_score=min_score)
+                    if _scan_peak_acceptable(result2, keep2):
+                        _append_scan_peak(peaks, start=start2, window_sec=window_sec, result=result2)
+
+            block += step_sec
     finally:
         if prev_skip is None:
             os.environ.pop("MLBB_KILL_UI_SKIP_OCR", None)
