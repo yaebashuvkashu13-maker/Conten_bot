@@ -16,6 +16,13 @@ from typing import Any
 import cv2
 import numpy as np
 
+TOWER_BANNER_RE = re.compile(
+    r"(destroyed|has\s*been\s*destroyed|turret|tower|inhibitor|barracks|base|"
+    r"destroy\s*turret|push\s*turret|"
+    r"башн\w*|вышк\w*|уничтож\w*\s*(башн|вышк)|разруш\w*\s*(башн|вышк))",
+    re.I,
+)
+
 MLBB_KILL_KEYWORDS = re.compile(
     r"(savage|maniac|legendary|triple\s*kill|double\s*kill|quadra\s*kill|penta\s*kill|"
     r"triple|double|wipe|wiped|first\s*blood|pentakill|killing\s*spree|shutdown|\bace\b|"
@@ -48,6 +55,12 @@ def _normalize_ocr_text(text: str) -> str:
     t = text.replace("0", "o").replace("1", "l").replace("|", "l")
     t = re.sub(r"\s+", " ", t)
     return t.strip()
+
+
+def _looks_like_tower_banner(text: str) -> bool:
+    if not text:
+        return False
+    return bool(TOWER_BANNER_RE.search(text))
 
 
 def _match_kill_keywords(text: str) -> tuple[int, str]:
@@ -389,9 +402,13 @@ def score_mlbb_kill_ui(
         )
         if multikill_ocr and announce_peak >= min_color * 0.85:
             has_kill = True
-    if yolo_label and score >= min_score * 0.55:
+    # "Destroyed" is a non-kill banner (tower/objective); do NOT treat as kill.
+    if yolo_label and yolo_label.lower() != "destroyed" and score >= min_score * 0.55:
         has_kill = True
     has_kill = has_kill and (keyword_hits > 0 or score >= min_score * 0.65)
+
+    if _looks_like_tower_banner(ocr_text) or _looks_like_tower_banner(yolo_label):
+        has_kill = False
 
     if yolo_label:
         reason = f"yolo={yolo_label}"

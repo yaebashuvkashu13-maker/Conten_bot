@@ -10,6 +10,7 @@ from mlbb_kill_ui import (  # noqa: E402
     KillUiResult,
     _match_kill_keywords,
     _normalize_ocr_text,
+    _looks_like_tower_banner,
     result_is_multikill,
 )
 
@@ -50,3 +51,8 @@ def test_result_is_multikill_double() -> None:
 def test_result_is_multikill_rejects_single() -> None:
     row = KillUiResult(0.5, True, 1, 0.1, 0.1, "slain", "kill_keyword=slain", "slain")
     assert not result_is_multikill(row)
+
+
+def test_tower_banner_rejected() -> None:
+    assert _looks_like_tower_banner("Turret Destroyed")
+    assert _looks_like_tower_banner("Башня уничтожена")
