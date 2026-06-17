@@ -21,6 +21,22 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+# VOD-only mode: do NOT run Shorts ingest/feed or restart worker.
+if [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
+  log "vod_only=1: skip continuous worker; ensure vod_segment_feed running"
+  # Telegram callback bot (👍/👎) — restart if dead
+  if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
+    log "restart telegram_upload_bot"
+    nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+  fi
+  # Keep VOD running in background
+  if ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
+    nohup env PYTHONPATH="/usr/local/bin" python3 -u /usr/local/bin/mlbb_vod_segment_feed.py >> /root/data/mlbb/vod_only.log 2>&1 &
+    log "started vod_segment_feed pid=$!"
+  fi
+  exit 0
+fi
+
 log() {
   echo "[$(date -Is)] $*" >> "$WLOG"
 }
