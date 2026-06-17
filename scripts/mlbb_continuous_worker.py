@@ -688,6 +688,7 @@ def main() -> int:
                 refill_pending = False
             if (
                 (refill_pending or force_ingest)
+                and not pipeline_paused("ingest")
                 and should_start_ingest(pending=pending, target_pending=target_pending)
                 and not ingest.running()
                 and not ingest_running_externally()
@@ -784,6 +785,7 @@ def main() -> int:
                     log(f"steady feed wait: {feed_block_reason} pending={pending}")
             if (
                 run_feed
+                and not pipeline_paused("feed")
                 and not feed.running()
                 and not feed_running_externally()
                 and feed.cooldown_ok(30 if steady else (feed_wait if pending > 0 else 30))
