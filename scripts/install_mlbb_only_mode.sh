@@ -109,6 +109,9 @@ install -m 755 \
   "$REPO/scripts/mlbb_daily_report.py" \
   "$REPO/scripts/mlbb_vod_montage_feed.py" \
   "$REPO/scripts/mlbb_viral_threshold_sync.py" \
+  "$REPO/scripts/mlbb_hq_shorts_mission.py" \
+  "$REPO/scripts/mlbb_hq_shorts_mission.sh" \
+  "$REPO/scripts/mlbb_mission_rollback.sh" \
   "$REPO/scripts/telegram_upload_bot.py" \
   "$REPO/scripts/overnight_youtube_batch.py" \
   "$REPO/scripts/overnight_catchup.sh" \
