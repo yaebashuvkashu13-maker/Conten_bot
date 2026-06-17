@@ -21,6 +21,10 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+log() {
+  echo "[$(date -Is)] $*" >> "$WLOG"
+}
+
 # VOD-only mode: do NOT run Shorts ingest/feed or restart worker.
 if [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
   log "vod_only=1: skip continuous worker; ensure vod_segment_feed running"
@@ -36,10 +40,6 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
   fi
   exit 0
 fi
-
-log() {
-  echo "[$(date -Is)] $*" >> "$WLOG"
-}
 
 worker_pid() {
   local pid=""

@@ -9,6 +9,8 @@ ENV="/root/.video_bot.env"
 cd "$REPO"
 git fetch origin cursor/content-farm-fixes-1a63 2>/dev/null || true
 BRANCH="origin/cursor/content-farm-fixes-1a63"
+echo "=== deploy scripts ==="
+git pull origin cursor/content-farm-fixes-1a63 2>/dev/null || git fetch origin cursor/content-farm-fixes-1a63
 for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
   mlbb_youtube_shorts_ingest.py mlbb_shorts_montage.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
@@ -21,12 +23,17 @@ for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_work
     chmod 755 "$BIN/${f}"
   fi
 done
+if git show "${BRANCH}:scripts/mlbb_continuous_worker_watchdog.sh" >/dev/null 2>&1; then
+  git show "${BRANCH}:scripts/mlbb_continuous_worker_watchdog.sh" > "$BIN/mlbb_continuous_worker_watchdog.sh"
+  chmod 755 "$BIN/mlbb_continuous_worker_watchdog.sh"
+fi
 # Do NOT run mlbb_deploy.sh here — server repo may be stale and overwrites /usr/local/bin.
 
 for kv in \
   MLBB_STEADY_MODE=1 \
   MLBB_LEARNING_SPAM_MODE=0 \
   MLBB_LEARNING_FIRST=0 \
+  MLBB_VOD_ONLY=1 \
   MLBB_SEND_ENABLED=1 \
   MLBB_SHORTS_ONLY=1 \
   MLBB_SHORTS_FOCUS=1 \
@@ -150,8 +157,16 @@ rm -f /root/data/mlbb/youtube_shorts_ingest.lock /root/data/mlbb/vod_segment_fee
 echo "=== health check ==="
 PYTHONPATH="$BIN" python3 "$BIN/mlbb_health_guard.py" --recover || true
 
-echo "=== start worker ==="
-nohup python3 "$BIN/mlbb_continuous_worker.py" >> /root/data/mlbb/mlbb_continuous_worker.log 2>&1 &
+echo "=== start pipeline ==="
+if grep -q '^MLBB_VOD_ONLY=1' "$ENV" 2>/dev/null; then
+  pkill -f mlbb_vod_segment_feed.py 2>/dev/null || true
+  sleep 1
+  rm -f /root/data/mlbb/vod_segment_feed.lock
+  nohup env PYTHONPATH="$BIN" python3 -u "$BIN/mlbb_vod_segment_feed.py" >> /root/data/mlbb/vod_only.log 2>&1 &
+  /usr/local/bin/mlbb_continuous_worker_watchdog.sh || true
+else
+  nohup python3 "$BIN/mlbb_continuous_worker.py" >> /root/data/mlbb/mlbb_continuous_worker.log 2>&1 &
+fi
 sleep 5
 pgrep -af 'mlbb_continuous_worker|youtube_shorts_ingest|vod_segment_feed|calibration_feed' || true
 echo "done"
