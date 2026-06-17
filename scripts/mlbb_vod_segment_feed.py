@@ -1249,6 +1249,26 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if rend_motion < _presend_min_motion() * 0.75:
         return False, f"render_idle_motion={rend_motion:.4f}", report
 
+    from mlbb_fight_structure import passes_hero_fight_gate
+
+    multikill = "multikill" in str(row.get("pass_reason", "")).lower() or "double" in str(
+        row.get("gate_reason", "")
+    ).lower()
+    hero_ok, hero_reason, hero_tl = passes_hero_fight_gate(
+        vod,
+        cut_start,
+        dur,
+        peak_start=peak_start,
+        multikill=multikill,
+        crop_box=crop,
+    )
+    report["hero_bins"] = hero_tl.get("hero_bins", 0)
+    report["creep_bins"] = hero_tl.get("creep_bins", 0)
+    report["peak_lift"] = round(float(hero_tl.get("peak_lift", 0.0)), 3)
+    report["hud_activity"] = round(float(hero_tl.get("hud_activity", 0.0)), 4)
+    if not hero_ok:
+        return False, hero_reason, report
+
     report["pass_reason"] = row.get("pass_reason") or row.get("gate_reason") or "presend_ok"
     return True, "presend_ok", report
 
@@ -1263,6 +1283,12 @@ def _format_send_report(row: dict, check: dict) -> str:
             f"render={check.get('render_motion', 0):.3f}"
         ),
     ]
+    if check.get("hero_bins") is not None:
+        lines.append(
+            f"fight hero_bins={check.get('hero_bins', 0)} "
+            f"creep_bins={check.get('creep_bins', 0)} "
+            f"lift={check.get('peak_lift', 0):.2f}"
+        )
     if check.get("freezes"):
         lines.append(f"freeze_scan={len(check['freezes'])}")
     return "\n".join(lines)
@@ -1340,6 +1366,18 @@ def _collect_kill_first_segments(
         if not ok:
             log.info("kill-first skip %s gate=%s", sid, gate_reason)
             continue
+        from mlbb_fight_structure import passes_hero_fight_gate
+
+        hero_ok, hero_reason, hero_tl = passes_hero_fight_gate(
+            vod,
+            start,
+            dur,
+            peak_start=peak_t,
+            multikill=result_is_multikill(peak_row),
+        )
+        if not hero_ok:
+            log.info("kill-first skip %s hero=%s", sid, hero_reason)
+            continue
         score = float(peak_row.get("score", getattr(gate, "score", 0)))
         clip = {
             "source_path": str(vod),
@@ -1368,6 +1406,7 @@ def _collect_kill_first_segments(
                 "pass_reason": peak_row.get("reason", "kill_ui"),
                 "clip_score": score,
                 "gate_reason": gate_reason,
+                "hero_fight": hero_tl,
             }
         )
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_starts=reserved)

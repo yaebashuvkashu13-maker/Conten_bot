@@ -12,7 +12,7 @@ BRANCH="origin/cursor/content-farm-fixes-1a63"
 for f in mlbb_calibration_store.py mlbb_calibration_feed.py mlbb_continuous_worker.py \
   mlbb_youtube_shorts_ingest.py mlbb_shorts_montage.py mlbb_channel_blocklist.py mlbb_hud_signals.py \
   mlbb_yolo_epic_ui.py mlbb_minimap_analyze.py mlbb_models_download.py mlbb_kill_ui.py \
-  mlbb_fight_segment.py mlbb_vod_segment_feed.py mlbb_vod_segment_store.py \
+  mlbb_fight_segment.py mlbb_fight_structure.py mlbb_vod_segment_feed.py mlbb_vod_segment_store.py \
   pubg_ui_refs_download.py mlbb_health_guard.py mlbb_pipeline_health.py mlbb_emergency_prime.py \
   mlbb_telegram_handlers.py mlbb_telegram_send.py \
   youtube_download.py mlbb_learning_first.py gameplay_gate.py; do
@@ -81,6 +81,9 @@ for kv in \
   MLBB_FIGHT_MIN_SEC=10 \
   MLBB_FIGHT_MAX_SEC=90 \
   MLBB_REQUIRE_MULTIKILL=1 \
+  MLBB_HERO_FIGHT_GATE=1 \
+  MLBB_HERO_FIGHT_BINS=5 \
+  MLBB_HERO_FIGHT_MIN_COMBAT_BINS=2 \
   MLBB_VOD_CALIBRATION_LENIENT=0 \
   MLBB_KILL_SCAN_SKIP_OCR=0 \
   MLBB_KILL_SCAN_STEP_SEC=30 \
