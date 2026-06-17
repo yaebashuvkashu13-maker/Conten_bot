@@ -58,9 +58,104 @@ LONG_VOD_TITLE_RE = re.compile(
     r"час(?:ов)?\s+игр|полный\s+стрим",
     re.I,
 )
+VOD_NEGATIVE_TITLE_RE = re.compile(
+    r"valorant|dota\b|league of legends|\bcs2\b|counter.?strike|apex legends|"
+    r"pubg|fortnite|wild rift|honor of kings|"
+    r"tutorial|guide|tips|how to|meta guide|review|promo|giveaway|"
+    r"tournament day|battle arena|world championship|community tournament|"
+    r"deathmatch|skin reveal|cinematic|hero reveal|patch notes",
+    re.I,
+)
 
 
-def _vod_min_sec() -> float:
+def _reset_exhausted_vods(registry: list[dict]) -> int:
+    """Re-open on-disk VODs marked exhausted when highlights pipeline was too strict."""
+    if os.environ.get("MLBB_VOD_RESET_EXHAUSTED", "0") != "1":
+        return 0
+    n = 0
+    for row in registry:
+        if not row.get("exhausted"):
+            continue
+        path = Path(str(row.get("path", "")))
+        if not path.exists():
+            continue
+        dur = _ffprobe_duration(path)
+        if _vod_length_ok(path, dur) and not _vod_unreliable(path, dur):
+            row["exhausted"] = False
+            n += 1
+            log.info("reset exhausted vod id=%s dur_min=%.0f", row.get("id", path.name), dur / 60)
+    return n
+
+
+def _discover_vod_ytsearch_fallback(
+    env: dict[str, str],
+    used: set[str],
+    *,
+    min_sec: float,
+    max_sec: float,
+    target: float,
+) -> list[dict]:
+    """yt-dlp ytsearch when nightly_youtube_montage returns 403 or empty."""
+    from youtube_download import subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
+
+    queries = [
+        q.strip()
+        for q in os.environ.get(
+            "MLBB_VOD_YTSEARCH_QUERIES",
+            "MLBB mythic ranked match gameplay 10 minutes,"
+            "Mobile Legends bang bang solo rank full match,"
+            "MLBB savage maniac teamfight ranked",
+        ).split(",")
+        if q.strip()
+    ]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for query in queries[:4]:
+        cmd = ytdlp_cmd(env, use_proxy=False) + [
+            "--flat-playlist",
+            "--print",
+            "%(id)s\t%(title)s\t%(duration)s",
+            f"ytsearch{int(os.environ.get('MLBB_VOD_YTSEARCH_LIMIT', '15'))}:{query}",
+            *ytdlp_extra_args(env),
+        ]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=int(os.environ.get("MLBB_VOD_SEARCH_TIMEOUT_SEC", "90")),
+            env=subprocess_env_no_proxy(env),
+        )
+        for line in (proc.stdout or "").splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) < 3:
+                continue
+            vid, title, dur_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if not vid or vid in seen or vid in used:
+                continue
+            try:
+                dur = float(dur_s)
+            except ValueError:
+                continue
+            if dur < min_sec or dur > max_sec:
+                continue
+            if not MLBB_TITLE_RE.search(title):
+                continue
+            if VOD_NEGATIVE_TITLE_RE.search(title) or LIVE_TITLE_RE.search(title) or LONG_VOD_TITLE_RE.search(title):
+                continue
+            seen.add(vid)
+            out.append(
+                {
+                    "id": vid,
+                    "title": title,
+                    "duration": dur,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                }
+            )
+    out.sort(key=lambda m: abs(float(m.get("duration") or 0) - target))
+    return out
+
+
     return float(os.environ.get("MLBB_VOD_MIN_SEC", "300"))
 
 
@@ -221,6 +316,9 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
     registry: list[dict] = list(state.get("vods", []))
     if _repair_registry_ids(registry):
         log.info("repaired registry youtube ids")
+    reset = _reset_exhausted_vods(registry)
+    if reset:
+        log.info("reset_exhausted_vods=%s", reset)
     known = {r.get("id") for r in registry}
     known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))
@@ -355,10 +453,18 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     for idx, query in enumerate(queries):
         if throttled and idx > 0:
             time.sleep(search_delay)
-        batch = discover_candidates(
-            env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=search_limit
-        )
+        try:
+            batch = discover_candidates(
+                env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=search_limit
+            )
+        except Exception as exc:
+            log.warning("discover_candidates failed query=%s err=%s", query[:40], exc)
+            batch = []
         raw.extend(batch)
+
+    if not raw:
+        raw = _discover_vod_ytsearch_fallback(env, used, min_sec=min_sec, max_sec=max_sec, target=target)
+        log.info("ytsearch_fallback candidates=%s", len(raw))
 
     out: list[dict] = []
     seen: set[str] = set()
@@ -370,6 +476,9 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         title = str(meta.get("title") or "")
         dur = float(meta.get("duration") or 0)
         if LIVE_TITLE_RE.search(title) or LONG_VOD_TITLE_RE.search(title):
+            continue
+        if VOD_NEGATIVE_TITLE_RE.search(title):
+            log.info("skip negative title id=%s title=%s", vid, title[:60])
             continue
         if vid in used:
             continue
@@ -1453,7 +1562,7 @@ def _resolve_next_vod(
 
     if notify:
         send_message(token, chat_id, "📥 Качаю новый MLBB VOD с YouTube (с паузами, без бана)…")
-    vod = _download_new_mlbb_vod(env, registry, throttled=True)
+    vod = _download_new_mlbb_vod(env, registry, throttled=_pick_available_vod(registry) is not None)
     if vod:
         registry[:] = _ensure_registry(env)
         entry = next((r for r in registry if r.get("id") == vod_youtube_id(vod)), None)

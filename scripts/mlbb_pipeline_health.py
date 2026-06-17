@@ -127,8 +127,8 @@ def should_send_feed_steady(*, pending: int, batch_size: int) -> tuple[bool, str
     interval = steady_feed_interval_sec()
     if last > 0:
         since = time.time() - last
-        if since < interval and pending < batch_size:
-            return False, f"steady_wait={interval - since:.0f}s pending={pending}<{batch_size}"
+        if since < interval:
+            return False, f"steady_wait={interval - since:.0f}s pending={pending}"
     return True, "ok"
 
 

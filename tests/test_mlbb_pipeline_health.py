@@ -26,7 +26,8 @@ def test_steady_feed_pacing(tmp_path: Path, monkeypatch) -> None:
 
     mph.record_feed_delivery(delivered=3)
     ok, reason = mph.should_send_feed_steady(pending=8, batch_size=4)
-    assert ok  # full batch — send even before interval
+    assert not ok
+    assert "steady_wait" in reason
 
     ok_partial, reason_partial = mph.should_send_feed_steady(pending=2, batch_size=4)
     assert not ok_partial
@@ -37,6 +38,11 @@ def test_steady_feed_pacing(tmp_path: Path, monkeypatch) -> None:
     mph._write(data)
     ok2, _ = mph.should_send_feed_steady(pending=2, batch_size=4)
     assert ok2  # interval elapsed — send partial batch
+
+    mph.record_feed_delivery(delivered=1)
+    ok3, reason3 = mph.should_send_feed_steady(pending=5, batch_size=1)
+    assert not ok3
+    assert "steady_wait" in reason3
 
 
 def test_unsendable_feed_recovery(tmp_path: Path, monkeypatch) -> None:

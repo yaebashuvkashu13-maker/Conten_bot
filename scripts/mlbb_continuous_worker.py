@@ -514,6 +514,7 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "24"),
             "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "4"),
             "MLBB_VOD_MAX_CLIPS_PER_RUN": env.get("MLBB_VOD_MAX_CLIPS_PER_RUN", "15"),
+            "MLBB_VOD_MAX_RUN_SEC": env.get("MLBB_VOD_MAX_RUN_SEC", "3600"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_FULL_FRAME": "1",
@@ -673,6 +674,9 @@ def main() -> int:
                         _LAST_STARVATION_INGEST = now
 
             refill_pending = pending < target_pending
+            vod_focus = base.get("MLBB_VOD_FOCUS", "0") == "1"
+            if vod_focus and base.get("MLBB_SHORTS_INGEST_DURING_VOD", "0") != "1":
+                refill_pending = False
             if (
                 (refill_pending or force_ingest)
                 and should_start_ingest(pending=pending, target_pending=target_pending)
@@ -732,7 +736,14 @@ def main() -> int:
             batch_size = int(base.get("MLBB_CALIBRATION_BATCH", "4"))
             feed_allowed = True
             feed_block_reason = ""
-            if steady:
+            vod_focus = base.get("MLBB_VOD_FOCUS", "0") == "1"
+            if vod_focus and base.get("MLBB_SHORTS_FEED_DURING_VOD", "0") != "1":
+                feed_allowed = False
+                feed_block_reason = "vod_focus"
+            elif vod.running() or vod_feed_running_externally():
+                feed_allowed = False
+                feed_block_reason = "vod_active"
+            elif steady:
                 try:
                     from mlbb_pipeline_health import should_send_feed_steady
 
