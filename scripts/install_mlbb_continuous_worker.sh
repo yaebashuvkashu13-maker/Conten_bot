@@ -6,7 +6,16 @@ REPO="${REPO:-/root/content_bot_ml}"
 BIN=/usr/local/bin
 MARK="# mlbb-continuous-worker"
 
-install -m 755 "$REPO/scripts/mlbb_continuous_worker.py" "$BIN/mlbb_continuous_worker.py"
+install -m 755 \
+  "$REPO/scripts/mlbb_continuous_worker.py" \
+  "$REPO/scripts/mlbb_vod_segment_feed.py" \
+  "$REPO/scripts/mlbb_fight_segment.py" \
+  "$REPO/scripts/mlbb_learning_first.py" \
+  "$REPO/scripts/mlbb_calibration_feed.py" \
+  "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
+  "$REPO/scripts/mlbb_vod_montage_feed.py" \
+  "$REPO/scripts/mlbb_daily_report.py" \
+  "$BIN/mlbb_continuous_worker.py"
 
 # Stop sparse cron jobs — worker owns the loop now
 TMP=$(mktemp)

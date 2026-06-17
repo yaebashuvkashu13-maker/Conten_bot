@@ -21,6 +21,24 @@ def _lead_sec() -> float:
     return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
+_CACHE: dict[str, dict] = {}
+
+
+def _analysis_for(vod: Path) -> dict:
+    """One analyze_video pass per VOD file — pool scan calls this dozens of times."""
+    mtime = vod.stat().st_mtime_ns
+    key = f"{vod.resolve()}:{mtime}"
+    if key not in _CACHE:
+        from smart_video_editor import analyze_video
+
+        _CACHE[key] = analyze_video(vod)
+    return _CACHE[key]
+
+
+def clear_analysis_cache() -> None:
+    _CACHE.clear()
+
+
 def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float]:
     """
     Detect fight window around peak_sec.
@@ -28,13 +46,10 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
     Returns (start_sec, end_sec, duration_sec), clamped to [7, 22]s.
     Uses sustain decay walk from smart_video_editor.build_candidates logic.
     """
-    from smart_video_editor import analyze_video
-
     min_d = _fight_min_sec()
     max_d = _fight_max_sec()
     lead = _lead_sec()
-
-    analysis = analyze_video(vod)
+    analysis = _analysis_for(vod)
     win = float(analysis.get("window_seconds", 2.0))
     file_dur = float(analysis.get("duration", 0.0))
     bins = int(analysis.get("bins", 0))

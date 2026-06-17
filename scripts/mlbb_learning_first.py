@@ -70,6 +70,8 @@ def set_transition_passed(value: bool = True) -> None:
 
 
 def sends_allowed() -> bool:
+    if os.environ.get("MLBB_SEND_ENABLED", "1") == "1":
+        return True
     if not enabled():
         return True
     return transition_passed()

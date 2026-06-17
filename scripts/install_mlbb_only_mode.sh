@@ -97,6 +97,11 @@ install -m 755 \
   "$REPO/scripts/mlbb_calibration_weekly_report.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
+  "$REPO/scripts/mlbb_fight_segment.py" \
+  "$REPO/scripts/mlbb_learning_first.py" \
+  "$REPO/scripts/mlbb_continuous_worker.py" \
+  "$REPO/scripts/mlbb_daily_report.py" \
+  "$REPO/scripts/mlbb_vod_montage_feed.py" \
   "$REPO/scripts/telegram_upload_bot.py" \
   "$REPO/scripts/overnight_youtube_batch.py" \
   "$REPO/scripts/overnight_catchup.sh" \
@@ -141,7 +146,10 @@ export MLBB_SEEK_PREROLL_60FPS=12
 export MLBB_VOD_CHUNK_RENDER=1
 export MLBB_VOD_SIMPLE_AUDIO=1
 export MLBB_VOD_GOP_SEC=1
-export MLBB_VOD_LEAD_SEC=12
+export MLBB_VOD_LEAD_SEC=4
+export MLBB_VOD_VARIABLE_LENGTH=1
+export MLBB_LEARNING_FIRST=0
+export MLBB_SEND_ENABLED=1
 export MLBB_PRESEND_FREEZE_MIN_DUR=1.2
 export MLBB_PRESEND_FREEZE_MAX_START=3.0
 export MLBB_PRESEND_MIN_MOTION=0.014
@@ -165,9 +173,10 @@ chmod 755 "$WRAPPER_VOD"
 MARK_VOD="# mlbb-vod-segment-cron"
 TMP2=$(mktemp)
 crontab -l 2>/dev/null | grep -v "$MARK_VOD" >"$TMP2" || true
-echo "15 * * * * $WRAPPER_VOD $MARK_VOD" >>"$TMP2"
 crontab "$TMP2"
 rm -f "$TMP2"
+
+bash "$REPO/scripts/install_mlbb_continuous_worker.sh" 2>/dev/null || true
 
 clean_system_cron() {
   local f
@@ -215,6 +224,6 @@ echo "Cron:"
 crontab -l 2>/dev/null | grep -E 'mlbb|daily' || true
 echo "Remaining multi-game procs:"
 pgrep -af 'pubg_mlbb|overnight|viral_reference|eval_owner|score_owner|genshin|standoff|wot' || echo "(none)"
-echo "OK MLBB-only: VOD pipeline (hourly, short 15-45min VODs) + Shorts calibration"
+echo "OK MLBB-only: 24/7 continuous worker + short VODs + variable fight cuts"
 echo "/etc/cron.d:"
 ls -la /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive 2>/dev/null || echo "(multi-game crons removed)"

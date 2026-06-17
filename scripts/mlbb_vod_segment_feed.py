@@ -785,7 +785,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         run_command,
     )
 
-    clip = _normalize_clip(clip, vod)
+    clip = _normalize_clip(clip, vod) if clip.get("input_duration") is None else clip
     start = float(clip["start"])
     dur = float(clip["input_duration"])
     pre_roll = _seek_preroll_sec(vod, start)
@@ -1075,6 +1075,9 @@ def _dedupe_segments_by_gap(rows: list[dict], *, min_gap: float, reserved_starts
 
 
 def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_limit: int) -> list[dict]:
+    from mlbb_fight_segment import clear_analysis_cache
+
+    clear_analysis_cache()
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
     reserved = _used_starts_for_vod(vod, labeled_set, sent)
@@ -1136,13 +1139,25 @@ def _send_segment_batch(
     vod: Path,
     to_send: list[dict],
     sig: str,
-) -> int:
-    from mlbb_learning_first import daily_send_count, max_daily_sends
+) -> tuple[int, int, int]:
+    """Returns (sent_count, presend_skipped, send_blocked)."""
+    from mlbb_learning_first import can_send, daily_send_count, max_daily_sends
+
+    ok_batch, block_reason = can_send(1)
+    if not ok_batch:
+        log.warning("send batch blocked reason=%s", block_reason)
+        send_message(
+            token,
+            chat_id,
+            f"⛔ Отправка кусков приостановлена: {block_reason}\n"
+            f"(LEARNING_FIRST gate — проверь MLBB_SEND_ENABLED=1 на VPS)",
+        )
+        return 0, 0, len(to_send)
 
     cap_left = max_daily_sends() - daily_send_count()
     if cap_left <= 0:
         log.info("daily cap reached sent_today=%s cap=%s", daily_send_count(), max_daily_sends())
-        return 0
+        return 0, 0, 0
     if len(to_send) > cap_left:
         log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
         to_send = to_send[:cap_left]
@@ -1159,6 +1174,7 @@ def _send_segment_batch(
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
     skipped: list[str] = []
+    send_blocked = 0
     for row in to_send:
         sid = row["segment_id"]
         out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
@@ -1184,7 +1200,13 @@ def _send_segment_batch(
             f"👍 Ок / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
+            ok_one, one_reason = can_send(1)
+            if not ok_one:
+                send_blocked += 1
+                log.warning("send blocked seg=%s reason=%s", sid, one_reason)
+                continue
             send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")
+            continue
         upsert_segment(
             {
                 "segment_id": sid,
@@ -1209,8 +1231,9 @@ def _send_segment_batch(
             f"⚠️ {vod_youtube_id(vod)}: {len(skipped)} кусков не прошли presend\n"
             + "\n".join(skipped[:6]),
         )
-    mark_feed_sent(sent_ids)
-    return len(sent_ids)
+    if sent_ids:
+        mark_feed_sent(sent_ids)
+    return len(sent_ids), len(skipped), send_blocked
 
 
 def _resolve_next_vod(
@@ -1286,8 +1309,14 @@ def _process_vod_segments(
         to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
         if not to_send:
             break
-        n = _send_segment_batch(token, chat_id, vod, to_send, sig)
+        n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
         if n == 0:
+            if to_send and sblock > 0:
+                log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
+                break
+            if to_send and preskip >= len(to_send):
+                log.warning("batch presend rejected all — stop vod=%s", vod.name)
+                break
             log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
             break
         sent_total += n
@@ -1344,6 +1373,11 @@ def main() -> int:
         os.environ[key] = val
 
     env = {**os.environ, **load_env(ENV_PATH)}
+    if env.get("MLBB_SEND_ENABLED", "1") == "1":
+        from mlbb_learning_first import set_transition_passed
+
+        set_transition_passed(True)
+        log.info("sends enabled MLBB_SEND_ENABLED=1")
     token = env.get("TG_BOT_TOKEN", "")
     chat_id = env.get("TG_CHAT_ID", "")
     if not token or not chat_id:
