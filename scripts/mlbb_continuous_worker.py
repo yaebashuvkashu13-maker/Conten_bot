@@ -766,7 +766,9 @@ def main() -> int:
             if starvation:
                 empty_feed_sec = min(empty_feed_sec, 45.0)
             run_feed = (pending > 0 and feed_allowed) or (
-                pending == 0 and (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
+                pending == 0
+                and feed_allowed
+                and (time.time() - _LAST_EMPTY_FEED >= empty_feed_sec)
             )
             if pending > 0 and steady and not feed_allowed:
                 if cycles % 30 == 0:
