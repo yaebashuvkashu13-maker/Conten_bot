@@ -241,10 +241,8 @@ def main() -> int:
         "После 10 — автоматически вернёмся к VOD-нарезкам.",
     )
 
-    pool = collect_pool(env, per_query=args.per_query)
-    print(f"pool={len(pool)} need={need}", flush=True)
-
-    # Try local HQ files first (fast path)
+    # Local files first — no YouTube wait
+    print("scan local shorts…", flush=True)
     for path, row in existing_hq_files(sent_ids, min_height=args.min_height):
         if len(sent_ids) >= args.target:
             break
@@ -259,6 +257,7 @@ def main() -> int:
             f"{row.get('url', '')}"
         )
         if not send_video(token, chat_id, path, caption):
+            print(f"send_fail local {vid}", flush=True)
             continue
         sent_ids.add(vid)
         state.setdefault("downloaded", {})[vid] = {"path": str(path), "quality": q}
@@ -270,7 +269,11 @@ def main() -> int:
     need = max(0, args.target - len(sent_ids))
     if need <= 0:
         send_message(token, chat_id, f"✅ HQ Shorts миссия завершена: {args.target}/{args.target}.")
+        print("mission_complete local_only", flush=True)
         return 0
+
+    pool = collect_pool(env, per_query=args.per_query)
+    print(f"pool={len(pool)} need={need}", flush=True)
 
     for row in pool:
         if len(sent_ids) >= args.target:
