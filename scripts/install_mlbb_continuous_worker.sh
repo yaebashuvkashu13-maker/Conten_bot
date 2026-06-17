@@ -15,7 +15,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
   "$REPO/scripts/mlbb_vod_montage_feed.py" \
   "$REPO/scripts/mlbb_daily_report.py" \
-  "$BIN/mlbb_continuous_worker.py"
+  "$BIN/"
 
 # Stop sparse cron jobs — worker owns the loop now
 TMP=$(mktemp)

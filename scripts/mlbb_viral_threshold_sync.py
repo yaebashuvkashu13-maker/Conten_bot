@@ -75,12 +75,15 @@ def compute_thresholds() -> dict:
     owner_hook = _median(owner_good_hooks)
     bad_hook = _median(owner_bad_hooks)
 
-    # Floor: viral Shorts median * 0.85, but never below owner-good median * 0.7 when we have labels
-    hook_min = max(0.10, silver_hook * 0.85)
-    if owner_hook > 0:
+    # Floor from silver Shorts; owner labels nudge up only when we have silver signal.
+    hook_floor = float(os.environ.get("VIRAL_MLBB_HOOK_FLOOR", "0.06"))
+    hook_cap = float(os.environ.get("VIRAL_MLBB_HOOK_CAP", "0.12"))
+    hook_min = max(hook_floor, silver_hook * 0.85)
+    if silver_hook > 0 and owner_hook > 0:
         hook_min = max(hook_min, owner_hook * 0.65)
-    if bad_hook > 0:
+    if silver_hook > 0 and bad_hook > 0:
         hook_min = max(hook_min, bad_hook * 0.55)
+    hook_min = min(hook_min, hook_cap)
 
     clip_min = max(0.08, float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")))
     if owner_hook > 0:
