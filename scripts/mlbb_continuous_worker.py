@@ -30,6 +30,8 @@ _LAST_DISK_INDEX = 0.0
 _LAST_EMPTY_FEED = 0.0
 _LAST_STARVATION_INGEST = 0.0
 _PENDING_ZERO_SINCE = 0.0
+_LAST_DAILY_REPORT = 0.0
+_LAST_HOURLY_STATUS = 0.0
 
 
 def log(msg: str) -> None:
@@ -801,8 +803,12 @@ def main() -> int:
             if cycles % 30 == 0:
                 nudge_stale_jobs()
 
-            if cycles % 900 == 0:
-                hourly_status(base)
+            global _LAST_HOURLY_STATUS, _LAST_DAILY_REPORT
+            hourly_interval = float(base.get("MLBB_HOURLY_STATUS_INTERVAL_SEC", "3600"))
+            if base.get("MLBB_HOURLY_STATUS_TELEGRAM", "0") == "1":
+                if now - _LAST_HOURLY_STATUS >= hourly_interval:
+                    _LAST_HOURLY_STATUS = now
+                    hourly_status(base)
 
             if cycles % 90 == 0:
                 sync_script = BIN / "mlbb_viral_threshold_sync.py"
@@ -811,12 +817,15 @@ def main() -> int:
                 if sync_script.exists():
                     subprocess.run([PY, str(sync_script)], env=base, timeout=120, check=False)
 
-            if cycles % 360 == 0:
-                report_script = BIN / "mlbb_daily_report.py"
-                if not report_script.exists():
-                    report_script = Path(__file__).resolve().parent / "mlbb_daily_report.py"
-                if report_script.exists():
-                    subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
+            daily_interval = float(base.get("MLBB_DAILY_REPORT_INTERVAL_SEC", "86400"))
+            if base.get("MLBB_DAILY_REPORT_TELEGRAM", "0") == "1":
+                if now - _LAST_DAILY_REPORT >= daily_interval:
+                    _LAST_DAILY_REPORT = now
+                    report_script = BIN / "mlbb_daily_report.py"
+                    if not report_script.exists():
+                        report_script = Path(__file__).resolve().parent / "mlbb_daily_report.py"
+                    if report_script.exists():
+                        subprocess.run([PY, str(report_script), "--telegram"], env=base, timeout=60, check=False)
 
             if cycles % 15 == 0:
                 try:

@@ -88,6 +88,35 @@ def _week_thumbs_line(calib: dict) -> str:
         return f"👍/нед Shorts: {yes}👍 {no}👎 (all-time fallback)"
 
 
+def _next_clip_line(env: dict | None = None) -> str:
+    import os
+    import time
+
+    env = env or {}
+    vod_focus = env.get("MLBB_VOD_FOCUS", os.environ.get("MLBB_VOD_FOCUS", "0")) == "1"
+    try:
+        from mlbb_pipeline_health import last_feed_delivered_at, steady_feed_interval_sec
+
+        last = last_feed_delivered_at()
+        interval = steady_feed_interval_sec()
+        if vod_focus:
+            cap = int(env.get("MLBB_VOD_MAX_CLIPS_PER_RUN", os.environ.get("MLBB_VOD_MAX_CLIPS_PER_RUN", "15")))
+            return (
+                f"След. контент: VOD-хайлайты (до {cap} нарезок за прогон), Shorts ~раз в "
+                f"{interval / 3600:.0f}ч"
+            )
+        if last <= 0:
+            return "След. клип: очередь пуста — бот докачивает"
+        wait = max(0.0, interval - (time.time() - last))
+        if wait < 120:
+            return "След. клип: в ближайшие минуты"
+        if wait < 3600:
+            return f"След. клип: ~через {wait / 60:.0f} мин"
+        return f"След. клип: ~через {wait / 3600:.1f} ч"
+    except Exception:
+        return "След. клип: —"
+
+
 def build_report(env: dict | None = None) -> str:
     import os
 
@@ -117,6 +146,7 @@ def build_report(env: dict | None = None) -> str:
 
     return (
         "📋 MLBB Bot — дневной статус\n"
+        f"{_next_clip_line(env)}\n"
         f"Worker: {worker_line}\n"
         f"Отправки сегодня: {ls['sent_today']}/{ls['cap']}\n"
         f"precision_7d: {ls['precision_7d']:.0%}\n"
