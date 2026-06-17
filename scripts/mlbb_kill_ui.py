@@ -49,6 +49,26 @@ MLBB_KILL_LABEL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 _MULTIKILL_LABELS = frozenset({"double_kill", "triple_kill", "quadra_kill", "penta_kill"})
 
+# VOD highlight tier — what we hunt on long streams (MLBB_REQUIRE_MULTIKILL=1).
+_VOD_HIGHLIGHT_LABELS = frozenset(
+    {
+        "double_kill",
+        "triple_kill",
+        "quadra_kill",
+        "penta_kill",
+        "savage",
+        "maniac",
+        "legendary",
+    }
+)
+
+
+def _vod_highlight_labels() -> frozenset[str]:
+    raw = os.environ.get("MLBB_VOD_HIGHLIGHT_LABELS", "").strip()
+    if not raw:
+        return _VOD_HIGHLIGHT_LABELS
+    return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+
 
 def _normalize_ocr_text(text: str) -> str:
     """Fix common OCR misreads in kill banners."""
@@ -145,6 +165,51 @@ def result_is_multikill(result: KillUiResult | dict[str, Any]) -> bool:
         yolo = reason.split("=", 1)[1].lower()
         return any(x in yolo for x in ("double", "triple", "quadra", "penta"))
     return False
+
+
+def is_vod_highlight_kill_label(label: str) -> bool:
+    norm = label.strip().lower().replace(" ", "_")
+    allowed = _vod_highlight_labels()
+    if norm in allowed:
+        return True
+    spaced = label.strip().lower()
+    return spaced in {
+        "double kill",
+        "triple kill",
+        "quadra kill",
+        "penta kill",
+        "savage",
+        "maniac",
+        "legendary",
+    }
+
+
+def result_is_vod_highlight_kill(result: KillUiResult | dict[str, Any]) -> bool:
+    """Double/triple+ or Savage/Maniac/Legendary banner — VOD send tier."""
+    if isinstance(result, KillUiResult):
+        label = result.keyword_label
+        reason = result.reason
+    else:
+        label = str(result.get("keyword_label", ""))
+        reason = str(result.get("reason", ""))
+    if is_vod_highlight_kill_label(label):
+        return True
+    if reason.startswith("kill_keyword="):
+        return is_vod_highlight_kill_label(reason.split("=", 1)[1])
+    if reason.lower().startswith("yolo="):
+        yolo = reason.split("=", 1)[1].lower()
+        return any(
+            x in yolo
+            for x in ("double", "triple", "quadra", "penta", "savage", "maniac", "legendary", "god-like")
+        )
+    return False
+
+
+def _vod_kill_tier_ok(result: KillUiResult | dict[str, Any]) -> bool:
+    """When MLBB_REQUIRE_MULTIKILL=1, accept highlight-tier banners (not solo slain)."""
+    if not _multikill_required():
+        return True
+    return result_is_vod_highlight_kill(result)
 
 
 def _import_frame_helpers():
@@ -318,7 +383,7 @@ def _ocr_kill_text(frame: np.ndarray) -> tuple[str, int, str]:
                 continue
             merged = f"{merged} {text}".strip()
             zone_hits, zone_label = _match_kill_keywords(text)
-            if zone_hits > hits or (zone_hits == hits and zone_label in _MULTIKILL_LABELS):
+            if zone_hits > hits or (zone_hits == hits and zone_label in _vod_highlight_labels()):
                 hits = zone_hits
                 label = zone_label
     if hits == 0 and merged:
@@ -356,7 +421,7 @@ def score_mlbb_kill_ui(
             text, hits, label = _ocr_kill_text(frame)
             if text:
                 ocr_text = text
-            if hits > keyword_hits or (hits == keyword_hits and label in _MULTIKILL_LABELS):
+            if hits > keyword_hits or (hits == keyword_hits and label in _vod_highlight_labels()):
                 keyword_hits = hits
                 keyword_label = label
 
@@ -388,7 +453,7 @@ def score_mlbb_kill_ui(
     min_color = float(os.environ.get("MLBB_KILL_ANNOUNCE_MIN", "0.08"))
     min_spike = float(os.environ.get("MLBB_KILL_ANNOUNCE_SPIKE_MIN", "0.075"))
     min_feed = float(os.environ.get("MLBB_KILL_FEED_MIN", "0.30"))
-    multikill_ocr = keyword_label in _MULTIKILL_LABELS
+    multikill_ocr = keyword_label in _vod_highlight_labels()
 
     if strict:
         # Send gate: OCR reads double/triple/savage/maniac/etc. on the banner.
@@ -511,8 +576,8 @@ def passes_mlbb_kill_gate(
                 return True, f"lenient_spike:{result.reason}", result
     if not result.has_kill_notification:
         return False, result.reason, result
-    if _multikill_required() and not result_is_multikill(result):
-        return False, f"no_multikill:{result.reason}", result
+    if _multikill_required() and not result_is_vod_highlight_kill(result):
+        return False, f"no_highlight_kill:{result.reason}", result
     return True, result.reason, result
 
 
@@ -562,13 +627,13 @@ def _scan_window_keep(result: KillUiResult, *, lenient: bool, min_score: float) 
 def _scan_peak_acceptable(result: KillUiResult, keep: bool) -> bool:
     if not keep:
         return False
-    if _multikill_required() and not result_is_multikill(result):
+    if _multikill_required() and not result_is_vod_highlight_kill(result):
         return False
     return True
 
 
 def _should_run_second_pass(result: KillUiResult, keep: bool) -> bool:
-    """Second half of a step block when first half missed multikill (or any kill)."""
+    """Second half of a step block when first half missed highlight-tier kill."""
     if _scan_peak_acceptable(result, keep):
         return False
     if _multikill_required():

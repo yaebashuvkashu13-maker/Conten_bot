@@ -12,6 +12,7 @@ from mlbb_kill_ui import (  # noqa: E402
     _normalize_ocr_text,
     _looks_like_tower_banner,
     result_is_multikill,
+    result_is_vod_highlight_kill,
 )
 
 
@@ -56,6 +57,17 @@ def test_result_is_multikill_rejects_single() -> None:
 def test_tower_banner_rejected() -> None:
     assert _looks_like_tower_banner("Turret Destroyed")
     assert _looks_like_tower_banner("Башня уничтожена")
+
+
+def test_result_is_vod_highlight_savage() -> None:
+    row = KillUiResult(0.5, True, 1, 0.1, 0.1, "SAVAGE", "kill_keyword=savage", "savage")
+    assert result_is_vod_highlight_kill(row)
+    assert not result_is_multikill(row)
+
+
+def test_result_is_vod_highlight_maniac_yolo() -> None:
+    row = KillUiResult(0.5, True, 1, 0.1, 0.1, "", "yolo=Maniac", "")
+    assert result_is_vod_highlight_kill(row)
 
 
 def test_two_pass_scan_runs_second_half(monkeypatch) -> None:

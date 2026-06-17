@@ -1251,15 +1251,21 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
     from mlbb_fight_structure import passes_hero_fight_gate
 
-    multikill = "multikill" in str(row.get("pass_reason", "")).lower() or "double" in str(
-        row.get("gate_reason", "")
-    ).lower()
+    highlight = result_is_vod_highlight_kill(
+        {
+            "keyword_label": row.get("kill_label", ""),
+            "reason": row.get("pass_reason", "") or row.get("gate_reason", ""),
+        }
+    ) or "multikill" in str(row.get("pass_reason", "")).lower() or any(
+        x in str(row.get("pass_reason", "") + row.get("gate_reason", "")).lower()
+        for x in ("double", "triple", "savage", "maniac", "quadra", "penta", "legendary")
+    )
     hero_ok, hero_reason, hero_tl = passes_hero_fight_gate(
         vod,
         cut_start,
         dur,
         peak_start=peak_start,
-        multikill=multikill,
+        multikill=highlight,
         crop_box=crop,
     )
     report["hero_bins"] = hero_tl.get("hero_bins", 0)
@@ -1341,7 +1347,7 @@ def _collect_kill_first_segments(
 ) -> list[dict]:
     """Fast path: kill UI peaks → variable fight bounds (7–22s)."""
     from mlbb_fight_segment import detect_fight_bounds
-    from mlbb_kill_ui import passes_mlbb_kill_gate, result_is_multikill, scan_vod_kill_peaks
+    from mlbb_kill_ui import passes_mlbb_kill_gate, result_is_vod_highlight_kill, scan_vod_kill_peaks
 
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
@@ -1354,7 +1360,7 @@ def _collect_kill_first_segments(
         peak_t = float(peak_row.get("start_sec", 0))
         if peak_t < min_peak:
             continue
-        if os.environ.get("MLBB_REQUIRE_MULTIKILL", "0") == "1" and not result_is_multikill(peak_row):
+        if os.environ.get("MLBB_REQUIRE_MULTIKILL", "0") == "1" and not result_is_vod_highlight_kill(peak_row):
             continue
         start, end, dur = detect_fight_bounds(vod, peak_t)
         if any(abs(start - s) < min_gap for s in reserved):
@@ -1373,7 +1379,7 @@ def _collect_kill_first_segments(
             start,
             dur,
             peak_start=peak_t,
-            multikill=result_is_multikill(peak_row),
+            multikill=result_is_vod_highlight_kill(peak_row),
         )
         if not hero_ok:
             log.info("kill-first skip %s hero=%s", sid, hero_reason)
@@ -1406,6 +1412,8 @@ def _collect_kill_first_segments(
                 "pass_reason": peak_row.get("reason", "kill_ui"),
                 "clip_score": score,
                 "gate_reason": gate_reason,
+                "kill_label": peak_row.get("keyword_label", ""),
+                "kill_ocr": (peak_row.get("ocr_snippet") or "")[:80],
                 "hero_fight": hero_tl,
             }
         )
@@ -1502,7 +1510,7 @@ def _send_segment_batch(
     send_message(
         token,
         chat_id,
-        f"MLBB VOD — {len(to_send)} хайлайтов (~{avg_dur}с, двойное убийство+)\n"
+        f"MLBB VOD — {len(to_send)} хайлайтов (~{avg_dur}с, double/triple/savage/maniac+)\n"
         f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
         f"👍 Ок / 👎 Не ок под каждым\n"
         f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
@@ -1528,10 +1536,16 @@ def _send_segment_batch(
         seg_dur = _ffprobe_duration(out)
         report_line = _format_send_report(row, presend_report)
         watch = youtube_watch_url(vod_youtube_id(vod), float(row["start"]))
+        kill_line = ""
+        if row.get("kill_label") or row.get("pass_reason"):
+            kill_line = f"kill={row.get('kill_label') or row.get('pass_reason', '')}\n"
+            if row.get("kill_ocr"):
+                kill_line += f"OCR: {row['kill_ocr']}\n"
         caption = (
             f"MLBB кусок #{sid}\n"
             f"{watch}\n"
             f"кусок {seg_dur:.0f}с\n"
+            f"{kill_line}"
             f"{report_line}\n"
             f"✓ presend\n"
             f"👍 Ок / 👎 Не ок"
@@ -1553,6 +1567,8 @@ def _send_segment_batch(
                 "hook_score": row["hook_score"],
                 "pass_reason": row.get("pass_reason", ""),
                 "gate_reason": row.get("gate_reason", ""),
+                "kill_label": row.get("kill_label", ""),
+                "kill_ocr": row.get("kill_ocr", ""),
                 "highlight_metrics": row.get("clip", {}).get("highlight_metrics", {}),
                 "sig": sig,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),

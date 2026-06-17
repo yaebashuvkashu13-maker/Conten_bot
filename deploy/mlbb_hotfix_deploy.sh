@@ -81,6 +81,7 @@ for kv in \
   MLBB_FIGHT_MIN_SEC=10 \
   MLBB_FIGHT_MAX_SEC=90 \
   MLBB_REQUIRE_MULTIKILL=1 \
+  MLBB_VOD_HIGHLIGHT_LABELS=double_kill,triple_kill,quadra_kill,penta_kill,savage,maniac,legendary \
   MLBB_HERO_FIGHT_GATE=1 \
   MLBB_HERO_FIGHT_BINS=5 \
   MLBB_HERO_FIGHT_MIN_COMBAT_BINS=2 \
