@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_vod_segment_feed import (
     INBOX,
-    VodPipelineDownloader,
     _ensure_registry,
     _load_state,
     _process_vod_segments,
@@ -31,17 +30,42 @@ from youtube_download import load_env, normalize_youtube_url, subprocess_env_no_
 ENV_PATH = Path("/root/.video_bot.env")
 
 
+class _NoOpDownloader:
+    """One-off jobs must not spawn background VOD downloads or segment_feed."""
+
+    def __init__(self, env: dict[str, str]):
+        self.env = env
+
+    def busy(self) -> bool:
+        return False
+
+    def start_if_idle(self, registry: list[dict]) -> None:
+        return
+
+    def pop_ready(self) -> Path | None:
+        return None
+
+    def wait_ready(self, timeout: float) -> Path | None:
+        return None
+
+
+def _vod_download_env(env: dict[str, str]) -> dict[str, str]:
+    """MLBB_SHORTS_ONLY=1 on VPS adds a Shorts-only match-filter — disable for VOD."""
+    return {**env, "MLBB_SHORTS_ONLY": "0", "YTDLP_MATCH_FILTER": ""}
+
+
 def download_vod_exact(url: str, dest: Path, env: dict[str, str]) -> Path:
     """Download one VOD to exact path (no shorts duration filter, no wrong-file fallback)."""
     url = normalize_youtube_url(url)
     vid = _video_id(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     template = str(dest.parent / f"yt_{vid}.%(ext)s")
-    fmt = env.get(
+    dl_env = _vod_download_env(env)
+    fmt = dl_env.get(
         "YOUTUBE_FORMAT",
         "bv*[height<=1080][vcodec^=avc1]+ba/bv*[height<=1080]+ba/b[height<=1080]/b",
     )
-    cmd = ytdlp_cmd(env, use_proxy=False) + [
+    cmd = ytdlp_cmd(dl_env, use_proxy=False) + [
         "--no-playlist",
         "--restrict-filenames",
         "--merge-output-format",
@@ -50,7 +74,7 @@ def download_vod_exact(url: str, dest: Path, env: dict[str, str]) -> Path:
         fmt,
         "--match-filter",
         "duration >= 300",
-        *ytdlp_extra_args(env),
+        *ytdlp_extra_args(dl_env),
         "-o",
         template,
         url,
@@ -58,8 +82,8 @@ def download_vod_exact(url: str, dest: Path, env: dict[str, str]) -> Path:
     subprocess.run(
         cmd,
         check=True,
-        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(env),
+        timeout=int(dl_env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+        env=subprocess_env_no_proxy(dl_env),
     )
     if not dest.exists() or dest.stat().st_size < 500_000:
         raise RuntimeError(f"download failed or too small: {dest}")
@@ -142,12 +166,20 @@ def main() -> int:
 
     pause_worker()
 
+    state = _load_state()
+    state["pending_download"] = {}
+    _save_state(state)
+
     INBOX.mkdir(parents=True, exist_ok=True)
     dest = INBOX / f"yt_{vid}.mp4"
     try:
         if not dest.exists() or dest.stat().st_size < 500_000:
             send_message(token, chat_id, f"📥 Качаю VOD {vid}…")
-            dest = download_one(args.url, INBOX, env)
+            dest = download_vod_exact(args.url, dest, env)
+        elif vod_youtube_id(dest) != vid:
+            send_message(token, chat_id, f"📥 Перекачиваю VOD {vid} (был неверный файл)…")
+            dest.unlink(missing_ok=True)
+            dest = download_vod_exact(args.url, dest, env)
         meta = fetch_video_meta(vid, env) or {}
         title = str(meta.get("title") or vid)
         entry = register_vod(dest, title=title)
@@ -159,7 +191,7 @@ def main() -> int:
         )
 
         registry = _ensure_registry(env)
-        downloader = VodPipelineDownloader(env)
+        downloader = _NoOpDownloader(env)
         labeled = labeled_ids()
         sent = _process_vod_segments(
             token,
