@@ -86,8 +86,10 @@ def compute_thresholds() -> dict:
     hook_min = min(hook_min, hook_cap)
 
     clip_min = max(0.08, float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")))
-    if owner_hook > 0:
+    if silver_hook > 0 and owner_hook > 0:
         clip_min = max(clip_min, hook_min * 0.9)
+    clip_cap = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_CAP", "0.15"))
+    clip_min = min(clip_min, clip_cap)
 
     return {
         "shorts_analyzed": len(rows),

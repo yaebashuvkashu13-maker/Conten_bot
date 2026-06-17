@@ -14,6 +14,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_calibration_feed.py" \
   "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
   "$REPO/scripts/mlbb_vod_montage_feed.py" \
+  "$REPO/scripts/mlbb_viral_threshold_sync.py" \
   "$REPO/scripts/mlbb_daily_report.py" \
   "$BIN/"
 
