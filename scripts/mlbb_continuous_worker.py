@@ -26,8 +26,29 @@ TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "12"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "20"))
 FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "10"))
-VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "45"))
-VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "6"))
+VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "30"))
+VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "2"))
+ONE_HEAVY_JOB = os.environ.get("MLBB_ONE_HEAVY_JOB", "1") == "1"
+CALIBRATION_FEED = os.environ.get("MLBB_CALIBRATION_FEED_ENABLED", "0") == "1"
+VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
+
+
+def _cpu_cores() -> int:
+    try:
+        return os.cpu_count() or 4
+    except OSError:
+        return 4
+
+
+def kill_orphan_heavy_procs() -> None:
+    """Drop CLIP-heavy children left from crashed/restarted workers."""
+    patterns = (
+        "mlbb_vod_segment_feed.py",
+        "mlbb_vod_montage_feed.py",
+        "mlbb_youtube_shorts_ingest.py",
+    )
+    for pat in patterns:
+        subprocess.run(["pkill", "-f", pat], check=False)
 
 
 def log(msg: str) -> None:
@@ -87,6 +108,26 @@ class Proc:
 
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def age_sec(self) -> float:
+        if not self.running():
+            return 0.0
+        return time.time() - self.last_start
+
+    def stop(self, *, reason: str = "") -> None:
+        if not self.proc or self.proc.poll() is not None:
+            self.proc = None
+            return
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait(timeout=5)
+        except OSError:
+            pass
+        log(f"STOP {self.name} reason={reason}")
+        self.proc = None
 
     def start(self) -> bool:
         if self.running():
@@ -161,6 +202,10 @@ def feed_cmd(env: dict[str, str]) -> list[str]:
 
 
 def vod_env(base: dict[str, str]) -> dict[str, str]:
+    cores = _cpu_cores()
+    probe = str(min(20, max(10, cores * 4)))
+    pann = str(min(24, max(12, cores * 5)))
+    stage1 = str(min(40, max(24, cores * 8)))
     env = dict(base)
     env.update(
         {
@@ -170,12 +215,14 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_PIPELINE_MAX_MIN": str(VOD_SLICE_MIN),
             "MLBB_VOD_PIPELINE_MAX_VODS": str(VOD_MAX_VODS),
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
-            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", "40"),
-            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "30"),
+            "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", probe),
+            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "5"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_LEAD_SEC": "4",
             "HIGHLIGHT_WINDOW_SEC": env.get("HIGHLIGHT_WINDOW_SEC", "15"),
+            "HIGHLIGHT_MAX_PANN_PROBE": env.get("HIGHLIGHT_MAX_PANN_PROBE", pann),
+            "HIGHLIGHT_MAX_STAGE1": env.get("HIGHLIGHT_MAX_STAGE1", stage1),
             "OWNER_PREVIEW_REQUIRED": "0",
             "LOGO_FILE": "/nonexistent/mlbb_calibration_no_logo.png",
             "YTDLP_SLEEP_REQUESTS": "1.5",
@@ -216,15 +263,20 @@ def montage_cmd(env: dict[str, str]) -> list[str]:
 
 def main() -> int:
     base = base_env()
+    kill_orphan_heavy_procs()
+    time.sleep(2)
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
     vod = Proc("vod", vod_cmd(base), vod_env(base))
     feed = Proc("feed", feed_cmd(base), base)
     montage = Proc("montage", montage_cmd(base), base)
-    MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "7200"))
+    MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "14400"))
+    cores = _cpu_cores()
 
     log(
-        f"mlbb_continuous_worker start target_pending={TARGET_PENDING} "
-        f"vod_slice={VOD_SLICE_MIN}min loop={LOOP_SEC}s"
+        f"mlbb_continuous_worker start cores={cores} one_heavy={ONE_HEAVY_JOB} "
+        f"calibration_feed={CALIBRATION_FEED} target_pending={TARGET_PENDING} "
+        f"vod_slice={VOD_SLICE_MIN}min loop={LOOP_SEC}s "
+        f"(~15-20min scan + ~1-2min/segment on {cores} cores)"
     )
     cycles = 0
     pending = pending_shorts()
@@ -255,32 +307,52 @@ def main() -> int:
         pending = pending_shorts()
         aggressive = pending < TARGET_PENDING
 
-        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC):
+        heavy_busy = ONE_HEAVY_JOB and (
+            vod.running() or montage.running() or ingest.running()
+        )
+
+        if vod.running() and vod.age_sec() > VOD_STALE_SEC:
+            log(f"vod stale age={int(vod.age_sec())}s — letting it finish (no kill)")
+
+        # VOD scan has top priority — one CLIP process at a time
+        if not vod.running() and (not ONE_HEAVY_JOB or not montage.running()):
+            vod.start()
+
+        # Montage only when VOD idle
+        if (
+            not heavy_busy
+            and not vod.running()
+            and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC)
+        ):
+            montage.start()
+
+        # Ingest is network-bound; skip while VOD/montage hold CLIP
+        if (
+            aggressive
+            and ingest.cooldown_ok(INGEST_COOLDOWN_SEC)
+            and (not ONE_HEAVY_JOB or (not vod.running() and not montage.running()))
+        ):
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
 
-        # VOD scan/cut always — downloader inside feed runs parallel to scoring
-        if not vod.running():
-            vod.start()
-
-        if pending > 0 and feed.cooldown_ok(FEED_COOLDOWN_SEC):
+        # Shorts calibration — off by default; never parallel to VOD scan
+        if (
+            CALIBRATION_FEED
+            and pending > 0
+            and feed.cooldown_ok(FEED_COOLDOWN_SEC)
+            and not vod.running()
+        ):
             feed.start()
-
-        if montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
-            montage.start()
 
         for job in (ingest, vod, feed, montage):
             job.reap()
 
-        if cycles % 90 == 0:
+        if cycles % 90 == 0 and not heavy_busy:
             sync_script = BIN / "mlbb_viral_threshold_sync.py"
             if not sync_script.exists():
                 sync_script = Path(__file__).resolve().parent / "mlbb_viral_threshold_sync.py"
             subprocess.run([PY, str(sync_script)], env=base, timeout=120, check=False)
-            ingest.cmd = ingest_cmd(base, aggressive=True)
-            ingest.env = ingest_env(base, aggressive=True)
-            ingest.start()
 
         if cycles % 360 == 0:
             report_script = BIN / "mlbb_daily_report.py"
@@ -302,10 +374,14 @@ def main() -> int:
         if cycles % 15 == 0:
             write_state(
                 {
+                    "cores": cores,
+                    "one_heavy_job": ONE_HEAVY_JOB,
                     "pending_shorts": pending,
                     "ingest_running": ingest.running(),
                     "vod_running": vod.running(),
+                    "vod_age_sec": int(vod.age_sec()),
                     "feed_running": feed.running(),
+                    "montage_running": montage.running(),
                     "cycles": cycles,
                 }
             )
