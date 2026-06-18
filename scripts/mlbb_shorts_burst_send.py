@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -19,7 +20,7 @@ from mlbb_calibration_store import (
     pending_candidates,
     upsert_candidate,
 )
-from mlbb_youtube_shorts_ingest import download_short, light_clip_features, search_shorts
+from mlbb_youtube_shorts_ingest import download_short, fetch_upload_date, light_clip_features, search_shorts
 from youtube_download import load_env
 
 QUERIES = (
@@ -47,6 +48,17 @@ def main() -> int:
                 continue
             mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
             if not mp4.exists():
+                ud = str(row.get("upload_date") or "")
+                if not ud or ud in ("NA", "N/A"):
+                    ud = fetch_upload_date(vid, env)
+                    if ud:
+                        row["upload_date"] = ud
+                min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+                if ud and ud.isdigit() and len(ud) >= 8:
+                    if int(ud[:4]) < min_year or ud < cutoff:
+                        print(f"skip stale {vid} ud={ud}")
+                        continue
                 mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=days) or mp4
             if not mp4.exists():
                 print(f"skip download_fail {vid}")

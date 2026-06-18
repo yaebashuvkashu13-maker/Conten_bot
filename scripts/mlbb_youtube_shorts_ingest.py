@@ -179,15 +179,12 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, 
 
     out_dir.mkdir(parents=True, exist_ok=True)
     template = str(out_dir / "yt_%(id)s.%(ext)s")
-    date_after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
         env.get("YOUTUBE_SHORTS_FORMAT")
         or env.get("YOUTUBE_SHORTS_FORMAT_HQ", HQ_FORMAT),
         "--merge-output-format",
         "mp4",
-        "--dateafter",
-        date_after,
         "--sleep-requests",
         env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
         "--sleep-interval",
@@ -207,9 +204,19 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, 
         cmd, capture_output=True, text=True, check=False, timeout=300, env=subprocess_env_no_proxy(env)
     )
     if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "")[-240:]
+        print(f"download_fail {video_id} rc={proc.returncode} {err}")
         return None
     if dest.exists():
         return dest
+    for alt in out_dir.glob(f"yt_{video_id}.*"):
+        if alt.suffix.lower() in (".mp4", ".mkv", ".webm") and alt.stat().st_size > 50_000:
+            if alt != dest:
+                try:
+                    alt.rename(dest)
+                except OSError:
+                    return alt
+            return dest
     return None
 
 
@@ -379,6 +386,12 @@ def main() -> int:
                 ud = fetch_upload_date(vid, env)
                 if ud:
                     row["upload_date"] = ud
+            min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).strftime("%Y%m%d")
+            if ud and ud.isdigit() and len(ud) >= 8:
+                if int(ud[:4]) < min_year or ud < cutoff:
+                    rejected += 1
+                    continue
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=args.days) or mp4
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
