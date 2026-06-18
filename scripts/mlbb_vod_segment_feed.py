@@ -642,6 +642,28 @@ def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
     return f"crop={w}:{h}:{x}:{y},"
 
 
+def _vod_output_vf(crop_prefix: str, *, setpts: bool = False) -> str:
+    """Build ffmpeg -vf chain. MLBB_VOD_LANDSCAPE=1 keeps 16:9 (full stream), not vertical Shorts."""
+    from smart_video_editor import OUTPUT_FPS, TARGET_HEIGHT, TARGET_WIDTH
+
+    pts = ",setpts=PTS-STARTPTS" if setpts else ""
+    if os.environ.get("MLBB_VOD_LANDSCAPE", "0") == "1":
+        w = int(os.environ.get("MLBB_VOD_OUT_WIDTH", "1280"))
+        h = int(os.environ.get("MLBB_VOD_OUT_HEIGHT", "720"))
+        return (
+            f"{crop_prefix}"
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"fps={OUTPUT_FPS}{pts},format=yuv420p"
+        )
+    return (
+        f"{crop_prefix}"
+        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"fps={OUTPUT_FPS}{pts},format=yuv420p"
+    )
+
+
 def _needs_chunk_render(vod: Path) -> bool:
     if os.environ.get("MLBB_VOD_CHUNK_RENDER", "1") != "1":
         return False
@@ -743,12 +765,7 @@ def _render_from_chunk(
         run_command,
     )
 
-    vf = (
-        f"{crop_prefix}"
-        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},setpts=PTS-STARTPTS,format=yuv420p"
-    )
+    vf = _vod_output_vf(crop_prefix, setpts=True)
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     cmd = [
         "ffmpeg",
@@ -820,10 +837,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
 
     vf = (
         f"trim=start={trim_start:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
-        f"{crop_prefix}"
-        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={TARGET_WIDTH}:{TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"fps={OUTPUT_FPS},format=yuv420p"
+        + _vod_output_vf(crop_prefix, setpts=False)
     )
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     cmd = [
