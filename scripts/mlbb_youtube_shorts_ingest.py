@@ -159,8 +159,6 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
             continue
         if NEGATIVE_TITLE.search(title):
             continue
-        if (not upload_date or upload_date in ("NA", "N/A")) and vid:
-            upload_date = fetch_upload_date(vid, env)
         entries.append(
             {
                 "video_id": vid,
@@ -358,6 +356,11 @@ def main() -> int:
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
+            ud = str(row.get("upload_date") or "")
+            if not ud or ud in ("NA", "N/A"):
+                ud = fetch_upload_date(vid, env)
+                if ud:
+                    row["upload_date"] = ud
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=args.days) or mp4
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
