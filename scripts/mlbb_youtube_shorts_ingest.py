@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-MLBB-only: ingest top YouTube Shorts (≤60s, ~90 days) for owner calibration.
+MLBB-only: ingest fresh YouTube Shorts (≤60s, recent) for owner calibration.
 
-Searches: mobile legends highlights, mlbb teamfight, mlbb savage
-Filters: gameplay_gate, highlight_scorer (mobile_legends)
+Searches recent MLBB Shorts; rejects pre-2024 and stale uploads.
 Output: /root/datasets/mlbb/youtube_shorts/ + data/mlbb/youtube_shorts_index.json
 """
 
@@ -33,6 +32,10 @@ from viral_scorer import hook_score
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
 SEARCH_QUERIES = (
+    "mlbb 2026 savage shorts",
+    "mlbb 2025 highlights shorts",
+    "mlbb mpl 2025 shorts",
+    "mlbb m7 highlights shorts",
     "mlbb teamfight shorts",
     "mlbb savage shorts",
     "mobile legends highlights shorts",
@@ -41,7 +44,12 @@ SEARCH_QUERIES = (
     "mobile legends esports highlights shorts",
     "mlbb onic alter ego shorts",
     "mlbb chou savage shorts",
-    "mlbb m7 highlights shorts",
+)
+
+HQ_FORMAT = (
+    "bv*[vcodec^=avc1][height<=1080][height>=720]+ba/"
+    "bv*[height<=1080][height>=720]+ba/"
+    "bv*[height<=1080]+ba/b[height<=1080]/best"
 )
 
 NEGATIVE_TITLE = re.compile(
@@ -79,10 +87,22 @@ def _ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
+def _min_year(env: dict[str, str]) -> int:
+    return int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+
+
+def _sort_freshness_key(row: dict) -> tuple[str, int]:
+    ud = str(row.get("upload_date") or "00000000")
+    if not ud.isdigit():
+        ud = "00000000"
+    return (ud, int(row.get("view_count") or 0))
+
+
 def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+    min_year = _min_year(env)
     search_n = max(limit * 8, 80)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
@@ -105,8 +125,11 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
         vid, title, views, dur, upload_date, url = parts[:6]
         if not vid or len(vid) != 11:
             continue
-        if upload_date and upload_date not in ("NA", "N/A") and upload_date.isdigit() and upload_date < cutoff:
-            continue
+        if upload_date and upload_date not in ("NA", "N/A") and upload_date.isdigit():
+            if len(upload_date) >= 4 and int(upload_date[:4]) < min_year:
+                continue
+            if upload_date < cutoff:
+                continue
         try:
             duration = float(dur or 0)
             view_count = int(float(views or 0))
@@ -132,18 +155,15 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
     return entries
 
 
-def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str) -> Path | None:
+def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, *, days: int) -> Path | None:
     import subprocess
 
     out_dir.mkdir(parents=True, exist_ok=True)
     template = str(out_dir / "yt_%(id)s.%(ext)s")
-    date_after = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y%m%d")
+    date_after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
-        env.get(
-            "YOUTUBE_SHORTS_FORMAT",
-            "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b[height<=720]/b",
-        ),
+        env.get("YOUTUBE_SHORTS_FORMAT", HQ_FORMAT),
         "--merge-output-format",
         "mp4",
         "--dateafter",
@@ -206,7 +226,7 @@ def score_clip(path: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
-    parser.add_argument("--days", type=int, default=90)
+    parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_DAYS", "60")))
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--min-score", type=float, default=0.12)
     parser.add_argument(
@@ -251,10 +271,10 @@ def main() -> int:
 
     queries = list(SEARCH_QUERIES)
     if args.incremental:
-        # Rotate one query per run — less search load on YouTube.
-        slot = int(time.time() // 10800) % len(queries)  # ~3h rotation
+        # Rotate one query per hour — steady fresh discovery without hammering YouTube.
+        slot = int(time.time() // 3600) % len(queries)
         queries = [queries[slot]]
-        print(f"incremental query={queries[0]} pending={pending_n}")
+        print(f"incremental query={queries[0]} pending={pending_n} days={args.days}")
 
     seen: set[str] = set()
     pool: list[dict] = []
@@ -268,7 +288,7 @@ def main() -> int:
         if args.search_delay > 0 and len(queries) > 1:
             time.sleep(args.search_delay)
 
-    pool.sort(key=lambda r: int(r.get("view_count") or 0), reverse=True)
+    pool.sort(key=_sort_freshness_key, reverse=True)
     cap = args.max_per_query * len(queries)
     pool = pool[: cap * 3]  # extra headroom — many rows already labeled
 
@@ -311,7 +331,7 @@ def main() -> int:
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
-            mp4 = download_short(row["url"], SHORTS_ROOT, env, vid) or mp4
+            mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=args.days) or mp4
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":

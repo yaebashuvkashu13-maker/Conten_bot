@@ -24,7 +24,7 @@ from mlbb_calibration_store import (
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
-BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "6"))
+BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
 TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
 QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "7200"))  # 2h
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
@@ -164,9 +164,11 @@ def main() -> int:
                     str(ingest),
                     "--incremental",
                     "--max-downloads",
-                    "8",
+                    "12",
                     "--max-per-query",
-                    "20",
+                    "24",
+                    "--days",
+                    os.environ.get("MLBB_SHORTS_DAYS", "60"),
                 ],
                 env={**env, "MLBB_INGEST_SKIP_IF_PENDING": "0"},
                 timeout=600,
@@ -189,9 +191,9 @@ def main() -> int:
             send_message(
                 token,
                 chat_id,
-                "MLBB калибровка: очередь пуста — ingest ищет новые Shorts.\n"
+                "MLBB калибровка: очередь пуста — ingest ищет свежие Shorts (2024+).\n"
                 f"Индекс: {s['index_total']}, в очереди: {s['pending']}.\n"
-                "Continuous worker качает и режет VOD параллельно.",
+                "Continuous worker качает новые Shorts (~15/час).",
             )
             EMPTY_NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
             EMPTY_NOTIFY_PATH.write_text(json.dumps({"at": now}), encoding="utf-8")

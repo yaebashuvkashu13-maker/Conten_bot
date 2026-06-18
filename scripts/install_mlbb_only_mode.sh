@@ -42,19 +42,24 @@ done
 pkill -f 'run_job_until_ok.sh /root/data/mlbb/pubg_mlbb' 2>/dev/null || true
 pkill -f 'run_job_until_ok.sh /root/data/mlbb/investor_demo' 2>/dev/null || true
 pkill -f 'run_job_until_ok.sh /root/data/mlbb/action_showcase' 2>/dev/null || true
+pkill -f 'mlbb_vod_segment_feed' 2>/dev/null || true
+pkill -f 'mlbb_vod_oneoff' 2>/dev/null || true
+pkill -f 'mlbb_vod_montage_feed' 2>/dev/null || true
+rm -f /tmp/mlbb_vod_oneoff.lock /tmp/mlbb_vod_segment_feed.lock 2>/dev/null || true
 rm -f /var/lock/smart_video_editor.lock /var/lock/overnight_msk.lock 2>/dev/null || true
 
 touch "$ENV_FILE"
 for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
-  MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 MLBB_VOD_VARIABLE_LENGTH=1 \
-  MLBB_VOD_LEAD_SEC=4 MLBB_MAX_DAILY_SENDS=150 MLBB_VOD_BATCH_MAX=5 \
-  MLBB_VOD_NO_CROP=1 MLBB_FIGHT_MAX_SEC=35 MLBB_FIGHT_SUSTAIN_QUIET_BINS=3 \
-  MLBB_CALIBRATION_BATCH=6 HIGHLIGHT_OWNER_BAD_PAD_SEC=90 \
-  VIRAL_MLBB_HOOK_MIN=0.06 VIRAL_MLBB_CLIP_HOOK_MIN=0.12 VIRAL_SEGMENT_HOOK_MIN=0.06 \
-  VIRAL_MLBB_HOOK_FLOOR=0.06 VIRAL_MLBB_HOOK_CAP=0.12 MLBB_USE_CLASSIFIER=0 \
-  MLBB_ONE_HEAVY_JOB=1 MLBB_CALIBRATION_FEED_ENABLED=0 \
-  MLBB_VOD_PROBE_LIMIT=16 MLBB_VOD_SLICE_MIN=30 MLBB_VOD_PIPELINE_MAX_VODS=2 \
-  MLBB_INGEST_COOLDOWN_SEC=300 MLBB_MONTAGE_COOLDOWN_SEC=14400 \
+  MLBB_VOD_DISABLED=1 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
+  MLBB_MAX_DAILY_SENDS=200 MLBB_CALIBRATION_BATCH=3 MLBB_FEED_COOLDOWN_SEC=720 \
+  MLBB_CALIBRATION_FEED_ENABLED=1 MLBB_ONE_HEAVY_JOB=0 \
+  MLBB_TARGET_PENDING=30 MLBB_INGEST_COOLDOWN_SEC=120 MLBB_SHORTS_DAYS=60 \
+  MLBB_SHORTS_MIN_YEAR=2024 MLBB_SHORTS_REQUIRE_DATE=1 \
+  MLBB_INGEST_MAX_DOWNLOADS=12 MLBB_INGEST_SKIP_IF_PENDING=30 \
+  YOUTUBE_SHORTS_FORMAT='bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best' \
+  HIGHLIGHT_OWNER_BAD_PAD_SEC=90 VIRAL_MLBB_HOOK_MIN=0.06 VIRAL_MLBB_CLIP_HOOK_MIN=0.12 \
+  VIRAL_SEGMENT_HOOK_MIN=0.06 VIRAL_MLBB_HOOK_FLOOR=0.06 VIRAL_MLBB_HOOK_CAP=0.12 \
+  MLBB_USE_CLASSIFIER=0 MLBB_MONTAGE_COOLDOWN_SEC=14400 \
   HIGHLIGHT_MAX_PANN_PROBE=18 HIGHLIGHT_MAX_STAGE1=32; do
   key="${kv%%=*}"
   val="${kv#*=}"
@@ -236,6 +241,6 @@ echo "Cron:"
 crontab -l 2>/dev/null | grep -E 'mlbb|daily' || true
 echo "Remaining multi-game procs:"
 pgrep -af 'pubg_mlbb|overnight|viral_reference|eval_owner|score_owner|genshin|standoff|wot' || echo "(none)"
-echo "OK MLBB-only: 24/7 continuous worker + short VODs + variable fight cuts"
+echo "OK MLBB-only: 24/7 continuous worker — fresh YouTube Shorts (~15/hour), VOD off"
 echo "/etc/cron.d:"
 ls -la /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive 2>/dev/null || echo "(multi-game crons removed)"

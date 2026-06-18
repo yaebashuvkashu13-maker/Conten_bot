@@ -1,15 +1,16 @@
-"""Tests for MLBB calibration index rebuild."""
+"""Tests for MLBB calibration index rebuild and freshness filter."""
 
 from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from mlbb_calibration_store import rebuild_index_from_disk  # noqa: E402
+from mlbb_calibration_store import is_fresh_short, rebuild_index_from_disk  # noqa: E402
 
 
 def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
@@ -37,3 +38,15 @@ def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
     data = json.loads(index.read_text())
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["video_id"] == "abcdefghijk"
+
+
+def test_is_fresh_short_rejects_old_and_unknown(monkeypatch) -> None:
+    recent = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y%m%d")
+    monkeypatch.setenv("MLBB_SHORTS_MIN_YEAR", "2024")
+    monkeypatch.setenv("MLBB_SHORTS_DAYS", "60")
+    monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "1")
+
+    assert is_fresh_short({"upload_date": recent})
+    assert not is_fresh_short({"upload_date": "20200315"})
+    assert not is_fresh_short({"upload_date": ""})
+    assert not is_fresh_short({"source": "disk_rebuild"})

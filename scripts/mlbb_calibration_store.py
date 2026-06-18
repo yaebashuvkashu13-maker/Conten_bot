@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
@@ -364,6 +365,32 @@ def repair_index() -> int:
     return old_n - len(data["candidates"])
 
 
+def _upload_date(row: dict) -> str:
+    ud = str(row.get("upload_date") or "").strip()
+    if ud.isdigit() and len(ud) >= 8:
+        return ud
+    return ""
+
+
+def is_fresh_short(row: dict) -> bool:
+    """Reject legacy low-quality Shorts (e.g. 2020) from the calibration queue."""
+    min_year = int(os.environ.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+    max_days = int(os.environ.get("MLBB_SHORTS_DAYS", "60"))
+    ud = _upload_date(row)
+    if not ud:
+        # Disk rebuilds without metadata are usually old — skip when freshness is required.
+        return os.environ.get("MLBB_SHORTS_REQUIRE_DATE", "1") != "1"
+    if int(ud[:4]) < min_year:
+        return False
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_days)).strftime("%Y%m%d")
+    return ud >= cutoff
+
+
+def _freshness_sort_key(row: dict) -> tuple[str, float]:
+    ud = _upload_date(row) or "00000000"
+    return (ud, float(row.get("score") or 0))
+
+
 def pending_candidates(*, limit: int = 50) -> list[dict]:
     repair_index()
     migrate_labels_from_paths()
@@ -380,13 +407,15 @@ def pending_candidates(*, limit: int = 50) -> list[dict]:
         vid = id_from_path(path)
         if _is_excluded(vid, path, labeled, sent) or vid in seen_vids:
             continue
+        if not is_fresh_short(row):
+            continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
             continue
         seen_vids.add(vid)
         seen_paths.add(path_key)
         out.append({**row, "video_id": vid, "id": vid, "path": str(path)})
-    out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+    out.sort(key=_freshness_sort_key, reverse=True)
     return out[:limit]
 
 
