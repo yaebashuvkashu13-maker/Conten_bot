@@ -248,12 +248,19 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
 
 def _pick_available_vod(registry: list[dict]) -> dict | None:
     target = _vod_target_dur_sec()
+    exhausted_ids = {
+        str(row.get("id") or "")
+        for row in registry
+        if row.get("exhausted") and row.get("id")
+    }
     ranked: list[tuple[float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
+        vid = str(row.get("id") or "")
+        if vid and vid in exhausted_ids:
+            continue
         if row.get("exhausted"):
             continue
-        vid = str(row.get("id") or "")
         if vid and vid in seen_ids:
             continue
         path = Path(str(row.get("path", "")))
