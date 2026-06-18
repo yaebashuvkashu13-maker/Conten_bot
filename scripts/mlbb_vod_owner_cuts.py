@@ -96,10 +96,14 @@ def cut_and_send(
         raise ValueError(f"bad url: {url}")
 
     os.environ.setdefault("MLBB_VOD_VARIABLE_LENGTH", "1")
+    os.environ.setdefault("MLBB_VOD_NO_CROP", "1")
+    os.environ.setdefault("MLBB_FIGHT_MAX_SEC", "42")
+    os.environ.setdefault("MLBB_FIGHT_SUSTAIN_QUIET_BINS", "4")
     os.environ.setdefault("MLBB_VOD_LEAD_SEC", "4")
     os.environ.setdefault("MLBB_FORCE_RERENDER", "1")
-    if preview:
-        os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
+    os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
+    os.environ.setdefault("SMART_OUTPUT_CRF", "23")
+    os.environ.setdefault("SMART_OUTPUT_AUDIO_K", "128")
 
     INBOX.mkdir(parents=True, exist_ok=True)
     dest = INBOX / f"yt_{vid}.mp4"
@@ -130,11 +134,11 @@ def cut_and_send(
         if not render_single_segment(dest, norm, out):
             send_message(token, chat_id, f"❌ Не вышло нарезать #{idx} @ {_fmt_ts(anchor)}")
             continue
-        tag = "пример" if preview else "файл"
         caption = (
-            f"MLBB {tag} #{idx}/{len(anchors)}\n"
+            f"MLBB пример v2 #{idx}/{len(anchors)}\n"
             f"{vid} | метка {_fmt_ts(anchor)} → пик {_fmt_ts(peak)}\n"
             f"окно {_fmt_ts(start)}–{_fmt_ts(end)} ({dur:.0f}с)\n"
+            f"полный кадр · extended fight\n"
             f"👍 Ок / 👎 Не ок"
         )
         if send_video(token, chat_id, out, caption, seg_id=sid):
