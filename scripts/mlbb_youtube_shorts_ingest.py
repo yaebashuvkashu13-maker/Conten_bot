@@ -214,6 +214,23 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, 
     return None
 
 
+def light_clip_features(path: Path) -> dict:
+    dur = _ffprobe_duration(path)
+    return {
+        "score": 0.18,
+        "combat_score": 0.18,
+        "clip_score": 0.0,
+        "hook_score": 0.0,
+        "panns_gun_max": 0.0,
+        "minimap_delta": 0.0,
+        "skill_delta": 0.0,
+        "rule_pass": 1,
+        "pass_reason": "calibration_fast",
+        "hook_menu": 0,
+        "duration": round(dur, 2),
+    }
+
+
 def score_clip(path: Path) -> dict:
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")

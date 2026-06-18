@@ -277,6 +277,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
     env.update(
         {
             "MLBB_CALIBRATION_LENIENT": "1",
+            "MLBB_CALIBRATION_FAST_INGEST": env.get("MLBB_CALIBRATION_FAST_INGEST", "1"),
             "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
             "YTDLP_SLEEP_REQUESTS": "1.2",
             "YTDLP_SLEEP_INTERVAL": "3",
