@@ -364,6 +364,8 @@ def main() -> int:
         pool = sorted(deep, key=_sort_freshness_key, reverse=True)[: cap * 2]
 
     saved = rejected = downloads = skipped_known = 0
+    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
+    fast_ingest = os.environ.get("MLBB_CALIBRATION_FAST_INGEST", "1") == "1"
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
