@@ -271,8 +271,12 @@ def _date_ok(ud: str, env: dict[str, str], days: int) -> bool:
     if not ud.isdigit() or len(ud) < 8:
         return False
     min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+    if int(ud[:4]) < min_year:
+        return False
+    if env.get("MLBB_SHORTS_YEAR_ONLY", "1") == "1":
+        return True
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
-    return int(ud[:4]) >= min_year and ud >= cutoff
+    return ud >= cutoff
 
 
 def _resolve_upload_date(row: dict, env: dict[str, str]) -> str:

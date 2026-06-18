@@ -390,6 +390,8 @@ def is_fresh_short(row: dict) -> bool:
         return os.environ.get("MLBB_SHORTS_REQUIRE_DATE", "1") != "1"
     if int(ud[:4]) < min_year:
         return False
+    if os.environ.get("MLBB_SHORTS_YEAR_ONLY", "1") == "1":
+        return True
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_days)).strftime("%Y%m%d")
     return ud >= cutoff
 

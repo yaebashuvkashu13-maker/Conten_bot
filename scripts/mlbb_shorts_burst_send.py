@@ -61,14 +61,14 @@ def main() -> int:
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists():
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=days) or mp4
-            if not mp4.exists():
-                print(f"skip download_fail {vid}")
-                continue
-            ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
-            if not ok:
-                print(f"skip gate {vid} {reason}")
-                continue
-            upsert_candidate(
+        if not mp4.exists():
+            print(f"skip download_fail {vid}")
+            continue
+        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
+        if not ok:
+            print(f"skip gate {vid} {reason}")
+            continue
+        upsert_candidate(
                 {
                     **row,
                     **light_clip_features(mp4),
@@ -83,8 +83,6 @@ def main() -> int:
             saved += 1
             if saved >= target:
                 break
-        if saved >= target:
-            break
     print(f"queued={saved} pending={len(pending_candidates(limit=9999))}")
     if saved > 0 or pending_candidates(limit=1):
         return run_feed()
