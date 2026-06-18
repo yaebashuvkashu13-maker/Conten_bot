@@ -629,6 +629,8 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
 
 
 def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
+    if os.environ.get("MLBB_VOD_NO_CROP", "0") == "1":
+        return ""
     from smart_video_editor import detect_game_viewport_crop
 
     crop = detect_game_viewport_crop(vod, start, dur)

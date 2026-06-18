@@ -14,7 +14,15 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "22"))
+    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "35"))
+
+
+def _sustain_quiet_bins() -> int:
+    return int(os.environ.get("MLBB_FIGHT_SUSTAIN_QUIET_BINS", "3"))
+
+
+def _extend_bins(max_d: float, win: float) -> int:
+    return int(os.environ.get("MLBB_FIGHT_EXTEND_BINS", str(int(max_d / max(win, 0.5)) + 6)))
 
 
 def _lead_sec() -> float:
@@ -69,9 +77,12 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
     peak_idx = int(round(float(peak_sec) / win))
     peak_idx = max(0, min(bins - 1, peak_idx))
 
+    extend = _extend_bins(max_d, win)
+    quiet_need = _sustain_quiet_bins()
+
     left = peak_idx
     quiet = 0
-    while left > 0 and peak_idx - left < 12:
+    while left > 0 and peak_idx - left < extend:
         probe = left - 1
         active = combined[probe] >= sustain_thr or motion[probe] >= motion_thr
         left = probe
@@ -79,20 +90,20 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
             quiet = 0
         else:
             quiet += 1
-            if quiet >= 2:
+            if quiet >= quiet_need:
                 break
 
     right = peak_idx
     quiet = 0
-    while right < bins - 1 and right - peak_idx < 14:
+    while right < bins - 1 and right - peak_idx < extend:
         probe = right + 1
-        active = combined[probe] >= sustain_thr * 0.96 or motion[probe] >= motion_thr
+        active = combined[probe] >= sustain_thr * 0.92 or motion[probe] >= motion_thr * 0.95
         right = probe
         if active:
             quiet = 0
         else:
             quiet += 1
-            if quiet >= 2:
+            if quiet >= quiet_need:
                 break
 
     region_start = left * win
@@ -107,9 +118,8 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
         end = min(file_dur, start + min_d)
         dur = end - start
     if dur > max_d:
-        half = max_d / 2.0
-        start = max(0.0, float(peak_sec) - half)
-        end = min(file_dur, start + max_d)
+        # Keep climax tail — don't cut teamfight mid-resolution.
+        end = min(file_dur, region_end)
         start = max(0.0, end - max_d)
         dur = end - start
 
