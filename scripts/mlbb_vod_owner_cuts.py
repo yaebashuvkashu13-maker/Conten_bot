@@ -76,6 +76,33 @@ def refine_peak_near(vod: Path, anchor_sec: float, *, radius: float = 50.0) -> f
     return round(refined, 1)
 
 
+def _owner_clip(vod: Path, anchor_sec: float) -> tuple[dict, float]:
+    """Build clip dict: optional anchor-as-peak, minimum duration for owner previews."""
+    from mlbb_vod_segment_feed import _ffprobe_duration
+
+    use_anchor = os.environ.get("MLBB_OWNER_USE_ANCHOR_PEAK", "1") == "1"
+    peak = anchor_sec if use_anchor else refine_peak_near(vod, anchor_sec)
+    clip = {"start": peak, "score": 1.0, "hook_score": 0.0}
+    norm = _normalize_clip(clip, vod)
+    min_d = float(os.environ.get("MLBB_OWNER_MIN_DUR", "38"))
+    start = float(norm["start"])
+    dur = float(norm["input_duration"])
+    file_dur = _ffprobe_duration(vod)
+    if dur < min_d:
+        end = min(file_dur, start + min_d)
+        start = max(0.0, min(start, peak - float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))))
+        end = min(file_dur, max(end, start + min_d))
+        dur = end - start
+        norm = {
+            **norm,
+            "start": start,
+            "peak_start": peak,
+            "input_duration": dur,
+            "output_duration": dur,
+        }
+    return norm, peak
+
+
 def _fmt_ts(sec: float) -> str:
     sec = max(0.0, sec)
     m, s = divmod(int(sec), 60)
@@ -104,6 +131,8 @@ def cut_and_send(
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
     os.environ.setdefault("SMART_OUTPUT_CRF", "23")
     os.environ.setdefault("SMART_OUTPUT_AUDIO_K", "128")
+    os.environ.setdefault("MLBB_OWNER_USE_ANCHOR_PEAK", "1")
+    os.environ.setdefault("MLBB_OWNER_MIN_DUR", "38")
 
     INBOX.mkdir(parents=True, exist_ok=True)
     dest = INBOX / f"yt_{vid}.mp4"
@@ -123,9 +152,7 @@ def cut_and_send(
     PREVIEW_ROOT.mkdir(parents=True, exist_ok=True)
     sent = 0
     for idx, anchor in enumerate(anchors, 1):
-        peak = refine_peak_near(dest, anchor)
-        clip = {"start": peak, "score": 1.0, "hook_score": 0.0}
-        norm = _normalize_clip(clip, dest)
+        norm, peak = _owner_clip(dest, anchor)
         start = float(norm["start"])
         dur = float(norm["input_duration"])
         end = start + dur
@@ -135,7 +162,7 @@ def cut_and_send(
             send_message(token, chat_id, f"❌ Не вышло нарезать #{idx} @ {_fmt_ts(anchor)}")
             continue
         caption = (
-            f"MLBB пример v2 #{idx}/{len(anchors)}\n"
+            f"MLBB пример v3 #{idx}/{len(anchors)}\n"
             f"{vid} | метка {_fmt_ts(anchor)} → пик {_fmt_ts(peak)}\n"
             f"окно {_fmt_ts(start)}–{_fmt_ts(end)} ({dur:.0f}с)\n"
             f"полный кадр · extended fight\n"
