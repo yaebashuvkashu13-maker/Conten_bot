@@ -25,7 +25,7 @@ from mlbb_vod_segment_feed import (
 )
 from mlbb_vod_segment_store import labeled_ids, vod_youtube_id
 from nightly_youtube_montage import fetch_video_meta
-from youtube_download import load_env, normalize_youtube_url, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
+from youtube_download import load_env, normalize_youtube_url, run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
 ENV_PATH = Path("/root/.video_bot.env")
 
@@ -79,12 +79,15 @@ def download_vod_exact(url: str, dest: Path, env: dict[str, str]) -> Path:
         template,
         url,
     ]
-    subprocess.run(
+    proc = run_ytdlp(
         cmd,
-        check=True,
+        dl_env,
         timeout=int(dl_env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(dl_env),
+        label=vid,
     )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "")[-500:]
+        raise RuntimeError(f"yt-dlp failed: {err}")
     if not dest.exists() or dest.stat().st_size < 500_000:
         raise RuntimeError(f"download failed or too small: {dest}")
     if vod_youtube_id(dest) != vid:
