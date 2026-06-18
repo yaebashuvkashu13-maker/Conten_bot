@@ -104,6 +104,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_calibration_weekly_report.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
+  "$REPO/scripts/youtube_mlbb_vod_prefs.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/mlbb_continuous_worker.py" \
@@ -144,7 +145,7 @@ export MLBB_VOD_TARGET_DUR_SEC=1500
 export MLBB_VOD_SKIP_LONG_SEC=2700
 export MLBB_VOD_MIN_PEAK_SEC=420
 export MLBB_VOD_SEARCH_LIMIT=25
-export MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked match 20 minutes gameplay,Mobile Legends solo rank match gameplay,MLBB savage teamfight ranked short match"
+export MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game"
 export MLBB_VOD_PROBE_LIMIT=30
 export MLBB_VOD_FULL_SCAN=1
 export MLBB_VOD_BOOTSTRAP=0
