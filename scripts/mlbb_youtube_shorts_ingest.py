@@ -23,6 +23,7 @@ from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
     labeled_ids,
+    load_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
@@ -122,7 +123,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     min_year = _min_year(env)
-    search_n = max(limit * 8, 80)
+    search_n = max(limit * 12, 120)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -315,40 +316,44 @@ def main() -> int:
     pool = pool[: cap * 3]  # extra headroom — many rows already labeled
 
     known = labeled_ids()
+    already_sent = load_feed_sent()["ids"]
     sent_pending = {str(r.get("video_id", "")) for r in pending_candidates(limit=9999)}
     fresh_pool: list[dict] = []
     for row in pool:
         vid = row["video_id"]
-        if vid in known:
-            continue
-        if vid in sent_pending:
+        if vid in known or vid in already_sent or vid in sent_pending:
             continue
         fresh_pool.append(row)
     pool = fresh_pool[:cap]
 
     if not pool and args.incremental:
         deep: list[dict] = []
-        for query in queries:
+        extra_queries = list(SEARCH_QUERIES)
+        slot = int(time.time() // 3600) % len(extra_queries)
+        extra_queries = extra_queries[slot:] + extra_queries[:slot]
+        for query in extra_queries[:4]:
             for row in search_shorts(
                 query,
-                limit=max(args.max_per_query * 4, 40),
+                limit=max(args.max_per_query * 3, 24),
                 env=env,
                 days=args.days,
             ):
                 vid = row["video_id"]
-                if vid in known or vid in sent_pending:
+                if vid in known or vid in already_sent or vid in sent_pending:
                     continue
                 deep.append(row)
+            if len(deep) >= cap:
+                break
             if args.search_delay > 0:
                 time.sleep(args.search_delay)
-        pool = deep[: cap * 2]
+        pool = sorted(deep, key=_sort_freshness_key, reverse=True)[: cap * 2]
 
     saved = rejected = downloads = skipped_known = 0
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
         vid = row["video_id"]
-        if vid in known:
+        if vid in known or vid in already_sent:
             skipped_known += 1
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
