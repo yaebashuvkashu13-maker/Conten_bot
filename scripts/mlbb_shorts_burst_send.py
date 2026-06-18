@@ -20,7 +20,11 @@ from mlbb_calibration_store import (
     pending_candidates,
     upsert_candidate,
 )
-from mlbb_youtube_shorts_ingest import download_short, fetch_upload_date, light_clip_features, search_shorts
+from mlbb_youtube_shorts_ingest import (
+    _sweep_pool,
+    download_short,
+    light_clip_features,
+)
 from youtube_download import load_env
 
 QUERIES = (
@@ -41,25 +45,22 @@ def main() -> int:
     sent = load_feed_sent()["ids"]
     known = labeled_ids()
     saved = 0
-    for query in QUERIES:
-        for row in search_shorts(query, limit=25, env=env, days=days):
-            vid = row["video_id"]
-            if vid in sent or vid in known:
-                continue
-            mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
-            if not mp4.exists():
-                ud = str(row.get("upload_date") or "")
-                if not ud or ud in ("NA", "N/A"):
-                    ud = fetch_upload_date(vid, env)
-                    if ud:
-                        row["upload_date"] = ud
-                min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
-                cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
-                if ud and ud.isdigit() and len(ud) >= 8:
-                    if int(ud[:4]) < min_year or ud < cutoff:
-                        print(f"skip stale {vid} ud={ud}")
-                        continue
-                mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=days) or mp4
+    pool = _sweep_pool(
+        env,
+        days=days,
+        known=known,
+        already_sent=sent,
+        sent_pending=set(),
+        max_per_query=12,
+        search_delay=1.5,
+        start_slot=0,
+        max_queries=4,
+    )
+    for row in pool:
+        vid = row["video_id"]
+        mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
+        if not mp4.exists():
+            mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=days) or mp4
             if not mp4.exists():
                 print(f"skip download_fail {vid}")
                 continue

@@ -267,6 +267,57 @@ def score_clip(path: Path) -> dict:
     }
 
 
+def _date_ok(ud: str, env: dict[str, str], days: int) -> bool:
+    if not ud.isdigit() or len(ud) < 8:
+        return False
+    min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+    return int(ud[:4]) >= min_year and ud >= cutoff
+
+
+def _resolve_upload_date(row: dict, env: dict[str, str]) -> str:
+    ud = str(row.get("upload_date") or "").strip()
+    if ud in ("", "NA", "N/A") or not ud.isdigit():
+        ud = fetch_upload_date(str(row.get("video_id", "")), env)
+        if ud:
+            row["upload_date"] = ud
+    return ud
+
+
+def _sweep_pool(
+    env: dict[str, str],
+    *,
+    days: int,
+    known: dict[str, str],
+    already_sent: set[str],
+    sent_pending: set[str],
+    max_per_query: int,
+    search_delay: float,
+    start_slot: int,
+    max_queries: int,
+) -> list[dict]:
+    seen: set[str] = set()
+    out: list[dict] = []
+    ordered = list(SEARCH_QUERIES)
+    ordered = ordered[start_slot:] + ordered[:start_slot]
+    for query in ordered[:max_queries]:
+        for row in search_shorts(query, limit=max_per_query, env=env, days=days):
+            vid = row["video_id"]
+            if vid in seen or vid in known or vid in already_sent or vid in sent_pending:
+                continue
+            ud = _resolve_upload_date(row, env)
+            if not _date_ok(ud, env, days):
+                continue
+            seen.add(vid)
+            out.append(row)
+        if len(out) >= max_per_query * 2:
+            break
+        if search_delay > 0:
+            time.sleep(search_delay)
+    out.sort(key=_sort_freshness_key, reverse=True)
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
@@ -314,60 +365,74 @@ def main() -> int:
         return 0
 
     queries = list(SEARCH_QUERIES)
+    slot = int(time.time() // 120) % len(queries)
     if args.incremental:
-        # Rotate one query per hour — steady fresh discovery without hammering YouTube.
-        slot = int(time.time() // 3600) % len(queries)
-        queries = [queries[slot]]
-        print(f"incremental query={queries[0]} pending={pending_n} days={args.days}")
-
-    seen: set[str] = set()
-    pool: list[dict] = []
-    for query in queries:
-        for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
-            vid = row["video_id"]
-            if vid in seen:
-                continue
-            seen.add(vid)
-            pool.append(row)
-        if args.search_delay > 0 and len(queries) > 1:
-            time.sleep(args.search_delay)
-
-    pool.sort(key=_sort_freshness_key, reverse=True)
-    cap = args.max_per_query * len(queries)
-    pool = pool[: cap * 3]  # extra headroom — many rows already labeled
+        hungry = pending_n < int(env.get("MLBB_TARGET_PENDING", "25"))
+        if hungry:
+            print(
+                f"incremental sweep pending={pending_n} days={args.days} "
+                f"queries={min(6, len(queries))} start={queries[slot]}"
+            )
+            pool = _sweep_pool(
+                env,
+                days=args.days,
+                known=labeled_ids(),
+                already_sent=load_feed_sent()["ids"],
+                sent_pending={str(r.get("video_id", "")) for r in pending_candidates(limit=9999)},
+                max_per_query=args.max_per_query,
+                search_delay=args.search_delay,
+                start_slot=slot,
+                max_queries=6,
+            )
+            pool = pool[: args.max_per_query * 6]
+            queries = []
+        else:
+            queries = [queries[slot]]
+            print(f"incremental query={queries[0]} pending={pending_n} days={args.days}")
 
     known = labeled_ids()
     already_sent = load_feed_sent()["ids"]
     sent_pending = {str(r.get("video_id", "")) for r in pending_candidates(limit=9999)}
-    fresh_pool: list[dict] = []
-    for row in pool:
-        vid = row["video_id"]
-        if vid in known or vid in already_sent or vid in sent_pending:
-            continue
-        fresh_pool.append(row)
-    pool = fresh_pool[:cap]
 
-    if not pool and args.incremental:
-        deep: list[dict] = []
-        extra_queries = list(SEARCH_QUERIES)
-        slot = int(time.time() // 3600) % len(extra_queries)
-        extra_queries = extra_queries[slot:] + extra_queries[:slot]
-        for query in extra_queries[:4]:
-            for row in search_shorts(
-                query,
-                limit=max(args.max_per_query * 3, 24),
-                env=env,
-                days=args.days,
-            ):
+    if not queries:
+        cap = args.max_per_query * 6
+    else:
+        seen: set[str] = set()
+        pool: list[dict] = []
+        for query in queries:
+            for row in search_shorts(query, limit=args.max_per_query, env=env, days=args.days):
                 vid = row["video_id"]
-                if vid in known or vid in already_sent or vid in sent_pending:
+                if vid in seen:
                     continue
-                deep.append(row)
-            if len(deep) >= cap:
-                break
-            if args.search_delay > 0:
+                seen.add(vid)
+                pool.append(row)
+            if args.search_delay > 0 and len(queries) > 1:
                 time.sleep(args.search_delay)
-        pool = sorted(deep, key=_sort_freshness_key, reverse=True)[: cap * 2]
+
+        pool.sort(key=_sort_freshness_key, reverse=True)
+        cap = args.max_per_query * len(queries)
+        pool = pool[: cap * 3]
+
+        fresh_pool: list[dict] = []
+        for row in pool:
+            vid = row["video_id"]
+            if vid in known or vid in already_sent or vid in sent_pending:
+                continue
+            fresh_pool.append(row)
+        pool = fresh_pool[:cap]
+
+        if not pool and args.incremental:
+            pool = _sweep_pool(
+                env,
+                days=args.days,
+                known=known,
+                already_sent=already_sent,
+                sent_pending=sent_pending,
+                max_per_query=max(args.max_per_query, 12),
+                search_delay=args.search_delay,
+                start_slot=slot,
+                max_queries=6,
+            )
 
     saved = rejected = downloads = skipped_known = 0
     lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
@@ -381,17 +446,10 @@ def main() -> int:
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
-            ud = str(row.get("upload_date") or "")
-            if not ud or ud in ("NA", "N/A"):
-                ud = fetch_upload_date(vid, env)
-                if ud:
-                    row["upload_date"] = ud
-            min_year = int(env.get("MLBB_SHORTS_MIN_YEAR", "2024"))
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).strftime("%Y%m%d")
-            if ud and ud.isdigit() and len(ud) >= 8:
-                if int(ud[:4]) < min_year or ud < cutoff:
-                    rejected += 1
-                    continue
+            ud = _resolve_upload_date(row, env)
+            if ud and not _date_ok(ud, env, args.days):
+                rejected += 1
+                continue
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=args.days) or mp4
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
