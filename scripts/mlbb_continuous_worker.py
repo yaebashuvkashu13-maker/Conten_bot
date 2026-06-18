@@ -192,7 +192,9 @@ class Proc:
         return rc
 
     def cooldown_ok(self, sec: float) -> bool:
-        return (time.time() - self.last_start) >= sec or not self.running()
+        if self.running():
+            return False
+        return (time.time() - self.last_start) >= sec
 
 
 def pending_shorts() -> int:
