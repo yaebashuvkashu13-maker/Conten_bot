@@ -57,8 +57,10 @@ def refine_peak_near(vod: Path, anchor_sec: float, *, radius: float = 50.0) -> f
 
     analysis = _analysis_for(vod)
     win = float(analysis.get("window_seconds", 2.0))
-    motion = np.asarray(analysis.get("center_motion") or [], dtype=np.float32)
-    audio = np.asarray(analysis.get("audio") or [], dtype=np.float32)
+    motion_raw = analysis.get("center_motion")
+    audio_raw = analysis.get("audio")
+    motion = np.asarray(motion_raw if motion_raw is not None else [], dtype=np.float32)
+    audio = np.asarray(audio_raw if audio_raw is not None else [], dtype=np.float32)
     if motion.size < 2:
         return anchor_sec
     combined = motion * 0.48 + (audio if audio.size == motion.size else motion) * 0.52
