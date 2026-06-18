@@ -31,7 +31,11 @@ VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "2"))
 ONE_HEAVY_JOB = os.environ.get("MLBB_ONE_HEAVY_JOB", "1") == "1"
 CALIBRATION_FEED = os.environ.get("MLBB_CALIBRATION_FEED_ENABLED", "0") == "1"
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
-FEED_LOCK = Path("/tmp/mlbb_vod_segment_feed.lock")
+ONEOFF_LOCK = Path("/tmp/mlbb_vod_oneoff.lock")
+
+
+def oneoff_running() -> bool:
+    return ONEOFF_LOCK.exists()
 
 
 def vod_feed_pids() -> list[int]:
@@ -344,6 +348,7 @@ def main() -> int:
         if (
             not vod.running()
             and not vod_feed_pids()
+            and not oneoff_running()
             and (not ONE_HEAVY_JOB or not montage.running())
         ):
             vod.start()

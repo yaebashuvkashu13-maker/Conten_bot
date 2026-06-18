@@ -218,6 +218,8 @@ def main() -> int:
         return 1
 
     pause_worker()
+    oneoff_lock = Path("/tmp/mlbb_vod_oneoff.lock")
+    oneoff_lock.write_text(str(os.getpid()), encoding="utf-8")
 
     state = _load_state()
     state["pending_download"] = {}
@@ -236,6 +238,7 @@ def main() -> int:
             if code != 0:
                 rc = code
     finally:
+        oneoff_lock.unlink(missing_ok=True)
         if not args.no_resume_worker:
             resume_worker()
     return rc
