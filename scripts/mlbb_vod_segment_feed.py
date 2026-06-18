@@ -48,6 +48,7 @@ TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
 SEGMENT_SEC = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", os.environ.get("HIGHLIGHT_WINDOW_SEC", "15")))
 STATE_PATH = Path("/root/data/mlbb/vod_segment_state.json")
 YTDLP_LOCK_PATH = Path("/tmp/mlbb_vod_ytdlp.lock")
+FEED_LOCK_PATH = Path("/tmp/mlbb_vod_segment_feed.lock")
 log = logging.getLogger("mlbb_vod_feed")
 
 LONG_VOD_TITLE_RE = re.compile(
@@ -248,8 +249,12 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
 def _pick_available_vod(registry: list[dict]) -> dict | None:
     target = _vod_target_dur_sec()
     ranked: list[tuple[float, float, dict]] = []
+    seen_ids: set[str] = set()
     for row in registry:
         if row.get("exhausted"):
+            continue
+        vid = str(row.get("id") or "")
+        if vid and vid in seen_ids:
             continue
         path = Path(str(row.get("path", "")))
         if not path.exists():
@@ -257,6 +262,8 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         dur = _ffprobe_duration(path)
         if not _vod_length_ok(path, dur):
             continue
+        if vid:
+            seen_ids.add(vid)
         ranked.append((abs(dur - target), dur, row))
     if not ranked:
         return None
@@ -280,6 +287,25 @@ def _mark_vod_exhausted(vod: Path) -> None:
             row["exhausted"] = True
             row["id"] = vid
     _save_state(state)
+
+
+@contextmanager
+def _feed_singleton_lock(blocking: bool = False):
+    """Only one VOD feed process — continuous_worker bypasses shell flock."""
+    FEED_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = FEED_LOCK_PATH.open("w")
+    flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(handle.fileno(), flags)
+    except BlockingIOError:
+        handle.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 @contextmanager
@@ -1462,6 +1488,14 @@ def main() -> int:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
 
+    with _feed_singleton_lock(blocking=False) as acquired:
+        if not acquired:
+            log.warning("another mlbb_vod_segment_feed already running — exit")
+            return 0
+        return _run_feed(env, token, chat_id)
+
+
+def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"

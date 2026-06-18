@@ -31,6 +31,26 @@ VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "2"))
 ONE_HEAVY_JOB = os.environ.get("MLBB_ONE_HEAVY_JOB", "1") == "1"
 CALIBRATION_FEED = os.environ.get("MLBB_CALIBRATION_FEED_ENABLED", "0") == "1"
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
+FEED_LOCK = Path("/tmp/mlbb_vod_segment_feed.lock")
+
+
+def vod_feed_pids() -> list[int]:
+    proc = subprocess.run(
+        ["pgrep", "-f", "mlbb_vod_segment_feed.py"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    mine = os.getpid()
+    out: list[int] = []
+    for line in (proc.stdout or "").splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid != mine:
+            out.append(pid)
+    return out
 
 
 def _cpu_cores() -> int:
@@ -312,10 +332,20 @@ def main() -> int:
         )
 
         if vod.running() and vod.age_sec() > VOD_STALE_SEC:
-            log(f"vod stale age={int(vod.age_sec())}s — letting it finish (no kill)")
+            log(f"vod stale age={int(vod.age_sec())}s — killing stuck scan")
+            vod.stop(reason="stale")
+            for pid in vod_feed_pids():
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
 
         # VOD scan has top priority — one CLIP process at a time
-        if not vod.running() and (not ONE_HEAVY_JOB or not montage.running()):
+        if (
+            not vod.running()
+            and not vod_feed_pids()
+            and (not ONE_HEAVY_JOB or not montage.running())
+        ):
             vod.start()
 
         # Montage only when VOD idle
