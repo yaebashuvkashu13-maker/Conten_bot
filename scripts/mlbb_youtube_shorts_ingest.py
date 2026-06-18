@@ -48,8 +48,7 @@ SEARCH_QUERIES = (
 )
 
 HQ_FORMAT = (
-    "bv*[vcodec^=avc1][height<=1080][height>=720]+ba/"
-    "bv*[height<=1080][height>=720]+ba/"
+    "bv*[height<=1080][height>=480]+ba/"
     "bv*[height<=1080]+ba/b[height<=1080]/best"
 )
 

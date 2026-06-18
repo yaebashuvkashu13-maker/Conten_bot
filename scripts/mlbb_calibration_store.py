@@ -425,14 +425,6 @@ def pending_candidates(*, limit: int = 50) -> list[dict]:
             )
             if not ok_mlbb:
                 continue
-        elif str(row.get("gameplay_reason") or "") in ("calibration_fast", ""):
-            from gameplay_gate import is_mlbb_calibration_short
-
-            ok_mlbb, _, _ = is_mlbb_calibration_short(
-                path, description=str(row.get("title", ""))
-            )
-            if not ok_mlbb:
-                continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
             continue

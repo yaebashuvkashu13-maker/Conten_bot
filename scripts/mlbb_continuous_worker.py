@@ -380,11 +380,17 @@ def main() -> int:
 
         if (
             CALIBRATION_FEED
-            and pending > 0
             and feed.cooldown_ok(FEED_COOLDOWN_SEC)
             and (VOD_DISABLED or not vod.running())
         ):
             feed.start()
+
+        if VOD_DISABLED and vod_feed_pids():
+            for pid in vod_feed_pids():
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
 
         for job in (ingest, vod, feed, montage):
             job.reap()

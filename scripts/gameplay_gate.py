@@ -1683,6 +1683,11 @@ def is_mlbb_calibration_short(
     if score < floor:
         return False, score, "low_hud"
 
+    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
+    strong = float(os.environ.get("MLBB_CALIBRATION_STRONG_HEURISTIC", "0.62"))
+    if lenient and score >= strong:
+        return True, score, "heuristic_ok"
+
     ok_window, win_reason = source_has_valid_gameplay_window(
         video_path,
         profile="mobile_legends",
