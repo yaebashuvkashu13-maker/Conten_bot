@@ -384,15 +384,17 @@ def main() -> int:
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
             continue
 
-        ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
-        lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
+        if fast_ingest and lenient:
+            ok, gscore, reason = True, 0.5, "calibration_fast"
+            feats = light_clip_features(mp4)
+        else:
+            ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
+            feats = score_clip(mp4)
         hard_reject = reason in ("promo_text", "csv_lookup")
         if not ok:
             if hard_reject or not lenient:
                 rejected += 1
                 continue
-
-        feats = score_clip(mp4)
         if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
             rejected += 1
             continue
