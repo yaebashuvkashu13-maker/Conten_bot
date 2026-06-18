@@ -56,7 +56,7 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_TARGET_PENDING=30 MLBB_INGEST_COOLDOWN_SEC=120 MLBB_SHORTS_DAYS=60 \
   MLBB_SHORTS_MIN_YEAR=2024 MLBB_SHORTS_REQUIRE_DATE=1 \
   MLBB_INGEST_MAX_DOWNLOADS=12 MLBB_INGEST_SKIP_IF_PENDING=30 \
-  YOUTUBE_SHORTS_FORMAT='bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best' \
+  YOUTUBE_SHORTS_FORMAT_HQ='bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best' \
   HIGHLIGHT_OWNER_BAD_PAD_SEC=90 VIRAL_MLBB_HOOK_MIN=0.06 VIRAL_MLBB_CLIP_HOOK_MIN=0.12 \
   VIRAL_SEGMENT_HOOK_MIN=0.06 VIRAL_MLBB_HOOK_FLOOR=0.06 VIRAL_MLBB_HOOK_CAP=0.12 \
   MLBB_USE_CLASSIFIER=0 MLBB_MONTAGE_COOLDOWN_SEC=14400 \
@@ -64,11 +64,16 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   key="${kv%%=*}"
   val="${kv#*=}"
   if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    sed -i "s/^${key}=.*/${key}=${val}/" "$ENV_FILE"
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
   else
     echo "${key}=${val}" >>"$ENV_FILE"
   fi
 done
+# Unquoted YOUTUBE_SHORTS_FORMAT breaks `source` (bash treats [height<=1080] as tests).
+sed -i '/^YOUTUBE_SHORTS_FORMAT=/d' "$ENV_FILE" 2>/dev/null || true
+if ! grep -q '^YOUTUBE_SHORTS_FORMAT_HQ=' "$ENV_FILE" 2>/dev/null; then
+  echo "YOUTUBE_SHORTS_FORMAT_HQ='bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best'" >>"$ENV_FILE"
+fi
 
 TMP=$(mktemp)
 crontab -l 2>/dev/null >"$TMP" || true

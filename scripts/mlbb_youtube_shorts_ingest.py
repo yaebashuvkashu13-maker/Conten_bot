@@ -163,7 +163,8 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, 
     date_after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
-        env.get("YOUTUBE_SHORTS_FORMAT", HQ_FORMAT),
+        env.get("YOUTUBE_SHORTS_FORMAT")
+        or env.get("YOUTUBE_SHORTS_FORMAT_HQ", HQ_FORMAT),
         "--merge-output-format",
         "mp4",
         "--dateafter",
