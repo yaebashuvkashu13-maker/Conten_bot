@@ -35,6 +35,15 @@ PROMO_PATTERNS = re.compile(
     re.I,
 )
 
+OTHER_GAME_TITLE = re.compile(
+    r"(pubg|bgmi|standoff\s*2|standoff2|genshin|honkai|free\s*fire|cod\s*m|"
+    r"call\s*of\s*duty|fortnite|valorant|wild\s*rift|league\s*of\s*legends|\blol\b|"
+    r"dota\s*2|\bbrawl\s*stars|clash\s*royale|minecraft|roblox|\bwot\b|world\s*of\s*tanks|"
+    r"arena\s*of\s*valor|\baov\b|clash\s*of\s*clans|among\s*us|csgo|cs2|"
+    r"counter\s*strike|apex\s*legends|overwatch|naruto|dragon\s*ball)",
+    re.I,
+)
+
 
 def _load_calibration_state() -> dict:
     global _CALIBRATION_CACHE, _CALIBRATION_MTIME
@@ -1648,6 +1657,41 @@ def is_gameplay_video(
         ok_window, win_reason = source_has_valid_gameplay_window(video_path)
         return ok_window, score, win_reason if ok_window else "no_valid_window"
     return False, score, "heuristic"
+
+
+def is_mlbb_calibration_short(
+    video_path: Path,
+    *,
+    description: str = "",
+    min_heuristic: float | None = None,
+) -> tuple[bool, float, str]:
+    """Fast OpenCV HUD gate for Shorts calibration — blocks obvious non-MLBB clips."""
+    text = f"{description} {video_path.name}"
+    if PROMO_PATTERNS.search(text):
+        return False, 0.0, "promo_text"
+    if OTHER_GAME_TITLE.search(text):
+        return False, 0.0, "other_game_title"
+    if profile_looks_like_mlbb_edit(video_path, sample_frames=4):
+        return False, 0.0, "promo_edit"
+
+    floor = (
+        float(os.environ.get("MLBB_CALIBRATION_MIN_HEURISTIC", "0.52"))
+        if min_heuristic is None
+        else min_heuristic
+    )
+    score = heuristic_gameplay_score(video_path, sample_frames=4)
+    if score < floor:
+        return False, score, "low_hud"
+
+    ok_window, win_reason = source_has_valid_gameplay_window(
+        video_path,
+        profile="mobile_legends",
+        windows=3,
+        window_sec=6.0,
+    )
+    if not ok_window:
+        return False, score, f"not_mlbb:{win_reason}"
+    return True, score, win_reason
 
 
 def main() -> int:

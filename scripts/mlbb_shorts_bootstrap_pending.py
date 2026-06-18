@@ -18,6 +18,7 @@ from mlbb_calibration_store import (
     upsert_candidate,
 )
 from mlbb_youtube_shorts_ingest import download_short, light_clip_features, search_shorts
+from gameplay_gate import is_mlbb_calibration_short
 from youtube_download import load_env
 
 QUERIES = (
@@ -42,14 +43,20 @@ def main() -> int:
             mp4 = download_short(row["url"], SHORTS_ROOT, env, vid, days=days)
             if not mp4 or not mp4.exists():
                 continue
+            ok, gscore, reason = is_mlbb_calibration_short(
+                mp4, description=row.get("title", "")
+            )
+            if not ok:
+                print(f"skip non-mlbb {vid} reason={reason}")
+                continue
             upsert_candidate(
                 {
                     **row,
                     **light_clip_features(mp4),
                     "path": str(mp4),
                     "gameplay_pass": 1,
-                    "gameplay_score": 0.5,
-                    "gameplay_reason": "bootstrap",
+                    "gameplay_score": round(float(gscore), 4),
+                    "gameplay_reason": reason,
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 }
             )

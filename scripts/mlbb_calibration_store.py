@@ -417,6 +417,22 @@ def pending_candidates(*, limit: int = 50) -> list[dict]:
             continue
         if not is_fresh_short(row):
             continue
+        if int(row.get("gameplay_pass") or 0) != 1:
+            from gameplay_gate import is_mlbb_calibration_short
+
+            ok_mlbb, _, _ = is_mlbb_calibration_short(
+                path, description=str(row.get("title", ""))
+            )
+            if not ok_mlbb:
+                continue
+        elif str(row.get("gameplay_reason") or "") in ("calibration_fast", ""):
+            from gameplay_gate import is_mlbb_calibration_short
+
+            ok_mlbb, _, _ = is_mlbb_calibration_short(
+                path, description=str(row.get("title", ""))
+            )
+            if not ok_mlbb:
+                continue
         path_key = str(path.resolve())
         if path_key in seen_paths:
             continue

@@ -21,6 +21,7 @@ from mlbb_calibration_store import (
     repair_index,
     stats,
 )
+from gameplay_gate import is_mlbb_calibration_short
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -210,12 +211,20 @@ def main() -> int:
     )
 
     sent_ids: list[str] = []
+    skipped_ids: list[str] = []
     for idx, row in enumerate(picked, start=1):
         path = Path(row.get("path", ""))
         if not path.exists():
             continue
-        caption = format_caption(row, idx, len(picked))
         vid = str(row.get("video_id", ""))
+        ok_mlbb, _score, gate_reason = is_mlbb_calibration_short(
+            path, description=str(row.get("title", ""))
+        )
+        if not ok_mlbb:
+            print(f"skip non-mlbb video_id={vid} reason={gate_reason}")
+            skipped_ids.append(vid)
+            continue
+        caption = format_caption(row, idx, len(picked))
         ok = send_video(token, chat_id, path, caption, video_id=vid)
         if not ok:
             send_message(
@@ -228,10 +237,10 @@ def main() -> int:
         time.sleep(1.2)
 
     mark_feed_sent(
-        sent_ids,
+        sent_ids + skipped_ids,
         paths=[Path(row.get("path", "")) for row in picked if row.get("path")],
     )
-    print(f"sent={len(sent_ids)}")
+    print(f"sent={len(sent_ids)} skipped_non_mlbb={len(skipped_ids)}")
     return 0
 
 

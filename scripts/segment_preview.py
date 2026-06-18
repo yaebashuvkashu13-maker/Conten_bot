@@ -281,6 +281,15 @@ def send_approved_montage(pkg: dict[str, Any], env: dict[str, str], caption: str
     if pkg.get("video_sent_at"):
         return
 
+    if os.environ.get("MLBB_ONLY_MODE", "0") == "1":
+        prof = str(pkg.get("profile", "")).strip().lower()
+        if prof in ("world_of_tanks",):
+            prof = "wot"
+        if prof == "mlbb":
+            prof = "mobile_legends"
+        if prof and prof not in ("mobile_legends",):
+            raise RuntimeError(f"MLBB_ONLY_MODE blocks send for profile={prof}")
+
     os.environ["OWNER_PREVIEW_APPROVED"] = "1"
     os.environ["STRICT_PEAK_MONTAGE"] = "1"
     os.environ["QUEUE_GAME_PROFILE"] = pkg.get("profile", "")

@@ -1924,6 +1924,8 @@ def send_telegram_video(bot_token: str, chat_id: str, video_path: Path, caption:
         profile = 'wot'
     if profile == 'mlbb':
         profile = 'mobile_legends'
+    if os.environ.get('MLBB_ONLY_MODE', '0') == '1' and profile and profile not in ('mobile_legends',):
+        raise RuntimeError(f'MLBB_ONLY_MODE blocks sendVideo for profile={profile}')
     if profile in STRICT_PEAK_PROFILES and os.environ.get('OWNER_PREVIEW_APPROVED', '0') != '1':
         raise RuntimeError(
             f'blocked sendVideo: owner visual preview required for profile={profile}'

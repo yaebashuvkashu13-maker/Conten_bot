@@ -324,7 +324,7 @@ def main() -> int:
     bootstrap_script = BIN / "mlbb_silver_bootstrap.py"
     if not bootstrap_script.exists():
         bootstrap_script = Path(__file__).resolve().parent / "mlbb_silver_bootstrap.py"
-    if bootstrap_script.exists() and pending < 6:
+    if bootstrap_script.exists() and pending < 6 and os.environ.get("MLBB_SILVER_BOOTSTRAP", "0") == "1":
         log(f"startup silver bootstrap pending={pending}")
         subprocess.run(
             [

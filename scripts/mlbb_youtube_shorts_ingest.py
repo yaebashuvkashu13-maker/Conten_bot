@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gameplay_gate import is_gameplay_video
+from gameplay_gate import OTHER_GAME_TITLE, is_mlbb_calibration_short, is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
@@ -157,7 +157,7 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
             continue
         if duration <= 3 or duration > 60:
             continue
-        if NEGATIVE_TITLE.search(title):
+        if NEGATIVE_TITLE.search(title) or OTHER_GAME_TITLE.search(title):
             continue
         entries.append(
             {
@@ -386,17 +386,18 @@ def main() -> int:
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
             continue
 
-        if fast_ingest and lenient:
-            ok, gscore, reason = True, 0.5, "calibration_fast"
-            feats = light_clip_features(mp4)
-        else:
-            ok, gscore, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
-            feats = score_clip(mp4)
-        hard_reject = reason in ("promo_text", "csv_lookup")
+        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
+        hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
         if not ok:
             if hard_reject or not lenient:
                 rejected += 1
                 continue
+
+        if fast_ingest and lenient:
+            feats = light_clip_features(mp4)
+            feats["score"] = max(float(feats.get("score") or 0), float(gscore))
+        else:
+            feats = score_clip(mp4)
         if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
             rejected += 1
             continue
