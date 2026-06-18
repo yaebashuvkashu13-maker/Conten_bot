@@ -21,7 +21,7 @@ from vk_mlbb_queue import (
     pending_count,
     pop_batch,
 )
-from vk_mlbb_upload import load_env, publish_clip
+from vk_mlbb_upload import load_env, publish_clip, publish_short_clip
 
 ENV_FILE = Path("/root/.video_bot.env")
 SLOT_LABELS = {
@@ -82,7 +82,8 @@ def main() -> int:
             meta_path = path.with_suffix(".json")
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            result = publish_clip(path, title=meta.get("label") or path.stem, env=env)
+            publish_fn = publish_short_clip if os.environ.get("VK_MLBB_SHORT_VIDEO", "1") == "1" else publish_clip
+            result = publish_fn(path, title=meta.get("label") or path.stem, env=env)
             vid = result.get("video_id", "")
             archive_published(path, vk_video_id=str(vid), slot=args.slot)
             published += 1

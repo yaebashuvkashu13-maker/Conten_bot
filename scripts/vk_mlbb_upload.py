@@ -50,6 +50,17 @@ def vk_group_id(env: dict[str, str]) -> int:
     return int(env.get("VK_MLBB_GROUP_ID", "234820335"))
 
 
+def token_permissions_summary(token: str, env: dict[str, str] | None = None) -> str:
+    env = env or load_env()
+    group_id = vk_group_id(env)
+    try:
+        perms = vk_call("groups.getTokenPermissions", {"group_id": group_id}, token)
+    except RuntimeError as exc:
+        return f"unknown ({exc})"
+    names = sorted(p.get("name", "") for p in perms.get("permissions", []) if p.get("name"))
+    return ",".join(names) or "none"
+
+
 def assert_upload_token(token: str, group_id: int) -> None:
     """Community Callback keys (manage-only) cannot call video.save."""
     try:
@@ -62,11 +73,27 @@ def assert_upload_token(token: str, group_id: int) -> None:
     if names and names <= {"manage"}:
         raise RuntimeError(
             "VK token is community manage-only (Callback key). "
-            "video.save requires a user OAuth token (admin of group 234820335) "
-            "with scopes video+groups. "
-            "Get it: https://oauth.vk.com/authorize?client_id=6121396&"
-            "scope=video,groups,offline&redirect_uri=https://oauth.vk.com/blank.html&"
-            "response_type=token — then update VK_MLBB_ACCESS_TOKEN secret."
+            "Create a community API key with rights: video (+ wall). "
+            "Управление группой → Работа с API → Создать ключ. "
+            "Or use user OAuth with scopes video+groups (see docs/VK_MLBB_TOKEN.md)."
+        )
+
+
+def assert_short_video_token(token: str, group_id: int) -> None:
+    try:
+        perms = vk_call("groups.getTokenPermissions", {"group_id": group_id}, token)
+    except RuntimeError as exc:
+        if "error_code': 27" in str(exc) or "Group authorization failed" in str(exc):
+            raise RuntimeError(
+                "VK community token cannot call shortVideo.create (error 27). "
+                "Recreate community key with video permission, or use user OAuth token."
+            ) from exc
+        raise
+    names = {p.get("name", "") for p in perms.get("permissions", []) if p.get("name")}
+    if names and "video" not in names and names <= {"manage"}:
+        raise RuntimeError(
+            "VK token has only manage (Callback). Enable video on community API key "
+            "and update VK_MLBB_ACCESS_TOKEN secret."
         )
 
 
@@ -176,6 +203,104 @@ def _product_description_suffix(game: str = "mobile_legends") -> str:
         return description_suffix(game)
     except Exception:
         return ""
+
+
+def upload_short_video_file(upload_url: str, path: Path) -> dict:
+    proc = subprocess.run(
+        ["curl", "-sS", "-m", "900", "--noproxy", "*", "-F", f"file=@{path}", upload_url],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"curl_upload_fail:{proc.stderr[-300:]}")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"upload_bad_json:{proc.stdout[:300]}") from exc
+
+
+def publish_short_clip(
+    source: Path,
+    *,
+    title: str = "",
+    description: str = "",
+    game: str = "mobile_legends",
+    publish: bool = True,
+    env: dict[str, str] | None = None,
+) -> dict:
+    """Upload vertical clip via shortVideo.create (community token with video right)."""
+    env = env or load_env()
+    token = vk_token(env)
+    group_id = vk_group_id(env)
+    assert_short_video_token(token, group_id)
+    prepared = prepare_clip_source(source)
+    try:
+        if not title:
+            title = f"MLBB {time.strftime('%d.%m %H:%M')}"
+        product_line = _product_description_suffix(game)
+        base_desc = description or "Mobile Legends"
+        if product_line:
+            base_desc = f"{base_desc}\n{product_line}"
+        file_size = prepared.stat().st_size
+        created = vk_call(
+            "shortVideo.create",
+            {
+                "group_id": group_id,
+                "file_size": file_size,
+                "description": base_desc[:5000],
+                "wallpost": 0,
+            },
+            token,
+        )
+        upload_url = created.get("upload_url")
+        if not upload_url:
+            raise RuntimeError("vk_no_upload_url")
+        up = upload_short_video_file(upload_url, prepared)
+        owner_id = int(up.get("owner_id") or created.get("owner_id") or -group_id)
+        video_id = int(up.get("video_id") or created.get("video_id") or 0)
+        if not video_id:
+            raise RuntimeError(f"vk_no_video_id upload={up}")
+
+        if publish:
+            time.sleep(float(os.environ.get("VK_SHORT_VIDEO_PROCESS_SEC", "12")))
+            try:
+                vk_call(
+                    "shortVideo.publish",
+                    {"owner_id": owner_id, "video_id": video_id, "group_id": group_id},
+                    token,
+                )
+            except RuntimeError as exc:
+                if "error_code': 27" not in str(exc):
+                    raise
+                # Some tokens can upload but not publish — clip may still appear after processing.
+                up["publish_skipped"] = str(exc)
+
+        if title and title.strip():
+            try:
+                vk_call(
+                    "shortVideo.edit",
+                    {
+                        "owner_id": owner_id,
+                        "video_id": video_id,
+                        "title": title[:128],
+                        "description": base_desc[:5000],
+                    },
+                    token,
+                )
+            except RuntimeError:
+                pass
+
+        return {
+            "owner_id": owner_id,
+            "video_id": video_id,
+            "upload": up,
+            "duration": ffprobe_duration(prepared),
+            "prepared_size": file_size,
+            "api": "shortVideo.create",
+        }
+    finally:
+        shutil.rmtree(prepared.parent, ignore_errors=True)
 
 
 def publish_clip(
