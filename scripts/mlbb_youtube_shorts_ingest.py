@@ -98,6 +98,25 @@ def _sort_freshness_key(row: dict) -> tuple[str, int]:
     return (ud, int(row.get("view_count") or 0))
 
 
+def fetch_upload_date(video_id: str, env: dict[str, str]) -> str:
+    import subprocess
+
+    cmd = ytdlp_cmd(env, use_proxy=False) + [
+        f"https://www.youtube.com/watch?v={video_id}",
+        "--skip-download",
+        "--print",
+        "upload_date",
+        *ytdlp_extra_args(env),
+    ]
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, timeout=60, env=subprocess_env_no_proxy(env)
+    )
+    ud = (proc.stdout or "").strip()
+    if ud.isdigit() and len(ud) >= 8:
+        return ud
+    return ""
+
+
 def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
     import subprocess
 
@@ -139,6 +158,8 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
             continue
         if NEGATIVE_TITLE.search(title):
             continue
+        if (not upload_date or upload_date in ("NA", "N/A")) and vid:
+            upload_date = fetch_upload_date(vid, env)
         entries.append(
             {
                 "video_id": vid,

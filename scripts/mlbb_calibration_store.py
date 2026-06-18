@@ -378,7 +378,15 @@ def is_fresh_short(row: dict) -> bool:
     max_days = int(os.environ.get("MLBB_SHORTS_DAYS", "60"))
     ud = _upload_date(row)
     if not ud:
-        # Disk rebuilds without metadata are usually old — skip when freshness is required.
+        ingested_at = str(row.get("ingested_at") or "").strip()
+        if ingested_at:
+            try:
+                ts = time.strptime(ingested_at, "%Y-%m-%d %H:%M:%S")
+                age_days = (time.time() - time.mktime(ts)) / 86400.0
+                if age_days <= max_days:
+                    return True
+            except ValueError:
+                pass
         return os.environ.get("MLBB_SHORTS_REQUIRE_DATE", "1") != "1"
     if int(ud[:4]) < min_year:
         return False

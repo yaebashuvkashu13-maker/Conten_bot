@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -50,3 +51,4 @@ def test_is_fresh_short_rejects_old_and_unknown(monkeypatch) -> None:
     assert not is_fresh_short({"upload_date": "20200315"})
     assert not is_fresh_short({"upload_date": ""})
     assert not is_fresh_short({"source": "disk_rebuild"})
+    assert is_fresh_short({"ingested_at": time.strftime("%Y-%m-%d %H:%M:%S")})
