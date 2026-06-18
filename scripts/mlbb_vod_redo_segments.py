@@ -43,6 +43,8 @@ def redo_segments(segment_ids: list[str], *, token: str, chat_id: str) -> int:
     os.environ.setdefault("MLBB_VOD_LEAD_SEC", "4")
     os.environ.setdefault("MLBB_FORCE_RERENDER", "1")
     os.environ.setdefault("SMART_OUTPUT_PRESET", "fast")
+    os.environ.setdefault("SMART_OUTPUT_CRF", "23")
+    os.environ.setdefault("SMART_OUTPUT_AUDIO_K", "128")
 
     clear_analysis_cache()
     segments_root().mkdir(parents=True, exist_ok=True)
