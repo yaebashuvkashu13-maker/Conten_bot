@@ -69,20 +69,20 @@ def main() -> int:
             print(f"skip gate {vid} {reason}")
             continue
         upsert_candidate(
-                {
-                    **row,
-                    **light_clip_features(mp4),
-                    "path": str(mp4),
-                    "gameplay_pass": 1,
-                    "gameplay_score": round(float(gscore), 4),
-                    "gameplay_reason": reason,
-                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-            print(f"queued {vid} {row.get('title', '')[:55]}")
-            saved += 1
-            if saved >= target:
-                break
+            {
+                **row,
+                **light_clip_features(mp4),
+                "path": str(mp4),
+                "gameplay_pass": 1,
+                "gameplay_score": round(float(gscore), 4),
+                "gameplay_reason": reason,
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        print(f"queued {vid} {row.get('title', '')[:55]}")
+        saved += 1
+        if saved >= target:
+            break
     print(f"queued={saved} pending={len(pending_candidates(limit=9999))}")
     if saved > 0 or pending_candidates(limit=1):
         return run_feed()
