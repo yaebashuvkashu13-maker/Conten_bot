@@ -133,53 +133,29 @@ def register_vod(path: Path, *, title: str) -> dict:
     return entry
 
 
-def main() -> int:
-    import logging
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("url")
-    parser.add_argument("--batch-max", type=int, default=5)
-    parser.add_argument("--no-resume-worker", action="store_true")
-    args = parser.parse_args()
-
-    vid = _video_id(args.url)
+def run_oneoff(
+    url: str,
+    *,
+    env: dict[str, str],
+    token: str,
+    chat_id: str,
+    batch_max: int,
+) -> int:
+    vid = _video_id(url)
     if len(vid) != 11:
-        print("bad youtube url", file=sys.stderr)
+        print(f"bad youtube url: {url}", file=sys.stderr)
         return 1
-
-    os.environ.setdefault("MLBB_ONLY_MODE", "1")
-    os.environ.setdefault("MLBB_SEND_ENABLED", "1")
-    os.environ.setdefault("MLBB_LEARNING_FIRST", "0")
-    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
-    os.environ.setdefault("MLBB_VOD_BATCH_MAX", str(args.batch_max))
-    os.environ.setdefault("MLBB_VOD_PROBE_LIMIT", "16")
-    os.environ.setdefault("MLBB_VOD_VARIABLE_LENGTH", "1")
-
-    env = {**os.environ, **load_env(ENV_PATH)}
-    token = env.get("TG_BOT_TOKEN", "")
-    chat_id = env.get("TG_CHAT_ID", "")
-    if not token or not chat_id:
-        print("TG missing", file=sys.stderr)
-        return 1
-
-    pause_worker()
-
-    state = _load_state()
-    state["pending_download"] = {}
-    _save_state(state)
 
     INBOX.mkdir(parents=True, exist_ok=True)
     dest = INBOX / f"yt_{vid}.mp4"
     try:
         if not dest.exists() or dest.stat().st_size < 500_000:
             send_message(token, chat_id, f"📥 Качаю VOD {vid}…")
-            dest = download_vod_exact(args.url, dest, env)
+            dest = download_vod_exact(url, dest, env)
         elif vod_youtube_id(dest) != vid:
             send_message(token, chat_id, f"📥 Перекачиваю VOD {vid} (был неверный файл)…")
             dest.unlink(missing_ok=True)
-            dest = download_vod_exact(args.url, dest, env)
+            dest = download_vod_exact(url, dest, env)
         meta = fetch_video_meta(vid, env) or {}
         title = str(meta.get("title") or vid)
         entry = register_vod(dest, title=title)
@@ -208,11 +184,58 @@ def main() -> int:
         return 0 if sent > 0 else 1
     except Exception as exc:
         send_message(token, chat_id, f"❌ Ошибка one-off {vid}: {exc}")
-        log.exception("oneoff failed")
+        log.exception("oneoff failed vod=%s", vid)
         return 1
+
+
+def main() -> int:
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("url", nargs="+", help="One or more YouTube URLs (processed in order)")
+    parser.add_argument("--batch-max", type=int, default=5)
+    parser.add_argument("--no-resume-worker", action="store_true")
+    args = parser.parse_args()
+
+    os.environ.setdefault("MLBB_ONLY_MODE", "1")
+    os.environ.setdefault("MLBB_SEND_ENABLED", "1")
+    os.environ.setdefault("MLBB_LEARNING_FIRST", "0")
+    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    os.environ.setdefault("MLBB_VOD_BATCH_MAX", str(args.batch_max))
+    os.environ.setdefault("MLBB_VOD_PROBE_LIMIT", "16")
+    os.environ.setdefault("MLBB_VOD_VARIABLE_LENGTH", "1")
+
+    env = {**os.environ, **load_env(ENV_PATH)}
+    token = env.get("TG_BOT_TOKEN", "")
+    chat_id = env.get("TG_CHAT_ID", "")
+    if not token or not chat_id:
+        print("TG missing", file=sys.stderr)
+        return 1
+
+    pause_worker()
+
+    state = _load_state()
+    state["pending_download"] = {}
+    _save_state(state)
+
+    rc = 0
+    try:
+        for url in args.url:
+            code = run_oneoff(
+                url,
+                env=env,
+                token=token,
+                chat_id=chat_id,
+                batch_max=args.batch_max,
+            )
+            if code != 0:
+                rc = code
     finally:
         if not args.no_resume_worker:
             resume_worker()
+    return rc
 
 
 if __name__ == "__main__":
