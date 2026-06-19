@@ -489,9 +489,6 @@ def inline_keyboard_markup(video_id: str) -> dict:
                 {"text": "👍", "callback_data": f"mlbb_yes:{vid}"},
                 {"text": "👎", "callback_data": f"mlbb_no:{vid}"},
             ],
-            [
-                {"text": "📥 HQ файлом", "callback_data": f"mlbb_hq:{vid}"},
-            ],
         ]
     }
 
