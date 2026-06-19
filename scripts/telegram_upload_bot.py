@@ -547,6 +547,70 @@ def _mlbb_send_hq_file(chat_id: str | int, video_id: str) -> bool:
     return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
 
 
+def _show_dislike_reason_picker(
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+    item_id: str,
+    callback_prefix: str = 'mlbb_bad',
+) -> None:
+    """Second step after 👎 — edit markup or send a new picker message if edit fails."""
+    from mlbb_calibration_store import dislike_reason_keyboard_markup
+
+    markup = dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+    try:
+        api_call(
+            'editMessageReplyMarkup',
+            {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'reply_markup': markup,
+            },
+            timeout=15,
+        )
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': 'Выбери причину 👇'},
+            timeout=15,
+        )
+        return
+    except Exception as exc:
+        logging.warning('dislike picker edit failed id=%s: %s', item_id, exc)
+    try:
+        api_call(
+            'sendMessage',
+            {
+                'chat_id': str(chat_id),
+                'text': f'Причина дизлайка #{item_id}:',
+                'reply_markup': markup,
+            },
+            timeout=15,
+        )
+        api_call(
+            'answerCallbackQuery',
+            {
+                'callback_query_id': query_id,
+                'text': 'Выбери причину в сообщении ниже 👇',
+            },
+            timeout=15,
+        )
+    except Exception as exc:
+        logging.exception('dislike picker fallback failed id=%s', item_id)
+        try:
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': f'Ошибка: {exc}'[:180],
+                    'show_alert': True,
+                },
+                timeout=15,
+            )
+        except Exception:
+            pass
+
+
 def handle_callback_query(query: dict) -> None:
     query_id = query.get('id')
     data = str(query.get('data') or '')
@@ -696,23 +760,13 @@ def handle_callback_query(query: dict) -> None:
         is_good = True
         item_id = data.split(':', 1)[1].strip()
     elif data.startswith('mlbb_no:'):
-        from mlbb_calibration_store import dislike_reason_keyboard_markup
-
         item_id = data.split(':', 1)[1].strip()
         try:
-            api_call(
-                'answerCallbackQuery',
-                {'callback_query_id': query_id, 'text': 'Выбери причину 👇'},
-                timeout=15,
-            )
-            api_call(
-                'editMessageReplyMarkup',
-                {
-                    'chat_id': chat_id,
-                    'message_id': message_id,
-                    'reply_markup': dislike_reason_keyboard_markup(item_id),
-                },
-                timeout=15,
+            _show_dislike_reason_picker(
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                item_id=item_id,
             )
         except Exception as exc:
             logging.exception('mlbb_no picker failed video_id=%s', item_id)
@@ -727,25 +781,14 @@ def handle_callback_query(query: dict) -> None:
         is_good = True
         item_id = data.split(':', 1)[1].strip()
     elif data.startswith('mlbb_vseg_no:'):
-        from mlbb_calibration_store import dislike_reason_keyboard_markup
-
         item_id = data.split(':', 1)[1].strip()
         try:
-            api_call(
-                'answerCallbackQuery',
-                {'callback_query_id': query_id, 'text': 'Выбери причину 👇'},
-                timeout=15,
-            )
-            api_call(
-                'editMessageReplyMarkup',
-                {
-                    'chat_id': chat_id,
-                    'message_id': message_id,
-                    'reply_markup': dislike_reason_keyboard_markup(
-                        item_id, callback_prefix='mlbb_vseg_bad'
-                    ),
-                },
-                timeout=15,
+            _show_dislike_reason_picker(
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                item_id=item_id,
+                callback_prefix='mlbb_vseg_bad',
             )
         except Exception as exc:
             logging.exception('mlbb_vseg_no picker failed seg=%s', item_id)
