@@ -335,7 +335,7 @@ def main() -> int:
     hero_montage = Proc("hero_montage", hero_shorts_montage_cmd(base), base)
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "14400"))
     HERO_MONTAGE_ENABLED = base.get("MLBB_HERO_SHORTS_MONTAGE", "0") == "1"
-    HERO_MONTAGE_COOLDOWN_SEC = float(base.get("MLBB_HERO_MONTAGE_COOLDOWN_SEC", "3600"))
+    HERO_MONTAGE_COOLDOWN_SEC = float(base.get("MLBB_HERO_MONTAGE_COOLDOWN_SEC", "2400"))
     cores = _cpu_cores()
 
     log(
