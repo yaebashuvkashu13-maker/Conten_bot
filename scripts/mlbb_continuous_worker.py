@@ -36,7 +36,7 @@ CALIBRATION_FEED = os.environ.get(
 SHORTS_DAYS = int(os.environ.get("MLBB_SHORTS_DAYS", "365"))
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
 INGEST_STALE_SEC = float(os.environ.get("MLBB_INGEST_STALE_SEC", "1500"))  # 25 min
-HERO_MONTAGE_STALE_SEC = float(os.environ.get("MLBB_HERO_MONTAGE_STALE_SEC", "4200"))  # 70 min
+HERO_MONTAGE_STALE_SEC = float(os.environ.get("MLBB_HERO_MONTAGE_STALE_SEC", "1200"))  # 20 min
 ONEOFF_LOCK = Path("/tmp/mlbb_vod_oneoff.lock")
 
 
@@ -475,13 +475,15 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
-        if aggressive and ingest.gap_ok(JOB_MIN_GAP_SEC) and not ingest_block and not hero_busy:
+        if aggressive and ingest.gap_ok(JOB_MIN_GAP_SEC) and not ingest_block:
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
 
+        hero_min_pending = int(base.get("MLBB_HERO_MONTAGE_MIN_PENDING", "12"))
         if (
             HERO_MONTAGE_ENABLED
+            and pending >= hero_min_pending
             and not hero_busy
             and not feed.running()
             and not ingest.running()
@@ -499,7 +501,6 @@ def main() -> int:
             and pending > 0
             and feed.gap_ok(feed_cd)
             and (VOD_DISABLED or not vod.running())
-            and not hero_busy
             and not calibration_feed_running()
         ):
             feed.start()
