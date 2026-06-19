@@ -171,6 +171,7 @@ class Proc:
         self.last_finish = time.time()
 
     def start(self) -> bool:
+        self.reap()
         if self.running():
             return False
         LOG.parent.mkdir(parents=True, exist_ok=True)
