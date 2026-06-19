@@ -46,6 +46,8 @@ def compress_for_inline_video(
             "-y",
             "-v",
             "error",
+            "-hwaccel",
+            "none",
             "-i",
             str(path),
             "-vf",

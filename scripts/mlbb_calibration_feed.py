@@ -227,13 +227,14 @@ def _run_feed() -> int:
             failed_ids.append(str(row.get("video_id", "")))
             continue
         vid = str(row.get("video_id", ""))
-        ok_mlbb, _score, gate_reason = is_mlbb_calibration_short(
-            path, description=str(row.get("title", ""))
-        )
-        if not ok_mlbb:
-            print(f"skip non-mlbb video_id={vid} reason={gate_reason}")
-            skipped_ids.append(vid)
-            continue
+        if int(row.get("gameplay_pass") or 0) != 1:
+            ok_mlbb, _score, gate_reason = is_mlbb_calibration_short(
+                path, description=str(row.get("title", ""))
+            )
+            if not ok_mlbb:
+                print(f"skip non-mlbb video_id={vid} reason={gate_reason}")
+                skipped_ids.append(vid)
+                continue
         caption = format_caption(row, idx, len(picked))
         ok = send_video(token, chat_id, path, caption, video_id=vid)
         if not ok:
