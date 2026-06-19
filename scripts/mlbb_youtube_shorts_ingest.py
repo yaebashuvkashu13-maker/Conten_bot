@@ -135,10 +135,10 @@ def search_shorts(
     depth = int(
         env.get(
             "MLBB_INGEST_HUNGRY_SEARCH_DEPTH" if hungry else "MLBB_INGEST_SEARCH_DEPTH",
-            "20" if hungry else "12",
+            "40" if hungry else "12",
         )
     )
-    search_n = max(limit * depth, 300 if hungry else 120)
+    search_n = max(limit * depth, 800 if hungry else 120)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -226,9 +226,15 @@ def download_short(url: str, out_dir: Path, env: dict[str, str], video_id: str, 
         print(f"download_fail {video_id} rc={proc.returncode} {err}")
         return None
     if dest.exists():
+        if _ffprobe_duration(dest) <= 0:
+            dest.unlink(missing_ok=True)
+            return None
         return dest
     for alt in out_dir.glob(f"yt_{video_id}.*"):
         if alt.suffix.lower() in (".mp4", ".mkv", ".webm") and alt.stat().st_size > 50_000:
+            if _ffprobe_duration(alt) <= 0:
+                alt.unlink(missing_ok=True)
+                continue
             if alt != dest:
                 try:
                     alt.rename(dest)
@@ -361,6 +367,10 @@ def _sweep_pool(
         ):
             vid = row["video_id"]
             if vid in seen or vid in known or vid in already_sent or vid in sent_pending:
+                continue
+            if hungry:
+                seen.add(vid)
+                out.append(row)
                 continue
             ud = _resolve_upload_date(row, env)
             if not _date_ok(ud, env, days):
@@ -505,7 +515,9 @@ def main() -> int:
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
-            ud = _resolve_upload_date(row, env)
+            ud = str(row.get("upload_date") or "").strip()
+            if ud in ("", "NA", "N/A") or not ud.isdigit():
+                ud = _resolve_upload_date(row, env)
             if ud and not _date_ok(ud, env, args.days):
                 rejected += 1
                 continue

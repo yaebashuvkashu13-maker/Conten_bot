@@ -35,7 +35,7 @@ CALIBRATION_FEED = os.environ.get(
 ) == "1"
 SHORTS_DAYS = int(os.environ.get("MLBB_SHORTS_DAYS", "365"))
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
-INGEST_STALE_SEC = float(os.environ.get("MLBB_INGEST_STALE_SEC", "1500"))  # 25 min
+INGEST_STALE_SEC = float(os.environ.get("MLBB_INGEST_STALE_SEC", "2400"))  # 40 min
 HERO_MONTAGE_STALE_SEC = float(os.environ.get("MLBB_HERO_MONTAGE_STALE_SEC", "1200"))  # 20 min
 ONEOFF_LOCK = Path("/tmp/mlbb_vod_oneoff.lock")
 
