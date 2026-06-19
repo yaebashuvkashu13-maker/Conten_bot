@@ -14,8 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_calibration_store import (
     DATA_MLBB,
+    claim_feed_candidates,
+    feed_singleton_lock,
     inline_keyboard_markup,
-    mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
@@ -108,6 +109,36 @@ def format_caption(row: dict, idx: int, total: int) -> str:
 
 
 def main() -> int:
+    with feed_singleton_lock() as acquired:
+        if not acquired:
+            print("skip feed another instance running")
+            return 0
+        return _run_feed()
+
+
+def _pick_unique_batch(rows: list[dict]) -> list[dict]:
+    unique: list[dict] = []
+    seen_paths: set[str] = set()
+    seen_vids: set[str] = set()
+    for row in rows:
+        vid = str(row.get("video_id", ""))
+        path = Path(row.get("path", ""))
+        if not vid or vid in seen_vids:
+            continue
+        path_key = str(path.resolve()) if path.exists() else ""
+        if not path_key or path_key in seen_paths:
+            continue
+        if path.name != f"yt_{vid}.mp4":
+            continue
+        seen_vids.add(vid)
+        seen_paths.add(path_key)
+        unique.append(row)
+        if len(unique) >= BATCH_SIZE:
+            break
+    return unique
+
+
+def _run_feed() -> int:
     env = {**os.environ, **load_env(ENV_PATH)}
     token = env.get("TG_BOT_TOKEN", "")
     chat_id = os.environ.get("TG_CHAT_ID") or env.get("TG_CHAT_ID", "")
@@ -123,25 +154,7 @@ def main() -> int:
         rebuild_index_from_disk()
         picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
-    unique: list[dict] = []
-    seen_paths: set[str] = set()
-    seen_vids: set[str] = set()
-    for row in picked:
-        vid = str(row.get("video_id", ""))
-        path = Path(row.get("path", ""))
-        if not vid or vid in seen_vids:
-            continue
-        path_key = str(path.resolve()) if path.exists() else ""
-        if not path_key or path_key in seen_paths:
-            continue
-        if path.name != f"yt_{vid}.mp4":
-            continue
-        seen_vids.add(vid)
-        seen_paths.add(path_key)
-        unique.append(row)
-        if len(unique) >= BATCH_SIZE:
-            break
-    picked = unique
+    picked = claim_feed_candidates(_pick_unique_batch(picked))
     if not picked:
         s = stats()
         worker_ingest = subprocess.run(
@@ -175,7 +188,9 @@ def main() -> int:
                 check=False,
             )
             rebuild_index_from_disk()
-            picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+            picked = claim_feed_candidates(
+                _pick_unique_batch(pending_candidates(limit=max(BATCH_SIZE * 3, 12)))
+            )
             s = stats()
 
     if not picked:
@@ -235,10 +250,6 @@ def main() -> int:
         sent_ids.append(str(row.get("video_id", "")))
         time.sleep(1.2)
 
-    mark_feed_sent(
-        sent_ids + skipped_ids,
-        paths=[Path(row.get("path", "")) for row in picked if row.get("path")],
-    )
     print(f"sent={len(sent_ids)} skipped_non_mlbb={len(skipped_ids)}")
     return 0
 

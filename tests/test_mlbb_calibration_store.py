@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_calibration_store import (  # noqa: E402
     DISLIKE_REASONS,
+    claim_feed_candidates,
     dislike_reason_keyboard_markup,
     is_fresh_short,
     rebuild_index_from_disk,
@@ -107,3 +108,29 @@ def test_dislike_reason_keyboard_has_eight_buttons() -> None:
     for btn in buttons:
         assert len(btn["callback_data"]) <= 64
         assert btn["callback_data"].startswith("mlbb_bad:abcdefghijk:")
+
+
+def test_claim_feed_candidates_prevents_duplicate(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    mp4 = shorts / "yt_abcdefghijk.mp4"
+    mp4.write_bytes(b"x" * 20_000)
+    sent = tmp_path / "sent.json"
+    proc_lock = tmp_path / "proc.lock"
+    sent_lock = tmp_path / "sent.lock"
+
+    monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
+    monkeypatch.setenv("MLBB_FEED_LOCK", str(proc_lock))
+    monkeypatch.setenv("MLBB_FEED_SENT_LOCK", str(sent_lock))
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "FEED_SENT_PATH", sent)
+    monkeypatch.setattr(store, "FEED_PROC_LOCK_PATH", proc_lock)
+    monkeypatch.setattr(store, "FEED_SENT_LOCK_PATH", sent_lock)
+
+    row = {"video_id": "abcdefghijk", "path": str(mp4)}
+    first = claim_feed_candidates([row])
+    second = claim_feed_candidates([row])
+    assert len(first) == 1
+    assert len(second) == 0

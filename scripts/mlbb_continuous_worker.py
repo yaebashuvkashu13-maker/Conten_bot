@@ -42,6 +42,16 @@ def oneoff_running() -> bool:
     return ONEOFF_LOCK.exists()
 
 
+def calibration_feed_running() -> bool:
+    proc = subprocess.run(
+        ["pgrep", "-f", "mlbb_calibration_feed.py"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return bool(proc.stdout.strip())
+
+
 def vod_feed_pids() -> list[int]:
     proc = subprocess.run(
         ["pgrep", "-f", "mlbb_vod_segment_feed.py"],
@@ -445,6 +455,7 @@ def main() -> int:
             and feed.gap_ok(FEED_COOLDOWN_SEC)
             and (VOD_DISABLED or not vod.running())
             and not hero_busy
+            and not calibration_feed_running()
         ):
             feed.start()
 

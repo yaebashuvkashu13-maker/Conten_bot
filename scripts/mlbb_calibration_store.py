@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import subprocess
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -24,6 +26,10 @@ EXEMPLAR_ROOT = Path(
 INDEX_PATH = Path(os.environ.get("MLBB_SHORTS_INDEX", str(DATA_MLBB / "youtube_shorts_index.json")))
 LABELS_PATH = Path(os.environ.get("MLBB_CALIBRATION_LABELS", str(DATA_MLBB / "calibration_labels.json")))
 FEED_SENT_PATH = Path(os.environ.get("MLBB_FEED_SENT", str(DATA_MLBB / "calibration_feed_sent.json")))
+FEED_PROC_LOCK_PATH = Path(os.environ.get("MLBB_FEED_LOCK", "/tmp/mlbb_calibration_feed.lock"))
+FEED_SENT_LOCK_PATH = Path(
+    os.environ.get("MLBB_FEED_SENT_LOCK", "/tmp/mlbb_calibration_feed_sent.lock")
+)
 REPO_LABELS_PATH = REPO / "data" / "mlbb" / "calibration_labels.json"
 
 
@@ -109,12 +115,17 @@ def load_feed_sent() -> dict[str, set[str]]:
 
 
 def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
-    sent = load_feed_sent()
-    sent["ids"].update(str(x) for x in ids if x)
-    for path in paths or []:
-        if path.exists() or path.name.startswith("yt_"):
-            sent["file_ids"].add(id_from_path(path))
-            sent["ids"].add(id_from_path(path))
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        sent["ids"].update(str(x) for x in ids if x)
+        for path in paths or []:
+            if path.exists() or path.name.startswith("yt_"):
+                sent["file_ids"].add(id_from_path(path))
+                sent["ids"].add(id_from_path(path))
+        _write_feed_sent(sent)
+
+
+def _write_feed_sent(sent: dict[str, set[str]]) -> None:
     _write_json(
         FEED_SENT_PATH,
         {
@@ -123,6 +134,59 @@ def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
+
+
+@contextmanager
+def _feed_sent_lock():
+    FEED_SENT_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = FEED_SENT_LOCK_PATH.open("w")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+@contextmanager
+def feed_singleton_lock(*, blocking: bool = False):
+    """Only one calibration feed process at a time."""
+    FEED_PROC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = FEED_PROC_LOCK_PATH.open("w")
+    flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(handle.fileno(), flags)
+    except BlockingIOError:
+        handle.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def claim_feed_candidates(rows: list[dict]) -> list[dict]:
+    """Atomically reserve ids before Telegram send — prevents parallel duplicate feeds."""
+    claimed: list[dict] = []
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        for row in rows:
+            vid = str(row.get("video_id", "")).strip()
+            path = Path(str(row.get("path", "")))
+            if not vid or not path.name.startswith("yt_"):
+                continue
+            file_id = id_from_path(path)
+            if vid in sent["ids"] or file_id in sent["ids"] or file_id in sent["file_ids"]:
+                continue
+            sent["ids"].add(vid)
+            sent["ids"].add(file_id)
+            sent["file_ids"].add(file_id)
+            claimed.append({**row, "video_id": vid, "id": vid, "path": str(path)})
+        if claimed:
+            _write_feed_sent(sent)
+    return claimed
 
 
 def migrate_labels_from_paths() -> int:
