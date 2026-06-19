@@ -17,6 +17,86 @@ TELEGRAM_DOCUMENT_MAX_BYTES = int(
 TARGET_PART_BYTES = int(os.environ.get("MLBB_TELEGRAM_TARGET_PART_BYTES", str(48 * 1024 * 1024)))
 
 
+def _telegram_api_ok(stdout: str) -> tuple[bool, str]:
+    try:
+        payload = json.loads(stdout or "{}")
+    except json.JSONDecodeError:
+        return False, (stdout or "")[:240]
+    if payload.get("ok"):
+        return True, ""
+    return False, str(payload.get("description") or payload)[:240]
+
+
+def compress_for_inline_video(
+    path: Path,
+    *,
+    max_bytes: int = TELEGRAM_MAX_BYTES,
+) -> tuple[Path, bool]:
+    """Re-encode to fit Telegram sendVideo limit (inline player with buttons)."""
+    if not path.exists():
+        return path, False
+    if path.stat().st_size <= max_bytes:
+        return path, False
+    fd, tmp_name = tempfile.mkstemp(prefix="mlbb_tg_", suffix=".mp4")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    for crf in ("30", "32", "34", "36"):
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "libx264",
+            "-preset",
+            os.environ.get("MLBB_TG_PRESET", "fast"),
+            "-crf",
+            crf,
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+        subprocess.run(cmd, check=False, timeout=600)
+        if tmp.exists() and tmp.stat().st_size <= max_bytes:
+            return tmp, True
+    if tmp.exists() and tmp.stat().st_size > 0 and tmp.stat().st_size < path.stat().st_size:
+        return tmp, True
+    tmp.unlink(missing_ok=True)
+    return path, False
+
+
+def send_calibration_video(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    reply_markup: dict | None = None,
+) -> bool:
+    """Prefer inline sendVideo (with buttons); compress if >20MB."""
+    deliver, is_temp = compress_for_inline_video(path)
+    try:
+        if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+            ok = send_video_file(token, chat_id, deliver, caption, reply_markup=reply_markup)
+            if ok:
+                return True
+        ok = send_hq_files(token, chat_id, path, caption, reply_markup=reply_markup)
+        if not ok:
+            print(f"send_calibration_video failed path={path.name} size={path.stat().st_size}")
+        return ok
+    finally:
+        if is_temp:
+            deliver.unlink(missing_ok=True)
+
+
 def probe_duration(path: Path) -> float:
     proc = subprocess.run(
         [
@@ -171,10 +251,10 @@ def send_document_file(
         cmd.insert(-1, f"reply_markup={json.dumps(reply_markup, ensure_ascii=False)}")
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
-    try:
-        return bool(json.loads(result.stdout).get("ok"))
-    except json.JSONDecodeError:
-        return False
+    ok, err = _telegram_api_ok(result.stdout)
+    if not ok:
+        print(f"sendDocument failed: {err}")
+    return ok
 
 
 def send_hq_files(
@@ -240,13 +320,10 @@ def send_video_file(
         cmd.insert(-1, f"reply_markup={json.dumps(reply_markup, ensure_ascii=False)}")
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
-    try:
-        return bool(json.loads(result.stdout).get("ok"))
-    except json.JSONDecodeError:
-        return False
-
-
-def main() -> int:
+    ok, err = _telegram_api_ok(result.stdout)
+    if not ok:
+        print(f"sendVideo failed: {err}")
+    return ok
     import argparse
 
     from mlbb_calibration_store import find_candidate, inline_keyboard_markup

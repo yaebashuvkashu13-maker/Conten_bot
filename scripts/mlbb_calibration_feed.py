@@ -29,9 +29,7 @@ from youtube_download import load_env
 ENV_PATH = Path("/root/.video_bot.env")
 BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
 from mlbb_telegram_video import (
-    TELEGRAM_MAX_BYTES,
-    send_hq_files,
-    send_video_file,
+    send_calibration_video,
 )
 QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "7200"))  # 2h
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
@@ -52,16 +50,11 @@ def send_video(
         print(f"send blocked video_id={video_id} reason={reason}")
         return False
     markup = inline_keyboard_markup(video_id) if video_id else None
-    if path.stat().st_size <= TELEGRAM_MAX_BYTES:
-        ok = send_video_file(token, chat_id, path, caption, reply_markup=markup)
-        if ok:
-            record_send(1)
-        return ok
-
-    # >20MB: send original as file(s), not compressed video
-    ok = send_hq_files(token, chat_id, path, caption, reply_markup=markup)
+    ok = send_calibration_video(token, chat_id, path, caption, reply_markup=markup)
     if ok:
         record_send(1)
+    else:
+        print(f"send blocked video_id={video_id} reason=telegram_api")
     return ok
 
 

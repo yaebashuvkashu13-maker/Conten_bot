@@ -527,6 +527,32 @@ def main() -> int:
             downloads += 1
             time.sleep(max(2.0, args.download_delay))
         if not mp4.exists() or mp4.name != f"yt_{vid}.mp4":
+            rejected += 1
+            continue
+
+        hungry_mode = env.get("MLBB_INGEST_HUNGRY", "0") == "1"
+        dur = _ffprobe_duration(mp4)
+        if hungry_mode and lenient and dur >= 3.0:
+            ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
+            hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
+            if hard_reject:
+                rejected += 1
+                continue
+            feats = light_clip_features(mp4)
+            feats["score"] = max(float(feats.get("score") or 0), float(gscore))
+            upsert_candidate(
+                {
+                    **row,
+                    **feats,
+                    "path": str(mp4),
+                    "gameplay_pass": int(ok),
+                    "gameplay_score": round(float(gscore), 4),
+                    "gameplay_reason": reason,
+                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            saved += 1
+            print(f"OK {vid} score={feats['score']:.3f} hungry=1 views={row.get('view_count')} {row.get('title','')[:50]}")
             continue
 
         ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
