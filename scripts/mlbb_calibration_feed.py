@@ -118,6 +118,10 @@ def main() -> int:
     repair_index()
     rebuild_index_from_disk()
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+    if not picked:
+        # Metadata-only repair — unblocks rows missing ingested_at/upload_date.
+        rebuild_index_from_disk()
+        picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     # Guarantee unique files — never send the same mp4 twice in one batch.
     unique: list[dict] = []
     seen_paths: set[str] = set()
@@ -140,7 +144,17 @@ def main() -> int:
     picked = unique
     if not picked:
         s = stats()
-        if s["pending"] == 0 and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1":
+        worker_ingest = subprocess.run(
+            ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if (
+            s["pending"] == 0
+            and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1"
+            and not worker_ingest
+        ):
             ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
             if not ingest.exists():
                 ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
@@ -150,14 +164,14 @@ def main() -> int:
                     str(ingest),
                     "--incremental",
                     "--max-downloads",
-                    "12",
+                    os.environ.get("MLBB_FEED_INGEST_MAX_DOWNLOADS", "4"),
                     "--max-per-query",
-                    "24",
+                    "12",
                     "--days",
-                    os.environ.get("MLBB_SHORTS_DAYS", "60"),
+                    os.environ.get("MLBB_SHORTS_DAYS", "365"),
                 ],
                 env={**env, "MLBB_INGEST_SKIP_IF_PENDING": "0"},
-                timeout=600,
+                timeout=int(os.environ.get("MLBB_FEED_INGEST_TIMEOUT_SEC", "300")),
                 check=False,
             )
             rebuild_index_from_disk()

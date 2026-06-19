@@ -309,6 +309,19 @@ def _expected_path(video_id: str) -> Path:
     return SHORTS_ROOT / f"yt_{video_id}.mp4"
 
 
+def _backfill_short_metadata(row: dict, mp4: Path) -> dict:
+    """Ensure queue freshness fields exist for disk/index rows."""
+    out = {**row, "path": str(mp4)}
+    if not _upload_date(out) and not str(out.get("ingested_at") or "").strip():
+        try:
+            out["ingested_at"] = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(mp4.stat().st_mtime)
+            )
+        except OSError:
+            out["ingested_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return out
+
+
 def rebuild_index_from_disk(*, rescore: bool = False) -> int:
     """Re-register Shorts already on disk so owner can keep labeling after repair/prune."""
     added = 0
@@ -323,20 +336,26 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
             continue
         row = find_candidate(vid) or {}
         if row.get("video_id") == vid and not rescore:
-            upsert_candidate({**row, "path": str(mp4), "video_id": vid, "id": vid})
+            upsert_candidate(
+                _backfill_short_metadata(
+                    {**row, "video_id": vid, "id": vid},
+                    mp4,
+                )
+            )
             added += 1
             continue
         upsert_candidate(
-            {
-                "video_id": vid,
-                "id": vid,
-                "path": str(mp4),
-                "title": row.get("title", vid),
-                "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
-                "score": float(row.get("score") or 0.12),
-                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "disk_rebuild",
-            }
+            _backfill_short_metadata(
+                {
+                    "video_id": vid,
+                    "id": vid,
+                    "title": row.get("title", vid),
+                    "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
+                    "score": float(row.get("score") or 0.12),
+                    "source": "disk_rebuild",
+                },
+                mp4,
+            )
         )
         added += 1
     return added

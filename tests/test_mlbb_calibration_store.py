@@ -44,6 +44,46 @@ def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
     data = json.loads(index.read_text())
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["video_id"] == "abcdefghijk"
+    assert data["candidates"][0].get("ingested_at")
+
+
+def test_rebuild_backfills_ingested_at_for_existing_row(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    mp4 = shorts / "yt_abcdefghijk.mp4"
+    mp4.write_bytes(b"x" * 20_000)
+    index = tmp_path / "index.json"
+    labels = tmp_path / "labels.json"
+    index.write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "video_id": "abcdefghijk",
+                        "id": "abcdefghijk",
+                        "path": str(mp4),
+                        "title": "abcdefghijk",
+                        "score": 0.0,
+                    }
+                ]
+            }
+        )
+    )
+    labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+
+    monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
+    monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
+    monkeypatch.setattr(store, "INDEX_PATH", index)
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+
+    rebuild_index_from_disk()
+    row = json.loads(index.read_text())["candidates"][0]
+    assert row.get("ingested_at")
 
 
 def test_is_fresh_short_rejects_old_and_unknown(monkeypatch) -> None:
