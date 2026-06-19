@@ -1,6 +1,6 @@
 {
   "heroes": [
-    {"id": "hayabusa", "tags": ["hayabusa", "hayabi"]},
+    {"id": "hayabusa", "tags": ["hayabusa", "hayabi", "haya"]},
     {"id": "gusion", "tags": ["gusion"]},
     {"id": "fanny", "tags": ["fanny", "fannylight"]},
     {"id": "ling", "tags": ["ling", "lingmlbb"]},
@@ -19,6 +19,9 @@
     {"id": "layla", "tags": ["layla"]},
     {"id": "miya", "tags": ["miya"]},
     {"id": "aldous", "tags": ["aldous"]},
-    {"id": "benedetta", "tags": ["benedetta"]}
+    {"id": "benedetta", "tags": ["benedetta"]},
+    {"id": "dyrroth", "tags": ["dyrroth"]},
+    {"id": "harith", "tags": ["harith"]},
+    {"id": "wu_zetian", "tags": ["wu zetian", "zetian", "wu zetian"]}
   ]
 }

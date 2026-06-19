@@ -302,6 +302,13 @@ def write_state(state: dict) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def hero_shorts_montage_cmd(env: dict[str, str]) -> list[str]:
+    script = BIN / "mlbb_hero_shorts_montage.py"
+    if not script.exists():
+        script = Path(__file__).resolve().parent / "mlbb_hero_shorts_montage.py"
+    return [PY, str(script)]
+
+
 def montage_cmd(env: dict[str, str]) -> list[str]:
     script = BIN / "mlbb_vod_montage_feed.py"
     if not script.exists():
@@ -325,14 +332,18 @@ def main() -> int:
     vod = Proc("vod", vod_cmd(base), vod_env(base))
     feed = Proc("feed", feed_cmd(base), base)
     montage = Proc("montage", montage_cmd(base), base)
+    hero_montage = Proc("hero_montage", hero_shorts_montage_cmd(base), base)
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "14400"))
+    HERO_MONTAGE_ENABLED = base.get("MLBB_HERO_SHORTS_MONTAGE", "0") == "1"
+    HERO_MONTAGE_COOLDOWN_SEC = float(base.get("MLBB_HERO_MONTAGE_COOLDOWN_SEC", "3600"))
     cores = _cpu_cores()
 
     log(
         f"mlbb_continuous_worker start cores={cores} vod_disabled={VOD_DISABLED} "
         f"one_heavy={ONE_HEAVY_JOB} calibration_feed={CALIBRATION_FEED} "
         f"target_pending={TARGET_PENDING} feed_cd={FEED_COOLDOWN_SEC}s "
-        f"ingest_cd={INGEST_COOLDOWN_SEC}s shorts_days={SHORTS_DAYS} loop={LOOP_SEC}s"
+        f"ingest_cd={INGEST_COOLDOWN_SEC}s shorts_days={SHORTS_DAYS} "
+        f"hero_montage={HERO_MONTAGE_ENABLED} loop={LOOP_SEC}s"
     )
     cycles = 0
     pending = pending_shorts()
@@ -367,6 +378,7 @@ def main() -> int:
         montage_busy = montage.running()
         ingest_block = ONE_HEAVY_JOB and not VOD_DISABLED and (vod_busy or montage_busy)
         heavy_busy = ingest_block or (ONE_HEAVY_JOB and ingest.running() and not VOD_DISABLED)
+        hero_busy = hero_montage.running()
 
         if not VOD_DISABLED:
             if vod.running() and vod.age_sec() > VOD_STALE_SEC:
@@ -389,15 +401,25 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
-        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC) and not ingest_block:
+        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC) and not ingest_block and not hero_busy:
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
 
         if (
+            HERO_MONTAGE_ENABLED
+            and not hero_busy
+            and not ingest.running()
+            and not feed.running()
+            and hero_montage.cooldown_ok(HERO_MONTAGE_COOLDOWN_SEC)
+        ):
+            hero_montage.start()
+
+        if (
             CALIBRATION_FEED
             and feed.cooldown_ok(FEED_COOLDOWN_SEC)
             and (VOD_DISABLED or not vod.running())
+            and not hero_busy
         ):
             feed.start()
 
@@ -408,7 +430,7 @@ def main() -> int:
                 except OSError:
                     pass
 
-        for job in (ingest, vod, feed, montage):
+        for job in (ingest, vod, feed, montage, hero_montage):
             job.reap()
 
         if cycles % 90 == 0 and not heavy_busy:
@@ -446,6 +468,7 @@ def main() -> int:
                     "vod_age_sec": int(vod.age_sec()),
                     "feed_running": feed.running(),
                     "montage_running": montage.running(),
+                    "hero_montage_running": hero_montage.running(),
                     "cycles": cycles,
                 }
             )
