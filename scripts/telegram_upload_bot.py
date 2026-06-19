@@ -574,6 +574,30 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_hq:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            ok = _mlbb_send_hq_file(chat_id, item_id)
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+            if not ok:
+                send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
+        except Exception as exc:
+            logging.exception('mlbb_hq callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
     if data.startswith('mlbb_bad:'):
         try:
             _, item_id, reason = data.split(':', 2)
@@ -748,7 +772,7 @@ def handle_callback_query(query: dict) -> None:
             ok, reply = _mlbb_apply_owner_label(chat_id, item_id, is_good=is_good, reason=reason)
             from mlbb_calibration_store import labeled_keyboard_markup as shorts_markup
 
-            markup = shorts_markup('good' if is_good else 'bad')
+            markup = shorts_markup('good' if is_good else 'bad', reason=reason, video_id=item_id)
         alert = '✅ Ок' if is_good else '❌ Не ок'
         if not ok:
             api_call(

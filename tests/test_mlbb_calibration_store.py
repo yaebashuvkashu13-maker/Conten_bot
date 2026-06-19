@@ -100,6 +100,14 @@ def test_is_fresh_short_rejects_old_and_unknown(monkeypatch) -> None:
     assert is_fresh_short({"ingested_at": time.strftime("%Y-%m-%d %H:%M:%S")})
 
 
+def test_labeled_keyboard_good_has_hq_button() -> None:
+    from mlbb_calibration_store import labeled_keyboard_markup
+
+    markup = labeled_keyboard_markup("good", video_id="abcdefghijk")
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert any(b["callback_data"] == "mlbb_hq:abcdefghijk" for b in flat)
+
+
 def test_dislike_reason_keyboard_has_eight_buttons() -> None:
     markup = dislike_reason_keyboard_markup("abcdefghijk")
     buttons = [b for row in markup["inline_keyboard"] for b in row]

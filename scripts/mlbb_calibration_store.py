@@ -615,9 +615,14 @@ def inline_keyboard_markup(video_id: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str, *, reason: str = "") -> dict:
+def labeled_keyboard_markup(label: str, *, reason: str = "", video_id: str = "") -> dict:
     if label == "good":
-        mark = "✅ Хорошо"
-    else:
-        mark = f"❌ {dislike_reason_label(reason)}"
+        vid = str(video_id).strip()
+        if vid.startswith("yt_"):
+            vid = vid[3:]
+        rows: list[list[dict]] = [[{"text": "✅ Хорошо", "callback_data": "mlbb_noop"}]]
+        if vid:
+            rows.append([{"text": "📁 HQ файл", "callback_data": f"mlbb_hq:{vid}"}])
+        return {"inline_keyboard": rows}
+    mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
