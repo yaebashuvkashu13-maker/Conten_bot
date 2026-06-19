@@ -172,20 +172,14 @@ def labeled_ids() -> dict[str, str]:
 
 
 def ingest_sent_blocklist() -> set[str]:
-    """IDs ingest should skip. Unlabeled sent Shorts may be re-queued when enabled."""
-    sent = load_feed_sent()["ids"]
-    if os.environ.get("MLBB_SHORTS_RESEND_IF_UNLABELED", "1") != "1":
-        return sent
-    labeled = set(labeled_ids().keys())
-    return {vid for vid in sent if vid in labeled}
+    """IDs ingest should skip (already sent to owner)."""
+    return load_feed_sent()["ids"]
 
 
 def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str]]) -> bool:
     file_id = id_from_path(path)
     if vid in labeled or file_id in labeled:
         return True
-    if os.environ.get("MLBB_SHORTS_RESEND_IF_UNLABELED", "1") == "1":
-        return False
     if vid in sent["ids"] or file_id in sent["ids"]:
         return True
     if file_id in sent["file_ids"]:
@@ -494,7 +488,10 @@ def inline_keyboard_markup(video_id: str) -> dict:
             [
                 {"text": "👍", "callback_data": f"mlbb_yes:{vid}"},
                 {"text": "👎", "callback_data": f"mlbb_no:{vid}"},
-            ]
+            ],
+            [
+                {"text": "📥 HQ файлом", "callback_data": f"mlbb_hq:{vid}"},
+            ],
         ]
     }
 

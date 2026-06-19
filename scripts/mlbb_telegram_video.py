@@ -11,7 +11,10 @@ import tempfile
 from pathlib import Path
 
 TELEGRAM_MAX_BYTES = int(os.environ.get("MLBB_TELEGRAM_MAX_BYTES", str(20 * 1024 * 1024)))
-TARGET_PART_BYTES = int(os.environ.get("MLBB_TELEGRAM_TARGET_PART_BYTES", str(18 * 1024 * 1024)))
+TELEGRAM_DOCUMENT_MAX_BYTES = int(
+    os.environ.get("MLBB_TELEGRAM_DOCUMENT_MAX_BYTES", str(50 * 1024 * 1024))
+)
+TARGET_PART_BYTES = int(os.environ.get("MLBB_TELEGRAM_TARGET_PART_BYTES", str(48 * 1024 * 1024)))
 
 
 def probe_duration(path: Path) -> float:
@@ -136,6 +139,76 @@ def split_for_telegram(
     return out_paths
 
 
+def send_document_file(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    filename: str | None = None,
+    reply_markup: dict | None = None,
+) -> bool:
+    """Send as file (no Telegram video recompression). Bot API limit ~50MB."""
+    if path.stat().st_size > TELEGRAM_DOCUMENT_MAX_BYTES:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    fname = filename or path.name
+    cmd = [
+        "curl",
+        "-sS",
+        "-m",
+        "600",
+        "-F",
+        f"chat_id={chat_id}",
+        "-F",
+        f"caption={caption[:900]}",
+        "-F",
+        f"document=@{path};filename={fname}",
+        url,
+    ]
+    if reply_markup:
+        cmd.insert(-1, "-F")
+        cmd.insert(-1, f"reply_markup={json.dumps(reply_markup, ensure_ascii=False)}")
+    clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
+    result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
+    try:
+        return bool(json.loads(result.stdout).get("ok"))
+    except json.JSONDecodeError:
+        return False
+
+
+def send_hq_files(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    reply_markup: dict | None = None,
+) -> bool:
+    """HQ delivery: always sendDocument; split only if file >50MB."""
+    if not path.exists():
+        return False
+    if path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+        return send_document_file(token, chat_id, path, caption, reply_markup=reply_markup)
+
+    parts = split_for_telegram(path, parts=2, max_bytes=TELEGRAM_DOCUMENT_MAX_BYTES)
+    if not parts:
+        return False
+    sent_any = False
+    for pi, part in enumerate(parts, start=1):
+        part_cap = f"{caption}\nчасть {pi}/{len(parts)} (файл)"
+        ok = send_document_file(
+            token,
+            chat_id,
+            part,
+            part_cap,
+            filename=f"{path.stem}_part{pi}{path.suffix}",
+            reply_markup=reply_markup if pi == len(parts) else None,
+        )
+        sent_any = sent_any or ok
+    return sent_any
+
+
 def send_video_file(
     token: str,
     chat_id: str,
@@ -212,25 +285,9 @@ def main() -> int:
     )
     markup = inline_keyboard_markup(vid)
 
-    if path.stat().st_size <= TELEGRAM_MAX_BYTES:
-        ok = send_video_file(token, chat_id, path, base_caption, reply_markup=markup)
-        print("sent=1" if ok else "sent=0")
-        return 0 if ok else 1
-
-    parts = split_for_telegram(path, parts=args.parts)
-    if not parts:
-        print("split failed", file=sys.stderr)
-        return 1
-
-    sent = 0
-    for idx, part in enumerate(parts, start=1):
-        cap = f"{base_caption}\nчасть {idx}/{len(parts)} ({part.stat().st_size // (1024 * 1024)}MB)"
-        ok = send_video_file(token, chat_id, part, cap, reply_markup=markup if idx == len(parts) else None)
-        print(f"part{idx} size={part.stat().st_size} ok={ok}")
-        if ok:
-            sent += 1
-    print(f"sent={sent}/{len(parts)}")
-    return 0 if sent == len(parts) else 1
+    ok = send_hq_files(token, chat_id, path, base_caption, reply_markup=markup)
+    print("sent_hq=1" if ok else "sent_hq=0")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

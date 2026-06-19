@@ -555,6 +555,74 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_hq:'):
+        video_id = data.split(':', 1)[1].strip()
+        try:
+            from mlbb_calibration_store import find_candidate, inline_keyboard_markup
+            from mlbb_telegram_video import send_hq_files
+
+            row = find_candidate(video_id)
+            if not row:
+                api_call(
+                    'answerCallbackQuery',
+                    {
+                        'callback_query_id': query_id,
+                        'text': f'Видео {video_id} не найдено',
+                        'show_alert': True,
+                    },
+                    timeout=15,
+                )
+                return
+            path = Path(str(row.get('path', '')))
+            if not path.exists():
+                api_call(
+                    'answerCallbackQuery',
+                    {
+                        'callback_query_id': query_id,
+                        'text': 'Файл на сервере не найден',
+                        'show_alert': True,
+                    },
+                    timeout=15,
+                )
+                return
+            caption = (
+                f"MLBB HQ файл #{video_id}\n"
+                f"{row.get('title', '')[:120]}\n"
+                f"{row.get('url', '')}\n"
+                f"#id {video_id}"
+            )
+            ok = send_hq_files(
+                BOT_TOKEN,
+                str(chat_id),
+                path,
+                caption,
+                reply_markup=inline_keyboard_markup(video_id),
+            )
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'Файл отправлен' if ok else 'Не удалось отправить файл',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_hq callback failed video_id=%s', video_id)
+            try:
+                api_call(
+                    'answerCallbackQuery',
+                    {
+                        'callback_query_id': query_id,
+                        'text': f'Ошибка: {exc}'[:180],
+                        'show_alert': True,
+                    },
+                    timeout=15,
+                )
+            except Exception:
+                pass
+        return
+
     mode = ''
     is_good: bool | None = None
     item_id = ''
