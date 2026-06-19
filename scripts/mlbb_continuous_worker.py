@@ -225,8 +225,35 @@ class Proc:
 def pending_shorts() -> int:
     from mlbb_calibration_store import pending_candidates, rebuild_index_from_disk
 
-    rebuild_index_from_disk()
     return len(pending_candidates(limit=9999))
+
+
+_PENDING_CACHE: tuple[float, int] | None = None
+_REBUILD_CACHE: float = 0.0
+
+
+def _invalidate_pending_cache() -> None:
+    global _PENDING_CACHE
+    _PENDING_CACHE = None
+
+
+def _cached_pending_shorts(*, now: float | None = None) -> int:
+    """Throttle expensive index scans — worker polls every few seconds."""
+    global _PENDING_CACHE, _REBUILD_CACHE
+    ts = now if now is not None else time.time()
+    rebuild_every = float(os.environ.get("MLBB_REBUILD_INDEX_SEC", "90"))
+    pending_every = float(os.environ.get("MLBB_PENDING_CACHE_SEC", "20"))
+    if ts - _REBUILD_CACHE >= rebuild_every:
+        from mlbb_calibration_store import rebuild_index_from_disk
+
+        rebuild_index_from_disk()
+        _REBUILD_CACHE = ts
+        _PENDING_CACHE = None
+    if _PENDING_CACHE and ts - _PENDING_CACHE[0] < pending_every:
+        return _PENDING_CACHE[1]
+    count = pending_shorts()
+    _PENDING_CACHE = (ts, count)
+    return count
 
 
 def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
@@ -382,7 +409,7 @@ def main() -> int:
         f"hero_daily_max={HERO_MONTAGE_DAILY_MAX} loop={LOOP_SEC}s"
     )
     cycles = 0
-    pending = pending_shorts()
+    pending = _cached_pending_shorts()
 
     bootstrap_script = BIN / "mlbb_silver_bootstrap.py"
     if not bootstrap_script.exists():
@@ -410,7 +437,7 @@ def main() -> int:
         for job in (ingest, vod, feed, montage, hero_montage):
             job.reap()
 
-        pending = pending_shorts()
+        pending = _cached_pending_shorts()
         aggressive = pending < TARGET_PENDING
 
         vod_busy = vod.running() or bool(vod_feed_pids()) or oneoff_running()
@@ -457,9 +484,10 @@ def main() -> int:
             HERO_MONTAGE_ENABLED
             and not hero_busy
             and not feed.running()
+            and not ingest.running()
             and hero_montage.gap_ok(JOB_MIN_GAP_SEC)
             and hero_montages_today() < HERO_MONTAGE_DAILY_MAX
-            and (not ONE_HEAVY_JOB or not ingest.running())
+            and (not ONE_HEAVY_JOB or not vod_busy)
         ):
             hero_montage.start()
 
@@ -486,6 +514,7 @@ def main() -> int:
         for job in (ingest, vod, feed, montage, hero_montage):
             rc = job.reap()
             if rc is not None and job.name in ("ingest", "hero_montage", "montage"):
+                _invalidate_pending_cache()
                 cleanup_script = BIN / "mlbb_runtime_cleanup.py"
                 if not cleanup_script.exists():
                     cleanup_script = Path(__file__).resolve().parent / "mlbb_runtime_cleanup.py"

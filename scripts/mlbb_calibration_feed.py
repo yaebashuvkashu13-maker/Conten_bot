@@ -19,6 +19,7 @@ from mlbb_calibration_store import (
     inline_keyboard_markup,
     pending_candidates,
     rebuild_index_from_disk,
+    release_feed_claims,
     repair_index,
     stats,
 )
@@ -226,9 +227,11 @@ def _run_feed() -> int:
 
     sent_ids: list[str] = []
     skipped_ids: list[str] = []
+    failed_ids: list[str] = []
     for idx, row in enumerate(picked, start=1):
         path = Path(row.get("path", ""))
         if not path.exists():
+            failed_ids.append(str(row.get("video_id", "")))
             continue
         vid = str(row.get("video_id", ""))
         ok_mlbb, _score, gate_reason = is_mlbb_calibration_short(
@@ -247,10 +250,15 @@ def _run_feed() -> int:
                 f"#{idx} (не удалось отправить файл >20MB)\n{caption}",
                 video_id=vid,
             )
-        sent_ids.append(str(row.get("video_id", "")))
+            failed_ids.append(vid)
+            continue
+        sent_ids.append(vid)
         time.sleep(1.2)
 
-    print(f"sent={len(sent_ids)} skipped_non_mlbb={len(skipped_ids)}")
+    if skipped_ids or failed_ids:
+        release_feed_claims(skipped_ids + failed_ids)
+
+    print(f"sent={len(sent_ids)} skipped_non_mlbb={len(skipped_ids)} failed={len(failed_ids)}")
     return 0
 
 

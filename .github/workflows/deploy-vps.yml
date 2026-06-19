@@ -29,7 +29,11 @@ jobs:
             git checkout cursor/mlbb-video-pipeline-e712 || git checkout main
             git pull --ff-only
             bash scripts/install_mlbb_only_mode.sh
+            bash scripts/mlbb_deploy_sync.sh
             systemctl restart telegram-upload-bot 2>/dev/null || true
+            pkill -f mlbb_continuous_worker.py 2>/dev/null || true
+            sleep 2
+            nohup python3 /usr/local/bin/mlbb_continuous_worker.py >>/root/data/mlbb/mlbb_continuous_worker.log 2>&1 &
             echo "=== MLBB-only deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
             pgrep -af telegram_upload_bot.py || true

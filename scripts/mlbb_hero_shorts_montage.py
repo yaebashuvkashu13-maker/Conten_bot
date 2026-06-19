@@ -125,7 +125,12 @@ def collect_shorts_for_hero(hero_id: str, *, limit: int) -> list[dict]:
 
 
 def _short_playable_for_montage(path: Path, row: dict) -> bool:
-    """Shorts montage: strict window first, then MLBB calibration gate fallback."""
+    """Shorts montage: trust ingest metadata, then strict window, then MLBB gate."""
+    if int(row.get("gameplay_pass") or 0) == 1:
+        return True
+    gscore = float(row.get("gameplay_score") or 0)
+    if gscore >= 0.35 and str(row.get("ingested_at") or "").strip():
+        return True
     ok, _ = source_has_valid_gameplay_window(path, windows=3, window_sec=5.0)
     if ok:
         return True

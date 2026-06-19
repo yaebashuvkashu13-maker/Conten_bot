@@ -12,7 +12,11 @@ install -m 755 \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/mlbb_calibration_feed.py" \
+  "$REPO/scripts/mlbb_calibration_store.py" \
   "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
+  "$REPO/scripts/mlbb_hero_shorts_montage.py" \
+  "$REPO/scripts/mlbb_runtime_cleanup.py" \
+  "$REPO/scripts/mlbb_telegram_video.py" \
   "$REPO/scripts/mlbb_vod_montage_feed.py" \
   "$REPO/scripts/mlbb_viral_threshold_sync.py" \
   "$REPO/scripts/mlbb_daily_report.py" \

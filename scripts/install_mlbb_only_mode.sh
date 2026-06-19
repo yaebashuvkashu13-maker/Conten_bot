@@ -52,11 +52,12 @@ touch "$ENV_FILE"
 for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_DISABLED=1 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
   MLBB_MAX_DAILY_SENDS=200 MLBB_CALIBRATION_BATCH=3 MLBB_FEED_COOLDOWN_SEC=720 \
-  MLBB_CALIBRATION_FEED_ENABLED=1 MLBB_ONE_HEAVY_JOB=0 \
+  MLBB_CALIBRATION_FEED_ENABLED=1 MLBB_ONE_HEAVY_JOB=1 \
   MLBB_TARGET_PENDING=30 MLBB_INGEST_COOLDOWN_SEC=120 MLBB_SHORTS_DAYS=365 \
   MLBB_SHORTS_MIN_YEAR=2025 MLBB_SHORTS_YEAR_ONLY=1 \
   MLBB_CALIBRATION_LENIENT=1 MLBB_CALIBRATION_FAST_INGEST=0 MLBB_SILVER_BOOTSTRAP=0 \
   MLBB_INGEST_MAX_DOWNLOADS=12 MLBB_INGEST_SKIP_IF_PENDING=30 \
+  MLBB_REBUILD_INDEX_SEC=90 MLBB_PENDING_CACHE_SEC=20 MLBB_PENDING_TRUST_INDEX=1 \
   MLBB_AUTO_TRAIN=1 \
   YOUTUBE_SHORTS_FORMAT_HQ='bv*[height<=1080][height>=480]+ba/bv*[height<=1080]+ba/b[height<=1080]/best' \
   HIGHLIGHT_OWNER_BAD_PAD_SEC=90 VIRAL_MLBB_HOOK_MIN=0.06 VIRAL_MLBB_CLIP_HOOK_MIN=0.12 \
@@ -127,6 +128,9 @@ install -m 755 \
   "$REPO/scripts/mlbb_viral_threshold_sync.py" \
   "$REPO/scripts/mlbb_hq_shorts_mission.py" \
   "$REPO/scripts/mlbb_hq_shorts_mission.sh" \
+  "$REPO/scripts/mlbb_hero_shorts_montage.py" \
+  "$REPO/scripts/mlbb_runtime_cleanup.py" \
+  "$REPO/scripts/mlbb_telegram_video.py" \
   "$REPO/scripts/mlbb_mission_rollback.sh" \
   "$REPO/scripts/telegram_upload_bot.py" \
   "$REPO/scripts/overnight_youtube_batch.py" \
