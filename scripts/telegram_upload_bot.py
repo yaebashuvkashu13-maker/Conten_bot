@@ -1532,14 +1532,14 @@ def enqueue_youtube_downloads(chat_id: str, items: list[dict[str, str]]) -> int:
 
 def try_youtube_ingest(chat_id: str, message: dict) -> bool:
     """Handle YouTube URLs in text/caption/entities. Returns True if handled."""
+    yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
+    if not yt_urls:
+        return False
     import sys
 
     sys.path.insert(0, '/usr/local/bin')
     from youtube_download import is_youtube_live_url, is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
 
-    yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
-    if not yt_urls:
-        return False
     items: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw in yt_urls:
