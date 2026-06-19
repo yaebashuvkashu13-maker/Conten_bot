@@ -41,9 +41,9 @@ PY
 python3 /usr/local/bin/highlight_train.py --profile mobile_legends
 python3 /usr/local/bin/eval_learning_first_gate.py || true
 
-if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
+if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]] && [[ "${MLBB_VOD_DISABLED:-1}" != "1" ]]; then
   /usr/local/bin/mlbb_vod_segment_feed.sh
-elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]]; then
+elif [[ -f "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" ]] && [[ "${MLBB_VOD_DISABLED:-1}" != "1" ]]; then
   flock -n /tmp/mlbb_vod_segment_feed.lock \
     python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_segment_feed.py" \
     >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true

@@ -255,11 +255,21 @@ def save_state(hero_id: str, video_ids: list[str], *, rc: int) -> None:
 
 def main() -> int:
     import argparse
+    import fcntl
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--hero", default=os.environ.get("MLBB_HERO_MONTAGE_HERO", ""))
     parser.add_argument("--ingest", type=int, default=INGEST_IF_BELOW)
     args = parser.parse_args()
+
+    lock_path = Path("/tmp/mlbb_hero_shorts_montage.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("another hero montage running", file=sys.stderr)
+        return 0
 
     chat_id = os.environ.get("TG_CHAT_ID", "")
     if not chat_id:
@@ -293,6 +303,9 @@ def main() -> int:
     print(f"montage hero={hero_id} sources={len(sources)}")
     rc = run_montage(hero_id, sources, chat_id, theme)
     save_state(hero_id, [str(r.get("video_id", "")) for r in playable[:MAX_SOURCES]], rc=rc)
+    cleanup = Path(__file__).resolve().parent / "mlbb_runtime_cleanup.py"
+    if cleanup.exists():
+        subprocess.run([sys.executable, str(cleanup)], check=False, timeout=30)
     print(f"done rc={rc}")
     return rc
 

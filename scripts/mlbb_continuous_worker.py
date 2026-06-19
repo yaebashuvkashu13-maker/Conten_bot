@@ -144,6 +144,7 @@ class Proc:
         self.env = env
         self.proc: subprocess.Popen | None = None
         self.last_start = 0.0
+        self.last_finish = 0.0
 
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -167,6 +168,7 @@ class Proc:
             pass
         log(f"STOP {self.name} reason={reason}")
         self.proc = None
+        self.last_finish = time.time()
 
     def start(self) -> bool:
         if self.running():
@@ -192,12 +194,19 @@ class Proc:
             return None
         log(f"DONE {self.name} rc={rc}")
         self.proc = None
+        self.last_finish = time.time()
         return rc
 
-    def cooldown_ok(self, sec: float) -> bool:
+    def gap_ok(self, min_gap: float) -> bool:
+        """Ready for next job after min_gap seconds since last finish (not fixed schedule)."""
         if self.running():
             return False
-        return (time.time() - self.last_start) >= sec
+        if self.last_finish <= 0:
+            return True
+        return (time.time() - self.last_finish) >= min_gap
+
+    def cooldown_ok(self, sec: float) -> bool:
+        return self.gap_ok(sec)
 
 
 def pending_shorts() -> int:
@@ -282,7 +291,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
     env.update(
         {
             "MLBB_CALIBRATION_LENIENT": "1",
-            "MLBB_CALIBRATION_FAST_INGEST": env.get("MLBB_CALIBRATION_FAST_INGEST", "1"),
+            "MLBB_CALIBRATION_FAST_INGEST": env.get("MLBB_CALIBRATION_FAST_INGEST", "0"),
             "MLBB_SHORTS_DAYS": env.get("MLBB_SHORTS_DAYS", "365"),
             "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
             "MLBB_SHORTS_YEAR_ONLY": env.get("MLBB_SHORTS_YEAR_ONLY", "1"),
@@ -300,6 +309,18 @@ def write_state(state: dict) -> None:
     state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def hero_montages_today() -> int:
+    path = Path(os.environ.get("MLBB_HERO_SHORTS_MONTAGE_STATE", "/root/data/mlbb/hero_shorts_montage.json"))
+    if not path.exists():
+        return 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+    today = time.strftime("%Y-%m-%d")
+    return sum(1 for row in data.get("runs", []) if str(row.get("at", "")).startswith(today))
 
 
 def hero_shorts_montage_cmd(env: dict[str, str]) -> list[str]:
@@ -335,7 +356,8 @@ def main() -> int:
     hero_montage = Proc("hero_montage", hero_shorts_montage_cmd(base), base)
     MONTAGE_COOLDOWN_SEC = float(os.environ.get("MLBB_MONTAGE_COOLDOWN_SEC", "14400"))
     HERO_MONTAGE_ENABLED = base.get("MLBB_HERO_SHORTS_MONTAGE", "0") == "1"
-    HERO_MONTAGE_COOLDOWN_SEC = float(base.get("MLBB_HERO_MONTAGE_COOLDOWN_SEC", "2400"))
+    JOB_MIN_GAP_SEC = float(base.get("MLBB_JOB_MIN_GAP_SEC", "45"))
+    HERO_MONTAGE_DAILY_MAX = int(base.get("MLBB_HERO_MONTAGE_DAILY_MAX", "40"))
     cores = _cpu_cores()
 
     log(
@@ -343,7 +365,8 @@ def main() -> int:
         f"one_heavy={ONE_HEAVY_JOB} calibration_feed={CALIBRATION_FEED} "
         f"target_pending={TARGET_PENDING} feed_cd={FEED_COOLDOWN_SEC}s "
         f"ingest_cd={INGEST_COOLDOWN_SEC}s shorts_days={SHORTS_DAYS} "
-        f"hero_montage={HERO_MONTAGE_ENABLED} loop={LOOP_SEC}s"
+        f"hero_montage={HERO_MONTAGE_ENABLED} job_gap={JOB_MIN_GAP_SEC}s "
+        f"hero_daily_max={HERO_MONTAGE_DAILY_MAX} loop={LOOP_SEC}s"
     )
     cycles = 0
     pending = pending_shorts()
@@ -401,7 +424,7 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
-        if aggressive and ingest.cooldown_ok(INGEST_COOLDOWN_SEC) and not ingest_block and not hero_busy:
+        if aggressive and ingest.gap_ok(JOB_MIN_GAP_SEC) and not ingest_block and not hero_busy:
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
@@ -411,13 +434,14 @@ def main() -> int:
             and not hero_busy
             and not ingest.running()
             and not feed.running()
-            and hero_montage.cooldown_ok(HERO_MONTAGE_COOLDOWN_SEC)
+            and hero_montage.gap_ok(JOB_MIN_GAP_SEC)
+            and hero_montages_today() < HERO_MONTAGE_DAILY_MAX
         ):
             hero_montage.start()
 
         if (
             CALIBRATION_FEED
-            and feed.cooldown_ok(FEED_COOLDOWN_SEC)
+            and feed.gap_ok(FEED_COOLDOWN_SEC)
             and (VOD_DISABLED or not vod.running())
             and not hero_busy
         ):
@@ -431,7 +455,25 @@ def main() -> int:
                     pass
 
         for job in (ingest, vod, feed, montage, hero_montage):
-            job.reap()
+            rc = job.reap()
+            if rc is not None and job.name in ("ingest", "hero_montage", "montage"):
+                cleanup_script = BIN / "mlbb_runtime_cleanup.py"
+                if not cleanup_script.exists():
+                    cleanup_script = Path(__file__).resolve().parent / "mlbb_runtime_cleanup.py"
+                if cleanup_script.exists():
+                    subprocess.run([PY, str(cleanup_script)], env=base, timeout=30, check=False)
+
+        if cycles % 180 == 0 and not hero_busy and not ingest.running():
+            train_script = BIN / "highlight_train.py"
+            if not train_script.exists():
+                train_script = Path(__file__).resolve().parent / "highlight_train.py"
+            if train_script.exists() and base.get("MLBB_AUTO_TRAIN", "1") == "1":
+                subprocess.run(
+                    [PY, str(train_script), "--profile", "mobile_legends"],
+                    env={**base, "MLBB_USE_CLASSIFIER": "1"},
+                    timeout=600,
+                    check=False,
+                )
 
         if cycles % 90 == 0 and not heavy_busy:
             sync_script = BIN / "mlbb_viral_threshold_sync.py"
