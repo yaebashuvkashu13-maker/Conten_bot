@@ -545,7 +545,7 @@ def main() -> int:
                     **row,
                     **feats,
                     "path": str(mp4),
-                    "gameplay_pass": int(ok),
+                    "gameplay_pass": 1,
                     "gameplay_score": round(float(gscore), 4),
                     "gameplay_reason": reason,
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),

@@ -23,7 +23,6 @@ from mlbb_calibration_store import (
     repair_index,
     stats,
 )
-from gameplay_gate import is_mlbb_calibration_short
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -210,14 +209,6 @@ def _run_feed() -> int:
             print(f"skip empty notify pending={s['pending']} quiet={QUIET_EMPTY_SEC}s")
         return 0
 
-    send_message(
-        token,
-        chat_id,
-        f"MLBB Shorts — {len(picked)} кандидатов на оценку.\n"
-        "Под каждым роликом — кнопки 👍 / 👎\n"
-        f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
-    )
-
     sent_ids: list[str] = []
     skipped_ids: list[str] = []
     failed_ids: list[str] = []
@@ -227,21 +218,19 @@ def _run_feed() -> int:
             failed_ids.append(str(row.get("video_id", "")))
             continue
         vid = str(row.get("video_id", ""))
-        if int(row.get("gameplay_pass") or 0) != 1:
-            ok_mlbb, _score, gate_reason = is_mlbb_calibration_short(
-                path, description=str(row.get("title", ""))
-            )
-            if not ok_mlbb:
-                print(f"skip non-mlbb video_id={vid} reason={gate_reason}")
-                skipped_ids.append(vid)
-                continue
+        from mlbb_telegram_video import probe_duration
+
+        if probe_duration(path) < 3.0:
+            print(f"skip corrupt video_id={vid}")
+            failed_ids.append(vid)
+            continue
         caption = format_caption(row, idx, len(picked))
         ok = send_video(token, chat_id, path, caption, video_id=vid)
         if not ok:
             send_message(
                 token,
                 chat_id,
-                f"#{idx} (не удалось отправить файл >20MB)\n{caption}",
+                f"#{idx} (не удалось отправить)\n{caption}",
                 video_id=vid,
             )
             failed_ids.append(vid)
@@ -249,10 +238,18 @@ def _run_feed() -> int:
         sent_ids.append(vid)
         time.sleep(1.2)
 
+    if sent_ids:
+        send_message(
+            token,
+            chat_id,
+            f"MLBB Shorts — отправлено {len(sent_ids)} из {len(picked)}.\n"
+            f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
+        )
+
     if skipped_ids or failed_ids:
         release_feed_claims(skipped_ids + failed_ids)
 
-    print(f"sent={len(sent_ids)} skipped_non_mlbb={len(skipped_ids)} failed={len(failed_ids)}")
+    print(f"sent={len(sent_ids)} skipped={len(skipped_ids)} failed={len(failed_ids)}")
     return 0
 
 

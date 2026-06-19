@@ -48,6 +48,8 @@ def compress_for_inline_video(
             "error",
             "-hwaccel",
             "none",
+            "-c:v",
+            "libdav1d",
             "-i",
             str(path),
             "-vf",
