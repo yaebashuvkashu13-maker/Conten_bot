@@ -1181,16 +1181,16 @@ def video_upload_help_text(for_owner: bool = False) -> str:
 
 def research_help_text() -> str:
     return (
-        'Excel больше ~20 МБ бот из Telegram не получит — это лимит Bot API, не архиватора.\n'
-        'Файл .xlsx уже внутри ZIP: WinRAR/7-Zip почти не ужимают.\n\n'
+        'Исследование доставки: CSV или Excel.\n'
+        'Лимит Telegram Bot API ~20 МБ на файл в чате.\n\n'
         'Вариант 1 — ссылка (любой размер):\n'
-        'На ПК в PowerShell:\n'
-        'curl.exe -T "E:\\путь\\исследование клика.xlsx" https://transfer.sh/\n'
-        'Скопируйте выданную https://… ссылку и пришлите боту одной строкой или:\n'
+        'curl.exe -T "E:\\путь\\DataExport.csv" https://transfer.sh/\n'
+        'Пришлите ссылку одной строкой или:\n'
         '/research https://…\n\n'
-        'Вариант 2 — уменьшить файл в Excel:\n'
-        'Сохранить копию только с order_id, courier_id и колонками G+ за нужный период.\n\n'
-        'После загрузки на сервер запускается анализ доставки — отчёт придёт в этот чат.'
+        'Вариант 2 — файл .csv или .xlsx документом (до ~20 МБ).\n\n'
+        'Анализ: задержка Picked_date → дата начала доставки,\n'
+        'доли >5 / >10 / >15 мин, топ магазинов и курьеров.\n'
+        'Отчёт придёт в этот чат.'
     )
 
 
@@ -1619,6 +1619,7 @@ def looks_like_research_url(url: str) -> bool:
             '0x0.st',
             'catbox.moe',
             '.xlsx',
+            '.csv',
             'research',
         )
     )
@@ -1628,7 +1629,7 @@ def save_research_from_url(url: str, chat_id: str) -> Path | None:
     RESEARCH_INBOX_DIR.mkdir(parents=True, exist_ok=True)
     parsed = urlparse(url)
     name = unquote(Path(parsed.path).name) or 'research.xlsx'
-    if not name.lower().endswith(('.xlsx', '.xlsm', '.xls')):
+    if not name.lower().endswith(('.xlsx', '.xlsm', '.xls', '.csv')):
         if '.' not in name or name.endswith('/'):
             name = 'research.xlsx'
     stamp = time.strftime('%Y%m%d_%H%M%S')
@@ -1674,18 +1675,29 @@ def extract_xlsx_from_zip(zip_path: Path, chat_id: str) -> Path | None:
 
 
 def start_research_analysis() -> None:
-    script = RESEARCH_ANALYSIS
-    if not script.exists():
-        script = Path(__file__).resolve().parent / 'research_delivery_analysis.py'
-    if not script.exists():
-        logging.warning('research_delivery_analysis.py not found')
-        return
+    script = Path(os.environ.get("RESEARCH_PICKED_SCRIPT", "")).strip()
+    if script:
+        picked = Path(script)
+    else:
+        picked = Path("/usr/local/bin/research_picked_delivery_analysis.py")
+        if not picked.exists():
+            picked = Path(__file__).resolve().parent / "research_picked_delivery_analysis.py"
+    legacy = RESEARCH_ANALYSIS
+    if not legacy.exists():
+        legacy = Path(__file__).resolve().parent / "research_delivery_analysis.py"
 
     def _run():
         try:
-            subprocess.run(['python3', str(script)], check=False, timeout=3600)
+            inbox_csv = list(RESEARCH_INBOX_DIR.glob("*.csv"))
+            latest = max(inbox_csv, key=lambda p: p.stat().st_mtime) if inbox_csv else None
+            if latest and latest.stat().st_mtime >= time.time() - 86400 * 7:
+                if picked.exists():
+                    subprocess.run(["python3", str(picked), str(latest)], check=False, timeout=3600)
+                    return
+            if legacy.exists():
+                subprocess.run(["python3", str(legacy)], check=False, timeout=3600)
         except Exception as exc:
-            logging.exception('research analysis failed: %s', exc)
+            logging.exception("research analysis failed: %s", exc)
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -2674,10 +2686,15 @@ def handle_message(message: dict):
             send_message(chat_id, f'ZIP не скачался (часто >20 МБ): {exc}\n\n{research_help_text()}')
         return
 
-    if doc and is_owner(chat_id) and (doc.get('ext') == '.xlsx' or 'spreadsheet' in (doc.get('mime_type') or '')):
+    if doc and is_owner(chat_id) and (
+        doc.get('ext') in ('.xlsx', '.csv')
+        or 'spreadsheet' in (doc.get('mime_type') or '')
+        or 'csv' in (doc.get('mime_type') or '')
+    ):
         saved = save_research_file(chat_id, message)
         if saved and saved.exists():
-            send_message(chat_id, f'Файл сохранён: {saved.name}. Запускаю анализ доставки…')
+            kind = 'CSV' if saved.suffix.lower() == '.csv' else 'Excel'
+            send_message(chat_id, f'Файл сохранён ({kind}): {saved.name}. Запускаю анализ…')
             notify_owner(f'Research file saved: {saved}')
             start_research_analysis()
         else:
