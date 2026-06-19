@@ -505,7 +505,9 @@ def main() -> int:
 
     saved = rejected = downloads = skipped_known = 0
     lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-    fast_ingest = os.environ.get("MLBB_CALIBRATION_FAST_INGEST", "0") == "1"
+    fast_ingest = os.environ.get("MLBB_CALIBRATION_FAST_INGEST", "0") == "1" or env.get(
+        "MLBB_INGEST_HUNGRY", "0"
+    ) == "1"
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
