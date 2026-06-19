@@ -15,8 +15,8 @@ from gameplay_gate import is_mlbb_calibration_short
 from mlbb_calibration_feed import main as run_feed
 from mlbb_calibration_store import (
     SHORTS_ROOT,
+    ingest_sent_blocklist,
     labeled_ids,
-    load_feed_sent,
     pending_candidates,
     upsert_candidate,
 )
@@ -40,9 +40,9 @@ def main() -> int:
     env["MLBB_CALIBRATION_LENIENT"] = "1"
     env["MLBB_CALIBRATION_FAST_INGEST"] = "1"
     os.environ.update(env)
-    days = int(env.get("MLBB_SHORTS_DAYS", "60"))
+    days = int(env.get("MLBB_SHORTS_DAYS", "365"))
     target = int(env.get("MLBB_BURST_TARGET", "6"))
-    sent = load_feed_sent()["ids"]
+    sent = ingest_sent_blocklist()
     known = labeled_ids()
     saved = 0
     pool = _sweep_pool(
@@ -54,7 +54,7 @@ def main() -> int:
         max_per_query=12,
         search_delay=1.5,
         start_slot=0,
-        max_queries=4,
+        max_queries=8,
     )
     for row in pool:
         vid = row["video_id"]

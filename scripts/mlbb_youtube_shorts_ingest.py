@@ -22,8 +22,8 @@ from gameplay_gate import OTHER_GAME_TITLE, is_mlbb_calibration_short, is_gamepl
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
+    ingest_sent_blocklist,
     labeled_ids,
-    load_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
@@ -325,7 +325,7 @@ def _sweep_pool(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
-    parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_DAYS", "60")))
+    parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_DAYS", "365")))
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--min-score", type=float, default=0.12)
     parser.add_argument(
@@ -375,18 +375,18 @@ def main() -> int:
         if hungry:
             print(
                 f"incremental sweep pending={pending_n} days={args.days} "
-                f"queries={min(6, len(queries))} start={queries[slot]}"
+                f"queries={min(10, len(queries))} start={queries[slot]}"
             )
             pool = _sweep_pool(
                 env,
                 days=args.days,
                 known=labeled_ids(),
-                already_sent=load_feed_sent()["ids"],
+                already_sent=ingest_sent_blocklist(),
                 sent_pending={str(r.get("video_id", "")) for r in pending_candidates(limit=9999)},
                 max_per_query=args.max_per_query,
                 search_delay=args.search_delay,
                 start_slot=slot,
-                max_queries=6,
+                max_queries=10,
             )
             pool = pool[: args.max_per_query * 6]
             queries = []
@@ -395,7 +395,7 @@ def main() -> int:
             print(f"incremental query={queries[0]} pending={pending_n} days={args.days}")
 
     known = labeled_ids()
-    already_sent = load_feed_sent()["ids"]
+    already_sent = ingest_sent_blocklist()
     sent_pending = {str(r.get("video_id", "")) for r in pending_candidates(limit=9999)}
 
     if not queries:
@@ -435,7 +435,7 @@ def main() -> int:
                 max_per_query=max(args.max_per_query, 12),
                 search_delay=args.search_delay,
                 start_slot=slot,
-                max_queries=6,
+                max_queries=10,
             )
 
     saved = rejected = downloads = skipped_known = 0

@@ -33,7 +33,7 @@ ONE_HEAVY_JOB = os.environ.get("MLBB_ONE_HEAVY_JOB", "0" if VOD_DISABLED else "1
 CALIBRATION_FEED = os.environ.get(
     "MLBB_CALIBRATION_FEED_ENABLED", "1" if VOD_DISABLED else "0"
 ) == "1"
-SHORTS_DAYS = int(os.environ.get("MLBB_SHORTS_DAYS", "60"))
+SHORTS_DAYS = int(os.environ.get("MLBB_SHORTS_DAYS", "365"))
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
 ONEOFF_LOCK = Path("/tmp/mlbb_vod_oneoff.lock")
 
@@ -123,6 +123,10 @@ def base_env() -> dict[str, str]:
             "MLBB_MAX_DAILY_SENDS": env.get("MLBB_MAX_DAILY_SENDS", "150"),
             "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "30"),
             "MLBB_CALIBRATION_BATCH": env.get("MLBB_CALIBRATION_BATCH", "6"),
+            "MLBB_SHORTS_DAYS": env.get("MLBB_SHORTS_DAYS", "365"),
+            "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
+            "MLBB_SHORTS_YEAR_ONLY": env.get("MLBB_SHORTS_YEAR_ONLY", "1"),
+            "MLBB_SHORTS_RESEND_IF_UNLABELED": env.get("MLBB_SHORTS_RESEND_IF_UNLABELED", "1"),
             "HIGHLIGHT_OWNER_BAD_PAD_SEC": env.get("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90"),
             "HIGHLIGHT_HEATMAP": "0",
             "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
@@ -210,7 +214,7 @@ def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
         script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
     max_dl = "20" if aggressive else "6"
     max_q = "30" if aggressive else "12"
-    days = os.environ.get("MLBB_SHORTS_DAYS", "60")
+    days = env.get("MLBB_SHORTS_DAYS", "365")
     return [
         PY,
         str(script),
@@ -280,6 +284,10 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
         {
             "MLBB_CALIBRATION_LENIENT": "1",
             "MLBB_CALIBRATION_FAST_INGEST": env.get("MLBB_CALIBRATION_FAST_INGEST", "1"),
+            "MLBB_SHORTS_DAYS": env.get("MLBB_SHORTS_DAYS", "365"),
+            "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
+            "MLBB_SHORTS_YEAR_ONLY": env.get("MLBB_SHORTS_YEAR_ONLY", "1"),
+            "MLBB_SHORTS_RESEND_IF_UNLABELED": env.get("MLBB_SHORTS_RESEND_IF_UNLABELED", "1"),
             "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
             "YTDLP_SLEEP_REQUESTS": "1.2",
             "YTDLP_SLEEP_INTERVAL": "3",
@@ -305,6 +313,14 @@ def montage_cmd(env: dict[str, str]) -> list[str]:
 
 def main() -> int:
     base = base_env()
+    global FEED_COOLDOWN_SEC, INGEST_COOLDOWN_SEC, TARGET_PENDING, CALIBRATION_FEED, VOD_DISABLED, SHORTS_DAYS
+    FEED_COOLDOWN_SEC = float(base.get("MLBB_FEED_COOLDOWN_SEC", str(FEED_COOLDOWN_SEC)))
+    INGEST_COOLDOWN_SEC = float(base.get("MLBB_INGEST_COOLDOWN_SEC", str(INGEST_COOLDOWN_SEC)))
+    TARGET_PENDING = int(base.get("MLBB_TARGET_PENDING", str(TARGET_PENDING)))
+    CALIBRATION_FEED = base.get("MLBB_CALIBRATION_FEED_ENABLED", "1" if VOD_DISABLED else "0") == "1"
+    VOD_DISABLED = base.get("MLBB_VOD_DISABLED", "1") == "1"
+    global SHORTS_DAYS
+    SHORTS_DAYS = int(base.get("MLBB_SHORTS_DAYS", "365"))
     kill_orphan_heavy_procs()
     time.sleep(2)
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
