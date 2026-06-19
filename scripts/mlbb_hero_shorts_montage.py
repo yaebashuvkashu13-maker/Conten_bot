@@ -123,31 +123,43 @@ def collect_shorts_for_hero(hero_id: str, *, limit: int) -> list[dict]:
 
 
 def ingest_hero_shorts(hero_id: str, *, count: int) -> int:
-    ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
-    if not ingest.exists():
-        ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
+    from mlbb_youtube_shorts_ingest import download_short, search_shorts
+    from mlbb_calibration_store import upsert_candidate
+    from gameplay_gate import is_mlbb_calibration_short
+    from youtube_download import load_env
+
+    env = {**os.environ, **load_env()}
+    days = int(env.get("MLBB_SHORTS_DAYS", "365"))
     query = f"mlbb {hero_id.replace('_', ' ')} savage shorts"
-    env = dict(os.environ)
-    env["MLBB_INGEST_SKIP_IF_PENDING"] = "0"
-    env["MLBB_CALIBRATION_FAST_INGEST"] = "1"
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(ingest),
-            "--incremental",
-            "--days",
-            env.get("MLBB_SHORTS_DAYS", "365"),
-            "--max-downloads",
-            str(count),
-            "--max-per-query",
-            "16",
-        ],
-        env=env,
-        timeout=900,
-        check=False,
-    )
+    saved = 0
+    for row in search_shorts(query, limit=max(count * 3, 12), env=env, days=days):
+        if saved >= count:
+            break
+        vid = row["video_id"]
+        dest = SHORTS_ROOT / f"yt_{vid}.mp4"
+        if not dest.exists():
+            dest = download_short(row["url"], SHORTS_ROOT, env, vid, days=days) or dest
+        if not dest.exists():
+            continue
+        ok, gscore, reason = is_mlbb_calibration_short(dest, description=row.get("title", ""))
+        if not ok:
+            continue
+        upsert_candidate(
+            {
+                **row,
+                "path": str(dest),
+                "score": max(0.18, float(gscore)),
+                "gameplay_pass": 1,
+                "gameplay_score": round(float(gscore), 4),
+                "gameplay_reason": reason,
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        saved += 1
+        print(f"hero_ingest saved={vid} views={row.get('view_count')}")
+        time.sleep(4)
     rebuild_index_from_disk()
-    return proc.returncode
+    return 0 if saved else 1
 
 
 def stage_sources(hero_id: str, rows: list[dict]) -> list[Path]:
