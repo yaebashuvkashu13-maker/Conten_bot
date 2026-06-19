@@ -26,7 +26,7 @@ from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
 BATCH_SIZE = int(os.environ.get("MLBB_CALIBRATION_BATCH", "3"))
-TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
+from mlbb_telegram_video import TELEGRAM_MAX_BYTES, send_video_file, split_for_telegram
 QUIET_EMPTY_SEC = int(os.environ.get("MLBB_FEED_QUIET_EMPTY_SEC", "7200"))  # 2h
 EMPTY_NOTIFY_PATH = DATA_MLBB / "calibration_feed_empty_notify.json"
 
@@ -45,37 +45,32 @@ def send_video(
     if not ok_send:
         print(f"send blocked video_id={video_id} reason={reason}")
         return False
-    if path.stat().st_size > TELEGRAM_MAX_BYTES:
+    markup = inline_keyboard_markup(video_id) if video_id else None
+    if path.stat().st_size <= TELEGRAM_MAX_BYTES:
+        ok = send_video_file(token, chat_id, path, caption, reply_markup=markup)
+        if ok:
+            record_send(1)
+        return ok
+
+    parts = split_for_telegram(path, parts=2)
+    if not parts:
         return False
-    url = f"https://api.telegram.org/bot{token}/sendVideo"
-    cmd = [
-        "curl",
-        "-sS",
-        "-m",
-        "600",
-        "-F",
-        f"chat_id={chat_id}",
-        "-F",
-        "supports_streaming=true",
-        "-F",
-        f"caption={caption[:900]}",
-        "-F",
-        f"video=@{path}",
-        url,
-    ]
-    if video_id:
-        cmd.insert(-1, "-F")
-        cmd.insert(-1, f"reply_markup={json.dumps(inline_keyboard_markup(video_id), ensure_ascii=False)}")
-    clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
-    result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return False
-    ok = bool(payload.get("ok"))
-    if ok:
-        record_send(1)
-    return ok
+    sent_any = False
+    for pi, part in enumerate(parts, start=1):
+        part_cap = f"{caption}\nчасть {pi}/{len(parts)}"
+        ok = send_video_file(
+            token,
+            chat_id,
+            part,
+            part_cap,
+            reply_markup=markup if pi == len(parts) else None,
+        )
+        if ok:
+            record_send(1)
+            sent_any = True
+        else:
+            print(f"split part failed video_id={video_id} part={pi}/{len(parts)}")
+    return sent_any
 
 
 def send_message(
