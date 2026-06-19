@@ -23,6 +23,7 @@ from mlbb_calibration_store import (
     repair_index,
     stats,
 )
+from gameplay_gate import is_mlbb_calibration_short
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -223,6 +224,13 @@ def _run_feed() -> int:
         if probe_duration(path) < 3.0:
             print(f"skip corrupt video_id={vid}")
             failed_ids.append(vid)
+            continue
+        ok_mlbb, gscore, gate_reason = is_mlbb_calibration_short(
+            path, description=str(row.get("title", ""))
+        )
+        if not ok_mlbb:
+            print(f"skip non-gameplay video_id={vid} reason={gate_reason} score={gscore:.3f}")
+            skipped_ids.append(vid)
             continue
         caption = format_caption(row, idx, len(picked))
         ok = send_video(token, chat_id, path, caption, video_id=vid)

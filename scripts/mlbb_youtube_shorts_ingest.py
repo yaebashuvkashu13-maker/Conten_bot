@@ -535,7 +535,7 @@ def main() -> int:
         if hungry_mode and lenient and dur >= 3.0:
             ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
             hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
-            if hard_reject:
+            if hard_reject or not ok:
                 rejected += 1
                 continue
             feats = light_clip_features(mp4)
@@ -557,10 +557,9 @@ def main() -> int:
 
         ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
         hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
-        if not ok:
-            if hard_reject or not lenient:
-                rejected += 1
-                continue
+        if hard_reject or not ok:
+            rejected += 1
+            continue
 
         if fast_ingest and lenient:
             feats = light_clip_features(mp4)

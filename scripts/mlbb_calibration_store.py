@@ -512,19 +512,13 @@ def _freshness_sort_key(row: dict) -> tuple[str, float]:
 
 
 def _row_passes_pending_gate(row: dict, path: Path) -> bool:
-    """Fast queue gate — avoid re-running CLIP on every worker loop."""
-    if int(row.get("gameplay_pass") or 0) == 1:
-        return True
+    """Fast queue gate — only trust rows that passed MLBB gameplay check."""
+    if int(row.get("gameplay_pass") or 0) != 1:
+        return False
     gscore = float(row.get("gameplay_score") or 0)
-    if gscore >= 0.35 and str(row.get("ingested_at") or "").strip():
-        return True
-    if os.environ.get("MLBB_PENDING_TRUST_INDEX", "1") == "1" and str(row.get("ingested_at") or "").strip():
-        if float(row.get("score") or 0) >= 0.12:
-            return True
-    from gameplay_gate import is_mlbb_calibration_short
-
-    ok_mlbb, _, _ = is_mlbb_calibration_short(path, description=str(row.get("title", "")))
-    return ok_mlbb
+    if gscore < float(os.environ.get("MLBB_CALIBRATION_MIN_HEURISTIC", "0.52")):
+        return False
+    return True
 
 
 def pending_candidates(*, limit: int = 50) -> list[dict]:

@@ -838,12 +838,6 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'shorts' and is_good:
-            try:
-                if not _mlbb_send_hq_file(chat_id, item_id):
-                    send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
-            except Exception:
-                logging.exception('mlbb hq send failed video_id=%s', item_id)
     except Exception as exc:
         logging.exception('mlbb callback failed data=%s', data)
         try:
