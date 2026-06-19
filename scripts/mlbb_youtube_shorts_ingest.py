@@ -305,7 +305,8 @@ def _resolve_upload_date(row: dict, env: dict[str, str]) -> str:
 
 def _hero_search_queries() -> list[str]:
     queries: list[str] = []
-    heroes_path = Path(__file__).resolve().parent.parent / "config" / "mlbb_heroes.json"
+    repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
+    heroes_path = repo / "config" / "mlbb_heroes.json"
     if not heroes_path.exists():
         return queries
     try:
