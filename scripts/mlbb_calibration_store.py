@@ -478,6 +478,45 @@ def ready_for_eval(*, min_yes: int = 30, min_no: int = 20) -> bool:
     return s["feedback_yes"] >= min_yes and s["feedback_no"] >= min_no
 
 
+# Owner 👎 reason codes (stored in calibration_labels.json → highlight_train).
+DISLIKE_REASONS: tuple[tuple[str, str], ...] = (
+    ("promo", "📢 Реклама"),
+    ("not_gameplay", "🎬 Не геймплей"),
+    ("boring", "😴 Скучно"),
+    ("wrong_hero", "🦸 Не тот герой"),
+    ("music", "🎵 Музыка"),
+    ("old", "📅 Старое"),
+    ("blurry", "🌫 Мыльное"),
+    ("other", "🗑 Другое"),
+)
+
+DISLIKE_REASON_CODES = {code for code, _ in DISLIKE_REASONS}
+
+
+def dislike_reason_label(reason: str) -> str:
+    for code, label in DISLIKE_REASONS:
+        if code == reason:
+            return label
+    return reason.strip() or "Плохо"
+
+
+def dislike_reason_keyboard_markup(item_id: str, *, callback_prefix: str = "mlbb_bad") -> dict:
+    """Eight reason buttons shown after 👎 (second step)."""
+    vid = str(item_id).strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    rows: list[list[dict[str, str]]] = []
+    row: list[dict[str, str]] = []
+    for code, label in DISLIKE_REASONS:
+        row.append({"text": label, "callback_data": f"{callback_prefix}:{vid}:{code}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return {"inline_keyboard": rows}
+
+
 def inline_keyboard_markup(video_id: str) -> dict:
     """Telegram inline keyboard: 👍 / 👎 under calibration Shorts."""
     vid = str(video_id).strip()
@@ -493,6 +532,9 @@ def inline_keyboard_markup(video_id: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str) -> dict:
-    mark = "✅ Хорошо" if label == "good" else "❌ Плохо"
+def labeled_keyboard_markup(label: str, *, reason: str = "") -> dict:
+    if label == "good":
+        mark = "✅ Хорошо"
+    else:
+        mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}

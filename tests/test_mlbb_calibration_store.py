@@ -11,7 +11,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from mlbb_calibration_store import is_fresh_short, rebuild_index_from_disk  # noqa: E402
+from mlbb_calibration_store import (  # noqa: E402
+    DISLIKE_REASONS,
+    dislike_reason_keyboard_markup,
+    is_fresh_short,
+    rebuild_index_from_disk,
+)
 
 
 def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
@@ -52,3 +57,13 @@ def test_is_fresh_short_rejects_old_and_unknown(monkeypatch) -> None:
     assert not is_fresh_short({"upload_date": ""})
     assert not is_fresh_short({"source": "disk_rebuild"})
     assert is_fresh_short({"ingested_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+
+
+def test_dislike_reason_keyboard_has_eight_buttons() -> None:
+    markup = dislike_reason_keyboard_markup("abcdefghijk")
+    buttons = [b for row in markup["inline_keyboard"] for b in row]
+    assert len(buttons) == 8
+    assert len(DISLIKE_REASONS) == 8
+    for btn in buttons:
+        assert len(btn["callback_data"]) <= 64
+        assert btn["callback_data"].startswith("mlbb_bad:abcdefghijk:")

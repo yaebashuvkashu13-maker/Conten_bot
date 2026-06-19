@@ -574,6 +574,95 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_bad:'):
+        try:
+            _, item_id, reason = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return
+        from mlbb_calibration_store import DISLIKE_REASON_CODES, labeled_keyboard_markup as shorts_markup
+
+        if reason not in DISLIKE_REASON_CODES:
+            reason = 'other'
+        try:
+            ok, reply = _mlbb_apply_owner_label(
+                chat_id, item_id, is_good=False, reason=reason
+            )
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': '❌ Записано'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': shorts_markup('bad', reason=reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_bad callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
+    if data.startswith('mlbb_vseg_bad:'):
+        try:
+            _, item_id, reason = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return
+        from mlbb_calibration_store import DISLIKE_REASON_CODES
+        from mlbb_vod_segment_store import labeled_keyboard_markup as vseg_markup
+
+        if reason not in DISLIKE_REASON_CODES:
+            reason = 'other'
+        try:
+            ok, reply = _mlbb_apply_vseg_label(
+                chat_id, item_id, is_good=False, reason=reason
+            )
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': '❌ Записано'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': vseg_markup('bad', reason=reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_vseg_bad callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
     mode = ''
     is_good: bool | None = None
     item_id = ''
@@ -583,19 +672,65 @@ def handle_callback_query(query: dict) -> None:
         is_good = True
         item_id = data.split(':', 1)[1].strip()
     elif data.startswith('mlbb_no:'):
-        mode = 'shorts'
-        is_good = False
+        from mlbb_calibration_store import dislike_reason_keyboard_markup
+
         item_id = data.split(':', 1)[1].strip()
-        reason = 'button_dislike'
+        try:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Выбери причину 👇'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': dislike_reason_keyboard_markup(item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_no picker failed video_id=%s', item_id)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
     elif data.startswith('mlbb_vseg_yes:'):
         mode = 'vseg'
         is_good = True
         item_id = data.split(':', 1)[1].strip()
     elif data.startswith('mlbb_vseg_no:'):
-        mode = 'vseg'
-        is_good = False
+        from mlbb_calibration_store import dislike_reason_keyboard_markup
+
         item_id = data.split(':', 1)[1].strip()
-        reason = 'button_dislike'
+        try:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Выбери причину 👇'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': dislike_reason_keyboard_markup(
+                        item_id, callback_prefix='mlbb_vseg_bad'
+                    ),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_vseg_no picker failed seg=%s', item_id)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
     else:
         try:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
@@ -636,12 +771,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if not is_good:
-            send_message(
-                chat_id,
-                f'{reply}\n\nМожешь уточнить причину ответом (необязательно).',
-            )
-        elif mode == 'shorts':
+        if mode == 'shorts' and is_good:
             try:
                 if not _mlbb_send_hq_file(chat_id, item_id):
                     send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
@@ -2540,7 +2670,27 @@ def handle_message(message: dict):
         if len(parts) < 2:
             send_message(chat_id, 'Использование: /mlbb_no {youtube_id} [причина] или кнопка 👎 под видео')
             return
-        reason = parts[2].strip() if len(parts) > 2 else ''
+        reason = parts[2].strip() if len(parts) > 2 else 'other'
+        reason_aliases = {
+            'реклама': 'promo',
+            'промо': 'promo',
+            'не геймплей': 'not_gameplay',
+            'геймплей': 'not_gameplay',
+            'скучно': 'boring',
+            'герой': 'wrong_hero',
+            'музыка': 'music',
+            'старое': 'old',
+            'старая': 'old',
+            'мыльное': 'blurry',
+            'мыльная': 'blurry',
+            'blur': 'blurry',
+        }
+        from mlbb_calibration_store import DISLIKE_REASON_CODES
+
+        low = reason.lower()
+        reason = reason_aliases.get(low, reason)
+        if reason not in DISLIKE_REASON_CODES:
+            reason = 'other'
         try:
             ok, reply = _mlbb_apply_owner_label(
                 chat_id,

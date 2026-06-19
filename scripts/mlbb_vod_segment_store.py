@@ -359,8 +359,13 @@ def inline_keyboard_markup(segment_id_str: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str) -> dict:
-    mark = "✅ Ок" if label == "good" else "❌ Не ок"
+def labeled_keyboard_markup(label: str, *, reason: str = "") -> dict:
+    from mlbb_calibration_store import dislike_reason_label
+
+    if label == "good":
+        mark = "✅ Ок"
+    else:
+        mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
 
 
