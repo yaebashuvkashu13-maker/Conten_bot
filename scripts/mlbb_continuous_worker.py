@@ -35,6 +35,8 @@ CALIBRATION_FEED = os.environ.get(
 ) == "1"
 SHORTS_DAYS = int(os.environ.get("MLBB_SHORTS_DAYS", "365"))
 VOD_STALE_SEC = float(os.environ.get("MLBB_VOD_STALE_SEC", "2700"))  # 45 min
+INGEST_STALE_SEC = float(os.environ.get("MLBB_INGEST_STALE_SEC", "1500"))  # 25 min
+HERO_MONTAGE_STALE_SEC = float(os.environ.get("MLBB_HERO_MONTAGE_STALE_SEC", "4200"))  # 70 min
 ONEOFF_LOCK = Path("/tmp/mlbb_vod_oneoff.lock")
 
 
@@ -405,6 +407,9 @@ def main() -> int:
 
     while True:
         cycles += 1
+        for job in (ingest, vod, feed, montage, hero_montage):
+            job.reap()
+
         pending = pending_shorts()
         aggressive = pending < TARGET_PENDING
 
@@ -413,6 +418,14 @@ def main() -> int:
         ingest_block = ONE_HEAVY_JOB and not VOD_DISABLED and (vod_busy or montage_busy)
         heavy_busy = ingest_block or (ONE_HEAVY_JOB and ingest.running() and not VOD_DISABLED)
         hero_busy = hero_montage.running()
+
+        if ingest.running() and ingest.age_sec() > INGEST_STALE_SEC:
+            log(f"ingest stale age={int(ingest.age_sec())}s — killing")
+            ingest.stop(reason="stale")
+
+        if hero_montage.running() and hero_montage.age_sec() > HERO_MONTAGE_STALE_SEC:
+            log(f"hero_montage stale age={int(hero_montage.age_sec())}s — killing")
+            hero_montage.stop(reason="stale")
 
         if not VOD_DISABLED:
             if vod.running() and vod.age_sec() > VOD_STALE_SEC:
@@ -443,16 +456,20 @@ def main() -> int:
         if (
             HERO_MONTAGE_ENABLED
             and not hero_busy
-            and not ingest.running()
             and not feed.running()
             and hero_montage.gap_ok(JOB_MIN_GAP_SEC)
             and hero_montages_today() < HERO_MONTAGE_DAILY_MAX
+            and (not ONE_HEAVY_JOB or not ingest.running())
         ):
             hero_montage.start()
 
+        feed_cd = FEED_COOLDOWN_SEC if pending > 0 else float(
+            base.get("MLBB_FEED_COOLDOWN_EMPTY_SEC", "720")
+        )
         if (
             CALIBRATION_FEED
-            and feed.gap_ok(FEED_COOLDOWN_SEC)
+            and pending > 0
+            and feed.gap_ok(feed_cd)
             and (VOD_DISABLED or not vod.running())
             and not hero_busy
             and not calibration_feed_running()

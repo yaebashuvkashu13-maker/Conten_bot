@@ -133,9 +133,12 @@ def search_shorts(
     skip = skip_ids or set()
     hungry = len(skip) > 200 or env.get("MLBB_INGEST_HUNGRY", "0") == "1"
     depth = int(
-        env.get("MLBB_INGEST_HUNGRY_SEARCH_DEPTH" if hungry else "MLBB_INGEST_SEARCH_DEPTH", "40" if hungry else "12")
+        env.get(
+            "MLBB_INGEST_HUNGRY_SEARCH_DEPTH" if hungry else "MLBB_INGEST_SEARCH_DEPTH",
+            "20" if hungry else "12",
+        )
     )
-    search_n = max(limit * depth, 500 if hungry else 120)
+    search_n = max(limit * depth, 300 if hungry else 120)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -344,7 +347,9 @@ def _sweep_pool(
     blocklist = set(known) | already_sent | sent_pending
     hungry = len(blocklist) > 200 or env.get("MLBB_INGEST_HUNGRY", "0") == "1"
     ordered = _ordered_search_queries(start_slot, hungry=hungry)
-    query_cap = max(max_queries, len(ordered)) if hungry else max_queries
+    query_cap = min(max_queries, len(ordered)) if hungry else max_queries
+    if hungry:
+        query_cap = min(query_cap, int(env.get("MLBB_INGEST_HUNGRY_MAX_QUERIES", "8")))
     for query in ordered[:query_cap]:
         blocklist |= seen
         for row in search_shorts(
@@ -433,12 +438,12 @@ def main() -> int:
                 known=labeled_ids(),
                 already_sent=ingest_sent_blocklist(),
                 sent_pending={str(r.get("video_id", "")) for r in pending_candidates(limit=9999)},
-                max_per_query=max(args.max_per_query, 20),
+                max_per_query=max(args.max_per_query, 12),
                 search_delay=args.search_delay,
                 start_slot=slot,
-                max_queries=len(ordered),
+                max_queries=min(len(ordered), int(env.get("MLBB_INGEST_HUNGRY_MAX_QUERIES", "8"))),
             )
-            pool = pool[: args.max_per_query * 6]
+            pool = pool[: args.max_per_query * 4]
             queries = []
         else:
             queries = [queries[slot]]

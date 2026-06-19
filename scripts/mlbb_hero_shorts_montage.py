@@ -22,7 +22,7 @@ from mlbb_hero_dataset_builder import hero_from_text, load_heroes
 HERO_ROOT = Path("/root/hero_datasets")
 OUTPUT_DIR = Path("/root/videos")
 STATE_PATH = Path(os.environ.get("MLBB_HERO_SHORTS_MONTAGE_STATE", "/root/data/mlbb/hero_shorts_montage.json"))
-MIN_SOURCES = int(os.environ.get("MLBB_HERO_MONTAGE_MIN_SOURCES", "4"))
+MIN_SOURCES = int(os.environ.get("MLBB_HERO_MONTAGE_MIN_SOURCES", "3"))
 MAX_SOURCES = int(os.environ.get("MLBB_HERO_MONTAGE_MAX_SOURCES", "8"))
 INGEST_IF_BELOW = int(os.environ.get("MLBB_HERO_MONTAGE_INGEST_IF_BELOW", "6"))
 
@@ -108,7 +108,9 @@ def collect_shorts_for_hero(hero_id: str, *, limit: int) -> list[dict]:
         if not path.exists():
             continue
         text = f"{row.get('title', '')} {row.get('search_query', '')}"
-        if _hero_match(text, heroes) != hero_id:
+        if str(row.get("hero_id", "")).strip().lower() == hero_id:
+            pass
+        elif _hero_match(text, heroes) != hero_id:
             continue
         if path_blocked_by_calibration(path):
             continue
@@ -122,17 +124,33 @@ def collect_shorts_for_hero(hero_id: str, *, limit: int) -> list[dict]:
     return rows[:limit]
 
 
+def _short_playable_for_montage(path: Path, row: dict) -> bool:
+    """Shorts montage: strict window first, then MLBB calibration gate fallback."""
+    ok, _ = source_has_valid_gameplay_window(path, windows=3, window_sec=5.0)
+    if ok:
+        return True
+    from gameplay_gate import is_mlbb_calibration_short
+
+    ok_mlbb, score, _reason = is_mlbb_calibration_short(
+        path, description=str(row.get("title", ""))
+    )
+    return ok_mlbb and float(score) >= 0.35
+
+
 def ingest_hero_shorts(hero_id: str, *, count: int) -> int:
     from mlbb_youtube_shorts_ingest import download_short, search_shorts
-    from mlbb_calibration_store import upsert_candidate
+    from mlbb_calibration_store import ingest_sent_blocklist, labeled_ids, upsert_candidate
     from gameplay_gate import is_mlbb_calibration_short
     from youtube_download import load_env
 
     env = {**os.environ, **load_env()}
     days = int(env.get("MLBB_SHORTS_DAYS", "365"))
     query = f"mlbb {hero_id.replace('_', ' ')} savage shorts"
+    block = set(labeled_ids()) | ingest_sent_blocklist()
     saved = 0
-    for row in search_shorts(query, limit=max(count * 3, 12), env=env, days=days):
+    for row in search_shorts(
+        query, limit=max(count * 4, 12), env=env, days=days, skip_ids=block
+    ):
         if saved >= count:
             break
         vid = row["video_id"]
@@ -148,6 +166,8 @@ def ingest_hero_shorts(hero_id: str, *, count: int) -> int:
             {
                 **row,
                 "path": str(dest),
+                "hero_id": hero_id,
+                "search_query": query,
                 "score": max(0.18, float(gscore)),
                 "gameplay_pass": 1,
                 "gameplay_score": round(float(gscore), 4),
@@ -201,9 +221,9 @@ def run_montage(hero_id: str, sources: list[Path], chat_id: str, theme: str) -> 
             "STRICT_GAMEPLAY": "1",
             "SMART_REQUIRE_UNIFORM_GAMEPLAY": "1",
             "SMART_REJECT_HERO_SHOWCASE": "1",
-            "TARGET_DURATION": "42",
-            "MIN_FINAL_DURATION": "30",
-            "MAX_FINAL_DURATION": "55",
+            "TARGET_DURATION": "45",
+            "MIN_FINAL_DURATION": "33",
+            "MAX_FINAL_DURATION": "57",
             "MIN_HIGHLIGHTS": "3",
             "MAX_HIGHLIGHTS": "4",
             "SMART_ADD_MUSIC": "0",
@@ -291,8 +311,7 @@ def main() -> int:
     playable: list[dict] = []
     for row in rows:
         path = Path(row["path"])
-        ok, _ = source_has_valid_gameplay_window(path, windows=2, window_sec=8.0)
-        if ok:
+        if _short_playable_for_montage(path, row):
             playable.append(row)
     if len(playable) < MIN_SOURCES:
         print(f"not enough playable shorts hero={hero_id} have={len(playable)} need={MIN_SOURCES}")

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Sync MLBB scripts to /usr/local/bin and restart services. Run on VPS after git pull.
+set -euo pipefail
+REPO="${REPO:-/root/content_bot_ml}"
+BIN=/usr/local/bin
+shopt -s nullglob
+for f in \
+  mlbb_calibration_store.py \
+  mlbb_calibration_feed.py \
+  mlbb_continuous_worker.py \
+  mlbb_youtube_shorts_ingest.py \
+  mlbb_hero_shorts_montage.py \
+  mlbb_telegram_video.py \
+  telegram_upload_bot.py \
+  mlbb_runtime_cleanup.py; do
+  if [[ -f "$REPO/scripts/$f" ]]; then
+    install -m 755 "$REPO/scripts/$f" "$BIN/$f"
+  fi
+done
+echo "synced $(date -u +%Y-%m-%dT%H:%M:%SZ)"
