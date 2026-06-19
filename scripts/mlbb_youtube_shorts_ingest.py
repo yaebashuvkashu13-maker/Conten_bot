@@ -9,6 +9,7 @@ Output: /root/datasets/mlbb/youtube_shorts/ + data/mlbb/youtube_shorts_index.jso
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -117,12 +118,24 @@ def fetch_upload_date(video_id: str, env: dict[str, str]) -> str:
     return ""
 
 
-def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> list[dict]:
+def search_shorts(
+    query: str,
+    *,
+    limit: int,
+    env: dict[str, str],
+    days: int,
+    skip_ids: set[str] | None = None,
+) -> list[dict]:
     import subprocess
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     min_year = _min_year(env)
-    search_n = max(limit * 12, 120)
+    skip = skip_ids or set()
+    hungry = len(skip) > 200 or env.get("MLBB_INGEST_HUNGRY", "0") == "1"
+    depth = int(
+        env.get("MLBB_INGEST_HUNGRY_SEARCH_DEPTH" if hungry else "MLBB_INGEST_SEARCH_DEPTH", "40" if hungry else "12")
+    )
+    search_n = max(limit * depth, 500 if hungry else 120)
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -157,6 +170,8 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str], days: int) -> 
         if duration <= 3 or duration > 60:
             continue
         if NEGATIVE_TITLE.search(title) or OTHER_GAME_TITLE.search(title):
+            continue
+        if vid in skip:
             continue
         entries.append(
             {
@@ -288,6 +303,29 @@ def _resolve_upload_date(row: dict, env: dict[str, str]) -> str:
     return ud
 
 
+def _hero_search_queries() -> list[str]:
+    queries: list[str] = []
+    heroes_path = Path(__file__).resolve().parent.parent / "config" / "mlbb_heroes.json"
+    if not heroes_path.exists():
+        return queries
+    try:
+        data = json.loads(heroes_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return queries
+    for hero in data.get("heroes", []):
+        tags = hero.get("tags") or []
+        if tags:
+            queries.append(f"mlbb {tags[0]} savage shorts 2025")
+    return queries
+
+
+def _ordered_search_queries(start_slot: int, *, hungry: bool) -> list[str]:
+    queries = list(SEARCH_QUERIES)
+    if hungry:
+        queries.extend(_hero_search_queries())
+    return queries[start_slot:] + queries[:start_slot]
+
+
 def _sweep_pool(
     env: dict[str, str],
     *,
@@ -302,10 +340,19 @@ def _sweep_pool(
 ) -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
-    ordered = list(SEARCH_QUERIES)
-    ordered = ordered[start_slot:] + ordered[:start_slot]
-    for query in ordered[:max_queries]:
-        for row in search_shorts(query, limit=max_per_query, env=env, days=days):
+    blocklist = set(known) | already_sent | sent_pending
+    hungry = len(blocklist) > 200 or env.get("MLBB_INGEST_HUNGRY", "0") == "1"
+    ordered = _ordered_search_queries(start_slot, hungry=hungry)
+    query_cap = max(max_queries, len(ordered)) if hungry else max_queries
+    for query in ordered[:query_cap]:
+        blocklist |= seen
+        for row in search_shorts(
+            query,
+            limit=max_per_query,
+            env=env,
+            days=days,
+            skip_ids=blocklist,
+        ):
             vid = row["video_id"]
             if vid in seen or vid in known or vid in already_sent or vid in sent_pending:
                 continue
@@ -373,9 +420,11 @@ def main() -> int:
     if args.incremental:
         hungry = pending_n < int(env.get("MLBB_TARGET_PENDING", "25"))
         if hungry:
+            env["MLBB_INGEST_HUNGRY"] = "1"
+            ordered = _ordered_search_queries(slot, hungry=True)
             print(
                 f"incremental sweep pending={pending_n} days={args.days} "
-                f"queries={min(10, len(queries))} start={queries[slot]}"
+                f"queries={len(ordered)} start={ordered[0]}"
             )
             pool = _sweep_pool(
                 env,
@@ -383,10 +432,10 @@ def main() -> int:
                 known=labeled_ids(),
                 already_sent=ingest_sent_blocklist(),
                 sent_pending={str(r.get("video_id", "")) for r in pending_candidates(limit=9999)},
-                max_per_query=args.max_per_query,
+                max_per_query=max(args.max_per_query, 20),
                 search_delay=args.search_delay,
                 start_slot=slot,
-                max_queries=10,
+                max_queries=len(ordered),
             )
             pool = pool[: args.max_per_query * 6]
             queries = []
