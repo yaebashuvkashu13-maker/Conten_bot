@@ -119,6 +119,46 @@ def load_feed_sent() -> dict[str, set[str] | dict[str, str]]:
     }
 
 
+def recycle_unlabeled_sent(*, limit: int = 12) -> int:
+    """Re-queue Shorts that were sent but never got 👍/👎 — unblocks exhausted pool."""
+    labeled = labeled_ids()
+    recycled: list[str] = []
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        for vid in sorted(sent["ids"]):
+            if vid in labeled:
+                continue
+            path = _expected_path(vid)
+            if not path.exists() or path.stat().st_size < 10_000:
+                continue
+            recycled.append(vid)
+            if len(recycled) >= limit:
+                break
+        if not recycled:
+            return 0
+        for vid in recycled:
+            sent["ids"].discard(vid)
+            sent["file_ids"].discard(vid)
+            sent["claimed"].pop(vid, None)
+        _write_feed_sent(sent)
+    for vid in recycled:
+        path = _expected_path(vid)
+        row = find_candidate(vid) or {}
+        upsert_candidate(
+            _backfill_short_metadata(
+                {
+                    **row,
+                    "video_id": vid,
+                    "id": vid,
+                    "gameplay_pass": int(row.get("gameplay_pass") or 1),
+                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
+                },
+                path,
+            )
+        )
+    return len(recycled)
+
+
 def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
     with _feed_sent_lock():
         sent = load_feed_sent()

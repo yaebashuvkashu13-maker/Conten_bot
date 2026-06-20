@@ -149,9 +149,11 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
-    rescore_pending_candidates(
-        limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "20")))
-    )
+    load_max = float(env.get("MLBB_RESCORE_LOAD_MAX", "18"))
+    if os.getloadavg()[0] < load_max:
+        rescore_pending_candidates(
+            limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "12")))
+        )
     stale = release_stale_claims(
         max_age_sec=float(env.get("MLBB_CLAIM_STALE_SEC", "300"))
     )
@@ -169,7 +171,7 @@ def _run_feed() -> int:
         s = stats()
         if (
             s["pending"] == 0
-            and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1"
+            and os.environ.get("MLBB_FEED_TRY_INGEST", "0") == "1"
         ):
             worker_ingest = subprocess.run(
                 ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
@@ -178,40 +180,26 @@ def _run_feed() -> int:
                 check=False,
             ).stdout.strip()
             if worker_ingest:
-                subprocess.run(["pkill", "-f", "mlbb_youtube_shorts_ingest.py"], check=False)
-                time.sleep(2)
-            ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
-            if not ingest.exists():
-                ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(ingest),
-                    "--incremental",
-                    "--max-downloads",
-                    os.environ.get("MLBB_FEED_INGEST_MAX_DOWNLOADS", "4"),
-                    "--max-per-query",
-                    "12",
-                    "--days",
-                    os.environ.get("MLBB_SHORTS_DAYS", "365"),
-                ],
-                env={
-                    **env,
-                    "MLBB_INGEST_SKIP_IF_PENDING": "0",
-                    "MLBB_INGEST_HUNGRY": "1",
-                    "MLBB_CALIBRATION_FAST_INGEST": "1",
-                },
-                timeout=int(os.environ.get("MLBB_FEED_INGEST_TIMEOUT_SEC", "300")),
-                check=False,
-            )
-            rebuild_index_from_disk()
-            picked = claim_feed_candidates(
-                _pick_unique_batch(
-                    pending_candidates(limit=max(batch_size * 3, 12), repair=False),
-                    batch_size=batch_size,
+                print(f"skip feed ingest worker_ingest={worker_ingest.strip().split()[0]}")
+            else:
+                burst = Path("/usr/local/bin/mlbb_shorts_burst_send.py")
+                if not burst.exists():
+                    burst = Path(__file__).resolve().parent / "mlbb_shorts_burst_send.py"
+                if burst.exists():
+                    subprocess.run(
+                        [sys.executable, str(burst)],
+                        env={**env, "MLBB_BURST_TARGET": env.get("MLBB_BURST_TARGET", "6")},
+                        timeout=int(os.environ.get("MLBB_FEED_BURST_TIMEOUT_SEC", "120")),
+                        check=False,
+                    )
+                rebuild_index_from_disk()
+                picked = claim_feed_candidates(
+                    _pick_unique_batch(
+                        pending_candidates(limit=max(batch_size * 3, 12), repair=False),
+                        batch_size=batch_size,
+                    )
                 )
-            )
-            s = stats()
+                s = stats()
 
     if not picked:
         now = time.time()

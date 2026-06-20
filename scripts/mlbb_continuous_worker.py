@@ -306,12 +306,13 @@ def _cached_pending_shorts(*, now: float | None = None) -> int:
     return count
 
 
-def ingest_cmd(env: dict[str, str], *, aggressive: bool) -> list[str]:
+def ingest_cmd(env: dict[str, str], *, aggressive: bool, hungry: bool = False) -> list[str]:
     script = BIN / "mlbb_youtube_shorts_ingest.py"
     if not script.exists():
         script = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
-    max_dl = "20" if aggressive else "6"
-    max_q = "30" if aggressive else "12"
+    refill = aggressive or hungry
+    max_dl = "20" if refill else "6"
+    max_q = "30" if refill else "12"
     days = env.get("MLBB_SHORTS_DAYS", "365")
     return [
         PY,
@@ -376,9 +377,9 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
+def ingest_env(base: dict[str, str], *, aggressive: bool, hungry: bool = False) -> dict[str, str]:
     env = dict(base)
-    pending_low = base.get("MLBB_INGEST_FORCE_HUNGRY_PENDING", "8")
+    refill = aggressive or hungry
     env.update(
         {
             "MLBB_CALIBRATION_LENIENT": "1",
@@ -386,8 +387,8 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_SHORTS_DAYS": env.get("MLBB_SHORTS_DAYS", "365"),
             "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
             "MLBB_SHORTS_YEAR_ONLY": env.get("MLBB_SHORTS_YEAR_ONLY", "1"),
-            "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
-            "MLBB_INGEST_HUNGRY": "1" if aggressive else env.get("MLBB_INGEST_HUNGRY", "0"),
+            "MLBB_INGEST_SKIP_IF_PENDING": "0" if refill else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
+            "MLBB_INGEST_HUNGRY": "1" if hungry else ("1" if aggressive else env.get("MLBB_INGEST_HUNGRY", "0")),
             "YTDLP_SLEEP_REQUESTS": "1.2",
             "YTDLP_SLEEP_INTERVAL": "3",
             "YTDLP_MAX_SLEEP_INTERVAL": "10",
@@ -509,6 +510,8 @@ def main() -> int:
                 log(f"pruned_duplicate_ingests={dup}")
 
         pending = _cached_pending_shorts()
+        hungry_threshold = int(base.get("MLBB_INGEST_FORCE_HUNGRY_PENDING", "8"))
+        hungry = pending < hungry_threshold
         aggressive = pending > 0 and pending < TARGET_PENDING
         from mlbb_calibration_store import claimed_count, release_stale_claims, last_feed_sent_age_sec
 
@@ -531,6 +534,20 @@ def main() -> int:
 
         claimed = claimed_count()
         sent_age = last_feed_sent_age_sec()
+        if (
+            pending == 0
+            and sent_age >= float(base.get("MLBB_RECYCLE_SENT_SEC", "1800"))
+            and cycles % 10 == 0
+        ):
+            from mlbb_calibration_store import recycle_unlabeled_sent
+
+            recycled = recycle_unlabeled_sent(limit=int(base.get("MLBB_RECYCLE_LIMIT", "12")))
+            if recycled:
+                log(f"recycled_unlabeled_sent={recycled}")
+                _invalidate_pending_cache()
+                pending = _cached_pending_shorts()
+                hungry = pending < hungry_threshold
+
         force_empty_feed = sent_age >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480")) or (
             feed.last_finish > 0
             and (time.time() - feed.last_finish)
@@ -579,22 +596,21 @@ def main() -> int:
                 montage.start()
 
         ingest_if_pending = int(base.get("MLBB_INGEST_IF_PENDING", str(TARGET_PENDING)))
-        ingest_gap = INGEST_COOLDOWN_SEC if aggressive else JOB_MIN_GAP_SEC
+        ingest_gap = INGEST_COOLDOWN_SEC if (aggressive or hungry) else JOB_MIN_GAP_SEC
         ingest_mutex = ONE_HEAVY_JOB and not shorts_parallel and (
             feed.running() or calibration_feed_running() or hero_busy
         )
         own_ingest = ingest.proc.pid if ingest.running() and ingest.proc else None
         global_ingest = ingest_running_global()
         if (
-            aggressive
-            and pending < ingest_if_pending
+            pending < ingest_if_pending
             and ingest.gap_ok(ingest_gap)
             and not ingest_block
             and not ingest_mutex
             and (not global_ingest or own_ingest is not None)
         ):
-            ingest.cmd = ingest_cmd(base, aggressive=aggressive)
-            ingest.env = ingest_env(base, aggressive=aggressive)
+            ingest.cmd = ingest_cmd(base, aggressive=aggressive, hungry=hungry)
+            ingest.env = ingest_env(base, aggressive=aggressive, hungry=hungry)
             ingest.start()
 
         hero_min_pending = int(base.get("MLBB_HERO_MONTAGE_MIN_PENDING", str(TARGET_PENDING + 5)))
