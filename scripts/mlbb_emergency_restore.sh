@@ -32,13 +32,12 @@ sys.path.insert(0, "/usr/local/bin")
 from mlbb_calibration_store import (
     backfill_gameplay_flags,
     rebuild_index_from_disk,
-    release_all_claims,
     release_stale_claims,
     stats,
 )
 rebuild_index_from_disk()
-released = release_all_claims() + release_stale_claims(max_age_sec=60)
-backfill = backfill_gameplay_flags()
+released = release_stale_claims(max_age_sec=120)
+backfill = backfill_gameplay_flags(limit=8)
 s = stats()
 print(f"released_claims={released} backfill={backfill} pending={s['pending']} index={s['index_total']}")
 PY

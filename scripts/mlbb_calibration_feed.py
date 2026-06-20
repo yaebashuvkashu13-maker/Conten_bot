@@ -18,6 +18,7 @@ from mlbb_calibration_store import (
     claim_feed_candidates,
     feed_singleton_lock,
     inline_keyboard_markup,
+    mark_feed_blocked,
     mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
@@ -113,7 +114,8 @@ def main() -> int:
         return _run_feed()
 
 
-def _pick_unique_batch(rows: list[dict]) -> list[dict]:
+def _pick_unique_batch(rows: list[dict], *, batch_size: int | None = None) -> list[dict]:
+    limit = batch_size if batch_size is not None else BATCH_SIZE
     unique: list[dict] = []
     seen_paths: set[str] = set()
     seen_vids: set[str] = set()
@@ -130,15 +132,16 @@ def _pick_unique_batch(rows: list[dict]) -> list[dict]:
         seen_vids.add(vid)
         seen_paths.add(path_key)
         unique.append(row)
-        if len(unique) >= BATCH_SIZE:
+        if len(unique) >= limit:
             break
     return unique
 
 
 def _run_feed() -> int:
     env = {**os.environ, **load_env(ENV_PATH)}
+    batch_size = int(env.get("MLBB_CALIBRATION_BATCH", os.environ.get("MLBB_CALIBRATION_BATCH", "3")))
     token = env.get("TG_BOT_TOKEN", "")
-    chat_id = os.environ.get("TG_CHAT_ID") or env.get("TG_CHAT_ID", "")
+    chat_id = env.get("TG_CHAT_ID") or os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
@@ -146,18 +149,18 @@ def _run_feed() -> int:
     repair_index()
     rebuild_index_from_disk()
     stale = release_stale_claims(
-        max_age_sec=float(os.environ.get("MLBB_CLAIM_STALE_SEC", "600"))
+        max_age_sec=float(env.get("MLBB_CLAIM_STALE_SEC", "300"))
     )
     if stale:
         print(f"released_stale_claims={stale}")
-    backfill_gameplay_flags(limit=int(os.environ.get("MLBB_FEED_BACKFILL_LIMIT", "30")))
-    picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
+    backfill_limit = int(env.get("MLBB_FEED_BACKFILL_LIMIT", "0"))
+    if backfill_limit > 0:
+        backfill_gameplay_flags(limit=backfill_limit)
+    picked = pending_candidates(limit=max(batch_size * 3, 12), repair=False)
     if not picked:
-        # Metadata-only repair — unblocks rows missing ingested_at/upload_date.
         rebuild_index_from_disk()
-        picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
-    # Guarantee unique files — never send the same mp4 twice in one batch.
-    picked = claim_feed_candidates(_pick_unique_batch(picked))
+        picked = pending_candidates(limit=max(batch_size * 3, 12), repair=False)
+    picked = claim_feed_candidates(_pick_unique_batch(picked, batch_size=batch_size))
     if not picked:
         s = stats()
         worker_ingest = subprocess.run(
@@ -192,7 +195,10 @@ def _run_feed() -> int:
             )
             rebuild_index_from_disk()
             picked = claim_feed_candidates(
-                _pick_unique_batch(pending_candidates(limit=max(BATCH_SIZE * 3, 12)))
+                _pick_unique_batch(
+                    pending_candidates(limit=max(batch_size * 3, 12), repair=False),
+                    batch_size=batch_size,
+                )
             )
             s = stats()
 
@@ -239,6 +245,7 @@ def _run_feed() -> int:
         )
         if not ok_mlbb:
             print(f"skip non-gameplay video_id={vid} reason={gate_reason} score={gscore:.3f}")
+            mark_feed_blocked(vid, reason=gate_reason, score=gscore)
             skipped_ids.append(vid)
             continue
         caption = format_caption(row, idx, len(picked))

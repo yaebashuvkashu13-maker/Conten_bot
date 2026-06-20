@@ -13,10 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve VPS host
+        id: vps
+        run: |
+          if [ -n "${{ secrets.VPS_HOST }}" ]; then
+            echo "host=${{ secrets.VPS_HOST }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ secrets.SSH_HOST }}" ]; then
+            echo "host=${{ secrets.SSH_HOST }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy scripts and restart bot
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.VPS_HOST }}
+          host: ${{ steps.vps.outputs.host }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}

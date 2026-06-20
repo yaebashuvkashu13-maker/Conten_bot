@@ -219,14 +219,35 @@ def release_feed_claims(ids: list[str]) -> int:
                 vid = vid[3:]
             if not vid:
                 continue
-            if vid in claimed_map:
-                claimed_map.pop(vid, None)
-                released += 1
-            if vid in sent["file_ids"]:
-                sent["file_ids"].discard(vid)
+            for key in (vid, f"yt_{vid}"):
+                if key in claimed_map:
+                    claimed_map.pop(key, None)
+                    released += 1
         if released:
             _write_feed_sent(sent)
     return released
+
+
+def claimed_count() -> int:
+    sent = load_feed_sent()
+    claimed: dict[str, str] = sent.get("claimed", {})  # type: ignore[assignment]
+    return len(claimed)
+
+
+def mark_feed_blocked(video_id: str, *, reason: str, score: float = 0.0) -> None:
+    """Exclude repeat failures from pending queue after send-time gameplay gate."""
+    vid = video_id.strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    upsert_candidate(
+        {
+            "video_id": vid,
+            "id": vid,
+            "gameplay_pass": 0,
+            "gameplay_score": round(float(score), 4),
+            "gameplay_reason": reason,
+        }
+    )
 
 
 def release_stale_claims(*, max_age_sec: float = 2700) -> int:
@@ -613,8 +634,9 @@ def _row_passes_pending_gate(row: dict, path: Path) -> bool:
     return True
 
 
-def pending_candidates(*, limit: int = 50) -> list[dict]:
-    repair_index()
+def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
+    if repair and os.environ.get("MLBB_PENDING_SKIP_REPAIR", "0") != "1":
+        repair_index()
     migrate_labels_from_paths()
     labeled = labeled_ids()
     sent = load_feed_sent()
@@ -670,7 +692,7 @@ def stats() -> dict:
         "good_exemplars": good_ex,
         "bad_exemplars": bad_ex,
         "index_total": len(load_index().get("candidates", [])),
-        "pending": len(pending_candidates(limit=9999)),
+        "pending": len(pending_candidates(limit=9999, repair=False)),
     }
 
 

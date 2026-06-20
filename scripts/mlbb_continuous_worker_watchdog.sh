@@ -78,8 +78,22 @@ PY
 restart_worker() {
   local reason="$1"
   log "restart continuous_worker reason=${reason}"
+  python3 - <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/usr/local/bin")
+from mlbb_calibration_store import release_stale_claims
+print("released_claims", release_stale_claims(max_age_sec=120))
+PY
   pkill -f "mlbb_continuous_worker.py" 2>/dev/null || true
-  sleep 1
+  sleep 2
+  if pgrep -f "mlbb_continuous_worker.py" >/dev/null 2>&1; then
+    log "skip restart — worker already running"
+    return 0
+  fi
+  set -a
+  # shellcheck disable=SC1091
+  source "$ENV_FILE" 2>/dev/null || true
+  set +a
   nohup python3 "$WORKER" >> "$LOG" 2>&1 &
   echo $! > "$PIDFILE"
   log "started pid=$(cat "$PIDFILE")"
@@ -131,7 +145,9 @@ print(f"[{datetime.now().isoformat()}] feed_starvation pending={pending} last_se
 subprocess.run(["pkill", "-f", "mlbb_continuous_worker.py"], check=False)
 PY
   sleep 2
-  if ! pgrep -f "mlbb_continuous_worker.py" >/dev/null 2>&1; then
-    restart_worker "feed_starvation"
+  if pgrep -f "mlbb_continuous_worker.py" >/dev/null 2>&1; then
+    log "feed_starvation: worker already restarted"
+    exit 0
   fi
+  restart_worker "feed_starvation"
 fi

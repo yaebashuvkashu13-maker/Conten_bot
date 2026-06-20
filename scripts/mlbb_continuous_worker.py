@@ -82,21 +82,22 @@ def _cpu_cores() -> int:
 
 
 def kill_orphan_heavy_procs() -> None:
-    """Drop CLIP-heavy children left from crashed/restarted workers."""
-    patterns = ["mlbb_youtube_shorts_ingest.py"]
-    if VOD_DISABLED:
-        patterns.extend(
-            (
-                "mlbb_vod_segment_feed.py",
-                "mlbb_vod_montage_feed.py",
-                "mlbb_vod_oneoff.py",
-            )
-        )
+    """Drop CLIP-heavy children left from crashed workers — not our own subprocesses."""
+    if os.environ.get("MLBB_VOD_DISABLED", "1") == "1":
+        patterns = [
+            "mlbb_vod_segment_feed.py",
+            "mlbb_vod_montage_feed.py",
+            "mlbb_vod_oneoff.py",
+        ]
     else:
-        patterns.extend(("mlbb_vod_segment_feed.py", "mlbb_vod_montage_feed.py"))
+        patterns = [
+            "mlbb_youtube_shorts_ingest.py",
+            "mlbb_vod_segment_feed.py",
+            "mlbb_vod_montage_feed.py",
+        ]
     for pat in patterns:
         subprocess.run(["pkill", "-f", pat], check=False)
-    if VOD_DISABLED:
+    if os.environ.get("MLBB_VOD_DISABLED", "1") == "1":
         ONEOFF_LOCK.unlink(missing_ok=True)
 
 
@@ -117,7 +118,13 @@ def load_env_file() -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, val = line.split("=", 1)
-        env.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key.startswith("MLBB_") or key in ("TG_BOT_TOKEN", "TG_CHAT_ID"):
+            if val:
+                env[key] = val
+        else:
+            env.setdefault(key, val)
     return env
 
 
@@ -388,14 +395,18 @@ def main() -> int:
         return 0
 
     base = base_env()
+    os.environ.update({k: v for k, v in base.items() if v})
     global FEED_COOLDOWN_SEC, INGEST_COOLDOWN_SEC, TARGET_PENDING, CALIBRATION_FEED, VOD_DISABLED, SHORTS_DAYS, ONE_HEAVY_JOB
     FEED_COOLDOWN_SEC = float(base.get("MLBB_FEED_COOLDOWN_SEC", str(FEED_COOLDOWN_SEC)))
     INGEST_COOLDOWN_SEC = float(base.get("MLBB_INGEST_COOLDOWN_SEC", str(INGEST_COOLDOWN_SEC)))
     TARGET_PENDING = int(base.get("MLBB_TARGET_PENDING", str(TARGET_PENDING)))
     CALIBRATION_FEED = base.get("MLBB_CALIBRATION_FEED_ENABLED", "1" if VOD_DISABLED else "0") == "1"
     VOD_DISABLED = base.get("MLBB_VOD_DISABLED", "1") == "1"
-    ONE_HEAVY_JOB = base.get("MLBB_ONE_HEAVY_JOB", "1" if VOD_DISABLED else "0") == "1"
+    ONE_HEAVY_JOB = base.get("MLBB_ONE_HEAVY_JOB", "0" if VOD_DISABLED else "1") == "1"
     SHORTS_DAYS = int(base.get("MLBB_SHORTS_DAYS", "365"))
+    PIDFILE = Path(os.environ.get("MLBB_CONTINUOUS_PID", "/root/data/mlbb/mlbb_continuous_worker.pid"))
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     kill_orphan_heavy_procs()
     time.sleep(2)
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
@@ -448,6 +459,20 @@ def main() -> int:
 
         pending = _cached_pending_shorts()
         aggressive = pending < TARGET_PENDING
+        from mlbb_calibration_store import claimed_count, release_stale_claims
+
+        if cycles % 5 == 0:
+            released = release_stale_claims(
+                max_age_sec=float(base.get("MLBB_CLAIM_STALE_SEC", "300"))
+            )
+            if released:
+                log(f"released_stale_claims={released}")
+                _invalidate_pending_cache()
+                pending = _cached_pending_shorts()
+
+        claimed = claimed_count()
+        feed_ready = pending > 0 or claimed > 0
+        shorts_parallel = VOD_DISABLED and not ONE_HEAVY_JOB
 
         vod_busy = vod.running() or bool(vod_feed_pids()) or oneoff_running()
         montage_busy = montage.running()
@@ -488,20 +513,26 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
+        ingest_if_pending = int(base.get("MLBB_INGEST_IF_PENDING", str(TARGET_PENDING)))
+        ingest_gap = INGEST_COOLDOWN_SEC if aggressive else JOB_MIN_GAP_SEC
+        ingest_mutex = ONE_HEAVY_JOB and not shorts_parallel and (
+            feed.running() or calibration_feed_running() or hero_busy
+        )
         if (
             aggressive
-            and pending < int(base.get("MLBB_INGEST_IF_PENDING", "12"))
-            and ingest.gap_ok(JOB_MIN_GAP_SEC)
+            and pending < ingest_if_pending
+            and ingest.gap_ok(ingest_gap)
             and not ingest_block
-            and not (ONE_HEAVY_JOB and (feed.running() or calibration_feed_running() or hero_busy))
+            and not ingest_mutex
         ):
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
 
-        hero_min_pending = int(base.get("MLBB_HERO_MONTAGE_MIN_PENDING", "12"))
+        hero_min_pending = int(base.get("MLBB_HERO_MONTAGE_MIN_PENDING", str(TARGET_PENDING + 5)))
         if (
             HERO_MONTAGE_ENABLED
+            and not VOD_DISABLED
             and pending >= hero_min_pending
             and not hero_busy
             and not feed.running()
@@ -512,16 +543,19 @@ def main() -> int:
         ):
             hero_montage.start()
 
-        feed_cd = FEED_COOLDOWN_SEC if pending > 0 else float(
-            base.get("MLBB_FEED_COOLDOWN_EMPTY_SEC", "720")
-        )
+        if pending > 0:
+            feed_cd = float(base.get("MLBB_FEED_COOLDOWN_PENDING_SEC", str(FEED_COOLDOWN_SEC)))
+        else:
+            feed_cd = float(base.get("MLBB_FEED_COOLDOWN_EMPTY_SEC", str(FEED_COOLDOWN_SEC)))
+        feed_mutex = ONE_HEAVY_JOB and not shorts_parallel and ingest.running()
+        stray_feed = calibration_feed_running() and not feed.running()
         if (
             CALIBRATION_FEED
-            and pending > 0
+            and feed_ready
             and feed.gap_ok(feed_cd)
             and (VOD_DISABLED or not vod.running())
-            and not calibration_feed_running()
-            and not (ONE_HEAVY_JOB and ingest.running())
+            and not stray_feed
+            and not feed_mutex
         ):
             feed.start()
 
@@ -535,11 +569,11 @@ def main() -> int:
         for job in (ingest, vod, feed, montage, hero_montage):
             rc = job.reap()
             if rc is not None and job.name == "feed" and rc != 0:
-                from mlbb_calibration_store import release_all_claims
+                from mlbb_calibration_store import release_stale_claims
 
-                released = release_all_claims()
+                released = release_stale_claims(max_age_sec=60)
                 if released:
-                    log(f"feed_failed rc={rc} released_claims={released}")
+                    log(f"feed_failed rc={rc} released_stale_claims={released}")
                 _invalidate_pending_cache()
             if rc is not None and job.name in ("ingest", "hero_montage", "montage"):
                 _invalidate_pending_cache()
@@ -584,12 +618,30 @@ def main() -> int:
                 check=False,
             )
 
+        if cycles % 30 == 0 and aggressive and not ingest.running():
+            backfill_script = BIN / "mlbb_calibration_store.py"
+            subprocess.run(
+                [
+                    PY,
+                    "-c",
+                    "import sys; sys.path.insert(0,'/usr/local/bin'); "
+                    "from mlbb_calibration_store import backfill_gameplay_flags; "
+                    f"print('backfill', backfill_gameplay_flags(limit={int(base.get('MLBB_WORKER_BACKFILL_LIMIT', '8'))}))",
+                ],
+                env=base,
+                timeout=120,
+                check=False,
+            )
+            _invalidate_pending_cache()
+
         if cycles % 15 == 0:
             write_state(
                 {
                     "cores": cores,
                     "one_heavy_job": ONE_HEAVY_JOB,
                     "pending_shorts": pending,
+                    "claimed_shorts": claimed,
+                    "feed_ready": feed_ready,
                     "vod_disabled": VOD_DISABLED,
                     "ingest_running": ingest.running(),
                     "vod_running": vod.running(),

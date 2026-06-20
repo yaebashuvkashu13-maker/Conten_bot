@@ -14,10 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from mlbb_calibration_store import (  # noqa: E402
     DISLIKE_REASONS,
     claim_feed_candidates,
+    claimed_count,
     dislike_reason_keyboard_markup,
     is_fresh_short,
+    load_index,
+    mark_feed_blocked,
+    pending_candidates,
     rebuild_index_from_disk,
     release_feed_claims,
+    release_stale_claims,
 )
 
 
@@ -168,3 +173,74 @@ def test_release_feed_claims_restores_queue(tmp_path: Path, monkeypatch) -> None
     assert len(claim_feed_candidates([row])) == 1
     assert release_feed_claims(["abcdefghijk"]) >= 1
     assert len(claim_feed_candidates([row])) == 1
+
+
+def test_claimed_count_and_stale_release(tmp_path: Path, monkeypatch) -> None:
+    sent = tmp_path / "sent.json"
+    sent.write_text(
+        json.dumps(
+            {
+                "sent_ids": [],
+                "sent_file_ids": [],
+                "claimed_ids": {"abcdefghijk": "2000-01-01 00:00:00"},
+            }
+        )
+    )
+    monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
+    monkeypatch.setenv("MLBB_FEED_SENT_LOCK", str(tmp_path / "sent.lock"))
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "FEED_SENT_PATH", sent)
+    monkeypatch.setattr(store, "FEED_SENT_LOCK_PATH", tmp_path / "sent.lock")
+
+    assert claimed_count() == 1
+    assert release_stale_claims(max_age_sec=60) == 1
+    assert claimed_count() == 0
+
+
+def test_mark_feed_blocked_sets_gameplay_pass_zero(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    mp4 = shorts / "yt_abcdefghijk.mp4"
+    mp4.write_bytes(b"x" * 20_000)
+    index = tmp_path / "index.json"
+    index.write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "video_id": "abcdefghijk",
+                        "path": str(mp4),
+                        "gameplay_pass": 1,
+                        "gameplay_score": 0.9,
+                        "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                ]
+            }
+        )
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+    sent = tmp_path / "sent.json"
+    sent.write_text(json.dumps({"sent_ids": [], "sent_file_ids": [], "claimed_ids": {}}))
+
+    monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
+    monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+    monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
+    monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "0")
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
+    monkeypatch.setattr(store, "INDEX_PATH", index)
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+    monkeypatch.setattr(store, "FEED_SENT_PATH", sent)
+
+    assert len(pending_candidates(limit=10, repair=False)) == 1
+    mark_feed_blocked("abcdefghijk", reason="not_gameplay", score=0.1)
+    assert len(pending_candidates(limit=10, repair=False)) == 0
+    row = load_index()["candidates"][0]
+    assert row["gameplay_pass"] == 0
+    assert row["gameplay_reason"] == "not_gameplay"
