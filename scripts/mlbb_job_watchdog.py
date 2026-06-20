@@ -146,11 +146,27 @@ def nudge_high_load() -> int:
     return killed
 
 
+def dedupe_ingests() -> int:
+    """Keep one ingest — zombies were starving the VPS."""
+    pids = pids_matching("mlbb_youtube_shorts_ingest.py")
+    if len(pids) <= 1:
+        return 0
+    pids.sort()
+    killed = 0
+    for pid in pids[:-1]:
+        kill_pid_tree(pid, label="duplicate_ingest", reason="extra mlbb_youtube_shorts_ingest")
+        killed += 1
+    return killed
+
+
 def nudge_all() -> list[str]:
     actions: list[str] = []
     dup = dedupe_workers()
     if dup:
         actions.append(f"duplicate_worker={dup}")
+    ing = dedupe_ingests()
+    if ing:
+        actions.append(f"duplicate_ingest={ing}")
     stale_feed = float(os.environ.get("MLBB_FEED_STALE_SEC", "900"))
     stale_ingest = float(os.environ.get("MLBB_INGEST_STALE_SEC", "2400"))
     if nudge_stale("mlbb_calibration_feed.py", stale_feed):

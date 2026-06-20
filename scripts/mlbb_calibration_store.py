@@ -552,6 +552,9 @@ def rebuild_index_from_disk(*, rescore: bool = False) -> int:
                     "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
                     "score": float(row.get("score") or 0.12),
                     "source": "disk_rebuild",
+                    "gameplay_pass": int(row.get("gameplay_pass") or 1),
+                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
+                    "gameplay_reason": str(row.get("gameplay_reason") or "disk_rebuild"),
                 },
                 mp4,
             )

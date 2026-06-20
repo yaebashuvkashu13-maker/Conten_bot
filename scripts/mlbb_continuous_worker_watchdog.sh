@@ -120,34 +120,3 @@ if [[ -n "$pid" ]]; then
 else
   restart_worker "not_running"
 fi
-
-# Feed starvation: pending queue but no delivery for too long → restart worker once.
-FEED_SENT="/root/data/mlbb/calibration_feed_sent.json"
-STARVE_SEC="${MLBB_FEED_STARVE_SEC:-5400}"
-if [[ -f "$FEED_SENT" && -f "$STATE" ]]; then
-  python3 - <<PY >> "$WLOG" 2>&1 || true
-import json, os, subprocess, time
-from datetime import datetime
-from pathlib import Path
-starve = int("${STARVE_SEC}")
-state = json.loads(Path("${STATE}").read_text(encoding="utf-8"))
-pending = int(state.get("pending_shorts") or 0)
-if pending <= 0:
-    raise SystemExit(0)
-raw = json.loads(Path("${FEED_SENT}").read_text(encoding="utf-8"))
-ts = raw.get("updated_at", "")
-if not ts:
-    raise SystemExit(0)
-age = time.time() - datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp()
-if age < starve:
-    raise SystemExit(0)
-print(f"[{datetime.now().isoformat()}] feed_starvation pending={pending} last_sent_age={int(age)}s — restart worker")
-subprocess.run(["pkill", "-f", "mlbb_continuous_worker.py"], check=False)
-PY
-  sleep 2
-  if pgrep -f "mlbb_continuous_worker.py" >/dev/null 2>&1; then
-    log "feed_starvation: worker already restarted"
-    exit 0
-  fi
-  restart_worker "feed_starvation"
-fi

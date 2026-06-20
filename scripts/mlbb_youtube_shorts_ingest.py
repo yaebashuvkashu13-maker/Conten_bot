@@ -9,6 +9,7 @@ Output: /root/datasets/mlbb/youtube_shorts/ + data/mlbb/youtube_shorts_index.jso
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -387,6 +388,14 @@ def _sweep_pool(
 
 
 def main() -> int:
+    lock_path = Path("/tmp/mlbb_youtube_shorts_ingest.lock")
+    lock_fd = lock_path.open("w")
+    try:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("skip ingest another instance running")
+        return 0
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
     parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_DAYS", "365")))
@@ -423,8 +432,8 @@ def main() -> int:
     pruned = repair_index()
     if pruned:
         print(f"repair_index removed={pruned}")
-    rebuilt =     rebuild_index_from_disk()
-    backfill_gameplay_flags(limit=int(env.get("MLBB_INGEST_BACKFILL_LIMIT", "20")))
+    rebuilt = rebuild_index_from_disk()
+    backfill_gameplay_flags(limit=int(env.get("MLBB_INGEST_BACKFILL_LIMIT", "0")))
     if rebuilt:
         print(f"rebuild_index_from_disk added={rebuilt}")
 

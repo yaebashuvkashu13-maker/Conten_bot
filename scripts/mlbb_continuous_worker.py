@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -53,6 +54,47 @@ def calibration_feed_running() -> bool:
         check=False,
     )
     return bool(proc.stdout.strip())
+
+
+def ingest_pids() -> list[int]:
+    proc = subprocess.run(
+        ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    out: list[int] = []
+    for line in (proc.stdout or "").splitlines():
+        try:
+            out.append(int(line.strip()))
+        except ValueError:
+            continue
+    return out
+
+
+def ingest_running_global() -> bool:
+    return bool(ingest_pids())
+
+
+def prune_duplicate_ingests(*, keep_pid: int | None = None) -> int:
+    """Kill zombie ingests — main cause of load 50+ and zero throughput."""
+    pids = ingest_pids()
+    if len(pids) <= 1:
+        return 0
+    pids.sort()
+    keep = keep_pid if keep_pid in pids else pids[-1]
+    killed = 0
+    for pid in pids:
+        if pid == keep:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed += 1
+        except OSError:
+            pass
+    if killed:
+        time.sleep(1)
+    return killed
 
 
 def vod_feed_pids() -> list[int]:
@@ -408,6 +450,7 @@ def main() -> int:
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     kill_orphan_heavy_procs()
+    prune_duplicate_ingests()
     time.sleep(2)
     ingest = Proc("ingest", [], ingest_env(base, aggressive=True))
     vod = Proc("vod", vod_cmd(base), vod_env(base))
@@ -457,6 +500,12 @@ def main() -> int:
         for job in (ingest, vod, feed, montage, hero_montage):
             job.reap()
 
+        if cycles % 3 == 0:
+            keep = ingest.proc.pid if ingest.running() and ingest.proc else None
+            dup = prune_duplicate_ingests(keep_pid=keep)
+            if dup:
+                log(f"pruned_duplicate_ingests={dup}")
+
         pending = _cached_pending_shorts()
         aggressive = pending < TARGET_PENDING
         from mlbb_calibration_store import claimed_count, release_stale_claims
@@ -471,7 +520,10 @@ def main() -> int:
                 pending = _cached_pending_shorts()
 
         claimed = claimed_count()
-        feed_ready = pending > 0 or claimed > 0
+        force_empty_feed = feed.last_finish > 0 and (
+            time.time() - feed.last_finish
+        ) >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480"))
+        feed_ready = pending > 0 or claimed > 0 or force_empty_feed
         shorts_parallel = VOD_DISABLED and not ONE_HEAVY_JOB
 
         vod_busy = vod.running() or bool(vod_feed_pids()) or oneoff_running()
@@ -518,12 +570,15 @@ def main() -> int:
         ingest_mutex = ONE_HEAVY_JOB and not shorts_parallel and (
             feed.running() or calibration_feed_running() or hero_busy
         )
+        own_ingest = ingest.proc.pid if ingest.running() and ingest.proc else None
+        global_ingest = ingest_running_global()
         if (
             aggressive
             and pending < ingest_if_pending
             and ingest.gap_ok(ingest_gap)
             and not ingest_block
             and not ingest_mutex
+            and (not global_ingest or own_ingest is not None)
         ):
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)

@@ -32,6 +32,7 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   | grep -v 'mlbb_youtube_shorts_ingest.sh' \
   | grep -v 'mlbb-vod-segment-cron' \
   | grep -v 'mlbb_vod_segment_feed.sh' \
+  | grep -v 'mlbb_continuous_worker_watchdog' \
   >"$TMP" || true
 echo "*/2 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_continuous_watchdog.log 2>&1 $MARK watchdog2" >>"$TMP"
 crontab "$TMP"
