@@ -474,6 +474,24 @@ def main() -> int:
         f"hero_montage={HERO_MONTAGE_ENABLED} job_gap={JOB_MIN_GAP_SEC}s "
         f"hero_daily_max={HERO_MONTAGE_DAILY_MAX} loop={LOOP_SEC}s"
     )
+    write_state(
+        {
+            "cores": cores,
+            "one_heavy_job": ONE_HEAVY_JOB,
+            "pending_shorts": 0,
+            "claimed_shorts": 0,
+            "feed_ready": False,
+            "vod_disabled": VOD_DISABLED,
+            "ingest_running": False,
+            "vod_running": False,
+            "vod_age_sec": 0,
+            "feed_running": False,
+            "montage_running": False,
+            "hero_montage_running": False,
+            "cycles": 0,
+            "startup": True,
+        }
+    )
     cycles = 0
     pending = _cached_pending_shorts()
 
@@ -718,7 +736,7 @@ def main() -> int:
             )
             _invalidate_pending_cache()
 
-        if cycles % 15 == 0:
+        if cycles % 5 == 0:
             write_state(
                 {
                     "cores": cores,

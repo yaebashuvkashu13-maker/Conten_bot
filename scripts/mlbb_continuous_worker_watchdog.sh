@@ -62,10 +62,17 @@ worker_pid() {
 state_stale() {
   [[ ! -f "$STATE" ]] && return 0
   python3 - <<PY
-import json, time
+import json, os, time
 from datetime import datetime
 from pathlib import Path
 stale = int("${STALE_SEC}")
+pid = int("${pid}")
+try:
+    worker_age = time.time() - os.stat(f"/proc/{pid}").st_mtime
+except OSError:
+    worker_age = stale + 1
+if worker_age < stale:
+    raise SystemExit(1)
 try:
     d = json.loads(Path("${STATE}").read_text(encoding="utf-8"))
     ts = datetime.strptime(d["updated_at"], "%Y-%m-%d %H:%M:%S").timestamp()
