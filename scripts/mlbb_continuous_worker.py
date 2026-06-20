@@ -378,6 +378,7 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
 
 def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
     env = dict(base)
+    pending_low = base.get("MLBB_INGEST_FORCE_HUNGRY_PENDING", "8")
     env.update(
         {
             "MLBB_CALIBRATION_LENIENT": "1",
@@ -386,6 +387,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool) -> dict[str, str]:
             "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
             "MLBB_SHORTS_YEAR_ONLY": env.get("MLBB_SHORTS_YEAR_ONLY", "1"),
             "MLBB_INGEST_SKIP_IF_PENDING": "0" if aggressive else env.get("MLBB_INGEST_SKIP_IF_PENDING", "6"),
+            "MLBB_INGEST_HUNGRY": "1" if aggressive else env.get("MLBB_INGEST_HUNGRY", "0"),
             "YTDLP_SLEEP_REQUESTS": "1.2",
             "YTDLP_SLEEP_INTERVAL": "3",
             "YTDLP_MAX_SLEEP_INTERVAL": "10",

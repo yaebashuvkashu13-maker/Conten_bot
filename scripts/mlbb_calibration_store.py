@@ -234,6 +234,40 @@ def claimed_count() -> int:
     return len(claimed)
 
 
+def index_disk_avail() -> int:
+    """Register on-disk Shorts not yet sent/labeled so feed can drain local pool."""
+    sent = load_feed_sent()
+    labels = labeled_ids()
+    added = 0
+    if not SHORTS_ROOT.exists():
+        return 0
+    for mp4 in SHORTS_ROOT.glob("yt_*.mp4"):
+        if mp4.stat().st_size < 10_000:
+            continue
+        vid = id_from_path(mp4)
+        if vid in sent["ids"] or vid in labels:
+            continue
+        row = find_candidate(vid) or {}
+        upsert_candidate(
+            _backfill_short_metadata(
+                {
+                    **row,
+                    "video_id": vid,
+                    "id": vid,
+                    "title": row.get("title", vid),
+                    "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
+                    "score": float(row.get("score") or 0.55),
+                    "gameplay_pass": 1,
+                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
+                    "gameplay_reason": str(row.get("gameplay_reason") or "disk_avail"),
+                },
+                mp4,
+            )
+        )
+        added += 1
+    return added
+
+
 def mark_feed_blocked(video_id: str, *, reason: str, score: float = 0.0) -> None:
     """Exclude repeat failures from pending queue after send-time gameplay gate."""
     vid = video_id.strip()
