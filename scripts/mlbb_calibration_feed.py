@@ -18,9 +18,11 @@ from mlbb_calibration_store import (
     claim_feed_candidates,
     feed_singleton_lock,
     inline_keyboard_markup,
+    mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
     release_feed_claims,
+    release_stale_claims,
     repair_index,
     stats,
 )
@@ -143,6 +145,11 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
+    stale = release_stale_claims(
+        max_age_sec=float(os.environ.get("MLBB_CLAIM_STALE_SEC", "600"))
+    )
+    if stale:
+        print(f"released_stale_claims={stale}")
     backfill_gameplay_flags(limit=int(os.environ.get("MLBB_FEED_BACKFILL_LIMIT", "30")))
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     if not picked:
@@ -246,6 +253,7 @@ def _run_feed() -> int:
             failed_ids.append(vid)
             continue
         sent_ids.append(vid)
+        mark_feed_sent([vid], paths=[path])
         time.sleep(1.2)
 
     if sent_ids:

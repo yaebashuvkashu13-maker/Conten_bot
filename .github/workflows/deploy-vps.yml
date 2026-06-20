@@ -33,6 +33,9 @@ jobs:
             systemctl restart telegram-upload-bot 2>/dev/null || true
             pkill -f mlbb_continuous_worker.py 2>/dev/null || true
             sleep 2
+            set -a
+            source /root/.video_bot.env 2>/dev/null || true
+            set +a
             nohup python3 /usr/local/bin/mlbb_continuous_worker.py >>/root/data/mlbb/mlbb_continuous_worker.log 2>&1 &
             echo "=== MLBB-only deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true

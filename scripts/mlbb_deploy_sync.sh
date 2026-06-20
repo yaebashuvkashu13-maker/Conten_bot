@@ -11,6 +11,7 @@ for f in \
   mlbb_youtube_shorts_ingest.py \
   mlbb_hero_shorts_montage.py \
   mlbb_telegram_video.py \
+  mlbb_job_watchdog.py \
   telegram_upload_bot.py \
   mlbb_runtime_cleanup.py \
   mlbb_continuous_worker_watchdog.sh; do

@@ -9,6 +9,7 @@ MARK="# mlbb-continuous-worker"
 install -m 755 \
   "$REPO/scripts/mlbb_continuous_worker.py" \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
+  "$REPO/scripts/mlbb_job_watchdog.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
@@ -38,6 +39,10 @@ rm -f "$TMP"
 
 pkill -f mlbb_continuous_worker.py 2>/dev/null || true
 sleep 1
+set -a
+# shellcheck disable=SC1091
+source /root/.video_bot.env 2>/dev/null || true
+set +a
 nohup python3 "$BIN/mlbb_continuous_worker.py" >>/root/data/mlbb/mlbb_continuous_worker.log 2>&1 &
 
 echo "OK mlbb continuous worker started (watchdog every 5 min)"

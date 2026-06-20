@@ -65,6 +65,8 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_USE_CLASSIFIER=1   MLBB_MONTAGE_COOLDOWN_SEC=14400 \
   MLBB_HERO_SHORTS_MONTAGE=1 MLBB_HERO_MONTAGE_MIN_PENDING=12 MLBB_HERO_MONTAGE_STALE_SEC=1200 \
   MLBB_JOB_MIN_GAP_SEC=45 MLBB_HERO_MONTAGE_DAILY_MAX=40 \
+  MLBB_NUDGE_LOAD_MAX=0 MLBB_FEED_STALE_SEC=900 MLBB_CLAIM_STALE_SEC=600 \
+  MLBB_WORKER_STALE_SEC=300 MLBB_FEED_STARVE_SEC=5400 \
   HIGHLIGHT_MAX_PANN_PROBE=18 HIGHLIGHT_MAX_STAGE1=32; do
   key="${kv%%=*}"
   val="${kv#*=}"
@@ -124,6 +126,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/mlbb_continuous_worker.py" \
+  "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
+  "$REPO/scripts/mlbb_job_watchdog.py" \
   "$REPO/scripts/mlbb_daily_report.py" \
   "$REPO/scripts/mlbb_vod_montage_feed.py" \
   "$REPO/scripts/mlbb_viral_threshold_sync.py" \

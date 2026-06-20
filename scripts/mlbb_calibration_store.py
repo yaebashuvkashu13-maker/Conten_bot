@@ -104,13 +104,18 @@ def id_from_path(path: Path) -> str:
     return stem
 
 
-def load_feed_sent() -> dict[str, set[str]]:
-    raw = _read_json(FEED_SENT_PATH, {"sent_ids": [], "sent_file_ids": []})
+def load_feed_sent() -> dict[str, set[str] | dict[str, str]]:
+    raw = _read_json(FEED_SENT_PATH, {"sent_ids": [], "sent_file_ids": [], "claimed_ids": {}})
     if not isinstance(raw, dict):
-        return {"ids": set(), "file_ids": set()}
+        return {"ids": set(), "file_ids": set(), "claimed": {}}
+    claimed_raw = raw.get("claimed_ids", {})
+    claimed: dict[str, str] = {}
+    if isinstance(claimed_raw, dict):
+        claimed = {str(k): str(v) for k, v in claimed_raw.items()}
     return {
         "ids": set(str(x) for x in raw.get("sent_ids", [])),
         "file_ids": set(str(x) for x in raw.get("sent_file_ids", [])),
+        "claimed": claimed,
     }
 
 
@@ -122,15 +127,21 @@ def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
             if path.exists() or path.name.startswith("yt_"):
                 sent["file_ids"].add(id_from_path(path))
                 sent["ids"].add(id_from_path(path))
+        for vid in ids:
+            sent["claimed"].pop(str(vid), None)
         _write_feed_sent(sent)
 
 
-def _write_feed_sent(sent: dict[str, set[str]]) -> None:
+def _write_feed_sent(sent: dict[str, set[str] | dict[str, str]]) -> None:
+    claimed = sent.get("claimed", {})
+    if not isinstance(claimed, dict):
+        claimed = {}
     _write_json(
         FEED_SENT_PATH,
         {
             "sent_ids": sorted(sent["ids"]),
             "sent_file_ids": sorted(sent["file_ids"]),
+            "claimed_ids": dict(sorted(claimed.items())),
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
@@ -170,19 +181,26 @@ def feed_singleton_lock(*, blocking: bool = False):
 def claim_feed_candidates(rows: list[dict]) -> list[dict]:
     """Atomically reserve ids before Telegram send — prevents parallel duplicate feeds."""
     claimed: list[dict] = []
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
     with _feed_sent_lock():
         sent = load_feed_sent()
+        claimed_map: dict[str, str] = sent["claimed"]  # type: ignore[assignment]
         for row in rows:
             vid = str(row.get("video_id", "")).strip()
             path = Path(str(row.get("path", "")))
             if not vid or not path.name.startswith("yt_"):
                 continue
             file_id = id_from_path(path)
-            if vid in sent["ids"] or file_id in sent["ids"] or file_id in sent["file_ids"]:
+            if (
+                vid in sent["ids"]
+                or file_id in sent["ids"]
+                or file_id in sent["file_ids"]
+                or vid in claimed_map
+                or file_id in claimed_map
+            ):
                 continue
-            sent["ids"].add(vid)
-            sent["ids"].add(file_id)
-            sent["file_ids"].add(file_id)
+            claimed_map[vid] = now
+            claimed_map[file_id] = now
             claimed.append({**row, "video_id": vid, "id": vid, "path": str(path)})
         if claimed:
             _write_feed_sent(sent)
@@ -194,21 +212,56 @@ def release_feed_claims(ids: list[str]) -> int:
     released = 0
     with _feed_sent_lock():
         sent = load_feed_sent()
+        claimed_map: dict[str, str] = sent["claimed"]  # type: ignore[assignment]
         for raw in ids:
             vid = str(raw).strip()
             if vid.startswith("yt_"):
                 vid = vid[3:]
             if not vid:
                 continue
-            if vid in sent["ids"]:
-                sent["ids"].discard(vid)
+            if vid in claimed_map:
+                claimed_map.pop(vid, None)
                 released += 1
             if vid in sent["file_ids"]:
                 sent["file_ids"].discard(vid)
+        if released:
+            _write_feed_sent(sent)
+    return released
+
+
+def release_stale_claims(*, max_age_sec: float = 2700) -> int:
+    """Return reserved-but-undelivered ids to the pending queue (killed feed recovery)."""
+    released = 0
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        claimed_map: dict[str, str] = sent["claimed"]  # type: ignore[assignment]
+        stale: list[str] = []
+        for vid, ts in list(claimed_map.items()):
+            try:
+                age = time.time() - datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp()
+            except ValueError:
+                age = max_age_sec + 1
+            if age >= max_age_sec:
+                stale.append(vid)
+        for vid in stale:
+            if vid in claimed_map:
+                claimed_map.pop(vid, None)
                 released += 1
         if released:
             _write_feed_sent(sent)
     return released
+
+
+def release_all_claims() -> int:
+    """Clear in-flight reservations (feed startup after crash)."""
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        claimed_map: dict[str, str] = sent["claimed"]  # type: ignore[assignment]
+        n = len(claimed_map)
+        if n:
+            sent["claimed"] = {}
+            _write_feed_sent(sent)
+        return n
 
 
 def migrate_labels_from_paths() -> int:
@@ -262,13 +315,16 @@ def ingest_sent_blocklist() -> set[str]:
     return load_feed_sent()["ids"]
 
 
-def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str]]) -> bool:
+def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str] | dict[str, str]]) -> bool:
     file_id = id_from_path(path)
+    claimed: dict[str, str] = sent.get("claimed", {})  # type: ignore[assignment]
     if vid in labeled or file_id in labeled:
         return True
     if vid in sent["ids"] or file_id in sent["ids"]:
         return True
     if file_id in sent["file_ids"]:
+        return True
+    if vid in claimed or file_id in claimed:
         return True
     return False
 

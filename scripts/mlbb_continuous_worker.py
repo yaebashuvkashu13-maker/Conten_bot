@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+import fcntl
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -378,14 +379,22 @@ def montage_cmd(env: dict[str, str]) -> list[str]:
 
 
 def main() -> int:
+    lock_path = Path("/tmp/mlbb_continuous_worker.lock")
+    lock_fd = lock_path.open("w")
+    try:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("another mlbb_continuous_worker running", file=sys.stderr)
+        return 0
+
     base = base_env()
-    global FEED_COOLDOWN_SEC, INGEST_COOLDOWN_SEC, TARGET_PENDING, CALIBRATION_FEED, VOD_DISABLED, SHORTS_DAYS
+    global FEED_COOLDOWN_SEC, INGEST_COOLDOWN_SEC, TARGET_PENDING, CALIBRATION_FEED, VOD_DISABLED, SHORTS_DAYS, ONE_HEAVY_JOB
     FEED_COOLDOWN_SEC = float(base.get("MLBB_FEED_COOLDOWN_SEC", str(FEED_COOLDOWN_SEC)))
     INGEST_COOLDOWN_SEC = float(base.get("MLBB_INGEST_COOLDOWN_SEC", str(INGEST_COOLDOWN_SEC)))
     TARGET_PENDING = int(base.get("MLBB_TARGET_PENDING", str(TARGET_PENDING)))
     CALIBRATION_FEED = base.get("MLBB_CALIBRATION_FEED_ENABLED", "1" if VOD_DISABLED else "0") == "1"
     VOD_DISABLED = base.get("MLBB_VOD_DISABLED", "1") == "1"
-    global SHORTS_DAYS
+    ONE_HEAVY_JOB = base.get("MLBB_ONE_HEAVY_JOB", "1" if VOD_DISABLED else "0") == "1"
     SHORTS_DAYS = int(base.get("MLBB_SHORTS_DAYS", "365"))
     kill_orphan_heavy_procs()
     time.sleep(2)
@@ -454,6 +463,10 @@ def main() -> int:
             log(f"hero_montage stale age={int(hero_montage.age_sec())}s — killing")
             hero_montage.stop(reason="stale")
 
+        if feed.running() and feed.age_sec() > float(base.get("MLBB_FEED_STALE_SEC", "900")):
+            log(f"feed stale age={int(feed.age_sec())}s — killing")
+            feed.stop(reason="stale")
+
         if not VOD_DISABLED:
             if vod.running() and vod.age_sec() > VOD_STALE_SEC:
                 log(f"vod stale age={int(vod.age_sec())}s — killing stuck scan")
@@ -475,7 +488,13 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
-        if aggressive and ingest.gap_ok(JOB_MIN_GAP_SEC) and not ingest_block:
+        if (
+            aggressive
+            and pending < int(base.get("MLBB_INGEST_IF_PENDING", "12"))
+            and ingest.gap_ok(JOB_MIN_GAP_SEC)
+            and not ingest_block
+            and not (ONE_HEAVY_JOB and (feed.running() or calibration_feed_running() or hero_busy))
+        ):
             ingest.cmd = ingest_cmd(base, aggressive=aggressive)
             ingest.env = ingest_env(base, aggressive=aggressive)
             ingest.start()
@@ -502,6 +521,7 @@ def main() -> int:
             and feed.gap_ok(feed_cd)
             and (VOD_DISABLED or not vod.running())
             and not calibration_feed_running()
+            and not (ONE_HEAVY_JOB and ingest.running())
         ):
             feed.start()
 
@@ -514,6 +534,13 @@ def main() -> int:
 
         for job in (ingest, vod, feed, montage, hero_montage):
             rc = job.reap()
+            if rc is not None and job.name == "feed" and rc != 0:
+                from mlbb_calibration_store import release_all_claims
+
+                released = release_all_claims()
+                if released:
+                    log(f"feed_failed rc={rc} released_claims={released}")
+                _invalidate_pending_cache()
             if rc is not None and job.name in ("ingest", "hero_montage", "montage"):
                 _invalidate_pending_cache()
                 cleanup_script = BIN / "mlbb_runtime_cleanup.py"
