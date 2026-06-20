@@ -553,18 +553,25 @@ def main() -> int:
         claimed = claimed_count()
         sent_age = last_feed_sent_age_sec()
         if (
-            pending == 0
+            os.environ.get("MLBB_RECYCLE_SENT", "0") == "1"
+            and pending == 0
             and sent_age >= float(base.get("MLBB_RECYCLE_SENT_SEC", "600"))
             and cycles % 3 == 0
         ):
-            from mlbb_calibration_store import refill_pending_emergency
+            from mlbb_calibration_store import recycle_unlabeled_sent
 
-            refilled = refill_pending_emergency(limit=int(base.get("MLBB_RECYCLE_LIMIT", "15")))
-            if refilled:
-                log(f"refill_pending={refilled}")
+            recycled = recycle_unlabeled_sent(limit=int(base.get("MLBB_RECYCLE_LIMIT", "15")))
+            if recycled:
+                log(f"recycled_unlabeled_sent={recycled}")
                 _invalidate_pending_cache()
                 pending = _cached_pending_shorts()
                 hungry = pending < hungry_threshold
+        elif pending == 0 and sent_age >= float(base.get("MLBB_REFILL_DISK_SEC", "900")) and cycles % 15 == 0:
+            from mlbb_calibration_store import refill_pending_emergency
+
+            refilled = refill_pending_emergency(limit=int(base.get("MLBB_REFILL_LIMIT", "10")))
+            if refilled:
+                log(f"refill_new_on_disk={refilled}")
 
         force_empty_feed = sent_age >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480")) or (
             feed.last_finish > 0

@@ -30,6 +30,7 @@ python3 - <<'PY'
 import sys
 sys.path.insert(0, "/usr/local/bin")
 from mlbb_calibration_store import (
+    backfill_ever_delivered,
     backfill_gameplay_flags,
     rebuild_index_from_disk,
     refill_pending_emergency,
@@ -38,10 +39,11 @@ from mlbb_calibration_store import (
 )
 rebuild_index_from_disk()
 released = release_stale_claims(max_age_sec=120)
-refilled = refill_pending_emergency(limit=20)
+delivered = backfill_ever_delivered()
+refilled = refill_pending_emergency(limit=10)
 backfill = backfill_gameplay_flags(limit=8)
 s = stats()
-print(f"released={released} refilled={refilled} backfill={backfill} pending={s['pending']}")
+print(f"released={released} delivered_sync={delivered} refilled={refilled} backfill={backfill} pending={s['pending']}")
 PY
 
 rm -f /tmp/mlbb_calibration_feed.lock

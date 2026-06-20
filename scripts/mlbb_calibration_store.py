@@ -26,6 +26,9 @@ EXEMPLAR_ROOT = Path(
 INDEX_PATH = Path(os.environ.get("MLBB_SHORTS_INDEX", str(DATA_MLBB / "youtube_shorts_index.json")))
 LABELS_PATH = Path(os.environ.get("MLBB_CALIBRATION_LABELS", str(DATA_MLBB / "calibration_labels.json")))
 FEED_SENT_PATH = Path(os.environ.get("MLBB_FEED_SENT", str(DATA_MLBB / "calibration_feed_sent.json")))
+EVER_DELIVERED_PATH = Path(
+    os.environ.get("MLBB_EVER_DELIVERED", str(DATA_MLBB / "calibration_ever_delivered.json"))
+)
 FEED_PROC_LOCK_PATH = Path(os.environ.get("MLBB_FEED_LOCK", "/tmp/mlbb_calibration_feed.lock"))
 FEED_SENT_LOCK_PATH = Path(
     os.environ.get("MLBB_FEED_SENT_LOCK", "/tmp/mlbb_calibration_feed_sent.lock")
@@ -119,6 +122,48 @@ def load_feed_sent() -> dict[str, set[str] | dict[str, str]]:
     }
 
 
+def load_ever_delivered() -> set[str]:
+    """Permanent record — owner has already seen these Shorts in Telegram."""
+    raw = _read_json(EVER_DELIVERED_PATH, {"ids": []})
+    if not isinstance(raw, dict):
+        return set()
+    return {str(x) for x in raw.get("ids", [])}
+
+
+def mark_ever_delivered(ids: list[str]) -> None:
+    if not ids:
+        return
+    data = _read_json(EVER_DELIVERED_PATH, {"ids": []})
+    if not isinstance(data, dict):
+        data = {"ids": []}
+    merged = load_ever_delivered() | {str(x) for x in ids if x}
+    data["ids"] = sorted(merged)
+    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_json(EVER_DELIVERED_PATH, data)
+
+
+def backfill_ever_delivered() -> int:
+    """Merge sent_ids + labeled feedback into permanent delivery log."""
+    before = len(load_ever_delivered())
+    merged = load_ever_delivered()
+    merged.update(load_feed_sent()["ids"])
+    for row in load_labels().get("feedback", []):
+        vid = str(row.get("video_id") or row.get("id") or "")
+        if vid:
+            merged.add(vid)
+    payload = {
+        "ids": sorted(merged),
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _write_json(EVER_DELIVERED_PATH, payload)
+    with _feed_sent_lock():
+        sent = load_feed_sent()
+        sent["ids"].update(merged)
+        sent["file_ids"].update(merged)
+        _write_feed_sent(sent)
+    return len(merged) - before
+
+
 def count_unlabeled_sent() -> dict[str, int]:
     labeled = labeled_ids()
     sent = load_feed_sent()
@@ -142,7 +187,9 @@ def count_unlabeled_sent() -> dict[str, int]:
 
 
 def recycle_unlabeled_sent(*, limit: int = 12) -> int:
-    """Re-queue Shorts that were sent but never got 👍/👎 — unblocks exhausted pool."""
+    """Re-queue Shorts that were sent but never got 👍/👎 — disabled by default (causes repeats)."""
+    if os.environ.get("MLBB_RECYCLE_SENT", "0") != "1":
+        return 0
     labeled = labeled_ids()
     recycled: list[str] = []
     with _feed_sent_lock():
@@ -189,15 +236,37 @@ def recycle_unlabeled_sent(*, limit: int = 12) -> int:
 
 
 def refill_pending_emergency(*, limit: int = 15) -> int:
-    """Unstick queue: recycle unlabeled sent, then register any disk files missed by index."""
-    recycled = recycle_unlabeled_sent(limit=limit)
-    if recycled:
-        return recycled
-    indexed = index_disk_avail()
-    if indexed:
-        print(f"refill_disk_avail={indexed}")
-        return indexed
-    return 0
+    """Register never-delivered disk Shorts only — never re-send already seen videos."""
+    delivered = load_ever_delivered()
+    added = 0
+    if not SHORTS_ROOT.exists():
+        return 0
+    labeled = labeled_ids()
+    for mp4 in sorted(SHORTS_ROOT.glob("yt_*.mp4")):
+        if added >= limit:
+            break
+        if mp4.stat().st_size < 10_000:
+            continue
+        vid = id_from_path(mp4)
+        if vid in delivered or vid in labeled:
+            continue
+        row = find_candidate(vid) or {}
+        upsert_candidate(
+            _backfill_short_metadata(
+                {
+                    **row,
+                    "video_id": vid,
+                    "id": vid,
+                    "gameplay_pass": int(row.get("gameplay_pass") or 1),
+                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
+                },
+                mp4,
+            )
+        )
+        added += 1
+    if added:
+        print(f"refill_new_on_disk={added}")
+    return added
 
 
 def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
@@ -211,6 +280,7 @@ def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
         for vid in ids:
             sent["claimed"].pop(str(vid), None)
         _write_feed_sent(sent)
+    mark_ever_delivered([str(x) for x in ids if x])
 
 
 def _write_feed_sent(sent: dict[str, set[str] | dict[str, str]]) -> None:
@@ -340,7 +410,7 @@ def index_disk_avail() -> int:
         if mp4.stat().st_size < 10_000:
             continue
         vid = id_from_path(mp4)
-        if vid in sent["ids"] or vid in labels:
+        if vid in sent["ids"] or vid in labels or vid in load_ever_delivered():
             continue
         row = find_candidate(vid) or {}
         upsert_candidate(
@@ -461,14 +531,17 @@ def labeled_ids() -> dict[str, str]:
 
 
 def ingest_sent_blocklist() -> set[str]:
-    """IDs ingest should skip (already sent to owner)."""
-    return load_feed_sent()["ids"]
+    """IDs ingest should skip (already delivered to owner)."""
+    return load_ever_delivered() | load_feed_sent()["ids"]
 
 
 def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict[str, set[str] | dict[str, str]]) -> bool:
     file_id = id_from_path(path)
+    delivered = load_ever_delivered()
     claimed: dict[str, str] = sent.get("claimed", {})  # type: ignore[assignment]
     if vid in labeled or file_id in labeled:
+        return True
+    if vid in delivered or file_id in delivered:
         return True
     if vid in sent["ids"] or file_id in sent["ids"]:
         return True
