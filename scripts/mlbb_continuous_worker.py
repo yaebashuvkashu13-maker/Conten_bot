@@ -510,7 +510,7 @@ def main() -> int:
 
         pending = _cached_pending_shorts()
         aggressive = pending < TARGET_PENDING
-        from mlbb_calibration_store import claimed_count, release_stale_claims
+        from mlbb_calibration_store import claimed_count, release_stale_claims, last_feed_sent_age_sec
 
         if cycles % 5 == 0:
             released = release_stale_claims(
@@ -520,11 +520,22 @@ def main() -> int:
                 log(f"released_stale_claims={released}")
                 _invalidate_pending_cache()
                 pending = _cached_pending_shorts()
+            if pending < int(base.get("MLBB_INDEX_DISK_IF_PENDING", "8")):
+                from mlbb_calibration_store import index_disk_avail
+
+                indexed = index_disk_avail()
+                if indexed:
+                    log(f"index_disk_avail={indexed}")
+                    _invalidate_pending_cache()
+                    pending = _cached_pending_shorts()
 
         claimed = claimed_count()
-        force_empty_feed = feed.last_finish > 0 and (
-            time.time() - feed.last_finish
-        ) >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480"))
+        sent_age = last_feed_sent_age_sec()
+        force_empty_feed = sent_age >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480")) or (
+            feed.last_finish > 0
+            and (time.time() - feed.last_finish)
+            >= float(base.get("MLBB_FEED_FORCE_EMPTY_SEC", "480"))
+        )
         feed_ready = pending > 0 or claimed > 0 or force_empty_feed
         shorts_parallel = VOD_DISABLED and not ONE_HEAVY_JOB
 

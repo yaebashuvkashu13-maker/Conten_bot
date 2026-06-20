@@ -234,6 +234,20 @@ def claimed_count() -> int:
     return len(claimed)
 
 
+def last_feed_sent_age_sec() -> float:
+    """Seconds since last successful feed delivery (survives worker restarts)."""
+    raw = _read_json(FEED_SENT_PATH, {})
+    if not isinstance(raw, dict):
+        return 999999.0
+    ts = str(raw.get("updated_at", "")).strip()
+    if not ts:
+        return 999999.0
+    try:
+        return max(0.0, time.time() - datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp())
+    except ValueError:
+        return 999999.0
+
+
 def index_disk_avail() -> int:
     """Register on-disk Shorts not yet sent/labeled so feed can drain local pool."""
     sent = load_feed_sent()
