@@ -23,7 +23,7 @@ sys.path.insert(0, "/usr/local/bin")
 sys.path.insert(0, str(Path("/root/content_bot_ml") / "scripts"))
 
 from highlight_scorer import clear_exemplar_cache
-from mlbb_calibration_store import rebuild_index_from_disk, stats as cal_stats
+from mlbb_calibration_store import rebuild_index_from_disk, rescore_pending_candidates, stats as cal_stats
 from mlbb_vod_segment_store import backfill_owner_labels_from_vod_segments, stats as vseg_stats
 
 synced = backfill_owner_labels_from_vod_segments()
@@ -39,6 +39,16 @@ print(
 PY
 
 python3 /usr/local/bin/highlight_train.py --profile mobile_legends
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/local/bin")
+from highlight_scorer import clear_exemplar_cache
+from mlbb_calibration_store import rescore_pending_candidates, stats
+clear_exemplar_cache()
+n = rescore_pending_candidates()
+s = stats()
+print(f"rescore_pending={n} owner_rank={s.get('owner_rank')} pending={s['pending']}")
+PY
 python3 /usr/local/bin/eval_learning_first_gate.py || true
 
 if [[ -x /usr/local/bin/mlbb_vod_segment_feed.sh ]] && [[ "${MLBB_VOD_DISABLED:-1}" != "1" ]]; then

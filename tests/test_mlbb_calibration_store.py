@@ -19,6 +19,7 @@ from mlbb_calibration_store import (  # noqa: E402
     is_fresh_short,
     load_index,
     mark_feed_blocked,
+    owner_rank_enabled,
     pending_candidates,
     rebuild_index_from_disk,
     release_feed_claims,
@@ -244,3 +245,66 @@ def test_mark_feed_blocked_sets_gameplay_pass_zero(tmp_path: Path, monkeypatch) 
     row = load_index()["candidates"][0]
     assert row["gameplay_pass"] == 0
     assert row["gameplay_reason"] == "not_gameplay"
+
+
+def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    ex_root = tmp_path / "exemplars"
+    (ex_root / "mobile_legends" / "good").mkdir(parents=True)
+    (ex_root / "mobile_legends" / "bad").mkdir(parents=True)
+    for i, score in (("aaa11111111", 0.9), ("bbb22222222", 0.1)):
+        mp4 = shorts / f"yt_{i}.mp4"
+        mp4.write_bytes(b"x" * 20_000)
+        (ex_root / "mobile_legends" / "good" / f"cal_{i}.mp4").write_bytes(b"x" * 1000)
+    index = tmp_path / "index.json"
+    labels = tmp_path / "labels.json"
+    sent = tmp_path / "sent.json"
+    recent = "20260601"
+    older = "20260101"
+    index.write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "video_id": "aaa11111111",
+                        "path": str(shorts / "yt_aaa11111111.mp4"),
+                        "gameplay_pass": 1,
+                        "gameplay_score": 0.8,
+                        "upload_date": older,
+                        "owner_score": 0.9,
+                    },
+                    {
+                        "video_id": "bbb22222222",
+                        "path": str(shorts / "yt_bbb22222222.mp4"),
+                        "gameplay_pass": 1,
+                        "gameplay_score": 0.8,
+                        "upload_date": recent,
+                        "owner_score": 0.1,
+                    },
+                ]
+            }
+        )
+    )
+    labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+    sent.write_text(json.dumps({"sent_ids": [], "sent_file_ids": [], "claimed_ids": {}}))
+
+    monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
+    monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+    monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
+    monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "0")
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(ex_root))
+    monkeypatch.setenv("MLBB_OWNER_MIN_EXEMPLARS", "2")
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
+    monkeypatch.setattr(store, "INDEX_PATH", index)
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+    monkeypatch.setattr(store, "FEED_SENT_PATH", sent)
+    monkeypatch.setattr(store, "EXEMPLAR_ROOT", ex_root)
+
+    assert owner_rank_enabled()
+    rows = pending_candidates(limit=2, repair=False)
+    assert [r["video_id"] for r in rows] == ["aaa11111111", "bbb22222222"]

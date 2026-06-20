@@ -675,6 +675,112 @@ def _freshness_sort_key(row: dict) -> tuple[str, float]:
     return (ud, float(row.get("score") or 0))
 
 
+def _exemplar_counts() -> tuple[int, int]:
+    good = len(list((EXEMPLAR_ROOT / "mobile_legends" / "good").glob("cal_*.mp4")))
+    bad = len(list((EXEMPLAR_ROOT / "mobile_legends" / "bad").glob("cal_*.mp4")))
+    return good, bad
+
+
+def owner_rank_enabled() -> bool:
+    if os.environ.get("MLBB_OWNER_RANK", "1") != "1":
+        return False
+    good, bad = _exemplar_counts()
+    min_total = int(os.environ.get("MLBB_OWNER_MIN_EXEMPLARS", "50"))
+    return (good + bad) >= min_total
+
+
+def compute_owner_score(path: Path) -> float:
+    """CLIP similarity to owner 👍/👎 exemplars — drives pending queue ranking."""
+    from mlbb_telegram_video import probe_duration
+
+    try:
+        from highlight_scorer import score_clip_exemplar
+    except ImportError:
+        return float("nan")
+    dur = max(3.0, min(12.0, probe_duration(path) or 12.0))
+    try:
+        score, _frames = score_clip_exemplar(path, 0.15, dur, "mobile_legends")
+    except Exception:
+        return float("nan")
+    return round(float(score), 4)
+
+
+def rescore_pending_candidates(*, limit: int | None = None) -> int:
+    """Re-score unevaluated Shorts against owner exemplars after 👍/👎 votes."""
+    if not owner_rank_enabled():
+        return 0
+    cap = limit if limit is not None else int(os.environ.get("MLBB_RESCORE_LIMIT", "30"))
+    labeled = labeled_ids()
+    sent = load_feed_sent()
+    updated = 0
+    for row in load_index().get("candidates", []):
+        if updated >= cap:
+            break
+        vid = str(row.get("video_id", "")).strip()
+        if not vid or vid in labeled or vid in sent["ids"]:
+            continue
+        if int(row.get("gameplay_pass") or 0) != 1:
+            continue
+        path = _expected_path(vid)
+        if not path.exists():
+            continue
+        owner_score = compute_owner_score(path)
+        if owner_score != owner_score:  # NaN
+            continue
+        upsert_candidate(
+            {
+                **row,
+                "video_id": vid,
+                "owner_score": owner_score,
+                "owner_scored_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        updated += 1
+    return updated
+
+
+def _pending_sort_key(row: dict) -> tuple[float, str, float]:
+    ud = _upload_date(row) or "00000000"
+    if owner_rank_enabled():
+        raw = row.get("owner_score")
+        owner = float(raw) if raw is not None else -999.0
+        return (owner, ud, float(row.get("gameplay_score") or 0))
+    ud_key, score = _freshness_sort_key(row)
+    return (float(score), ud_key, float(row.get("gameplay_score") or 0))
+
+
+def _row_passes_owner_gate(row: dict) -> bool:
+    if not owner_rank_enabled():
+        return True
+    raw = row.get("owner_score")
+    if raw is None:
+        return True
+    floor = float(os.environ.get("MLBB_OWNER_SCORE_MIN", "-0.08"))
+    return float(raw) >= floor
+
+
+def _ensure_owner_scores(rows: list[dict], *, limit: int) -> None:
+    if not owner_rank_enabled():
+        return
+    need = [r for r in rows if r.get("owner_score") is None][:limit]
+    for row in need:
+        path = Path(row.get("path", ""))
+        if not path.exists():
+            continue
+        score = compute_owner_score(path)
+        if score != score:
+            continue
+        row["owner_score"] = score
+        upsert_candidate(
+            {
+                **(find_candidate(str(row.get("video_id", ""))) or row),
+                "video_id": row.get("video_id"),
+                "owner_score": score,
+                "owner_scored_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+
+
 def _row_passes_pending_gate(row: dict, path: Path) -> bool:
     """Fast queue gate — only trust rows that passed MLBB gameplay check."""
     if int(row.get("gameplay_pass") or 0) != 1:
@@ -712,7 +818,10 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         seen_vids.add(vid)
         seen_paths.add(path_key)
         out.append({**row, "video_id": vid, "id": vid, "path": str(path)})
-    out.sort(key=_freshness_sort_key, reverse=True)
+    score_limit = int(os.environ.get("MLBB_OWNER_SCORE_ON_DEMAND", "12"))
+    _ensure_owner_scores(out, limit=score_limit)
+    out = [r for r in out if _row_passes_owner_gate(r)]
+    out.sort(key=_pending_sort_key, reverse=True)
     return out[:limit]
 
 
@@ -731,8 +840,7 @@ def stats() -> dict:
         if model_positive == owner_good:
             agree += 1
     accuracy = agree / comparable if comparable else 0.0
-    good_ex = len(list((EXEMPLAR_ROOT / "mobile_legends" / "good").glob("cal_*.mp4")))
-    bad_ex = len(list((EXEMPLAR_ROOT / "mobile_legends" / "bad").glob("cal_*.mp4")))
+    good_ex, bad_ex = _exemplar_counts()
     return {
         "feedback_yes": yes,
         "feedback_no": no,
@@ -742,6 +850,7 @@ def stats() -> dict:
         "bad_labels": len(labels.get("bad", [])),
         "good_exemplars": good_ex,
         "bad_exemplars": bad_ex,
+        "owner_rank": owner_rank_enabled(),
         "index_total": len(load_index().get("candidates", [])),
         "pending": len(pending_candidates(limit=9999, repair=False)),
     }

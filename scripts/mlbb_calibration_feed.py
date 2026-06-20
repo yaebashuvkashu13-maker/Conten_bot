@@ -25,6 +25,7 @@ from mlbb_calibration_store import (
     release_feed_claims,
     release_stale_claims,
     repair_index,
+    rescore_pending_candidates,
     stats,
 )
 from gameplay_gate import is_mlbb_calibration_short
@@ -148,6 +149,9 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
+    rescore_pending_candidates(
+        limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "20")))
+    )
     stale = release_stale_claims(
         max_age_sec=float(env.get("MLBB_CLAIM_STALE_SEC", "300"))
     )
