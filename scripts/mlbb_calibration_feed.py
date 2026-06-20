@@ -247,14 +247,15 @@ def _run_feed() -> int:
             print(f"skip corrupt video_id={vid}")
             failed_ids.append(vid)
             continue
-        ok_mlbb, gscore, gate_reason = is_mlbb_calibration_short(
-            path, description=str(row.get("title", ""))
-        )
-        if not ok_mlbb:
-            print(f"skip non-gameplay video_id={vid} reason={gate_reason} score={gscore:.3f}")
-            mark_feed_blocked(vid, reason=gate_reason, score=gscore)
-            skipped_ids.append(vid)
-            continue
+        if env.get("MLBB_FEED_RE_GATE", "0") == "1":
+            ok_mlbb, gscore, gate_reason = is_mlbb_calibration_short(
+                path, description=str(row.get("title", ""))
+            )
+            if not ok_mlbb:
+                print(f"skip non-gameplay video_id={vid} reason={gate_reason} score={gscore:.3f}")
+                mark_feed_blocked(vid, reason=gate_reason, score=gscore)
+                skipped_ids.append(vid)
+                continue
         caption = format_caption(row, idx, len(picked))
         ok = send_video(token, chat_id, path, caption, video_id=vid)
         if not ok:
