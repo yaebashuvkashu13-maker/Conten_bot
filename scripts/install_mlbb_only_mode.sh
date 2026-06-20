@@ -50,7 +50,7 @@ rm -f /var/lock/smart_video_editor.lock /var/lock/overnight_msk.lock 2>/dev/null
 
 touch "$ENV_FILE"
 for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
-  MLBB_VOD_DISABLED=1 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
+  MLBB_VOD_DISABLED=1 MLBB_VOD_ONLY=0 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
   MLBB_MAX_DAILY_SENDS=200 MLBB_CALIBRATION_BATCH=3 MLBB_FEED_COOLDOWN_SEC=720 \
   MLBB_CALIBRATION_FEED_ENABLED=1 MLBB_ONE_HEAVY_JOB=1 \
   MLBB_TARGET_PENDING=30 MLBB_INGEST_COOLDOWN_SEC=120 MLBB_SHORTS_DAYS=365 \
@@ -209,6 +209,16 @@ rm -f "$TMP2"
 
 bash "$REPO/scripts/install_mlbb_continuous_worker.sh" 2>/dev/null || true
 
+# Worker owns feed+ingest loop — do not install legacy calibration crons on top.
+TMP_CAL=$(mktemp)
+crontab -l 2>/dev/null | grep -v 'mlbb-calibration-cron' \
+  | grep -v 'mlbb_calibration_feed.sh' \
+  | grep -v 'mlbb_youtube_shorts_ingest.sh' >"$TMP_CAL" || true
+crontab "$TMP_CAL"
+rm -f "$TMP_CAL"
+
+bash "$REPO/scripts/mlbb_deploy_sync.sh" 2>/dev/null || true
+
 clean_system_cron() {
   local f
   for f in /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive /etc/cron.d/overnight_msk; do
@@ -242,7 +252,10 @@ elif pgrep -f telegram_upload_bot.py >/dev/null 2>&1; then
 fi
 
 bash "$REPO/scripts/disable_vk_mlbb_scheduler.sh" 2>/dev/null || true
-bash "$REPO/scripts/install_mlbb_calibration_cron.sh"
+
+if [[ "${MLBB_CALIBRATION_FEED_ENABLED:-1}" != "1" ]]; then
+  bash "$REPO/scripts/install_mlbb_calibration_cron.sh"
+fi
 
 if [[ -f /etc/cron.d/overnight_msk ]]; then
   rm -f /etc/cron.d/overnight_msk

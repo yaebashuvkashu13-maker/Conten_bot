@@ -12,7 +12,8 @@ for f in \
   mlbb_hero_shorts_montage.py \
   mlbb_telegram_video.py \
   telegram_upload_bot.py \
-  mlbb_runtime_cleanup.py; do
+  mlbb_runtime_cleanup.py \
+  mlbb_continuous_worker_watchdog.sh; do
   if [[ -f "$REPO/scripts/$f" ]]; then
     install -m 755 "$REPO/scripts/$f" "$BIN/$f"
   fi
