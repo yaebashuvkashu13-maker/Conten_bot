@@ -51,11 +51,12 @@ def main() -> int:
         known=known,
         already_sent=sent,
         sent_pending=set(),
-        max_per_query=12,
-        search_delay=1.5,
-        start_slot=0,
-        max_queries=8,
+        max_per_query=15,
+        search_delay=1.0,
+        start_slot=int(time.time() // 3600) % len(QUERIES),
+        max_queries=12,
     )
+    print(f"burst_pool={len(pool)}")
     for row in pool:
         vid = row["video_id"]
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"

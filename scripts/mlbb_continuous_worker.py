@@ -509,7 +509,7 @@ def main() -> int:
                 log(f"pruned_duplicate_ingests={dup}")
 
         pending = _cached_pending_shorts()
-        aggressive = pending < TARGET_PENDING
+        aggressive = pending > 0 and pending < TARGET_PENDING
         from mlbb_calibration_store import claimed_count, release_stale_claims, last_feed_sent_age_sec
 
         if cycles % 5 == 0:

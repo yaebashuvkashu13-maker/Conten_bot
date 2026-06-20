@@ -163,17 +163,19 @@ def _run_feed() -> int:
     picked = claim_feed_candidates(_pick_unique_batch(picked, batch_size=batch_size))
     if not picked:
         s = stats()
-        worker_ingest = subprocess.run(
-            ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip()
         if (
             s["pending"] == 0
             and os.environ.get("MLBB_FEED_TRY_INGEST", "1") == "1"
-            and not worker_ingest
         ):
+            worker_ingest = subprocess.run(
+                ["pgrep", "-f", "mlbb_youtube_shorts_ingest.py"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if worker_ingest:
+                subprocess.run(["pkill", "-f", "mlbb_youtube_shorts_ingest.py"], check=False)
+                time.sleep(2)
             ingest = Path("/usr/local/bin/mlbb_youtube_shorts_ingest.py")
             if not ingest.exists():
                 ingest = Path(__file__).resolve().parent / "mlbb_youtube_shorts_ingest.py"
@@ -189,7 +191,12 @@ def _run_feed() -> int:
                     "--days",
                     os.environ.get("MLBB_SHORTS_DAYS", "365"),
                 ],
-                env={**env, "MLBB_INGEST_SKIP_IF_PENDING": "0"},
+                env={
+                    **env,
+                    "MLBB_INGEST_SKIP_IF_PENDING": "0",
+                    "MLBB_INGEST_HUNGRY": "1",
+                    "MLBB_CALIBRATION_FAST_INGEST": "1",
+                },
                 timeout=int(os.environ.get("MLBB_FEED_INGEST_TIMEOUT_SEC", "300")),
                 check=False,
             )
