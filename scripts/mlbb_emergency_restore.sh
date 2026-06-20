@@ -32,15 +32,21 @@ sys.path.insert(0, "/usr/local/bin")
 from mlbb_calibration_store import (
     backfill_gameplay_flags,
     rebuild_index_from_disk,
+    refill_pending_emergency,
     release_stale_claims,
     stats,
 )
 rebuild_index_from_disk()
 released = release_stale_claims(max_age_sec=120)
+refilled = refill_pending_emergency(limit=20)
 backfill = backfill_gameplay_flags(limit=8)
 s = stats()
-print(f"released_claims={released} backfill={backfill} pending={s['pending']} index={s['index_total']}")
+print(f"released={released} refilled={refilled} backfill={backfill} pending={s['pending']}")
 PY
+
+rm -f /tmp/mlbb_calibration_feed.lock
+MLBB_FEED_RE_GATE=0 MLBB_FEED_TRY_INGEST=0 MLBB_FEED_SKIP_REBUILD=1 MLBB_OWNER_EMERGENCY=1 \
+  timeout 90 python3 "$BIN/mlbb_calibration_feed.py" >>"$LOG" 2>&1 || true
 
 nohup python3 "$BIN/mlbb_continuous_worker.py" >>"$LOG" 2>&1 &
 echo "worker pid=$!"

@@ -554,14 +554,14 @@ def main() -> int:
         sent_age = last_feed_sent_age_sec()
         if (
             pending == 0
-            and sent_age >= float(base.get("MLBB_RECYCLE_SENT_SEC", "1800"))
-            and cycles % 10 == 0
+            and sent_age >= float(base.get("MLBB_RECYCLE_SENT_SEC", "600"))
+            and cycles % 3 == 0
         ):
-            from mlbb_calibration_store import recycle_unlabeled_sent
+            from mlbb_calibration_store import refill_pending_emergency
 
-            recycled = recycle_unlabeled_sent(limit=int(base.get("MLBB_RECYCLE_LIMIT", "12")))
-            if recycled:
-                log(f"recycled_unlabeled_sent={recycled}")
+            refilled = refill_pending_emergency(limit=int(base.get("MLBB_RECYCLE_LIMIT", "15")))
+            if refilled:
+                log(f"refill_pending={refilled}")
                 _invalidate_pending_cache()
                 pending = _cached_pending_shorts()
                 hungry = pending < hungry_threshold

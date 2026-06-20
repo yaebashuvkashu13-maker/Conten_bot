@@ -22,6 +22,7 @@ from mlbb_calibration_store import (
     mark_feed_sent,
     pending_candidates,
     rebuild_index_from_disk,
+    refill_pending_emergency,
     release_feed_claims,
     release_stale_claims,
     repair_index,
@@ -151,9 +152,12 @@ def _run_feed() -> int:
         repair_index()
         rebuild_index_from_disk()
     load_max = float(env.get("MLBB_RESCORE_LOAD_MAX", "18"))
-    if os.getloadavg()[0] < load_max:
+    if (
+        env.get("MLBB_FEED_RESCORE", "0") == "1"
+        and os.getloadavg()[0] < load_max
+    ):
         rescore_pending_candidates(
-            limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "12")))
+            limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "8")))
         )
     stale = release_stale_claims(
         max_age_sec=float(env.get("MLBB_CLAIM_STALE_SEC", "300"))
@@ -168,6 +172,16 @@ def _run_feed() -> int:
         rebuild_index_from_disk()
         picked = pending_candidates(limit=max(batch_size * 3, 12), repair=False)
     picked = claim_feed_candidates(_pick_unique_batch(picked, batch_size=batch_size))
+    if not picked:
+        refilled = refill_pending_emergency(limit=int(env.get("MLBB_REFILL_LIMIT", "15")))
+        if refilled:
+            print(f"refill_pending={refilled}")
+            picked = claim_feed_candidates(
+                _pick_unique_batch(
+                    pending_candidates(limit=max(batch_size * 3, 12), repair=False),
+                    batch_size=batch_size,
+                )
+            )
     if not picked:
         s = stats()
         if (

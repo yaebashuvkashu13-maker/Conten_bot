@@ -119,13 +119,36 @@ def load_feed_sent() -> dict[str, set[str] | dict[str, str]]:
     }
 
 
+def count_unlabeled_sent() -> dict[str, int]:
+    labeled = labeled_ids()
+    sent = load_feed_sent()
+    missing = labeled_n = 0
+    unlabeled = 0
+    for vid in sent["ids"]:
+        if vid in labeled:
+            labeled_n += 1
+            continue
+        path = _expected_path(vid)
+        if not path.exists() or path.stat().st_size < 10_000:
+            missing += 1
+            continue
+        unlabeled += 1
+    return {
+        "sent_total": len(sent["ids"]),
+        "unlabeled_on_disk": unlabeled,
+        "labeled": labeled_n,
+        "missing_file": missing,
+    }
+
+
 def recycle_unlabeled_sent(*, limit: int = 12) -> int:
     """Re-queue Shorts that were sent but never got 👍/👎 — unblocks exhausted pool."""
     labeled = labeled_ids()
     recycled: list[str] = []
     with _feed_sent_lock():
         sent = load_feed_sent()
-        for vid in sorted(sent["ids"]):
+        candidates = sorted(set(sent["ids"]) | set(sent.get("file_ids", set())))
+        for vid in candidates:
             if vid in labeled:
                 continue
             path = _expected_path(vid)
@@ -135,6 +158,12 @@ def recycle_unlabeled_sent(*, limit: int = 12) -> int:
             if len(recycled) >= limit:
                 break
         if not recycled:
+            diag = count_unlabeled_sent()
+            print(
+                f"recycle_none sent={diag['sent_total']} "
+                f"unlabeled_on_disk={diag['unlabeled_on_disk']} "
+                f"labeled={diag['labeled']} missing={diag['missing_file']}"
+            )
             return 0
         for vid in recycled:
             sent["ids"].discard(vid)
@@ -157,6 +186,18 @@ def recycle_unlabeled_sent(*, limit: int = 12) -> int:
             )
         )
     return len(recycled)
+
+
+def refill_pending_emergency(*, limit: int = 15) -> int:
+    """Unstick queue: recycle unlabeled sent, then register any disk files missed by index."""
+    recycled = recycle_unlabeled_sent(limit=limit)
+    if recycled:
+        return recycled
+    indexed = index_disk_avail()
+    if indexed:
+        print(f"refill_disk_avail={indexed}")
+        return indexed
+    return 0
 
 
 def mark_feed_sent(ids: list[str], *, paths: list[Path] | None = None) -> None:
@@ -796,6 +837,8 @@ def _pending_sort_key(row: dict) -> tuple[float, str, float]:
 def _row_passes_owner_gate(row: dict) -> bool:
     if not owner_rank_enabled():
         return True
+    if os.environ.get("MLBB_OWNER_EMERGENCY", "0") == "1":
+        return True
     raw = row.get("owner_score")
     if raw is None:
         return True
@@ -862,8 +905,9 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         seen_vids.add(vid)
         seen_paths.add(path_key)
         out.append({**row, "video_id": vid, "id": vid, "path": str(path)})
-    score_limit = int(os.environ.get("MLBB_OWNER_SCORE_ON_DEMAND", "12"))
-    _ensure_owner_scores(out, limit=score_limit)
+    score_limit = int(os.environ.get("MLBB_OWNER_SCORE_ON_DEMAND", "0"))
+    if score_limit > 0 and os.getloadavg()[0] < float(os.environ.get("MLBB_OWNER_SCORE_LOAD_MAX", "12")):
+        _ensure_owner_scores(out, limit=score_limit)
     out = [r for r in out if _row_passes_owner_gate(r)]
     out.sort(key=_pending_sort_key, reverse=True)
     return out[:limit]

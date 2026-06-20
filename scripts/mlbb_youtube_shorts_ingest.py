@@ -37,6 +37,9 @@ from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp
 
 SEARCH_QUERIES = (
     "mlbb 2026 savage shorts",
+    "mlbb 2026 highlights shorts",
+    "mlbb january 2026 shorts",
+    "mobile legends 2026 shorts gameplay",
     "mlbb 2025 highlights shorts",
     "mlbb mpl 2025 shorts",
     "mlbb m7 highlights shorts",
@@ -48,6 +51,9 @@ SEARCH_QUERIES = (
     "mobile legends esports highlights shorts",
     "mlbb onic alter ego shorts",
     "mlbb chou savage shorts",
+    "mlbb fanny savage shorts",
+    "mlbb ling shorts",
+    "mlbb ranked gameplay shorts",
 )
 
 HQ_FORMAT = (
