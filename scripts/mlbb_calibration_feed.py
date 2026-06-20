@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_calibration_store import (
     DATA_MLBB,
+    backfill_gameplay_flags,
     claim_feed_candidates,
     feed_singleton_lock,
     inline_keyboard_markup,
@@ -142,6 +143,7 @@ def _run_feed() -> int:
 
     repair_index()
     rebuild_index_from_disk()
+    backfill_gameplay_flags(limit=int(os.environ.get("MLBB_FEED_BACKFILL_LIMIT", "30")))
     picked = pending_candidates(limit=max(BATCH_SIZE * 3, 12))
     if not picked:
         # Metadata-only repair — unblocks rows missing ingested_at/upload_date.

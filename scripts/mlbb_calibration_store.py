@@ -408,6 +408,42 @@ def _backfill_short_metadata(row: dict, mp4: Path) -> dict:
     return out
 
 
+def backfill_gameplay_flags(*, limit: int = 50) -> int:
+    """Tag candidates missing gameplay_pass so the pending queue can work."""
+    from gameplay_gate import is_mlbb_calibration_short
+
+    labeled = labeled_ids()
+    sent = load_feed_sent()
+    updated = 0
+    for row in load_index().get("candidates", []):
+        if updated >= limit:
+            break
+        if int(row.get("gameplay_pass") or 0) == 1:
+            continue
+        vid = str(row.get("video_id", "")).strip()
+        if not vid or vid in labeled or vid in sent["ids"]:
+            continue
+        path = _expected_path(vid)
+        if not path.exists() or path.stat().st_size < 10_000:
+            continue
+        ok, score, reason = is_mlbb_calibration_short(
+            path, description=str(row.get("title", ""))
+        )
+        upsert_candidate(
+            {
+                **row,
+                "video_id": vid,
+                "id": vid,
+                "path": str(path),
+                "gameplay_pass": int(ok),
+                "gameplay_score": round(float(score), 4),
+                "gameplay_reason": reason,
+            }
+        )
+        updated += 1
+    return updated
+
+
 def rebuild_index_from_disk(*, rescore: bool = False) -> int:
     """Re-register Shorts already on disk so owner can keep labeling after repair/prune."""
     added = 0

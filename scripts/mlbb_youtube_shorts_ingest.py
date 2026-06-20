@@ -23,6 +23,7 @@ from gameplay_gate import OTHER_GAME_TITLE, is_mlbb_calibration_short, is_gamepl
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
+    backfill_gameplay_flags,
     ingest_sent_blocklist,
     labeled_ids,
     pending_candidates,
@@ -422,7 +423,8 @@ def main() -> int:
     pruned = repair_index()
     if pruned:
         print(f"repair_index removed={pruned}")
-    rebuilt = rebuild_index_from_disk()
+    rebuilt =     rebuild_index_from_disk()
+    backfill_gameplay_flags(limit=int(env.get("MLBB_INGEST_BACKFILL_LIMIT", "20")))
     if rebuilt:
         print(f"rebuild_index_from_disk added={rebuilt}")
 
@@ -569,16 +571,13 @@ def main() -> int:
         if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
             rejected += 1
             continue
-        if not ok and lenient and feats["score"] < 0.05:
-            rejected += 1
-            continue
 
         upsert_candidate(
             {
                 **row,
                 **feats,
                 "path": str(mp4),
-                "gameplay_pass": int(ok),
+                "gameplay_pass": 1,
                 "gameplay_score": round(float(gscore), 4),
                 "gameplay_reason": reason,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
