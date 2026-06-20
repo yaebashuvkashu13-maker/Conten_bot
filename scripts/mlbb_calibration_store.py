@@ -513,6 +513,9 @@ def apply_owner_label(
             entry["exemplar"] = str(exemplar)
 
     save_labels(labels)
+    from mlbb_owner_learning import sync_shorts_label_to_owner_json
+
+    sync_shorts_label_to_owner_json(vid, is_good=is_good, reason=reason)
     return True, "good" if is_good else "bad"
 
 
@@ -676,8 +679,9 @@ def _freshness_sort_key(row: dict) -> tuple[str, float]:
 
 
 def _exemplar_counts() -> tuple[int, int]:
-    good = len(list((EXEMPLAR_ROOT / "mobile_legends" / "good").glob("cal_*.mp4")))
-    bad = len(list((EXEMPLAR_ROOT / "mobile_legends" / "bad").glob("cal_*.mp4")))
+    root = EXEMPLAR_ROOT / "mobile_legends"
+    good = len(list((root / "good").glob("*.mp4"))) if (root / "good").exists() else 0
+    bad = len(list((root / "bad").glob("*.mp4"))) if (root / "bad").exists() else 0
     return good, bad
 
 

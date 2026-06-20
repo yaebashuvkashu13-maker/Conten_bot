@@ -198,19 +198,6 @@ def _vod_id_from_row(row: dict, segment_id_str: str) -> str:
     return segment_id_str[:11]
 
 
-def load_owner_labels_json() -> dict:
-    data = _read_json(_owner_labels_path(), {"videos": {}})
-    if not isinstance(data, dict):
-        return {"videos": {}}
-    data.setdefault("videos", {})
-    return data
-
-
-def save_owner_labels_json(data: dict) -> None:
-    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(_owner_labels_path(), data)
-
-
 def append_owner_label_json(
     vod_id: str,
     time_sec: float,
@@ -220,26 +207,28 @@ def append_owner_label_json(
     source: str = "vod_segment",
 ) -> None:
     """Append hard-negative / gold anchor to mobile_legends_owner_labels.json."""
-    vid = vod_id.strip()
-    if not vid or label not in ("good", "bad"):
-        return
-    data = load_owner_labels_json()
-    videos: dict = data.setdefault("videos", {})
-    rows: list[dict] = list(videos.get(vid, []))
-    key = (round(float(time_sec), 1), label)
-    seen = {(round(float(r.get("time_sec", 0)), 1), r.get("label")) for r in rows if "time_sec" in r}
-    if key in seen:
-        return
-    entry: dict = {
-        "time_sec": round(float(time_sec), 1),
-        "label": label,
-        "source": source,
-    }
-    if note:
-        entry["note"] = note[:200]
-    rows.append(entry)
-    videos[vid] = rows
-    save_owner_labels_json(data)
+    from mlbb_owner_learning import append_owner_time_label
+
+    append_owner_time_label(
+        vod_id,
+        time_sec,
+        label,
+        note=note,
+        source=source,
+        scope="segment" if source.startswith("vod") else "",
+    )
+
+
+def load_owner_labels_json() -> dict:
+    from mlbb_owner_learning import load_owner_labels_json as _load
+
+    return _load()
+
+
+def save_owner_labels_json(data: dict) -> None:
+    from mlbb_owner_learning import save_owner_labels_json as _save
+
+    _save(data)
 
 
 def backfill_owner_labels_from_vod_segments() -> int:

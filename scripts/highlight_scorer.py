@@ -189,6 +189,10 @@ def classifier_path_for_profile(profile: str) -> Path:
 
 
 def _labels_for_vod(video_path: Path, profile: str) -> list[dict]:
+    if normalize_profile(profile) == "mobile_legends":
+        from mlbb_owner_learning import owner_labels_for_vod_scan
+
+        return owner_labels_for_vod_scan(video_path, profile)
     rows: list[dict] = []
     labels_path = _owner_labels_path(profile)
     if labels_path is not None and labels_path.exists():
@@ -198,7 +202,6 @@ def _labels_for_vod(video_path: Path, profile: str) -> list[dict]:
             rows.extend(list(data.get("videos", {}).get(vid, [])))
         except (json.JSONDecodeError, OSError):
             pass
-    rows.extend(_labels_from_vod_segment_store(video_path, profile))
     return rows
 
 
@@ -882,18 +885,24 @@ def classifier_probability(metrics: HighlightMetrics, profile: str | None = None
     clf = _load_classifier(profile or metrics.profile)
     if clf is None:
         return 0.0
-    feats = np.array(
-        [
+    prof = normalize_profile(profile or metrics.profile)
+    if prof == "mobile_legends":
+        from mlbb_owner_learning import mlbb_classifier_features
+
+        feats = np.array([mlbb_classifier_features(metrics)])
+    else:
+        feats = np.array(
             [
-                metrics.panns_gunshot,
-                metrics.panns_machine_gun,
-                metrics.panns_explosion,
-                metrics.clip_score,
-                metrics.center_motion,
-                metrics.boss_bar,
+                [
+                    metrics.panns_gunshot,
+                    metrics.panns_machine_gun,
+                    metrics.panns_explosion,
+                    metrics.clip_score,
+                    metrics.center_motion,
+                    metrics.boss_bar,
+                ]
             ]
-        ]
-    )
+        )
     try:
         if hasattr(clf, "predict_proba"):
             return float(clf.predict_proba(feats)[0][1])

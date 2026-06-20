@@ -136,15 +136,9 @@ def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
 def extract_features(vod: Path, start: float, profile: str) -> list[float]:
     m = score_candidate_window(vod, start, WINDOW_SEC, profile)
     if normalize_profile(profile) == "mobile_legends":
-        # PUBG gunshot features are noise for MLBB — use HUD motion + CLIP + hook.
-        return [
-            max(0.0, float(m.clip_score)),
-            float(m.minimap_delta),
-            float(m.skill_delta),
-            float(m.center_motion),
-            float(m.hook_score),
-            float(m.visual_dynamics),
-        ]
+        from mlbb_owner_learning import mlbb_classifier_features
+
+        return mlbb_classifier_features(m)
     return [
         m.panns_gunshot,
         m.panns_machine_gun,
@@ -165,24 +159,28 @@ def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
 
     X: list[list[float]] = []
     y: list[int] = []
-    for vod, start, label in load_all_owner_samples(profile):
-        X.append(extract_features(vod, start, profile))
-        y.append(label)
-    for vod, start, label in load_mlbb_owner_calibration(profile):
-        X.append(extract_features(vod, start, profile))
-        y.append(label)
-
-    exemplar_root = REPO / "data" / "highlight_exemplars" / profile
-    exemplar_cap = max_exemplar
     if profile == "mobile_legends":
-        exemplar_cap = int(os.environ.get("MLBB_TRAIN_MAX_EXEMPLARS", "200"))
-    for label_name, cls in (("good", 1), ("bad", 0)):
-        folder = exemplar_root / label_name
-        if not folder.exists():
-            continue
-        for clip in sorted(folder.glob("*.mp4"))[:exemplar_cap]:
-            X.append(extract_features(clip, 0.5, profile))
-            y.append(cls)
+        from mlbb_owner_learning import load_unified_training_samples
+
+        samples = load_unified_training_samples(profile)
+        for path, start, label in samples:
+            X.append(extract_features(path, start, profile))
+            y.append(label)
+        print(f"unified_mlbb_samples={len(samples)}")
+    else:
+        for vod, start, label in load_all_owner_samples(profile):
+            X.append(extract_features(vod, start, profile))
+            y.append(label)
+
+    if profile != "mobile_legends":
+        exemplar_root = REPO / "data" / "highlight_exemplars" / profile
+        for label_name, cls in (("good", 1), ("bad", 0)):
+            folder = exemplar_root / label_name
+            if not folder.exists():
+                continue
+            for clip in sorted(folder.glob("*.mp4"))[:max_exemplar]:
+                X.append(extract_features(clip, 0.5, profile))
+                y.append(cls)
 
     if len(X) < 8:
         print(f"REFUSED: train profile={profile}, reason=insufficient_samples n={len(X)}")
