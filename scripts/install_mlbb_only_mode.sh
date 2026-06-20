@@ -79,6 +79,8 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
 done
 # Unquoted YOUTUBE_SHORTS_FORMAT breaks `source` (bash treats [height<=1080] as tests).
 sed -i '/^YOUTUBE_SHORTS_FORMAT=/d' "$ENV_FILE" 2>/dev/null || true
+sed -i '/^=1080/d' "$ENV_FILE" 2>/dev/null || true
+sed -i '/^YOUTUBE_SHORTS_FORMAT_HQ=/d' "$ENV_FILE" 2>/dev/null || true
 sed -i '/^MLBB_SHORTS_MIN_UPLOAD_DATE=/d' "$ENV_FILE" 2>/dev/null || true
 if ! grep -q '^YOUTUBE_SHORTS_FORMAT_HQ=' "$ENV_FILE" 2>/dev/null; then
   echo "YOUTUBE_SHORTS_FORMAT_HQ='bv*[vcodec^=avc1][height<=1080][height>=720]+ba/bv*[height<=1080][height>=720]+ba/bv*[height<=1080]+ba/b[height<=1080]/best'" >>"$ENV_FILE"
