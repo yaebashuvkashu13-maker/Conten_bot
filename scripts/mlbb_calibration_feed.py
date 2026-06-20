@@ -147,8 +147,9 @@ def _run_feed() -> int:
         print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
         return 1
 
-    repair_index()
-    rebuild_index_from_disk()
+    if env.get("MLBB_FEED_SKIP_REBUILD", "0") != "1":
+        repair_index()
+        rebuild_index_from_disk()
     load_max = float(env.get("MLBB_RESCORE_LOAD_MAX", "18"))
     if os.getloadavg()[0] < load_max:
         rescore_pending_candidates(
