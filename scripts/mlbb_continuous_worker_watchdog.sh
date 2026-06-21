@@ -30,16 +30,17 @@ log() {
 if [[ "${MLBB_VOD_DISABLED:-1}" == "1" || "${MLBB_CALIBRATION_FEED_ENABLED:-1}" == "1" ]]; then
   :
 elif [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
-  log "vod_only=1: skip continuous worker; ensure vod_segment_feed running"
+  log "vod_only=1: skip continuous worker; ensure vod supervisor running"
   if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
     log "restart telegram_upload_bot"
     nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
   fi
   VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
-  if ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
+  if ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \
+    && ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
     if [[ -x "$VOD_WRAPPER" ]]; then
       nohup "$VOD_WRAPPER" >>/root/data/mlbb/vod_only_watchdog.log 2>&1 &
-      log "started vod_segment_feed via wrapper pid=$!"
+      log "started vod supervisor via wrapper pid=$!"
     else
       nohup env PYTHONPATH="/usr/local/bin" flock -n /tmp/mlbb_vod_segment_feed.lock \
         python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \

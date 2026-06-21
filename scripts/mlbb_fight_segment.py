@@ -14,7 +14,11 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "35"))
+    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "55"))
+
+
+def _fight_hard_max_sec() -> float:
+    return float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "65"))
 
 
 def _sustain_quiet_bins() -> int:
@@ -51,7 +55,7 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
     """
     Detect fight window around peak_sec.
 
-    Returns (start_sec, end_sec, duration_sec), clamped to [7, 22]s.
+    Returns (start_sec, end_sec, duration_sec) for the full fight sustain region.
     Uses sustain decay walk from smart_video_editor.build_candidates logic.
     """
     min_d = _fight_min_sec()
@@ -117,8 +121,14 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
     if dur < min_d:
         end = min(file_dur, start + min_d)
         dur = end - start
-    if dur > max_d:
-        # Keep climax tail — don't cut teamfight mid-resolution.
+
+    hard_max = _fight_hard_max_sec()
+    if dur > hard_max:
+        # Absolute safety cap only — prefer full teamfight up to hard_max.
+        end = min(file_dur, region_end)
+        start = max(0.0, end - hard_max)
+        dur = end - start
+    elif dur > max_d and os.environ.get("MLBB_FIGHT_TRIM_LONG", "0") == "1":
         end = min(file_dur, region_end)
         start = max(0.0, end - max_d)
         dur = end - start

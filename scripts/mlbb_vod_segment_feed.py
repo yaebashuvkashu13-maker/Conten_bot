@@ -722,17 +722,26 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
     }
 
 
-def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
+def _vod_crop_box(vod: Path, start: float, dur: float) -> tuple[int, int, int, int] | None:
+    """Full stream frame when MLBB_VOD_NO_CROP=1 — avoids cutting off HUD/minimap."""
     if os.environ.get("MLBB_VOD_NO_CROP", "0") == "1":
-        return ""
+        return None
     from smart_video_editor import detect_game_viewport_crop
 
     crop = detect_game_viewport_crop(vod, start, dur)
     if not crop or len(crop) != 4:
-        return ""
+        return None
     x, y, w, h = crop
     if w < 64 or h < 64:
+        return None
+    return int(x), int(y), int(w), int(h)
+
+
+def _crop_filter_prefix(vod: Path, start: float, dur: float) -> str:
+    crop = _vod_crop_box(vod, start, dur)
+    if not crop:
         return ""
+    x, y, w, h = crop
     return f"crop={w}:{h}:{x}:{y},"
 
 
@@ -964,6 +973,21 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 
+def _segment_duration(row: dict) -> float:
+    clip = row.get("clip") or {}
+    for key in ("input_duration", "output_duration", "fight_dur"):
+        raw = row.get(key) if key != "fight_dur" else row.get("fight_dur")
+        if raw is None and key in clip:
+            raw = clip.get(key)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if val > 0.5:
+            return val
+    return float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15"))
+
+
 def _presend_freeze_min_dur() -> float:
     return float(os.environ.get("MLBB_PRESEND_FREEZE_MIN_DUR", "1.2"))
 
@@ -1069,7 +1093,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     Catches Telegram freeze, base spawn, idle lanes — after render.
     """
     from gameplay_gate import (
-        detect_game_viewport_crop,
         score_segment_combat,
         segment_looks_like_draft_or_queue,
         segment_uniform_gameplay_ok,
@@ -1079,14 +1102,14 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     report: dict = {"segment_id": row.get("segment_id", "")}
     cut_start = float(row.get("start", 0))
     peak_start = float(row.get("peak_start", cut_start))
-    dur = float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15"))
+    dur = _segment_duration(row)
 
     ok, reason, freezes = _detect_render_freeze(rendered)
     report["freezes"] = freezes
     if not ok:
         return False, reason, report
 
-    crop = detect_game_viewport_crop(vod, cut_start, dur)
+    crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
 
     for label, t0 in (("cut", cut_start), ("peak", peak_start)):
@@ -1170,8 +1193,14 @@ def _used_starts_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> list[f
 
 
 def _dedupe_segments_by_gap(rows: list[dict], *, min_gap: float, reserved_starts: list[float]) -> list[dict]:
-    """Keep best-scoring clip per fight — no 614/622/624 duplicates from one teamfight."""
-    ranked = sorted(rows, key=lambda r: (r["score"], r["hook_score"]), reverse=True)
+    """Keep best-scoring clip per fight — owner exemplars (👍 Shorts) rank first."""
+
+    def _rank_key(r: dict) -> tuple[float, float, float]:
+        metrics = r.get("highlight_metrics") or {}
+        clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
+        return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)))
+
+    ranked = sorted(rows, key=_rank_key, reverse=True)
     taken = list(reserved_starts)
     chosen: list[dict] = []
     for row in ranked:
@@ -1213,6 +1242,11 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
         vis = visual_rows[0] if visual_rows else {}
+        clip_score = float(metrics.get("clip_score") or 0.0)
+        min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
+        if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+            log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
+            continue
         out.append(
             {
                 "segment_id": sid,
@@ -1222,6 +1256,8 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "fight_dur": float(lead_clip.get("input_duration", 0)),
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
+                "clip_score": clip_score,
+                "highlight_metrics": metrics,
                 "visual_pass": vis.get("visual_pass", True),
                 "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
                 "clip_score": float(metrics.get("clip_score") or 0),
@@ -1250,8 +1286,12 @@ def _send_segment_batch(
     to_send: list[dict],
     sig: str,
 ) -> tuple[int, int, int]:
-    """Returns (sent_count, presend_skipped, send_blocked)."""
+    """Render and send segments — one Telegram video per clip (no montage merge)."""
     from mlbb_learning_first import can_send, daily_send_count, max_daily_sends
+
+    send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+    if send_one and len(to_send) > 1:
+        to_send = to_send[:1]
 
     ok_batch, block_reason = can_send(1)
     if not ok_batch:
@@ -1271,15 +1311,17 @@ def _send_segment_batch(
     if len(to_send) > cap_left:
         log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
         to_send = to_send[:cap_left]
-    seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
-    send_message(
-        token,
-        chat_id,
-        f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
-        f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
-        f"👍 Ок / 👎 Не ок под каждым\n"
-        f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
-    )
+
+    if not send_one:
+        seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
+        send_message(
+            token,
+            chat_id,
+            f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
+            f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
+            f"👍 Ок / 👎 Не ок под каждым\n"
+            f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
+        )
     SEGMENTS_ROOT = segments_root()
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
@@ -1301,11 +1343,14 @@ def _send_segment_batch(
         seg_dur = _ffprobe_duration(out)
         peak = int(row.get("peak_start", row["start"]))
         report_line = _format_send_report(row, presend_report)
+        clip_line = ""
+        if row.get("clip_score") is not None:
+            clip_line = f"learn={float(row['clip_score']):.3f} | "
         caption = (
             f"MLBB кусок #{sid}\n"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s"
             f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
-            f"{report_line}\n"
+            f"{clip_line}{report_line}\n"
             f"✓ presend\n"
             f"👍 Ок / 👎 Не ок"
         )
@@ -1452,6 +1497,51 @@ def _process_vod_segments(
     return sent_total
 
 
+def _bootstrap_shorts_exemplars_for_vod() -> dict:
+    """Load 600+ 👍/👎 Shorts exemplars into CLIP cache for VOD peak scoring."""
+    repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
+    root = repo / "data" / "highlight_exemplars" / "mobile_legends"
+    good_n = len(list((root / "good").glob("*.mp4"))) if (root / "good").exists() else 0
+    bad_n = len(list((root / "bad").glob("*.mp4"))) if (root / "bad").exists() else 0
+    out = {"good_exemplars": good_n, "bad_exemplars": bad_n, "owner_rank": False}
+    try:
+        from mlbb_calibration_store import owner_rank_enabled, stats as cal_stats, sync_owner_learning
+
+        cal = cal_stats()
+        out["owner_rank"] = owner_rank_enabled()
+        out["feedback_yes"] = cal.get("feedback_yes", 0)
+        out["feedback_no"] = cal.get("feedback_no", 0)
+        if os.environ.get("MLBB_VOD_SYNC_OWNER", "1") == "1":
+            sync_owner_learning(rescore_limit=0)
+    except Exception as exc:
+        log.warning("shorts exemplar sync failed: %s", exc)
+        try:
+            from highlight_scorer import clear_exemplar_cache
+
+            clear_exemplar_cache()
+        except Exception:
+            pass
+    else:
+        try:
+            from highlight_scorer import clear_exemplar_cache
+
+            clear_exemplar_cache()
+        except Exception:
+            pass
+    log.info(
+        "vod owner exemplars good=%s bad=%s owner_rank=%s feedback=%s/%s",
+        good_n,
+        bad_n,
+        out.get("owner_rank"),
+        out.get("feedback_yes", "?"),
+        out.get("feedback_no", "?"),
+    )
+    min_good = int(os.environ.get("MLBB_VOD_MIN_GOOD_EXEMPLARS", "50"))
+    if good_n < min_good:
+        log.warning("few good exemplars (%s < %s) — VOD scoring may be weak", good_n, min_good)
+    return out
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -1473,9 +1563,16 @@ def main() -> int:
 
     seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
-    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+        os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
+        os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
+    else:
+        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
     os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
+    os.environ.setdefault("MLBB_VOD_NO_CROP", "1")
+    os.environ.setdefault("MLBB_VOD_LANDSCAPE", "1")
+    os.environ.setdefault("MLBB_VOD_VARIABLE_LENGTH", "1")
     os.environ["LOGO_FILE"] = "/nonexistent/mlbb_calibration_no_logo.png"
     os.environ.setdefault("MLBB_VOD_SEGMENT_SEC", seg_sec)
     os.environ.setdefault("HIGHLIGHT_WINDOW_SEC", seg_sec)
@@ -1484,6 +1581,16 @@ def main() -> int:
         os.environ[key] = val
 
     env = {**os.environ, **load_env(ENV_PATH)}
+    for key in (
+        "MLBB_VOD_NO_CROP",
+        "MLBB_VOD_LANDSCAPE",
+        "MLBB_VOD_VARIABLE_LENGTH",
+        "MLBB_VOD_OWNER_EXEMPLARS",
+        "HIGHLIGHT_USE_OWNER_ANCHORS",
+    ):
+        if key in env:
+            os.environ[key] = str(env[key])
+    _bootstrap_shorts_exemplars_for_vod()
     if env.get("MLBB_SEND_ENABLED", "1") == "1":
         from mlbb_learning_first import set_transition_passed
 
@@ -1507,8 +1614,12 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"
     max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "360"))
+    if max_min <= 0:
+        max_min = 24 * 60.0
     deadline = time.time() + max_min * 60
     max_vods = int(os.environ.get("MLBB_VOD_PIPELINE_MAX_VODS", "4"))
+    if max_vods <= 0:
+        max_vods = 10_000
 
     registry = _ensure_registry(env)
     if _auto_exhaust_oversized(registry):

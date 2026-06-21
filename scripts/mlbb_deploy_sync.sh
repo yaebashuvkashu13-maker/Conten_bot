@@ -19,6 +19,7 @@ for f in \
   mlbb_vod_segment_store.py \
   mlbb_fight_segment.py \
   youtube_mlbb_vod_prefs.py \
+  mlbb_vod_only_verify.sh \
   gameplay_gate.py \
   telegram_upload_bot.py \
   mlbb_runtime_cleanup.py \
