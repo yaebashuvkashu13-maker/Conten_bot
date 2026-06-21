@@ -1341,6 +1341,9 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "gate_reason": reason,
             }
         )
+        if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
+            log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
+            break
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if batch_cap > 0:
