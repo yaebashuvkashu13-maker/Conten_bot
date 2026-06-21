@@ -15,6 +15,7 @@ from youtube_mlbb_vod_prefs import (  # noqa: E402
     upload_age_days,
     vod_search_date_sort,
     vod_youtube_duration_sp,
+    vod_youtube_freshness_sp,
 )
 
 
@@ -82,7 +83,8 @@ def test_rank_prefers_full_match_over_montage_hint() -> None:
     assert rank_mlbb_vod_candidate(good) > rank_mlbb_vod_candidate(weak)
 
 
-def test_fresh_search_uses_date_sort_not_duration_sp() -> None:
+def test_fresh_search_uses_month_sp_not_duration_sp() -> None:
     assert vod_search_date_sort({"MLBB_VOD_SEARCH_FRESH": "1"}) is True
+    assert vod_youtube_freshness_sp({"MLBB_VOD_SEARCH_FRESH": "1"}) == "EgQIBBAB"
     assert vod_youtube_duration_sp({"MLBB_VOD_SEARCH_FRESH": "1"}) == ""
     assert vod_youtube_duration_sp({"MLBB_VOD_SEARCH_FRESH": "0"}) == "EgQQARgB"

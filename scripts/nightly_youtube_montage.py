@@ -157,6 +157,7 @@ def discover_candidates(
     game_prefs: dict | None = None,
     youtube_duration_sp: str | None = None,
     youtube_search_date: bool | None = None,
+    youtube_freshness_sp: str | None = None,
     max_age_days: int | None = None,
 ) -> list[dict]:
     if queries is None:
@@ -177,15 +178,17 @@ def discover_candidates(
 
     use_date_sort = bool(youtube_search_date)
     age_limit = int(max_age_days) if max_age_days is not None else 0
+    freshness_sp = ""
+    if use_date_sort:
+        freshness_sp = (youtube_freshness_sp or "EgQIBBAB").strip()
 
     for query in queries:
-        if use_date_sort:
-            search_target = f"ytsearchdate{search_limit}:{query}"
-        elif duration_sp:
+        if freshness_sp or duration_sp:
             from urllib.parse import quote_plus
 
+            sp = freshness_sp or duration_sp
             search_target = (
-                f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={duration_sp}"
+                f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={sp}"
             )
         else:
             search_target = f"ytsearch{search_limit}:{query}"

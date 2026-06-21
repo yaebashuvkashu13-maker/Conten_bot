@@ -376,6 +376,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         vod_max_age_days,
         vod_search_date_sort,
         vod_youtube_duration_sp,
+        vod_youtube_freshness_sp,
     )
 
     min_sec = _vod_min_sec()
@@ -405,6 +406,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             search_limit=search_limit,
             youtube_duration_sp=vod_youtube_duration_sp(env),
             youtube_search_date=vod_search_date_sort(env),
+            youtube_freshness_sp=vod_youtube_freshness_sp(env),
             max_age_days=vod_max_age_days(env),
         )
         raw.extend(batch)

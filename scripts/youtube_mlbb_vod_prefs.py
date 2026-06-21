@@ -10,6 +10,8 @@ from urllib.parse import quote_plus
 
 # YouTube search UI: "4–20 minutes" duration bucket (closest to our 3–20 min window).
 YOUTUBE_DURATION_SP_4_TO_20 = "EgQQARgB"
+# YouTube search UI: upload date "This month" — works with yt-dlp on VPS (ytsearchdate does not).
+YOUTUBE_FRESHNESS_SP_THIS_MONTH = "EgQIBBAB"
 
 MLBB_VOD_DEFAULT_SEASON = 41
 MLBB_VOD_DEFAULT_MAX_AGE_DAYS = 21
@@ -102,9 +104,21 @@ def vod_max_age_days(env: dict[str, str] | None = None) -> int:
 
 
 def vod_search_date_sort(env: dict[str, str] | None = None) -> bool:
-    """Prefer ytsearchdate (upload order) for fresher candidates."""
+    """Prefer YouTube upload-date filter + post-filter for fresher candidates."""
     merged = {**os.environ, **(env or {})}
     return merged.get("MLBB_VOD_SEARCH_FRESH", "1") != "0"
+
+
+def vod_youtube_freshness_sp(env: dict[str, str] | None = None) -> str:
+    merged = {**os.environ, **(env or {})}
+    if not vod_search_date_sort(merged):
+        return ""
+    explicit = (merged.get("MLBB_VOD_YOUTUBE_FRESHNESS_SP") or "").strip()
+    if explicit.lower() in ("0", "off", "none", "disable", "disabled"):
+        return ""
+    if explicit:
+        return explicit
+    return YOUTUBE_FRESHNESS_SP_THIS_MONTH
 
 
 def vod_search_include_supplements(env: dict[str, str] | None = None) -> bool:
