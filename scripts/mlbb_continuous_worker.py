@@ -703,6 +703,13 @@ def main() -> int:
                     timeout=600,
                     check=False,
                 )
+                sync_py = (
+                    "import sys; sys.path.insert(0,'/usr/local/bin');"
+                    "sys.path.insert(0,'/root/content_bot_ml/scripts');"
+                    "from mlbb_calibration_store import sync_owner_learning; "
+                    "print('owner_sync', sync_owner_learning())"
+                )
+                subprocess.run([PY, "-c", sync_py], env=base, timeout=300, check=False)
 
         if cycles % 90 == 0 and not heavy_busy:
             sync_script = BIN / "mlbb_viral_threshold_sync.py"

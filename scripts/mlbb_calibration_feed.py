@@ -100,9 +100,11 @@ def format_caption(row: dict, idx: int, total: int) -> str:
     vid = row.get("video_id", "")
     gscore = row.get("gameplay_score")
     hud = f" | hud={float(gscore):.3f}" if gscore is not None else ""
+    oscore = row.get("owner_score")
+    learn = f" | learn={float(oscore):.3f}" if oscore is not None else ""
     return (
         f"MLBB калибровка {idx}/{total}\n"
-        f"score={float(row.get('score', 0)):.3f}{hud} | hook={float(row.get('hook_score', 0)):.2f}\n"
+        f"score={float(row.get('score', 0)):.3f}{hud}{learn} | hook={float(row.get('hook_score', 0)):.2f}\n"
         f"views={int(row.get('view_count') or 0)}\n"
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"
@@ -156,7 +158,7 @@ def _run_feed() -> int:
         rebuild_index_from_disk()
     load_max = float(env.get("MLBB_RESCORE_LOAD_MAX", "18"))
     if (
-        env.get("MLBB_FEED_RESCORE", "0") == "1"
+        env.get("MLBB_FEED_RESCORE", "1") == "1"
         and os.getloadavg()[0] < load_max
     ):
         rescore_pending_candidates(

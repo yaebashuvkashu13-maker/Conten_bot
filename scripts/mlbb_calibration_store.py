@@ -721,6 +721,7 @@ def apply_owner_label(
     if not is_good:
         block_reason = reason or "owner_dislike"
         mark_feed_blocked(vid, reason=block_reason, score=0.0)
+    sync_owner_learning(rescore_limit=int(os.environ.get("MLBB_RESCORE_ON_LABEL", "40")))
     return True, "good" if is_good else "bad"
 
 
@@ -958,6 +959,18 @@ def _pending_sort_key(row: dict) -> tuple[float, str, float]:
     return (float(score), ud_key, float(row.get("gameplay_score") or 0))
 
 
+def sync_owner_learning(*, rescore_limit: int | None = None) -> dict:
+    """After 👍/👎 or train: bust CLIP cache and refresh pending owner_score."""
+    try:
+        from highlight_scorer import clear_exemplar_cache
+    except ImportError:
+        clear_exemplar_cache = None  # type: ignore[assignment,misc]
+    if clear_exemplar_cache:
+        clear_exemplar_cache()
+    n = rescore_pending_candidates(limit=rescore_limit)
+    return {"rescored": n, "owner_rank": owner_rank_enabled()}
+
+
 def _row_passes_owner_gate(row: dict) -> bool:
     if not owner_rank_enabled():
         return True
@@ -965,7 +978,7 @@ def _row_passes_owner_gate(row: dict) -> bool:
         return True
     raw = row.get("owner_score")
     if raw is None:
-        return True
+        return os.environ.get("MLBB_OWNER_REQUIRE_SCORE", "1") != "1"
     floor = float(os.environ.get("MLBB_OWNER_SCORE_MIN", "-0.08"))
     return float(raw) >= floor
 
