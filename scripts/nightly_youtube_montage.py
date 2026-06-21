@@ -143,6 +143,7 @@ def fetch_video_meta(video_id: str, env: dict[str, str]) -> dict | None:
         "duration": duration,
         "title": title,
         "uploader": str(data.get("uploader") or data.get("channel") or ""),
+        "upload_date": str(data.get("upload_date") or ""),
     }
 
 
@@ -155,6 +156,8 @@ def discover_candidates(
     search_limit: int | None = None,
     game_prefs: dict | None = None,
     youtube_duration_sp: str | None = None,
+    youtube_search_date: bool | None = None,
+    max_age_days: int | None = None,
 ) -> list[dict]:
     if queries is None:
         queries = [
@@ -172,8 +175,13 @@ def discover_candidates(
     if youtube_duration_sp is not None:
         duration_sp = youtube_duration_sp.strip()
 
+    use_date_sort = bool(youtube_search_date)
+    age_limit = int(max_age_days) if max_age_days is not None else 0
+
     for query in queries:
-        if duration_sp:
+        if use_date_sort:
+            search_target = f"ytsearchdate{search_limit}:{query}"
+        elif duration_sp:
             from urllib.parse import quote_plus
 
             search_target = (
@@ -219,6 +227,17 @@ def discover_candidates(
                     meta["title"][:60],
                 )
                 continue
+            if age_limit > 0:
+                from youtube_mlbb_vod_prefs import passes_upload_freshness
+
+                if not passes_upload_freshness(meta, max_age_days=age_limit):
+                    logging.info(
+                        "skip stale upload id=%s date=%s title=%s",
+                        vid,
+                        meta.get("upload_date") or "?",
+                        meta["title"][:60],
+                    )
+                    continue
             if game_prefs and not passes_game_filters(meta, game_prefs):
                 logging.info(
                     "skip prefs id=%s title=%s",

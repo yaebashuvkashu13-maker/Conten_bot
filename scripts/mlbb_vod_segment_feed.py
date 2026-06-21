@@ -369,8 +369,12 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     from youtube_mlbb_vod_prefs import (
         DEFAULT_SEARCH_QUERIES,
         normalize_uploader,
+        parse_upload_date_ymd,
         passes_mlbb_vod_filters,
+        passes_upload_freshness,
         rank_mlbb_vod_candidate,
+        vod_max_age_days,
+        vod_search_date_sort,
         vod_youtube_duration_sp,
     )
 
@@ -400,6 +404,8 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             max_sec=max_sec,
             search_limit=search_limit,
             youtube_duration_sp=vod_youtube_duration_sp(env),
+            youtube_search_date=vod_search_date_sort(env),
+            max_age_days=vod_max_age_days(env),
         )
         raw.extend(batch)
 
@@ -432,12 +438,16 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             skipped["bad_title"] = skipped.get("bad_title", 0) + 1
             log.info("skip bad title id=%s %s", vid, title[:70])
             continue
+        if not passes_upload_freshness(meta, max_age_days=vod_max_age_days(env)):
+            skipped["stale_upload"] = skipped.get("stale_upload", 0) + 1
+            continue
         out.append(meta)
     if skipped:
         log.info("discovery filtered raw=%s kept=%s skipped=%s", len(raw), len(out), skipped)
     out.sort(
         key=lambda m: (
             -rank_mlbb_vod_candidate(m, target_dur_sec=target),
+            -(int(parse_upload_date_ymd(str(m.get("upload_date") or "")) or 0)),
             abs(float(m.get("duration") or 0) - target),
         )
     )

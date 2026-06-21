@@ -5,12 +5,24 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
 # YouTube search UI: "4–20 minutes" duration bucket (closest to our 3–20 min window).
 YOUTUBE_DURATION_SP_4_TO_20 = "EgQQARgB"
 
 MLBB_VOD_DEFAULT_SEASON = 41
+MLBB_VOD_DEFAULT_MAX_AGE_DAYS = 21
+
+# Primary search — broad ranked/match phrases (no global/season lock-in).
+VOD_CORE_SEARCH_QUERIES = (
+    "MLBB mythic ranked full match gameplay",
+    "Mobile Legends legend rank solo queue full match",
+    "MLBB ranked match gameplay",
+    "Mobile Legends mythic ranked solo match full game",
+    "MLBB epic ranked full match replay",
+    "Mobile Legends ranked gameplay teamfight",
+)
 
 # Popular heroes for rotating VOD search (includes Masha from user examples).
 VOD_SEARCH_HEROES = (
@@ -81,22 +93,43 @@ def vod_current_season() -> int:
     return MLBB_VOD_DEFAULT_SEASON
 
 
+def vod_max_age_days(env: dict[str, str] | None = None) -> int:
+    merged = {**os.environ, **(env or {})}
+    raw = (merged.get("MLBB_VOD_MAX_AGE_DAYS") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return MLBB_VOD_DEFAULT_MAX_AGE_DAYS
+
+
+def vod_search_date_sort(env: dict[str, str] | None = None) -> bool:
+    """Prefer ytsearchdate (upload order) for fresher candidates."""
+    merged = {**os.environ, **(env or {})}
+    return merged.get("MLBB_VOD_SEARCH_FRESH", "1") != "0"
+
+
+def vod_search_include_supplements(env: dict[str, str] | None = None) -> bool:
+    merged = {**os.environ, **(env or {})}
+    return merged.get("MLBB_VOD_SEARCH_SUPPLEMENT", "1") != "0"
+
+
 def build_vod_search_queries(
     *,
     season: int | None = None,
     heroes: tuple[str, ...] | None = None,
-    max_hero_queries: int = 8,
+    max_hero_queries: int = 6,
+    include_supplements: bool | None = None,
 ) -> list[str]:
-    """Search phrases without duration — YouTube duration filter is applied separately."""
-    season = season if season is not None else vod_current_season()
+    """Core ranked queries first; global/season/hero extras are optional supplements."""
+    if include_supplements is None:
+        include_supplements = vod_search_include_supplements()
     heroes = heroes or VOD_SEARCH_HEROES
-    queries = [
-        f"MLBB mythic global ranked gameplay season {season}",
-        f"Mobile Legends mythic global solo queue season {season}",
-        f"MLBB legend rank global full match season {season}",
-    ]
+    queries = list(VOD_CORE_SEARCH_QUERIES)
     for hero in heroes[:max_hero_queries]:
-        queries.append(f"MLBB mythic global {hero} season {season} ranked gameplay")
+        queries.append(f"MLBB mythic {hero} ranked gameplay")
+    if include_supplements:
+        season = season if season is not None else vod_current_season()
+        queries.append(f"MLBB mythic global ranked season {season}")
+        queries.append(f"MLBB mythic global masha season {season} ranked gameplay")
     return queries
 
 
@@ -105,6 +138,35 @@ def default_vod_search_queries_csv() -> str:
 
 
 DEFAULT_SEARCH_QUERIES = default_vod_search_queries_csv()
+
+
+def parse_upload_date_ymd(raw: str) -> str:
+    text = str(raw or "").strip()
+    if len(text) >= 8 and text[:8].isdigit():
+        return text[:8]
+    return ""
+
+
+def upload_age_days(upload_date: str, *, now: datetime | None = None) -> int | None:
+    ymd = parse_upload_date_ymd(upload_date)
+    if not ymd:
+        return None
+    try:
+        uploaded = datetime.strptime(ymd, "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    ref = now or datetime.now(timezone.utc)
+    return max(0, (ref.date() - uploaded.date()).days)
+
+
+def passes_upload_freshness(meta: dict, *, max_age_days: int | None = None) -> bool:
+    limit = MLBB_VOD_DEFAULT_MAX_AGE_DAYS if max_age_days is None else max_age_days
+    if limit <= 0:
+        return True
+    age = upload_age_days(str(meta.get("upload_date") or ""))
+    if age is None:
+        return True
+    return age <= limit
 
 
 def youtube_results_search_url(query: str, *, duration_sp: str = "") -> str:
@@ -118,6 +180,8 @@ def youtube_results_search_url(query: str, *, duration_sp: str = "") -> str:
 
 def vod_youtube_duration_sp(env: dict[str, str] | None = None) -> str:
     merged = {**os.environ, **(env or {})}
+    if vod_search_date_sort(merged):
+        return ""
     explicit = (merged.get("MLBB_VOD_YOUTUBE_DURATION_SP") or "").strip()
     if explicit.lower() in ("0", "off", "none", "disable", "disabled"):
         return ""
@@ -152,8 +216,20 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
     dur = float(meta.get("duration") or 0)
     score = 0.0
 
-    # Prefer ~10–15 min uploads (typical ranked match length in the 3–20 min window).
     score -= abs(dur - target_dur_sec) / 180.0
+
+    age = upload_age_days(str(meta.get("upload_date") or ""))
+    if age is not None:
+        if age <= 2:
+            score += 9.0
+        elif age <= 7:
+            score += 6.0
+        elif age <= 14:
+            score += 3.0
+        elif age <= vod_max_age_days():
+            score += 1.0
+        else:
+            score -= 12.0
 
     boosts = (
         ("full match", 5.0),
@@ -163,7 +239,7 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("legend", 3.0),
         ("immortal", 3.0),
         ("grandmaster", 2.5),
-        ("global", 3.5),
+        ("global", 2.0),
         ("solo queue", 3.0),
         ("solo rank", 3.0),
         ("gameplay", 2.0),
@@ -173,7 +249,7 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("savage", 1.5),
         ("teamfight", 1.5),
         ("no commentary", 1.0),
-        (f"season {vod_current_season()}", 2.5),
+        (f"season {vod_current_season()}", 1.5),
     )
     for needle, weight in boosts:
         if needle in blob:
