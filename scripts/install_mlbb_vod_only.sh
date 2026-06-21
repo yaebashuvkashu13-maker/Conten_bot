@@ -118,7 +118,11 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
 done
 
 if ! grep -q '^MLBB_VOD_SEARCH_QUERIES=' "$ENV_FILE" 2>/dev/null; then
-  echo 'MLBB_VOD_SEARCH_QUERIES=MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game' >>"$ENV_FILE"
+  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game"' >>"$ENV_FILE"
+else
+  # Unquoted value breaks `source /root/.video_bot.env` (mythic: command not found).
+  sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
+  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game"' >>"$ENV_FILE"
 fi
 
 install -m 755 \
@@ -184,8 +188,7 @@ export LOGO_FILE=/nonexistent/mlbb_calibration_no_logo.png
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 IDLE_SEC="${MLBB_VOD_IDLE_SEC:-25}"
 while true; do
-  flock -n /tmp/mlbb_vod_segment_feed.lock \
-    python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
+  python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
     >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
   sleep "$IDLE_SEC"
 done
