@@ -23,4 +23,13 @@ for f in \
     install -m 755 "$REPO/scripts/$f" "$BIN/$f"
   fi
 done
+if [[ -f "$REPO/scripts/mlbb_learn_apply.sh" ]]; then
+  install -m 755 "$REPO/scripts/mlbb_learn_apply.sh" "$BIN/mlbb_learn_apply.sh"
+fi
+if [[ -f "$REPO/scripts/highlight_train.py" ]]; then
+  install -m 755 "$REPO/scripts/highlight_train.py" "$BIN/highlight_train.py"
+fi
+if [[ -f "$REPO/scripts/highlight_scorer.py" ]]; then
+  install -m 755 "$REPO/scripts/highlight_scorer.py" "$BIN/highlight_scorer.py"
+fi
 echo "synced $(date -u +%Y-%m-%dT%H:%M:%SZ)"

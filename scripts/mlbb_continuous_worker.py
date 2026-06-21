@@ -382,7 +382,7 @@ def ingest_env(base: dict[str, str], *, aggressive: bool, hungry: bool = False) 
     refill = aggressive or hungry
     env.update(
         {
-            "MLBB_CALIBRATION_LENIENT": "1",
+            "MLBB_CALIBRATION_LENIENT": env.get("MLBB_CALIBRATION_LENIENT", "0"),
             "MLBB_CALIBRATION_FAST_INGEST": env.get("MLBB_CALIBRATION_FAST_INGEST", "0"),
             "MLBB_SHORTS_DAYS": env.get("MLBB_SHORTS_DAYS", "365"),
             "MLBB_SHORTS_MIN_YEAR": env.get("MLBB_SHORTS_MIN_YEAR", "2025"),
@@ -686,6 +686,14 @@ def main() -> int:
                 _invalidate_pending_cache()
             if rc is not None and job.name in ("ingest", "hero_montage", "montage"):
                 _invalidate_pending_cache()
+                if job.name == "ingest" and rc == 0:
+                    sync_py = (
+                        "import sys; sys.path.insert(0,'/usr/local/bin');"
+                        "sys.path.insert(0,'/root/content_bot_ml/scripts');"
+                        "from mlbb_calibration_store import sync_owner_learning; "
+                        "print('ingest_owner_sync', sync_owner_learning())"
+                    )
+                    subprocess.run([PY, "-c", sync_py], env=base, timeout=300, check=False)
                 cleanup_script = BIN / "mlbb_runtime_cleanup.py"
                 if not cleanup_script.exists():
                     cleanup_script = Path(__file__).resolve().parent / "mlbb_runtime_cleanup.py"

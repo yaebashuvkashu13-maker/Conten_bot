@@ -47,7 +47,7 @@ print(f"released={released} delivered_sync={delivered} refilled={refilled} backf
 PY
 
 rm -f /tmp/mlbb_calibration_feed.lock
-MLBB_FEED_RE_GATE=0 MLBB_FEED_TRY_INGEST=0 MLBB_FEED_SKIP_REBUILD=1 MLBB_OWNER_EMERGENCY=1 \
+MLBB_FEED_RE_GATE=1 MLBB_FEED_TRY_INGEST=0 MLBB_FEED_SKIP_REBUILD=1 MLBB_OWNER_EMERGENCY=0 \
   timeout 90 python3 "$BIN/mlbb_calibration_feed.py" >>"$LOG" 2>&1 || true
 
 nohup python3 "$BIN/mlbb_continuous_worker.py" >>"$LOG" 2>&1 &

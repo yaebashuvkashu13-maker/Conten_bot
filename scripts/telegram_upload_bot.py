@@ -432,8 +432,28 @@ def send_message(chat_id: str | int, text: str):
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
+def _schedule_owner_sync() -> None:
+    """Refresh pending owner_score after 👍/👎 (non-blocking)."""
+    code = (
+        "import sys; sys.path.insert(0,'/usr/local/bin');"
+        "sys.path.insert(0,'/root/content_bot_ml/scripts');"
+        "from mlbb_calibration_store import sync_owner_learning; "
+        "print(sync_owner_learning(rescore_limit=int(__import__('os').environ.get('MLBB_RESCORE_ON_LABEL','30'))))"
+    )
+    try:
+        subprocess.Popen(
+            [sys.executable, '-c', code],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        logging.exception('mlbb owner sync schedule failed')
+
+
 def _schedule_mlbb_retrain() -> None:
     """Retrain MLBB scorer from owner 👍/👎 without blocking Telegram."""
+    _schedule_owner_sync()
     script = Path('/usr/local/bin/mlbb_learn_apply.sh')
     if not script.exists():
         script = Path(__file__).resolve().parent / 'mlbb_learn_apply.sh'

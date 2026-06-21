@@ -235,10 +235,46 @@ def recycle_unlabeled_sent(*, limit: int = 12) -> int:
     return len(recycled)
 
 
+def register_disk_short_candidate(vid: str, mp4: Path, row: dict | None = None) -> bool:
+    """Put on-disk Short into queue only after correspondence + gameplay + owner score."""
+    from gameplay_gate import is_mlbb_calibration_short
+    from mlbb_correspondence import corresponds_to_mlbb_search, passes_owner_video_correspondence
+
+    base = row or find_candidate(vid) or {}
+    title = str(base.get("title", ""))
+    query = str(base.get("search_query", ""))
+    ok_corr, corr_reason = corresponds_to_mlbb_search(title=title, search_query=query)
+    if not ok_corr:
+        mark_feed_blocked(vid, reason=corr_reason, score=0.0)
+        return False
+    ok, gscore, greason = is_mlbb_calibration_short(mp4, description=title)
+    if not ok:
+        mark_feed_blocked(vid, reason=greason, score=gscore)
+        return False
+    owner_ok, owner_score = passes_owner_video_correspondence(mp4)
+    if not owner_ok:
+        oscore = float(owner_score) if owner_score == owner_score else 0.0
+        mark_feed_blocked(vid, reason="low_owner_score", score=oscore)
+        return False
+    payload: dict = {
+        **base,
+        "video_id": vid,
+        "id": vid,
+        "title": base.get("title", vid),
+        "url": base.get("url", f"https://www.youtube.com/shorts/{vid}"),
+        "gameplay_pass": 1,
+        "gameplay_score": round(float(gscore), 4),
+        "gameplay_reason": greason,
+    }
+    if owner_score == owner_score:
+        payload["owner_score"] = round(float(owner_score), 4)
+        payload["owner_scored_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    upsert_candidate(_backfill_short_metadata(payload, mp4))
+    return True
+
+
 def refill_pending_emergency(*, limit: int = 15) -> int:
     """Register never-delivered disk Shorts only — never re-send already seen videos."""
-    from gameplay_gate import is_mlbb_calibration_short
-
     delivered = load_ever_delivered()
     added = 0
     if not SHORTS_ROOT.exists():
@@ -253,25 +289,8 @@ def refill_pending_emergency(*, limit: int = 15) -> int:
         if vid in delivered or vid in labeled:
             continue
         row = find_candidate(vid) or {}
-        title = str(row.get("title", ""))
-        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
-        if not ok:
-            mark_feed_blocked(vid, reason=reason, score=gscore)
-            continue
-        upsert_candidate(
-            _backfill_short_metadata(
-                {
-                    **row,
-                    "video_id": vid,
-                    "id": vid,
-                    "gameplay_pass": 1,
-                    "gameplay_score": round(float(gscore), 4),
-                    "gameplay_reason": reason,
-                },
-                mp4,
-            )
-        )
-        added += 1
+        if register_disk_short_candidate(vid, mp4, row):
+            added += 1
     if added:
         print(f"refill_new_on_disk={added}")
     return added
@@ -408,7 +427,7 @@ def last_feed_sent_age_sec() -> float:
 
 
 def index_disk_avail() -> int:
-    """Register on-disk Shorts not yet sent/labeled so feed can drain local pool."""
+    """Register on-disk Shorts not yet sent/labeled (same gates as ingest)."""
     sent = load_feed_sent()
     labels = labeled_ids()
     added = 0
@@ -421,23 +440,8 @@ def index_disk_avail() -> int:
         if vid in sent["ids"] or vid in labels or vid in load_ever_delivered():
             continue
         row = find_candidate(vid) or {}
-        upsert_candidate(
-            _backfill_short_metadata(
-                {
-                    **row,
-                    "video_id": vid,
-                    "id": vid,
-                    "title": row.get("title", vid),
-                    "url": row.get("url", f"https://www.youtube.com/shorts/{vid}"),
-                    "score": float(row.get("score") or 0.55),
-                    "gameplay_pass": 1,
-                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
-                    "gameplay_reason": str(row.get("gameplay_reason") or "disk_avail"),
-                },
-                mp4,
-            )
-        )
-        added += 1
+        if register_disk_short_candidate(vid, mp4, row):
+            added += 1
     return added
 
 
@@ -721,7 +725,6 @@ def apply_owner_label(
     if not is_good:
         block_reason = reason or "owner_dislike"
         mark_feed_blocked(vid, reason=block_reason, score=0.0)
-    sync_owner_learning(rescore_limit=int(os.environ.get("MLBB_RESCORE_ON_LABEL", "40")))
     return True, "good" if is_good else "bad"
 
 

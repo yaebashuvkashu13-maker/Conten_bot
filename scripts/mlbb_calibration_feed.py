@@ -156,19 +156,17 @@ def _run_feed() -> int:
     if env.get("MLBB_FEED_SKIP_REBUILD", "0") != "1":
         repair_index()
         rebuild_index_from_disk()
-    load_max = float(env.get("MLBB_RESCORE_LOAD_MAX", "18"))
-    if (
-        env.get("MLBB_FEED_RESCORE", "1") == "1"
-        and os.getloadavg()[0] < load_max
-    ):
-        rescore_pending_candidates(
-            limit=int(env.get("MLBB_RESCORE_LIMIT", os.environ.get("MLBB_RESCORE_LIMIT", "8")))
-        )
     stale = release_stale_claims(
         max_age_sec=float(env.get("MLBB_CLAIM_STALE_SEC", "300"))
     )
     if stale:
         print(f"released_stale_claims={stale}")
+    sync_limit = int(env.get("MLBB_FEED_RESCORE_LIMIT", "25"))
+    if env.get("MLBB_FEED_RESCORE", "1") == "1":
+        from mlbb_calibration_store import sync_owner_learning
+
+        synced = sync_owner_learning(rescore_limit=sync_limit)
+        print(f"owner_sync_before_feed={synced}")
     backfill_limit = int(env.get("MLBB_FEED_BACKFILL_LIMIT", "0"))
     if backfill_limit > 0:
         backfill_gameplay_flags(limit=backfill_limit)
