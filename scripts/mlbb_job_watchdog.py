@@ -41,6 +41,13 @@ def worker_running() -> bool:
     return bool((proc.stdout or "").strip())
 
 
+def vod_only_mode() -> bool:
+    return (
+        os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+        and os.environ.get("MLBB_VOD_DISABLED", "1") != "1"
+    )
+
+
 def load_avg_1m() -> float:
     try:
         return os.getloadavg()[0]
@@ -107,6 +114,11 @@ def dedupe_workers() -> int:
 
 def kill_orphans(pattern: str) -> int:
     if worker_running() and pattern in WORKER_CHILD_PATTERNS:
+        return 0
+    if vod_only_mode() and pattern in (
+        "mlbb_vod_segment_feed.py",
+        "smart_video_editor.py",
+    ):
         return 0
     killed = 0
     for pid in pids_matching(pattern):

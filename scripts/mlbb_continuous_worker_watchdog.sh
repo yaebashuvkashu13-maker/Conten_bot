@@ -35,10 +35,17 @@ elif [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
     log "restart telegram_upload_bot"
     nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
   fi
+  VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
   if ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
-    nohup env PYTHONPATH="/usr/local/bin" python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
-      >> /root/data/mlbb/vod_only.log 2>&1 &
-    log "started vod_segment_feed pid=$!"
+    if [[ -x "$VOD_WRAPPER" ]]; then
+      nohup "$VOD_WRAPPER" >>/root/data/mlbb/vod_only_watchdog.log 2>&1 &
+      log "started vod_segment_feed via wrapper pid=$!"
+    else
+      nohup env PYTHONPATH="/usr/local/bin" flock -n /tmp/mlbb_vod_segment_feed.lock \
+        python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
+        >>/root/data/mlbb/vod_only.log 2>&1 &
+      log "started vod_segment_feed direct pid=$!"
+    fi
   fi
   exit 0
 fi
