@@ -149,6 +149,9 @@ install -m 755 \
   "$REPO/scripts/mlbb_runtime_cleanup.py" \
   "$REPO/scripts/telegram_upload_bot.py" \
   "$REPO/scripts/youtube_mlbb_vod_prefs.py" \
+  "$REPO/scripts/nightly_youtube_montage.py" \
+  "$REPO/scripts/youtube_download.py" \
+  "$REPO/scripts/youtube_game_prefs.py" \
   "$BIN/" 2>/dev/null || true
 
 WRAPPER_VOD="$BIN/mlbb_vod_segment_feed.sh"
