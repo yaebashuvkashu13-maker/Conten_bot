@@ -13,6 +13,7 @@ for f in \
   mlbb_telegram_video.py \
   mlbb_job_watchdog.py \
   mlbb_owner_learning.py \
+  mlbb_correspondence.py \
   mlbb_shorts_title_gate.py \
   gameplay_gate.py \
   telegram_upload_bot.py \

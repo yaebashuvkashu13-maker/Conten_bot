@@ -27,8 +27,8 @@ from mlbb_calibration_store import (  # noqa: E402
     rebuild_index_from_disk,
     release_feed_claims,
     release_stale_claims,
+    row_corresponds_to_mlbb,
     save_labels,
-    title_blocked_by_owner_feedback,
     upsert_candidate,
 )
 
@@ -221,6 +221,9 @@ def test_mark_feed_blocked_sets_gameplay_pass_zero(tmp_path: Path, monkeypatch) 
                         "path": str(mp4),
                         "gameplay_pass": 1,
                         "gameplay_score": 0.9,
+                        "title": "MLBB savage teamfight",
+                        "search_query": "mlbb savage shorts",
+                        "view_count": 1000,
                         "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 ]
@@ -280,6 +283,9 @@ def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) 
                         "gameplay_score": 0.8,
                         "upload_date": older,
                         "owner_score": 0.9,
+                        "title": "MLBB savage clip",
+                        "search_query": "mlbb savage shorts",
+                        "view_count": 500,
                     },
                     {
                         "video_id": "bbb22222222",
@@ -288,6 +294,9 @@ def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) 
                         "gameplay_score": 0.8,
                         "upload_date": recent,
                         "owner_score": 0.1,
+                        "title": "MLBB teamfight",
+                        "search_query": "mlbb teamfight shorts",
+                        "view_count": 500,
                     },
                 ]
             }
@@ -318,29 +327,24 @@ def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) 
     assert [r["video_id"] for r in rows] == ["aaa11111111", "bbb22222222"]
 
 
-def test_title_blocked_by_owner_not_gameplay(tmp_path: Path, monkeypatch) -> None:
-    labels = tmp_path / "labels.json"
-    labels.write_text(
-        json.dumps(
-            {
-                "good": [],
-                "bad": [
-                    {
-                        "video_id": "kk0OccNvDrw",
-                        "title": "Penn State Football hype video",
-                        "reason": "not_gameplay",
-                    }
-                ],
-                "feedback": [],
-            }
-        )
+def test_row_correspondence_rejects_football_query_mismatch() -> None:
+    reason = row_corresponds_to_mlbb(
+        {
+            "title": "Penn State Football hype video",
+            "search_query": "mlbb savage shorts",
+        }
     )
-    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
-    import mlbb_calibration_store as store
+    assert reason == "domain_conflict"
 
-    monkeypatch.setattr(store, "LABELS_PATH", labels)
-    reason = title_blocked_by_owner_feedback("New Penn State Football clip")
-    assert reason in ("non_mlbb_sports", "owner_not_gameplay:football")
+
+def test_row_correspondence_rejects_generic_title() -> None:
+    reason = row_corresponds_to_mlbb(
+        {
+            "title": "Hmmm!! #shorts #shortlive",
+            "search_query": "mlbb 2026 savage shorts",
+        }
+    )
+    assert reason == "no_correspondence"
 
 
 def test_apply_owner_label_bad_blocks_queue(tmp_path: Path, monkeypatch) -> None:
@@ -356,7 +360,9 @@ def test_apply_owner_label_bad_blocks_queue(tmp_path: Path, monkeypatch) -> None
                     {
                         "video_id": "abcdefghijk",
                         "path": str(mp4),
-                        "title": "test",
+                        "title": "MLBB savage",
+                        "search_query": "mlbb savage shorts",
+                        "view_count": 100,
                         "gameplay_pass": 1,
                         "gameplay_score": 0.9,
                         "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),

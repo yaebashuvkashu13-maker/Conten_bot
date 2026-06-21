@@ -1,11 +1,9 @@
-"""Tests for MLBB-only Shorts title gate."""
+"""Tests for MLBB domain conflict title gate."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -24,19 +22,7 @@ def test_sports_title_rejected() -> None:
     assert not NON_MLBB_SPORTS_TITLE.search("MLBB savage teamfight shorts")
 
 
-def test_hmmm_shortlive_rejected() -> None:
-    reason = title_rejected_for_mlbb_shorts("Hmmm!! #shorts #shortlive")
-    assert reason in ("generic_clickbait", "spam_shorts_tag")
-
-
-def test_spam_shortlive_tag() -> None:
-    assert title_rejected_for_mlbb_shorts("random #shortlive clip") == "spam_shorts_tag"
-
-
-def test_mlbb_title_passes() -> None:
+def test_domain_conflict_codes() -> None:
+    assert title_rejected_for_mlbb_shorts("PUBG mobile highlights #shorts") == "other_game_title"
+    assert title_rejected_for_mlbb_shorts("Penn State Football hype") == "non_mlbb_sports"
     assert title_rejected_for_mlbb_shorts("MLBB savage teamfight #shorts") is None
-
-
-def test_promo_title_rejected() -> None:
-    reason = title_rejected_for_mlbb_shorts("PUBG mobile highlights #shorts")
-    assert reason == "other_game_title"

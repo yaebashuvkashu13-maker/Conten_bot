@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mlbb_shorts_title_gate import OTHER_GAME_TITLE, title_rejected_for_mlbb_shorts
-from gameplay_gate import is_mlbb_calibration_short, is_gameplay_video
+from mlbb_correspondence import corresponds_to_mlbb_search, passes_owner_video_correspondence
+from mlbb_shorts_title_gate import OTHER_GAME_TITLE
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
@@ -31,9 +31,9 @@ from mlbb_calibration_store import (
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
-    title_blocked_by_owner_feedback,
     upsert_candidate,
 )
+from gameplay_gate import is_mlbb_calibration_short, is_gameplay_video
 from viral_scorer import hook_score
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
@@ -187,7 +187,8 @@ def search_shorts(
             continue
         if NEGATIVE_TITLE.search(title) or OTHER_GAME_TITLE.search(title):
             continue
-        if title_rejected_for_mlbb_shorts(title) or title_blocked_by_owner_feedback(title):
+        ok_corr, corr_reason = corresponds_to_mlbb_search(title=title, search_query=query)
+        if not ok_corr:
             continue
         if vid in skip:
             continue
@@ -383,9 +384,11 @@ def _sweep_pool(
             vid = row["video_id"]
             if vid in seen or vid in known or vid in already_sent or vid in sent_pending:
                 continue
-            if hungry:
-                seen.add(vid)
-                out.append(row)
+            ok_corr, _ = corresponds_to_mlbb_search(
+                title=str(row.get("title", "")),
+                search_query=str(row.get("search_query", query)),
+            )
+            if not ok_corr:
                 continue
             ud = _resolve_upload_date(row, env)
             if not _date_ok(ud, env, days):
@@ -528,16 +531,18 @@ def main() -> int:
             )
 
     saved = rejected = downloads = skipped_known = 0
-    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-    fast_ingest = os.environ.get("MLBB_CALIBRATION_FAST_INGEST", "0") == "1" or env.get(
-        "MLBB_INGEST_HUNGRY", "0"
-    ) == "1"
     for row in pool:
         if args.max_downloads > 0 and downloads >= args.max_downloads:
             break
         vid = row["video_id"]
         if vid in known or vid in already_sent:
             skipped_known += 1
+            continue
+        title = str(row.get("title", ""))
+        query = str(row.get("search_query", ""))
+        ok_corr, corr_reason = corresponds_to_mlbb_search(title=title, search_query=query)
+        if not ok_corr:
+            rejected += 1
             continue
         mp4 = SHORTS_ROOT / f"yt_{vid}.mp4"
         if not mp4.exists() and not args.skip_download:
@@ -554,64 +559,24 @@ def main() -> int:
             rejected += 1
             continue
 
-        hungry_mode = env.get("MLBB_INGEST_HUNGRY", "0") == "1"
-        dur = _ffprobe_duration(mp4)
-        title = str(row.get("title", ""))
-        title_block = title_blocked_by_owner_feedback(title)
-        if title_block:
-            rejected += 1
-            continue
-        if hungry_mode and lenient and dur >= 3.0:
-            ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
-            hard_reject = reason in (
-                "promo_text",
-                "csv_lookup",
-                "other_game_title",
-                "non_mlbb_sports",
-                "promo_edit",
-                "spam_shorts_tag",
-                "generic_clickbait",
-                "no_mlbb_title",
-            ) or reason.startswith("owner_not_gameplay:")
-            if hard_reject or not ok:
-                rejected += 1
-                continue
-            feats = light_clip_features(mp4)
-            upsert_candidate(
-                {
-                    **row,
-                    **feats,
-                    "path": str(mp4),
-                    "gameplay_pass": 1,
-                    "gameplay_score": round(float(gscore), 4),
-                    "gameplay_reason": reason,
-                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-            saved += 1
-            print(f"OK {vid} score={feats['score']:.3f} hungry=1 views={row.get('view_count')} {row.get('title','')[:50]}")
-            continue
-
         ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
-        hard_reject = reason in (
-            "promo_text",
-            "csv_lookup",
-            "other_game_title",
-            "non_mlbb_sports",
-            "promo_edit",
-            "spam_shorts_tag",
-            "generic_clickbait",
-            "no_mlbb_title",
-        ) or reason.startswith("owner_not_gameplay:")
-        if hard_reject or not ok:
+        if not ok:
             rejected += 1
             continue
 
-        if fast_ingest and lenient:
+        owner_ok, owner_score = passes_owner_video_correspondence(mp4)
+        if not owner_ok:
+            rejected += 1
+            print(f"REJECT {vid} owner_score={owner_score:.3f} {title[:50]}")
+            continue
+
+        fast_ingest = os.environ.get("MLBB_CALIBRATION_FAST_INGEST", "0") == "1"
+        if fast_ingest:
             feats = light_clip_features(mp4)
         else:
             feats = score_clip(mp4)
-        if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:
+        min_score = args.min_score
+        if feats["score"] < min_score and not feats["rule_pass"]:
             rejected += 1
             continue
 
@@ -623,11 +588,15 @@ def main() -> int:
                 "gameplay_pass": 1,
                 "gameplay_score": round(float(gscore), 4),
                 "gameplay_reason": reason,
+                "owner_score": round(float(owner_score), 4) if owner_score == owner_score else None,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
         )
         saved += 1
-        print(f"OK {vid} score={feats['score']:.3f} views={row.get('view_count')} {row.get('title','')[:50]}")
+        print(
+            f"OK {vid} score={feats['score']:.3f} hud={gscore:.3f} "
+            f"views={row.get('view_count')} q={query[:30]} {title[:40]}"
+        )
 
     print(
         f"SUMMARY saved={saved} rejected={rejected} downloads={downloads} skipped_known={skipped_known} "
