@@ -12,6 +12,9 @@ for f in \
   mlbb_hero_shorts_montage.py \
   mlbb_telegram_video.py \
   mlbb_job_watchdog.py \
+  mlbb_owner_learning.py \
+  mlbb_shorts_title_gate.py \
+  gameplay_gate.py \
   telegram_upload_bot.py \
   mlbb_runtime_cleanup.py \
   mlbb_continuous_worker_watchdog.sh; do
