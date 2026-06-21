@@ -61,8 +61,14 @@ if [[ "$GOOD" -lt 50 ]]; then
   warn "good exemplars < 50 — owner scoring weak"
 fi
 
-if crontab -l 2>/dev/null | grep -q 'mlbb_continuous_worker.py'; then
-  die "cron still starts continuous_worker"
+if crontab -l 2>/dev/null | grep -qE 'mlbb_calibration_feed|mlbb_youtube_shorts_ingest|mlbb_continuous_worker\.py'; then
+  die "cron still references Shorts calibration or continuous worker"
+fi
+
+if grep -q 'DISABLED: MLBB VOD-only' /usr/local/bin/mlbb_calibration_feed.sh 2>/dev/null; then
+  echo "calibration_feed.sh: disabled stub OK"
+else
+  die "mlbb_calibration_feed.sh is not VOD-only stub"
 fi
 
 echo "===== VOD-only verify $(date -Is) ====="

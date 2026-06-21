@@ -443,6 +443,12 @@ def main() -> int:
 
     base = base_env()
     os.environ.update({k: v for k, v in base.items() if v})
+    from mlbb_pipeline_mode import vod_only_mode
+
+    if vod_only_mode(base):
+        print("SKIP continuous_worker: MLBB_VOD_ONLY=1", file=sys.stderr)
+        return 0
+
     global FEED_COOLDOWN_SEC, INGEST_COOLDOWN_SEC, TARGET_PENDING, CALIBRATION_FEED, VOD_DISABLED, SHORTS_DAYS, ONE_HEAVY_JOB
     FEED_COOLDOWN_SEC = float(base.get("MLBB_FEED_COOLDOWN_SEC", str(FEED_COOLDOWN_SEC)))
     INGEST_COOLDOWN_SEC = float(base.get("MLBB_INGEST_COOLDOWN_SEC", str(INGEST_COOLDOWN_SEC)))

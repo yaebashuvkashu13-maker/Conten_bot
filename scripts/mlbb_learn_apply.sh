@@ -70,6 +70,14 @@ PY
 python3 /usr/local/bin/eval_learning_first_gate.py 2>/dev/null || true
 
 if [[ "${MLBB_LEARN_APPLY_FEED:-0}" == "1" ]]; then
-  /usr/local/bin/mlbb_calibration_feed.sh || true
+  set -a
+  # shellcheck disable=SC1091
+  source /root/.video_bot.env 2>/dev/null || true
+  set +a
+  if [[ "${MLBB_VOD_ONLY:-0}" == "1" || "${MLBB_CALIBRATION_FEED_ENABLED:-1}" == "0" ]]; then
+    echo "skip calibration_feed: VOD-only"
+  else
+    /usr/local/bin/mlbb_calibration_feed.sh || true
+  fi
 fi
 echo "mlbb_learn_apply done $(date -Is)"

@@ -57,10 +57,26 @@ kill_all_competing() {
 kill_all_competing
 sleep 2
 kill_all_competing
+pkill -9 -f 'mlbb_continuous_worker' 2>/dev/null || true
+pkill -9 -f 'mlbb_calibration_feed' 2>/dev/null || true
+pkill -9 -f 'mlbb_youtube_shorts_ingest' 2>/dev/null || true
 pkill -9 -f 'mlbb_vod_segment_feed' 2>/dev/null || true
 sleep 1
 rm -f /tmp/mlbb_vod_oneoff.lock /tmp/mlbb_vod_segment_feed.lock 2>/dev/null || true
+rm -f /tmp/mlbb_calibration_feed.lock /tmp/mlbb_youtube_shorts_ingest.lock 2>/dev/null || true
+rm -f /tmp/mlbb_continuous_worker.lock 2>/dev/null || true
+rm -f /root/data/mlbb/calibration_feed_empty_notify.json 2>/dev/null || true
 rm -f /var/lock/smart_video_editor.lock /var/lock/overnight_msk.lock 2>/dev/null || true
+
+disable_shorts_wrapper() {
+  local name="$1"
+  cat >"$BIN/$name" <<'EOF'
+#!/usr/bin/env bash
+echo "DISABLED: MLBB VOD-only — Shorts calibration off ($(date -Is))" >&2
+exit 0
+EOF
+  chmod 755 "$BIN/$name"
+}
 
 touch "$ENV_FILE"
 for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
@@ -110,8 +126,12 @@ install -m 755 \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_intervals.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
-  "$REPO/scripts/mlbb_learning_first.py" \
+  "$REPO/scripts/mlbb_pipeline_mode.py" \
   "$REPO/scripts/mlbb_calibration_store.py" \
+  "$REPO/scripts/mlbb_calibration_feed.py" \
+  "$REPO/scripts/mlbb_youtube_shorts_ingest.py" \
+  "$REPO/scripts/mlbb_continuous_worker.py" \
+  "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/highlight_scorer.py" \
   "$REPO/scripts/strict_montage_direct.py" \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
@@ -171,6 +191,22 @@ while true; do
 done
 EOF
 chmod 755 "$WRAPPER_VOD"
+
+disable_shorts_wrapper mlbb_calibration_feed.sh
+disable_shorts_wrapper mlbb_youtube_shorts_ingest.sh
+
+for f in /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive; do
+  [[ -f "$f" ]] || continue
+  grep -v 'mlbb_calibration_feed' "$f" \
+    | grep -v 'mlbb_youtube_shorts_ingest' \
+    | grep -v 'mlbb_continuous_worker' \
+    | grep -v 'continuous.worker' >"${f}.vod_only" || true
+  if grep -qE '^[0-9*]' "${f}.vod_only" 2>/dev/null; then
+    mv "${f}.vod_only" "$f"
+  else
+    rm -f "$f" "${f}.vod_only"
+  fi
+done
 
 # Single supervisor process for the VOD loop (not cron-spawned duplicates).
 pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true

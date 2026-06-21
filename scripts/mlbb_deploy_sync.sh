@@ -6,6 +6,7 @@ BIN=/usr/local/bin
 shopt -s nullglob
 for f in \
   mlbb_calibration_store.py \
+  mlbb_pipeline_mode.py \
   mlbb_calibration_feed.py \
   mlbb_continuous_worker.py \
   mlbb_youtube_shorts_ingest.py \

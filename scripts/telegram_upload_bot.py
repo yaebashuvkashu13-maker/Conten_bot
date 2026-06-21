@@ -2726,6 +2726,9 @@ def handle_message(message: dict):
             send_message(chat_id, f'MLBB VOD feed error: {exc}')
         return
     if is_owner(chat_id) and cmd in ('/mlbb_samples', '/mlbb_sample'):
+        if env.get('MLBB_VOD_ONLY', '0') == '1' or env.get('MLBB_CALIBRATION_FEED_ENABLED', '1') == '0':
+            send_message(chat_id, 'Shorts-калибровка отключена. Режим: нарезка MLBB VOD (~20 мин матчи).')
+            return
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from mlbb_calibration_feed import main as mlbb_feed_main

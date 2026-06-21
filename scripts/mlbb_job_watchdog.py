@@ -48,6 +48,23 @@ def vod_only_mode() -> bool:
     )
 
 
+def kill_shorts_pipeline_orphans() -> int:
+    """VOD-only: Shorts worker/feed/ingest must not run."""
+    if not vod_only_mode():
+        return 0
+    killed = 0
+    for pattern in (
+        "mlbb_continuous_worker.py",
+        "mlbb_calibration_feed.py",
+        "mlbb_youtube_shorts_ingest.py",
+        "mlbb_hero_shorts_montage.py",
+    ):
+        for pid in pids_matching(pattern):
+            kill_pid_tree(pid, label="vod_only_shorts", reason=pattern)
+            killed += 1
+    return killed
+
+
 def load_avg_1m() -> float:
     try:
         return os.getloadavg()[0]
@@ -173,6 +190,10 @@ def dedupe_ingests() -> int:
 
 def nudge_all() -> list[str]:
     actions: list[str] = []
+    if vod_only_mode():
+        shorts_killed = kill_shorts_pipeline_orphans()
+        if shorts_killed:
+            actions.append(f"vod_only_kill_shorts={shorts_killed}")
     dup = dedupe_workers()
     if dup:
         actions.append(f"duplicate_worker={dup}")

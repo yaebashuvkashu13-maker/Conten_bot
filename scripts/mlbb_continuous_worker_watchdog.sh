@@ -26,11 +26,18 @@ log() {
   echo "[$(date -Is)] $*" >> "$WLOG"
 }
 
-# Shorts calibration mode wins over legacy VOD-only flag.
-if [[ "${MLBB_VOD_DISABLED:-1}" == "1" || "${MLBB_CALIBRATION_FEED_ENABLED:-1}" == "1" ]]; then
-  :
-elif [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
-  log "vod_only=1: skip continuous worker; ensure vod supervisor running"
+# VOD-only wins — never restart Shorts worker when cutting long VODs.
+if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
+  log "vod_only=1: kill Shorts worker/feed/ingest; ensure vod supervisor"
+  pkill -f "mlbb_continuous_worker.py" 2>/dev/null || true
+  pkill -f "mlbb_calibration_feed.py" 2>/dev/null || true
+  pkill -f "mlbb_youtube_shorts_ingest.py" 2>/dev/null || true
+  pkill -f "mlbb_hero_shorts_montage.py" 2>/dev/null || true
+  rm -f /tmp/mlbb_calibration_feed.lock /tmp/mlbb_youtube_shorts_ingest.lock 2>/dev/null || true
+  WATCHDOG_PY="/usr/local/bin/mlbb_job_watchdog.py"
+  if [[ -f "$WATCHDOG_PY" ]]; then
+    python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
+  fi
   if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
     log "restart telegram_upload_bot"
     nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
@@ -48,6 +55,13 @@ elif [[ "${MLBB_VOD_ONLY:-0}" == "1" ]]; then
       log "started vod_segment_feed direct pid=$!"
     fi
   fi
+  exit 0
+fi
+
+# Shorts calibration watchdog (legacy).
+if [[ "${MLBB_VOD_DISABLED:-1}" == "1" || "${MLBB_CALIBRATION_FEED_ENABLED:-1}" == "1" ]]; then
+  :
+else
   exit 0
 fi
 

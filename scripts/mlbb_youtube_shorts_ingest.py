@@ -412,6 +412,12 @@ def main() -> int:
         print("skip ingest another instance running")
         return 0
 
+    from mlbb_pipeline_mode import shorts_calibration_enabled
+
+    if not shorts_calibration_enabled():
+        print("SKIP shorts ingest: VOD-only or MLBB_CALIBRATION_FEED_ENABLED=0")
+        return 0
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-per-query", type=int, default=30)
     parser.add_argument("--days", type=int, default=int(os.environ.get("MLBB_SHORTS_DAYS", "365")))

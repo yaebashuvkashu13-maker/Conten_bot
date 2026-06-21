@@ -145,6 +145,12 @@ def _pick_unique_batch(rows: list[dict], *, batch_size: int | None = None) -> li
 
 def _run_feed() -> int:
     env = {**os.environ, **load_env(ENV_PATH)}
+    from mlbb_pipeline_mode import shorts_calibration_enabled
+
+    if not shorts_calibration_enabled(env):
+        print("SKIP calibration_feed: VOD-only or MLBB_CALIBRATION_FEED_ENABLED=0")
+        return 0
+
     batch_size = int(env.get("MLBB_CALIBRATION_BATCH", os.environ.get("MLBB_CALIBRATION_BATCH", "3")))
     token = env.get("TG_BOT_TOKEN", "")
     chat_id = env.get("TG_CHAT_ID") or os.environ.get("TG_CHAT_ID", "")
