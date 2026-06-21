@@ -98,9 +98,11 @@ def send_message(
 
 def format_caption(row: dict, idx: int, total: int) -> str:
     vid = row.get("video_id", "")
+    gscore = row.get("gameplay_score")
+    hud = f" | hud={float(gscore):.3f}" if gscore is not None else ""
     return (
         f"MLBB калибровка {idx}/{total}\n"
-        f"score={float(row.get('score', 0)):.3f} | hook={float(row.get('hook_score', 0)):.2f}\n"
+        f"score={float(row.get('score', 0)):.3f}{hud} | hook={float(row.get('hook_score', 0)):.2f}\n"
         f"views={int(row.get('view_count') or 0)}\n"
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"

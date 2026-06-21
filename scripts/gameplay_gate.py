@@ -1674,8 +1674,8 @@ def is_mlbb_calibration_short(
     if score < floor:
         return False, score, "low_hud"
 
-    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "1") == "1"
-    strong = float(os.environ.get("MLBB_CALIBRATION_STRONG_HEURISTIC", "0.62"))
+    lenient = os.environ.get("MLBB_CALIBRATION_LENIENT", "0") == "1"
+    strong = float(os.environ.get("MLBB_CALIBRATION_STRONG_HEURISTIC", "0.72"))
     if lenient and score >= strong:
         return True, score, "heuristic_ok"
 

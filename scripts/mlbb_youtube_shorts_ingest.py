@@ -182,6 +182,9 @@ def search_shorts(
             continue
         if duration <= 3 or duration > 60:
             continue
+        min_views = int(env.get("MLBB_SHORTS_MIN_VIEWS", "50"))
+        if view_count < min_views:
+            continue
         if NEGATIVE_TITLE.search(title) or OTHER_GAME_TITLE.search(title):
             continue
         if title_rejected_for_mlbb_shorts(title) or title_blocked_by_owner_feedback(title):
@@ -566,12 +569,14 @@ def main() -> int:
                 "other_game_title",
                 "non_mlbb_sports",
                 "promo_edit",
+                "spam_shorts_tag",
+                "generic_clickbait",
+                "no_mlbb_title",
             ) or reason.startswith("owner_not_gameplay:")
             if hard_reject or not ok:
                 rejected += 1
                 continue
             feats = light_clip_features(mp4)
-            feats["score"] = max(float(feats.get("score") or 0), float(gscore))
             upsert_candidate(
                 {
                     **row,
@@ -594,6 +599,9 @@ def main() -> int:
             "other_game_title",
             "non_mlbb_sports",
             "promo_edit",
+            "spam_shorts_tag",
+            "generic_clickbait",
+            "no_mlbb_title",
         ) or reason.startswith("owner_not_gameplay:")
         if hard_reject or not ok:
             rejected += 1
@@ -601,7 +609,6 @@ def main() -> int:
 
         if fast_ingest and lenient:
             feats = light_clip_features(mp4)
-            feats["score"] = max(float(feats.get("score") or 0), float(gscore))
         else:
             feats = score_clip(mp4)
         if feats["score"] < args.min_score and not feats["rule_pass"] and not lenient:

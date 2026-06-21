@@ -237,6 +237,7 @@ def test_mark_feed_blocked_sets_gameplay_pass_zero(tmp_path: Path, monkeypatch) 
     monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
     monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
     monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "0")
+    monkeypatch.setenv("MLBB_SHORTS_MIN_VIEWS", "0")
 
     import mlbb_calibration_store as store
 
@@ -300,6 +301,7 @@ def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) 
     monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
     monkeypatch.setenv("MLBB_FEED_SENT", str(sent))
     monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "0")
+    monkeypatch.setenv("MLBB_SHORTS_MIN_VIEWS", "0")
     monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(ex_root))
     monkeypatch.setenv("MLBB_OWNER_MIN_EXEMPLARS", "2")
 

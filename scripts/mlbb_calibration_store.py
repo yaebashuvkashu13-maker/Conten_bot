@@ -238,6 +238,8 @@ def recycle_unlabeled_sent(*, limit: int = 12) -> int:
 
 def refill_pending_emergency(*, limit: int = 15) -> int:
     """Register never-delivered disk Shorts only — never re-send already seen videos."""
+    from gameplay_gate import is_mlbb_calibration_short
+
     delivered = load_ever_delivered()
     added = 0
     if not SHORTS_ROOT.exists():
@@ -252,14 +254,20 @@ def refill_pending_emergency(*, limit: int = 15) -> int:
         if vid in delivered or vid in labeled:
             continue
         row = find_candidate(vid) or {}
+        title = str(row.get("title", ""))
+        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
+        if not ok:
+            mark_feed_blocked(vid, reason=reason, score=gscore)
+            continue
         upsert_candidate(
             _backfill_short_metadata(
                 {
                     **row,
                     "video_id": vid,
                     "id": vid,
-                    "gameplay_pass": int(row.get("gameplay_pass") or 1),
-                    "gameplay_score": float(row.get("gameplay_score") or 0.55),
+                    "gameplay_pass": 1,
+                    "gameplay_score": round(float(gscore), 4),
+                    "gameplay_reason": reason,
                 },
                 mp4,
             )
@@ -1041,6 +1049,9 @@ def _row_passes_pending_gate(row: dict, path: Path) -> bool:
     if int(row.get("gameplay_pass") or 0) != 1:
         return False
     if title_blocked_by_owner_feedback(str(row.get("title", ""))):
+        return False
+    min_views = int(os.environ.get("MLBB_SHORTS_MIN_VIEWS", "50"))
+    if int(row.get("view_count") or 0) < min_views:
         return False
     gscore = float(row.get("gameplay_score") or 0)
     if gscore < float(os.environ.get("MLBB_CALIBRATION_MIN_HEURISTIC", "0.52")):

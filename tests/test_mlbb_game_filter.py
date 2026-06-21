@@ -24,11 +24,17 @@ def test_sports_title_rejected() -> None:
     assert not NON_MLBB_SPORTS_TITLE.search("MLBB savage teamfight shorts")
 
 
-def test_football_short_rejected_by_title(tmp_path: Path) -> None:
-    fake = tmp_path / "yt_test.mp4"
-    fake.write_bytes(b"x" * 1000)
-    reason = title_rejected_for_mlbb_shorts("Penn State Football hype video #shorts")
-    assert reason == "non_mlbb_sports"
+def test_hmmm_shortlive_rejected() -> None:
+    reason = title_rejected_for_mlbb_shorts("Hmmm!! #shorts #shortlive")
+    assert reason in ("generic_clickbait", "spam_shorts_tag")
+
+
+def test_spam_shortlive_tag() -> None:
+    assert title_rejected_for_mlbb_shorts("random #shortlive clip") == "spam_shorts_tag"
+
+
+def test_mlbb_title_passes() -> None:
+    assert title_rejected_for_mlbb_shorts("MLBB savage teamfight #shorts") is None
 
 
 def test_promo_title_rejected() -> None:
