@@ -91,8 +91,9 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_INTERVAL_GAP_SEC=3 MLBB_VOD_PIPELINE_MAX_VODS=0 \
   MLBB_VOD_PIPELINE_MAX_MIN=0 MLBB_VOD_IDLE_SEC=25 \
   MLBB_VOD_PROBE_LIMIT=24 MLBB_VOD_SEGMENT_SEC=15 HIGHLIGHT_WINDOW_SEC=15 \
-  MLBB_VOD_MIN_SEC=900 MLBB_VOD_MAX_SEC=2700 MLBB_VOD_TARGET_DUR_SEC=1500 \
-  MLBB_VOD_SKIP_LONG_SEC=2700 MLBB_VOD_MIN_PEAK_SEC=420 \
+  MLBB_VOD_MIN_SEC=180 MLBB_VOD_MAX_SEC=1200 MLBB_VOD_TARGET_DUR_SEC=780 \
+  MLBB_VOD_SKIP_LONG_SEC=1200 MLBB_VOD_MIN_PEAK_SEC=420 \
+  MLBB_VOD_SEASON=41 MLBB_VOD_YOUTUBE_DURATION_FILTER=1 \
   MLBB_VOD_SEARCH_LIMIT=15 MLBB_VOD_SEARCH_DELAY=6 MLBB_VOD_DOWNLOAD_DELAY=10 \
   MLBB_VOD_BG_WAIT_SEC=180 MLBB_VOD_AUTO_DOWNLOAD=1 MLBB_VOD_FULL_SCAN=1 \
   MLBB_VOD_BOOTSTRAP=0 MLBB_VOD_CHUNK_RENDER=1 MLBB_VOD_SIMPLE_AUDIO=1 \
@@ -118,11 +119,11 @@ for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
 done
 
 if ! grep -q '^MLBB_VOD_SEARCH_QUERIES=' "$ENV_FILE" 2>/dev/null; then
-  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game"' >>"$ENV_FILE"
+  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic global ranked gameplay season 41,Mobile Legends mythic global solo queue season 41,MLBB legend rank global full match season 41,MLBB mythic global masha season 41 ranked gameplay,MLBB mythic global paquito season 41 ranked gameplay,MLBB mythic global hayabusa season 41 ranked gameplay,MLBB mythic global gusion season 41 ranked gameplay,MLBB mythic global fanny season 41 ranked gameplay,MLBB mythic global ling season 41 ranked gameplay,MLBB mythic global chou season 41 ranked gameplay,MLBB mythic global beatrix season 41 ranked gameplay"' >>"$ENV_FILE"
 else
   # Unquoted value breaks `source /root/.video_bot.env` (mythic: command not found).
   sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
-  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay 20 minutes,Mobile Legends legend rank solo queue full match replay,MLBB ranked match gameplay no montage 15 minutes,Mobile Legends mythic ranked solo match full game"' >>"$ENV_FILE"
+  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic global ranked gameplay season 41,Mobile Legends mythic global solo queue season 41,MLBB legend rank global full match season 41,MLBB mythic global masha season 41 ranked gameplay,MLBB mythic global paquito season 41 ranked gameplay,MLBB mythic global hayabusa season 41 ranked gameplay,MLBB mythic global gusion season 41 ranked gameplay,MLBB mythic global fanny season 41 ranked gameplay,MLBB mythic global ling season 41 ranked gameplay,MLBB mythic global chou season 41 ranked gameplay,MLBB mythic global beatrix season 41 ranked gameplay"' >>"$ENV_FILE"
 fi
 
 install -m 755 \

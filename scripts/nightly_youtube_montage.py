@@ -154,6 +154,7 @@ def discover_candidates(
     max_sec: float | None = None,
     search_limit: int | None = None,
     game_prefs: dict | None = None,
+    youtube_duration_sp: str | None = None,
 ) -> list[dict]:
     if queries is None:
         queries = [
@@ -167,10 +168,24 @@ def discover_candidates(
     seen: set[str] = set()
     out: list[dict] = []
 
+    duration_sp = ""
+    if youtube_duration_sp is not None:
+        duration_sp = youtube_duration_sp.strip()
+
     for query in queries:
+        if duration_sp:
+            from urllib.parse import quote_plus
+
+            search_target = (
+                f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={duration_sp}"
+            )
+        else:
+            search_target = f"ytsearch{search_limit}:{query}"
         cmd = ytdlp_base(env) + [
-            f"ytsearch{search_limit}:{query}",
+            search_target,
             "--flat-playlist",
+            "--playlist-end",
+            str(search_limit),
             "--print",
             "%(id)s",
         ]

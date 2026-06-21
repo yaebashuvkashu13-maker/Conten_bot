@@ -66,15 +66,15 @@ LONG_VOD_TITLE_RE = re.compile(
 
 
 def _vod_min_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MIN_SEC", "900"))
+    return float(os.environ.get("MLBB_VOD_MIN_SEC", "180"))
 
 
 def _vod_max_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MAX_SEC", "2700"))
+    return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
 
 
 def _vod_target_dur_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "1500"))
+    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "780"))
 
 
 def _vod_skip_long_sec() -> float:
@@ -371,6 +371,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         normalize_uploader,
         passes_mlbb_vod_filters,
         rank_mlbb_vod_candidate,
+        vod_youtube_duration_sp,
     )
 
     min_sec = _vod_min_sec()
@@ -393,7 +394,12 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         if throttled and idx > 0:
             time.sleep(search_delay)
         batch = discover_candidates(
-            env, queries=[query], min_sec=min_sec, max_sec=max_sec, search_limit=search_limit
+            env,
+            queries=[query],
+            min_sec=min_sec,
+            max_sec=max_sec,
+            search_limit=search_limit,
+            youtube_duration_sp=vod_youtube_duration_sp(env),
         )
         raw.extend(batch)
 
@@ -781,7 +787,7 @@ def _needs_chunk_render(vod: Path) -> bool:
         return True
     if vod.stat().st_size > 900_000_000:
         return True
-    return _ffprobe_duration(vod) > 2700
+    return _ffprobe_duration(vod) > _vod_max_sec()
 
 
 def _extract_vod_chunk(vod: Path, rough_seek: float, chunk_dur: float, chunk_path: Path) -> bool:

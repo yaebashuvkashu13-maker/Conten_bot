@@ -3,9 +3,36 @@
 
 from __future__ import annotations
 
+import os
 import re
+from urllib.parse import quote_plus
 
-# Hard reject — montages, guides, promos; unlikely to yield fight segments.
+# YouTube search UI: "4–20 minutes" duration bucket (closest to our 3–20 min window).
+YOUTUBE_DURATION_SP_4_TO_20 = "EgQQARgB"
+
+MLBB_VOD_DEFAULT_SEASON = 41
+
+# Popular heroes for rotating VOD search (includes Masha from user examples).
+VOD_SEARCH_HEROES = (
+    "masha",
+    "paquito",
+    "hayabusa",
+    "gusion",
+    "fanny",
+    "ling",
+    "chou",
+    "beatrix",
+    "moskov",
+    "valentina",
+    "joy",
+    "angela",
+    "tigreal",
+    "layla",
+    "kagura",
+    "lancelot",
+)
+
+# Hard reject — montages, guides, promos, skin showcases.
 BAD_TITLE_RE = re.compile(
     r"(?:"
     r"giveaway|#short\b|shorts\b|tiktok\b|reels?\b|"
@@ -15,11 +42,17 @@ BAD_TITLE_RE = re.compile(
     r"build\s+guide|item\s+build|emblem\s+guide|"
     r"reaction(?:\s+only)?|react(?:ing|s)?\s+to|"
     r"official\s+cinematic|trailer\b|cinematic\b|"
-    r"skin\s+review|new\s+skin|skin\s+showcase|diamond\s+giveaway|"
+    r"skin\s+review|new\s+skin|skin\s+showcase|skin\s+comparison|all\s+skins?\b|"
+    r"collector\s+skin|starlight\s+skin|legendary\s+skin|epic\s+skin|"
+    r"skin\s+(?:unbox|preview|trailer|animation|effect|test)|"
+    r"battle\s+pass\s+skin|event\s+skin|limited\s+skin|exorcist\s+skin|"
+    r"new\s+(?:collector|legendary|epic|starlight|limited)\b|"
+    r"season\s+\d+\s+skin|skin\s+season|diamond\s+giveaway|"
     r"patch\s+notes|update\s+review|new\s+hero\s+release|"
     r"funny\s+moments?|troll(?:ing)?|meme\s+comp|"
     r"music\s+video|edited\s+by|fan\s*made|"
-    r"news\b|esports\s+recap|mpl\s+highlights|tournament\s+highlights"
+    r"news\b|esports\s+recap|mpl\s+highlights|tournament\s+highlights|"
+    r"обзор.{0,24}скин|скин.{0,24}обзор|новый\s+скин|показ\s+скина"
     r")",
     re.I,
 )
@@ -29,23 +62,70 @@ SOFT_BAD_TITLE_RE = re.compile(
     r"(?:"
     r"just\s+chatting|q\s*&\s*a|opening\s+diamonds?|diamond\s+spin|"
     r"gacha|lucky\s+spin|account\s+review|coach(?:ing)?\s+session|"
-    r"rank\s+push\s+stream(?!\s+gameplay)"
+    r"rank\s+push\s+stream(?!\s+gameplay)|skin\s+spin|lucky\s+box"
     r")",
     re.I,
 )
 
 RANKED_SIGNAL_RE = re.compile(
     r"\b(?:ranked?|mythic|legend|epic|grandmaster|immortal|solo\s*queue?|"
-    r"match|gameplay|full\s+(?:game|match)|replay|vs\.?)\b",
+    r"match|gameplay|full\s+(?:game|match)|replay|vs\.?|global)\b",
     re.I,
 )
 
-DEFAULT_SEARCH_QUERIES = (
-    "MLBB mythic ranked full match gameplay 20 minutes,"
-    "Mobile Legends legend rank solo queue full match replay,"
-    "MLBB ranked match gameplay no montage 15 minutes,"
-    "Mobile Legends mythic ranked solo match full game"
-)
+
+def vod_current_season() -> int:
+    raw = (os.environ.get("MLBB_VOD_SEASON") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return MLBB_VOD_DEFAULT_SEASON
+
+
+def build_vod_search_queries(
+    *,
+    season: int | None = None,
+    heroes: tuple[str, ...] | None = None,
+    max_hero_queries: int = 8,
+) -> list[str]:
+    """Search phrases without duration — YouTube duration filter is applied separately."""
+    season = season if season is not None else vod_current_season()
+    heroes = heroes or VOD_SEARCH_HEROES
+    queries = [
+        f"MLBB mythic global ranked gameplay season {season}",
+        f"Mobile Legends mythic global solo queue season {season}",
+        f"MLBB legend rank global full match season {season}",
+    ]
+    for hero in heroes[:max_hero_queries]:
+        queries.append(f"MLBB mythic global {hero} season {season} ranked gameplay")
+    return queries
+
+
+def default_vod_search_queries_csv() -> str:
+    return ",".join(build_vod_search_queries())
+
+
+DEFAULT_SEARCH_QUERIES = default_vod_search_queries_csv()
+
+
+def youtube_results_search_url(query: str, *, duration_sp: str = "") -> str:
+    """YouTube results URL; optional sp= applies the site duration filter (not query text)."""
+    url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    sp = (duration_sp or "").strip()
+    if sp:
+        url += f"&sp={sp}"
+    return url
+
+
+def vod_youtube_duration_sp(env: dict[str, str] | None = None) -> str:
+    merged = {**os.environ, **(env or {})}
+    explicit = (merged.get("MLBB_VOD_YOUTUBE_DURATION_SP") or "").strip()
+    if explicit.lower() in ("0", "off", "none", "disable", "disabled"):
+        return ""
+    if explicit:
+        return explicit
+    if merged.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "0":
+        return ""
+    return YOUTUBE_DURATION_SP_4_TO_20
 
 
 def text_blob(meta: dict) -> str:
@@ -66,14 +146,14 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
     return True
 
 
-def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 1500.0) -> float:
+def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> float:
     """Higher score = better candidate for ranked fight extraction."""
     blob = text_blob(meta).lower()
     dur = float(meta.get("duration") or 0)
     score = 0.0
 
-    # Prefer ~20–25 min matches (sweet spot for teamfights without 45 min scan).
-    score -= abs(dur - target_dur_sec) / 240.0
+    # Prefer ~10–15 min uploads (typical ranked match length in the 3–20 min window).
+    score -= abs(dur - target_dur_sec) / 180.0
 
     boosts = (
         ("full match", 5.0),
@@ -83,6 +163,7 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 1500.0) -> fl
         ("legend", 3.0),
         ("immortal", 3.0),
         ("grandmaster", 2.5),
+        ("global", 3.5),
         ("solo queue", 3.0),
         ("solo rank", 3.0),
         ("gameplay", 2.0),
@@ -92,6 +173,7 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 1500.0) -> fl
         ("savage", 1.5),
         ("teamfight", 1.5),
         ("no commentary", 1.0),
+        (f"season {vod_current_season()}", 2.5),
     )
     for needle, weight in boosts:
         if needle in blob:
@@ -105,7 +187,10 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 1500.0) -> fl
         ("tutorial", -10.0),
         ("guide", -6.0),
         ("reaction", -8.0),
-        ("skin", -6.0),
+        ("skin", -10.0),
+        ("collector", -8.0),
+        ("starlight", -8.0),
+        ("legendary skin", -10.0),
         ("giveaway", -12.0),
         ("funny", -4.0),
         ("edit", -3.0),
@@ -120,6 +205,8 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 1500.0) -> fl
         ("uncut", -5.0),
         ("streamer", -1.5),
         ("face cam", -4.0),
+        ("unbox", -8.0),
+        ("preview", -5.0),
     )
     for needle, weight in penalties:
         if needle in blob:

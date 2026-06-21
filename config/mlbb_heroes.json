@@ -1,5 +1,8 @@
 {
   "heroes": [
+    {"id": "masha", "tags": ["masha"]},
+    {"id": "paquito", "tags": ["paquito"]},
+    {"id": "joy", "tags": ["joy", "joymlbb"]},
     {"id": "hayabusa", "tags": ["hayabusa", "hayabi", "haya"]},
     {"id": "gusion", "tags": ["gusion"]},
     {"id": "fanny", "tags": ["fanny", "fannylight"]},
