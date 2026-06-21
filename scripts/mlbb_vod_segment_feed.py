@@ -1311,9 +1311,17 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
         sid = segment_id(vod, start)
         if sid in labeled_set or sid in sent:
             continue
-        ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
-            vod, PROFILE, [lead_clip]
-        )
+        hm = clip.get("highlight_metrics") or {}
+        skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
+        already_scored = bool(hm.get("rule_pass")) or str(hm.get("pass_reason") or "").startswith("mlbb_fight")
+        if skip_revalidate and already_scored:
+            ok, reason = True, str(hm.get("pass_reason") or "highlight_pass")
+            metrics_rows = [hm]
+            visual_rows = [{"visual_pass": hm.get("visual_pass", True)}]
+        else:
+            ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
+                vod, PROFILE, [lead_clip]
+            )
         if not ok:
             log.info("skip %s gate=%s", sid, reason)
             continue

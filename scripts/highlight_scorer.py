@@ -1434,6 +1434,8 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
     max_pann = int(os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "36"))
+    if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+        max_pann = int(os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "5"))
     starts = starts[:max_pann]
     if profile not in SHOOTER_PROFILES:
         return starts
@@ -1553,6 +1555,15 @@ def discover_highlight_candidates(
             }
         )
         if len(verified) >= limit:
+            break
+        if (
+            os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+            and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+        ):
+            log.info(
+                "vod send_one: stop after first highlight pass start=%.1f",
+                start,
+            )
             break
 
     verified.sort(
