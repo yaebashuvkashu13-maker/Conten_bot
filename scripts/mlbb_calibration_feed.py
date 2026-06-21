@@ -162,10 +162,25 @@ def _run_feed() -> int:
         print(f"released_stale_claims={stale}")
     sync_limit = int(env.get("MLBB_FEED_RESCORE_LIMIT", "25"))
     if env.get("MLBB_FEED_RESCORE", "1") == "1":
-        from mlbb_calibration_store import sync_owner_learning
+        if env.get("MLBB_FEED_SYNC_ASYNC", "1") == "1":
+            sync_py = (
+                "import sys; sys.path.insert(0,'/usr/local/bin');"
+                "sys.path.insert(0,'/root/content_bot_ml/scripts');"
+                f"from mlbb_calibration_store import sync_owner_learning; "
+                f"print(sync_owner_learning(rescore_limit={sync_limit}))"
+            )
+            subprocess.Popen(
+                [sys.executable, "-c", sync_py],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print(f"owner_sync_async limit={sync_limit}")
+        else:
+            from mlbb_calibration_store import sync_owner_learning
 
-        synced = sync_owner_learning(rescore_limit=sync_limit)
-        print(f"owner_sync_before_feed={synced}")
+            synced = sync_owner_learning(rescore_limit=sync_limit)
+            print(f"owner_sync_before_feed={synced}")
     backfill_limit = int(env.get("MLBB_FEED_BACKFILL_LIMIT", "0"))
     if backfill_limit > 0:
         backfill_gameplay_flags(limit=backfill_limit)

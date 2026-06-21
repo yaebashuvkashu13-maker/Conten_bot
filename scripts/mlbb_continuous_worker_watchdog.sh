@@ -61,6 +61,10 @@ worker_pid() {
 
 state_stale() {
   [[ ! -f "$STATE" ]] && return 0
+  if pgrep -f "mlbb_youtube_shorts_ingest.py" >/dev/null 2>&1 \
+    || pgrep -f "mlbb_calibration_feed.py" >/dev/null 2>&1; then
+    return 1
+  fi
   python3 - <<PY
 import json, os, time
 from datetime import datetime

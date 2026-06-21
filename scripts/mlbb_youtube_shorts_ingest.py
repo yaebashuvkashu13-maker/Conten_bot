@@ -439,7 +439,7 @@ def main() -> int:
         if args.max_per_query > 12:
             args.max_per_query = 12
         if args.skip_if_pending <= 0:
-            args.skip_if_pending = int(os.environ.get("MLBB_INGEST_SKIP_IF_PENDING", "12"))
+            args.skip_if_pending = int(os.environ.get("MLBB_INGEST_SKIP_IF_PENDING", "0"))
 
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("CONTENT_BOT_REPO", "/root/content_bot_ml")
@@ -454,8 +454,9 @@ def main() -> int:
         print(f"rebuild_index_from_disk added={rebuilt}")
 
     pending_n = len(pending_candidates(limit=9999))
-    if args.skip_if_pending > 0 and pending_n >= args.skip_if_pending:
-        print(f"SKIP ingest pending={pending_n} >= {args.skip_if_pending} (no YouTube calls)")
+    skip_pending = int(env.get("MLBB_INGEST_SKIP_IF_PENDING", "0"))
+    if skip_pending > 0 and pending_n >= skip_pending:
+        print(f"SKIP ingest pending={pending_n} >= {skip_pending} (no YouTube calls)")
         return 0
 
     queries = list(SEARCH_QUERIES)

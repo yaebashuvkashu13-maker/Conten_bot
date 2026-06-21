@@ -27,6 +27,8 @@ PY = sys.executable
 TARGET_PENDING = int(os.environ.get("MLBB_TARGET_PENDING", "25"))
 LOOP_SEC = float(os.environ.get("MLBB_CONTINUOUS_LOOP_SEC", "4"))
 INGEST_COOLDOWN_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_SEC", "120"))
+INGEST_COOLDOWN_EMPTY_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_EMPTY_SEC", "45"))
+INGEST_COOLDOWN_HUNGRY_SEC = float(os.environ.get("MLBB_INGEST_COOLDOWN_HUNGRY_SEC", "60"))
 FEED_COOLDOWN_SEC = float(os.environ.get("MLBB_FEED_COOLDOWN_SEC", "720"))
 VOD_SLICE_MIN = int(os.environ.get("MLBB_VOD_SLICE_MIN", "30"))
 VOD_MAX_VODS = int(os.environ.get("MLBB_VOD_SLICE_MAX_VODS", "2"))
@@ -620,15 +622,23 @@ def main() -> int:
             if not heavy_busy and not vod.running() and montage.cooldown_ok(MONTAGE_COOLDOWN_SEC):
                 montage.start()
 
-        ingest_if_pending = int(base.get("MLBB_INGEST_IF_PENDING", str(TARGET_PENDING)))
         ingest_gap = INGEST_COOLDOWN_SEC if (aggressive or hungry) else JOB_MIN_GAP_SEC
+        ingest_if_pending = int(base.get("MLBB_INGEST_IF_PENDING", str(TARGET_PENDING)))
+        ingest_always = base.get("MLBB_INGEST_ALWAYS", "1") == "1"
+        if pending == 0:
+            ingest_gap = min(ingest_gap, INGEST_COOLDOWN_EMPTY_SEC)
+        elif pending < hungry_threshold:
+            ingest_gap = min(ingest_gap, INGEST_COOLDOWN_HUNGRY_SEC)
         ingest_mutex = ONE_HEAVY_JOB and not shorts_parallel and (
             feed.running() or calibration_feed_running() or hero_busy
         )
         own_ingest = ingest.proc.pid if ingest.running() and ingest.proc else None
         global_ingest = ingest_running_global()
+        need_ingest = pending < ingest_if_pending or (
+            ingest_always and pending < TARGET_PENDING and not ingest.running()
+        )
         if (
-            pending < ingest_if_pending
+            need_ingest
             and ingest.gap_ok(ingest_gap)
             and not ingest_block
             and not ingest_mutex
