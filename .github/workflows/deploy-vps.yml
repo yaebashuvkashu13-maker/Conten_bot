@@ -39,8 +39,7 @@ jobs:
             git fetch origin
             git checkout cursor/mlbb-video-pipeline-e712 || git checkout main
             git pull --ff-only
-            bash scripts/install_mlbb_vod_only.sh
-            bash /usr/local/bin/mlbb_vod_only_verify.sh || exit 1
+            bash scripts/vps_apply_vod_only.sh
             echo "=== MLBB VOD-only deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
             pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot' || true

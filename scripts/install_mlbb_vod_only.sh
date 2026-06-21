@@ -46,7 +46,7 @@ kill_all_competing() {
     pubg_gunfire_rebuild pubg_tiktok_batch genshin_boss_rebuild \
     mlbb_showcase_rebuild standoff overnight_orchestrator \
     pubg_brawl_direct pubg_stream_learn youtube_triple_montage \
-    nightly_youtube_montage hourly_new_sources pipeline_watchdog; do
+    nightly_youtube_montage hourly_new_sources pipeline_watchdog highlight_train; do
     pkill -f "$pat" 2>/dev/null || true
   done
   pkill -f 'run_job_until_ok.sh /root/data/mlbb/pubg_mlbb' 2>/dev/null || true
@@ -140,7 +140,9 @@ install -m 755 \
   "$REPO/scripts/strict_montage_direct.py" \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
   "$REPO/scripts/mlbb_job_watchdog.py" \
+  "$REPO/scripts/mlbb_vod_health_watchdog.sh" \
   "$REPO/scripts/mlbb_vod_only_verify.sh" \
+  "$REPO/scripts/vps_apply_vod_only.sh" \
   "$REPO/scripts/mlbb_telegram_video.py" \
   "$REPO/scripts/mlbb_runtime_cleanup.py" \
   "$REPO/scripts/telegram_upload_bot.py" \
@@ -227,6 +229,8 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   | grep -v 'mlbb_vod_segment_feed.sh' \
   >"$TMP" || true
 echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_watchdog.log 2>&1 $MARK watchdog" >>"$TMP"
+echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
+echo "*/15 * * * * $REPO/scripts/vps_apply_vod_only.sh >>/root/data/mlbb/vps_apply_vod.log 2>&1 $MARK auto-apply" >>"$TMP"
 crontab "$TMP"
 rm -f "$TMP"
 

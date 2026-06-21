@@ -9,12 +9,15 @@ die() { echo "FAIL: $*"; FAIL=1; }
 
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE"
 
-# shellcheck disable=SC1091
-source "$ENV_FILE" 2>/dev/null || die "cannot source env"
+env_val() {
+  local key="$1"
+  grep "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+}
 
 check_env() {
   local key="$1" expected="$2"
-  local val="${!key:-}"
+  local val
+  val="$(env_val "$key")"
   if [[ "$val" != "$expected" ]]; then
     die "env $key=$val (want $expected)"
   fi
@@ -34,6 +37,7 @@ forbidden=(
   mlbb_calibration_feed.py
   mlbb_youtube_shorts_ingest.py
   mlbb_hero_shorts_montage.py
+  highlight_train.py
 )
 for pat in "${forbidden[@]}"; do
   if pgrep -f "$pat" >/dev/null 2>&1; then
@@ -42,6 +46,9 @@ for pat in "${forbidden[@]}"; do
 done
 
 vod_pids=($(pgrep -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true))
+if [[ ${#vod_pids[@]} -eq 0 ]]; then
+  die "mlbb_vod_segment_feed.py not running"
+fi
 if [[ ${#vod_pids[@]} -gt 1 ]]; then
   die "duplicate vod_segment_feed pids: ${vod_pids[*]}"
 fi
@@ -61,8 +68,8 @@ if [[ "$GOOD" -lt 50 ]]; then
   warn "good exemplars < 50 — owner scoring weak"
 fi
 
-if crontab -l 2>/dev/null | grep -qE 'mlbb_calibration_feed|mlbb_youtube_shorts_ingest|mlbb_continuous_worker\.py'; then
-  die "cron still references Shorts calibration or continuous worker"
+if crontab -l 2>/dev/null | grep -qE 'mlbb_calibration_feed|mlbb_youtube_shorts_ingest|mlbb_continuous_worker\.py|install_mlbb_only_mode|vps_auto_update'; then
+  die "cron still references Shorts mode or old auto_update"
 fi
 
 if grep -q 'DISABLED: MLBB VOD-only' /usr/local/bin/mlbb_calibration_feed.sh 2>/dev/null; then
@@ -72,8 +79,9 @@ else
 fi
 
 echo "===== VOD-only verify $(date -Is) ====="
-echo "vod_feed_pids=${vod_pids[*]:-(none)}"
-grep -E 'MLBB_VOD_|MLBB_CALIBRATION_FEED|HIGHLIGHT_USE_OWNER' "$ENV_FILE" | sort || true
+echo "vod_feed_pids=${vod_pids[*]}"
+echo "load: $(uptime | sed 's/.*load average: //')"
+grep -E '^MLBB_VOD_ONLY=|^MLBB_VOD_DISABLED=|^MLBB_CALIBRATION_FEED_ENABLED=' "$ENV_FILE" || true
 
 if [[ "$FAIL" -ne 0 ]]; then
   echo "VERIFY FAILED"
