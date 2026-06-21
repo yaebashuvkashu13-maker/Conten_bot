@@ -9,10 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from youtube_mlbb_vod_prefs import (  # noqa: E402
     build_vod_search_queries,
+    passes_mlbb_game_title,
     passes_mlbb_vod_filters,
     passes_upload_freshness,
+    pick_vod_search_batch,
     rank_mlbb_vod_candidate,
     upload_age_days,
+    vod_discovery_search_cycle,
     vod_search_date_sort,
     vod_youtube_duration_sp,
     vod_youtube_freshness_sp,
@@ -41,22 +44,49 @@ def test_rejects_skin_showcase_titles() -> None:
     assert not passes_mlbb_vod_filters(_meta("All New Skins Season 41 Battle Pass"))
 
 
+def test_rejects_guide_listicle_titles() -> None:
+    assert not passes_mlbb_vod_filters(_meta("BEST SOLO CARRY Heroes For Every Role | Season 41 ~ Mobile Legends"))
+    assert not passes_mlbb_game_title("BEST SOLO CARRY Heroes For Every Role | Season 41")
+
+
 def test_accepts_ranked_match_titles() -> None:
     assert passes_mlbb_vod_filters(_meta("MLBB Mythic Global Ranked Full Match Season 41"))
     assert passes_mlbb_vod_filters(_meta("Paquito vs Masha Mythic Ranked Match | MLBB"))
     assert passes_mlbb_vod_filters(_meta("Mobile Legends Legend Solo Queue Full Game Replay"))
 
 
-def test_build_queries_core_first_supplements_optional() -> None:
-    queries = build_vod_search_queries(season=41, heroes=("masha",), max_hero_queries=1)
+def test_accepts_implicit_mlbb_ranked_titles() -> None:
+    assert passes_mlbb_game_title("MID Hayabusa Full Highlights Ranked Game Mythical Glory")
+    assert passes_mlbb_vod_filters(_meta("OBISIDIA DESTROYS RANKED MATCH MYTHIC Gameplay"))
+    assert passes_mlbb_vod_filters(_meta("WanWan MVP Mythic Glory Ranked Gameplay | Mobile Legends"))
+
+
+def test_build_queries_returns_twenty() -> None:
+    queries = build_vod_search_queries(season=41)
+    assert len(queries) == 20
     assert queries[0] == "MLBB mythic ranked full match gameplay"
-    assert "MLBB mythic masha ranked gameplay" in queries
-    assert queries[-1] == "MLBB mythic global masha season 41 ranked gameplay"
+    assert any("masha" in q for q in queries)
+    assert any("placement" in q for q in queries)
     assert all("minute" not in q.lower() for q in queries)
 
-    no_sup = build_vod_search_queries(season=41, include_supplements=False, max_hero_queries=1)
-    assert all("season 41" not in q for q in no_sup)
-    assert any("masha" in q for q in no_sup)
+
+def test_pick_vod_search_batch_rotates() -> None:
+    queries = ["a", "b", "c", "d", "e"]
+    batch1, off1 = pick_vod_search_batch(queries, 0, 2)
+    batch2, off2 = pick_vod_search_batch(queries, off1, 2)
+    assert batch1 == ["a", "b"]
+    assert batch2 == ["c", "d"]
+    assert off2 == 4
+
+
+def test_discovery_search_cycle_rotates_modes() -> None:
+    m0 = vod_discovery_search_cycle(0)
+    m1 = vod_discovery_search_cycle(1)
+    m2 = vod_discovery_search_cycle(2)
+    assert m0["youtube_search_date"] is True
+    assert m1["youtube_search_date"] is False
+    assert m1["youtube_duration_sp"]
+    assert m2["youtube_freshness_sp"] == "EgQIARAB"
 
 
 def test_upload_freshness_filter() -> None:

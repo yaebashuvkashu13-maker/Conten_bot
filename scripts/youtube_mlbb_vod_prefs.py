@@ -19,12 +19,25 @@ MLBB_VOD_DEFAULT_MAX_AGE_DAYS = 21
 # Primary search — broad ranked/match phrases (no global/season lock-in).
 VOD_CORE_SEARCH_QUERIES = (
     "MLBB mythic ranked full match gameplay",
-    "Mobile Legends legend rank solo queue full match",
-    "MLBB ranked match gameplay",
-    "Mobile Legends mythic ranked solo match full game",
-    "MLBB epic ranked full match replay",
-    "Mobile Legends ranked gameplay teamfight",
+    "Mobile Legends mythic glory ranked full game",
+    "MLBB legend rank solo queue match replay",
+    "Mobile Legends epic mythic ranked teamfight gameplay",
+    "MLBB ranked match no montage full game",
+    "Mobile Legends global mythic ranked full match",
 )
+
+# Role / angle queries — different YouTube result pools from core+hero searches.
+VOD_ANGLE_SEARCH_QUERIES = (
+    "MLBB mythic placement match full gameplay",
+    "Mobile Legends immortal rank push match replay",
+    "MLBB roam mythic ranked full game",
+    "Mobile Legends jungle mythic ranked match gameplay",
+    "MLBB mythic glory savage teamfight ranked match",
+    "Mobile Legends ranked match MVP gameplay no commentary",
+)
+
+# YouTube upload-date filter: "This week" (alternate pool vs this month).
+YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
 # Popular heroes for rotating VOD search (includes Masha from user examples).
 VOD_SEARCH_HEROES = (
@@ -82,8 +95,30 @@ SOFT_BAD_TITLE_RE = re.compile(
 )
 
 RANKED_SIGNAL_RE = re.compile(
-    r"\b(?:ranked?|mythic|legend|epic|grandmaster|immortal|solo\s*queue?|"
-    r"match|gameplay|full\s+(?:game|match)|replay|vs\.?|global)\b",
+    r"\b(?:ranked?|mythic|mythical|legend|epic|grandmaster|immortal|solo\s*queue?|"
+    r"match|gameplay|full\s+(?:game|match)|replay|vs\.?|global|placement|"
+    r"mvp|teamfight|glory)\b",
+    re.I,
+)
+
+MLBB_EXPLICIT_TITLE_RE = re.compile(
+    r"mobile legends|mlbb|bang bang|мобайл легенд|#mlbb|#mobilelegends",
+    re.I,
+)
+
+MLBB_IMPLICIT_TITLE_RE = re.compile(
+    r"mythic glory|mythical glory|mythic ranked|ranked game|ranked match|"
+    r"mythical placement|mythic placement|immortal rank|legend rank|"
+    r"epic rank|solo rank|rank push",
+    re.I,
+)
+
+GUIDE_TITLE_RE = re.compile(
+    r"(?:"
+    r"best\s+\d+\s+heroes|heroes\s+for\s+every\s+role|for\s+every\s+role|"
+    r"best\s+solo\s+carry\s+heroes|tier\s+list|hero\s+tier|"
+    r"how\s+to\s+rank|rank\s+guide|emblem\s+setup|item\s+build\s+guide"
+    r")",
     re.I,
 )
 
@@ -130,21 +165,94 @@ def build_vod_search_queries(
     *,
     season: int | None = None,
     heroes: tuple[str, ...] | None = None,
-    max_hero_queries: int = 6,
+    max_hero_queries: int = 8,
     include_supplements: bool | None = None,
+    limit: int = 20,
 ) -> list[str]:
-    """Core ranked queries first; global/season/hero extras are optional supplements."""
+    """20 rotating queries: core + heroes + angles + optional season supplements."""
     if include_supplements is None:
         include_supplements = vod_search_include_supplements()
     heroes = heroes or VOD_SEARCH_HEROES
-    queries = list(VOD_CORE_SEARCH_QUERIES)
-    for hero in heroes[:max_hero_queries]:
-        queries.append(f"MLBB mythic {hero} ranked gameplay")
-    if include_supplements:
-        season = season if season is not None else vod_current_season()
+    season = season if season is not None else vod_current_season()
+    queries: list[str] = list(VOD_CORE_SEARCH_QUERIES)
+    hero_templates = (
+        "MLBB mythic {hero} ranked full match",
+        "Mobile Legends {hero} mythic glory ranked gameplay",
+    )
+    hero_slots = max(0, min(max_hero_queries, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
+    for idx in range(hero_slots):
+        hero = heroes[idx % len(heroes)]
+        tpl = hero_templates[idx % len(hero_templates)]
+        queries.append(tpl.format(hero=hero))
+    for angle in VOD_ANGLE_SEARCH_QUERIES:
+        if len(queries) >= limit:
+            break
+        queries.append(angle)
+    if include_supplements and len(queries) < limit:
         queries.append(f"MLBB mythic global ranked season {season}")
-        queries.append(f"MLBB mythic global masha season {season} ranked gameplay")
-    return queries
+    if include_supplements and len(queries) < limit:
+        queries.append(f"MLBB mythic global masha season {season} ranked full match")
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        key = q.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(q)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def pick_vod_search_batch(queries: list[str], offset: int, batch_size: int) -> tuple[list[str], int]:
+    """Round-robin slice — each pass hits a different query subset."""
+    if not queries:
+        return [], 0
+    batch_size = max(1, min(batch_size, len(queries)))
+    offset = offset % len(queries)
+    batch = [queries[(offset + i) % len(queries)] for i in range(batch_size)]
+    return batch, (offset + batch_size) % len(queries)
+
+
+def vod_discovery_search_cycle(cycle: int, env: dict[str, str] | None = None) -> dict[str, object]:
+    """
+    Rotate YouTube filters so we don't always scrape the same 'this month' page.
+    cycle 0: upload this month | cycle 1: 4–20 min (broader age) | cycle 2: this week
+    """
+    merged = {**os.environ, **(env or {})}
+    mode = int(cycle) % 3
+    if mode == 0:
+        return {
+            "youtube_search_date": True,
+            "youtube_freshness_sp": vod_youtube_freshness_sp(merged) or YOUTUBE_FRESHNESS_SP_THIS_MONTH,
+            "youtube_duration_sp": "",
+            "max_age_days": vod_max_age_days(merged),
+        }
+    if mode == 1:
+        return {
+            "youtube_search_date": False,
+            "youtube_freshness_sp": "",
+            "youtube_duration_sp": vod_youtube_duration_sp({**merged, "MLBB_VOD_SEARCH_FRESH": "0"}),
+            "max_age_days": max(vod_max_age_days(merged), 35),
+        }
+    return {
+        "youtube_search_date": True,
+        "youtube_freshness_sp": YOUTUBE_FRESHNESS_SP_THIS_WEEK,
+        "youtube_duration_sp": "",
+        "max_age_days": vod_max_age_days(merged),
+    }
+
+
+def passes_mlbb_game_title(title: str) -> bool:
+    """Accept ranked VOD titles even when uploader omits 'MLBB' in the name."""
+    blob = str(title or "")
+    if MLBB_EXPLICIT_TITLE_RE.search(blob):
+        return True
+    if GUIDE_TITLE_RE.search(blob):
+        return False
+    return bool(MLBB_IMPLICIT_TITLE_RE.search(blob) and RANKED_SIGNAL_RE.search(blob))
 
 
 def default_vod_search_queries_csv() -> str:
@@ -217,9 +325,14 @@ def text_blob(meta: dict) -> str:
 
 def passes_mlbb_vod_filters(meta: dict) -> bool:
     blob = text_blob(meta)
+    title = str(meta.get("title") or "")
     if BAD_TITLE_RE.search(blob):
         return False
+    if GUIDE_TITLE_RE.search(blob):
+        return False
     if SOFT_BAD_TITLE_RE.search(blob) and not RANKED_SIGNAL_RE.search(blob):
+        return False
+    if not passes_mlbb_game_title(title):
         return False
     return True
 
@@ -273,7 +386,11 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("montage", -12.0),
         ("compilation", -12.0),
         ("highlight", -8.0),
+        ("full highlights", -10.0),
         ("best moment", -8.0),
+        ("best build", -4.0),
+        ("for every role", -14.0),
+        ("best solo carry", -14.0),
         ("tutorial", -10.0),
         ("guide", -6.0),
         ("reaction", -8.0),

@@ -97,8 +97,8 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_SKIP_LONG_SEC=1200 MLBB_VOD_MIN_PEAK_SEC=300 \
   MLBB_VOD_SKIP_REVALIDATE=1 \
   MLBB_VOD_SEASON=41 MLBB_VOD_YOUTUBE_DURATION_FILTER=1 \
-  MLBB_VOD_SEARCH_FRESH=1 MLBB_VOD_MAX_AGE_DAYS=21 MLBB_VOD_SEARCH_SUPPLEMENT=1 \
-  MLBB_VOD_SEARCH_LIMIT=15 MLBB_VOD_SEARCH_DELAY=6 MLBB_VOD_DOWNLOAD_DELAY=10 \
+  MLBB_VOD_SEARCH_FRESH=1 MLBB_VOD_MAX_AGE_DAYS=35 MLBB_VOD_SEARCH_SUPPLEMENT=1 \
+  MLBB_VOD_SEARCH_LIMIT=20 MLBB_VOD_SEARCH_BATCH=3 MLBB_VOD_SEARCH_DELAY=6 MLBB_VOD_DOWNLOAD_DELAY=10 \
   MLBB_VOD_BG_WAIT_SEC=180 MLBB_VOD_AUTO_DOWNLOAD=1 MLBB_VOD_FULL_SCAN=1 \
   MLBB_VOD_BOOTSTRAP=0 MLBB_VOD_CHUNK_RENDER=1 MLBB_VOD_SIMPLE_AUDIO=1 \
   MLBB_VOD_GOP_SEC=1 MLBB_VOD_LEAD_SEC=4 MLBB_VOD_VARIABLE_LENGTH=1 \
@@ -122,13 +122,15 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   fi
 done
 
-if ! grep -q '^MLBB_VOD_SEARCH_QUERIES=' "$ENV_FILE" 2>/dev/null; then
-  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay,Mobile Legends legend rank solo queue full match,MLBB ranked match gameplay,Mobile Legends mythic ranked solo match full game,MLBB epic ranked full match replay,Mobile Legends ranked gameplay teamfight,MLBB mythic masha ranked gameplay,MLBB mythic paquito ranked gameplay,MLBB mythic hayabusa ranked gameplay,MLBB mythic gusion ranked gameplay,MLBB mythic fanny ranked gameplay,MLBB mythic ling ranked gameplay,MLBB mythic global ranked season 41,MLBB mythic global masha season 41 ranked gameplay"' >>"$ENV_FILE"
-else
-  # Unquoted value breaks `source /root/.video_bot.env` (mythic: command not found).
-  sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
-  echo 'MLBB_VOD_SEARCH_QUERIES="MLBB mythic ranked full match gameplay,Mobile Legends legend rank solo queue full match,MLBB ranked match gameplay,Mobile Legends mythic ranked solo match full game,MLBB epic ranked full match replay,Mobile Legends ranked gameplay teamfight,MLBB mythic masha ranked gameplay,MLBB mythic paquito ranked gameplay,MLBB mythic hayabusa ranked gameplay,MLBB mythic gusion ranked gameplay,MLBB mythic fanny ranked gameplay,MLBB mythic ling ranked gameplay,MLBB mythic global ranked season 41,MLBB mythic global masha season 41 ranked gameplay"' >>"$ENV_FILE"
-fi
+VOD_SEARCH_CSV="$(python3 - <<PY
+import sys
+sys.path.insert(0, "$REPO/scripts")
+from youtube_mlbb_vod_prefs import default_vod_search_queries_csv
+print(default_vod_search_queries_csv())
+PY
+)"
+sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
+printf 'MLBB_VOD_SEARCH_QUERIES="%s"\n' "$VOD_SEARCH_CSV" >>"$ENV_FILE"
 
 install -m 755 \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \

@@ -370,13 +370,13 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         DEFAULT_SEARCH_QUERIES,
         normalize_uploader,
         parse_upload_date_ymd,
+        passes_mlbb_game_title,
         passes_mlbb_vod_filters,
         passes_upload_freshness,
+        pick_vod_search_batch,
         rank_mlbb_vod_candidate,
+        vod_discovery_search_cycle,
         vod_max_age_days,
-        vod_search_date_sort,
-        vod_youtube_duration_sp,
-        vod_youtube_freshness_sp,
     )
 
     min_sec = _vod_min_sec()
@@ -385,18 +385,35 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
     search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", "25"))
     blocked_uploaders = _zero_yield_uploaders()
-    queries = [
+    all_queries = [
         q.strip()
         for q in os.environ.get("MLBB_VOD_SEARCH_QUERIES", DEFAULT_SEARCH_QUERIES).split(",")
         if q.strip()
     ]
-    if throttled and len(queries) > 1:
-        # One query per background pass — less YouTube pressure than full sweep.
-        queries = queries[:1]
+    batch_size = int(
+        os.environ.get(
+            "MLBB_VOD_SEARCH_BATCH",
+            "3" if throttled else str(min(6, max(3, len(all_queries)))),
+        )
+    )
+    state = _load_state()
+    offset = int(state.get("discovery_query_offset", 0))
+    queries, next_offset = pick_vod_search_batch(all_queries, offset, batch_size)
+    search_cycle = int(state.get("discovery_search_cycle", 0))
+    search_params = vod_discovery_search_cycle(search_cycle, env)
+    state["discovery_query_offset"] = next_offset
+    state["discovery_search_cycle"] = search_cycle + 1
+    _save_state(state)
+    log.info(
+        "discovery batch queries=%s cycle=%s mode=%s",
+        len(queries),
+        search_cycle,
+        search_cycle % 3,
+    )
 
     raw: list[dict] = []
     for idx, query in enumerate(queries):
-        if throttled and idx > 0:
+        if idx > 0:
             time.sleep(search_delay)
         batch = discover_candidates(
             env,
@@ -404,10 +421,10 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             min_sec=min_sec,
             max_sec=max_sec,
             search_limit=search_limit,
-            youtube_duration_sp=vod_youtube_duration_sp(env),
-            youtube_search_date=vod_search_date_sort(env),
-            youtube_freshness_sp=vod_youtube_freshness_sp(env),
-            max_age_days=vod_max_age_days(env),
+            youtube_duration_sp=str(search_params.get("youtube_duration_sp") or ""),
+            youtube_search_date=bool(search_params.get("youtube_search_date")),
+            youtube_freshness_sp=str(search_params.get("youtube_freshness_sp") or ""),
+            max_age_days=int(search_params.get("max_age_days") or vod_max_age_days(env)),
         )
         raw.extend(batch)
 
@@ -426,7 +443,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             continue
         if vid in used:
             continue
-        if not MLBB_TITLE_RE.search(title):
+        if not passes_mlbb_game_title(title):
             skipped["not_mlbb"] = skipped.get("not_mlbb", 0) + 1
             continue
         if dur < min_sec or dur > max_sec:
@@ -440,7 +457,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             skipped["bad_title"] = skipped.get("bad_title", 0) + 1
             log.info("skip bad title id=%s %s", vid, title[:70])
             continue
-        if not passes_upload_freshness(meta, max_age_days=vod_max_age_days(env)):
+        if not passes_upload_freshness(meta, max_age_days=int(search_params.get("max_age_days") or vod_max_age_days(env))):
             skipped["stale_upload"] = skipped.get("stale_upload", 0) + 1
             continue
         out.append(meta)
