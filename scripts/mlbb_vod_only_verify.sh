@@ -113,8 +113,11 @@ fi
 
 LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
 if [[ -f "$LOG" ]]; then
-  if tail -100 "$LOG" | grep -qE 'TypeError: discover_candidates|Unsupported url scheme: "ytsearchdate'; then
-    die "recent VOD log has discovery errors — search still broken"
+  last_start=$(grep -n "vod owner exemplars" "$LOG" | tail -1 | cut -d: -f1)
+  if [[ -n "$last_start" ]]; then
+    if tail -n +"$last_start" "$LOG" | grep -qE 'TypeError: discover_candidates|Unsupported url scheme: "ytsearchdate'; then
+      die "VOD log has discovery errors since last feed start"
+    fi
   fi
 fi
 
