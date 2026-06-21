@@ -78,6 +78,46 @@ else
   die "mlbb_calibration_feed.sh is not VOD-only stub"
 fi
 
+# --- VOD discovery smoke (catch partial deploy / API mismatch before claiming OK) ---
+for dep in nightly_youtube_montage.py youtube_mlbb_vod_prefs.py youtube_download.py; do
+  if [[ ! -f "/usr/local/bin/$dep" ]]; then
+    die "missing /usr/local/bin/$dep — partial install"
+  fi
+done
+
+python3 <<'PY' || die "VOD discovery API smoke failed"
+import inspect
+import sys
+
+sys.path.insert(0, "/usr/local/bin")
+import nightly_youtube_montage as n  # noqa: WPS433
+import youtube_mlbb_vod_prefs as p  # noqa: WPS433
+
+params = inspect.signature(n.discover_candidates).parameters
+for name in ("youtube_duration_sp", "youtube_search_date", "youtube_freshness_sp", "max_age_days"):
+    if name not in params:
+        raise SystemExit(f"discover_candidates missing {name}")
+if p.vod_youtube_freshness_sp({}) != "EgQIBBAB":
+    raise SystemExit("freshness sp mismatch")
+PY
+echo "discovery API smoke: OK"
+
+if command -v yt-dlp >/dev/null; then
+  if ! timeout 50 yt-dlp --flat-playlist --playlist-end 1 \
+    "https://www.youtube.com/results?search_query=MLBB+mythic+ranked&sp=EgQIBBAB" \
+    --print "%(id)s" >/dev/null 2>&1; then
+    die "YouTube fresh-search yt-dlp smoke failed"
+  fi
+  echo "yt-dlp fresh search smoke: OK"
+fi
+
+LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+if [[ -f "$LOG" ]]; then
+  if tail -100 "$LOG" | grep -qE 'TypeError: discover_candidates|Unsupported url scheme: "ytsearchdate'; then
+    die "recent VOD log has discovery errors — search still broken"
+  fi
+fi
+
 echo "===== VOD-only verify $(date -Is) ====="
 echo "vod_feed_pids=${vod_pids[*]}"
 echo "load: $(uptime | sed 's/.*load average: //')"
