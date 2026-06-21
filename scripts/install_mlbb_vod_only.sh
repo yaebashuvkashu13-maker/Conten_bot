@@ -60,9 +60,11 @@ kill_all_competing
 pkill -9 -f 'mlbb_continuous_worker' 2>/dev/null || true
 pkill -9 -f 'mlbb_calibration_feed' 2>/dev/null || true
 pkill -9 -f 'mlbb_youtube_shorts_ingest' 2>/dev/null || true
-pkill -9 -f 'mlbb_vod_segment_feed' 2>/dev/null || true
-sleep 1
-rm -f /tmp/mlbb_vod_oneoff.lock /tmp/mlbb_vod_segment_feed.lock 2>/dev/null || true
+if [[ "${MLBB_VOD_INSTALL_RESTART_FEED:-0}" == "1" ]]; then
+  pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+  sleep 1
+  rm -f /tmp/mlbb_vod_oneoff.lock /tmp/mlbb_vod_segment_feed.lock 2>/dev/null || true
+fi
 rm -f /tmp/mlbb_calibration_feed.lock /tmp/mlbb_youtube_shorts_ingest.lock 2>/dev/null || true
 rm -f /tmp/mlbb_continuous_worker.lock 2>/dev/null || true
 rm -f /root/data/mlbb/calibration_feed_empty_notify.json 2>/dev/null || true
@@ -79,8 +81,8 @@ EOF
 }
 
 touch "$ENV_FILE"
-for kv in MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
-  MLBB_VOD_DISABLED=0 MLBB_VOD_ONLY=1 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
+for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
+  MLBB_SHORTS_ONLY=0 MLBB_VOD_DISABLED=0 MLBB_VOD_ONLY=1 MLBB_LEARNING_FIRST=0 MLBB_SEND_ENABLED=1 \
   MLBB_MAX_DAILY_SENDS=200 MLBB_CALIBRATION_FEED_ENABLED=0 MLBB_ONE_HEAVY_JOB=1 \
   MLBB_CALIBRATION_LENIENT=0 MLBB_CALIBRATION_FAST_INGEST=0 MLBB_SILVER_BOOTSTRAP=0 \
   MLBB_FEED_RESCORE=0 MLBB_OWNER_EMERGENCY=0 MLBB_OWNER_REQUIRE_SCORE=0 \
@@ -219,9 +221,15 @@ for f in /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive; do
 done
 
 # Single supervisor process for the VOD loop (not cron-spawned duplicates).
-pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-sleep 1
-nohup "$WRAPPER_VOD" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+if [[ "${MLBB_VOD_INSTALL_RESTART_FEED:-0}" == "1" ]]; then
+  pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+  sleep 1
+  nohup "$WRAPPER_VOD" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+elif ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1; then
+  nohup "$WRAPPER_VOD" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+else
+  echo "VOD feed supervisor already running — left untouched"
+fi
 
 TMP=$(mktemp)
 crontab -l 2>/dev/null | grep -v "$MARK" \

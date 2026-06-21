@@ -465,28 +465,37 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     return out
 
 
-def _download_vod_ytdlp_throttled(url: str, env: dict[str, str]) -> Path:
+def _download_vod_ytdlp_throttled(url: str, env: dict[str, str], *, video_id: str = "") -> Path:
+    from nightly_youtube_montage import parse_youtube_id
     from youtube_download import subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args, youtube_format_for_url
+
+    vid = (video_id or parse_youtube_id(url)).strip()
+    if not vid:
+        raise ValueError(f"cannot parse youtube id from {url}")
+
+    # VPS often has MLBB_SHORTS_ONLY=1 — that blocks 3–20 min VOD downloads.
+    vod_env = {**env, "MLBB_SHORTS_ONLY": "0", "YTDLP_MATCH_FILTER": ""}
 
     delay = float(os.environ.get("MLBB_VOD_DOWNLOAD_DELAY", "12"))
     if delay > 0:
         time.sleep(delay)
     INBOX.mkdir(parents=True, exist_ok=True)
     template = str(INBOX / "yt_%(id)s.%(ext)s")
-    cmd = ytdlp_cmd(env, use_proxy=False) + [
+    expected = INBOX / f"yt_{vid}.mp4"
+    cmd = ytdlp_cmd(vod_env, use_proxy=False) + [
         "--no-playlist",
         "--restrict-filenames",
         "--merge-output-format",
         "mp4",
         "-f",
-        youtube_format_for_url(url, env),
+        youtube_format_for_url(url, vod_env),
         "--sleep-requests",
-        env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
+        vod_env.get("YTDLP_SLEEP_REQUESTS", "1.5"),
         "--sleep-interval",
-        env.get("YTDLP_SLEEP_INTERVAL", "4"),
+        vod_env.get("YTDLP_SLEEP_INTERVAL", "4"),
         "--max-sleep-interval",
-        env.get("YTDLP_MAX_SLEEP_INTERVAL", "12"),
-        *ytdlp_extra_args(env),
+        vod_env.get("YTDLP_MAX_SLEEP_INTERVAL", "12"),
+        *ytdlp_extra_args(vod_env),
         "-o",
         template,
         url,
@@ -494,13 +503,18 @@ def _download_vod_ytdlp_throttled(url: str, env: dict[str, str]) -> Path:
     subprocess.run(
         cmd,
         check=True,
-        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(env),
+        timeout=int(vod_env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+        env=subprocess_env_no_proxy(vod_env),
     )
-    files = sorted(INBOX.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if expected.exists() and expected.stat().st_size > 0:
+        return expected
+    matches = [p for p in INBOX.glob(f"yt_{vid}*.mp4") if p.stat().st_size > 0]
+    if matches:
+        return max(matches, key=lambda p: p.stat().st_mtime)
+    files = [p for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 0]
     if not files:
-        raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
-    return files[0]
+        raise RuntimeError(f"yt-dlp produced no mp4 for {url} (id={vid})")
+    raise RuntimeError(f"yt-dlp did not create expected file {expected} for {url}")
 
 
 def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttled: bool = True) -> Path | None:
@@ -517,7 +531,11 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
         if not acquired:
             log.warning("yt-dlp lock busy — skip download")
             return None
-        path = _download_vod_ytdlp_throttled(str(pick.get("url") or f"https://www.youtube.com/watch?v={pick['id']}"), env)
+        path = _download_vod_ytdlp_throttled(
+            str(pick.get("url") or f"https://www.youtube.com/watch?v={pick['id']}"),
+            env,
+            video_id=str(pick.get("id") or ""),
+        )
 
     entry = _registry_entry(
         path,
