@@ -23,7 +23,7 @@ sys.path.insert(0, "/usr/local/bin")
 sys.path.insert(0, str(Path("/root/content_bot_ml") / "scripts"))
 
 from highlight_scorer import clear_exemplar_cache
-from mlbb_calibration_store import rebuild_index_from_disk, rescore_pending_candidates, stats as cal_stats
+from mlbb_calibration_store import rebuild_index_from_disk, rescore_pending_candidates, stats as cal_stats, purge_non_mlbb_candidates
 from mlbb_owner_learning import backfill_shorts_to_owner_labels
 from mlbb_vod_segment_store import backfill_owner_labels_from_vod_segments, stats as vseg_stats
 
@@ -32,11 +32,12 @@ synced_shorts = backfill_shorts_to_owner_labels()
 from mlbb_calibration_store import backfill_ever_delivered
 synced_delivered = backfill_ever_delivered()
 n = rebuild_index_from_disk()
+purged = purge_non_mlbb_candidates()
 s = cal_stats()
 vs = vseg_stats()
 clear_exemplar_cache()
 print(
-    f"owner_backfill vseg={synced_vseg} shorts={synced_shorts} delivered={synced_delivered} rebuild_index={n} "
+    f"owner_backfill vseg={synced_vseg} shorts={synced_shorts} delivered={synced_delivered} rebuild_index={n} purged={purged} "
     f"shorts_pending={s['pending']} vseg_pending={vs['pending']} "
     f"vseg_labels=👍{vs['good_labels']} 👎{vs['bad_labels']}"
 )

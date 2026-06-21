@@ -20,7 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gameplay_gate import OTHER_GAME_TITLE, is_mlbb_calibration_short, is_gameplay_video
+from mlbb_shorts_title_gate import OTHER_GAME_TITLE, title_rejected_for_mlbb_shorts
+from gameplay_gate import is_mlbb_calibration_short, is_gameplay_video
 from highlight_scorer import WINDOW_SEC, score_candidate_window
 from mlbb_calibration_store import (
     SHORTS_ROOT,
@@ -30,6 +31,7 @@ from mlbb_calibration_store import (
     pending_candidates,
     rebuild_index_from_disk,
     repair_index,
+    title_blocked_by_owner_feedback,
     upsert_candidate,
 )
 from viral_scorer import hook_score
@@ -181,6 +183,8 @@ def search_shorts(
         if duration <= 3 or duration > 60:
             continue
         if NEGATIVE_TITLE.search(title) or OTHER_GAME_TITLE.search(title):
+            continue
+        if title_rejected_for_mlbb_shorts(title) or title_blocked_by_owner_feedback(title):
             continue
         if vid in skip:
             continue
@@ -549,9 +553,20 @@ def main() -> int:
 
         hungry_mode = env.get("MLBB_INGEST_HUNGRY", "0") == "1"
         dur = _ffprobe_duration(mp4)
+        title = str(row.get("title", ""))
+        title_block = title_blocked_by_owner_feedback(title)
+        if title_block:
+            rejected += 1
+            continue
         if hungry_mode and lenient and dur >= 3.0:
-            ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
-            hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
+            ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
+            hard_reject = reason in (
+                "promo_text",
+                "csv_lookup",
+                "other_game_title",
+                "non_mlbb_sports",
+                "promo_edit",
+            ) or reason.startswith("owner_not_gameplay:")
             if hard_reject or not ok:
                 rejected += 1
                 continue
@@ -572,8 +587,14 @@ def main() -> int:
             print(f"OK {vid} score={feats['score']:.3f} hungry=1 views={row.get('view_count')} {row.get('title','')[:50]}")
             continue
 
-        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=row.get("title", ""))
-        hard_reject = reason in ("promo_text", "csv_lookup", "other_game_title", "promo_edit")
+        ok, gscore, reason = is_mlbb_calibration_short(mp4, description=title)
+        hard_reject = reason in (
+            "promo_text",
+            "csv_lookup",
+            "other_game_title",
+            "non_mlbb_sports",
+            "promo_edit",
+        ) or reason.startswith("owner_not_gameplay:")
         if hard_reject or not ok:
             rejected += 1
             continue

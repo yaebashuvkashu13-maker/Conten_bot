@@ -6,6 +6,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -530,6 +531,97 @@ def labeled_ids() -> dict[str, str]:
     return out
 
 
+_OWNER_TITLE_STOP = frozenset(
+    {
+        "short",
+        "shorts",
+        "video",
+        "highlight",
+        "highlights",
+        "mobile",
+        "game",
+        "gameplay",
+        "the",
+        "with",
+        "from",
+        "this",
+        "that",
+        "your",
+        "best",
+        "epic",
+        "insane",
+        "crazy",
+        "watch",
+        "full",
+        "clip",
+        "moments",
+        "moment",
+        "state",
+        "hype",
+    }
+)
+
+
+def owner_not_gameplay_title_terms() -> frozenset[str]:
+    """Words from owner 👎 with reason=not_gameplay — block similar titles at ingest/send."""
+    labels = load_labels()
+    terms: set[str] = set()
+    for row in labels.get("bad", []):
+        if str(row.get("reason", "")) != "not_gameplay":
+            continue
+        title = str(row.get("title", "")).lower()
+        for word in re.findall(r"[a-z]{4,}", title):
+            if word not in _OWNER_TITLE_STOP:
+                terms.add(word)
+    return frozenset(terms)
+
+
+def title_blocked_by_owner_feedback(title: str) -> str | None:
+    """Return block reason if owner 👎 not_gameplay history matches this title."""
+    from mlbb_shorts_title_gate import title_rejected_for_mlbb_shorts
+
+    text = str(title or "")
+    gate = title_rejected_for_mlbb_shorts(text)
+    if gate:
+        return gate
+    lowered = text.lower()
+    for term in owner_not_gameplay_title_terms():
+        if re.search(rf"\b{re.escape(term)}\b", lowered):
+            return f"owner_not_gameplay:{term}"
+    return None
+
+
+def purge_non_mlbb_candidates(*, limit: int | None = None) -> int:
+    """Re-scan queue rows and mark obvious non-MLBB as gameplay_pass=0."""
+    from gameplay_gate import is_mlbb_calibration_short
+
+    cap = limit if limit is not None else int(os.environ.get("MLBB_PURGE_LIMIT", "200"))
+    blocked = 0
+    for row in load_index().get("candidates", []):
+        if blocked >= cap:
+            break
+        if int(row.get("gameplay_pass") or 0) != 1:
+            continue
+        vid = str(row.get("video_id", "")).strip()
+        if not vid:
+            continue
+        title = str(row.get("title", ""))
+        title_reason = title_blocked_by_owner_feedback(title)
+        if title_reason:
+            mark_feed_blocked(vid, reason=title_reason, score=0.0)
+            blocked += 1
+            continue
+        path = _expected_path(vid)
+        if not path.exists():
+            continue
+        ok, score, reason = is_mlbb_calibration_short(path, description=title)
+        if ok:
+            continue
+        mark_feed_blocked(vid, reason=reason, score=score)
+        blocked += 1
+    return blocked
+
+
 def ingest_sent_blocklist() -> set[str]:
     """IDs ingest should skip (already delivered to owner)."""
     return load_ever_delivered() | load_feed_sent()["ids"]
@@ -670,6 +762,9 @@ def apply_owner_label(
     from mlbb_owner_learning import sync_shorts_label_to_owner_json
 
     sync_shorts_label_to_owner_json(vid, is_good=is_good, reason=reason)
+    if not is_good:
+        block_reason = reason or "owner_dislike"
+        mark_feed_blocked(vid, reason=block_reason, score=0.0)
     return True, "good" if is_good else "bad"
 
 
@@ -944,6 +1039,8 @@ def _ensure_owner_scores(rows: list[dict], *, limit: int) -> None:
 def _row_passes_pending_gate(row: dict, path: Path) -> bool:
     """Fast queue gate — only trust rows that passed MLBB gameplay check."""
     if int(row.get("gameplay_pass") or 0) != 1:
+        return False
+    if title_blocked_by_owner_feedback(str(row.get("title", ""))):
         return False
     gscore = float(row.get("gameplay_score") or 0)
     if gscore < float(os.environ.get("MLBB_CALIBRATION_MIN_HEURISTIC", "0.52")):

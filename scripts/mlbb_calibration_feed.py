@@ -28,6 +28,7 @@ from mlbb_calibration_store import (
     repair_index,
     rescore_pending_candidates,
     stats,
+    title_blocked_by_owner_feedback,
 )
 from gameplay_gate import is_mlbb_calibration_short
 from youtube_download import load_env
@@ -254,7 +255,13 @@ def _run_feed() -> int:
             print(f"skip corrupt video_id={vid}")
             failed_ids.append(vid)
             continue
-        if env.get("MLBB_FEED_RE_GATE", "0") == "1":
+        title_block = title_blocked_by_owner_feedback(str(row.get("title", "")))
+        if title_block:
+            print(f"skip owner/title block video_id={vid} reason={title_block}")
+            mark_feed_blocked(vid, reason=title_block, score=0.0)
+            skipped_ids.append(vid)
+            continue
+        if env.get("MLBB_FEED_RE_GATE", "1") == "1":
             ok_mlbb, gscore, gate_reason = is_mlbb_calibration_short(
                 path, description=str(row.get("title", ""))
             )

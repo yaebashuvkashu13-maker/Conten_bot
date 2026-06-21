@@ -13,17 +13,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_calibration_store import (  # noqa: E402
     DISLIKE_REASONS,
+    apply_owner_label,
     claim_feed_candidates,
     claimed_count,
     dislike_reason_keyboard_markup,
     is_fresh_short,
     load_index,
+    load_labels,
     mark_feed_blocked,
     owner_rank_enabled,
     pending_candidates,
+    purge_non_mlbb_candidates,
     rebuild_index_from_disk,
     release_feed_claims,
     release_stale_claims,
+    save_labels,
+    title_blocked_by_owner_feedback,
+    upsert_candidate,
 )
 
 
@@ -308,3 +314,76 @@ def test_pending_sorts_by_owner_score_when_enabled(tmp_path: Path, monkeypatch) 
     assert owner_rank_enabled()
     rows = pending_candidates(limit=2, repair=False)
     assert [r["video_id"] for r in rows] == ["aaa11111111", "bbb22222222"]
+
+
+def test_title_blocked_by_owner_not_gameplay(tmp_path: Path, monkeypatch) -> None:
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "good": [],
+                "bad": [
+                    {
+                        "video_id": "kk0OccNvDrw",
+                        "title": "Penn State Football hype video",
+                        "reason": "not_gameplay",
+                    }
+                ],
+                "feedback": [],
+            }
+        )
+    )
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+    reason = title_blocked_by_owner_feedback("New Penn State Football clip")
+    assert reason in ("non_mlbb_sports", "owner_not_gameplay:football")
+
+
+def test_apply_owner_label_bad_blocks_queue(tmp_path: Path, monkeypatch) -> None:
+    shorts = tmp_path / "shorts"
+    shorts.mkdir()
+    mp4 = shorts / "yt_abcdefghijk.mp4"
+    mp4.write_bytes(b"x" * 20_000)
+    index = tmp_path / "index.json"
+    index.write_text(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "video_id": "abcdefghijk",
+                        "path": str(mp4),
+                        "title": "test",
+                        "gameplay_pass": 1,
+                        "gameplay_score": 0.9,
+                        "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                ]
+            }
+        )
+    )
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+
+    monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
+    monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(labels))
+    monkeypatch.setenv("MLBB_SHORTS_REQUIRE_DATE", "0")
+
+    import mlbb_calibration_store as store
+
+    monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
+    monkeypatch.setattr(store, "INDEX_PATH", index)
+    monkeypatch.setattr(store, "LABELS_PATH", labels)
+    ex_root = tmp_path / "exemplars"
+    owner_labels = tmp_path / "owner_labels.json"
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(ex_root))
+    monkeypatch.setenv("MLBB_OWNER_LABELS_PATH", str(owner_labels))
+    monkeypatch.setattr(store, "EXEMPLAR_ROOT", ex_root)
+
+    ok, label = apply_owner_label("abcdefghijk", is_good=False, reason="not_gameplay")
+    assert ok and label == "bad"
+    row = load_index()["candidates"][0]
+    assert row["gameplay_pass"] == 0
+    assert row["gameplay_reason"] == "not_gameplay"

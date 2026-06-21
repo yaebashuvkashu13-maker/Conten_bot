@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -10,9 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-cv2 = pytest.importorskip("cv2")  # noqa: F401
-
-from gameplay_gate import OTHER_GAME_TITLE, is_mlbb_calibration_short  # noqa: E402
+from mlbb_shorts_title_gate import NON_MLBB_SPORTS_TITLE, OTHER_GAME_TITLE, title_rejected_for_mlbb_shorts
 
 
 def test_other_game_title_rejected() -> None:
@@ -21,12 +18,19 @@ def test_other_game_title_rejected() -> None:
     assert not OTHER_GAME_TITLE.search("MLBB savage teamfight shorts")
 
 
-def test_promo_title_rejected(tmp_path: Path) -> None:
-    # No real video — title check only needs path name + description.
+def test_sports_title_rejected() -> None:
+    assert NON_MLBB_SPORTS_TITLE.search("Penn State Football hype video")
+    assert NON_MLBB_SPORTS_TITLE.search("Champions League goal shorts")
+    assert not NON_MLBB_SPORTS_TITLE.search("MLBB savage teamfight shorts")
+
+
+def test_football_short_rejected_by_title(tmp_path: Path) -> None:
     fake = tmp_path / "yt_test.mp4"
     fake.write_bytes(b"x" * 1000)
-    ok, _score, reason = is_mlbb_calibration_short(
-        fake, description="PUBG mobile highlights #shorts"
-    )
-    assert not ok
+    reason = title_rejected_for_mlbb_shorts("Penn State Football hype video #shorts")
+    assert reason == "non_mlbb_sports"
+
+
+def test_promo_title_rejected() -> None:
+    reason = title_rejected_for_mlbb_shorts("PUBG mobile highlights #shorts")
     assert reason == "other_game_title"
