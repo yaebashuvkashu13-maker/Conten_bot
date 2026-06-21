@@ -26,7 +26,6 @@ from mlbb_calibration_store import (
     release_feed_claims,
     release_stale_claims,
     repair_index,
-    rescore_pending_candidates,
     stats,
     row_corresponds_to_mlbb,
 )
