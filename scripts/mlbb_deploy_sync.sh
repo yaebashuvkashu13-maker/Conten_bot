@@ -17,6 +17,7 @@ for f in \
   mlbb_shorts_title_gate.py \
   mlbb_vod_segment_feed.py \
   mlbb_vod_segment_store.py \
+  mlbb_vod_intervals.py \
   mlbb_fight_segment.py \
   youtube_mlbb_vod_prefs.py \
   mlbb_vod_only_verify.sh \

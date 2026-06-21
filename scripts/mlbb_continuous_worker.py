@@ -362,7 +362,7 @@ def vod_env(base: dict[str, str]) -> dict[str, str]:
             "MLBB_VOD_PIPELINE_MAX_VODS": str(VOD_MAX_VODS),
             "MLBB_VOD_AUTO_DOWNLOAD": "1",
             "MLBB_VOD_PROBE_LIMIT": env.get("MLBB_VOD_PROBE_LIMIT", probe),
-            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "5"),
+            "MLBB_VOD_BATCH_MAX": env.get("MLBB_VOD_BATCH_MAX", "0"),
             "MLBB_VOD_SEGMENT_SEC": env.get("MLBB_VOD_SEGMENT_SEC", "15"),
             "MLBB_VOD_VARIABLE_LENGTH": "1",
             "MLBB_VOD_LEAD_SEC": "4",

@@ -26,10 +26,17 @@ INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from mlbb_vod_intervals import (
+    conflicts_any_interval as _conflicts_any_interval,
+    interval_gap_sec as _interval_gap_sec,
+    segment_duration as _segment_duration_from_row,
+    segment_interval as _segment_interval,
+)
 from mlbb_vod_segment_store import (
     inline_keyboard_markup,
     labeled_ids,
     load_feed_sent,
+    load_index,
     mark_feed_sent,
     segment_id,
     segments_root,
@@ -974,18 +981,7 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
 
 
 def _segment_duration(row: dict) -> float:
-    clip = row.get("clip") or {}
-    for key in ("input_duration", "output_duration", "fight_dur"):
-        raw = row.get(key) if key != "fight_dur" else row.get("fight_dur")
-        if raw is None and key in clip:
-            raw = clip.get(key)
-        try:
-            val = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if val > 0.5:
-            return val
-    return float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15"))
+    return _segment_duration_from_row(row)
 
 
 def _presend_freeze_min_dur() -> float:
@@ -1170,44 +1166,87 @@ def _segment_gap_sec() -> float:
     return float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", os.environ.get("HIGHLIGHT_MIN_GAP_SEC", str(default))))
 
 
-def _used_starts_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> list[float]:
+def _parse_start_from_segment_id(sid: str, vid: str, stem: str) -> float | None:
+    tail = sid.rsplit("_", 1)[-1]
+    try:
+        start = float(tail)
+    except ValueError:
+        return None
+    if sid.startswith(f"{vid}_"):
+        return start
+    if len(vid) >= 8 and vid[:8] in sid:
+        return start
+    if stem in sid or stem.removeprefix("yt_") in sid:
+        return start
+    return None
+
+
+def _used_intervals_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> list[tuple[float, float]]:
+    """Reserved [start,end] windows — sent, labeled, and indexed segments for this VOD."""
     vid = vod_youtube_id(vod)
     stem = vod.stem
-    starts: list[float] = []
+    fallback_dur = float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "65"))
+    intervals: list[tuple[float, float]] = []
+    seen_starts: set[int] = set()
+
+    for row in load_index().get("segments", []):
+        row_vid = str(row.get("vod_id") or "")
+        row_vod = str(row.get("vod") or "")
+        if row_vid != vid and vod.name not in row_vod and str(vod) not in row_vod:
+            continue
+        start = float(row.get("start", 0))
+        dur = float(row.get("duration") or row.get("fight_dur") or 0)
+        if dur <= 0:
+            path = Path(str(row.get("path", "")))
+            if path.exists():
+                dur = _ffprobe_duration(path)
+        if dur <= 0:
+            dur = fallback_dur
+        intervals.append((start, start + dur))
+        seen_starts.add(int(round(start)))
+
     for sid in labeled | sent:
-        tail = sid.rsplit("_", 1)[-1]
-        try:
-            start = float(tail)
-        except ValueError:
+        start = _parse_start_from_segment_id(sid, vid, stem)
+        if start is None:
             continue
-        if sid.startswith(f"{vid}_"):
-            starts.append(start)
+        key = int(round(start))
+        if key in seen_starts:
             continue
-        # legacy ids from old yt_-prefix parser (yt_tp0aAJ22_622)
-        if len(vid) >= 8 and vid[:8] in sid:
-            starts.append(start)
-            continue
-        if stem in sid or stem.removeprefix("yt_") in sid:
-            starts.append(start)
-    return starts
+        seen_starts.add(key)
+        intervals.append((start, start + fallback_dur))
+
+    return intervals
 
 
-def _dedupe_segments_by_gap(rows: list[dict], *, min_gap: float, reserved_starts: list[float]) -> list[dict]:
-    """Keep best-scoring clip per fight — owner exemplars (👍 Shorts) rank first."""
+def _used_starts_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> list[float]:
+    return [start for start, _ in _used_intervals_for_vod(vod, labeled, sent)]
+
+
+def _dedupe_segments_by_gap(
+    rows: list[dict],
+    *,
+    min_gap: float,
+    reserved_intervals: list[tuple[float, float]],
+) -> list[dict]:
+    """Keep best clip per fight — no time overlap between highlight windows."""
 
     def _rank_key(r: dict) -> tuple[float, float, float]:
         metrics = r.get("highlight_metrics") or {}
         clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
         return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)))
 
+    gap = _interval_gap_sec()
     ranked = sorted(rows, key=_rank_key, reverse=True)
-    taken = list(reserved_starts)
+    taken = list(reserved_intervals)
     chosen: list[dict] = []
     for row in ranked:
-        start = float(row["start"])
-        if any(abs(start - s) < min_gap for s in taken):
+        start, end = _segment_interval(row)
+        if _conflicts_any_interval(start, end, taken, gap=gap):
             continue
-        taken.append(start)
+        # Legacy start-only guard for peaks very close together inside same fight blob.
+        if any(abs(start - s) < min_gap for s, _ in taken):
+            continue
+        taken.append((start, end))
         chosen.append(row)
     chosen.sort(key=lambda r: r["start"])
     return chosen
@@ -1219,17 +1258,19 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
     clear_analysis_cache()
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
-    reserved = _used_starts_for_vod(vod, labeled_set, sent)
+    reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
     pool = discover_strict_candidates(vod, PROFILE, sig, set())
     out: list[dict] = []
     min_peak = _vod_min_peak_sec()
+    gap = _interval_gap_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
         if peak < min_peak:
             continue
         lead_clip = _normalize_clip(clip, vod)
         start = float(lead_clip["start"])
-        if any(abs(start - s) < min_gap for s in reserved):
+        end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
+        if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
             continue
         sid = segment_id(vod, start)
         if sid in labeled_set or sid in sent:
@@ -1264,8 +1305,8 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "gate_reason": reason,
             }
         )
-    deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_starts=reserved)
-    batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "30"))
+    deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
+    batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):
@@ -1369,8 +1410,12 @@ def _send_segment_batch(
                 "vod": str(vod),
                 "vod_id": vod_youtube_id(vod),
                 "start": row["start"],
+                "duration": seg_dur,
+                "fight_dur": float(row.get("fight_dur") or seg_dur),
+                "peak_start": row.get("peak_start", row["start"]),
                 "score": row["score"],
                 "hook_score": row["hook_score"],
+                "clip_score": row.get("clip_score"),
                 "sig": sig,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -1457,10 +1502,14 @@ def _process_vod_segments(
     """Drain all scorable segments from one VOD; kick off next download in parallel."""
     downloader.start_if_idle(registry)
     sent_total = 0
+    max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
     sig = file_sha256(vod)
     sent = load_feed_sent()
 
     while True:
+        if max_per_vod > 0 and sent_total >= max_per_vod:
+            log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
+            break
         to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
         if not to_send:
             break
