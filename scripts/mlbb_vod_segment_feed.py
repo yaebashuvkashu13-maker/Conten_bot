@@ -670,8 +670,21 @@ def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: st
     if not ok_send:
         log.warning("send blocked seg=%s reason=%s", seg_id, reason)
         return False
+    deliver = path
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
-        return False
+        from mlbb_telegram_video import compress_for_inline_video
+
+        deliver, compressed = compress_for_inline_video(path)
+        if compressed:
+            log.info(
+                "telegram compress seg=%s %s -> %s bytes",
+                seg_id,
+                path.stat().st_size,
+                deliver.stat().st_size,
+            )
+        if deliver.stat().st_size > TELEGRAM_MAX_BYTES:
+            log.warning("telegram too large seg=%s bytes=%s", seg_id, deliver.stat().st_size)
+            return False
     url = f"https://api.telegram.org/bot{token}/sendVideo"
     cmd = [
         "curl",
@@ -689,7 +702,7 @@ def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: st
         "-F",
         f"reply_markup={json.dumps(inline_keyboard_markup(seg_id), ensure_ascii=False)}",
         "-F",
-        f"video=@{path}",
+        f"video=@{deliver}",
         url,
     ]
     clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}

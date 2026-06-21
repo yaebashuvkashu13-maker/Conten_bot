@@ -40,7 +40,7 @@ def compress_for_inline_video(
     fd, tmp_name = tempfile.mkstemp(prefix="mlbb_tg_", suffix=".mp4")
     os.close(fd)
     tmp = Path(tmp_name)
-    for crf in ("30", "32", "34", "36"):
+    for crf in ("28", "30", "32", "34", "36"):
         cmd = [
             "ffmpeg",
             "-y",
@@ -48,8 +48,6 @@ def compress_for_inline_video(
             "error",
             "-hwaccel",
             "none",
-            "-c:v",
-            "libdav1d",
             "-i",
             str(path),
             "-vf",
