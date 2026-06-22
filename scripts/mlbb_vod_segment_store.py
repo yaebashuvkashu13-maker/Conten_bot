@@ -348,13 +348,16 @@ def inline_keyboard_markup(segment_id_str: str) -> dict:
     }
 
 
-def labeled_keyboard_markup(label: str, *, reason: str = "") -> dict:
+def labeled_keyboard_markup(label: str, *, reason: str = "", segment_id: str = "") -> dict:
     from mlbb_calibration_store import dislike_reason_label
 
     if label == "good":
-        mark = "✅ Ок"
-    else:
-        mark = f"❌ {dislike_reason_label(reason)}"
+        sid = segment_id.strip()
+        rows: list[list[dict]] = [[{"text": "✅ Ок", "callback_data": "mlbb_noop"}]]
+        if sid:
+            rows.append([{"text": "📁 HQ файл", "callback_data": f"mlbb_vseg_hq:{sid}"}])
+        return {"inline_keyboard": rows}
+    mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
 
 

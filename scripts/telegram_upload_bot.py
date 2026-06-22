@@ -567,6 +567,29 @@ def _mlbb_send_hq_file(chat_id: str | int, video_id: str) -> bool:
     return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
 
 
+def _mlbb_send_vseg_hq_file(chat_id: str | int, segment_id: str) -> bool:
+    from mlbb_telegram_video import send_hq_files
+    from mlbb_vod_segment_store import find_segment
+
+    sid = segment_id.strip()
+    row = find_segment(sid)
+    if not row:
+        return False
+    path = Path(str(row.get('path', '')))
+    if not path.exists():
+        direct = Path(f"/root/datasets/mlbb/vod_segments/seg_{sid}.mp4")
+        if direct.exists():
+            path = direct
+        else:
+            return False
+    caption = (
+        f"MLBB HQ файл #{sid}\n"
+        f"VOD {row.get('vod_id') or sid.rsplit('_', 1)[0]}\n"
+        f"peak={row.get('peak_start') or row.get('start', '?')}s"
+    )
+    return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
+
+
 def _show_dislike_reason_picker(
     *,
     chat_id: str | int,
@@ -675,6 +698,33 @@ def handle_callback_query(query: dict) -> None:
                 send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
         except Exception as exc:
             logging.exception('mlbb_hq callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
+    if data.startswith('mlbb_vseg_hq:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+            if not ok:
+                send_message(
+                    chat_id,
+                    f'HQ файл для #{item_id} не отправился (нет файла на диске).',
+                )
+        except Exception as exc:
+            logging.exception('mlbb_vseg_hq callback failed data=%s', data)
             api_call(
                 'answerCallbackQuery',
                 {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
@@ -830,7 +880,11 @@ def handle_callback_query(query: dict) -> None:
             ok, reply = _mlbb_apply_vseg_label(chat_id, item_id, is_good=is_good, reason=reason)
             from mlbb_vod_segment_store import labeled_keyboard_markup as vseg_markup
 
-            markup = vseg_markup('good' if is_good else 'bad')
+            markup = vseg_markup(
+                'good' if is_good else 'bad',
+                reason=reason,
+                segment_id=item_id if is_good else '',
+            )
         else:
             ok, reply = _mlbb_apply_owner_label(chat_id, item_id, is_good=is_good, reason=reason)
             from mlbb_calibration_store import labeled_keyboard_markup as shorts_markup
