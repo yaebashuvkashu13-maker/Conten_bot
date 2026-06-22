@@ -14,6 +14,10 @@ env_val() {
 }
 
 [[ -f "$ENV_FILE" ]] || exit 0
+if [[ -f /root/data/mlbb/OWNER_BATCH_RUNNING ]]; then
+  log "owner batch lock — skip health watchdog"
+  exit 0
+fi
 if [[ "$(env_val MLBB_VOD_ONLY)" != "1" || "$(env_val MLBB_VOD_DISABLED)" == "1" ]]; then
   exit 0
 fi

@@ -26,6 +26,11 @@ log() {
   echo "[$(date -Is)] $*" >> "$WLOG"
 }
 
+if [[ -f /root/data/mlbb/OWNER_BATCH_RUNNING ]]; then
+  log "owner batch lock — skip vod supervisor"
+  exit 0
+fi
+
 # VOD-only wins — never restart Shorts worker when cutting long VODs.
 if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
   log "vod_only=1: kill Shorts worker/feed/ingest; ensure vod supervisor"

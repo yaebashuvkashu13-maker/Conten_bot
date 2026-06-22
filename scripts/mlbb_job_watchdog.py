@@ -48,6 +48,10 @@ def vod_only_mode() -> bool:
     )
 
 
+def owner_batch_running() -> bool:
+    return Path("/root/data/mlbb/OWNER_BATCH_RUNNING").is_file()
+
+
 def kill_shorts_pipeline_orphans() -> int:
     """VOD-only: Shorts worker/feed/ingest must not run."""
     if not vod_only_mode():

@@ -8,11 +8,12 @@ ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 LOG="${MLBB_OWNER_THEN_FEED_LOG:-/root/data/mlbb/owner_then_feed.log}"
 BATCH="$REPO/scripts/run_owner_batch8.sh"
+OWNER_LOCK="/root/data/mlbb/OWNER_BATCH_RUNNING"
 
 mkdir -p "$(dirname "$LOG")"
 
 log() {
-  echo "[$(date -Is)] $*" | tee -a "$LOG"
+  echo "[$(date -Is)] $*" >>"$LOG"
 }
 
 set_vod_disabled() {
@@ -24,15 +25,23 @@ set_vod_disabled() {
   fi
 }
 
-stop_vod_pipeline() {
-  pkill -TERM -f 'mlbb_vod_oneoff.py' 2>/dev/null || true
+stop_feed_only() {
   pkill -TERM -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
   pkill -TERM -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
   sleep 2
-  pkill -KILL -f 'mlbb_vod_oneoff.py' 2>/dev/null || true
   pkill -KILL -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
   pkill -KILL -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/mlbb_vod_oneoff.lock
+  rm -f /tmp/mlbb_vod_segment_feed.lock
+}
+
+stop_vod_pipeline() {
+  stop_feed_only
+  if [[ ! -f "$OWNER_LOCK" ]]; then
+    pkill -TERM -f 'mlbb_vod_oneoff.py' 2>/dev/null || true
+    sleep 2
+    pkill -KILL -f 'mlbb_vod_oneoff.py' 2>/dev/null || true
+    rm -f /tmp/mlbb_vod_oneoff.lock
+  fi
 }
 
 wait_feed_alive() {
@@ -50,7 +59,8 @@ wait_feed_alive() {
 
 log "=== STEP 1: owner batch (8 URLs), feed paused ==="
 set_vod_disabled 1
-stop_vod_pipeline
+echo "owner_batch $(date -Is)" >"$OWNER_LOCK"
+stop_feed_only
 
 set +u
 set -a
@@ -67,16 +77,25 @@ export HIGHLIGHT_MAX_PANN_PROBE=5 HIGHLIGHT_MAX_STAGE1=16
 export MLBB_VOD_PROBE_LIMIT=16 MLBB_VOD_SKIP_REVALIDATE=1
 
 log "running $BATCH"
-if bash "$BATCH" >>"$LOG" 2>&1; then
+set +e
+bash "$BATCH" >>"$LOG" 2>&1
+batch_rc=$?
+set -e
+rm -f "$OWNER_LOCK"
+
+if [[ "$batch_rc" -eq 143 || "$batch_rc" -eq 137 ]]; then
+  log "owner batch interrupted rc=$batch_rc — NOT starting base feed"
+  exit "$batch_rc"
+fi
+if [[ "$batch_rc" -eq 0 ]]; then
   log "owner batch finished ok"
 else
-  rc=$?
-  log "owner batch finished rc=$rc (continuing to base feed)"
+  log "owner batch finished rc=$batch_rc (some URLs may have sent=0; continuing to base feed)"
 fi
 
 log "=== STEP 2: base VOD feed (no owner oneoff) ==="
 set_vod_disabled 0
-stop_vod_pipeline
+stop_feed_only
 rm -f /tmp/mlbb_vod_segment_feed.lock
 
 FEED_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"

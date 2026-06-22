@@ -39,7 +39,7 @@ EOF
 
 kill_all_competing() {
   for pat in mlbb_continuous_worker mlbb_calibration_feed mlbb_youtube_shorts_ingest \
-    mlbb_hero_shorts_montage mlbb_vod_montage_feed mlbb_vod_oneoff \
+    mlbb_hero_shorts_montage mlbb_vod_montage_feed \
     pubg_mlbb_pipeline overnight_youtube_batch overnight_catchup \
     overnight_msk overnight_watchdog viral_reference_ingest eval_owner_labels score_owner_windows \
     investor_demo_batch action_showcase_2x5 morning_pubg_standoff \
