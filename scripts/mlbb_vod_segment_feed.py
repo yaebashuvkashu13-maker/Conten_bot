@@ -763,19 +763,39 @@ def _apply_lead_start(start: float) -> float:
 def _normalize_clip(clip: dict, vod: Path) -> dict:
     peak = float(clip.get("start", 0))
     if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
-        from mlbb_fight_segment import detect_fight_bounds
+        from mlbb_fight_segment import _analysis_for
+        from mlbb_kill_banner import resolve_fight_bounds
 
-        start, end, dur = detect_fight_bounds(vod, peak)
+        analysis = _analysis_for(vod)
+        file_dur = float(analysis.get("duration") or 0.0)
+        if file_dur <= 0:
+            file_dur = _ffprobe_duration(vod)
+        resolved = resolve_fight_bounds(vod, peak, file_dur)
+        if resolved is None:
+            return {
+                **clip,
+                "start": peak,
+                "peak_start": peak,
+                "input_duration": 0.0,
+                "output_duration": 0.0,
+                "banner_reject": "no_streak_banner",
+                "source_path": str(vod),
+                "source_index": 0,
+                "speed": 1.0,
+            }
+        start, end, dur, meta = resolved
+        banner_sec = float(meta.get("banner_sec", peak))
         return {
             **clip,
             "start": start,
-            "peak_start": peak,
+            "peak_start": banner_sec,
             "fight_end": end,
             "source_path": str(vod),
             "source_index": 0,
             "input_duration": dur,
             "output_duration": dur,
             "speed": 1.0,
+            **meta,
         }
 
     from smart_video_editor import profile_action_clip_bounds
@@ -1171,6 +1191,14 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if not ok:
         return False, reason, report
 
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
+        from mlbb_kill_banner import verify_rendered_clip
+
+        banner_ok, banner_reason = verify_rendered_clip(rendered)
+        report["kill_banner"] = banner_reason
+        if not banner_ok:
+            return False, banner_reason, report
+
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
 
@@ -1228,7 +1256,7 @@ def _format_send_report(row: dict, check: dict) -> str:
 
 
 def _segment_gap_sec() -> float:
-    default = max(45.0, SEGMENT_SEC * 3.0)
+    default = max(90.0, SEGMENT_SEC * 4.0)
     return float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", os.environ.get("HIGHLIGHT_MIN_GAP_SEC", str(default))))
 
 
@@ -1334,7 +1362,18 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
         if peak < min_peak:
             continue
         lead_clip = _normalize_clip(clip, vod)
+        if lead_clip.get("banner_reject"):
+            log.info(
+                "skip peak=%.1f banner_reject=%s",
+                peak,
+                lead_clip.get("banner_reject"),
+            )
+            continue
         start = float(lead_clip["start"])
+        seg_dur = float(lead_clip.get("input_duration") or 0)
+        if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
+            log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
+            continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
         if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
             continue
@@ -1464,10 +1503,14 @@ def _send_segment_batch(
         clip_line = ""
         if row.get("clip_score") is not None:
             clip_line = f"learn={float(row['clip_score']):.3f} | "
+        banner_line = ""
+        if row.get("kill_banner"):
+            banner_line = f"🎯 {str(row['kill_banner']).upper()} @ {peak}s\n"
         caption = (
             f"MLBB кусок #{sid}\n"
+            f"{banner_line}"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s"
-            f"{f' (пик {peak}s)' if peak != int(row['start']) else ''} | {seg_dur:.0f}с\n"
+            f"{f' (баннер {peak}s)' if banner_line else ''} | {seg_dur:.0f}с\n"
             f"{clip_line}{report_line}\n"
             f"✓ presend\n"
             f"👍 Ок / 👎 Не ок"
