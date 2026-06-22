@@ -91,7 +91,7 @@ def _announce_color_score(frame) -> float:
     return min(1.0, ratio * 11.0)
 
 
-def _ocr_banner_zones(frame) -> str:
+def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     import cv2
 
     try:
@@ -99,25 +99,25 @@ def _ocr_banner_zones(frame) -> str:
     except ImportError:
         return ""
 
-    small = cv2.resize(frame, (640, 360))
+    small = cv2.resize(frame, (480, 270))
     h, w = small.shape[:2]
     zones = [
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
         small[int(h * 0.04) : int(h * 0.32), int(w * 0.18) : int(w * 0.82)],
-        small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)],
     ]
+    if deep:
+        zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
     texts: list[str] = []
+    psms = (7, 8, 6) if deep else (7,)
     for zone in zones:
         if zone.size == 0:
             continue
         gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-        variants = [
-            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
-            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
-            cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5),
-        ]
+        variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
+        if deep:
+            variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
         for variant in variants:
-            for psm in (7, 8, 6):
+            for psm in psms:
                 text = pytesseract.image_to_string(
                     variant,
                     config=f"--psm {psm} -l eng+rus",
@@ -125,6 +125,8 @@ def _ocr_banner_zones(frame) -> str:
                 text = " ".join(text.split())
                 if text:
                     texts.append(text)
+                    if not deep and classify_banner_text(text) is not None:
+                        return " ".join(texts)
     return " ".join(texts)
 
 
@@ -201,8 +203,8 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
     return out
 
 
-def _classify_frame(sec: float, frame) -> KillBannerHit | None:
-    classified = classify_banner_text(_ocr_banner_zones(frame))
+def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
+    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
         return KillBannerHit(
             sec=round(sec, 2),
@@ -223,13 +225,57 @@ def _classify_frame(sec: float, frame) -> KillBannerHit | None:
     return None
 
 
-def scan_window(vod: Path, t0: float, t1: float) -> list[KillBannerHit]:
-    """Scan [t0, t1] for kill-streak banners; OCR + gold announce color."""
+def _candidate_secs(
+    frames: list[tuple[float, object]],
+    *,
+    focus_sec: float | None = None,
+    max_ocr: int = 5,
+) -> list[float]:
+    if not frames:
+        return []
+    scored: list[tuple[float, float]] = []
+    for sec, frame in frames:
+        scored.append((sec, _announce_color_score(frame)))
+    scored.sort(key=lambda row: row[1], reverse=True)
+    picks: list[float] = []
+    for sec, color in scored:
+        if color < _color_min_score() * 0.65 and picks:
+            break
+        picks.append(sec)
+        if len(picks) >= max_ocr:
+            break
+    if focus_sec is not None:
+        nearest = min(frames, key=lambda row: abs(row[0] - focus_sec))[0]
+        if nearest not in picks:
+            picks.insert(0, nearest)
+    return picks[: max_ocr + 1]
+
+
+def scan_window(
+    vod: Path,
+    t0: float,
+    t1: float,
+    *,
+    focus_sec: float | None = None,
+    deep: bool = False,
+) -> list[KillBannerHit]:
+    """Scan [t0, t1] for kill-streak banners; color prefilter then OCR on candidates."""
+    frames = _sample_frames(vod, t0, t1)
     hits: list[KillBannerHit] = []
-    for sec, frame in _sample_frames(vod, t0, t1):
-        hit = _classify_frame(sec, frame)
+    frame_map = {sec: frame for sec, frame in frames}
+    for sec in _candidate_secs(frames, focus_sec=focus_sec, max_ocr=6 if deep else 4):
+        frame = frame_map.get(sec)
+        if frame is None:
+            continue
+        hit = _classify_frame(sec, frame, deep=deep)
         if hit is not None:
             hits.append(hit)
+    if not hits and frames:
+        for sec, frame in frames:
+            hit = _classify_frame(sec, frame, deep=True)
+            if hit is not None and hit.source == "ocr":
+                hits.append(hit)
+                break
     hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
     return hits
 
@@ -238,7 +284,7 @@ def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "14"))
     after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "6"))
-    hits = scan_window(vod, peak_sec - before, peak_sec + after)
+    hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
     if not hits:
         return None
     min_tier = _min_tier()
@@ -371,7 +417,7 @@ def verify_rendered_clip(
         t0 = max(0.0, mid - 4.0)
         t1 = min(dur, mid + 4.0)
 
-    hits = scan_window(path, t0, t1)
+    hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
         if hit.tier >= need and hit.source == "ocr":
             return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
