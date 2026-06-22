@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# tier: 1=weak … 5=best. User wants triple (3) and above.
+# tier: 1=weak … 5=best. Default min tier: double (2) and above.
 TIER_LABELS = {
     5: "savage",
     4: "maniac",
@@ -51,10 +51,10 @@ class KillBannerHit:
 
 
 def _min_tier() -> int:
-    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "triple").strip().lower()
+    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "double").strip().lower()
     if raw.isdigit():
         return max(1, int(raw))
-    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 3)
+    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 2)
 
 
 def _banner_required() -> bool:

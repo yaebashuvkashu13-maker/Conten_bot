@@ -203,6 +203,11 @@ def main() -> int:
     args = parser.parse_args()
 
     os.environ.setdefault("MLBB_ONLY_MODE", "1")
+    os.environ.setdefault("MLBB_VOD_ONLY", "1")
+    os.environ.setdefault("MLBB_VOD_SEND_ONE", "0")
+    os.environ.setdefault("MLBB_KILL_BANNER_MIN_TIER", "double")
+    os.environ.setdefault("HIGHLIGHT_MAX_PANN_PROBE", "5")
+    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "16")
     os.environ.setdefault("MLBB_SEND_ENABLED", "1")
     os.environ.setdefault("MLBB_LEARNING_FIRST", "0")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")

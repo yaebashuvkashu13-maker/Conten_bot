@@ -33,6 +33,33 @@ def test_reject_single_kill_only() -> None:
     assert single.tier == 1
 
 
+def test_classify_double_kill() -> None:
+    d = classify_banner_text("DOUBLE KILL")
+    assert d is not None
+    assert d.tier == 2
+    assert d.label == "double"
+
+
+def test_min_tier_double_accepts_double_rejects_single() -> None:
+    import mlbb_kill_banner as kb
+
+    old = os.environ.get("MLBB_KILL_BANNER_MIN_TIER")
+    os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
+    try:
+        assert kb._min_tier() == 2
+        double = classify_banner_text("DOUBLE KILL")
+        assert double is not None
+        assert double.tier >= kb._min_tier()
+        single = classify_banner_text("You got a Kill")
+        assert single is not None
+        assert single.tier < kb._min_tier()
+    finally:
+        if old is None:
+            os.environ.pop("MLBB_KILL_BANNER_MIN_TIER", None)
+        else:
+            os.environ["MLBB_KILL_BANNER_MIN_TIER"] = old
+
+
 def test_reject_enemy_triple() -> None:
     assert classify_banner_text("Enemy Triple Kill!") is None
     assert classify_banner_text("ENEMY SAVAGE") is None

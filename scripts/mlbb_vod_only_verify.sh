@@ -29,7 +29,8 @@ check_env MLBB_CALIBRATION_FEED_ENABLED 0
 check_env MLBB_VOD_NO_CROP 1
 check_env MLBB_VOD_LANDSCAPE 1
 check_env MLBB_VOD_VARIABLE_LENGTH 1
-check_env MLBB_VOD_SEND_ONE 1
+check_env MLBB_VOD_SEND_ONE 0
+check_env MLBB_KILL_BANNER_MIN_TIER double
 check_env MLBB_VOD_OWNER_EXEMPLARS 1
 
 forbidden=(
