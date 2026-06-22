@@ -33,6 +33,14 @@ def test_reject_single_kill_only() -> None:
     assert single.tier == 1
 
 
+def test_reject_enemy_triple() -> None:
+    assert classify_banner_text("Enemy Triple Kill!") is None
+    assert classify_banner_text("ENEMY SAVAGE") is None
+    t = classify_banner_text("TRIPLE KILL")
+    assert t is not None
+    assert t.tier == 3
+
+
 def test_bounds_from_fight_sustain() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"

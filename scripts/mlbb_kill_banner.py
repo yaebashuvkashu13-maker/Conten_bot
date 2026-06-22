@@ -19,6 +19,16 @@ TIER_LABELS = {
     1: "single",
 }
 
+_ENEMY_STREAK_RE = re.compile(
+    r"(?:"
+    r"enemy\s+(?:triple|double|maniac|savage|legendary|quadra|penta|killing|rampage|"
+    r"unstoppable|dominating|god|wiped|ace)"
+    r"|вражеск.{0,16}(?:тройн|трипл|маньяк|саваж|легенд)"
+    r"|противник.{0,16}(?:тройн|трипл|маньяк|саваж)"
+    r")",
+    re.I,
+)
+
 _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"savage|саваж", re.I), 5, "savage"),
     (re.compile(r"legendary|легендар", re.I), 5, "legendary"),
@@ -62,6 +72,8 @@ def _color_min_score() -> float:
 def classify_banner_text(text: str) -> KillBannerHit | None:
     blob = " ".join(str(text or "").split())
     if not blob:
+        return None
+    if _ENEMY_STREAK_RE.search(blob):
         return None
     best_tier = 0
     best_label = ""
@@ -215,6 +227,21 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
         )
     color = _announce_color_score(frame)
     if color >= _color_min_score():
+        deep_text = _ocr_banner_zones(frame, deep=True)
+        if _ENEMY_STREAK_RE.search(deep_text):
+            return None
+        if classify_banner_text(deep_text) is not None:
+            classified = classify_banner_text(deep_text)
+            assert classified is not None
+            return KillBannerHit(
+                sec=round(sec, 2),
+                tier=classified.tier,
+                label=classified.label,
+                text=classified.text,
+                source="ocr",
+            )
+        if os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "1") != "1":
+            return None
         return KillBannerHit(
             sec=round(sec, 2),
             tier=3,

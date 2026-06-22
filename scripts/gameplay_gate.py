@@ -1510,6 +1510,10 @@ def segment_uniform_gameplay_ok(
     parts = 3 if duration_sec >= 9.0 else 2
     part_dur = max(duration_sec / parts, 2.0)
     min_hud_rate = float(os.environ.get("SMART_UNIFORM_MIN_HUD_RATE", "0.70"))
+    vod_lenient = os.environ.get("MLBB_VOD_ONLY", "0") == "1" or os.environ.get(
+        "MLBB_VOD_LENIENT_UNIFORM", "0"
+    ) == "1"
+    tail_hud_rate = float(os.environ.get("MLBB_VOD_TAIL_MIN_HUD_RATE", "0.45"))
     min_center_motion = float(os.environ.get("SMART_MIN_CENTER_MOTION", "0.016"))
     min_minimap_delta = float(os.environ.get("SMART_MIN_MINIMAP_DELTA", "0.009"))
     for idx in range(parts):
@@ -1534,7 +1538,10 @@ def segment_uniform_gameplay_ok(
             min_minimap=8.0,
             min_skill=7.0,
         )
-        if hud_rate < min_hud_rate:
+        part_min_hud = min_hud_rate
+        if vod_lenient and idx == parts - 1:
+            part_min_hud = tail_hud_rate
+        if hud_rate < part_min_hud:
             return False, f"weak_hud_part_{idx}={hud_rate:.2f}"
         center_motion, mini_delta, skill_delta, _center_text = score_segment_combat(
             video_path, sub_start, sub_dur, crop_box=crop_box, sample_frames=5
