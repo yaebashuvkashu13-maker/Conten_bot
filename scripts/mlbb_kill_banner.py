@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,7 @@ class KillBannerHit:
     tier: int
     label: str
     text: str
+    source: str = "ocr"
 
 
 def _min_tier() -> int:
@@ -48,16 +51,12 @@ def _banner_required() -> bool:
     return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
 
 
-def _banner_lead_sec() -> float:
-    return float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", "10"))
-
-
-def _banner_post_sec() -> float:
-    return float(os.environ.get("MLBB_KILL_BANNER_POST_SEC", "14"))
-
-
 def _scan_step() -> float:
-    return float(os.environ.get("MLBB_KILL_BANNER_SCAN_STEP", "0.45"))
+    return float(os.environ.get("MLBB_KILL_BANNER_SCAN_STEP", "0.35"))
+
+
+def _color_min_score() -> float:
+    return float(os.environ.get("MLBB_KILL_BANNER_COLOR_MIN", "0.045"))
 
 
 def classify_banner_text(text: str) -> KillBannerHit | None:
@@ -75,24 +74,62 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
     return KillBannerHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:120])
 
 
-def _ocr_center_banner(frame) -> str:
+def _announce_color_score(frame) -> float:
+    import cv2
+    import numpy as np
+
+    small = cv2.resize(frame, (320, 180))
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    h, w = small.shape[:2]
+    zone = hsv[int(h * 0.02) : int(h * 0.30), int(w * 0.15) : int(w * 0.85)]
+    if zone.size == 0:
+        return 0.0
+    gold = cv2.inRange(zone, np.array([8, 100, 140]), np.array([40, 255, 255]))
+    white = cv2.inRange(zone, np.array([0, 0, 210]), np.array([180, 50, 255]))
+    combined = cv2.bitwise_or(gold, white)
+    ratio = float(np.count_nonzero(combined)) / float(combined.size)
+    return min(1.0, ratio * 11.0)
+
+
+def _ocr_banner_zones(frame) -> str:
     import cv2
 
     try:
         import pytesseract
     except ImportError:
         return ""
-    small = cv2.resize(frame, (480, 270))
+
+    small = cv2.resize(frame, (640, 360))
     h, w = small.shape[:2]
-    # MLBB streak banner: upper-center overlay.
-    zone = small[int(h * 0.28) : int(h * 0.58), int(w * 0.12) : int(w * 0.88)]
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    text = pytesseract.image_to_string(
-        gray,
-        config="--psm 7 -l eng+rus",
-    )
-    return " ".join(text.split())
+    zones = [
+        small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
+        small[int(h * 0.04) : int(h * 0.32), int(w * 0.18) : int(w * 0.82)],
+        small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)],
+    ]
+    texts: list[str] = []
+    for zone in zones:
+        if zone.size == 0:
+            continue
+        gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+        variants = [
+            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
+            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
+            cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5),
+        ]
+        for variant in variants:
+            for psm in (7, 8, 6):
+                text = pytesseract.image_to_string(
+                    variant,
+                    config=f"--psm {psm} -l eng+rus",
+                )
+                text = " ".join(text.split())
+                if text:
+                    texts.append(text)
+    return " ".join(texts)
+
+
+def _ocr_center_banner(frame) -> str:
+    return _ocr_banner_zones(frame)
 
 
 def _read_frame(vod: Path, sec: float):
@@ -101,38 +138,113 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
-def scan_window(vod: Path, t0: float, t1: float) -> list[KillBannerHit]:
-    """OCR-scan [t0, t1] for kill-streak banners; return hits tier-sorted best first."""
+def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int) -> list[tuple[float, object]]:
+    import numpy as np
+
+    duration = max(0.25, t1 - t0)
+    fps = max(1.0, sample_count / duration)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{max(0.0, t0):.3f}",
+        "-i",
+        str(vod),
+        "-t",
+        f"{duration:.3f}",
+        "-vf",
+        f"fps={fps:.3f},scale=480:270",
+        "-frames:v",
+        str(max(1, sample_count)),
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, check=False, timeout=45)
+    if proc.returncode != 0 or not proc.stdout:
+        return []
+    frame_bytes = 480 * 270 * 3
+    raw = proc.stdout
+    frames: list[tuple[float, object]] = []
+    for idx in range(sample_count):
+        offset = idx * frame_bytes
+        chunk = raw[offset : offset + frame_bytes]
+        if len(chunk) < frame_bytes:
+            break
+        frame = np.frombuffer(chunk, dtype=np.uint8).reshape((270, 480, 3)).copy()
+        sec = t0 + (idx + 0.5) * duration / max(sample_count, 1)
+        frames.append((sec, frame))
+    return frames
+
+
+def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]]:
     step = max(0.25, _scan_step())
-    hits: list[KillBannerHit] = []
+    span = max(0.0, t1 - t0)
+    sample_count = max(3, min(36, int(span / step) + 1))
+    frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
+    if frames:
+        return frames
+    out: list[tuple[float, object]] = []
     t = max(0.0, t0)
     end = max(t, t1)
     while t <= end:
         frame = _read_frame(vod, t)
         if frame is not None:
-            classified = classify_banner_text(_ocr_center_banner(frame))
-            if classified is not None:
-                hits.append(
-                    KillBannerHit(
-                        sec=round(t, 2),
-                        tier=classified.tier,
-                        label=classified.label,
-                        text=classified.text,
-                    )
-                )
+            out.append((t, frame))
         t += step
-    hits.sort(key=lambda h: (-h.tier, h.sec))
+    return out
+
+
+def _classify_frame(sec: float, frame) -> KillBannerHit | None:
+    classified = classify_banner_text(_ocr_banner_zones(frame))
+    if classified is not None:
+        return KillBannerHit(
+            sec=round(sec, 2),
+            tier=classified.tier,
+            label=classified.label,
+            text=classified.text,
+            source="ocr",
+        )
+    color = _announce_color_score(frame)
+    if color >= _color_min_score():
+        return KillBannerHit(
+            sec=round(sec, 2),
+            tier=3,
+            label="announce",
+            text=f"color={color:.3f}",
+            source="color",
+        )
+    return None
+
+
+def scan_window(vod: Path, t0: float, t1: float) -> list[KillBannerHit]:
+    """Scan [t0, t1] for kill-streak banners; OCR + gold announce color."""
+    hits: list[KillBannerHit] = []
+    for sec, frame in _sample_frames(vod, t0, t1):
+        hit = _classify_frame(sec, frame)
+        if hit is not None:
+            hits.append(hit)
+    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
     return hits
 
 
 def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
-    """Look for streak banner around motion peak (banner usually at/just after peak)."""
-    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "12"))
-    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "4"))
+    """Look for streak banner around motion peak (banner at/just after peak)."""
+    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "14"))
+    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "6"))
     hits = scan_window(vod, peak_sec - before, peak_sec + after)
     if not hits:
         return None
     min_tier = _min_tier()
+    for hit in hits:
+        if hit.tier >= min_tier and hit.source == "ocr":
+            return hit
     for hit in hits:
         if hit.tier >= min_tier:
             return hit
@@ -143,27 +255,41 @@ def bounds_from_banner(
     banner_sec: float,
     file_dur: float,
     *,
-    lead_sec: float | None = None,
-    post_sec: float | None = None,
+    fight_start: float | None = None,
+    fight_end: float | None = None,
 ) -> tuple[float, float, float]:
-    lead = _banner_lead_sec() if lead_sec is None else lead_sec
-    post = _banner_post_sec() if post_sec is None else post_sec
-    from mlbb_fight_segment import _fight_min_sec, _fight_max_sec, _fight_hard_max_sec
+    """Clip bounds: fight sustain window anchored on banner, not fixed lead/post."""
+    from mlbb_fight_segment import _fight_min_sec, _fight_max_sec, _fight_hard_max_sec, _lead_sec
 
     min_d = _fight_min_sec()
-    max_d = min(_fight_max_sec(), lead + post)
+    max_d = _fight_max_sec()
     hard_max = _fight_hard_max_sec()
+    lead = _lead_sec()
 
-    start = max(0.0, float(banner_sec) - lead)
-    end = min(float(file_dur), float(banner_sec) + post)
+    if fight_start is not None and fight_end is not None and fight_end > fight_start:
+        start = max(0.0, float(fight_start))
+        end = min(float(file_dur), float(fight_end))
+    else:
+        start = max(0.0, float(banner_sec) - lead)
+        tail = max(min_d * 0.5, (max_d - lead) * 0.55)
+        end = min(float(file_dur), float(banner_sec) + tail)
+
+    if float(banner_sec) < start:
+        start = max(0.0, float(banner_sec) - lead)
+    if float(banner_sec) > end:
+        end = min(float(file_dur), float(banner_sec) + max(2.0, min_d * 0.4))
+
     dur = end - start
     if dur < min_d:
         end = min(file_dur, start + min_d)
         dur = end - start
-    cap = min(max_d, hard_max)
-    if dur > cap:
-        end = start + cap
-        dur = cap
+    if dur > hard_max:
+        end = start + hard_max
+        dur = hard_max
+    elif dur > max_d:
+        end = start + max_d
+        dur = max_d
+
     return round(start, 2), round(end, 2), round(dur, 2)
 
 
@@ -173,34 +299,34 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-streak banner anchor: start = banner - 10s, short post-banner fight.
-    Returns None when banner required but only single/double/none found.
+    Prefer kill-streak banner anchor inside motion sustain window.
+    Returns None when banner required but no qualifying streak found.
     """
-    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
-        from mlbb_fight_segment import detect_fight_bounds
+    from mlbb_fight_segment import detect_fight_bounds
 
-        start, end, dur = detect_fight_bounds(vod, peak_sec)
-        return start, end, dur, {"anchor": "motion", "banner_sec": peak_sec}
+    fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak_sec)
+
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
 
     hit = find_banner_near_peak(vod, peak_sec)
     min_tier = _min_tier()
     if hit is None:
         if _banner_required():
             return None
-        from mlbb_fight_segment import detect_fight_bounds
-
-        start, end, dur = detect_fight_bounds(vod, peak_sec)
-        return start, end, dur, {"anchor": "motion", "banner_sec": peak_sec}
+        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
 
     if hit.tier < min_tier:
         if _banner_required():
             return None
-        from mlbb_fight_segment import detect_fight_bounds
+        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
 
-        start, end, dur = detect_fight_bounds(vod, peak_sec)
-        return start, end, dur, {"anchor": "motion", "banner_sec": peak_sec}
-
-    start, end, dur = bounds_from_banner(hit.sec, file_dur)
+    start, end, dur = bounds_from_banner(
+        hit.sec,
+        file_dur,
+        fight_start=fight_start,
+        fight_end=fight_end,
+    )
     return (
         start,
         end,
@@ -211,11 +337,21 @@ def resolve_fight_bounds(
             "kill_banner": hit.label,
             "kill_banner_tier": hit.tier,
             "banner_text": hit.text,
+            "banner_source": hit.source,
+            "fight_start": fight_start,
+            "fight_end": fight_end,
+            "fight_dur": fight_dur,
         },
     )
 
 
-def verify_rendered_clip(path: Path, *, min_tier: int | None = None) -> tuple[bool, str]:
+def verify_rendered_clip(
+    path: Path,
+    *,
+    min_tier: int | None = None,
+    banner_sec: float | None = None,
+    clip_start: float | None = None,
+) -> tuple[bool, str]:
     """Presend: streak banner must appear inside rendered mp4."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
@@ -225,14 +361,40 @@ def verify_rendered_clip(path: Path, *, min_tier: int | None = None) -> tuple[bo
     if dur < 1.0:
         return False, "clip_too_short"
     need = min_tier if min_tier is not None else _min_tier()
-    # Banner should land after lead-in (~10s into clip).
-    lead = _banner_lead_sec()
-    t0 = max(0.0, lead - 2.0)
-    t1 = min(dur, lead + 4.0)
+
+    if banner_sec is not None and clip_start is not None:
+        offset = max(0.0, float(banner_sec) - float(clip_start))
+        t0 = max(0.0, offset - 2.5)
+        t1 = min(dur, offset + 3.5)
+    else:
+        mid = dur * 0.42
+        t0 = max(0.0, mid - 4.0)
+        t1 = min(dur, mid + 4.0)
+
     hits = scan_window(path, t0, t1)
     for hit in hits:
-        if hit.tier >= need:
+        if hit.tier >= need and hit.source == "ocr":
             return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
+    for hit in hits:
+        if hit.tier >= need:
+            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
     if hits and not _banner_required():
         return True, f"banner_weak:{hits[0].label}"
     return False, f"banner_missing_min_tier={need}"
+
+
+def main() -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Scan MLBB VOD for kill banners.")
+    parser.add_argument("video", type=Path)
+    parser.add_argument("--peak", type=float, required=True)
+    args = parser.parse_args()
+    hit = find_banner_near_peak(args.video, args.peak)
+    print(json.dumps(hit.__dict__ if hit else {}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

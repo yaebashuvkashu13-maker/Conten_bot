@@ -1194,7 +1194,11 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         from mlbb_kill_banner import verify_rendered_clip
 
-        banner_ok, banner_reason = verify_rendered_clip(rendered)
+        banner_ok, banner_reason = verify_rendered_clip(
+            rendered,
+            banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
+            clip_start=cut_start,
+        )
         report["kill_banner"] = banner_reason
         if not banner_ok:
             return False, banner_reason, report
@@ -1408,6 +1412,8 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
                 "start": start,
                 "peak_start": float(lead_clip.get("peak_start", peak)),
                 "fight_dur": float(lead_clip.get("input_duration", 0)),
+                "kill_banner": lead_clip.get("kill_banner"),
+                "kill_banner_tier": lead_clip.get("kill_banner_tier"),
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
                 "clip_score": clip_score,

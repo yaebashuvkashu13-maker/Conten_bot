@@ -33,12 +33,26 @@ def test_reject_single_kill_only() -> None:
     assert single.tier == 1
 
 
-def test_bounds_from_banner_lead_ten() -> None:
-    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "10"
-    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "14"
+def test_bounds_from_fight_sustain() -> None:
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
-    start, end, dur = bounds_from_banner(100.0, file_dur=200.0)
-    assert start == 90.0
-    assert end == 114.0
-    assert 20.0 <= dur <= 28.0
+    start, end, dur = bounds_from_banner(
+        100.0,
+        file_dur=200.0,
+        fight_start=88.0,
+        fight_end=118.0,
+    )
+    assert start == 88.0
+    assert end == 116.0
+    assert dur == 28.0
+
+
+def test_bounds_fallback_without_fight() -> None:
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
+    assert start == 46.0
+    assert 8.0 <= dur <= 28.0
