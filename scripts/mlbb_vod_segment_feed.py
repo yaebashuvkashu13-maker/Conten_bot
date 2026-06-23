@@ -1626,49 +1626,87 @@ def _process_vod_segments(
     registry: list[dict],
 ) -> int:
     """Drain all scorable segments from one VOD; kick off next download in parallel."""
+    from mlbb_vod_adaptive_gate import (
+        adaptive_env,
+        record_vod_outcome,
+        soften_level,
+        streak_from_state,
+        telegram_exhaust_notice,
+        telegram_soften_notice,
+    )
+
     downloader.start_if_idle(registry)
     sent_total = 0
     max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
     sig = file_sha256(vod)
     sent = load_feed_sent()
+    vid = vod_youtube_id(vod)
+    state_pre = _load_state()
+    streak_in = streak_from_state(state_pre)
+    active_level = 0
 
-    while True:
-        if max_per_vod > 0 and sent_total >= max_per_vod:
-            log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
-            break
-        to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
-        if not to_send:
-            break
-        n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
-        if n == 0:
-            if to_send and sblock > 0:
-                log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
+    with adaptive_env(streak_in) as level:
+        active_level = level
+        if level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
+            log.warning(
+                "adaptive soften active streak=%s level=%s vod=%s",
+                streak_in,
+                level,
+                vod.name,
+            )
+            send_message(token, chat_id, telegram_soften_notice(streak_in, level))
+
+        while True:
+            if max_per_vod > 0 and sent_total >= max_per_vod:
+                log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                 break
-            if to_send and preskip >= len(to_send):
-                log.warning("batch presend rejected all — stop vod=%s", vod.name)
+            to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+            if not to_send:
                 break
-            log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
-            break
-        sent_total += n
-        sent = load_feed_sent()
-        downloader.start_if_idle(registry)
+            n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
+            if n == 0:
+                if to_send and sblock > 0:
+                    log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
+                    break
+                if to_send and preskip >= len(to_send):
+                    log.warning("batch presend rejected all — stop vod=%s", vod.name)
+                    break
+                log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
+                break
+            sent_total += n
+            sent = load_feed_sent()
+            downloader.start_if_idle(registry)
 
     state = _load_state()
     state["active_vod"] = vod.name
     scanned = set(state.get("scanned_vods", []))
     scanned.add(vod.name)
     state["scanned_vods"] = sorted(scanned)
+    new_streak = record_vod_outcome(state, vod_id=vid, sent=sent_total)
+    state["last_adaptive_level"] = active_level
     _save_state(state)
 
     if sent_total == 0:
         _mark_vod_exhausted(vod)
         if entry:
             entry["exhausted"] = True
-            entry["id"] = vod_youtube_id(vod)
+            entry["id"] = vid
             _record_zero_yield_uploader(entry)
-        log.info("exhausted vod=%s", vod.name)
+        log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
+        if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
+            send_message(
+                token,
+                chat_id,
+                telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
+            )
     else:
-        log.info("sent=%s vod=%s", sent_total, vod.name)
+        log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
+        if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
+            send_message(
+                token,
+                chat_id,
+                f"✅ {sent_total} клип(ов) с мягких фильтров (L{active_level}) — возврат к strict после серии",
+            )
     return sent_total
 
 

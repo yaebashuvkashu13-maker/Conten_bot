@@ -1,0 +1,63 @@
+"""Tests for adaptive VOD gate after zero-cut streaks."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from mlbb_vod_adaptive_gate import (  # noqa: E402
+    adaptive_env,
+    overrides_for_level,
+    record_vod_outcome,
+    soften_level,
+    streak_from_state,
+    trailing_zero_streak,
+)
+
+
+def test_trailing_zero_streak():
+    hist = [{"sent": 1}, {"sent": 0}, {"sent": 0}, {"sent": 0}]
+    assert trailing_zero_streak(hist) == 3
+    assert trailing_zero_streak([{"sent": 0}, {"sent": 2}]) == 0
+
+
+def test_soften_after_three_zeros():
+    os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
+    assert soften_level(0) == 0
+    assert soften_level(2) == 0
+    assert soften_level(3) == 1
+    assert soften_level(5) == 1
+    assert soften_level(6) == 2
+
+
+def test_soft_overrides_disable_banner_prefilter():
+    ov = overrides_for_level(1)
+    assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+
+
+def test_adaptive_env_restores():
+    os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
+    os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
+    with adaptive_env(3) as level:
+        assert level == 1
+        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+    assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+
+
+def test_record_resets_streak_on_send():
+    state: dict = {"vod_outcomes": [{"id": "a", "sent": 0}, {"id": "b", "sent": 0}]}
+    streak = record_vod_outcome(state, vod_id="c", sent=1)
+    assert streak == 0
+    assert streak_from_state(state) == 0
+
+
+def test_record_increments_streak():
+    state: dict = {}
+    record_vod_outcome(state, vod_id="a", sent=0)
+    record_vod_outcome(state, vod_id="b", sent=0)
+    streak = record_vod_outcome(state, vod_id="c", sent=0)
+    assert streak == 3
