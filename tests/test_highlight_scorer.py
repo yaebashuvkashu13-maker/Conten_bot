@@ -41,6 +41,7 @@ def test_audio_passes_shooter_requires_panns_gun() -> None:
 
 
 def test_shooter_rule_delegates_to_combat_gate() -> None:
+    pytest.importorskip("cv2")
     m = HighlightMetrics(
         start=0,
         duration=10,
@@ -82,7 +83,10 @@ def test_calibrated_pann_gun_min_has_inference_floor(monkeypatch, tmp_path: Path
         '{"videos":{"testvid":[{"time_sec":515,"label":"good"},{"time_sec":600,"label":"bad"}]}}',
         encoding="utf-8",
     )
-    monkeypatch.setattr("highlight_scorer.OWNER_LABELS", labels)
+    monkeypatch.setattr(
+        "highlight_scorer._owner_labels_path",
+        lambda _profile: labels,
+    )
     with patch("highlight_scorer.score_panns_audio") as panns_mock:
         panns_mock.side_effect = [
             {"panns_gun_max": 0.07},
@@ -107,6 +111,7 @@ def test_score_panns_audio_mock() -> None:
 
 
 def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> None:
+    pytest.importorskip("cv2")
     labels = tmp_path / "labels.json"
     labels.write_text(
         '{"videos":{"testvid":[{"time_sec":515,"label":"good"}]}}',
@@ -114,7 +119,10 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     )
     monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     monkeypatch.setenv("INTELLICLIP_STAGE1", "0")
-    monkeypatch.setattr("highlight_scorer.OWNER_LABELS", labels)
+    monkeypatch.setattr(
+        "highlight_scorer._owner_labels_path",
+        lambda _profile: labels,
+    )
     monkeypatch.setattr(
         "smart_video_editor.analyze_video",
         lambda _p: {

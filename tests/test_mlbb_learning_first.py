@@ -18,6 +18,7 @@ from mlbb_learning_first import (  # noqa: E402
 
 def test_learning_first_blocks_send_by_default(monkeypatch) -> None:
     monkeypatch.setenv("MLBB_LEARNING_FIRST", "1")
+    monkeypatch.setenv("MLBB_SEND_ENABLED", "0")
     state_path = Path("/tmp/test_learning_state.json")
     monkeypatch.setenv("MLBB_LEARNING_STATE", str(state_path))
     state_path.write_text(json.dumps({"transition_passed": False, "daily_sends": {}}))

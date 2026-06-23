@@ -36,6 +36,15 @@ VOD_ANGLE_SEARCH_QUERIES = (
     "Mobile Legends ranked match MVP gameplay no commentary",
 )
 
+# Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
+VOD_COMBAT_SEARCH_QUERIES = (
+    "MLBB mythic ranked savage teamfight full match",
+    "Mobile Legends maniac triple kill ranked gameplay",
+    "MLBB ranked match double kill teamfight replay",
+    "Mobile Legends mythic glory 20 kills full game",
+    "MLBB mythic ranked mvp teamfight no montage",
+)
+
 # YouTube upload-date filter: "This week" (alternate pool vs this month).
 YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
@@ -117,7 +126,8 @@ GUIDE_TITLE_RE = re.compile(
     r"(?:"
     r"best\s+\d+\s+heroes|heroes\s+for\s+every\s+role|for\s+every\s+role|"
     r"best\s+solo\s+carry\s+heroes|tier\s+list|hero\s+tier|"
-    r"how\s+to\s+rank|rank\s+guide|emblem\s+setup|item\s+build\s+guide"
+    r"how\s+to\s+rank|rank\s+guide|emblem\s+setup|item\s+build\s+guide|"
+    r"wr\s+build|meta\s+build|passive\s+skill|skill\s+combo\s+guide"
     r")",
     re.I,
 )
@@ -179,11 +189,14 @@ def build_vod_search_queries(
         "MLBB mythic {hero} ranked full match",
         "Mobile Legends {hero} mythic glory ranked gameplay",
     )
-    hero_slots = max(0, min(max_hero_queries, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
+    hero_slots = max(0, min(max_hero_queries, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 4))
     for idx in range(hero_slots):
         hero = heroes[idx % len(heroes)]
         tpl = hero_templates[idx % len(hero_templates)]
         queries.append(tpl.format(hero=hero))
+    combat_slots = min(2, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
+    for idx in range(combat_slots):
+        queries.append(VOD_COMBAT_SEARCH_QUERIES[idx % len(VOD_COMBAT_SEARCH_QUERIES)])
     for angle in VOD_ANGLE_SEARCH_QUERIES:
         if len(queries) >= limit:
             break
@@ -373,8 +386,13 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("replay", 2.5),
         ("match", 2.0),
         (" vs ", 2.5),
-        ("savage", 1.5),
-        ("teamfight", 1.5),
+        ("savage", 3.5),
+        ("maniac", 3.0),
+        ("triple kill", 3.0),
+        ("double kill", 2.5),
+        ("teamfight", 2.0),
+        (" kills", 2.0),
+        ("mvp", 1.5),
         ("no commentary", 1.0),
         (f"season {vod_current_season()}", 1.5),
     )
@@ -412,6 +430,11 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("uncut", -5.0),
         ("streamer", -1.5),
         ("face cam", -4.0),
+        ("wr ", -5.0),
+        ("meta build", -5.0),
+        ("passive", -4.0),
+        ("macro only", -6.0),
+        ("farm", -3.0),
         ("unbox", -8.0),
         ("preview", -5.0),
     )

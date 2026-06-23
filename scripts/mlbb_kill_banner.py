@@ -329,6 +329,25 @@ def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     return None
 
 
+def filter_peaks_with_ocr_banner(
+    vod: Path,
+    peaks: list[float],
+    *,
+    max_probe: int | None = None,
+) -> list[float]:
+    """Keep motion peaks that have an OCR-qualified kill banner nearby."""
+    if os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") != "1":
+        return peaks
+    limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "8"))
+    need = _min_tier()
+    kept: list[float] = []
+    for peak in peaks[: max(1, limit)]:
+        hit = find_banner_near_peak(vod, peak)
+        if hit and hit.source == "ocr" and hit.tier >= need:
+            kept.append(peak)
+    return kept
+
+
 def bounds_from_banner(
     banner_sec: float,
     file_dur: float,
@@ -367,6 +386,18 @@ def bounds_from_banner(
     elif dur > max_d:
         end = start + max_d
         dur = max_d
+
+    # Montage: banner should not sit in the last ~30% (post-fight running / idle tail).
+    banner_rel = (float(banner_sec) - start) / max(dur, 1e-6)
+    if dur >= 10.0 and banner_rel > 0.68:
+        post = max(3.0, lead * 0.85)
+        pre = max(min_d - post, min_d * 0.5)
+        start = max(0.0, float(banner_sec) - pre)
+        end = min(float(file_dur), float(banner_sec) + post)
+        dur = end - start
+        if dur < min_d:
+            end = min(file_dur, start + min_d)
+            dur = end - start
 
     return round(start, 2), round(end, 2), round(dur, 2)
 

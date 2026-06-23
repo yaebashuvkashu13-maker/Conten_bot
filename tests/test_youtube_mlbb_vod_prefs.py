@@ -113,6 +113,17 @@ def test_rank_prefers_full_match_over_montage_hint() -> None:
     assert rank_mlbb_vod_candidate(good) > rank_mlbb_vod_candidate(weak)
 
 
+def test_rank_prefers_kill_heavy_title() -> None:
+    fight = _meta("MLBB Mythic Savage Teamfight 22 Kills MVP Ranked Full Match", duration=780)
+    passive = _meta("MLBB Mythic Ranked Full Match Macro Farm Gameplay", duration=780)
+    assert rank_mlbb_vod_candidate(fight) > rank_mlbb_vod_candidate(passive)
+
+
+def test_build_queries_includes_combat_angle() -> None:
+    queries = build_vod_search_queries(season=41)
+    assert any("savage" in q.lower() or "maniac" in q.lower() for q in queries)
+
+
 def test_fresh_search_uses_month_sp_not_duration_sp() -> None:
     assert vod_search_date_sort({"MLBB_VOD_SEARCH_FRESH": "1"}) is True
     assert vod_youtube_freshness_sp({"MLBB_VOD_SEARCH_FRESH": "1"}) == "EgQIBBAB"

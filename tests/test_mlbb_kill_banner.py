@@ -91,3 +91,19 @@ def test_bounds_fallback_without_fight() -> None:
     start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
     assert start == 46.0
     assert 8.0 <= dur <= 28.0
+
+
+def test_bounds_recenters_banner_not_in_tail() -> None:
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    # Banner at 27s in a 28s window ending at 28 — was tail-heavy.
+    start, end, dur = bounds_from_banner(
+        27.0,
+        file_dur=120.0,
+        fight_start=0.0,
+        fight_end=28.0,
+    )
+    rel = (27.0 - start) / dur
+    assert rel <= 0.68

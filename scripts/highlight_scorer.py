@@ -1475,6 +1475,20 @@ def discover_highlight_candidates(
         return []
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
+    if profile == "mobile_legends" and starts:
+        from mlbb_kill_banner import filter_peaks_with_ocr_banner
+
+        before = len(starts)
+        starts = filter_peaks_with_ocr_banner(video_path, starts)
+        log.info(
+            "highlight banner prefilter %s: %s/%s windows",
+            video_path.name,
+            len(starts),
+            before,
+        )
+        if not starts:
+            log.warning("highlight %s: no OCR kill banners on top peaks — skip VOD", video_path.name)
+            return []
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 

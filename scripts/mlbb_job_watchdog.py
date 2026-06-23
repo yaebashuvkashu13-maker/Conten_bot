@@ -134,6 +134,12 @@ def dedupe_workers() -> int:
 
 
 def kill_orphans(pattern: str) -> int:
+    if owner_batch_running() and pattern in (
+        "mlbb_vod_segment_feed.py",
+        "mlbb_vod_oneoff.py",
+        "smart_video_editor.py",
+    ):
+        return 0
     if worker_running() and pattern in WORKER_CHILD_PATTERNS:
         return 0
     if vod_only_mode() and pattern in (
