@@ -1079,11 +1079,11 @@ def _presend_freeze_max_start() -> float:
 
 
 def _presend_min_motion() -> float:
-    return float(os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.014"))
+    return float(os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.018"))
 
 
 def _presend_min_minimap_delta() -> float:
-    return float(os.environ.get("MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.010"))
+    return float(os.environ.get("MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.012"))
 
 
 def _parse_freezedetect(stderr: str, *, file_duration: float = 0.0) -> list[dict[str, float]]:

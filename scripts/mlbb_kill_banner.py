@@ -240,7 +240,7 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 text=classified.text,
                 source="ocr",
             )
-        if os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "1") != "1":
+        if not _color_only_allowed():
             return None
         return KillBannerHit(
             sec=round(sec, 2),
@@ -250,6 +250,10 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
             source="color",
         )
     return None
+
+
+def _color_only_allowed() -> bool:
+    return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1"
 
 
 def _candidate_secs(
@@ -318,10 +322,11 @@ def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     for hit in hits:
         if hit.tier >= min_tier and hit.source == "ocr":
             return hit
-    for hit in hits:
-        if hit.tier >= min_tier:
-            return hit
-    return hits[0] if not _banner_required() else None
+    if not _banner_required():
+        for hit in hits:
+            if hit.tier >= min_tier:
+                return hit
+    return None
 
 
 def bounds_from_banner(
@@ -448,9 +453,10 @@ def verify_rendered_clip(
     for hit in hits:
         if hit.tier >= need and hit.source == "ocr":
             return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
-    for hit in hits:
-        if hit.tier >= need:
-            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
+    if _color_only_allowed():
+        for hit in hits:
+            if hit.tier >= need:
+                return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
     if hits and not _banner_required():
         return True, f"banner_weak:{hits[0].label}"
     return False, f"banner_missing_min_tier={need}"

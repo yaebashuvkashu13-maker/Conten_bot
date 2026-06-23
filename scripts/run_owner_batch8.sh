@@ -5,8 +5,9 @@ source /root/.video_bot.env
 export PYTHONPATH=/root/content_bot_ml/scripts
 export MLBB_VOD_ONLY=1
 export MLBB_ONLY_MODE=1
-export MLBB_VOD_LENIENT_UNIFORM=1
-export MLBB_VOD_TAIL_MIN_HUD_RATE=0.45
+export MLBB_VOD_LENIENT_UNIFORM=0
+export MLBB_VOD_TAIL_MIN_HUD_RATE=0.58
+export MLBB_KILL_BANNER_COLOR_ONLY=0
 export MLBB_VOD_SEND_ONE=0
 export MLBB_KILL_BANNER_MIN_TIER=double
 export HIGHLIGHT_MAX_PANN_PROBE=5
