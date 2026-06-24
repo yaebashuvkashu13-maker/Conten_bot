@@ -46,6 +46,19 @@ def test_l2_skips_presend_banner():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
 
 
+def test_l2_lenient_uniform_for_presend_tail():
+    ov = overrides_for_level(2)
+    assert ov["MLBB_VOD_LENIENT_UNIFORM"] == "1"
+    assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.40
+
+
+def test_peak_near_skipped_import():
+    from mlbb_vod_adaptive_gate import peak_near_skipped
+
+    assert peak_near_skipped(100.0, {102.0}) is True
+    assert peak_near_skipped(100.0, {200.0}) is False
+
+
 def test_should_notify_only_on_level_up():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     assert should_notify_soften(5, 1, prev_level=0) is True

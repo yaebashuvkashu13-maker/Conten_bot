@@ -15,12 +15,15 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_BANNER_PREFILTER": "0",
     "MLBB_KILL_BANNER_MIN_TIER": "single",
     "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_VOD_LENIENT_UNIFORM": "1",
+    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
+    "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
     "MLBB_PRESEND_MIN_MOTION": "0.014",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
 }
 
-# Level 2: longer dry spell — motion-first clips, no presend banner hard-fail.
+# Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
@@ -28,7 +31,16 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
     "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
 }
+
+
+def soft_max_peak_tries() -> int:
+    return max(1, int(os.environ.get("MLBB_VOD_SOFT_MAX_PEAK_TRIES", "8")))
+
+
+def peak_near_skipped(peak: float, skip_peaks: set[float], *, tol: float = 4.0) -> bool:
+    return any(abs(peak - s) <= tol for s in skip_peaks)
 
 
 def streak_threshold() -> int:

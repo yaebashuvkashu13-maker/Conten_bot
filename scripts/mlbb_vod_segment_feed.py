@@ -1352,19 +1352,34 @@ def _dedupe_segments_by_gap(
     return chosen
 
 
-def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_limit: int) -> list[dict]:
-    from mlbb_fight_segment import clear_analysis_cache
+def _collect_scan_segments(
+    vod: Path,
+    sig: str,
+    labeled: dict,
+    sent: set,
+    probe_limit: int,
+    *,
+    pool: list[dict] | None = None,
+    skip_peaks: set[float] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    from mlbb_vod_adaptive_gate import peak_near_skipped
 
-    clear_analysis_cache()
+    if pool is None:
+        from mlbb_fight_segment import clear_analysis_cache
+
+        clear_analysis_cache()
+        pool = discover_strict_candidates(vod, PROFILE, sig, set())
+    skip_peaks = skip_peaks or set()
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
-    pool = discover_strict_candidates(vod, PROFILE, sig, set())
     out: list[dict] = []
     min_peak = _vod_min_peak_sec()
     gap = _interval_gap_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
+        if peak_near_skipped(peak, skip_peaks):
+            continue
         if peak < min_peak:
             continue
         lead_clip = _normalize_clip(clip, vod)
@@ -1441,7 +1456,7 @@ def _collect_scan_segments(vod: Path, sig: str, labeled: dict, sent: set, probe_
             len(out),
             len(deduped),
         )
-    return deduped
+    return deduped, pool
 
 
 def _send_segment_batch(
@@ -1632,6 +1647,7 @@ def _process_vod_segments(
         adaptive_env,
         record_vod_outcome,
         should_notify_soften,
+        soft_max_peak_tries,
         streak_from_state,
         telegram_exhaust_notice,
         telegram_soften_notice,
@@ -1647,6 +1663,9 @@ def _process_vod_segments(
     streak_in = streak_from_state(state_pre)
     prev_level = int(state_pre.get("last_adaptive_level") or 0)
     active_level = 0
+    pool_cache: list[dict] | None = None
+    skip_peaks: set[float] = set()
+    peak_tries = 0
 
     with adaptive_env(streak_in) as level:
         active_level = level
@@ -1672,7 +1691,9 @@ def _process_vod_segments(
             if max_per_vod > 0 and sent_total >= max_per_vod:
                 log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                 break
-            to_send = _collect_scan_segments(vod, sig, labeled, sent, probe_limit)
+            to_send, pool_cache = _collect_scan_segments(
+                vod, sig, labeled, sent, probe_limit, pool=pool_cache, skip_peaks=skip_peaks
+            )
             if not to_send:
                 break
             n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
@@ -1681,6 +1702,17 @@ def _process_vod_segments(
                     log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
                     break
                 if to_send and preskip >= len(to_send):
+                    for row in to_send:
+                        skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+                    peak_tries += 1
+                    if active_level > 0 and peak_tries < soft_max_peak_tries():
+                        log.warning(
+                            "presend rejected peak — try next (%s/%s) vod=%s",
+                            peak_tries,
+                            soft_max_peak_tries(),
+                            vod.name,
+                        )
+                        continue
                     log.warning("batch presend rejected all — stop vod=%s", vod.name)
                     break
                 log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
