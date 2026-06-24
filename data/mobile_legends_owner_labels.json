@@ -9,6 +9,22 @@
       {"tc": "35:00", "time_sec": 2100, "label": "good"},
       {"tc": "46:02", "time_sec": 2762, "label": "good"},
       {"tc": "48:40", "time_sec": 2920, "label": "bad", "note": "owner reject seg3"}
+    ],
+    "opuealwWYA0": [
+      {"tc": "0:49", "time_sec": 49, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "1:35", "time_sec": 95, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "1hezrcufqhc": [
+      {"tc": "0:16", "time_sec": 16, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "8:59", "time_sec": 539, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "10:27", "time_sec": 627, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "tkQjwO3DIzA": [
+      {"tc": "3:37", "time_sec": 217, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "3:41", "time_sec": 221, "label": "good", "note": "triple_kill", "source": "owner"},
+      {"tc": "13:45", "time_sec": 825, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "13:49", "time_sec": 829, "label": "good", "note": "triple_kill", "source": "owner"}
     ]
-  }
+  },
+  "updated_at": "2026-06-24 owner kill timestamps batch 1"
 }

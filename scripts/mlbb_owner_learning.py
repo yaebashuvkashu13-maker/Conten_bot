@@ -250,6 +250,37 @@ def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]
     return out
 
 
+def owner_kill_anchor_secs(video_id: str, *, radius: float = 0.0) -> list[float]:
+    """Owner-confirmed kill banner times (double/triple/…) for OCR bypass / peak snap."""
+    vid = str(video_id or "").strip()
+    if not vid:
+        return []
+    rows = load_owner_labels_json().get("videos", {}).get(vid, [])
+    if not isinstance(rows, list):
+        return []
+    out: list[float] = []
+    for row in rows:
+        if row.get("label") != "good" or "time_sec" not in row:
+            continue
+        note = str(row.get("note") or row.get("kill_tier") or "").lower()
+        if note and not any(k in note for k in ("kill", "double", "triple", "maniac", "savage")):
+            continue
+        out.append(float(row["time_sec"]))
+    if radius <= 0:
+        return sorted(set(out))
+    expanded: list[float] = []
+    for sec in out:
+        expanded.append(sec)
+    return sorted(set(expanded))
+
+
+def owner_kill_anchor_secs_for_path(video_path: Path, *, radius: float = 0.0) -> list[float]:
+    from highlight_scorer import _video_id_from_path
+
+    vid = _video_id_from_path(video_path)
+    return owner_kill_anchor_secs(vid, radius=radius) if vid else []
+
+
 def owner_labels_for_vod_scan(video_path: Path, profile: str) -> list[dict]:
     """Time anchors for VOD scanning — excludes Shorts full-clip labels on long files."""
     if normalize_profile(profile) != "mobile_legends":

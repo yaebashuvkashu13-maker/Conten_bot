@@ -13,6 +13,7 @@ from mlbb_owner_learning import (  # noqa: E402
     backfill_shorts_to_owner_labels,
     load_owner_labels_json,
     load_unified_training_samples,
+    owner_kill_anchor_secs,
     sync_shorts_label_to_owner_json,
 )
 
@@ -85,6 +86,15 @@ def test_unified_training_dedupes_exemplar_and_shorts(tmp_path: Path, monkeypatc
     paths = {p.name for p, _s, _l in samples}
     assert "cal_abcdefghijk.mp4" in paths
     assert "yt_abcdefghijk.mp4" not in paths
+
+
+def test_owner_kill_anchor_secs_filters_notes(tmp_path: Path, monkeypatch) -> None:
+    owner = tmp_path / "owner.json"
+    monkeypatch.setenv("MLBB_OWNER_LABELS_PATH", str(owner))
+    append_owner_time_label("opuealwWYA0", 49.0, "good", note="double_kill", source="owner")
+    append_owner_time_label("opuealwWYA0", 10.0, "good", note="bad spawn", source="owner")
+    secs = owner_kill_anchor_secs("opuealwWYA0")
+    assert secs == [49.0]
 
 
 def test_append_owner_time_label_dedupes(tmp_path: Path, monkeypatch) -> None:

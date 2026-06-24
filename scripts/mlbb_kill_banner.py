@@ -329,6 +329,21 @@ def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     return None
 
 
+def _owner_kill_anchor_tol() -> float:
+    return float(os.environ.get("MLBB_OWNER_KILL_ANCHOR_TOL", "28"))
+
+
+def _peak_near_owner_kill_anchor(vod: Path, peak: float) -> bool:
+    try:
+        from mlbb_owner_learning import owner_kill_anchor_secs_for_path
+
+        anchors = owner_kill_anchor_secs_for_path(vod)
+    except Exception:
+        return False
+    tol = _owner_kill_anchor_tol()
+    return any(abs(peak - a) <= tol for a in anchors)
+
+
 def filter_peaks_with_ocr_banner(
     vod: Path,
     peaks: list[float],
@@ -342,6 +357,9 @@ def filter_peaks_with_ocr_banner(
     need = _min_tier()
     kept: list[float] = []
     for peak in peaks[: max(1, limit)]:
+        if _peak_near_owner_kill_anchor(vod, peak):
+            kept.append(peak)
+            continue
         hit = find_banner_near_peak(vod, peak)
         if hit and hit.source == "ocr" and hit.tier >= need:
             kept.append(peak)
@@ -421,6 +439,38 @@ def resolve_fight_bounds(
     hit = find_banner_near_peak(vod, peak_sec)
     min_tier = _min_tier()
     if hit is None:
+        if _peak_near_owner_kill_anchor(vod, peak_sec):
+            try:
+                from mlbb_owner_learning import owner_kill_anchor_secs_for_path
+
+                anchors = owner_kill_anchor_secs_for_path(vod)
+                tol = _owner_kill_anchor_tol()
+                banner_sec = min(anchors, key=lambda a: abs(a - peak_sec)) if anchors else peak_sec
+                if abs(banner_sec - peak_sec) > tol:
+                    banner_sec = peak_sec
+            except Exception:
+                banner_sec = peak_sec
+            start, end, dur = bounds_from_banner(
+                banner_sec,
+                file_dur,
+                fight_start=fight_start,
+                fight_end=fight_end,
+            )
+            return (
+                start,
+                end,
+                dur,
+                {
+                    "anchor": "owner_kill",
+                    "banner_sec": banner_sec,
+                    "kill_banner": "owner_confirmed",
+                    "kill_banner_tier": min_tier,
+                    "banner_source": "owner",
+                    "fight_start": fight_start,
+                    "fight_end": fight_end,
+                    "fight_dur": fight_dur,
+                },
+            )
         if _banner_required():
             return None
         return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}

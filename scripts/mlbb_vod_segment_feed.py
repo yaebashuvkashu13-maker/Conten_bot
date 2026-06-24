@@ -1194,16 +1194,23 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         if presend_banner:
-            from mlbb_kill_banner import verify_rendered_clip
-
-            banner_ok, banner_reason = verify_rendered_clip(
-                rendered,
-                banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
-                clip_start=cut_start,
+            owner_anchor = (
+                str(row.get("banner_source") or "") == "owner"
+                or str(row.get("anchor") or "") == "owner_kill"
             )
-            report["kill_banner"] = banner_reason
-            if not banner_ok:
-                return False, banner_reason, report
+            if owner_anchor:
+                report["kill_banner"] = "owner_confirmed_skip_ocr"
+            else:
+                from mlbb_kill_banner import verify_rendered_clip
+
+                banner_ok, banner_reason = verify_rendered_clip(
+                    rendered,
+                    banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
+                    clip_start=cut_start,
+                )
+                report["kill_banner"] = banner_reason
+                if not banner_ok:
+                    return False, banner_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1375,12 +1382,20 @@ def _collect_scan_segments(
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
     out: list[dict] = []
     min_peak = _vod_min_peak_sec()
+    owner_kill_anchors: list[float] = []
+    try:
+        from mlbb_owner_learning import owner_kill_anchor_secs_for_path
+
+        owner_kill_anchors = owner_kill_anchor_secs_for_path(vod)
+    except Exception:
+        owner_kill_anchors = []
+    owner_anchor_tol = float(os.environ.get("MLBB_OWNER_KILL_ANCHOR_TOL", "28"))
     gap = _interval_gap_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
-        if peak < min_peak:
+        if peak < min_peak and not any(abs(peak - a) <= owner_anchor_tol for a in owner_kill_anchors):
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
