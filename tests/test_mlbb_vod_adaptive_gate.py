@@ -12,6 +12,7 @@ from mlbb_vod_adaptive_gate import (  # noqa: E402
     adaptive_env,
     overrides_for_level,
     record_vod_outcome,
+    should_notify_soften,
     soften_level,
     streak_from_state,
     trailing_zero_streak,
@@ -37,6 +38,20 @@ def test_soft_overrides_disable_banner_prefilter():
     ov = overrides_for_level(1)
     assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+
+
+def test_l2_skips_presend_banner():
+    ov = overrides_for_level(2)
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+
+
+def test_should_notify_only_on_level_up():
+    os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
+    assert should_notify_soften(5, 1, prev_level=0) is True
+    assert should_notify_soften(5, 1, prev_level=1) is False
+    assert should_notify_soften(6, 2, prev_level=1) is True
+    assert should_notify_soften(15, 2, prev_level=2) is False
 
 
 def test_adaptive_env_restores():

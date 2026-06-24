@@ -1192,16 +1192,18 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         return False, reason, report
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
-        from mlbb_kill_banner import verify_rendered_clip
+        presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
+        if presend_banner:
+            from mlbb_kill_banner import verify_rendered_clip
 
-        banner_ok, banner_reason = verify_rendered_clip(
-            rendered,
-            banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
-            clip_start=cut_start,
-        )
-        report["kill_banner"] = banner_reason
-        if not banner_ok:
-            return False, banner_reason, report
+            banner_ok, banner_reason = verify_rendered_clip(
+                rendered,
+                banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
+                clip_start=cut_start,
+            )
+            report["kill_banner"] = banner_reason
+            if not banner_ok:
+                return False, banner_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1629,7 +1631,7 @@ def _process_vod_segments(
     from mlbb_vod_adaptive_gate import (
         adaptive_env,
         record_vod_outcome,
-        soften_level,
+        should_notify_soften,
         streak_from_state,
         telegram_exhaust_notice,
         telegram_soften_notice,
@@ -1643,11 +1645,14 @@ def _process_vod_segments(
     vid = vod_youtube_id(vod)
     state_pre = _load_state()
     streak_in = streak_from_state(state_pre)
+    prev_level = int(state_pre.get("last_adaptive_level") or 0)
     active_level = 0
 
     with adaptive_env(streak_in) as level:
         active_level = level
-        if level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
+        if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
+            "MLBB_VOD_ADAPTIVE_NOTIFY", "1"
+        ) == "1":
             log.warning(
                 "adaptive soften active streak=%s level=%s vod=%s",
                 streak_in,
@@ -1655,6 +1660,13 @@ def _process_vod_segments(
                 vod.name,
             )
             send_message(token, chat_id, telegram_soften_notice(streak_in, level))
+        elif level > 0:
+            log.warning(
+                "adaptive soften active streak=%s level=%s vod=%s (no tg spam)",
+                streak_in,
+                level,
+                vod.name,
+            )
 
         while True:
             if max_per_vod > 0 and sent_total >= max_per_vod:

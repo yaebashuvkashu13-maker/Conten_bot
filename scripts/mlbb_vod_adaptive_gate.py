@@ -10,22 +10,24 @@ from typing import Iterator
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: still OCR-only banners, but single-kill + no whole-VOD prefilter skip.
+# Level 1: no whole-VOD prefilter skip; motion anchor if OCR banner missing.
 SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_BANNER_PREFILTER": "0",
     "MLBB_KILL_BANNER_MIN_TIER": "single",
+    "MLBB_KILL_BANNER_REQUIRED": "0",
     "MLBB_PRESEND_MIN_MOTION": "0.014",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
 }
 
-# Level 2: longer dry spell — slightly more room at presend (still no color-only bypass).
+# Level 2: longer dry spell — motion-first clips, no presend banner hard-fail.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
+    "MLBB_VOD_BANNER_PRESEND": "0",
 }
 
 
@@ -83,7 +85,22 @@ def soften_summary(level: int) -> str:
     ov = overrides_for_level(level)
     tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "?")
     pre = "off" if ov.get("MLBB_VOD_BANNER_PREFILTER") == "0" else "on"
-    return f"soft L{level} tier={tier} banner_prefilter={pre}"
+    anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "banner_required"
+    return f"soft L{level} tier={tier} prefilter={pre} {anchor}"
+
+
+def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
+    """Notify only on strict→L1 or L1→L2 transition, not every VOD."""
+    if level <= 0:
+        return False
+    if level > prev_level:
+        return True
+    need = streak_threshold()
+    if level == 1 and streak == need and prev_level == 0:
+        return True
+    if level == 2 and streak == need + 3 and prev_level < 2:
+        return True
+    return False
 
 
 @contextmanager
@@ -107,10 +124,9 @@ def adaptive_env(streak: int) -> Iterator[int]:
 
 
 def telegram_soften_notice(streak: int, level: int) -> str:
-    need = streak_threshold()
     return (
-        f"⚙️ {streak} VOD подряд без клипов — с #{need + 1} смягчаю фильтры ({soften_summary(level)}).\n"
-        f"Ищу single-kill + teamfight; ранний skip всего VOD отключён."
+        f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
+        f"Режу teamfight по motion; kill-banner — бонус, не обязателен."
     )
 
 
