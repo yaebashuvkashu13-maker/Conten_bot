@@ -121,7 +121,9 @@ def test_rank_prefers_kill_heavy_title() -> None:
 
 def test_build_queries_includes_combat_angle() -> None:
     queries = build_vod_search_queries(season=41)
-    assert any("savage" in q.lower() or "maniac" in q.lower() for q in queries)
+    lowered = [q.lower() for q in queries]
+    assert any("double kill" in q for q in lowered)
+    assert any("savage" in q or "maniac" in q for q in lowered)
 
 
 def test_fresh_search_uses_month_sp_not_duration_sp() -> None:
