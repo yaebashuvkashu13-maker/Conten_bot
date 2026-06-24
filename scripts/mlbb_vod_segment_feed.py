@@ -81,9 +81,17 @@ def _vod_skip_long_sec() -> float:
     return float(os.environ.get("MLBB_VOD_SKIP_LONG_SEC", str(_vod_max_sec())))
 
 
-def _vod_min_peak_sec() -> float:
-    """Skip laning/spawn — fights usually after ~7 min."""
-    return float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+def _vod_min_peak_sec(vod: Path | None = None) -> float:
+    """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
+    base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+    if vod is None:
+        return base
+    dur = _ffprobe_duration(vod)
+    if dur <= 240:
+        return min(base, 45.0)
+    if dur <= 480:
+        return min(base, 120.0)
+    return base
 
 
 def _vod_length_ok(path: Path, dur: float | None = None) -> bool:
@@ -1194,23 +1202,19 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         if presend_banner:
-            owner_anchor = (
-                str(row.get("banner_source") or "") == "owner"
-                or str(row.get("anchor") or "") == "owner_kill"
-            )
-            if owner_anchor:
-                report["kill_banner"] = "owner_confirmed_skip_ocr"
-            else:
-                from mlbb_kill_banner import verify_rendered_clip
+            from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip
 
+            banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
+            banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
+            if not banner_ok:
                 banner_ok, banner_reason = verify_rendered_clip(
                     rendered,
-                    banner_sec=float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else None,
+                    banner_sec=banner_sec if row.get("banner_sec") else None,
                     clip_start=cut_start,
                 )
-                report["kill_banner"] = banner_reason
-                if not banner_ok:
-                    return False, banner_reason, report
+            report["kill_banner"] = banner_reason
+            if not banner_ok:
+                return False, banner_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1381,21 +1385,13 @@ def _collect_scan_segments(
     min_gap = _segment_gap_sec()
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
     out: list[dict] = []
-    min_peak = _vod_min_peak_sec()
-    owner_kill_anchors: list[float] = []
-    try:
-        from mlbb_owner_learning import owner_kill_anchor_secs_for_path
-
-        owner_kill_anchors = owner_kill_anchor_secs_for_path(vod)
-    except Exception:
-        owner_kill_anchors = []
-    owner_anchor_tol = float(os.environ.get("MLBB_OWNER_KILL_ANCHOR_TOL", "28"))
+    min_peak = _vod_min_peak_sec(vod)
     gap = _interval_gap_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
-        if peak < min_peak and not any(abs(peak - a) <= owner_anchor_tol for a in owner_kill_anchors):
+        if peak < min_peak:
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):

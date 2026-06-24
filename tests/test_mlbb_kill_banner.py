@@ -38,6 +38,9 @@ def test_classify_double_kill() -> None:
     assert d is not None
     assert d.tier == 2
     assert d.label == "double"
+    partial = classify_banner_text("OUBLE KILL")
+    assert partial is not None
+    assert partial.tier == 2
 
 
 def test_min_tier_double_accepts_double_rejects_single() -> None:

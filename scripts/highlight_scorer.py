@@ -1475,20 +1475,34 @@ def discover_highlight_candidates(
         return []
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
-    if profile == "mobile_legends" and starts:
-        from mlbb_kill_banner import filter_peaks_with_ocr_banner
+    if profile == "mobile_legends":
+        from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
-        before = len(starts)
-        starts = filter_peaks_with_ocr_banner(video_path, starts)
-        log.info(
-            "highlight banner prefilter %s: %s/%s windows",
-            video_path.name,
-            len(starts),
-            before,
-        )
-        if not starts:
-            log.warning("highlight %s: no OCR kill banners on top peaks — skip VOD", video_path.name)
-            return []
+        start_set = set(starts)
+        banners = discover_vod_kill_banners(video_path)
+        if banners:
+            lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+            log.info(
+                "highlight banner discover %s: %s tier>=%s hits",
+                video_path.name,
+                len(banners),
+                os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
+            )
+            for hit in banners:
+                start_set.add(max(0.0, hit.sec - lead))
+        starts = sorted(start_set)
+        if starts:
+            before = len(starts)
+            starts = filter_peaks_with_ocr_banner(video_path, starts)
+            log.info(
+                "highlight banner prefilter %s: %s/%s windows",
+                video_path.name,
+                len(starts),
+                before,
+            )
+            if not starts:
+                log.warning("highlight %s: no OCR kill banners on top peaks — skip VOD", video_path.name)
+                return []
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 

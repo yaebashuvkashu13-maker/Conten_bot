@@ -36,7 +36,7 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"ruthless|беспощад|безжалост", re.I), 4, "ruthless"),
     (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
     (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
-    (re.compile(r"double\s*kill|двойн.{0,12}убий", re.I), 2, "double"),
+    (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill", re.I), 2, "double"),
     (re.compile(r"\bkill\b|убийств", re.I), 1, "single"),
 ]
 
@@ -313,8 +313,8 @@ def scan_window(
 
 def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
-    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "14"))
-    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "6"))
+    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
+    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
     hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
     if not hits:
         return None
@@ -329,19 +329,62 @@ def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
     return None
 
 
-def _owner_kill_anchor_tol() -> float:
-    return float(os.environ.get("MLBB_OWNER_KILL_ANCHOR_TOL", "28"))
+def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
+    """Earliest sec to scan for banners — short VODs have fights before 5 min."""
+    base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300"))
+    if duration <= 240:
+        return 15.0
+    if duration <= 480:
+        return min(base, 90.0)
+    return base
 
 
-def _peak_near_owner_kill_anchor(vod: Path, peak: float) -> bool:
-    try:
-        from mlbb_owner_learning import owner_kill_anchor_secs_for_path
+def discover_vod_kill_banners(vod: Path, *, min_tier: int | None = None) -> list[KillBannerHit]:
+    """
+    Motion-gated sparse OCR scan for kill banners independent of motion peaks.
+    Fixes misses when teamfight motion peak != banner second (prefilter 0/N).
+    """
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return []
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
+        return []
+    import numpy as np
 
-        anchors = owner_kill_anchor_secs_for_path(vod)
-    except Exception:
-        return False
-    tol = _owner_kill_anchor_tol()
-    return any(abs(peak - a) <= tol for a in anchors)
+    from mlbb_fight_segment import _analysis_for
+
+    analysis = _analysis_for(vod)
+    duration = float(analysis.get("duration") or 0.0)
+    if duration < 20.0:
+        return []
+    need = min_tier if min_tier is not None else _min_tier()
+    win = float(analysis.get("window_seconds", 2.0))
+    motion = np.asarray(analysis.get("center_motion") or [], dtype=np.float32)
+    audio = np.asarray(analysis.get("audio") or [], dtype=np.float32)
+    combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+    motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
+    step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "2.5"))
+    t0 = _adaptive_banner_scan_start(vod, duration)
+    hits: list[KillBannerHit] = []
+    t = t0
+    while t < duration - 4.0:
+        bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
+        if combined.size > bi and float(combined[bi]) < motion_thr:
+            t += step
+            continue
+        for hit in scan_window(vod, t - 0.5, t + 2.5, focus_sec=t, deep=True):
+            if hit.tier >= need and hit.source == "ocr":
+                hits.append(hit)
+                break
+        t += step
+    hits.sort(key=lambda h: h.sec)
+    merged: list[KillBannerHit] = []
+    for hit in hits:
+        if merged and hit.sec - merged[-1].sec < 6.0:
+            if hit.tier > merged[-1].tier:
+                merged[-1] = hit
+        else:
+            merged.append(hit)
+    return merged
 
 
 def filter_peaks_with_ocr_banner(
@@ -353,13 +396,10 @@ def filter_peaks_with_ocr_banner(
     """Keep motion peaks that have an OCR-qualified kill banner nearby."""
     if os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") != "1":
         return peaks
-    limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "8"))
+    limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "16"))
     need = _min_tier()
     kept: list[float] = []
     for peak in peaks[: max(1, limit)]:
-        if _peak_near_owner_kill_anchor(vod, peak):
-            kept.append(peak)
-            continue
         hit = find_banner_near_peak(vod, peak)
         if hit and hit.source == "ocr" and hit.tier >= need:
             kept.append(peak)
@@ -439,38 +479,6 @@ def resolve_fight_bounds(
     hit = find_banner_near_peak(vod, peak_sec)
     min_tier = _min_tier()
     if hit is None:
-        if _peak_near_owner_kill_anchor(vod, peak_sec):
-            try:
-                from mlbb_owner_learning import owner_kill_anchor_secs_for_path
-
-                anchors = owner_kill_anchor_secs_for_path(vod)
-                tol = _owner_kill_anchor_tol()
-                banner_sec = min(anchors, key=lambda a: abs(a - peak_sec)) if anchors else peak_sec
-                if abs(banner_sec - peak_sec) > tol:
-                    banner_sec = peak_sec
-            except Exception:
-                banner_sec = peak_sec
-            start, end, dur = bounds_from_banner(
-                banner_sec,
-                file_dur,
-                fight_start=fight_start,
-                fight_end=fight_end,
-            )
-            return (
-                start,
-                end,
-                dur,
-                {
-                    "anchor": "owner_kill",
-                    "banner_sec": banner_sec,
-                    "kill_banner": "owner_confirmed",
-                    "kill_banner_tier": min_tier,
-                    "banner_source": "owner",
-                    "fight_start": fight_start,
-                    "fight_end": fight_end,
-                    "fight_dur": fight_dur,
-                },
-            )
         if _banner_required():
             return None
         return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
@@ -502,6 +510,25 @@ def resolve_fight_bounds(
             "fight_dur": fight_dur,
         },
     )
+
+
+def verify_banner_on_source(
+    vod: Path,
+    banner_sec: float,
+    *,
+    min_tier: int | None = None,
+) -> tuple[bool, str]:
+    """Presend: verify streak banner on source VOD (rendered mp4 OCR is unreliable)."""
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return True, "banner_check_off"
+    need = min_tier if min_tier is not None else _min_tier()
+    hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
+    for hit in hits:
+        if hit.tier >= need and hit.source == "ocr":
+            return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
+    if hits and not _banner_required():
+        return True, f"source_banner_weak:{hits[0].label}"
+    return False, f"source_banner_missing_min_tier={need}"
 
 
 def verify_rendered_clip(
