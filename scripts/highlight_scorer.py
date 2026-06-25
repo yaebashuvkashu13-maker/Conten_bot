@@ -1493,7 +1493,7 @@ def discover_highlight_candidates(
         starts = sorted(start_set)
         if starts:
             before = len(starts)
-            starts = filter_peaks_with_ocr_banner(video_path, starts)
+            starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
             log.info(
                 "highlight banner prefilter %s: %s/%s windows",
                 video_path.name,

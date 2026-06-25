@@ -461,13 +461,29 @@ def filter_peaks_with_ocr_banner(
     peaks: list[float],
     *,
     max_probe: int | None = None,
+    known_banners: list[KillBannerHit] | None = None,
 ) -> list[float]:
     """Keep motion peaks that have an OCR-qualified kill banner nearby."""
     if os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") != "1":
         return peaks
     limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "16"))
     need = _min_tier()
-    kept: list[float] = []
+    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
+    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
+    qualified = [
+        h
+        for h in (known_banners or [])
+        if h.tier >= need and h.source == "ocr"
+    ]
+    if qualified:
+        kept: list[float] = []
+        for peak in peaks[: max(1, limit)]:
+            for hit in qualified:
+                if (hit.sec - before) <= peak <= (hit.sec + after) or abs(hit.sec - peak) <= before + 5:
+                    kept.append(peak)
+                    break
+        return kept
+    kept = []
     for peak in peaks[: max(1, limit)]:
         hit = find_banner_near_peak(vod, peak)
         if hit and hit.source == "ocr" and hit.tier >= need:
