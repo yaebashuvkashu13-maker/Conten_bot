@@ -124,6 +124,9 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   CONTENT_BOT_REPO=/root/content_bot_ml; do
   key="${kv%%=*}"
   val="${kv#*=}"
+  if [[ -z "$key" || "$key" == *.sh ]]; then
+    continue
+  fi
   if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
     sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
   else
