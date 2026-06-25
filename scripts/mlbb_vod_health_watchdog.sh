@@ -67,6 +67,16 @@ if [[ -f "$FEED_LOG" ]]; then
   if [[ "$CRASH_N" -gt 3 ]]; then
     log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
   fi
+  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
+  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
+  if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+    log "feed stuck log_age=${LOG_AGE_SEC}s — kill and restart"
+    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+    sleep 2
+    rm -f /tmp/mlbb_vod_segment_feed.lock
+    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  fi
 fi
 
 # Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).

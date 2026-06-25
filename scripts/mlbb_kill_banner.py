@@ -7,9 +7,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import logging
+
+log = logging.getLogger("mlbb_kill_banner")
 
 
 def _analysis_series(analysis: dict[str, Any], key: str) -> list[float]:
@@ -357,10 +362,15 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
-def discover_vod_kill_banners(vod: Path, *, min_tier: int | None = None) -> list[KillBannerHit]:
+def discover_vod_kill_banners(
+    vod: Path,
+    *,
+    min_tier: int | None = None,
+    hint_peaks: list[float] | None = None,
+) -> list[KillBannerHit]:
     """
     Motion-gated sparse OCR scan for kill banners independent of motion peaks.
-    Fixes misses when teamfight motion peak != banner second (prefilter 0/N).
+    Capped by probe count and wall time — full-VOD deep OCR can stall for hours.
     """
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return []
@@ -375,34 +385,75 @@ def discover_vod_kill_banners(vod: Path, *, min_tier: int | None = None) -> list
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    win = float(analysis.get("window_seconds", 2.0))
-    motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
-    audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
-    combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
-    motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
-    step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "2.5"))
-    t0 = _adaptive_banner_scan_start(vod, duration)
+    max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "28")))
+    max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "180")))
+    deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
-    t = t0
-    while t < duration - 4.0:
-        bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
-        if combined.size > bi and float(combined[bi]) < motion_thr:
-            t += step
-            continue
-        for hit in scan_window(vod, t - 0.5, t + 2.5, focus_sec=t, deep=True):
-            if hit.tier >= need and hit.source == "ocr":
-                hits.append(hit)
-                break
-        t += step
-    hits.sort(key=lambda h: h.sec)
-    merged: list[KillBannerHit] = []
-    for hit in hits:
-        if merged and hit.sec - merged[-1].sec < 6.0:
-            if hit.tier > merged[-1].tier:
-                merged[-1] = hit
+    probes = 0
+
+    def _merge_hit(hit: KillBannerHit) -> None:
+        if hit.tier < need or hit.source != "ocr":
+            return
+        if hits and hit.sec - hits[-1].sec < 6.0:
+            if hit.tier > hits[-1].tier:
+                hits[-1] = hit
         else:
-            merged.append(hit)
-    return merged
+            hits.append(hit)
+
+    def _probe_at(t: float, *, deep: bool) -> bool:
+        nonlocal probes
+        if probes >= max_probes or time.monotonic() >= deadline:
+            return False
+        probes += 1
+        for hit in scan_window(vod, t - 0.5, t + 2.5, focus_sec=t, deep=deep):
+            _merge_hit(hit)
+            if hits:
+                return True
+        return probes < max_probes and time.monotonic() < deadline
+
+    # Phase 1: scan around stage1 motion peaks (cheap, high yield).
+    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "12")))
+    for peak in sorted(set(hint_peaks or []))[:peak_limit]:
+        if not _probe_at(peak, deep=False):
+            break
+
+    # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
+    if probes < max_probes and time.monotonic() < deadline:
+        win = float(analysis.get("window_seconds", 2.0))
+        motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
+        audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
+        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+        motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
+        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "5.0"))
+        t0 = _adaptive_banner_scan_start(vod, duration)
+        t = t0
+        while t < duration - 4.0 and probes < max_probes and time.monotonic() < deadline:
+            bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
+            if combined.size > bi and float(combined[bi]) < motion_thr:
+                t += step
+                continue
+            if probes % 5 == 0:
+                log.info(
+                    "banner discover %s: probe=%s/%s t=%.0fs hits=%s",
+                    vod.name,
+                    probes,
+                    max_probes,
+                    t,
+                    len(hits),
+                )
+            if not _probe_at(t, deep=False):
+                break
+            t += step
+
+    hits.sort(key=lambda h: h.sec)
+    log.info(
+        "banner discover %s: done probes=%s hits=%s elapsed=%.0fs",
+        vod.name,
+        probes,
+        len(hits),
+        max_sec - max(0.0, deadline - time.monotonic()),
+    )
+    return hits
 
 
 def filter_peaks_with_ocr_banner(
