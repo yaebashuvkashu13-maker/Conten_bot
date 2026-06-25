@@ -22,11 +22,12 @@ OWNER_MARKS: dict[str, list[int]] = {
 
 def motion_peak_near(vod: Path, sec: float, *, radius: float = 30.0) -> float | None:
     from mlbb_fight_segment import _analysis_for
+    from mlbb_kill_banner import _analysis_series
 
     analysis = _analysis_for(vod)
     win = float(analysis.get("window_seconds", 2.0))
-    motion = analysis.get("center_motion") or []
-    audio = analysis.get("audio") or []
+    motion = _analysis_series(analysis, "center_motion")
+    audio = _analysis_series(analysis, "audio")
     if not motion:
         return None
     i0 = max(0, int((sec - radius) / win))
@@ -57,6 +58,7 @@ def _vod_min_peak_sec(vod: Path | None = None) -> float:
 def diagnose_mark(vod: Path, owner_sec: float) -> dict:
     from mlbb_kill_banner import (
         _adaptive_banner_scan_start,
+        _analysis_series,
         classify_banner_text,
         find_banner_near_peak,
         scan_window,

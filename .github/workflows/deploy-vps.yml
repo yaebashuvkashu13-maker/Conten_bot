@@ -16,20 +16,36 @@ jobs:
       - name: Resolve VPS host
         id: vps
         run: |
+          host=""
           if [ -n "${{ secrets.VPS_HOST }}" ]; then
-            echo "host=${{ secrets.VPS_HOST }}" >> "$GITHUB_OUTPUT"
+            host="${{ secrets.VPS_HOST }}"
           elif [ -n "${{ secrets.SSH_HOST }}" ]; then
-            echo "host=${{ secrets.SSH_HOST }}" >> "$GITHUB_OUTPUT"
+            host="${{ secrets.SSH_HOST }}"
+          fi
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          if [ -z "$host" ]; then
+            echo "::error::Set VPS_HOST or SSH_HOST in repository secrets"
+            exit 1
+          fi
+
+      - name: Resolve VPS SSH key
+        id: sshkey
+        run: |
+          if [ -n "${{ secrets.VPS_SSH_KEY }}" ]; then
+            echo "has_key=1" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "has_key=1" >> "$GITHUB_OUTPUT"
           else
-            echo "host=" >> "$GITHUB_OUTPUT"
+            echo "::error::Set VPS_SSH_KEY or SSH_PRIVATE_KEY in repository secrets"
+            exit 1
           fi
 
       - name: Deploy scripts and restart bot
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ steps.vps.outputs.host }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
+          username: ${{ secrets.VPS_USER || secrets.SSH_USER || 'root' }}
+          key: ${{ secrets.VPS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
           script_stop: true
           script: |

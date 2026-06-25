@@ -9,6 +9,24 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+
+def _analysis_series(analysis: dict[str, Any], key: str) -> list[float]:
+    """Safe array extraction — analysis values may be list or numpy ndarray."""
+    raw = analysis.get(key)
+    if raw is None:
+        return []
+    try:
+        import numpy as np
+
+        if isinstance(raw, np.ndarray):
+            return raw.astype(np.float32).tolist()
+    except Exception:
+        pass
+    if isinstance(raw, (list, tuple)):
+        return [float(x) for x in raw]
+    return []
 
 # tier: 1=weak … 5=best. Default min tier: double (2) and above.
 TIER_LABELS = {
@@ -358,8 +376,8 @@ def discover_vod_kill_banners(vod: Path, *, min_tier: int | None = None) -> list
         return []
     need = min_tier if min_tier is not None else _min_tier()
     win = float(analysis.get("window_seconds", 2.0))
-    motion = np.asarray(analysis.get("center_motion") or [], dtype=np.float32)
-    audio = np.asarray(analysis.get("audio") or [], dtype=np.float32)
+    motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
+    audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
     combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
     motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
     step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "2.5"))

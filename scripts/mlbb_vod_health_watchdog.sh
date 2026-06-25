@@ -50,4 +50,85 @@ if ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
 fi
 
+# Disk emergency — inbox cleanup when root is nearly full (common silence cause).
+DISK_PCT="$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')"
+if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
+  log "disk critical ${DISK_PCT}% — run vps_disk_cleanup"
+  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
+  if [[ -x "$REPO/scripts/vps_disk_cleanup.sh" ]]; then
+    bash "$REPO/scripts/vps_disk_cleanup.sh" >>"$LOG" 2>&1 || true
+  fi
+fi
+
+# Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
+FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+if [[ -f "$FEED_LOG" ]]; then
+  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || echo 0)"
+  if [[ "$CRASH_N" -gt 3 ]]; then
+    log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
+  fi
+fi
+
+# Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
+SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
+TOKEN="$(env_val TG_BOT_TOKEN)"
+CHAT="$(env_val TG_CHAT_ID)"
+if [[ -n "$TOKEN" && -n "$CHAT" && "$SILENCE_SEC" -gt 0 ]]; then
+  python3 - "$SILENCE_SEC" "$TOKEN" "$CHAT" <<'PY' >>"$LOG" 2>&1 || true
+import json, os, re, sys, time, urllib.parse, urllib.request
+from pathlib import Path
+
+silence = int(sys.argv[1])
+token, chat = sys.argv[2], sys.argv[3]
+stamp_path = Path("/root/data/mlbb/vod_silence_alert.json")
+now = time.time()
+
+def last_sent_age() -> float:
+    sent_path = Path("/root/data/mlbb/vod_segment_feed_sent.json")
+    if sent_path.exists():
+        try:
+            data = json.loads(sent_path.read_text(encoding="utf-8"))
+            ts = data.get("updated_at", "")
+            if ts:
+                return now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            pass
+    log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+    if not log_path.exists():
+        return silence + 1
+    last = 0.0
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-8000:]:
+        m = re.search(r"sent=(\d+) vod=", line)
+        if m and int(m.group(1)) > 0:
+            last = now
+    return now - last if last else silence + 1
+
+age = last_sent_age()
+if age < silence:
+    raise SystemExit(0)
+state = {}
+if stamp_path.exists():
+    try:
+        state = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+last_alert = float(state.get("last_alert_ts") or 0)
+if now - last_alert < silence:
+    raise SystemExit(0)
+hours = int(age // 3600)
+msg = (
+    f"⚠️ MLBB VOD: тишина ~{hours}ч — клипов не было.\n"
+    f"Проверь: feed, диск, лог mlbb_vod_segment_feed.log"
+)
+data = urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode()
+urllib.request.urlopen(
+    f"https://api.telegram.org/bot{token}/sendMessage",
+    data=data,
+    timeout=20,
+)
+stamp_path.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
+print(f"silence alert sent age_sec={int(age)}")
+PY
+fi
+
 exit 0

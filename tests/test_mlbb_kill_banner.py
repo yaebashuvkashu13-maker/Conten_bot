@@ -96,7 +96,48 @@ def test_bounds_fallback_without_fight() -> None:
     assert 8.0 <= dur <= 28.0
 
 
-def test_bounds_recenters_banner_not_in_tail() -> None:
+def test_discover_banners_handles_numpy_motion() -> None:
+    import numpy as np
+    import mlbb_kill_banner as kb
+
+    class FakeVod(Path):
+        pass
+
+    vod = FakeVod("/tmp/fake_vod.mp4")
+    fake_analysis = {
+        "duration": 600.0,
+        "window_seconds": 2.0,
+        "center_motion": np.linspace(0.01, 0.5, 300, dtype=np.float32),
+        "audio": np.linspace(0.0, 0.3, 300, dtype=np.float32),
+    }
+
+    def fake_analysis_for(_vod: Path) -> dict:
+        return fake_analysis
+
+    def fake_scan_window(*_a, **_kw):
+        return []
+
+    old = os.environ.get("MLBB_VOD_BANNER_DISCOVER")
+    os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    try:
+        import mlbb_fight_segment as fight
+
+        orig = fight._analysis_for
+        orig_scan = kb.scan_window
+        fight._analysis_for = fake_analysis_for
+        kb.scan_window = fake_scan_window
+        try:
+            hits = kb.discover_vod_kill_banners(vod)
+            assert hits == []
+        finally:
+            fight._analysis_for = orig
+            kb.scan_window = orig_scan
+    finally:
+        if old is None:
+            os.environ.pop("MLBB_VOD_BANNER_DISCOVER", None)
+        else:
+            os.environ["MLBB_VOD_BANNER_DISCOVER"] = old
+
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
