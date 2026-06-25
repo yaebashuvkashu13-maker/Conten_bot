@@ -42,11 +42,23 @@ for row in data.get("vods") or []:
         continue
     if not row.get("exhausted"):
         keep.add(Path(path).name)
-for name in data.get("scanned_vods") or []:
-    keep.add(Path(str(name)).name)
+# scanned_vods history is not kept — exhausted inbox files are safe to delete
 keep_path.write_text("\n".join(sorted(keep)) + ("\n" if keep else ""), encoding="utf-8")
 PY
 fi
+
+# Large feed log slows grep/watchdog.
+FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+if [[ -f "$FEED_LOG" ]]; then
+  SZ=$(stat -c %s "$FEED_LOG" 2>/dev/null || echo 0)
+  if [[ "$SZ" -gt 50000000 ]]; then
+    tail -200000 "$FEED_LOG" >"${FEED_LOG}.tail"
+    mv "${FEED_LOG}.tail" "$FEED_LOG"
+    echo "trimmed feed log to last 200k lines"
+  fi
+fi
+
+find /root/data/mlbb/logs -name '*.log' -size +20M -exec truncate -s 5M {} + 2>/dev/null || true
 
 mapfile -t KEEP_INBOX < <(grep -v '^$' "$KEEP_FILE" 2>/dev/null || true)
 echo "KEEP inbox files: ${#KEEP_INBOX[@]}"

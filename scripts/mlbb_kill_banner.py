@@ -334,11 +334,16 @@ def scan_window(
     return hits
 
 
-def find_banner_near_peak(vod: Path, peak_sec: float) -> KillBannerHit | None:
+def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
-    before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
-    after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
-    hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
+    if quick:
+        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
+        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, deep=False)
+    else:
+        before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
+        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
     if not hits:
         return None
     min_tier = _min_tier()
@@ -417,7 +422,7 @@ def discover_vod_kill_banners(
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         probes += 1
-        hit = find_banner_near_peak(vod, peak)
+        hit = find_banner_near_peak(vod, peak, quick=True)
         if hit:
             _merge_hit(hit)
 
@@ -490,14 +495,20 @@ def filter_peaks_with_ocr_banner(
         for h in (known_banners or [])
         if h.tier >= need and h.source == "ocr"
     ]
-    if not qualified:
-        return []
+    if qualified:
+        kept: list[float] = []
+        for peak in peaks[: max(1, limit)]:
+            for hit in qualified:
+                if (hit.sec - before) <= peak <= (hit.sec + after) or abs(hit.sec - peak) <= before + 5:
+                    kept.append(peak)
+                    break
+        return kept
     kept: list[float] = []
-    for peak in peaks[: max(1, limit)]:
-        for hit in qualified:
-            if (hit.sec - before) <= peak <= (hit.sec + after) or abs(hit.sec - peak) <= before + 5:
-                kept.append(peak)
-                break
+    ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
+    for peak in peaks[: max(1, ocr_cap)]:
+        hit = find_banner_near_peak(vod, peak, quick=True)
+        if hit and hit.source == "ocr" and hit.tier >= need:
+            kept.append(peak)
     return kept
 
 
