@@ -312,19 +312,30 @@ def scan_window(
     *,
     focus_sec: float | None = None,
     deep: bool = False,
+    quick: bool = False,
 ) -> list[KillBannerHit]:
     """Scan [t0, t1] for kill-streak banners; color prefilter then OCR on candidates."""
-    frames = _sample_frames(vod, t0, t1)
+    if quick:
+        deep = False
+        span = max(0.0, t1 - t0)
+        sample_count = max(3, min(6, int(span / 0.5) + 1))
+        frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
+        if not frames:
+            frames = _sample_frames(vod, t0, t1)[:6]
+        max_ocr = 2
+    else:
+        frames = _sample_frames(vod, t0, t1)
+        max_ocr = 6 if deep else 4
     hits: list[KillBannerHit] = []
     frame_map = {sec: frame for sec, frame in frames}
-    for sec in _candidate_secs(frames, focus_sec=focus_sec, max_ocr=6 if deep else 4):
+    for sec in _candidate_secs(frames, focus_sec=focus_sec, max_ocr=max_ocr):
         frame = frame_map.get(sec)
         if frame is None:
             continue
         hit = _classify_frame(sec, frame, deep=deep)
         if hit is not None:
             hits.append(hit)
-    if not hits and frames:
+    if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
             if hit is not None and hit.source == "ocr":
@@ -339,7 +350,7 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
     if quick:
         before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
         after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
-        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, deep=False)
+        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, quick=True)
     else:
         before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
         after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
