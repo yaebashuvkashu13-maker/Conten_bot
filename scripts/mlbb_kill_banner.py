@@ -421,6 +421,17 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
+    # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+        hits.sort(key=lambda h: h.sec)
+        log.info(
+            "banner discover %s: peaks-only probes=%s hits=%s",
+            vod.name,
+            probes,
+            len(hits),
+        )
+        return hits
+
     # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
     if probes < max_probes and time.monotonic() < deadline:
         win = float(analysis.get("window_seconds", 2.0))
