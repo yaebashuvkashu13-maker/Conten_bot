@@ -153,10 +153,13 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
             variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
         for variant in variants:
             for psm in psms:
-                text = pytesseract.image_to_string(
-                    variant,
-                    config=f"--psm {psm} -l eng+rus",
-                )
+                try:
+                    text = pytesseract.image_to_string(
+                        variant,
+                        config=f"--psm {psm} -l eng+rus",
+                    )
+                except Exception:
+                    continue
                 text = " ".join(text.split())
                 if text:
                     texts.append(text)
@@ -593,7 +596,11 @@ def resolve_fight_bounds(
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
 
-    hit = find_banner_near_peak(vod, peak_sec)
+    # Productive mode: motion bounds only — no slow OCR per peak unless banner is mandatory.
+    if not _banner_required() and os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
+        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
+
+    hit = find_banner_near_peak(vod, peak_sec, quick=True)
     min_tier = _min_tier()
     if hit is None:
         if _banner_required():
