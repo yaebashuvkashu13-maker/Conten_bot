@@ -1476,44 +1476,57 @@ def discover_highlight_candidates(
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     if profile == "mobile_legends":
-        from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
+        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
+        if use_discover or use_prefilter:
+            from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
-        start_set = set(starts)
-        banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
-        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
-        if banners:
-            log.info(
-                "highlight banner discover %s: %s tier>=%s hits",
-                video_path.name,
-                len(banners),
-                os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
-            )
-            for hit in banners:
-                start_set.add(max(0.0, hit.sec - lead))
-        starts = sorted(start_set)
-        if starts:
-            before = len(starts)
-            starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
-            log.info(
-                "highlight banner prefilter %s: %s/%s windows",
-                video_path.name,
-                len(starts),
-                before,
-            )
-            if not starts and banners:
-                starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+            start_set = set(starts)
+            banners: list = []
+            if use_discover:
+                banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
+            lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+            if banners:
                 log.info(
-                    "highlight banner prefilter %s: using %s banner anchors (peaks missed)",
+                    "highlight banner discover %s: %s tier>=%s hits",
+                    video_path.name,
+                    len(banners),
+                    os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
+                )
+                for hit in banners:
+                    start_set.add(max(0.0, hit.sec - lead))
+            starts = sorted(start_set)
+            if use_prefilter and starts:
+                before = len(starts)
+                starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                log.info(
+                    "highlight banner prefilter %s: %s/%s windows",
                     video_path.name,
                     len(starts),
-                )
-            if not starts:
-                log.warning(
-                    "highlight %s: banner prefilter 0/%s — skip VOD",
-                    video_path.name,
                     before,
                 )
-                return []
+                if not starts and banners:
+                    starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    log.info(
+                        "highlight banner prefilter %s: using %s banner anchors (peaks missed)",
+                        video_path.name,
+                        len(starts),
+                    )
+                if not starts and os.environ.get("MLBB_VOD_BANNER_SKIP_ON_MISS", "0") == "1":
+                    log.warning(
+                        "highlight %s: banner prefilter 0/%s — skip VOD",
+                        video_path.name,
+                        before,
+                    )
+                    return []
+                if not starts:
+                    cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
+                    starts = sorted(start_set)[:cap]
+                    log.info(
+                        "highlight %s: banner prefilter 0 — keep %s motion peaks",
+                        video_path.name,
+                        len(starts),
+                    )
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 
