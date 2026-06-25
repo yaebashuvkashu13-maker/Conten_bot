@@ -1481,6 +1481,12 @@ def discover_highlight_candidates(
         start_set = set(starts)
         banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
         lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        if not banners:
+            log.warning(
+                "highlight %s: discover found no OCR kill banners — skip VOD",
+                video_path.name,
+            )
+            return []
         if banners:
             log.info(
                 "highlight banner discover %s: %s tier>=%s hits",

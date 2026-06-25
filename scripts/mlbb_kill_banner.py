@@ -490,19 +490,14 @@ def filter_peaks_with_ocr_banner(
         for h in (known_banners or [])
         if h.tier >= need and h.source == "ocr"
     ]
-    if qualified:
-        kept: list[float] = []
-        for peak in peaks[: max(1, limit)]:
-            for hit in qualified:
-                if (hit.sec - before) <= peak <= (hit.sec + after) or abs(hit.sec - peak) <= before + 5:
-                    kept.append(peak)
-                    break
-        return kept
-    kept = []
+    if not qualified:
+        return []
+    kept: list[float] = []
     for peak in peaks[: max(1, limit)]:
-        hit = find_banner_near_peak(vod, peak)
-        if hit and hit.source == "ocr" and hit.tier >= need:
-            kept.append(peak)
+        for hit in qualified:
+            if (hit.sec - before) <= peak <= (hit.sec + after) or abs(hit.sec - peak) <= before + 5:
+                kept.append(peak)
+                break
     return kept
 
 
