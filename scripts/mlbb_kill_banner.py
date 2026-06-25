@@ -385,8 +385,8 @@ def discover_vod_kill_banners(
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "28")))
-    max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "180")))
+    max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "16")))
+    max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
@@ -411,11 +411,15 @@ def discover_vod_kill_banners(
                 return True
         return probes < max_probes and time.monotonic() < deadline
 
-    # Phase 1: scan around stage1 motion peaks (cheap, high yield).
-    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "12")))
+    # Phase 1: narrow scan around stage1 motion peaks (fast).
+    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
     for peak in sorted(set(hint_peaks or []))[:peak_limit]:
-        if not _probe_at(peak, deep=False):
+        if probes >= max_probes or time.monotonic() >= deadline:
             break
+        probes += 1
+        hit = find_banner_near_peak(vod, peak)
+        if hit:
+            _merge_hit(hit)
 
     # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
     if probes < max_probes and time.monotonic() < deadline:
