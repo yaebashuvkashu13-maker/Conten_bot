@@ -115,6 +115,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_BANNER_PRESEND=0 MLBB_VOD_BANNER_SKIP_ON_MISS=0 \
   MLBB_KILL_BANNER_DISCOVER_STEP=5 MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=12 MLBB_KILL_BANNER_DISCOVER_MAX_SEC=90 \
   MLBB_VOD_ZERO_STREAK_SOFTEN=1 MLBB_VOD_ADAPTIVE_NOTIFY=1 MLBB_VOD_EXHAUST_NOTIFY=1 \
+  DAILY_GAME_CYCLE_ENABLED=1 DAILY_MLBB_QUOTA=10 DAILY_PUBG_QUOTA=10 DAILY_STANDOFF_QUOTA=10 \
   MLBB_VOD_MAX_PER_VOD=5 MLBB_VOD_SOFT_MAX_PEAK_TRIES=12 \
   MLBB_VOD_SEGMENT_GAP_SEC=120 MLBB_VOD_LENIENT_UNIFORM=1 MLBB_VOD_TAIL_MIN_HUD_RATE=0.40 \
   MLBB_FORCE_RERENDER=1 MLBB_PRESEND_FREEZE_MIN_DUR=1.2 MLBB_PRESEND_FREEZE_MAX_START=3.0 \
@@ -147,6 +148,11 @@ sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
 printf 'MLBB_VOD_SEARCH_QUERIES="%s"\n' "$VOD_SEARCH_CSV" >>"$ENV_FILE"
 
 install -m 755 \
+  "$REPO/scripts/daily_game_cycle.py" \
+  "$REPO/scripts/daily_cycle_runner.py" \
+  "$REPO/scripts/shooter_vod_segment_feed.py" \
+  "$REPO/scripts/shooter_vod_segment_store.py" \
+  "$REPO/scripts/youtube_shooter_vod_prefs.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_intervals.py" \
@@ -218,7 +224,7 @@ export LOGO_FILE=/nonexistent/mlbb_calibration_no_logo.png
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 IDLE_SEC="${MLBB_VOD_IDLE_SEC:-25}"
 while true; do
-  python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
+  python3 -u /usr/local/bin/daily_cycle_runner.py \
     >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
   sleep "$IDLE_SEC"
 done

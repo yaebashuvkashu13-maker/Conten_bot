@@ -688,8 +688,24 @@ def bootstrap_exemplar_segments() -> list[dict]:
     return rows
 
 
-def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: str) -> bool:
+def send_video(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    seg_id: str,
+    record_learning: bool = True,
+) -> bool:
     from mlbb_learning_first import can_send, record_send
+
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+        from daily_game_cycle import can_send_for_game, record_send as cycle_record_send
+
+        ok_cycle, cycle_reason = can_send_for_game("mlbb", 1)
+        if not ok_cycle:
+            log.warning("send blocked seg=%s cycle=%s", seg_id, cycle_reason)
+            return False
 
     ok_send, reason = can_send(1)
     if not ok_send:
@@ -735,7 +751,12 @@ def send_video(token: str, chat_id: str, path: Path, caption: str, *, seg_id: st
     try:
         sent = bool(json.loads(result.stdout).get("ok"))
         if sent:
-            record_send(1)
+            if record_learning:
+                record_send(1)
+            if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+                from daily_game_cycle import record_send as cycle_record_send
+
+                cycle_record_send("mlbb", 1)
         return sent
     except json.JSONDecodeError:
         return False
@@ -1878,6 +1899,18 @@ def main() -> int:
 
 
 def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+        from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+
+        reset_if_new_day()
+        if active_game() != "mlbb":
+            log.info("daily cycle: active_game=%s — mlbb feed idle", active_game())
+            return 0
+        ok_mlbb, why = can_send_for_game("mlbb", 1)
+        if not ok_mlbb:
+            log.info("daily cycle mlbb blocked: %s", why)
+            return 0
+
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"

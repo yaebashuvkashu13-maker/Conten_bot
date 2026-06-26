@@ -300,6 +300,60 @@ def pubg_rejects_bot_farm(
     return False, "", out
 
 
+def pubg_pov_engagement_ok(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    gunfire_density: float,
+    center_motion: float,
+    shoot_metrics: dict | None = None,
+) -> tuple[bool, str, dict[str, Any]]:
+    """
+    Reject distant/background firefights: high gun audio but low POV engagement.
+
+    Signals (research + owner calibration):
+    - center_motion: crosshair/aim movement in viewport center
+    - gunfire spread across quarters (not a single distant burst)
+    - visual hit_flash / weapon_edge from pubg_combat_visual_strict
+    """
+    if os.environ.get("PUBG_POV_GATE", "1") != "1":
+        return True, "pov_gate_off", {}
+
+    shoot_metrics = shoot_metrics or {}
+    min_motion = float(os.environ.get("PUBG_POV_MIN_CENTER_MOTION", "0.028"))
+    min_gun = float(os.environ.get("PUBG_POV_MIN_GUN_FOR_MOTION", "0.055"))
+    out: dict[str, Any] = {
+        "center_motion": round(center_motion, 4),
+        "gunfire_density": round(gunfire_density, 4),
+    }
+
+    clusters, quarters_active, span_ratio = _gunfire_pvp_shape(video_path, start_sec, duration_sec)
+    out.update(
+        {
+            "gunfire_clusters": clusters,
+            "gunfire_quarters_active": quarters_active,
+            "gunfire_span_ratio": round(span_ratio, 3),
+        }
+    )
+
+    # Background gunfire: loud audio but static crosshair / single quarter
+    if gunfire_density >= min_gun and center_motion < min_motion:
+        if quarters_active < 2 and clusters < 2:
+            return (
+                False,
+                f"background_gunfire motion={center_motion:.3f} quarters={quarters_active}",
+                out,
+            )
+
+    # Distant fight: gunfire only in one temporal cluster, no spread
+    min_span = float(os.environ.get("PUBG_POV_MIN_SPAN_RATIO", "0.25"))
+    if gunfire_density >= min_gun and span_ratio < min_span and center_motion < min_motion * 1.2:
+        return False, f"distant_fight span={span_ratio:.2f}", out
+
+    return True, "pov_engagement_ok", out
+
+
 def pubg_passes_combat_gate(
     video_path: Path,
     start_sec: float,
@@ -392,6 +446,18 @@ def pubg_passes_combat_gate(
         out["bot_farm"] = bot_row
         if bot_reject:
             return False, bot_reason, out
+
+        pov_ok, pov_reason, pov_row = pubg_pov_engagement_ok(
+            video_path,
+            start_sec,
+            duration_sec,
+            gunfire_density=gun_density,
+            center_motion=center_motion,
+            shoot_metrics=shoot_row,
+        )
+        out["pov_engagement"] = pov_row
+        if not pov_ok:
+            return False, pov_reason, out
 
     out["pass"] = True
     return True, f"combat_ok=gun{panns_gun:.3f}:burst{shoot_row.get('burst_ratio')}", out

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Dispatch one VOD feed iteration for the active daily game (MLBB → PUBG → Standoff)."""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from daily_game_cycle import active_game, enabled, reset_if_new_day, status_summary
+from youtube_download import load_env
+
+log = logging.getLogger("daily_cycle_runner")
+ENV_PATH = Path("/root/.video_bot.env")
+SCRIPTS = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml")) / "scripts"
+
+
+def _notify_switch(token: str, chat_id: str, game: str) -> None:
+    from mlbb_vod_segment_feed import send_message
+
+    labels = {"mlbb": "MLBB", "pubg": "PUBG", "standoff": "Standoff 2"}
+    send_message(
+        token,
+        chat_id,
+        f"🔄 Дневной цикл: активна игра {labels.get(game, game)}\n"
+        f"Квоты: {status_summary()['remaining']}",
+    )
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if not enabled():
+        proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
+        return proc.returncode
+
+    reset_if_new_day()
+    game = active_game()
+    env = {**os.environ, **load_env(ENV_PATH)}
+    token = env.get("TG_BOT_TOKEN", "").strip()
+    chat_id = env.get("TG_CHAT_ID", "").strip()
+
+    if game is None:
+        log.info("all daily quotas done — idle")
+        if token and chat_id:
+            from mlbb_vod_segment_feed import send_message
+
+            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff выполнены. Жду 00:00.")
+        return 0
+
+    notify_key = f"active_{game}_{status_summary()['day']}"
+    from daily_game_cycle import load_state, save_state
+
+    state = load_state()
+    if state.get("notified", {}).get("active_game") != game:
+        if token and chat_id:
+            _notify_switch(token, chat_id, game)
+        notified = state.setdefault("notified", {})
+        notified["active_game"] = game
+        save_state(state)
+
+    if game == "mlbb":
+        script = SCRIPTS / "mlbb_vod_segment_feed.py"
+    else:
+        script = SCRIPTS / "shooter_vod_segment_feed.py"
+        env["VOD_SEGMENT_GAME"] = game
+
+    proc = subprocess.run(
+        [sys.executable, "-u", str(script)] + ([] if game == "mlbb" else [game]),
+        env=env,
+        check=False,
+    )
+    return proc.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
