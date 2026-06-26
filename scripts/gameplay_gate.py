@@ -1178,7 +1178,9 @@ def segment_is_valid_for_montage(
                 if not ok_tt:
                     return False, tt_reason
             strict_gun = gunfire_density >= min_gun and burst_ratio >= min_burst
-            heuristic_gun = owner_reason in ("fight_audio", "light_combat")
+            heuristic_gun = owner_reason in ("fight_audio", "light_combat", "sniper_hold") or owner_reason.startswith(
+                "relax_"
+            )
             if not strict_gun and not heuristic_gun:
                 if owner_reason == "sniper_hold" and center_motion >= 0.030:
                     pass
