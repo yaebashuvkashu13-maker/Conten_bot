@@ -42,7 +42,10 @@ if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
 fi
 
-if ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
+  && ! pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
+  && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1 \
+  && ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   log "restart vod supervisor"
   pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
   sleep 1

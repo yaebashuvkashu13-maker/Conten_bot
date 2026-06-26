@@ -49,6 +49,8 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
   fi
   VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
   if ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \
+    && ! pgrep -f "daily_cycle_runner.py" >/dev/null 2>&1 \
+    && ! pgrep -f "shooter_vod_segment_feed.py" >/dev/null 2>&1 \
     && ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
     if [[ -x "$VOD_WRAPPER" ]]; then
       nohup "$VOD_WRAPPER" >>/root/data/mlbb/vod_only_watchdog.log 2>&1 &
