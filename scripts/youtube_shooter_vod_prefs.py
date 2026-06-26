@@ -17,6 +17,16 @@ PUBG_TITLE_RE = re.compile(
     r"pubg|playerunknown|battlegrounds|metro\s*royale|пабг|метро\s*роял",
     re.I,
 )
+METRO_VAGUE_TITLE_RE = re.compile(
+    r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
+    r"обзор|гайд|guide|story|история|сюжет",
+    re.I,
+)
+CLASSIC_MODE_TITLE_RE = re.compile(
+    r"\b(erangel|livik|sanhok|miramar|vikendi|classic\s+mode|"
+    r"ranked\s+classic|эрангель|ливик)\b",
+    re.I,
+)
 STANDOFF_TITLE_RE = re.compile(r"standoff\s*2|standoff2|стендоф", re.I)
 LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs|grand finals", re.I)
 BAD_TITLE_RE = re.compile(
@@ -71,6 +81,8 @@ def title_ok(game: str, title: str) -> bool:
     if g == "standoff":
         return bool(STANDOFF_TITLE_RE.search(t))
     if g == "pubg":
+        if CLASSIC_MODE_TITLE_RE.search(t) or METRO_VAGUE_TITLE_RE.search(t):
+            return False
         return has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))
     return False
 

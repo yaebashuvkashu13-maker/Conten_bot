@@ -152,10 +152,32 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
     dur = _ffprobe_duration(rendered)
     if dur <= 0:
         dur = float(row.get("duration", 15))
+    if game == "pubg":
+        from pubg_metro_royale_gate import segment_looks_metro_royale
+
+        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+        if not ok_metro:
+            return False, metro_reason, {"metro": metro_reason}
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     if not ok:
         return False, reason, metrics
     return True, "shooter_combat_ok", metrics
+
+
+def _used_peak_times(vod_id: str, blocked_ids: set[str]) -> list[float]:
+    peaks: list[float] = []
+    for sid in blocked_ids:
+        if not sid.startswith(f"{vod_id}_"):
+            continue
+        try:
+            peaks.append(float(sid.rsplit("_", 1)[1]))
+        except ValueError:
+            continue
+    return peaks
+
+
+def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> bool:
+    return any(abs(peak - p) <= gap_sec for p in used_peaks)
 
 
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
@@ -178,6 +200,11 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             continue
         peak = int(row.get("peak_start", row["start"]))
         caption = (
+            f"{game.upper()} Metro Royale #{sid}\n"
+            f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
+            f"Metro ✓ | {presend_reason}\n"
+            f"👍 Ок / 👎 Не ок"
+        ) if game == "pubg" else (
             f"{game.upper()} кусок #{sid}\n"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
             f"POV combat ✓ | {presend_reason}\n"
@@ -235,6 +262,9 @@ def _scan_vod(
         return 0
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
+    seg_gap = float(os.environ.get("SHOOTER_VOD_SEGMENT_GAP_SEC", "45"))
+    vid = vod_youtube_id(vod)
+    used_peaks = _used_peak_times(vid, labeled | sent_set)
     skip_peaks: set[float] = set()
     peak_tries = 0
     max_tries = soft_max_peak_tries() if soften_level > 0 else 1
@@ -244,6 +274,8 @@ def _scan_vod(
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
+                continue
+            if _peak_too_close(peak, used_peaks, seg_gap):
                 continue
             start = max(0.0, peak - lead)
             sid = segment_id(vod_youtube_id(vod), start)
@@ -294,6 +326,19 @@ def _scan_vod_with_adaptive(
         telegram_exhaust_notice,
         telegram_soften_notice,
     )
+
+    if game == "pubg":
+        from pubg_metro_royale_gate import vod_looks_metro_royale
+
+        ok_metro, metro_reason = vod_looks_metro_royale(vod)
+        if not ok_metro:
+            log.warning("metro reject scan vod=%s reason=%s", vod.name, metro_reason)
+            for entry in state.get("vods", []):
+                if entry.get("path") == str(vod) or entry.get("id") == vid:
+                    entry["exhausted"] = True
+                    entry["reject_reason"] = metro_reason
+            _save_state(game, state)
+            return 0
 
     streak_in = streak_from_state(state)
     prev_level = int(state.get("last_adaptive_level") or 0)
@@ -357,6 +402,17 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
+        if game == "pubg":
+            from pubg_metro_royale_gate import vod_looks_metro_royale
+
+            ok_metro, metro_reason = vod_looks_metro_royale(mp4)
+            if not ok_metro:
+                log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
+                if entry:
+                    entry["exhausted"] = True
+                    entry["reject_reason"] = metro_reason
+                    _save_state(game, state)
+                continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         if n > 0:
             print(f"pipeline done sent={n} vods=1 game={game}")
@@ -374,6 +430,33 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
+
+    if game == "pubg":
+        from pubg_metro_royale_gate import vod_looks_metro_royale
+
+        ok_metro, metro_reason = vod_looks_metro_royale(vod)
+        if not ok_metro:
+            log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)
+            send_message(
+                token,
+                chat_id,
+                f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
+            )
+            registry.append(
+                {
+                    "id": pick["id"],
+                    "path": str(vod),
+                    "title": pick.get("title", ""),
+                    "exhausted": True,
+                    "reject_reason": metro_reason,
+                }
+            )
+            used.add(pick["id"])
+            state["vods"] = registry
+            state["used_youtube_ids"] = sorted(used)
+            _save_state(game, state)
+            print(f"pipeline done sent=0 vods=1 game={game} metro_reject=1")
+            return 0
 
     registry.append(
         {
