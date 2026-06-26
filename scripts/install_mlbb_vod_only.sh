@@ -137,6 +137,11 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   fi
 done
 
+# EU split-server: MLBB on server 1, PUBG/Standoff on server 2 — keep MLBB quota at 0.
+if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]]; then
+  sed -i 's/^DAILY_MLBB_QUOTA=.*/DAILY_MLBB_QUOTA=0/' "$ENV_FILE"
+fi
+
 VOD_SEARCH_CSV="$(python3 - <<PY
 import sys
 sys.path.insert(0, "$REPO/scripts")

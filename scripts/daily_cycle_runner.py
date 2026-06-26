@@ -31,15 +31,21 @@ def _notify_switch(token: str, chat_id: str, game: str) -> None:
     )
 
 
+def _load_runtime_env() -> dict[str, str]:
+    env = {**os.environ, **load_env(ENV_PATH)}
+    os.environ.update(env)
+    return env
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    env = _load_runtime_env()
     if not enabled():
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode
 
     reset_if_new_day()
     game = active_game()
-    env = {**os.environ, **load_env(ENV_PATH)}
     token = env.get("TG_BOT_TOKEN", "").strip()
     chat_id = env.get("TG_CHAT_ID", "").strip()
 
