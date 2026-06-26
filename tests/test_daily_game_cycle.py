@@ -66,6 +66,18 @@ def test_reset_new_day(isolated_state: Path) -> None:
         assert cycle.send_count("mlbb") == 0
 
 
+def test_today_key_uses_moscow(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import datetime
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return datetime(2026, 6, 26, 23, 30, tzinfo=tz)
+
+    monkeypatch.setattr(cycle, "datetime", FakeDatetime)
+    assert cycle._today_key() == "2026-06-26"
+
+
 def test_disabled_cycle_allows_all(isolated_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DAILY_GAME_CYCLE_ENABLED", "0")
     ok, reason = cycle.can_send_for_game("standoff", 1)

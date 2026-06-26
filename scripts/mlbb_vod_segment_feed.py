@@ -696,6 +696,7 @@ def send_video(
     *,
     seg_id: str,
     record_learning: bool = True,
+    reply_markup: dict | None = None,
 ) -> bool:
     from mlbb_learning_first import can_send, record_send
 
@@ -741,7 +742,7 @@ def send_video(
         "-F",
         f"caption={caption[:900]}",
         "-F",
-        f"reply_markup={json.dumps(inline_keyboard_markup(seg_id), ensure_ascii=False)}",
+        f"reply_markup={json.dumps(reply_markup or inline_keyboard_markup(seg_id), ensure_ascii=False)}",
         "-F",
         f"video=@{deliver}",
         url,

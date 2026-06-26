@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Daily multi-game VOD cycle: MLBB → PUBG → Standoff, reset at local midnight."""
+"""Daily multi-game VOD cycle: MLBB → PUBG → Standoff, reset at Moscow midnight."""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+MSK = ZoneInfo("Europe/Moscow")
 
 DATA_ROOT = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
 
@@ -24,7 +27,7 @@ GAME_PROFILE = {
 
 
 def _today_key() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(MSK).strftime("%Y-%m-%d")
 
 
 def enabled() -> bool:

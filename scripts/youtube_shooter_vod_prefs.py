@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""YouTube discovery for PUBG / Standoff ranked VOD segments (3–20 min window)."""
+"""YouTube discovery for PUBG Metro Royale / Standoff ranked VOD segments (3–20 min window)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import os
 import re
 from urllib.parse import quote_plus
 
+from youtube_game_prefs import has_metro_royale
 from youtube_mlbb_vod_prefs import (
     YOUTUBE_DURATION_SP_4_TO_20,
     YOUTUBE_FRESHNESS_SP_THIS_MONTH,
@@ -25,11 +26,12 @@ BAD_TITLE_RE = re.compile(
 )
 
 PUBG_CORE_QUERIES = (
-    "PUBG Mobile ranked gameplay full match",
     "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile squad fight ranked match replay",
-    "PUBG Mobile TPP ranked full game no montage",
+    "PUBG Mobile Metro Royale full match",
+    "PUBG Mobile Metro Royale squad fight ranked",
+    "PUBG Mobile Metro Royale TPP ranked replay",
     "метро рояль пабг мобайл ранкед матч",
+    "метро рояль пабг мобайл полный матч",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -40,9 +42,9 @@ STANDOFF_CORE_QUERIES = (
 )
 
 PUBG_ANGLE_QUERIES = (
-    "PUBG Mobile sniper ranked gameplay",
-    "PUBG Mobile close range fight ranked",
-    "PUBG Mobile final circle ranked match",
+    "PUBG Mobile Metro Royale sniper fight",
+    "PUBG Mobile Metro Royale close range fight",
+    "PUBG Mobile Metro Royale final circle ranked",
 )
 
 STANDOFF_ANGLE_QUERIES = (
@@ -65,7 +67,9 @@ def title_ok(game: str, title: str) -> bool:
     g = game.strip().lower()
     if g == "standoff":
         return bool(STANDOFF_TITLE_RE.search(t))
-    return bool(PUBG_TITLE_RE.search(t))
+    if g == "pubg":
+        return has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))
+    return False
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:

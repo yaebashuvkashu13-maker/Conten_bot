@@ -516,6 +516,217 @@ def _mlbb_apply_vseg_label(
     )
 
 
+def _shooter_apply_vseg_label(
+    game: str,
+    chat_id: str | int,
+    segment_id: str,
+    *,
+    is_good: bool,
+    reason: str = '',
+) -> tuple[bool, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from shooter_vod_segment_store import apply_owner_label, stats
+
+    game = game.strip().lower()
+    sid = segment_id.strip()
+    ok, _label = apply_owner_label(
+        game,
+        sid,
+        is_good=is_good,
+        reason=reason,
+        by_chat=str(chat_id),
+    )
+    s = stats(game)
+    if not ok:
+        return False, f'Не нашёл {game.upper()} кусок {sid}.'
+    if is_good:
+        return True, (
+            f'✅ Ок — {game.upper()} #{sid}\n'
+            f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+        )
+    return True, (
+        f'❌ Не ок — {game.upper()} #{sid}\n'
+        f'Причина: {reason or "—"}\n'
+        f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+    )
+
+
+def _shooter_send_vseg_hq_file(game: str, chat_id: str | int, segment_id: str) -> bool:
+    from mlbb_telegram_video import send_hq_files
+    from shooter_vod_segment_store import find_segment
+
+    game = game.strip().lower()
+    sid = segment_id.strip()
+    row = find_segment(game, sid)
+    if not row:
+        return False
+    path = Path(str(row.get('path', '')))
+    if not path.exists():
+        return False
+    caption = (
+        f'{game.upper()} HQ файл #{sid}\n'
+        f"VOD {row.get('vod_id') or sid.rsplit('_', 1)[0]}\n"
+        f"peak={row.get('peak_start') or row.get('start', '?')}s"
+    )
+    return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
+
+
+def _handle_shooter_vseg_callback(
+    game: str,
+    data: str,
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+) -> bool:
+    """Handle pubg_vseg_* / standoff_vseg_* callbacks. Returns True if handled."""
+    prefix = f'{game.strip().lower()}_vseg'
+    if not data.startswith(f'{prefix}_'):
+        return False
+
+    if data.startswith(f'{prefix}_hq:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+            if not ok:
+                send_message(
+                    chat_id,
+                    f'HQ файл для {game.upper()} #{item_id} не отправился (нет файла на диске).',
+                )
+        except Exception as exc:
+            logging.exception('%s_vseg_hq callback failed data=%s', game, data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_bad:'):
+        try:
+            _, item_id, reason = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return True
+        from mlbb_calibration_store import DISLIKE_REASON_CODES
+        from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
+
+        if reason not in DISLIKE_REASON_CODES:
+            reason = 'other'
+        try:
+            ok, reply = _shooter_apply_vseg_label(
+                game, chat_id, item_id, is_good=False, reason=reason
+            )
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return True
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': '❌ Записано'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': shooter_markup(game, 'bad', reason=reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('%s_vseg_bad callback failed data=%s', game, data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    is_good: bool | None = None
+    item_id = ''
+    reason = ''
+    if data.startswith(f'{prefix}_yes:'):
+        is_good = True
+        item_id = data.split(':', 1)[1].strip()
+    elif data.startswith(f'{prefix}_no:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            _show_dislike_reason_picker(
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                item_id=item_id,
+                callback_prefix=f'{prefix}_bad',
+            )
+        except Exception as exc:
+            logging.exception('%s_vseg_no picker failed seg=%s', game, item_id)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+    else:
+        return False
+
+    try:
+        ok, reply = _shooter_apply_vseg_label(
+            game, chat_id, item_id, is_good=is_good, reason=reason
+        )
+        from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
+
+        markup = shooter_markup(
+            game,
+            'good' if is_good else 'bad',
+            reason=reason,
+            segment_id=item_id if is_good else '',
+        )
+        alert = '✅ Ок' if is_good else '❌ Не ок'
+        if not ok:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                timeout=15,
+            )
+            return True
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': alert},
+            timeout=15,
+        )
+        api_call(
+            'editMessageReplyMarkup',
+            {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'reply_markup': markup,
+            },
+            timeout=15,
+        )
+    except Exception as exc:
+        logging.exception('%s_vseg_yes callback failed data=%s', game, data)
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+            timeout=15,
+        )
+    return True
+
+
 def _mlbb_apply_owner_label(
     chat_id: str | int,
     video_id: str,
@@ -680,6 +891,16 @@ def handle_callback_query(query: dict) -> None:
         except Exception:
             pass
         return
+
+    for shooter_game in ('pubg', 'standoff'):
+        if _handle_shooter_vseg_callback(
+            shooter_game,
+            data,
+            chat_id=chat_id,
+            message_id=message_id,
+            query_id=query_id,
+        ):
+            return
 
     if data.startswith('mlbb_hq:'):
         item_id = data.split(':', 1)[1].strip()

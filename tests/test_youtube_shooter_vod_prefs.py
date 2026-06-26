@@ -13,6 +13,7 @@ from youtube_shooter_vod_prefs import title_ok, vod_discovery_search_cycle  # no
 
 def test_pubg_title_ok() -> None:
     assert title_ok("pubg", "PUBG Mobile Metro Royale ranked gameplay")
+    assert not title_ok("pubg", "PUBG Mobile ranked gameplay full match")
     assert not title_ok("pubg", "Mobile Legends mythic ranked")
 
 

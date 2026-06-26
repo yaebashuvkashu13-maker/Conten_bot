@@ -9,7 +9,6 @@ import re
 import time
 from pathlib import Path
 
-from mlbb_vod_segment_store import inline_keyboard_markup, stats as mlbb_stats
 
 
 def _game_root(game: str) -> Path:
@@ -111,6 +110,71 @@ def upsert_segment(game: str, row: dict) -> None:
     p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def save_labels(game: str, data: dict) -> None:
+    p = _paths(game)["labels"]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def find_segment(game: str, segment_id_str: str) -> dict | None:
+    sid = segment_id_str.strip()
+    for row in load_index(game).get("segments", []):
+        if row.get("segment_id") == sid:
+            return row
+    direct = _paths(game)["segments"] / f"seg_{sid}.mp4"
+    if direct.exists():
+        return {"segment_id": sid, "path": str(direct), "start": 0, "score": 0}
+    return None
+
+
+def apply_owner_label(
+    game: str,
+    segment_id_str: str,
+    *,
+    is_good: bool,
+    reason: str = "",
+    by_chat: str = "",
+) -> tuple[bool, str]:
+    row = find_segment(game, segment_id_str)
+    if not row:
+        return False, f"unknown_segment:{segment_id_str}"
+    path = Path(row.get("path", ""))
+    if not path.exists():
+        path = _paths(game)["segments"] / f"seg_{segment_id_str}.mp4"
+    if not path.exists():
+        return False, f"file_missing:{segment_id_str}"
+
+    labels = load_labels(game)
+    entry = {
+        "segment_id": segment_id_str,
+        "path": str(path),
+        "vod": row.get("vod", ""),
+        "start": row.get("start", 0),
+        "score": row.get("score", 0),
+        "reason": reason,
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "by_chat": by_chat,
+        "source": "vod_segment",
+        "game": game.strip().lower(),
+    }
+    feedback = {**entry, "owner_label": "yes" if is_good else "no"}
+
+    labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
+    labels["feedback"].append(feedback)
+
+    if is_good:
+        labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
+        labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
+        labels["good"].append(entry)
+    else:
+        labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
+        labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
+        labels["bad"].append(entry)
+
+    save_labels(game, labels)
+    return True, "good" if is_good else "bad"
+
+
 def stats(game: str) -> dict:
     data = load_labels(game)
     yes = sum(1 for f in data.get("feedback", []) if f.get("owner_label") in ("yes", "good"))
@@ -118,5 +182,42 @@ def stats(game: str) -> dict:
     return {"feedback_yes": yes, "feedback_no": no, "game": game}
 
 
-def keyboard(seg_id: str) -> dict:
-    return inline_keyboard_markup(seg_id)
+def _callback_prefix(game: str) -> str:
+    return f"{game.strip().lower()}_vseg"
+
+
+def inline_keyboard_markup(game: str, segment_id_str: str) -> dict:
+    sid = segment_id_str.strip()
+    prefix = _callback_prefix(game)
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "👍 Ок", "callback_data": f"{prefix}_yes:{sid}"},
+                {"text": "👎 Не ок", "callback_data": f"{prefix}_no:{sid}"},
+            ]
+        ]
+    }
+
+
+def labeled_keyboard_markup(
+    game: str,
+    label: str,
+    *,
+    reason: str = "",
+    segment_id: str = "",
+) -> dict:
+    from mlbb_calibration_store import dislike_reason_label
+
+    prefix = _callback_prefix(game)
+    if label == "good":
+        sid = segment_id.strip()
+        rows: list[list[dict]] = [[{"text": "✅ Ок", "callback_data": "mlbb_noop"}]]
+        if sid:
+            rows.append([{"text": "📁 HQ файл", "callback_data": f"{prefix}_hq:{sid}"}])
+        return {"inline_keyboard": rows}
+    mark = f"❌ {dislike_reason_label(reason)}"
+    return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
+
+
+def keyboard(game: str, seg_id: str) -> dict:
+    return inline_keyboard_markup(game, seg_id)

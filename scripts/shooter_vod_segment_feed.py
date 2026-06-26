@@ -32,6 +32,7 @@ from mlbb_vod_segment_feed import (
 )
 from pubg_combat_gate import pubg_passes_combat_gate
 from shooter_vod_segment_store import (
+    keyboard,
     labeled_ids,
     load_feed_sent,
     mark_feed_sent,
@@ -181,7 +182,15 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             f"POV combat ✓ | {presend_reason}\n"
             f"👍 Ок / 👎 Не ок"
         )
-        if send_video(token, chat_id, out, caption, seg_id=sid, record_learning=False):
+        if send_video(
+            token,
+            chat_id,
+            out,
+            caption,
+            seg_id=sid,
+            record_learning=False,
+            reply_markup=keyboard(game, sid),
+        ):
             upsert_segment(
                 game,
                 {
