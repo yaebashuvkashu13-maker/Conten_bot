@@ -697,21 +697,25 @@ def send_video(
     seg_id: str,
     record_learning: bool = True,
     reply_markup: dict | None = None,
+    cycle_game: str | None = None,
 ) -> bool:
     from mlbb_learning_first import can_send, record_send
+
+    game = (cycle_game or os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
 
     if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
         from daily_game_cycle import can_send_for_game, record_send as cycle_record_send
 
-        ok_cycle, cycle_reason = can_send_for_game("mlbb", 1)
+        ok_cycle, cycle_reason = can_send_for_game(game, 1)
         if not ok_cycle:
-            log.warning("send blocked seg=%s cycle=%s", seg_id, cycle_reason)
+            log.warning("send blocked seg=%s cycle=%s game=%s", seg_id, cycle_reason, game)
             return False
 
-    ok_send, reason = can_send(1)
-    if not ok_send:
-        log.warning("send blocked seg=%s reason=%s", seg_id, reason)
-        return False
+    if record_learning:
+        ok_send, reason = can_send(1)
+        if not ok_send:
+            log.warning("send blocked seg=%s reason=%s", seg_id, reason)
+            return False
     deliver = path
     if path.stat().st_size > TELEGRAM_MAX_BYTES:
         from mlbb_telegram_video import compress_for_inline_video
@@ -757,7 +761,7 @@ def send_video(
             if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
                 from daily_game_cycle import record_send as cycle_record_send
 
-                cycle_record_send("mlbb", 1)
+                cycle_record_send(game, 1)
         return sent
     except json.JSONDecodeError:
         return False

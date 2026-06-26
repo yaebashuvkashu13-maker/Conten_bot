@@ -144,6 +144,11 @@ def pubg_passes_owner_heuristics(
     center_motion: float,
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
+    if os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0") == "1":
+        if gunfire_density >= 0.040 and burst_ratio >= 3.5:
+            return True, f"relax_fight=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+        if gunfire_density >= 0.055:
+            return True, "relax_fight_audio"
     if audio_rms > 0.050 and gunfire_density < 0.015:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if center_motion > 0.22 and gunfire_density < 0.052:

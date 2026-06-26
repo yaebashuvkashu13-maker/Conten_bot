@@ -23,7 +23,8 @@ BAD_TITLE_RE = re.compile(
     r"giveaway|#short\b|shorts\b|tiktok\b|montage|compilation|tutorial|"
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
-    r"guide|обзор|trick|совет",
+    r"guide|обзор|trick|совет|"
+    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден",
     re.I,
 )
 

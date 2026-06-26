@@ -27,6 +27,7 @@ def test_soften_after_two_zero_vods(monkeypatch: pytest.MonkeyPatch) -> None:
     assert soften_level(1) == 0
     assert soften_level(2) == 1
     assert soften_level(3) == 2
+    assert soften_level(6) == 3
 
 
 def test_adaptive_env_applies_menu_relax(monkeypatch: pytest.MonkeyPatch) -> None:

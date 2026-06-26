@@ -60,10 +60,22 @@ def streak_threshold() -> int:
     return max(1, int(raw))
 
 
+# Level 3: long zero streak — trust gun audio, skip run/loot owner heuristics.
+SHOOTER_SOFTEN_L3: dict[str, str] = {
+    **SHOOTER_SOFTEN_L2,
+    "VISUAL_MENU_OVERLAY_MAX": "0.85",
+    "PUBG_RELAX_OWNER_HEURISTICS": "1",
+    "SMART_PUBG_MAX_RUN_MOTION": "0.30",
+    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.040",
+}
+
+
 def soften_level(streak: int) -> int:
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 4:
+        return 3
     if streak >= need + 1:
         return 2
     return 1
@@ -72,6 +84,8 @@ def soften_level(streak: int) -> int:
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
+    if level >= 3:
+        return dict(SHOOTER_SOFTEN_L3)
     if level >= 2:
         return dict(SHOOTER_SOFTEN_L2)
     return dict(SHOOTER_SOFTEN_L1)

@@ -191,6 +191,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             seg_id=sid,
             record_learning=False,
             reply_markup=keyboard(game, sid),
+            cycle_game=game,
         ):
             upsert_segment(
                 game,
@@ -208,7 +209,6 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
                 },
             )
             mark_feed_sent(game, [sid])
-            cycle_record_send(game, 1)
             sent += 1
     st = stats(game)
     if sent:
