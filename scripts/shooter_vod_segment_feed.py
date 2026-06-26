@@ -43,6 +43,7 @@ from shooter_vod_segment_store import (
     _paths,
 )
 from strict_montage_direct import discover_strict_candidates, file_sha256
+from shooter_vod_adaptive_gate import soft_max_peak_tries
 from youtube_download import load_env
 from youtube_shooter_vod_prefs import title_ok, vod_discovery_search_cycle
 
@@ -215,7 +216,15 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
-def _scan_vod(game: str, token: str, chat_id: str, vod: Path, env: dict[str, str]) -> int:
+def _scan_vod(
+    game: str,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    env: dict[str, str],
+    *,
+    soften_level: int = 0,
+) -> int:
     profile = _profile(game)
     sig = file_sha256(vod)
     labeled = labeled_ids(game)
@@ -225,25 +234,109 @@ def _scan_vod(game: str, token: str, chat_id: str, vod: Path, env: dict[str, str
         log.info("no candidates %s", vod.name)
         return 0
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
-    rows: list[dict] = []
-    for clip in pool[: int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))]:
-        peak = float(clip.get("start", 0))
-        start = max(0.0, peak - lead)
-        sid = segment_id(vod_youtube_id(vod), start)
-        if sid in labeled or sid in sent_set:
-            continue
-        rows.append(
-            {
-                "segment_id": sid,
-                "start": start,
-                "peak_start": peak,
-                "score": float(clip.get("score", 0)),
-                "clip": {**clip, "start": start, "peak_start": peak},
-            }
+    probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
+    skip_peaks: set[float] = set()
+    peak_tries = 0
+    max_tries = soft_max_peak_tries() if soften_level > 0 else 1
+
+    while peak_tries < max_tries:
+        rows: list[dict] = []
+        for clip in pool[:probe_limit]:
+            peak = float(clip.get("start", 0))
+            if any(abs(peak - s) <= 4.0 for s in skip_peaks):
+                continue
+            start = max(0.0, peak - lead)
+            sid = segment_id(vod_youtube_id(vod), start)
+            if sid in labeled or sid in sent_set:
+                continue
+            rows.append(
+                {
+                    "segment_id": sid,
+                    "start": start,
+                    "peak_start": peak,
+                    "score": float(clip.get("score", 0)),
+                    "clip": {**clip, "start": start, "peak_start": peak},
+                }
+            )
+        if not rows:
+            return 0
+        rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
+        n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
+        if n > 0:
+            return n
+        if soften_level <= 0:
+            break
+        skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
+        peak_tries += 1
+        log.warning(
+            "presend rejected peak — try next (%s/%s) vod=%s game=%s",
+            peak_tries,
+            max_tries,
+            vod.name,
+            game,
         )
-    if not rows:
-        return 0
-    return _send_batch(game, token, chat_id, vod, rows, sig)
+    return 0
+
+
+def _scan_vod_with_adaptive(
+    game: str,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    env: dict[str, str],
+    state: dict,
+) -> int:
+    from shooter_vod_adaptive_gate import (
+        adaptive_env,
+        record_vod_outcome,
+        should_notify_soften,
+        streak_from_state,
+        telegram_exhaust_notice,
+        telegram_soften_notice,
+    )
+
+    streak_in = streak_from_state(state)
+    prev_level = int(state.get("last_adaptive_level") or 0)
+    active_level = 0
+    sent = 0
+
+    with adaptive_env(streak_in) as level:
+        active_level = level
+        if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
+            "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
+        ) == "1":
+            log.warning(
+                "adaptive soften active game=%s streak=%s level=%s vod=%s",
+                game,
+                streak_in,
+                level,
+                vod.name,
+            )
+            send_message(token, chat_id, telegram_soften_notice(game, streak_in, level))
+        elif level > 0:
+            log.warning(
+                "adaptive soften active game=%s streak=%s level=%s vod=%s (no tg spam)",
+                game,
+                streak_in,
+                level,
+                vod.name,
+            )
+        sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level)
+
+    vid = vod_youtube_id(vod)
+    new_streak = record_vod_outcome(state, vod_id=vid, sent=sent)
+    state["last_adaptive_level"] = active_level
+    _save_state(game, state)
+
+    if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
+        if active_level == 0 or new_streak % 2 == 0:
+            send_message(
+                token,
+                chat_id,
+                telegram_exhaust_notice(game, vid, level=active_level, streak=new_streak),
+            )
+
+    return sent
 
 
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
@@ -264,7 +357,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
-        n = _scan_vod(game, token, chat_id, mp4, env)
+        n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         if n > 0:
             print(f"pipeline done sent={n} vods=1 game={game}")
             return 0
@@ -295,7 +388,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     state["used_youtube_ids"] = sorted(used)
     _save_state(game, state)
 
-    n = _scan_vod(game, token, chat_id, vod, env)
+    n = _scan_vod_with_adaptive(game, token, chat_id, vod, env, state)
     print(f"pipeline done sent={n} vods=1 game={game}")
     return 0
 

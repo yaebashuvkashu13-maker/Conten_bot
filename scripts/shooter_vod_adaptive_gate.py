@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Soften PUBG/Standoff VOD gates after consecutive zero-send scans."""
+
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from typing import Iterator
+
+from mlbb_vod_adaptive_gate import (
+    record_vod_outcome,
+    should_notify_soften,
+    streak_from_state,
+    trailing_zero_streak,
+)
+
+DEFAULT_STREAK_THRESHOLD = 2
+
+# Level 1: relax menu/HUD overlay + slightly lower gun/combat bars.
+SHOOTER_SOFTEN_L1: dict[str, str] = {
+    "VISUAL_MENU_OVERLAY_MAX": "0.58",
+    "VISUAL_PUBG_MIN_FRAMES_PASS": "2",
+    "HIGHLIGHT_PANN_GUN_MIN": "0.22",
+    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.15",
+    "SMART_PUBG_MAX_CENTER_TEXT": "0.72",
+    "SMART_STANDOFF_MAX_CENTER_TEXT": "0.22",
+    "SMART_PUBG_MIN_CENTER_MOTION": "0.014",
+    "SMART_STANDOFF_MIN_CENTER_MOTION": "0.012",
+    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.048",
+    "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.048",
+    "PUBG_POV_MIN_CENTER_MOTION": "0.020",
+    "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
+    "VISUAL_PUBG_MIN_CENTER_EDGE": "0.022",
+    "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.014",
+}
+
+# Level 2: allow Metro highlight HUD, one good frame enough, POV gate off.
+SHOOTER_SOFTEN_L2: dict[str, str] = {
+    **SHOOTER_SOFTEN_L1,
+    "VISUAL_MENU_OVERLAY_MAX": "0.78",
+    "VISUAL_PUBG_MIN_FRAMES_PASS": "1",
+    "HIGHLIGHT_PANN_GUN_MIN": "0.18",
+    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.12",
+    "SMART_PUBG_MAX_CENTER_TEXT": "0.85",
+    "SMART_STANDOFF_MAX_CENTER_TEXT": "0.28",
+    "PUBG_POV_GATE": "0",
+    "PUBG_POV_MIN_CENTER_MOTION": "0.012",
+    "PUBG_COMBAT_PANN_MIN": "0.18",
+    "VISUAL_PUBG_MIN_CENTER_EDGE": "0.018",
+    "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.010",
+    "VISUAL_PUBG_MIN_HIT_FLASH": "0.0010",
+}
+
+
+def streak_threshold() -> int:
+    raw = os.environ.get(
+        "SHOOTER_VOD_ZERO_STREAK_SOFTEN",
+        os.environ.get("MLBB_VOD_ZERO_STREAK_SOFTEN", str(DEFAULT_STREAK_THRESHOLD)),
+    )
+    return max(1, int(raw))
+
+
+def soften_level(streak: int) -> int:
+    need = streak_threshold()
+    if streak < need:
+        return 0
+    if streak >= need + 2:
+        return 2
+    return 1
+
+
+def overrides_for_level(level: int) -> dict[str, str]:
+    if level <= 0:
+        return {}
+    if level >= 2:
+        return dict(SHOOTER_SOFTEN_L2)
+    return dict(SHOOTER_SOFTEN_L1)
+
+
+def soften_summary(level: int) -> str:
+    if level <= 0:
+        return "strict"
+    ov = overrides_for_level(level)
+    menu = ov.get("VISUAL_MENU_OVERLAY_MAX", "?")
+    frames = ov.get("VISUAL_PUBG_MIN_FRAMES_PASS", "?")
+    pov = "off" if ov.get("PUBG_POV_GATE") == "0" else "on"
+    return f"soft L{level} menu<={menu} frames>={frames} pov_gate={pov}"
+
+
+def telegram_soften_notice(game: str, streak: int, level: int) -> str:
+    g = game.strip().upper()
+    return (
+        f"⚙️ {g}: серия без клипов {streak}. Включаю {soften_summary(level)}.\n"
+        f"Смягчаю menu/HUD и combat gate — пришлю первый проходящий кусок."
+    )
+
+
+def telegram_exhaust_notice(game: str, vod_id: str, *, level: int, streak: int) -> str:
+    g = game.strip().upper()
+    base = f"⚠️ {g} {vod_id}: 0 клипов"
+    if level > 0:
+        return f"{base} (мягкий L{level}, серия={streak})"
+    need = streak_threshold()
+    return f"{base} — ещё {max(0, need - streak)} VOD до смягчения"
+
+
+def soft_max_peak_tries() -> int:
+    return max(1, int(os.environ.get("SHOOTER_VOD_SOFT_MAX_PEAK_TRIES", "6")))
+
+
+@contextmanager
+def adaptive_env(streak: int) -> Iterator[int]:
+    level = soften_level(streak)
+    overrides = overrides_for_level(level)
+    if not overrides:
+        yield 0
+        return
+    saved = {k: os.environ.get(k) for k in overrides}
+    try:
+        os.environ.update(overrides)
+        yield level
+    finally:
+        for key, prev in saved.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+
+
+__all__ = [
+    "adaptive_env",
+    "record_vod_outcome",
+    "should_notify_soften",
+    "soft_max_peak_tries",
+    "soften_level",
+    "soften_summary",
+    "streak_from_state",
+    "streak_threshold",
+    "telegram_exhaust_notice",
+    "telegram_soften_notice",
+    "trailing_zero_streak",
+]
