@@ -120,7 +120,7 @@ bash scripts/bootstrap_eu_vod_server.sh
 ```bash
 bash /usr/local/bin/mlbb_vod_only_verify.sh
 tail -f /root/data/mlbb/mlbb_vod_segment_feed.log
-# Ждём: banner discover, sent=1, без TypeError в логе
+# Ждём: highlight pool, sent=1, без Traceback/TesseractError в логе
 pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot'
 ```
 
@@ -134,16 +134,69 @@ pkill -f telegram_upload_bot
 
 ---
 
-## Рекомендуемые характеристики EU VPS
+## Целевой EU VPS (текущий план)
+
+Переезжаем на **послабее**, чем изначально планировали — этого достаточно для одного MLBB VOD feed:
+
+| Параметр | Значение |
+|----------|----------|
+| CPU | **8 vCPU** |
+| RAM | **32 GiB** |
+| Диск | **160 GiB NVMe** |
+| Сеть | 10 Gbit/s, ~20 TB/мес |
+| Цена | ~€39.99/мес |
+
+**Ожидание по скорости:** один VOD (~15–20 мин матча) сканируется **~15–25 мин** (PANNs+CLIP на CPU) вместо ~40+ на старом 4 vCPU. Один feed, без параллельных игр.
 
 | Нагрузка | CPU | RAM | Диск |
 |----------|-----|-----|------|
-| 1 игра (сейчас) | 8 vCPU | 16–32 GB | 160 GB |
-| 5 игр (позже, параллель) | 16 vCPU | 32 GB | 320 GB |
+| **1 игра MLBB (сейчас)** | 8 vCPU | 32 GB | 160 GB NVMe |
+| 5 игр (позже) | 16+ vCPU | 32–64 GB | 320 GB |
 
 **RU-хостинг не подходит:** YouTube и Telegram блокируются — нужен EU egress.
 
-Текущий сервер (4 CPU, load ~10, диск 94%) — узкое место по CPU и диску, не по RAM.
+Старый сервер (4 CPU, load ~10) — узкое место по CPU; новый 8 vCPU / 32 GB — нормальный апгрейд без переплаты.
+
+### Тюнинг под 8 vCPU (ставит `bootstrap_eu_vod_server.sh`)
+
+```
+OMP_NUM_THREADS=4
+OPENBLAS_NUM_THREADS=4
+MKL_NUM_THREADS=4
+```
+
+Один процесс `mlbb_vod_segment_feed.py` + ffmpeg; 4 потока на BLAS/PANNs, остальное — под рендер и ОС.
+
+---
+
+## Новый чат / новые секреты
+
+После заказа VPS **IP и SSH-пароль другие** — в Cloud Agent нужен **новый чат** с секретами (старый `SSH_HOST` не подойдёт).
+
+### Что передать агенту в новом чате
+
+| Секрет / переменная | Зачем |
+|---------------------|-------|
+| `SSH_HOST` | IP нового EU VPS |
+| `SSH_USER` | обычно `root` |
+| `SSH_PASSWORD` | пароль root (или ключ, если настроите) |
+| `TG_BOT_TOKEN` | уже в `/root/.video_bot.env` — можно скопировать со старого, в git не класть |
+| `TG_CHAT_ID` | ваш Telegram chat id |
+
+### GitHub Actions (опционально, для автодеплоя)
+
+| Secret | Значение |
+|--------|----------|
+| `VPS_HOST` | IP **нового** EU VPS |
+| `VPS_USER` | `root` |
+| `VPS_SSH_KEY` | deploy-ключ с нового сервера |
+| `VPS_REPO_PATH` | `/root/content_bot_ml` |
+
+Подробнее: `docs/vps-autodeploy.md`.
+
+### Что сказать агенту одной фразой
+
+> Поднять MLBB VOD на новом EU VPS по `docs/EU_SERVER_MIGRATION.md`: bootstrap, import state со старого, overlap 24–48ч, ветка `cursor/mlbb-video-pipeline-e712`.
 
 ---
 

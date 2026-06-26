@@ -83,6 +83,26 @@ if ! grep -qE '^TG_BOT_TOKEN=.+$' "$ENV_FILE" || ! grep -qE '^TG_CHAT_ID=.+$' "$
   exit 1
 fi
 
+echo "--- CPU thread tuning (8 vCPU / 32 GiB EU tier) ---"
+NPROC="$(nproc 2>/dev/null || echo 4)"
+if [[ "$NPROC" -ge 8 ]]; then
+  ML_THREADS=4
+elif [[ "$NPROC" -ge 4 ]]; then
+  ML_THREADS=2
+else
+  ML_THREADS=1
+fi
+for kv in OMP_NUM_THREADS="${ML_THREADS}" OPENBLAS_NUM_THREADS="${ML_THREADS}" MKL_NUM_THREADS="${ML_THREADS}"; do
+  key="${kv%%=*}"
+  val="${kv#*=}"
+  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+  else
+    echo "${key}=${val}" >>"$ENV_FILE"
+  fi
+done
+echo "nproc=${NPROC} → ML threads=${ML_THREADS}"
+
 echo "--- install MLBB VOD-only ---"
 export MLBB_VOD_INSTALL_RESTART_FEED=1
 bash "$REPO/scripts/install_mlbb_vod_only.sh"
