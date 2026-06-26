@@ -21,7 +21,9 @@ STANDOFF_TITLE_RE = re.compile(r"standoff\s*2|standoff2|стендоф", re.I)
 LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs|grand finals", re.I)
 BAD_TITLE_RE = re.compile(
     r"giveaway|#short\b|shorts\b|tiktok\b|montage|compilation|tutorial|"
-    r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode",
+    r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
+    r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
+    r"guide|обзор|trick|совет",
     re.I,
 )
 
