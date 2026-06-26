@@ -79,7 +79,8 @@ def search_shorts(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     min_year = int(env.get("PUBG_SHORTS_MIN_YEAR", "2024"))
     skip = skip_ids or set()
-    search_n = max(limit * 30, 200)
+    depth = int(env.get("PUBG_SHORTS_SEARCH_DEPTH", "80"))
+    search_n = min(depth, max(limit * 6, 40))
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         f"ytsearch{search_n}:{query} #shorts",
         "--flat-playlist",
@@ -176,7 +177,7 @@ def main() -> int:
         return 0
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-per-query", type=int, default=25)
+    parser.add_argument("--max-per-query", type=int, default=15)
     parser.add_argument("--days", type=int, default=int(os.environ.get("PUBG_SHORTS_DAYS", "365")))
     parser.add_argument("--max-downloads", type=int, default=0)
     parser.add_argument("--download-delay", type=float, default=3.0)

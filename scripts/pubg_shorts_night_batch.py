@@ -34,7 +34,7 @@ def main() -> int:
     feed_batch = int(env.get("PUBG_CALIBRATION_BATCH", "5"))
     ingest_batch = int(env.get("PUBG_INGEST_MAX_DOWNLOADS", "20"))
     max_rounds = int(env.get("PUBG_SHORTS_NIGHT_MAX_ROUNDS", "80"))
-    sleep_sec = float(env.get("PUBG_SHORTS_NIGHT_SLEEP_SEC", "45"))
+    sleep_sec = float(env.get("PUBG_SHORTS_NIGHT_SLEEP_SEC", "25"))
 
     start_delivered = len(load_ever_delivered())
     log(f"night batch start target={target} already_delivered={start_delivered}")
