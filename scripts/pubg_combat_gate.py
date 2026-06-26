@@ -34,10 +34,22 @@ TRAINING_UI_KEYWORDS = (
     "разминк",
 )
 KILLFEED_KEYWORDS = ("kill", "knock", "eliminated", "headshot", "убил", "убийство", "нок")
-PANN_ABSOLUTE_MIN = float(os.environ.get("PUBG_COMBAT_PANN_MIN", "0.22"))
-MIN_HIT_FLASH_ANY = float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", "0.004"))
-MIN_WEAPON_EDGE_ANY = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025"))
-FRAMES_REQUIRED = int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", "3"))
+
+
+def _pann_absolute_min() -> float:
+    return float(os.environ.get("PUBG_COMBAT_PANN_MIN", "0.22"))
+
+
+def _min_hit_flash() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", "0.004"))
+
+
+def _min_weapon_edge() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025"))
+
+
+def _frames_required() -> int:
+    return int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", "3"))
 
 
 def _norm_profile(profile: str) -> str:
@@ -87,7 +99,7 @@ def pubg_combat_visual_strict(
             }
         )
 
-    need = FRAMES_REQUIRED
+    need = _frames_required()
     if passed < need:
         bad = [f"{f['label']}:{f.get('reason', '?')}" for f in frames_out if not f.get("pass")]
         return False, f"visual_frames={passed}/{need}:{','.join(bad[:3])}", {
@@ -96,7 +108,7 @@ def pubg_combat_visual_strict(
             "frames": frames_out,
         }
 
-    if best_flash < MIN_HIT_FLASH_ANY and best_weapon < MIN_WEAPON_EDGE_ANY:
+    if best_flash < _min_hit_flash() and best_weapon < _min_weapon_edge():
         return False, (
             f"no_combat_signal flash={best_flash:.4f} weapon={best_weapon:.4f}"
         ), {
@@ -345,7 +357,7 @@ def pubg_passes_combat_gate(
         panns_gun = float(panns.get("panns_gun_max", 0))
         panns_thr = calibrated_pann_gun_min(video_path, profile)
 
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, _pann_absolute_min())
     out["panns_gun_max"] = round(panns_gun, 4)
     out["panns_gun_threshold"] = round(floor, 4)
     if panns_gun < floor:

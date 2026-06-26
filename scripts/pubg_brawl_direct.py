@@ -311,37 +311,81 @@ def make_brawl_montage(
     if not vod.exists():
         return 2, f"vod missing: {vod}"
 
+    from pubg_adaptive_gate import (
+        adaptive_env,
+        load_state,
+        merge_soften_into_env,
+        record_vod_outcome,
+        save_state,
+        soften_summary,
+        streak_from_state,
+    )
     from strict_montage_direct import build_and_send, discover_strict_candidates, pick_segments
 
-    merged_env = apply_pubg_env(env)
-    sig = file_sha256(vod)
-    used = load_used_keys()
-    pool = discover_strict_candidates(vod, "pubg", sig, used)
-    if len(pool) < MIN_CLIPS:
-        return 1, f"Game=PUBG, found {len(pool)}/{MIN_CLIPS} strict segments"
+    vod_id = vod.stem.removeprefix("yt_")
+    state = load_state()
+    streak_in = streak_from_state(state)
+    prev_level = int(state.get("last_adaptive_level") or 0)
+    clips_out = 0
+    code = 1
+    detail = ""
 
-    clips = pick_segments(pool, used, sig)
-    if len(clips) < MIN_CLIPS:
-        return 1, f"Game=PUBG, found {len(clips)}/{MIN_CLIPS} non-overlapping strict segments"
+    with adaptive_env(streak_in) as level:
+        if level > 0:
+            log.warning(
+                "pubg adaptive soften streak=%s level=%s vod=%s %s",
+                streak_in,
+                level,
+                vod.name,
+                soften_summary(level),
+            )
+        merged_env = merge_soften_into_env(apply_pubg_env(env), level)
+        sig = file_sha256(vod)
+        used = load_used_keys()
+        pool = discover_strict_candidates(vod, "pubg", sig, used)
+        if len(pool) < MIN_CLIPS:
+            detail = f"Game=PUBG, found {len(pool)}/{MIN_CLIPS} strict segments"
+            code = 1
+        else:
+            clips = pick_segments(pool, used, sig)
+            if len(clips) < MIN_CLIPS:
+                detail = f"Game=PUBG, found {len(clips)}/{MIN_CLIPS} non-overlapping strict segments"
+                code = 1
+            else:
+                out_dir = Path(merged_env.get("OUTPUT_DIR", "/root/videos"))
+                out_dir.mkdir(parents=True, exist_ok=True)
+                chat_id = resolve_pubg_chat_id(merged_env)
+                result = build_and_send(
+                    vod,
+                    "pubg",
+                    clips,
+                    output_dir=out_dir,
+                    basename=output_basename,
+                    caption=caption,
+                    chat_id=chat_id,
+                    bot_token=merged_env.get("TG_BOT_TOKEN", ""),
+                    sig=sig,
+                )
+                if result is None:
+                    detail = "REFUSED: game=PUBG, reason=render_or_visual_gate_failed, visual_passed=0/0"
+                    code = 1
+                else:
+                    for clip in clips:
+                        used.add(segment_key(sig, float(clip["start"])))
+                    save_used_keys(used)
+                    clips_out = len(clips)
+                    detail = (
+                        f"REFUSED: game=PUBG, reason=awaiting_owner_preview, "
+                        f"visual_passed={len(clips)}/{len(clips)}, montage={result.name}"
+                    )
+                    code = 3
 
-    out_dir = Path(merged_env.get("OUTPUT_DIR", "/root/videos"))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    chat_id = resolve_pubg_chat_id(merged_env)
-    result = build_and_send(
-        vod,
-        "pubg",
-        clips,
-        output_dir=out_dir,
-        basename=output_basename,
-        caption=caption,
-        chat_id=chat_id,
-        bot_token=merged_env.get("TG_BOT_TOKEN", ""),
-        sig=sig,
-    )
-    if result is None:
-        return 1, "REFUSED: game=PUBG, reason=render_or_visual_gate_failed, visual_passed=0/0"
+        state["last_adaptive_level"] = level
+        new_streak = record_vod_outcome(
+            state, vod_id=vod_id, clips=clips_out if code == 3 else 0
+        )
+        save_state(state)
+        if level > 0 and clips_out == 0:
+            log.warning("pubg zero clips vod=%s streak=%s level=%s", vod_id, new_streak, level)
 
-    for clip in clips:
-        used.add(segment_key(sig, float(clip["start"])))
-    save_used_keys(used)
-    return 3, f"REFUSED: game=PUBG, reason=awaiting_owner_preview, visual_passed={len(clips)}/{len(clips)}, montage={result.name}"
+    return code, detail

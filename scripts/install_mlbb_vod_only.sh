@@ -153,6 +153,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_kill_banner.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_vod_adaptive_gate.py" \
+  "$REPO/scripts/pubg_adaptive_gate.py" \
+  "$REPO/scripts/pubg_combat_gate.py" \
   "$REPO/scripts/mlbb_pipeline_mode.py" \
   "$REPO/scripts/mlbb_calibration_store.py" \
   "$REPO/scripts/mlbb_calibration_feed.py" \
