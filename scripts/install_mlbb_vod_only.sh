@@ -142,6 +142,9 @@ done
 # EU split-server: MLBB on server 1, PUBG/Standoff on server 2 — keep MLBB quota at 0.
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]]; then
   sed -i 's/^DAILY_MLBB_QUOTA=.*/DAILY_MLBB_QUOTA=0/' "$ENV_FILE"
+  grep -q '^PUBG_SHORTS_CALIBRATION=' "$ENV_FILE" 2>/dev/null || echo 'PUBG_SHORTS_CALIBRATION=1' >>"$ENV_FILE"
+  grep -q '^PUBG_SHORTS_NIGHT_TARGET=' "$ENV_FILE" 2>/dev/null || echo 'PUBG_SHORTS_NIGHT_TARGET=100' >>"$ENV_FILE"
+  grep -q '^PUBG_CALIBRATION_BATCH=' "$ENV_FILE" 2>/dev/null || echo 'PUBG_CALIBRATION_BATCH=5' >>"$ENV_FILE"
 fi
 
 VOD_SEARCH_CSV="$(python3 - <<PY
@@ -161,6 +164,13 @@ install -m 755 \
   "$REPO/scripts/shooter_vod_segment_store.py" \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/pubg_metro_royale_gate.py" \
+  "$REPO/scripts/pubg_shorts_calibration_store.py" \
+  "$REPO/scripts/pubg_shorts_title_gate.py" \
+  "$REPO/scripts/pubg_owner_learning.py" \
+  "$REPO/scripts/pubg_youtube_shorts_ingest.py" \
+  "$REPO/scripts/pubg_calibration_feed.py" \
+  "$REPO/scripts/pubg_shorts_night_batch.py" \
+  "$REPO/scripts/pubg_shorts_night_run.sh" \
   "$REPO/scripts/youtube_shooter_vod_prefs.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \

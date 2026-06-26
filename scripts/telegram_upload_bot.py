@@ -865,6 +865,180 @@ def _show_dislike_reason_picker(
             pass
 
 
+def _pubg_apply_owner_label(
+    chat_id: str | int,
+    video_id: str,
+    *,
+    is_good: bool,
+    reason: str = '',
+) -> tuple[bool, str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from pubg_shorts_calibration_store import apply_owner_label, stats
+
+    ok, _label = apply_owner_label(
+        video_id.strip(),
+        is_good=is_good,
+        reason=reason,
+        by_chat=str(chat_id),
+    )
+    s = stats()
+    if not ok:
+        return False, f'Не нашёл PUBG Short #{video_id}'
+    if is_good:
+        return True, (
+            f'✅ PUBG good #{video_id.strip()}\n'
+            f'Exemplars: 👍{s["feedback_yes"]} 👎{s["feedback_no"]} '
+            f'(good={s["good_exemplars"]} bad={s["bad_exemplars"]})'
+        )
+    return True, (
+        f'❌ PUBG bad #{video_id.strip()}\n'
+        f'Причина: {reason or "—"}\n'
+        f'Exemplars: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+    )
+
+
+def _pubg_send_short_hq_file(chat_id: str | int, video_id: str) -> bool:
+    from mlbb_telegram_video import send_hq_files
+    from pubg_shorts_calibration_store import find_candidate
+
+    row = find_candidate(video_id)
+    if not row:
+        return False
+    path = Path(str(row.get('path', '')))
+    if not path.exists():
+        return False
+    caption = (
+        f"PUBG HQ #{video_id}\n"
+        f"{row.get('title', '')[:120]}\n"
+        f"{row.get('url', '')}"
+    )
+    return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
+
+
+def _handle_pubg_short_callback(
+    data: str,
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+) -> bool:
+    if not data.startswith('pubg_short_'):
+        return False
+
+    if data.startswith('pubg_short_hq:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            ok = _pubg_send_short_hq_file(chat_id, item_id)
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'HQ отправлен' if ok else 'HQ не отправился',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('pubg_short_hq failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith('pubg_short_bad:'):
+        try:
+            _, item_id, reason = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return True
+        from pubg_shorts_calibration_store import DISLIKE_REASON_CODES, labeled_keyboard_markup as pubg_markup
+
+        if reason not in DISLIKE_REASON_CODES:
+            reason = 'other'
+        try:
+            ok, reply = _pubg_apply_owner_label(chat_id, item_id, is_good=False, reason=reason)
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return True
+            api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': '❌ Записано'}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': pubg_markup('bad', reason=reason, video_id=item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('pubg_short_bad failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith('pubg_short_no:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            _show_dislike_reason_picker(
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                item_id=item_id,
+                callback_prefix='pubg_short_bad',
+            )
+        except Exception as exc:
+            logging.exception('pubg_short_no failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith('pubg_short_yes:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            ok, reply = _pubg_apply_owner_label(chat_id, item_id, is_good=True)
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return True
+            from pubg_shorts_calibration_store import labeled_keyboard_markup as pubg_markup
+
+            api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': '✅ Записано'}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': pubg_markup('good', video_id=item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('pubg_short_yes failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    return False
+
+
 def handle_callback_query(query: dict) -> None:
     query_id = query.get('id')
     data = str(query.get('data') or '')
@@ -901,6 +1075,14 @@ def handle_callback_query(query: dict) -> None:
             query_id=query_id,
         ):
             return
+
+    if _handle_pubg_short_callback(
+        data,
+        chat_id=chat_id,
+        message_id=message_id,
+        query_id=query_id,
+    ):
+        return
 
     if data.startswith('mlbb_hq:'):
         item_id = data.split(':', 1)[1].strip()
