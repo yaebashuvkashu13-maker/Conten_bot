@@ -986,6 +986,8 @@ def audio_passes_shooter(
 
 
 def exemplars_sufficient(profile: str, min_good: int = 5) -> tuple[bool, str]:
+    if os.environ.get("HIGHLIGHT_COLD_START", "0") == "1":
+        return True, ""
     game = normalize_profile(profile)
     root = EXEMPLAR_ROOT / game / "good"
     good = [
