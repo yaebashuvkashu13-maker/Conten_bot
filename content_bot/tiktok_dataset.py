@@ -74,9 +74,25 @@ def collect_profile(
         records.append(record)
 
     manifest_path = output_path / f"{source_label}_manifest.jsonl"
-    with manifest_path.open("a", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+    seen_ids: set[str] = set()
+    if manifest_path.exists():
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                vid = str(row.get("video_id") or "")
+                if vid:
+                    seen_ids.add(vid)
+            except json.JSONDecodeError:
+                continue
+
+    new_records = [r for r in records if r.video_id not in seen_ids]
+    if new_records:
+        with manifest_path.open("a", encoding="utf-8") as handle:
+            for record in new_records:
+                handle.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
 
     return records
 
