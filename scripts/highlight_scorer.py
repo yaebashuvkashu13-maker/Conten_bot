@@ -177,6 +177,8 @@ def owner_anchors_enabled(profile: str | None = None) -> bool:
     if profile and normalize_profile(profile) == "pubg":
         # Owner timecodes are supervision for eval/audit — not discovery hints.
         return os.environ.get("PUBG_OWNER_ANCHORS", "0") == "1"
+    if profile and normalize_profile(profile) == "mobile_legends":
+        return os.environ.get("MLBB_OWNER_ANCHORS", "0") == "1"
     return os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") == "1"
 
 
@@ -216,6 +218,8 @@ def soft_anchor_enabled(video_path: Path, profile: str) -> bool:
     """Boost (not inject) owner good windows when VOD has labels in JSON."""
     profile = normalize_profile(profile)
     if profile == "pubg" and os.environ.get("PUBG_SOFT_ANCHOR", "0") != "1":
+        return False
+    if profile == "mobile_legends" and os.environ.get("MLBB_SOFT_ANCHOR", "0") != "1":
         return False
     if os.environ.get("HIGHLIGHT_SOFT_ANCHOR", "1") == "0":
         return False

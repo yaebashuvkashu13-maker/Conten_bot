@@ -1857,11 +1857,11 @@ def main() -> int:
 
     seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    # Exemplars score CLIP windows — owner timecodes are supervision only (see MLBB_OWNER_ANCHORS).
+    os.environ.setdefault("MLBB_OWNER_ANCHORS", "0")
+    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
-        os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
-    else:
-        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
     os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
     os.environ.setdefault("MLBB_VOD_NO_CROP", "1")
@@ -1880,6 +1880,7 @@ def main() -> int:
         "MLBB_VOD_LANDSCAPE",
         "MLBB_VOD_VARIABLE_LENGTH",
         "MLBB_VOD_OWNER_EXEMPLARS",
+        "MLBB_OWNER_ANCHORS",
         "HIGHLIGHT_USE_OWNER_ANCHORS",
     ):
         if key in env:

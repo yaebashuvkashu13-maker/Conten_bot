@@ -31,9 +31,12 @@ games:
       - "https://www.youtube.com/live/FpMs48XOnq0"
     search_limit: 12
     queries:
-      - "PUBG Mobile Metro Royale стрим"
       - "метро рояль пабг мобайл стрим полный"
+      - "PUBG Mobile Metro Royale стрим русский"
+      - "метро рояль пабг мобайл геймплей стрим"
+      - "пабг метро рояль полный стрим на русском"
       - "PUBG Mobile Metro Royale live русский"
+      - "метро рояль пабг мобайл ранкед стрим"
 
   - id: genshin
     profile: genshin

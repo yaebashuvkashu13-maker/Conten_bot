@@ -139,3 +139,4 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     starts = stage1_candidates(vod, "pubg")
     assert 510.0 not in starts
     assert not owner_anchors_enabled("pubg")
+    assert not owner_anchors_enabled("mobile_legends")

@@ -13,9 +13,25 @@ from youtube_shooter_vod_prefs import title_ok, vod_discovery_search_cycle  # no
 
 def test_pubg_title_ok() -> None:
     assert title_ok("pubg", "PUBG Mobile Metro Royale ranked gameplay")
+    assert title_ok("pubg", "Метро Рояль PUBG Mobile ranked перестрелка")
     assert not title_ok("pubg", "PUBG Mobile ranked gameplay full match")
     assert not title_ok("pubg", "PUBG Mobile- Metro Royale Gone Without A Trace")
     assert not title_ok("pubg", "Mobile Legends mythic ranked")
+    assert not title_ok("pubg", "PUBG Metro Royale обзор гайд")
+
+
+def test_pubg_default_queries_russian_first() -> None:
+    from youtube_shooter_vod_prefs import default_pubg_vod_search_queries
+
+    queries = default_pubg_vod_search_queries()
+    assert len(queries) >= 18
+    assert any("метро" in q.lower() for q in queries[:5])
+
+
+def test_pubg_query_env_override() -> None:
+    env = {"PUBG_VOD_SEARCH_QUERIES": "метро рояль тест,пабг тест"}
+    a = vod_discovery_search_cycle(0, "pubg", env)
+    assert "метро рояль тест" in a["queries"]
 
 
 def test_standoff_title_ok() -> None:

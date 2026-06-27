@@ -131,6 +131,10 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 }
             )
         time.sleep(float(params.get("delay", 6)))
+    if game == "pubg" and out:
+        from youtube_shooter_vod_prefs import rank_pubg_candidate
+
+        out.sort(key=rank_pubg_candidate, reverse=True)
     return out
 
 

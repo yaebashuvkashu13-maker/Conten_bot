@@ -7,7 +7,7 @@ import os
 import re
 from urllib.parse import quote_plus
 
-from youtube_game_prefs import has_metro_royale
+from youtube_game_prefs import has_metro_royale, rank_candidate
 from youtube_mlbb_vod_prefs import (
     YOUTUBE_DURATION_SP_4_TO_20,
     YOUTUBE_FRESHNESS_SP_THIS_MONTH,
@@ -19,7 +19,8 @@ PUBG_TITLE_RE = re.compile(
 )
 METRO_VAGUE_TITLE_RE = re.compile(
     r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
-    r"обзор|гайд|guide|story|история|сюжет",
+    r"обзор|гайд|guide|story|история|сюжет|ивент|event|royal\s+pass|"
+    r"проблем|problem|clash:|турнир|championship",
     re.I,
 )
 CLASSIC_MODE_TITLE_RE = re.compile(
@@ -38,13 +39,37 @@ BAD_TITLE_RE = re.compile(
     re.I,
 )
 
-PUBG_CORE_QUERIES = (
+# Russian-first: gameplay / fight / ranked match (no «стрим» — blocked by BAD_TITLE_RE).
+PUBG_RU_CORE_QUERIES = (
+    "метро рояль пабг мобайл геймплей ранкед",
+    "метро рояль пабг мобайл полный матч",
+    "метро рояль пабг мобайл перестрелка",
+    "метро рояль пабг мобайл отряд ранкед",
+    "пабг метро рояль геймплей матч",
+    "пабг мобайл метро рояль TPP ранкед",
+    "пабг метро рояль ранкед матч геймплей",
+    "метро рояль пабг мобайл на русском геймплей",
+    "PUBG Mobile Metro Royale геймплей русский",
+    "PUBG Mobile Metro Royale перестрелка ranked",
+)
+
+PUBG_RU_ANGLE_QUERIES = (
+    "метро рояль пабг снайпер перестрелка",
+    "метро рояль пабг финальный круг",
+    "метро рояль пабг ближний бой",
+    "метро рояль пабг эвакуация геймплей",
+    "метро рояль пабг лут и перестрелка",
+    "пабг метро рояль кладбище босса",
+    "пабг метро рояль clutch ranked",
+    "метро рояль пабг соло против отряда",
+    "PUBG Metro Royale squad fight ranked replay",
+    "PUBG Mobile Metro Royale close range fight",
+)
+
+PUBG_EN_CORE_QUERIES = (
     "PUBG Mobile Metro Royale gameplay ranked",
     "PUBG Mobile Metro Royale full match",
     "PUBG Mobile Metro Royale squad fight ranked",
-    "PUBG Mobile Metro Royale TPP ranked replay",
-    "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -54,23 +79,40 @@ STANDOFF_CORE_QUERIES = (
     "Standoff 2 5v5 ranked gameplay",
 )
 
-PUBG_ANGLE_QUERIES = (
-    "PUBG Mobile Metro Royale sniper fight",
-    "PUBG Mobile Metro Royale close range fight",
-    "PUBG Mobile Metro Royale final circle ranked",
-)
-
 STANDOFF_ANGLE_QUERIES = (
     "Standoff 2 ace ranked gameplay",
     "Standoff 2 teamfight ranked replay",
 )
 
 
-def _queries_for(game: str) -> tuple[str, ...]:
+def default_pubg_vod_search_queries() -> tuple[str, ...]:
+    return PUBG_RU_CORE_QUERIES + PUBG_RU_ANGLE_QUERIES + PUBG_EN_CORE_QUERIES
+
+
+def default_pubg_vod_search_queries_csv() -> str:
+    return ",".join(default_pubg_vod_search_queries())
+
+
+def _parse_query_csv(raw: str) -> tuple[str, ...]:
+    out: list[str] = []
+    for part in raw.split(","):
+        q = part.strip()
+        if q and q not in out:
+            out.append(q)
+    return tuple(out)
+
+
+def _queries_for(game: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     g = game.strip().lower()
+    env = env or {}
     if g == "standoff":
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
-    return PUBG_CORE_QUERIES + PUBG_ANGLE_QUERIES
+    override = env.get("PUBG_VOD_SEARCH_QUERIES", "").strip()
+    if override:
+        parsed = _parse_query_csv(override)
+        if parsed:
+            return parsed
+    return default_pubg_vod_search_queries()
 
 
 def title_ok(game: str, title: str) -> bool:
@@ -87,10 +129,24 @@ def title_ok(game: str, title: str) -> bool:
     return False
 
 
+def rank_pubg_candidate(meta: dict) -> float:
+    """Higher = prefer RU Metro gameplay VODs in discovery pool."""
+    score = rank_candidate(meta, {"require_metro_royale": True, "prefer_russian": True})
+    dur = float(meta.get("duration") or 0)
+    if 240 <= dur <= 1200:
+        score += 2.0
+    title = (meta.get("title") or "").lower()
+    if re.search(r"перестрелк|fight|clutch|kill|ранкед|ranked|squad|отряд", title, re.I):
+        score += 1.5
+    if re.search(r"обзор|гайд|tips|guide|event|ивент|pass", title, re.I):
+        score -= 4.0
+    return score
+
+
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
     """Rotate shooter search queries (same batch/delay pattern as MLBB)."""
     env = env or {}
-    queries = list(_queries_for(game))
+    queries = list(_queries_for(game, env))
     batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
     delay = float(env.get("MLBB_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
     limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "20")))

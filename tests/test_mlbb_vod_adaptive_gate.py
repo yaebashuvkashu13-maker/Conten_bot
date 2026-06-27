@@ -42,9 +42,9 @@ def test_soft_overrides_keep_motion_not_banner_tier():
     assert "MLBB_KILL_BANNER_REQUIRED" not in ov
 
 
-def test_l2_skips_presend_banner():
+def test_l2_keeps_presend_banner():
     ov = overrides_for_level(2)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert "MLBB_VOD_BANNER_PRESEND" not in ov
 
 
 def test_l2_lenient_uniform_for_presend_tail():
