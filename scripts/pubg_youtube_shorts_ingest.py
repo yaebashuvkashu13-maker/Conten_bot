@@ -114,7 +114,7 @@ def search_shorts(
             continue
         if view_count < int(env.get("PUBG_SHORTS_MIN_VIEWS", "100")):
             continue
-        if not pubg_short_title_ok(title, query=query):
+        if not pubg_short_title_ok(title):
             continue
         entries.append(
             {

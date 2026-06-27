@@ -398,6 +398,22 @@ def _is_excluded(vid: str, path: Path, labeled: dict[str, str], sent: dict) -> b
     return False
 
 
+def _row_passes_pending_gate(row: dict, path: Path) -> bool:
+    if int(row.get("gameplay_pass") or 0) != 1:
+        return False
+    title = str(row.get("title", ""))
+    from pubg_shorts_title_gate import pubg_short_title_ok
+
+    if not pubg_short_title_ok(title):
+        return False
+    try:
+        if path.stat().st_size > int(os.environ.get("PUBG_SHORTS_MAX_BYTES", str(50 * 1024 * 1024))):
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
     if repair:
         repair_index()
@@ -412,7 +428,7 @@ def pending_candidates(*, limit: int = 50, repair: bool = True) -> list[dict]:
         vid = id_from_path(path)
         if _is_excluded(vid, path, labeled, sent) or vid in seen:
             continue
-        if int(row.get("gameplay_pass") or 0) != 1:
+        if not _row_passes_pending_gate(row, path):
             continue
         seen.add(vid)
         out.append({**row, "video_id": vid, "id": vid, "path": str(path)})

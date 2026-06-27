@@ -118,15 +118,18 @@ def _run_feed() -> int:
         vid = str(row.get("video_id", ""))
         if not path.exists():
             failed_ids.append(vid)
+            print(f"skip missing file video_id={vid}")
             continue
         ok, gscore, reason = pubg_short_passes_calibration(path, title=str(row.get("title", "")))
         if not ok:
             mark_feed_blocked(vid, reason=reason, score=gscore)
             failed_ids.append(vid)
+            print(f"skip gate video_id={vid} reason={reason}")
             continue
         caption = format_caption(row, idx, len(picked))
         if not send_video(token, chat_id, path, caption, video_id=vid):
             failed_ids.append(vid)
+            print(f"skip telegram_fail video_id={vid} size={path.stat().st_size}")
             continue
         sent_ids.append(vid)
         mark_feed_sent([vid], paths=[path])
