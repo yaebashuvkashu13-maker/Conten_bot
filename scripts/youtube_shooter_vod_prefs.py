@@ -39,37 +39,36 @@ BAD_TITLE_RE = re.compile(
     re.I,
 )
 
-# Russian-first: gameplay / fight / ranked match (no «стрим» — blocked by BAD_TITLE_RE).
+# RU YouTube slang: «метро роял», карты 7/8, прокачка брони, соло vs сквад.
 PUBG_RU_CORE_QUERIES = (
-    "метро рояль пабг мобайл геймплей ранкед",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл перестрелка",
-    "метро рояль пабг мобайл отряд ранкед",
-    "пабг метро рояль геймплей матч",
-    "пабг мобайл метро рояль TPP ранкед",
-    "пабг метро рояль ранкед матч геймплей",
-    "метро рояль пабг мобайл на русском геймплей",
-    "PUBG Mobile Metro Royale геймплей русский",
-    "PUBG Mobile Metro Royale перестрелка ranked",
+    "метро роял 7 карта пабг",
+    "метро роял 8 карта пабг",
+    "метро роял пабг 7 карта геймплей",
+    "метро роял пабг 8 карта геймплей",
+    "метро роял с нуля до фул 6",
+    "метро роял пабг с нуля до фул 6",
+    "метро роял один против сквадов",
+    "метро роял соло против сквада пабг",
+    "метро роял пабг один против отряда",
+    "метро роял пабг перестрелка ранкед",
 )
 
 PUBG_RU_ANGLE_QUERIES = (
-    "метро рояль пабг снайпер перестрелка",
-    "метро рояль пабг финальный круг",
-    "метро рояль пабг ближний бой",
-    "метро рояль пабг эвакуация геймплей",
-    "метро рояль пабг лут и перестрелка",
-    "пабг метро рояль кладбище босса",
-    "пабг метро рояль clutch ranked",
-    "метро рояль пабг соло против отряда",
-    "PUBG Metro Royale squad fight ranked replay",
-    "PUBG Mobile Metro Royale close range fight",
+    "метро роял пабг финальный круг",
+    "метро роял пабг эвакуация",
+    "метро роял пабг снайпер",
+    "метро роял пабг кладбище босса",
+    "метро роял пабг лут перестрелка",
+    "метро роял пабг ближний бой",
+    "метро роял пабг отряд ранкед",
+    "метро роял пабг TPP ranked",
+    "PUBG Metro Royale метро роял 7 карта",
+    "PUBG Metro Royale solo vs squad метро роял",
 )
 
 PUBG_EN_CORE_QUERIES = (
-    "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile Metro Royale full match",
-    "PUBG Mobile Metro Royale squad fight ranked",
+    "PUBG Mobile Metro Royale метро роял gameplay",
+    "PUBG Mobile Metro Royale squad fight метро роял",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -136,8 +135,8 @@ def rank_pubg_candidate(meta: dict) -> float:
     if 240 <= dur <= 1200:
         score += 2.0
     title = (meta.get("title") or "").lower()
-    if re.search(r"перестрелк|fight|clutch|kill|ранкед|ranked|squad|отряд", title, re.I):
-        score += 1.5
+    if re.search(r"перестрелк|fight|clutch|kill|ранкед|ranked|squad|отряд|сквад|фул\s*6|7\s*карт|8\s*карт", title, re.I):
+        score += 2.0
     if re.search(r"обзор|гайд|tips|guide|event|ивент|pass", title, re.I):
         score -= 4.0
     return score

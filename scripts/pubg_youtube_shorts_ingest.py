@@ -26,19 +26,16 @@ from pubg_shorts_title_gate import pubg_short_passes_calibration, pubg_short_tit
 from youtube_download import load_env, subprocess_env_no_proxy, ytdlp_cmd, ytdlp_extra_args
 
 SEARCH_QUERIES = (
-    # Russian Metro Royale — primary calibration pool
-    "метро рояль пабг шортс",
-    "пабг метро рояль клип",
-    "метро рояль пабг перестрелка shorts",
-    "пабг метро рояль на русском shorts",
-    "метро рояль пабг мобайл шортс геймплей",
-    "пабг метро рояль clutch",
-    "метро рояль пабг снайпер shorts",
-    "пабг мобайл метро рояль килл shorts",
-    "PUBG Metro Royale shorts русский",
-    "PUBG Mobile Metro Royale fight shorts",
-    "PUBG Metro Royale gameplay shorts",
-    "PUBG Mobile Metro Royale ranked shorts",
+    "метро роял шортс пабг",
+    "метро роял 7 карта shorts",
+    "метро роял 8 карта shorts",
+    "метро роял один против сквадов shorts",
+    "метро роял с нуля до фул 6 shorts",
+    "метро роял пабг перестрелка shorts",
+    "метро роял пабг клип",
+    "пабг метро роял килл shorts",
+    "метро роял пабг на русском shorts",
+    "PUBG Metro Royale метро роял shorts",
 )
 
 HQ_FORMAT = "bv*[height<=1080][height>=480]+ba/b[height<=1080]/best"

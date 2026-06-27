@@ -25,7 +25,10 @@ def test_pubg_default_queries_russian_first() -> None:
 
     queries = default_pubg_vod_search_queries()
     assert len(queries) >= 18
-    assert any("метро" in q.lower() for q in queries[:5])
+    assert all("метро роял" in q.lower() or "metro royale" in q.lower() for q in queries)
+    assert any("7 карта" in q for q in queries)
+    assert any("фул 6" in q for q in queries)
+    assert any("сквад" in q for q in queries)
 
 
 def test_pubg_query_env_override() -> None:

@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 
 METRO_ROYALE_RE = re.compile(
-    r"metro[\s_-]*royale|metroroyale|метро[\s_-]*роял|метророял",
+    r"metro[\s_-]*royale|metroroyale|метро[\s_-]*роял",
     re.I,
 )
 CYRILLIC_RE = re.compile(r"[а-яё]", re.I)
