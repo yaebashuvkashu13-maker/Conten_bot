@@ -65,6 +65,19 @@
       {"tc": "12:27", "time_sec": 747, "label": "good", "note": "owner_metro_kill"},
       {"tc": "15:42", "time_sec": 942, "label": "good", "note": "owner_metro_kill"},
       {"tc": "19:05", "time_sec": 1145, "label": "good", "note": "owner_metro_kill"}
+    ],
+    "tDd38ATUsrs": [
+      {"tc": "4:03", "time_sec": 243, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "6:20", "time_sec": 380, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "7:07", "time_sec": 427, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "11:06", "time_sec": 666, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "11:17", "time_sec": 677, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "12:18", "time_sec": 738, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "12:52", "time_sec": 772, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "14:15", "time_sec": 855, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "15:00", "time_sec": 900, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "17:24", "time_sec": 1044, "label": "good", "note": "owner_metro_kill"},
+      {"tc": "18:18", "time_sec": 1098, "label": "good", "note": "owner_metro_kill"}
     ]
   }
 }
