@@ -58,6 +58,51 @@ def load_owner_good_anchors(*, skip_shorts_fullclip: bool = True) -> dict[str, l
     return out
 
 
+def parse_log_combat_passes(log_path: Path) -> list[dict]:
+    """[PASS] combat windows from highlight scorer — for unsent-moment audit."""
+    if not log_path.exists():
+        return []
+    import re
+
+    rows: list[dict] = []
+    current_vod = ""
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.search(r"highlight (?:stage1|pool) yt_([A-Za-z0-9_-]{11})", line)
+        if m:
+            current_vod = m.group(1)
+        m = re.search(
+            r"\[PASS\] highlight start=([0-9.]+).*reason=(combat_ok[^,\s]*)",
+            line,
+        )
+        if m and current_vod:
+            rows.append(
+                {
+                    "vod": current_vod,
+                    "time_sec": float(m.group(1)),
+                    "reason": m.group(2),
+                }
+            )
+    return rows
+
+
+def audit_unsent_combat_passes(
+    passes: list[dict],
+    sent_ids: set[str],
+    *,
+    lead: float = 4.0,
+) -> list[dict]:
+    """Combat PASS in logs but no Telegram segment id near that time."""
+    missed: list[dict] = []
+    for row in passes:
+        vid = row["vod"]
+        t = float(row["time_sec"])
+        start = max(0.0, t - lead)
+        sid = f"{vid}_{int(start)}"
+        if sid not in sent_ids:
+            missed.append({**row, "expected_segment_id": sid})
+    return missed
+
+
 def load_vseg_good_anchors() -> dict[str, list[float]]:
     data = _read_json(VSEG_LABELS, {"good": []})
     out: dict[str, list[float]] = {}
@@ -205,6 +250,22 @@ def main() -> int:
     if args.vod:
         anchors = {args.vod: anchors.get(args.vod, [])}
     rejects = parse_log_rejects(Path(args.log))
+    sent_raw = _read_json(DATA_PUBG / "vod_segment_feed_sent.json", {"sent": []})
+    sent_ids = set(sent_raw.get("sent", []) if isinstance(sent_raw, dict) else sent_raw)
+    combat_passes = parse_log_combat_passes(Path(args.log))
+    unsent = audit_unsent_combat_passes(combat_passes, sent_ids)
+    if unsent:
+        print(f"\n=== combat PASS but not sent ({len(unsent)} recent) ===")
+        seen: set[tuple[str, int]] = set()
+        for row in unsent[-30:]:
+            key = (row["vod"], int(row["time_sec"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            print(
+                f"  {row['vod']} @{row['time_sec']:.0f}s "
+                f"seg={row.get('expected_segment_id')} ({row.get('reason','')[:40]})"
+            )
 
     report: list[dict] = []
     total_missed = 0
@@ -230,7 +291,14 @@ def main() -> int:
 
     out_path = DATA_PUBG / "learning_audit_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"report": report, "total_missed": total_missed}, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(
+            {"report": report, "total_missed": total_missed, "unsent_combat_passes": unsent[-50:]},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     print(f"Report: {out_path}")
     return 0
 

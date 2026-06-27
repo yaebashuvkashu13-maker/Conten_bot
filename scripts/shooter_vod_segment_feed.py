@@ -35,6 +35,7 @@ from shooter_vod_segment_store import (
     keyboard,
     labeled_ids,
     load_feed_sent,
+    load_labels,
     mark_feed_sent,
     segment_id,
     stats,
@@ -164,13 +165,32 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
     return True, "shooter_combat_ok", metrics
 
 
-def _used_peak_times(vod_id: str, blocked_ids: set[str]) -> list[float]:
+def _used_peak_times(game: str, vod_id: str) -> list[float]:
+    """Peaks from 👍 labels + delivered segments only — 👎 must not block nearby retries."""
     peaks: list[float] = []
-    for sid in blocked_ids:
+    labels = load_labels(game)
+    good_ids = {str(r.get("segment_id", "")) for r in labels.get("good", [])}
+    bad_ids = {str(r.get("segment_id", "")) for r in labels.get("bad", [])}
+    for row in labels.get("good", []):
+        sid = str(row.get("segment_id", ""))
         if not sid.startswith(f"{vod_id}_"):
             continue
         try:
             peaks.append(float(sid.rsplit("_", 1)[1]))
+        except ValueError:
+            start = row.get("start")
+            if start is not None:
+                peaks.append(float(start))
+    for sid in load_feed_sent(game):
+        sid_s = str(sid)
+        if not sid_s.startswith(f"{vod_id}_"):
+            continue
+        if sid_s in bad_ids:
+            continue
+        if sid_s in good_ids:
+            continue
+        try:
+            peaks.append(float(sid_s.rsplit("_", 1)[1]))
         except ValueError:
             continue
     return peaks
@@ -264,7 +284,7 @@ def _scan_vod(
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
     seg_gap = float(os.environ.get("SHOOTER_VOD_SEGMENT_GAP_SEC", "45"))
     vid = vod_youtube_id(vod)
-    used_peaks = _used_peak_times(vid, labeled | sent_set)
+    used_peaks = _used_peak_times(game, vid)
     skip_peaks: set[float] = set()
     peak_tries = 0
     max_tries = soft_max_peak_tries() if soften_level > 0 else 1
@@ -293,7 +313,24 @@ def _scan_vod(
         if not rows:
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
-        n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
+        batch = rows[:1]
+        if game == "pubg":
+            from pubg_fight_segment import normalize_pubg_clip
+
+            normalized: list[dict] = []
+            for row in batch:
+                clip_norm = normalize_pubg_clip(row["clip"], vod)
+                start_n = float(clip_norm["start"])
+                normalized.append(
+                    {
+                        **row,
+                        "clip": clip_norm,
+                        "start": start_n,
+                        "segment_id": segment_id(vid, start_n),
+                    }
+                )
+            batch = normalized
+        n = _send_batch(game, token, chat_id, vod, batch, sig)
         if n > 0:
             return n
         if soften_level <= 0:

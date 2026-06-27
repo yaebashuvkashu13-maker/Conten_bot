@@ -142,6 +142,28 @@ def segment_looks_metro_royale(
             minimap_tint_votes += 1
 
     if checked == 0:
+        # Retry wider offsets — some encodes fail on exact seek points.
+        for t in (start_sec + 0.5, start_sec + 2.0, start_sec + duration_sec * 0.33):
+            frame = _read_frame_at(video_path, t)
+            if frame is not None:
+                checked += 1
+                sky = _frame_sky_ratio(frame)
+                bright = _frame_mean_brightness(frame)
+                metro_ui, classic_ui, metro_map = _ocr_metro_signals(frame)
+                tint = _frame_metro_minimap_tint(frame)
+                if sky >= float(os.environ.get("PUBG_METRO_MAX_SKY_RATIO", "0.11")):
+                    outdoor_votes += 1
+                if bright <= float(os.environ.get("PUBG_METRO_MAX_BRIGHTNESS", "0.42")):
+                    dark_votes += 1
+                if metro_ui:
+                    metro_ui_votes += 1
+                if metro_map:
+                    metro_map_votes += 1
+                if classic_ui:
+                    classic_ui_votes += 1
+                if tint >= float(os.environ.get("PUBG_METRO_MINIMAP_TINT_MIN", "0.06")):
+                    minimap_tint_votes += 1
+    if checked == 0:
         return False, "metro_no_frames"
 
     if classic_ui_votes >= 1:
