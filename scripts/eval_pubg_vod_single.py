@@ -24,6 +24,9 @@ def main() -> int:
 
     os.environ.setdefault("HIGHLIGHT_INBOX", "/root/data/pubg/youtube_nightly/inbox")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ.setdefault("PUBG_OWNER_ANCHORS", "0")
+    os.environ.setdefault("PUBG_SOFT_ANCHOR", "0")
+    os.environ.setdefault("HIGHLIGHT_SOFT_ANCHOR", "0")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
 
     videos = load_videos("pubg")

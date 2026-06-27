@@ -74,8 +74,10 @@ def eval_vod(
     if not vod:
         return {"video_id": video_id, "status": "vod_missing", "recall": 0.0, "bad_hits": 0}
 
-    os.environ.setdefault("HIGHLIGHT_SOFT_ANCHOR", "1")
+    os.environ.setdefault("HIGHLIGHT_SOFT_ANCHOR", "0" if profile == "pubg" else "1")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ.setdefault("PUBG_OWNER_ANCHORS", "0")
+    os.environ.setdefault("PUBG_SOFT_ANCHOR", "0")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     candidates = discover_highlight_candidates(vod, profile, limit=24)
 

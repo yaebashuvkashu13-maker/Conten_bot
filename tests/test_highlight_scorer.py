@@ -117,7 +117,8 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
         '{"videos":{"testvid":[{"time_sec":515,"label":"good"}]}}',
         encoding="utf-8",
     )
-    monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "1")
+    monkeypatch.setenv("PUBG_OWNER_ANCHORS", "0")
     monkeypatch.setenv("INTELLICLIP_STAGE1", "0")
     monkeypatch.setattr(
         "highlight_scorer._owner_labels_path",
@@ -137,4 +138,4 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     vod.write_bytes(b"")
     starts = stage1_candidates(vod, "pubg")
     assert 510.0 not in starts
-    assert not owner_anchors_enabled()
+    assert not owner_anchors_enabled("pubg")

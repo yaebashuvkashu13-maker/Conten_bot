@@ -172,8 +172,11 @@ GAME_LABELS = {
 SHOOTER_PROFILES = frozenset({"pubg", "standoff"})
 
 
-def owner_anchors_enabled() -> bool:
+def owner_anchors_enabled(profile: str | None = None) -> bool:
     """Hard inject owner windows into stage1 — off by default in inference."""
+    if profile and normalize_profile(profile) == "pubg":
+        # Owner timecodes are supervision for eval/audit — not discovery hints.
+        return os.environ.get("PUBG_OWNER_ANCHORS", "0") == "1"
     return os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") == "1"
 
 
@@ -211,9 +214,12 @@ def vod_has_owner_labels(video_path: Path, profile: str) -> bool:
 
 def soft_anchor_enabled(video_path: Path, profile: str) -> bool:
     """Boost (not inject) owner good windows when VOD has labels in JSON."""
+    profile = normalize_profile(profile)
+    if profile == "pubg" and os.environ.get("PUBG_SOFT_ANCHOR", "0") != "1":
+        return False
     if os.environ.get("HIGHLIGHT_SOFT_ANCHOR", "1") == "0":
         return False
-    if owner_anchors_enabled():
+    if owner_anchors_enabled(profile):
         return False
     return vod_has_owner_labels(video_path, profile)
 
@@ -1328,7 +1334,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             except Exception as exc:
                 log.warning("soft anchor stage1 failed: %s", exc)
 
-    if owner_anchors_enabled():
+    if owner_anchors_enabled(profile):
         if profile in SHOOTER_PROFILES and _owner_anchor_starts(video_path, profile):
             for vicinity_start in _owner_vicinity_gun_starts(video_path, profile):
                 starts.add(vicinity_start)
@@ -1374,7 +1380,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     from smart_video_editor import analyze_video
 
     analysis = analyze_video(video_path)
-    if not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"):
+    if not owner_anchors_enabled(profile) and profile in ("mobile_legends", "genshin", "wot"):
         peak_limit = int(os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"))
         for peak_start in _action_peak_starts(analysis, profile, limit=peak_limit):
             starts.add(peak_start)
@@ -1415,7 +1421,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             starts.add(round(t, 1))
         t += STEP_SEC
 
-    if owner_anchors_enabled():
+    if owner_anchors_enabled(profile):
         for anchor in _owner_anchor_starts(video_path, profile):
             for off in (-60, -30, 0, 30, 60):
                 s = anchor + off - WINDOW_SEC * 0.5
@@ -1447,7 +1453,12 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         if panns["panns_gun_max"] >= pre_min:
             kept.append(start)
-    if not kept and profile in OWNER_LABEL_PROFILES and _owner_anchor_starts(video_path, profile):
+    if (
+        not kept
+        and profile in OWNER_LABEL_PROFILES
+        and owner_anchors_enabled(profile)
+        and _owner_anchor_starts(video_path, profile)
+    ):
         kept = _owner_vicinity_gun_starts(video_path, profile)
         if kept:
             log.info(
@@ -1577,7 +1588,7 @@ def discover_highlight_candidates(
         )
         if not metrics.rule_pass or not metrics.visual_pass:
             continue
-        if profile == "mobile_legends" and not owner_anchors_enabled():
+        if profile == "mobile_legends" and not owner_anchors_enabled(profile):
             min_clip = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
             if start < _mlbb_skip_intro_sec() and metrics.clip_score < min_clip:
                 log.info(
