@@ -26,8 +26,10 @@ def pubg_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     seg = root / "segments" / "seg_abc123_42.mp4"
     seg.parent.mkdir(parents=True)
     seg.write_bytes(b"fake")
+    owner = tmp_path / "pubg_owner_labels.json"
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
     monkeypatch.setenv("SHOOTER_PUBG_SEGMENTS_ROOT", str(root / "segments"))
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(owner))
     return root
 
 

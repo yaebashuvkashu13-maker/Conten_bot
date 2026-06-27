@@ -1529,6 +1529,23 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
+    elif profile == "pubg":
+        if os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") == "1":
+            from pubg_kill_banner import discover_vod_kill_moments
+
+            start_set = set(starts)
+            moments = discover_vod_kill_moments(video_path, hint_peaks=starts)
+            lead = float(os.environ.get("PUBG_VOD_LEAD_SEC", "3"))
+            if moments:
+                log.info(
+                    "highlight pubg kill discover %s: %s hits tier>=%s",
+                    video_path.name,
+                    len(moments),
+                    os.environ.get("PUBG_KILL_MIN_TIER", "single"),
+                )
+                for hit in moments:
+                    start_set.add(max(0.0, hit.sec - lead))
+            starts = sorted(start_set)
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 

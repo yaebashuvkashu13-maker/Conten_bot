@@ -13,11 +13,49 @@ DATA_PUBG = Path(os.environ.get("SHOOTER_PUBG_DATA_ROOT", "/root/data/pubg"))
 OWNER_PATH = Path(
     os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json"))
 )
+
+
+def _owner_path() -> Path:
+    return Path(
+        os.environ.get("PUBG_OWNER_LABELS_PATH", str(REPO / "data" / "pubg_owner_labels.json"))
+    )
 SHORTS_LABELS = Path(
     os.environ.get("PUBG_CALIBRATION_LABELS", str(DATA_PUBG / "calibration_labels.json"))
 )
 
 SHORTS_SCOPE = "youtube_shorts"
+VOD_SCOPE = "vod_segment"
+
+
+def _video_id_from_segment(segment_id: str, vod: str) -> str:
+    vid = str(vod or "").strip()
+    if vid.startswith("yt_"):
+        vid = vid[3:]
+    if vid.endswith(".mp4"):
+        vid = Path(vid).stem
+        if vid.startswith("yt_"):
+            vid = vid[3:]
+    if not vid and "_" in segment_id:
+        vid = segment_id.rsplit("_", 1)[0]
+    return vid
+
+
+def sync_vod_segment_to_owner_json(
+    video_id: str,
+    time_sec: float,
+    *,
+    is_good: bool,
+    reason: str = "",
+    segment_id: str = "",
+) -> bool:
+    note = reason or (f"vseg_{segment_id}" if segment_id else "vod_segment")
+    return append_owner_time_label(
+        video_id,
+        time_sec,
+        "good" if is_good else "bad",
+        note=note,
+        source=VOD_SCOPE,
+    )
 
 
 def _read_json(path: Path, default: dict | list) -> dict | list:
@@ -35,7 +73,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def load_owner_labels_json() -> dict:
-    data = _read_json(OWNER_PATH, {"videos": {}})
+    data = _read_json(_owner_path(), {"videos": {}})
     if not isinstance(data, dict):
         return {"videos": {}}
     data.setdefault("videos", {})
@@ -44,10 +82,14 @@ def load_owner_labels_json() -> dict:
 
 def save_owner_labels_json(data: dict) -> None:
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(OWNER_PATH, data)
+    path = _owner_path()
+    _write_json(path, data)
     legacy = Path("/root/data/mlbb/pubg_owner_labels.json")
-    if legacy.parent.exists():
-        _write_json(legacy, data)
+    if legacy.parent.exists() and str(path.resolve()) != str(legacy.resolve()):
+        try:
+            _write_json(legacy, data)
+        except OSError:
+            pass
 
 
 def append_owner_time_label(

@@ -16,6 +16,16 @@ METRO_UI_RE = re.compile(
     r"metro[\s_-]*royale|metroroyale|метро[\s_-]*роял|метророял",
     re.I,
 )
+METRO_MAP_RE = re.compile(
+    r"(?:\b(arctic\s*base|misty\s*port|old\s*blockade|frontline|survival\s*drop|"
+    r"zombie\s*uprising|blockade\s*zone|radiation|metro\s*cash|evacuat)\b|"
+    r"арктик|туман|блокад|эвакуац|выживан|зомби|радиац)",
+    re.I,
+)
+METRO_LOOT_UI_RE = re.compile(
+    r"\b(loot\s*value|gear\s*value|inventory|рюкзак|инвентар|стоимост)\b",
+    re.I,
+)
 CLASSIC_MAP_RE = re.compile(
     r"\b(erangel|livik|sanhok|miramar|vikendi|nusa|rondo|classic ranked|"
     r"эрангель|ливик|санhok)\b",
@@ -60,17 +70,31 @@ def _frame_mean_brightness(frame: np.ndarray) -> float:
     return float(np.mean(gray)) / 255.0
 
 
-def _ocr_metro_signals(frame: np.ndarray) -> tuple[bool, bool]:
-    """Return (metro_keyword, classic_map_keyword) from HUD zones."""
+def _ocr_metro_signals(frame: np.ndarray) -> tuple[bool, bool, bool]:
+    """Return (metro_keyword, classic_map_keyword, metro_map_keyword) from HUD zones."""
     zones = (
         (0.0, 0.16, 0.12, 0.88),
         (0.72, 0.98, 0.02, 0.42),
         (0.0, 0.22, 0.55, 0.98),
+        (0.68, 0.98, 0.55, 0.98),  # minimap / evac hints
     )
     blob = " ".join(_ocr_zone_text(frame, y0=a, y1=b, x0=c, x1=d) for a, b, c, d in zones).lower()
-    metro = bool(METRO_UI_RE.search(blob))
+    metro = bool(METRO_UI_RE.search(blob) or METRO_LOOT_UI_RE.search(blob))
+    metro_map = bool(METRO_MAP_RE.search(blob))
     classic = bool(CLASSIC_MAP_RE.search(blob) or CLASSIC_MODE_UI_RE.search(blob))
-    return metro, classic
+    return metro, classic, metro_map
+
+
+def _frame_metro_minimap_tint(frame: np.ndarray) -> float:
+    """Teal/green minimap tint — common in Metro, rare in classic Erangel circle UI."""
+    small = cv2.resize(frame, (320, 180))
+    h, w = small.shape[:2]
+    zone = small[int(h * 0.72) : int(h * 0.98), int(w * 0.02) : int(w * 0.28)]
+    if zone.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(zone, cv2.COLOR_BGR2HSV)
+    teal = (hsv[:, :, 0] > 75) & (hsv[:, :, 0] < 105) & (hsv[:, :, 1] > 25) & (hsv[:, :, 2] > 40)
+    return float(np.count_nonzero(teal)) / float(teal.size or 1)
 
 
 def segment_looks_metro_royale(
@@ -90,6 +114,8 @@ def segment_looks_metro_royale(
     outdoor_votes = 0
     metro_ui_votes = 0
     classic_ui_votes = 0
+    metro_map_votes = 0
+    minimap_tint_votes = 0
     dark_votes = 0
     checked = 0
 
@@ -100,15 +126,20 @@ def segment_looks_metro_royale(
         checked += 1
         sky = _frame_sky_ratio(frame)
         bright = _frame_mean_brightness(frame)
-        metro_ui, classic_ui = _ocr_metro_signals(frame)
+        metro_ui, classic_ui, metro_map = _ocr_metro_signals(frame)
+        tint = _frame_metro_minimap_tint(frame)
         if sky >= float(os.environ.get("PUBG_METRO_MAX_SKY_RATIO", "0.11")):
             outdoor_votes += 1
         if bright <= float(os.environ.get("PUBG_METRO_MAX_BRIGHTNESS", "0.42")):
             dark_votes += 1
         if metro_ui:
             metro_ui_votes += 1
+        if metro_map:
+            metro_map_votes += 1
         if classic_ui:
             classic_ui_votes += 1
+        if tint >= float(os.environ.get("PUBG_METRO_MINIMAP_TINT_MIN", "0.06")):
+            minimap_tint_votes += 1
 
     if checked == 0:
         return False, "metro_no_frames"
@@ -117,11 +148,16 @@ def segment_looks_metro_royale(
         return False, f"classic_map_ui={classic_ui_votes}"
     if outdoor_votes >= 2:
         return False, f"classic_outdoor_sky={outdoor_votes}/{checked}"
-    if metro_ui_votes >= 1:
-        return True, "metro_ui_ok"
+    if metro_ui_votes >= 1 or metro_map_votes >= 1:
+        return True, f"metro_ui_ok=ui{metro_ui_votes}:map{metro_map_votes}"
+    if dark_votes >= 2 and outdoor_votes == 0 and minimap_tint_votes >= 1:
+        return True, f"metro_underground_tint=dark{dark_votes}:tint{minimap_tint_votes}"
     if dark_votes >= 2 and outdoor_votes == 0:
         return True, "metro_underground"
-    return False, f"not_metro=sky{outdoor_votes}:dark{dark_votes}:ui{metro_ui_votes}"
+    return False, (
+        f"not_metro=sky{outdoor_votes}:dark{dark_votes}:ui{metro_ui_votes}:"
+        f"map{metro_map_votes}:tint{minimap_tint_votes}"
+    )
 
 
 def vod_looks_metro_royale(video_path: Path, *, duration_sec: float | None = None) -> tuple[bool, str]:

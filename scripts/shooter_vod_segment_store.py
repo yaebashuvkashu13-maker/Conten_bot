@@ -172,14 +172,25 @@ def apply_owner_label(
         labels["bad"].append(entry)
 
     save_labels(game, labels)
-    if game.strip().lower() == "pubg" and not is_good:
-        from pubg_owner_learning import sync_shorts_label_to_owner_json
+    if game.strip().lower() == "pubg":
+        from pubg_owner_learning import sync_vod_segment_to_owner_json
 
         vid = str(row.get("vod", "")).strip()
         if not vid and "_" in segment_id_str:
             vid = segment_id_str.rsplit("_", 1)[0]
-        if vid:
-            sync_shorts_label_to_owner_json(vid, is_good=False, reason=reason or "not_metro")
+        if vid.endswith(".mp4"):
+            vid = Path(vid).stem
+        if vid.startswith("yt_"):
+            vid = vid[3:]
+        start = float(row.get("start", 0) or 0)
+        if vid and start >= 0:
+            sync_vod_segment_to_owner_json(
+                vid,
+                start,
+                is_good=is_good,
+                reason=reason or ("good" if is_good else "not_metro"),
+                segment_id=segment_id_str,
+            )
     return True, "good" if is_good else "bad"
 
 
