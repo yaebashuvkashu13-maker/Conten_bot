@@ -94,10 +94,11 @@ def soften_summary(level: int) -> str:
     if level <= 0:
         return "strict"
     ov = overrides_for_level(level)
-    tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "?")
+    tier = ov.get("MLBB_KILL_BANNER_MIN_TIER") or os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "?")
+    discover = ov.get("MLBB_VOD_BANNER_DISCOVER") or os.environ.get("MLBB_VOD_BANNER_DISCOVER", "?")
     pre = "off" if ov.get("MLBB_VOD_BANNER_PREFILTER") == "0" else "on"
     anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "banner_required"
-    return f"soft L{level} tier={tier} prefilter={pre} {anchor}"
+    return f"soft L{level} tier={tier} discover={discover} prefilter={pre} {anchor}"
 
 
 def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
