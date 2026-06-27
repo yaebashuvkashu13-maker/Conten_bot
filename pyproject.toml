@@ -7,13 +7,28 @@ requires-python = ">=3.11"
 dependencies = [
   "numpy",
   "opencv-python-headless",
+  "pytesseract",
   "PyYAML",
   "pandas",
   "scikit-learn",
+  "joblib",
   "yt-dlp",
 ]
+
+[project.optional-dependencies]
+highlight = [
+  "torch",
+  "panns-inference",
+  "open-clip-torch",
+  "Pillow",
+]
+dev = ["pytest"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["content_bot*"]
 

@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Per-game VOD segment store for shooter feeds (PUBG, Standoff)."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from pathlib import Path
+
+
+
+def _game_root(game: str) -> Path:
+    g = game.strip().lower()
+    base = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")).parent
+    return Path(os.environ.get(f"SHOOTER_{g.upper()}_DATA_ROOT", str(base / g)))
+
+
+def _paths(game: str) -> dict[str, Path]:
+    root = _game_root(game)
+    return {
+        "state": root / "vod_segment_state.json",
+        "index": root / "vod_segment_index.json",
+        "labels": root / "vod_segment_labels.json",
+        "feed_sent": root / "vod_segment_feed_sent.json",
+        "inbox": root / "youtube_nightly" / "inbox",
+        "segments": Path(
+            os.environ.get(
+                f"SHOOTER_{game.upper()}_SEGMENTS_ROOT",
+                str(Path("/root/datasets") / game / "vod_segments"),
+            )
+        ),
+    }
+
+
+def vod_youtube_id(path: Path) -> str:
+    stem = path.stem
+    if stem.startswith("yt_"):
+        return stem[3:][:11]
+    return stem[:11]
+
+
+def segment_id(vod_id: str, start_sec: float) -> str:
+    return f"{vod_id}_{int(start_sec)}"
+
+
+def load_index(game: str) -> dict:
+    p = _paths(game)["index"]
+    if not p.exists():
+        return {"segments": []}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"segments": []}
+
+
+def load_labels(game: str) -> dict:
+    p = _paths(game)["labels"]
+    if not p.exists():
+        return {"good": [], "bad": [], "feedback": []}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"good": [], "bad": [], "feedback": []}
+
+
+def labeled_ids(game: str) -> set[str]:
+    data = load_labels(game)
+    out: set[str] = set()
+    for bucket in ("good", "bad"):
+        for row in data.get(bucket, []):
+            sid = str(row.get("segment_id", ""))
+            if sid:
+                out.add(sid)
+    for row in data.get("feedback", []):
+        sid = str(row.get("segment_id", ""))
+        if sid:
+            out.add(sid)
+    return out
+
+
+def load_feed_sent(game: str) -> set[str]:
+    p = _paths(game)["feed_sent"]
+    if not p.exists():
+        return set()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return {str(x) for x in data.get("sent", [])}
+    except (json.JSONDecodeError, OSError):
+        return set()
+
+
+def mark_feed_sent(game: str, segment_ids: list[str]) -> None:
+    p = _paths(game)["feed_sent"]
+    sent = load_feed_sent(game)
+    sent.update(segment_ids)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"sent": sorted(sent)}, indent=2), encoding="utf-8")
+
+
+def upsert_segment(game: str, row: dict) -> None:
+    p = _paths(game)["index"]
+    data = load_index(game)
+    segments = data.setdefault("segments", [])
+    sid = str(row.get("segment_id", ""))
+    segments[:] = [s for s in segments if str(s.get("segment_id")) != sid]
+    segments.append(row)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def save_labels(game: str, data: dict) -> None:
+    p = _paths(game)["labels"]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def find_segment(game: str, segment_id_str: str) -> dict | None:
+    sid = segment_id_str.strip()
+    for row in load_index(game).get("segments", []):
+        if row.get("segment_id") == sid:
+            return row
+    direct = _paths(game)["segments"] / f"seg_{sid}.mp4"
+    if direct.exists():
+        return {"segment_id": sid, "path": str(direct), "start": 0, "score": 0}
+    return None
+
+
+def apply_owner_label(
+    game: str,
+    segment_id_str: str,
+    *,
+    is_good: bool,
+    reason: str = "",
+    by_chat: str = "",
+) -> tuple[bool, str]:
+    row = find_segment(game, segment_id_str)
+    if not row:
+        return False, f"unknown_segment:{segment_id_str}"
+    path = Path(row.get("path", ""))
+    if not path.exists():
+        path = _paths(game)["segments"] / f"seg_{segment_id_str}.mp4"
+    if not path.exists():
+        return False, f"file_missing:{segment_id_str}"
+
+    labels = load_labels(game)
+    entry = {
+        "segment_id": segment_id_str,
+        "path": str(path),
+        "vod": row.get("vod", ""),
+        "start": row.get("start", 0),
+        "score": row.get("score", 0),
+        "reason": reason,
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "by_chat": by_chat,
+        "source": "vod_segment",
+        "game": game.strip().lower(),
+    }
+    feedback = {**entry, "owner_label": "yes" if is_good else "no"}
+
+    labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
+    labels["feedback"].append(feedback)
+
+    if is_good:
+        labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
+        labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
+        labels["good"].append(entry)
+    else:
+        labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
+        labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
+        labels["bad"].append(entry)
+
+    save_labels(game, labels)
+    if game.strip().lower() == "pubg":
+        from pubg_owner_learning import sync_vod_segment_to_owner_json
+
+        vid = str(row.get("vod", "")).strip()
+        if not vid and "_" in segment_id_str:
+            vid = segment_id_str.rsplit("_", 1)[0]
+        if vid.endswith(".mp4"):
+            vid = Path(vid).stem
+        if vid.startswith("yt_"):
+            vid = vid[3:]
+        start = float(row.get("start", 0) or 0)
+        if vid and start >= 0:
+            sync_vod_segment_to_owner_json(
+                vid,
+                start,
+                is_good=is_good,
+                reason=reason or ("good" if is_good else "not_metro"),
+                segment_id=segment_id_str,
+            )
+    return True, "good" if is_good else "bad"
+
+
+def stats(game: str) -> dict:
+    data = load_labels(game)
+    yes = sum(1 for f in data.get("feedback", []) if f.get("owner_label") in ("yes", "good"))
+    no = sum(1 for f in data.get("feedback", []) if f.get("owner_label") in ("no", "bad"))
+    return {"feedback_yes": yes, "feedback_no": no, "game": game}
+
+
+def _callback_prefix(game: str) -> str:
+    return f"{game.strip().lower()}_vseg"
+
+
+def inline_keyboard_markup(game: str, segment_id_str: str) -> dict:
+    sid = segment_id_str.strip()
+    prefix = _callback_prefix(game)
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "👍 Ок", "callback_data": f"{prefix}_yes:{sid}"},
+                {"text": "👎 Не ок", "callback_data": f"{prefix}_no:{sid}"},
+            ]
+        ]
+    }
+
+
+def labeled_keyboard_markup(
+    game: str,
+    label: str,
+    *,
+    reason: str = "",
+    segment_id: str = "",
+) -> dict:
+    prefix = _callback_prefix(game)
+    if label == "good":
+        sid = segment_id.strip()
+        rows: list[list[dict]] = [[{"text": "✅ Ок", "callback_data": "mlbb_noop"}]]
+        if sid:
+            rows.append([{"text": "📁 HQ файл", "callback_data": f"{prefix}_hq:{sid}"}])
+        return {"inline_keyboard": rows}
+    mark = f"❌ {dislike_reason_label_for_game(game, reason)}"
+    return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
+
+
+def dislike_reason_label_for_game(game: str, reason: str) -> str:
+    g = game.strip().lower()
+    if g == "pubg":
+        from pubg_dislike_reasons import dislike_reason_label
+
+        return dislike_reason_label(reason)
+    from mlbb_calibration_store import dislike_reason_label
+
+    return dislike_reason_label(reason)
+
+
+def dislike_picker_markup(game: str, item_id: str, *, callback_prefix: str) -> dict:
+    g = game.strip().lower()
+    if g == "pubg":
+        from pubg_dislike_reasons import dislike_reason_keyboard_markup
+
+        return dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+    from mlbb_calibration_store import dislike_reason_keyboard_markup
+
+    return dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+
+
+def keyboard(game: str, seg_id: str) -> dict:
+    return inline_keyboard_markup(game, seg_id)
