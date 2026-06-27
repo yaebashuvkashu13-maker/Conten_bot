@@ -31,16 +31,7 @@ FEED_SENT_LOCK_PATH = Path(
     os.environ.get("PUBG_FEED_SENT_LOCK", "/tmp/pubg_calibration_feed_sent.lock")
 )
 
-DISLIKE_REASONS: tuple[tuple[str, str], ...] = (
-    ("not_metro", "🚇 Не Metro"),
-    ("not_combat", "🔫 Не бой"),
-    ("classic", "🌤 Classic PUBG"),
-    ("promo", "📢 Реклама"),
-    ("boring", "😴 Скучно"),
-    ("music", "🎵 Музыка"),
-    ("other", "🗑 Другое"),
-)
-DISLIKE_REASON_CODES = {code for code, _ in DISLIKE_REASONS}
+from pubg_dislike_reasons import DISLIKE_REASON_CODES, DISLIKE_REASONS  # noqa: F401
 
 
 def _read_json(path: Path, default: dict | list) -> dict | list:
@@ -553,26 +544,15 @@ def stats() -> dict:
 
 
 def dislike_reason_label(reason: str) -> str:
-    for code, label in DISLIKE_REASONS:
-        if code == reason:
-            return label
-    return reason.strip() or "Плохо"
+    from pubg_dislike_reasons import dislike_reason_label as _label
+
+    return _label(reason)
 
 
 def dislike_reason_keyboard_markup(item_id: str, *, callback_prefix: str = "pubg_short_bad") -> dict:
-    vid = str(item_id).strip()
-    if vid.startswith("yt_"):
-        vid = vid[3:]
-    rows: list[list[dict[str, str]]] = []
-    row: list[dict[str, str]] = []
-    for code, label in DISLIKE_REASONS:
-        row.append({"text": label, "callback_data": f"{callback_prefix}:{vid}:{code}"})
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    return {"inline_keyboard": rows}
+    from pubg_dislike_reasons import dislike_reason_keyboard_markup as _kb
+
+    return _kb(item_id, callback_prefix=callback_prefix)
 
 
 def inline_keyboard_markup(video_id: str) -> dict:

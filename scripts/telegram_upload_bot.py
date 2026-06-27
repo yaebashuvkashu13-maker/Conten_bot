@@ -617,11 +617,15 @@ def _handle_shooter_vseg_callback(
         except ValueError:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
             return True
-        from mlbb_calibration_store import DISLIKE_REASON_CODES
         from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
 
-        if reason not in DISLIKE_REASON_CODES:
-            reason = 'other'
+        if game.strip().lower() == 'pubg':
+            from pubg_dislike_reasons import DISLIKE_REASON_CODES as reason_codes
+        else:
+            from mlbb_calibration_store import DISLIKE_REASON_CODES as reason_codes
+
+        if reason not in reason_codes:
+            reason = 'not_metro' if game.strip().lower() == 'pubg' else 'other'
         try:
             ok, reply = _shooter_apply_vseg_label(
                 game, chat_id, item_id, is_good=False, reason=reason
@@ -671,6 +675,7 @@ def _handle_shooter_vseg_callback(
                 query_id=query_id,
                 item_id=item_id,
                 callback_prefix=f'{prefix}_bad',
+                game=game,
             )
         except Exception as exc:
             logging.exception('%s_vseg_no picker failed seg=%s', game, item_id)
@@ -808,11 +813,17 @@ def _show_dislike_reason_picker(
     query_id: str,
     item_id: str,
     callback_prefix: str = 'mlbb_bad',
+    game: str = '',
 ) -> None:
     """Second step after 👎 — edit markup or send a new picker message if edit fails."""
-    from mlbb_calibration_store import dislike_reason_keyboard_markup
+    if game.strip().lower() == 'pubg' or callback_prefix.startswith('pubg_'):
+        from pubg_dislike_reasons import dislike_reason_keyboard_markup
 
-    markup = dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+        markup = dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+    else:
+        from mlbb_calibration_store import dislike_reason_keyboard_markup
+
+        markup = dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
     try:
         api_call(
             'editMessageReplyMarkup',
@@ -994,6 +1005,7 @@ def _handle_pubg_short_callback(
                 query_id=query_id,
                 item_id=item_id,
                 callback_prefix='pubg_short_bad',
+                game='pubg',
             )
         except Exception as exc:
             logging.exception('pubg_short_no failed data=%s', data)

@@ -10,12 +10,9 @@ from typing import Iterator
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: productive fallback — motion peaks, banner checked at presend only.
+# Level 1: lower motion/clip thresholds — keep kill-banner discover + double tier intact.
 SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_BANNER_PREFILTER": "0",
-    "MLBB_VOD_BANNER_DISCOVER": "0",
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",

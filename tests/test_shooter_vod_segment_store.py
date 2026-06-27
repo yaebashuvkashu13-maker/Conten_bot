@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from shooter_vod_segment_store import (  # noqa: E402
     apply_owner_label,
+    dislike_picker_markup,
     inline_keyboard_markup,
     stats,
     upsert_segment,
@@ -35,6 +36,12 @@ def test_pubg_keyboard_uses_game_prefix(pubg_data: Path) -> None:
     row = markup["inline_keyboard"][0]
     assert row[0]["callback_data"] == "pubg_vseg_yes:abc123_42"
     assert row[1]["callback_data"] == "pubg_vseg_no:abc123_42"
+
+
+def test_pubg_dislike_picker_not_metro_first(pubg_data: Path) -> None:
+    markup = dislike_picker_markup("pubg", "abc123_42", callback_prefix="pubg_vseg_bad")
+    assert markup["inline_keyboard"][0][0]["text"] == "🚇 Не Metro"
+    assert markup["inline_keyboard"][0][0]["callback_data"] == "pubg_vseg_bad:abc123_42:not_metro"
 
 
 def test_apply_owner_label_records_feedback(pubg_data: Path) -> None:

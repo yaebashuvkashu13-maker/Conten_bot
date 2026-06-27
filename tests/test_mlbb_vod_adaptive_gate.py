@@ -34,11 +34,12 @@ def test_soften_after_three_zeros():
     assert soften_level(6) == 2
 
 
-def test_soft_overrides_disable_banner_prefilter():
+def test_soft_overrides_keep_motion_not_banner_tier():
     ov = overrides_for_level(1)
     assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
-    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert "MLBB_KILL_BANNER_MIN_TIER" not in ov
+    assert "MLBB_VOD_BANNER_DISCOVER" not in ov
+    assert "MLBB_KILL_BANNER_REQUIRED" not in ov
 
 
 def test_l2_skips_presend_banner():
@@ -68,12 +69,12 @@ def test_should_notify_only_on_level_up():
 
 
 def test_adaptive_env_restores():
-    os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
+    os.environ["MLBB_PRESEND_MIN_MOTION"] = "0.020"
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     with adaptive_env(3) as level:
         assert level == 1
-        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+        assert os.environ["MLBB_PRESEND_MIN_MOTION"] == "0.014"
+    assert os.environ["MLBB_PRESEND_MIN_MOTION"] == "0.020"
 
 
 def test_record_resets_streak_on_send():

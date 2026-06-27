@@ -172,6 +172,14 @@ def apply_owner_label(
         labels["bad"].append(entry)
 
     save_labels(game, labels)
+    if game.strip().lower() == "pubg" and not is_good:
+        from pubg_owner_learning import sync_shorts_label_to_owner_json
+
+        vid = str(row.get("vod", "")).strip()
+        if not vid and "_" in segment_id_str:
+            vid = segment_id_str.rsplit("_", 1)[0]
+        if vid:
+            sync_shorts_label_to_owner_json(vid, is_good=False, reason=reason or "not_metro")
     return True, "good" if is_good else "bad"
 
 
@@ -206,8 +214,6 @@ def labeled_keyboard_markup(
     reason: str = "",
     segment_id: str = "",
 ) -> dict:
-    from mlbb_calibration_store import dislike_reason_label
-
     prefix = _callback_prefix(game)
     if label == "good":
         sid = segment_id.strip()
@@ -215,8 +221,30 @@ def labeled_keyboard_markup(
         if sid:
             rows.append([{"text": "📁 HQ файл", "callback_data": f"{prefix}_hq:{sid}"}])
         return {"inline_keyboard": rows}
-    mark = f"❌ {dislike_reason_label(reason)}"
+    mark = f"❌ {dislike_reason_label_for_game(game, reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
+
+
+def dislike_reason_label_for_game(game: str, reason: str) -> str:
+    g = game.strip().lower()
+    if g == "pubg":
+        from pubg_dislike_reasons import dislike_reason_label
+
+        return dislike_reason_label(reason)
+    from mlbb_calibration_store import dislike_reason_label
+
+    return dislike_reason_label(reason)
+
+
+def dislike_picker_markup(game: str, item_id: str, *, callback_prefix: str) -> dict:
+    g = game.strip().lower()
+    if g == "pubg":
+        from pubg_dislike_reasons import dislike_reason_keyboard_markup
+
+        return dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+    from mlbb_calibration_store import dislike_reason_keyboard_markup
+
+    return dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
 
 
 def keyboard(game: str, seg_id: str) -> dict:
