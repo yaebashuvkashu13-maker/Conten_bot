@@ -617,10 +617,10 @@ def _handle_shooter_vseg_callback(
         except ValueError:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
             return True
-        from mlbb_calibration_store import DISLIKE_REASON_CODES
+        from calibration_dislike_reasons import dislike_reason_codes
         from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
 
-        if reason not in DISLIKE_REASON_CODES:
+        if reason not in dislike_reason_codes(game):
             reason = 'other'
         try:
             ok, reply = _shooter_apply_vseg_label(
@@ -671,6 +671,7 @@ def _handle_shooter_vseg_callback(
                 query_id=query_id,
                 item_id=item_id,
                 callback_prefix=f'{prefix}_bad',
+                game=game,
             )
         except Exception as exc:
             logging.exception('%s_vseg_no picker failed seg=%s', game, item_id)
@@ -808,11 +809,13 @@ def _show_dislike_reason_picker(
     query_id: str,
     item_id: str,
     callback_prefix: str = 'mlbb_bad',
+    game: str = '',
 ) -> None:
     """Second step after 👎 — edit markup or send a new picker message if edit fails."""
-    from mlbb_calibration_store import dislike_reason_keyboard_markup
+    from calibration_dislike_reasons import dislike_reason_keyboard_markup, normalize_game
 
-    markup = dislike_reason_keyboard_markup(item_id, callback_prefix=callback_prefix)
+    g = normalize_game(game or callback_prefix.split('_', 1)[0])
+    markup = dislike_reason_keyboard_markup(item_id, game=g, callback_prefix=callback_prefix)
     try:
         api_call(
             'editMessageReplyMarkup',
@@ -865,6 +868,156 @@ def _show_dislike_reason_picker(
             pass
 
 
+def _handle_game_shorts_callback(
+    game: str,
+    data: str,
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+) -> bool:
+    """Handle {game}_yes / {game}_no / {game}_bad / {game}_hq for Shorts calibration."""
+    from calibration_dislike_reasons import (
+        dislike_reason_codes,
+        labeled_keyboard_markup,
+        normalize_game,
+    )
+
+    g = normalize_game(game)
+    prefix = g
+    if not data.startswith(f'{prefix}_'):
+        return False
+
+    if data == f'{prefix}_noop':
+        api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+        return True
+
+    if data.startswith(f'{prefix}_hq:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            if g == 'mlbb':
+                ok = _mlbb_send_hq_file(chat_id, item_id)
+            else:
+                from game_shorts_calibration import _paths
+
+                path = _paths(g)['shorts'] / f'yt_{item_id}.mp4'
+                ok = path.exists() and send_hq_files(
+                    BOT_TOKEN, str(chat_id), path, f'{g.upper()} HQ #{item_id}'
+                )
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'show_alert': not ok,
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_bad:'):
+        try:
+            _, item_id, reason = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return True
+        if reason not in dislike_reason_codes(g):
+            reason = 'other'
+        try:
+            if g == 'mlbb':
+                ok, reply = _mlbb_apply_owner_label(
+                    chat_id, item_id, is_good=False, reason=reason
+                )
+            else:
+                from game_shorts_calibration import apply_shorts_label
+
+                ok, reply = apply_shorts_label(
+                    g, item_id, is_good=False, reason=reason, by_chat=str(chat_id)
+                )
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return True
+            api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': '❌ Записано'}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': labeled_keyboard_markup(g, 'bad', reason=reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('%s_bad callback failed', g)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_yes:'):
+        item_id = data.split(':', 1)[1].strip()
+        try:
+            if g == 'mlbb':
+                ok, reply = _mlbb_apply_owner_label(chat_id, item_id, is_good=True)
+            else:
+                from game_shorts_calibration import apply_shorts_label
+
+                ok, reply = apply_shorts_label(
+                    g, item_id, is_good=True, by_chat=str(chat_id)
+                )
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return True
+            api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': '✅ Записано'}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': labeled_keyboard_markup(g, 'good', video_id=item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('%s_yes callback failed', g)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_no:'):
+        item_id = data.split(':', 1)[1].strip()
+        _show_dislike_reason_picker(
+            chat_id=chat_id,
+            message_id=message_id,
+            query_id=query_id,
+            item_id=item_id,
+            callback_prefix=f'{prefix}_bad',
+            game=g,
+        )
+        return True
+
+    return False
+
+
 def handle_callback_query(query: dict) -> None:
     query_id = query.get('id')
     data = str(query.get('data') or '')
@@ -891,6 +1044,16 @@ def handle_callback_query(query: dict) -> None:
         except Exception:
             pass
         return
+
+    for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
+        if _handle_game_shorts_callback(
+            shorts_game,
+            data,
+            chat_id=chat_id,
+            message_id=message_id,
+            query_id=query_id,
+        ):
+            return
 
     for shooter_game in ('pubg', 'standoff'):
         if _handle_shooter_vseg_callback(
@@ -2616,6 +2779,11 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
         {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
         {'command': 'mlbb_vod', 'description': 'MLBB VOD — все куски отдельно (владелец)'},
+        {'command': 'shorts_mode', 'description': 'Режим Shorts — 5 игр (владелец)'},
+        {'command': 'vod_mode', 'description': 'Режим VOD-нарезки (владелец)'},
+        {'command': 'shorts_all', 'description': '3 Shorts × 5 игр на оценку'},
+        {'command': 'shorts', 'description': 'Shorts одной игры: /shorts pubg'},
+        {'command': 'mode', 'description': 'Текущий режим бота'},
         {'command': 'mlbb_yes', 'description': 'MLBB Shorts — хороший (#id)'},
         {'command': 'mlbb_no', 'description': 'MLBB Shorts — плохой (#id)'},
     ]
@@ -2978,6 +3146,58 @@ def handle_message(message: dict):
             daemon=True,
         ).start()
         return
+    if is_owner(chat_id) and cmd in ('/mode', '/pipeline_mode'):
+        try:
+            from pipeline_mode_switch import mode_status
+
+            send_message(chat_id, mode_status())
+        except Exception as exc:
+            send_message(chat_id, f'mode error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/shorts_mode', '/mode_shorts'):
+        try:
+            from pipeline_mode_switch import activate_shorts_mode
+
+            send_message(chat_id, activate_shorts_mode())
+        except Exception as exc:
+            send_message(chat_id, f'shorts_mode error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/vod_mode', '/mode_vod'):
+        try:
+            from pipeline_mode_switch import activate_vod_mode
+
+            send_message(chat_id, activate_vod_mode())
+        except Exception as exc:
+            send_message(chat_id, f'vod_mode error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/shorts_all', '/shorts_train'):
+        try:
+            from game_shorts_calibration import feed_all_games
+
+            send_message(chat_id, 'Качаю и отправляю Shorts: MLBB, PUBG Metro, Standoff, WoT, Genshin (по 3)…')
+
+            def _shorts_all_worker() -> None:
+                feed_all_games(token=BOT_TOKEN, chat_id=str(chat_id))
+
+            threading.Thread(target=_shorts_all_worker, daemon=True).start()
+        except Exception as exc:
+            send_message(chat_id, f'shorts_all error: {exc}')
+        return
+    if is_owner(chat_id) and cmd.startswith('/shorts'):
+        parts = text.split(maxsplit=1)
+        game = parts[1].strip().lower() if len(parts) > 1 else 'mlbb'
+        try:
+            from game_shorts_calibration import feed_game
+
+            send_message(chat_id, f'Подбираю Shorts для {game}…')
+
+            def _shorts_one_worker(g: str = game) -> None:
+                feed_game(g, token=BOT_TOKEN, chat_id=str(chat_id))
+
+            threading.Thread(target=_shorts_one_worker, daemon=True).start()
+        except Exception as exc:
+            send_message(chat_id, f'shorts error: {exc}')
+        return
     if is_owner(chat_id) and cmd in ('/mlbb_vod', '/mlbb_segments'):
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -3001,9 +3221,13 @@ def handle_message(message: dict):
             send_message(chat_id, f'MLBB VOD feed error: {exc}')
         return
     if is_owner(chat_id) and cmd in ('/mlbb_samples', '/mlbb_sample'):
-        if env.get('MLBB_VOD_ONLY', '0') == '1' or env.get('MLBB_CALIBRATION_FEED_ENABLED', '1') == '0':
-            send_message(chat_id, 'Shorts-калибровка отключена. Режим: нарезка MLBB VOD (~20 мин матчи).')
-            return
+        if env.get('MLBB_VOD_ONLY', '0') == '1' and env.get('MULTI_GAME_SHORTS_MODE', '0') != '1':
+            if env.get('MLBB_CALIBRATION_FEED_ENABLED', '1') == '0':
+                send_message(
+                    chat_id,
+                    'Shorts отключены. Команды: /shorts_mode → /shorts_all\nИли /vod_mode для нарезки VOD.',
+                )
+                return
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from mlbb_calibration_feed import main as mlbb_feed_main
