@@ -84,6 +84,17 @@ def _banner_required() -> bool:
     return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
 
 
+def _motion_anchor_ok() -> bool:
+    """Motion fight bounds are acceptable without a verified kill-banner anchor."""
+    if os.environ.get("MLBB_VOD_MOTION_ANCHOR_OK", "0") == "1":
+        return True
+    if not _banner_required():
+        return True
+    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
+        return True
+    return False
+
+
 def _scan_step() -> float:
     return float(os.environ.get("MLBB_KILL_BANNER_SCAN_STEP", "0.35"))
 
@@ -587,30 +598,55 @@ def resolve_fight_bounds(
 ) -> tuple[float, float, float, dict] | None:
     """
     Prefer kill-streak banner anchor inside motion sustain window.
-    Returns None when banner required but no qualifying streak found.
+    Returns None only when banner is mandatory and no qualifying streak is found.
     """
     from mlbb_fight_segment import detect_fight_bounds
 
     fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak_sec)
+    motion_meta = {
+        "anchor": "motion",
+        "banner_sec": peak_sec,
+        "fight_start": fight_start,
+        "fight_end": fight_end,
+        "fight_dur": fight_dur,
+    }
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
-        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
-
-    # Productive mode: motion bounds only — no slow OCR per peak unless banner is mandatory.
-    if not _banner_required() and os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
-        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
+        return fight_start, fight_end, fight_dur, motion_meta
 
     hit = find_banner_near_peak(vod, peak_sec, quick=True)
-    min_tier = _min_tier()
     if hit is None:
-        if _banner_required():
-            return None
-        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
+        hit = find_banner_near_peak(vod, peak_sec, quick=False)
+    min_tier = _min_tier()
 
-    if hit.tier < min_tier:
-        if _banner_required():
-            return None
-        return fight_start, fight_end, fight_dur, {"anchor": "motion", "banner_sec": peak_sec}
+    if _motion_anchor_ok():
+        if hit is not None and hit.tier >= min_tier:
+            start, end, dur = bounds_from_banner(
+                hit.sec,
+                file_dur,
+                fight_start=fight_start,
+                fight_end=fight_end,
+            )
+            return (
+                start,
+                end,
+                dur,
+                {
+                    "anchor": "kill_banner",
+                    "banner_sec": hit.sec,
+                    "kill_banner": hit.label,
+                    "kill_banner_tier": hit.tier,
+                    "banner_text": hit.text,
+                    "banner_source": hit.source,
+                    "fight_start": fight_start,
+                    "fight_end": fight_end,
+                    "fight_dur": fight_dur,
+                },
+            )
+        return fight_start, fight_end, fight_dur, motion_meta
+
+    if hit is None or hit.tier < min_tier:
+        return None
 
     start, end, dur = bounds_from_banner(
         hit.sec,

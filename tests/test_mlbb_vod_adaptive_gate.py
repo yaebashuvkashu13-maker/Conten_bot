@@ -41,6 +41,12 @@ def test_soft_overrides_disable_banner_prefilter():
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
 
 
+def test_l1_skips_presend_banner_and_motion_anchor():
+    ov = overrides_for_level(1)
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
+
+
 def test_l2_skips_presend_banner():
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
@@ -89,3 +95,12 @@ def test_record_increments_streak():
     record_vod_outcome(state, vod_id="b", sent=0)
     streak = record_vod_outcome(state, vod_id="c", sent=0)
     assert streak == 3
+
+
+def test_streak_from_state_uses_legacy_zero_cut_streak():
+    state = {"zero_cut_streak": 12, "vod_outcomes": []}
+    assert streak_from_state(state) == 12
+    state2 = {"zero_cut_streak": 2, "vod_outcomes": [{"sent": 0}, {"sent": 0}, {"sent": 0}]}
+    assert streak_from_state(state2) == 3
+    state3 = {"zero_cut_streak": 40, "vod_outcomes": [{"sent": 0}] * 3}
+    assert streak_from_state(state3) == 40

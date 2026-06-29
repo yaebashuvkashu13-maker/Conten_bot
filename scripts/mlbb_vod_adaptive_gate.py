@@ -16,6 +16,8 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_BANNER_DISCOVER": "0",
     "MLBB_KILL_BANNER_MIN_TIER": "single",
     "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
@@ -23,6 +25,8 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_PRESEND_MIN_MOTION": "0.014",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
+    "MLBB_KILL_BANNER_QUICK_BEFORE": "12",
+    "MLBB_KILL_BANNER_QUICK_AFTER": "8",
 }
 
 # Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
@@ -34,6 +38,10 @@ SOFTEN_L2: dict[str, str] = {
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
     "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
+    "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
+    "MLBB_KILL_BANNER_QUICK_AFTER": "10",
+    "MLBB_KILL_BANNER_SCAN_BEFORE": "24",
+    "MLBB_KILL_BANNER_SCAN_AFTER": "14",
 }
 
 
@@ -87,10 +95,12 @@ def record_vod_outcome(state: dict, *, vod_id: str, sent: int) -> int:
 
 
 def streak_from_state(state: dict) -> int:
+    from_hist = 0
     hist = state.get("vod_outcomes")
     if isinstance(hist, list) and hist:
-        return trailing_zero_streak(hist)
-    return int(state.get("zero_cut_streak") or 0)
+        from_hist = trailing_zero_streak(hist)
+    legacy = int(state.get("zero_cut_streak") or 0)
+    return max(from_hist, legacy)
 
 
 def soften_summary(level: int) -> str:
@@ -126,8 +136,10 @@ def adaptive_env(streak: int) -> Iterator[int]:
         yield 0
         return
     saved = {k: os.environ.get(k) for k in overrides}
+    saved_level = os.environ.get("MLBB_VOD_ADAPTIVE_LEVEL")
     try:
         os.environ.update(overrides)
+        os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = str(level)
         yield level
     finally:
         for key, prev in saved.items():
@@ -135,6 +147,10 @@ def adaptive_env(streak: int) -> Iterator[int]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = prev
+        if saved_level is None:
+            os.environ.pop("MLBB_VOD_ADAPTIVE_LEVEL", None)
+        else:
+            os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = saved_level
 
 
 def telegram_soften_notice(streak: int, level: int) -> str:
