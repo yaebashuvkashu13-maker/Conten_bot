@@ -448,11 +448,14 @@ def analyze_video(path: Path) -> dict:
         if seek_mode and duration >= LONG_VIDEO_MIN_SEC:
             cap_fps = float(os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS', '0.35'))
             eff_fps = min(sample_fps, cap_fps)
-        cmd = [
-            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none',
+        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none']
+        ff_threads = int(os.environ.get('SMART_FFMPEG_THREADS', '0') or '0')
+        if ff_threads > 0:
+            cmd.extend(['-threads', str(ff_threads)])
+        cmd.extend([
             '-i', str(path), '-vf', f'fps={eff_fps},scale={fw}:{fh}',
             '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-',
-        ]
+        ])
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         chunk = fw * fh * 3
         frame_idx = 0
