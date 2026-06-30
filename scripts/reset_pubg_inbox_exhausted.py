@@ -45,7 +45,7 @@ def main() -> int:
             reason = str(row.get("reject_reason") or "")
             if "metro" not in reason.lower():
                 continue
-        if vid in zero_ids or not args.metro_reject_only:
+        if vid in zero_ids or True:
             if args.dry_run:
                 print(f"would reset {vid} reason={row.get('reject_reason', '')[:60]}")
             else:
