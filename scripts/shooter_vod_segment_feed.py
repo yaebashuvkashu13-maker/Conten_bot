@@ -309,7 +309,7 @@ def _scan_vod(
     if soften_level >= 2:
         seg_gap = min(
             seg_gap,
-            float(os.environ.get("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", "12")),
+            float(os.environ.get("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", "7")),
         )
     vid = vod_youtube_id(vod)
     used_peaks = _used_peak_times(game, vid, sent_set)
