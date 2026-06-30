@@ -85,11 +85,34 @@ SHOOTER_SOFTEN_L3: dict[str, str] = {
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.008",
 }
 
+# Level 4: streak 10+ — trust PANNs gun audio, probe more windows, lower hook bar.
+SHOOTER_SOFTEN_L4: dict[str, str] = {
+    **SHOOTER_SOFTEN_L3,
+    "SHOOTER_VOD_MAX_PANN_PROBE": "28",
+    "HIGHLIGHT_MAX_STAGE1": "32",
+    "HIGHLIGHT_PANN_PREFILTER_MIN": "0.06",
+    "HIGHLIGHT_PANN_GUN_MIN": "0.12",
+    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.08",
+    "PUBG_PANNS_TRUST_MIN": "0.28",
+    "PUBG_RELAX_OWNER_HEURISTICS": "2",
+    "PUBG_COMBAT_PANN_MIN": "0.12",
+    "PUBG_COMBAT_FRAMES_REQUIRED": "1",
+    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.032",
+    "SMART_PUBG_MAX_RUN_MOTION": "0.35",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.04",
+    "VIRAL_COMBAT_HOOK_MIN": "0.02",
+    "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
+    "VISUAL_PUBG_MIN_HIT_FLASH": "0.0005",
+    "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.006",
+}
+
 
 def soften_level(streak: int) -> int:
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 8:
+        return 4
     if streak >= need + 4:
         return 3
     if streak >= need + 1:
@@ -100,6 +123,8 @@ def soften_level(streak: int) -> int:
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
+    if level >= 4:
+        return dict(SHOOTER_SOFTEN_L4)
     if level >= 3:
         return dict(SHOOTER_SOFTEN_L3)
     if level >= 2:
@@ -114,7 +139,9 @@ def soften_summary(level: int) -> str:
     menu = ov.get("VISUAL_MENU_OVERLAY_MAX", "?")
     frames = ov.get("VISUAL_PUBG_MIN_FRAMES_PASS", "?")
     pov = "off" if ov.get("PUBG_POV_GATE") == "0" else "on"
-    return f"soft L{level} menu<={menu} frames>={frames} pov_gate={pov}"
+    panns = ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "")
+    extra = f" panns={panns}" if panns else ""
+    return f"soft L{level} menu<={menu} frames>={frames} pov_gate={pov}{extra}"
 
 
 def telegram_soften_notice(game: str, streak: int, level: int) -> str:

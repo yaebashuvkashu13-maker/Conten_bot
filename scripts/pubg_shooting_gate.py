@@ -83,6 +83,7 @@ def pubg_passes_shooting_gate(
     duration_sec: float,
     *,
     crop_box: tuple[int, int, int, int] | None = None,
+    panns_gun_max: float = 0.0,
 ) -> tuple[bool, str, dict]:
     """
     MUST for every PUBG montage segment.
@@ -114,10 +115,15 @@ def pubg_passes_shooting_gate(
     except ImportError:
         from pubg_owner_calibration import pubg_passes_owner_heuristics  # type: ignore
 
-    ok_owner, owner_reason = pubg_passes_owner_heuristics(gun, burst, rms, motion)
+    ok_owner, owner_reason = pubg_passes_owner_heuristics(
+        gun, burst, rms, motion, panns_gun_max=panns_gun_max
+    )
     metrics["owner_reason"] = owner_reason
+    metrics["panns_gun_max"] = round(float(panns_gun_max), 4)
 
-    if reason_is_forbidden(owner_reason):
+    if reason_is_forbidden(owner_reason) and panns_gun_max < float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    ):
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst

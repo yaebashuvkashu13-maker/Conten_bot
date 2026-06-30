@@ -1436,12 +1436,28 @@ def _parallel_workers() -> int:
     return max(2, min(6, cpus - 2, int(cpus * 0.75)))
 
 
-def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
-    """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
+def _pann_probe_limit(profile: str) -> int:
     profile = normalize_profile(profile)
+    if profile in SHOOTER_PROFILES or os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
+        return max(
+            8,
+            int(
+                os.environ.get(
+                    "SHOOTER_VOD_MAX_PANN_PROBE",
+                    os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "24"),
+                )
+            ),
+        )
     max_pann = int(os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "36"))
     if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
         max_pann = int(os.environ.get("HIGHLIGHT_MAX_PANN_PROBE", "5"))
+    return max_pann
+
+
+def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
+    """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
+    profile = normalize_profile(profile)
+    max_pann = _pann_probe_limit(profile)
     starts = starts[:max_pann]
     if profile not in SHOOTER_PROFILES:
         return starts

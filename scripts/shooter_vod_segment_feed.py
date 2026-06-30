@@ -709,6 +709,9 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    os.environ.setdefault("SHOOTER_VOD_FEED", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
+    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
@@ -719,6 +722,9 @@ def main() -> int:
         return 0
     env = {**os.environ, **load_env(ENV_PATH)}
     for key in (
+        "SHOOTER_VOD_FEED",
+        "SHOOTER_VOD_MAX_PANN_PROBE",
+        "HIGHLIGHT_MAX_STAGE1",
         "SHOOTER_VOD_OWNER_EXEMPLARS",
         "SHOOTER_VOD_OWNER_BACKFILL",
         "SHOOTER_VOD_MIN_CLIP_SCORE",

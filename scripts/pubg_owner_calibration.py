@@ -142,18 +142,28 @@ def pubg_passes_owner_heuristics(
     burst_ratio: float,
     audio_rms: float,
     center_motion: float,
+    *,
+    panns_gun_max: float = 0.0,
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
-    if os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0") == "1":
+    panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    if panns_gun_max >= panns_trust:
+        return True, f"panns_trust={panns_gun_max:.3f}"
+    relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
+    if relax in ("1", "2"):
+        if panns_gun_max >= max(0.22, panns_trust - 0.08) and gunfire_density >= 0.020:
+            return True, f"panns_audio=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}"
         if gunfire_density >= 0.040 and burst_ratio >= 3.5:
             return True, f"relax_fight=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
         if gunfire_density >= 0.055:
             return True, "relax_fight_audio"
-    if audio_rms > 0.050 and gunfire_density < 0.015:
+        if relax == "2" and panns_gun_max >= 0.20:
+            return True, f"panns_relax_l4={panns_gun_max:.3f}"
+    if audio_rms > 0.050 and gunfire_density < 0.015 and panns_gun_max < 0.25:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
-    if center_motion > 0.22 and gunfire_density < 0.052:
+    if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
         return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if center_motion >= 0.075 and gunfire_density < 0.115:
+    if center_motion >= 0.075 and gunfire_density < 0.115 and panns_gun_max < 0.28:
         return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
     if gunfire_density < 0.040 and audio_rms > 0.036:
         return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"

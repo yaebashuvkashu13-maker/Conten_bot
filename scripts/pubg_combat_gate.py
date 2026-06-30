@@ -376,13 +376,6 @@ def pubg_passes_combat_gate(
 
     out: dict[str, Any] = {"start": round(start_sec, 3), "duration": round(duration_sec, 3)}
 
-    shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
-        video_path, start_sec, duration_sec
-    )
-    out.update(shoot_row)
-    if not shoot_ok:
-        return False, shoot_reason, out
-
     from highlight_scorer import (
         PANN_GUN_INFERENCE_FLOOR,
         calibrated_pann_gun_min,
@@ -398,6 +391,13 @@ def pubg_passes_combat_gate(
         panns = score_panns_audio(video_path, start_sec, duration_sec)
         panns_gun = float(panns.get("panns_gun_max", 0))
         panns_thr = calibrated_pann_gun_min(video_path, profile)
+
+    shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
+        video_path, start_sec, duration_sec, panns_gun_max=panns_gun
+    )
+    out.update(shoot_row)
+    if not shoot_ok:
+        return False, shoot_reason, out
 
     floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
     out["panns_gun_max"] = round(panns_gun, 4)

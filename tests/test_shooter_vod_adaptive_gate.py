@@ -28,6 +28,7 @@ def test_soften_after_two_zero_vods(monkeypatch: pytest.MonkeyPatch) -> None:
     assert soften_level(2) == 1
     assert soften_level(3) == 2
     assert soften_level(6) == 3
+    assert soften_level(10) == 4
 
 
 def test_adaptive_env_applies_menu_relax(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,3 +61,10 @@ def test_l3_trusts_metro_vod_on_presend() -> None:
     ov = overrides_for_level(3)
     assert ov.get("PUBG_METRO_SEGMENT_TRUST_VOD") == "1"
     assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
+
+
+def test_l4_trusts_panns_and_more_probes() -> None:
+    ov = overrides_for_level(4)
+    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "2"
+    assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) >= 24
+    assert float(ov.get("PUBG_PANNS_TRUST_MIN", "0")) <= 0.30
