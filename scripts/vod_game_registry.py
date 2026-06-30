@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Central registry for daily-cycle VOD games — paths, profiles, ops helpers."""
+"""Central registry for VOD pipeline games — paths, profiles, ops helpers."""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-DAILY_GAMES = ("mlbb", "pubg", "standoff")
+# Daily-cycle order (quotas reset at Moscow midnight).
+DAILY_GAMES = ("mlbb", "pubg", "standoff", "genshin", "wot")
+# All games with VOD inbox / segment feed support.
+VOD_GAMES = DAILY_GAMES
 
 
 @dataclass(frozen=True)
@@ -19,7 +22,7 @@ class VodGameSpec:
     data_root_env: str
     default_data_root: str
     state_name: str = "vod_segment_state.json"
-    feed_kind: str = "mlbb"  # mlbb | shooter
+    feed_kind: str = "mlbb"  # mlbb | shooter | extended
 
     @property
     def data_root(self) -> Path:
@@ -43,7 +46,11 @@ class VodGameSpec:
     def segments_root(self) -> Path:
         g = self.id.upper()
         default = Path("/root/datasets") / self.id / "vod_segments"
-        return Path(os.environ.get(f"SHOOTER_{g}_SEGMENTS_ROOT", os.environ.get("MLBB_VOD_SEGMENTS_ROOT", str(default))))
+        for key in (f"VOD_{g}_SEGMENTS_ROOT", f"SHOOTER_{g}_SEGMENTS_ROOT", "MLBB_VOD_SEGMENTS_ROOT"):
+            raw = os.environ.get(key)
+            if raw:
+                return Path(raw)
+        return default
 
 
 SPECS: dict[str, VodGameSpec] = {
@@ -68,14 +75,36 @@ SPECS: dict[str, VodGameSpec] = {
         default_data_root="/root/data/standoff",
         feed_kind="shooter",
     ),
+    "genshin": VodGameSpec(
+        id="genshin",
+        profile="genshin",
+        data_root_env="VOD_GENSHIN_DATA_ROOT",
+        default_data_root="/root/data/genshin",
+        feed_kind="extended",
+    ),
+    "wot": VodGameSpec(
+        id="wot",
+        profile="wot",
+        data_root_env="VOD_WOT_DATA_ROOT",
+        default_data_root="/root/data/wot",
+        feed_kind="extended",
+    ),
 }
 
 
 def spec(game: str) -> VodGameSpec:
     g = game.strip().lower()
     if g not in SPECS:
-        raise KeyError(f"unknown game {game!r}; expected one of {DAILY_GAMES}")
+        raise KeyError(f"unknown game {game!r}; expected one of {VOD_GAMES}")
     return SPECS[g]
+
+
+def is_extended_game(game: str) -> bool:
+    return spec(game).feed_kind == "extended"
+
+
+def is_shooter_game(game: str) -> bool:
+    return spec(game).feed_kind == "shooter"
 
 
 def load_state(game: str) -> dict:
@@ -135,23 +164,31 @@ def exhausted_summary(game: str, state: dict | None = None) -> dict:
     }
 
 
+def _adaptive_module(game: str):
+    kind = spec(game).feed_kind
+    if kind == "mlbb":
+        import mlbb_vod_adaptive_gate as mod
+
+        return mod
+    if kind == "extended":
+        import extended_vod_adaptive_gate as mod
+
+        return mod
+    import shooter_vod_adaptive_gate as mod
+
+    return mod
+
+
 def adaptive_streak_fn(game: str) -> Callable[[dict], int]:
-    s = spec(game)
-    if s.feed_kind == "mlbb":
-        from mlbb_vod_adaptive_gate import streak_from_state as fn
-
-        return fn
-    from shooter_vod_adaptive_gate import streak_from_state as fn
-
-    return fn
+    return _adaptive_module(game).streak_from_state
 
 
 def soften_level_fn(game: str) -> Callable[[int], int]:
-    s = spec(game)
-    if s.feed_kind == "mlbb":
-        from mlbb_vod_adaptive_gate import soften_level as fn
+    mod = _adaptive_module(game)
+    if is_extended_game(game):
 
-        return fn
-    from shooter_vod_adaptive_gate import soften_level as fn
+        def _soften(streak: int) -> int:
+            return mod.soften_level(streak)
 
-    return fn
+        return _soften
+    return mod.soften_level

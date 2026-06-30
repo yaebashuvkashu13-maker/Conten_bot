@@ -18,11 +18,13 @@ DATA_ROOT = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
 def _state_path() -> Path:
     return Path(os.environ.get("DAILY_GAME_CYCLE_STATE", str(DATA_ROOT / "daily_game_cycle.json")))
 
-GAME_ORDER = ("mlbb", "pubg", "standoff")
+GAME_ORDER = ("mlbb", "pubg", "standoff", "genshin", "wot")
 GAME_PROFILE = {
     "mlbb": "mobile_legends",
     "pubg": "pubg",
     "standoff": "standoff",
+    "genshin": "genshin",
+    "wot": "wot",
 }
 
 
@@ -36,7 +38,7 @@ def enabled() -> bool:
 
 def quota_for(game: str) -> int:
     game = game.strip().lower()
-    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10}
+    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
     env_key = f"DAILY_{game.upper()}_QUOTA"
     fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
     raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))

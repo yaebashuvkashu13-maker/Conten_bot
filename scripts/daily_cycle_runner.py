@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dispatch one VOD feed iteration for the active daily game (MLBB → PUBG → Standoff)."""
+"""Dispatch one VOD feed iteration for the active daily game (MLBB → PUBG → Standoff → Genshin → WoT)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,13 @@ SCRIPTS = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml")) / "sc
 def _notify_switch(token: str, chat_id: str, game: str) -> None:
     from mlbb_vod_segment_feed import send_message
 
-    labels = {"mlbb": "MLBB", "pubg": "PUBG", "standoff": "Standoff 2"}
+    labels = {
+        "mlbb": "MLBB",
+        "pubg": "PUBG",
+        "standoff": "Standoff 2",
+        "genshin": "Genshin",
+        "wot": "WoT",
+    }
     send_message(
         token,
         chat_id,
@@ -54,7 +60,7 @@ def main() -> int:
         if token and chat_id:
             from mlbb_vod_segment_feed import send_message
 
-            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff выполнены. Жду 00:00.")
+            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.")
         return 0
 
     notify_key = f"active_{game}_{status_summary()['day']}"

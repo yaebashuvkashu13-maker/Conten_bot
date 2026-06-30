@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-PUBG / Standoff VOD segment feed — same calibration loop as MLBB, shooter combat gates.
+PUBG / Standoff / Genshin / WoT VOD segment feed — same calibration loop as MLBB.
 
-Run with VOD_SEGMENT_GAME=pubg|standoff (or argv[1]).
+Run with VOD_SEGMENT_GAME=pubg|standoff|genshin|wot (or argv[1]).
 """
 
 from __future__ import annotations
@@ -45,18 +45,28 @@ from shooter_vod_segment_store import (
     _paths,
 )
 from strict_montage_direct import discover_strict_candidates, file_sha256
-from shooter_vod_adaptive_gate import soft_max_peak_tries
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from youtube_download import load_env
-from youtube_shooter_vod_prefs import title_ok, vod_discovery_search_cycle
 
 log = logging.getLogger("shooter_vod_feed")
 ENV_PATH = Path("/root/.video_bot.env")
+EXTENDED_GAMES = frozenset({"genshin", "wot"})
+FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
 
 
 def _game() -> str:
     raw = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VOD_SEGMENT_GAME", "pubg")).strip().lower()
-    return raw if raw in ("pubg", "standoff") else "pubg"
+    return raw if raw in FEED_GAMES else "pubg"
+
+
+def _adaptive_gate(game: str):
+    if game in EXTENDED_GAMES:
+        import extended_vod_adaptive_gate as gate
+
+        return gate
+    import shooter_vod_adaptive_gate as gate
+
+    return gate
 
 
 def _profile(game: str) -> str:
@@ -129,9 +139,20 @@ def _pubg_metro_vod_ok(
 def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list[dict]:
     from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
+    if game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import title_ok as ext_title_ok, vod_discovery_search_cycle as ext_cycle
+
+        title_ok_fn = ext_title_ok
+        cycle_fn = ext_cycle
+    else:
+        from youtube_shooter_vod_prefs import title_ok as shooter_title_ok, vod_discovery_search_cycle as shooter_cycle
+
+        title_ok_fn = shooter_title_ok
+        cycle_fn = shooter_cycle
+
     state = _load_state(game)
     cycle = int(state.get("discovery_cycle", 0))
-    params = vod_discovery_search_cycle(cycle, game, env)
+    params = cycle_fn(cycle, game, env)
     state["discovery_cycle"] = cycle + 1
     _save_state(game, state)
 
@@ -150,7 +171,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
             vid, title = parts[0][:11], parts[1]
             if vid in used or len(vid) != 11:
                 continue
-            if not title_ok(game, title):
+            if not title_ok_fn(game, title):
                 continue
             try:
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
@@ -196,6 +217,11 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
         if not ok_metro:
             return False, metro_reason, {"metro": metro_reason}
+    if game in EXTENDED_GAMES:
+        from strict_segment_gate import passes_strict_gate
+
+        ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
+        return ok, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     if not ok:
         return False, reason, metrics
@@ -237,7 +263,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         ) if game == "pubg" else (
             f"{game.upper()} кусок #{sid}\n"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
-            f"POV combat ✓ | {presend_reason}\n"
+            f"{'Boss' if game == 'genshin' else 'Combat' if game == 'wot' else 'POV combat'} ✓ | {presend_reason}\n"
             f"👍 Ок / 👎 Не ок"
         )
         if send_video(
@@ -297,7 +323,8 @@ def _scan_vod(
     used_peaks = _used_peak_times(game, vid, sent_set)
     skip_peaks: set[float] = set()
     peak_tries = 0
-    max_tries = soft_max_peak_tries() if soften_level > 0 else 1
+    gate = _adaptive_gate(game)
+    max_tries = gate.soft_max_peak_tries() if soften_level > 0 else 1
 
     while peak_tries < max_tries:
         rows: list[dict] = []
@@ -356,18 +383,17 @@ def _scan_vod_with_adaptive(
     env: dict[str, str],
     state: dict,
 ) -> int:
-    from shooter_vod_adaptive_gate import (
-        adaptive_env,
-        record_vod_outcome,
-        should_notify_soften,
-        streak_from_state,
-        telegram_exhaust_notice,
-        telegram_soften_notice,
-    )
+    gate = _adaptive_gate(game)
+    from mlbb_vod_adaptive_gate import should_notify_soften
+
+    if game in EXTENDED_GAMES:
+        from extended_vod_adaptive_gate import telegram_exhaust_notice, telegram_soften_notice
+    else:
+        from shooter_vod_adaptive_gate import telegram_exhaust_notice, telegram_soften_notice
 
     vid = vod_youtube_id(vod)
     title = _vod_title(state, vod)
-    streak_in = streak_from_state(state)
+    streak_in = gate.streak_from_state(state)
 
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
@@ -384,7 +410,8 @@ def _scan_vod_with_adaptive(
     active_level = 0
     sent = 0
 
-    with adaptive_env(streak_in) as level:
+    ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
+    with ctx as level:
         active_level = level
         if game == "pubg":
             os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
@@ -411,7 +438,7 @@ def _scan_vod_with_adaptive(
         if game == "pubg":
             os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
 
-    new_streak = record_vod_outcome(state, vod_id=vid, sent=sent)
+    new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
 
@@ -453,9 +480,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             }
             registry.append(entry)
         if game == "pubg":
-            from shooter_vod_adaptive_gate import streak_from_state
-
-            streak_in = streak_from_state(state)
+            streak_in = _adaptive_gate(game).streak_from_state(state)
             title = str(entry.get("title") or "")
             ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
             if not ok_metro:
@@ -483,12 +508,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         return 0
 
     if game == "pubg":
-        from shooter_vod_adaptive_gate import streak_from_state
-
         ok_metro, metro_reason = _pubg_metro_vod_ok(
             vod,
             title=str(pick.get("title") or ""),
-            streak=streak_from_state(state),
+            streak=_adaptive_gate(game).streak_from_state(state),
         )
         if not ok_metro:
             log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)

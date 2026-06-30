@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-queue inbox VODs wrongly marked exhausted after gate fixes — all daily-cycle games."""
+"""Re-queue inbox VODs wrongly marked exhausted after gate fixes — all VOD games."""
 
 from __future__ import annotations
 
@@ -9,7 +9,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from vod_game_registry import DAILY_GAMES, inbox_video_ids, load_state, save_state, spec
+from vod_game_registry import VOD_GAMES, inbox_video_ids, load_state, save_state, spec
+
+
+def _gate_reject_match(game: str, reason: str) -> bool:
+    r = reason.lower()
+    if game == "pubg":
+        return "metro" in r or "not_metro" in r
+    if game == "mlbb":
+        return "banner" in r or "motion" in r
+    if game == "genshin":
+        return any(k in r for k in ("boss", "gate", "weak_boss", "low_boss"))
+    if game == "wot":
+        return any(k in r for k in ("impact", "hit", "cruise", "drive", "burst"))
+    return bool(r) and r != "none"
 
 
 def reset_game(
@@ -35,17 +48,8 @@ def reset_game(
             continue
         if not row.get("exhausted"):
             continue
-        if gate_reject_only:
-            reason = str(row.get("reject_reason") or "").lower()
-            if game == "pubg":
-                if "metro" not in reason and "not_metro" not in reason:
-                    continue
-            elif game == "mlbb":
-                if "banner" not in reason and "motion" not in reason:
-                    continue
-            elif game == "standoff":
-                if not reason or reason == "none":
-                    continue
+        if gate_reject_only and not _gate_reject_match(game, str(row.get("reject_reason") or "")):
+            continue
         if dry_run:
             print(f"  would reset {vid} reason={str(row.get('reject_reason', ''))[:60]}")
         else:
@@ -62,24 +66,22 @@ def reset_game(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Reset exhausted flag for inbox VODs (MLBB / PUBG / Standoff)"
-    )
+    parser = argparse.ArgumentParser(description="Reset exhausted flag for inbox VODs (all VOD games)")
     parser.add_argument(
         "--game",
         default="all",
-        choices=("all", *DAILY_GAMES),
+        choices=("all", *VOD_GAMES),
         help="Game to reset (default: all)",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--gate-reject-only",
         action="store_true",
-        help="Only reset VODs rejected by discovery/gate (metro, banner, etc.)",
+        help="Only reset VODs rejected by discovery/gate",
     )
     args = parser.parse_args()
 
-    games = list(DAILY_GAMES) if args.game == "all" else [args.game]
+    games = list(VOD_GAMES) if args.game == "all" else [args.game]
     total = 0
     for game in games:
         total += reset_game(

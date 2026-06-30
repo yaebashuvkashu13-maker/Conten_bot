@@ -14,7 +14,12 @@ from pathlib import Path
 def _game_root(game: str) -> Path:
     g = game.strip().lower()
     base = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")).parent
-    return Path(os.environ.get(f"SHOOTER_{g.upper()}_DATA_ROOT", str(base / g)))
+    return Path(
+        os.environ.get(
+            f"VOD_{g.upper()}_DATA_ROOT",
+            os.environ.get(f"SHOOTER_{g.upper()}_DATA_ROOT", str(base / g)),
+        )
+    )
 
 
 def _paths(game: str) -> dict[str, Path]:

@@ -14,7 +14,7 @@ from typing import Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from strict_montage_direct import discover_strict_candidates, file_sha256
-from vod_game_registry import DAILY_GAMES, adaptive_streak_fn, load_state, soften_level_fn, spec
+from vod_game_registry import VOD_GAMES, adaptive_streak_fn, is_extended_game, load_state, soften_level_fn, spec
 from vod_peak_gap import (
     filter_blocked_peaks,
     load_index_segments,
@@ -40,13 +40,18 @@ def _load_feed_sent(path: Path) -> set[str]:
 
 
 @contextmanager
-def _shooter_soften_env(level: int) -> Iterator[None]:
+def _soften_env(game: str, level: int) -> Iterator[None]:
     if level <= 0:
         yield
         return
-    from shooter_vod_adaptive_gate import overrides_for_level
+    if is_extended_game(game):
+        from extended_vod_adaptive_gate import overrides_for_level
 
-    overrides = overrides_for_level(level)
+        overrides = overrides_for_level(game, level)
+    else:
+        from shooter_vod_adaptive_gate import overrides_for_level
+
+        overrides = overrides_for_level(level)
     saved = {k: os.environ.get(k) for k in overrides}
     try:
         os.environ.update(overrides)
@@ -65,7 +70,7 @@ def audit_mlbb_vod(vod: Path, *, soften_level: int = 0) -> dict:
     return audit_vod(vod, soften_level=soften_level)
 
 
-def audit_shooter_vod(game: str, vod: Path, *, soften_level: int = 0) -> dict:
+def audit_peak_vod(game: str, vod: Path, *, soften_level: int = 0) -> dict:
     s = spec(game)
     profile = s.profile
     vid = vod.stem.replace("yt_", "")[:11]
@@ -110,7 +115,7 @@ def audit_shooter_vod(game: str, vod: Path, *, soften_level: int = 0) -> dict:
         report["metro_reason"] = reason
 
     sig = file_sha256(vod)
-    with _shooter_soften_env(level):
+    with _soften_env(game, level):
         pool = discover_strict_candidates(vod, profile, sig, labeled | sent_set)
 
     report["pool_size"] = len(pool)
@@ -126,9 +131,9 @@ def audit_shooter_vod(game: str, vod: Path, *, soften_level: int = 0) -> dict:
 
     if available and pool:
         start = max(0.0, available[0] - float(os.environ.get("MLBB_VOD_LEAD_SEC", "4")))
-        from pubg_combat_gate import pubg_passes_combat_gate
+        from strict_segment_gate import passes_strict_gate
 
-        ok, reason, _ = pubg_passes_combat_gate(vod, start, 15.0, profile)
+        ok, reason, _ = passes_strict_gate(vod, start, 15.0, profile)
         report["presend_sample"] = {"peak": available[0], "ok": ok, "reason": reason}
 
     return report
@@ -136,13 +141,13 @@ def audit_shooter_vod(game: str, vod: Path, *, soften_level: int = 0) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit VOD inbox per game")
-    parser.add_argument("--game", default="all", choices=("all", *DAILY_GAMES))
+    parser.add_argument("--game", default="all", choices=("all", *VOD_GAMES))
     parser.add_argument("--limit", type=int, default=6)
     parser.add_argument("--soften", type=int, default=-1, help="Force soften level (-1=from state)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    games = list(DAILY_GAMES) if args.game == "all" else [args.game]
+    games = list(VOD_GAMES) if args.game == "all" else [args.game]
     rows: list[dict] = []
 
     for game in games:
@@ -161,7 +166,7 @@ def main() -> int:
             if game == "mlbb":
                 rows.append(audit_mlbb_vod(vod, soften_level=soften))
             else:
-                rows.append(audit_shooter_vod(game, vod, soften_level=soften))
+                rows.append(audit_peak_vod(game, vod, soften_level=soften))
 
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))

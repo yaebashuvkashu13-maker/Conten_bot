@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from daily_game_cycle import active_game, enabled, quota_remaining, send_count
-from vod_game_registry import DAILY_GAMES, exhausted_summary, load_state, spec, streak_from_state
+from vod_game_registry import VOD_GAMES, exhausted_summary, load_state, spec, streak_from_state
 
 
 def health_row(game: str) -> dict:
@@ -47,11 +47,11 @@ def health_row(game: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="VOD pipeline health for all daily-cycle games")
-    parser.add_argument("--game", default="all", choices=("all", *DAILY_GAMES))
+    parser.add_argument("--game", default="all", choices=("all", *VOD_GAMES))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    games = list(DAILY_GAMES) if args.game == "all" else [args.game]
+    games = list(VOD_GAMES) if args.game == "all" else [args.game]
     rows = [health_row(g) for g in games]
 
     payload = {

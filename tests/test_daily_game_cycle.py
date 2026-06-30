@@ -47,6 +47,12 @@ def test_full_rotation(isolated_state: Path) -> None:
     assert cycle.active_game() == "standoff"
     for _ in range(10):
         cycle.record_send("standoff", 1)
+    assert cycle.active_game() == "genshin"
+    for _ in range(5):
+        cycle.record_send("genshin", 1)
+    assert cycle.active_game() == "wot"
+    for _ in range(5):
+        cycle.record_send("wot", 1)
     assert cycle.active_game() is None
 
 

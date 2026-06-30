@@ -15,9 +15,14 @@ from vod_game_registry import exhausted_summary, inbox_video_ids, spec  # noqa: 
 
 
 def test_specs_cover_daily_games() -> None:
+    from vod_game_registry import VOD_GAMES, spec
+
+    for g in VOD_GAMES:
+        assert spec(g).id == g
     assert spec("mlbb").profile == "mobile_legends"
     assert spec("pubg").feed_kind == "shooter"
-    assert spec("standoff").default_data_root.endswith("/standoff")
+    assert spec("genshin").feed_kind == "extended"
+    assert spec("wot").default_data_root.endswith("/wot")
 
 
 def test_exhausted_summary_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
