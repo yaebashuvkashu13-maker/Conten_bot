@@ -874,6 +874,23 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             }
         start, end, dur, meta = resolved
         banner_sec = float(meta.get("banner_sec", peak))
+        from mlbb_death_screen import trim_death_tail
+
+        start, end, death_meta = trim_death_tail(vod, start, end, file_dur=file_dur)
+        dur = end - start
+        meta = {**meta, **death_meta}
+        if dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
+            return {
+                **clip,
+                "start": peak,
+                "peak_start": peak,
+                "input_duration": 0.0,
+                "output_duration": 0.0,
+                "banner_reject": "death_trim_too_short",
+                "source_path": str(vod),
+                "source_index": 0,
+                "speed": 1.0,
+            }
         return {
             **clip,
             "start": start,
@@ -1292,6 +1309,12 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     peak_start = float(row.get("peak_start", cut_start))
     dur = _segment_duration(row)
 
+    if os.environ.get("MLBB_VOD_DEATH_TRIM", "1") == "1":
+        from mlbb_death_screen import segment_mostly_death_screen
+
+        if segment_mostly_death_screen(vod, cut_start, dur):
+            return False, "death_respawn_timer", report
+
     ok, reason, freezes = _detect_render_freeze(rendered)
     report["freezes"] = freezes
     if not ok:
@@ -1495,6 +1518,12 @@ def _collect_scan_segments(
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
+        if os.environ.get("MLBB_VOD_DEATH_SKIP_PEAKS", "1") == "1":
+            from mlbb_death_screen import peak_inside_death_window
+
+            if peak_inside_death_window(vod, peak):
+                log.info("skip peak=%.1f death_respawn_window", peak)
+                continue
         if peak < min_peak:
             continue
         lead_clip = _normalize_clip(clip, vod)
