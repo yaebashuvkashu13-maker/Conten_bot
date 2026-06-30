@@ -586,6 +586,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0
 
+    if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":
+        log.info("skip discovery — inbox exhausted game=%s", game)
+        print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
+        return 0
+
     candidates = _discover_candidates(game, env, used)
     if not candidates:
         send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")

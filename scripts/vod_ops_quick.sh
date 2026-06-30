@@ -18,6 +18,9 @@ case "${1:-health}" in
   deploy)
     VPS_BRANCH="${VPS_BRANCH:-cursor/vod-pipeline-base-6cbd}" bash "$ROOT/scripts/vps_apply_vod_only.sh"
     ;;
+  requeue)
+    "$PY" requeue_inbox_vods.py "${@:2}"
+    ;;
   rev)
     grep -m1 VOD_PIPELINE_REV "$ROOT/scripts/vod_game_registry.py" || true
     ;;
