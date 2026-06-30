@@ -47,6 +47,7 @@ from mlbb_vod_segment_store import (
 from montage_env import strict_peak_env
 from preview_gate import validate_clips_before_preview
 from strict_montage_direct import discover_strict_candidates, file_sha256
+from vod_peak_gap import reserved_sent_only, segment_gap_sec
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -1333,8 +1334,10 @@ def _format_send_report(row: dict, check: dict) -> str:
 
 
 def _segment_gap_sec() -> float:
-    default = max(90.0, SEGMENT_SEC * 4.0)
-    return float(os.environ.get("MLBB_VOD_SEGMENT_GAP_SEC", os.environ.get("HIGHLIGHT_MIN_GAP_SEC", str(default))))
+    level = 2 if reserved_sent_only() else (
+        1 if os.environ.get("MLBB_KILL_BANNER_REQUIRED") == "0" else 0
+    )
+    return segment_gap_sec("mlbb", soften_level=level)
 
 
 def _parse_start_from_segment_id(sid: str, vid: str, stem: str) -> float | None:
@@ -1365,6 +1368,9 @@ def _used_intervals_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> lis
         row_vod = str(row.get("vod") or "")
         if row_vid != vid and vod.name not in row_vod and str(vod) not in row_vod:
             continue
+        sid = str(row.get("segment_id") or "")
+        if reserved_sent_only() and sid and sid not in sent:
+            continue
         start = float(row.get("start", 0))
         dur = float(row.get("duration") or row.get("fight_dur") or 0)
         if dur <= 0:
@@ -1376,7 +1382,8 @@ def _used_intervals_for_vod(vod: Path, labeled: set[str], sent: set[str]) -> lis
         intervals.append((start, start + dur))
         seen_starts.add(int(round(start)))
 
-    for sid in labeled | sent:
+    id_set = sent if reserved_sent_only() else (labeled | sent)
+    for sid in id_set:
         start = _parse_start_from_segment_id(sid, vid, stem)
         if start is None:
             continue

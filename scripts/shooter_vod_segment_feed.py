@@ -46,6 +46,7 @@ from shooter_vod_segment_store import (
 )
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from shooter_vod_adaptive_gate import soft_max_peak_tries
+from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from youtube_download import load_env
 from youtube_shooter_vod_prefs import title_ok, vod_discovery_search_cycle
 
@@ -202,25 +203,11 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
 
 
 def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:
-    """Peak times from actually sent segments — bad labels must not block nearby peaks."""
-    index = {str(s.get("segment_id")): s for s in load_index(game).get("segments", [])}
-    peaks: list[float] = []
-    for sid in sent_set:
-        if not sid.startswith(f"{vod_id}_"):
-            continue
-        row = index.get(sid)
-        if row and row.get("peak_start") is not None:
-            peaks.append(float(row["peak_start"]))
-            continue
-        try:
-            peaks.append(float(sid.rsplit("_", 1)[1]))
-        except ValueError:
-            continue
-    return peaks
+    return used_peak_times_shooter(vod_id, sent_set, load_index(game).get("segments", []))
 
 
 def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> bool:
-    return any(abs(peak - p) <= gap_sec for p in used_peaks)
+    return peak_too_close(peak, used_peaks, gap_sec)
 
 
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
@@ -305,12 +292,7 @@ def _scan_vod(
         return 0
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
-    seg_gap = float(os.environ.get("SHOOTER_VOD_SEGMENT_GAP_SEC", "18"))
-    if soften_level >= 2:
-        seg_gap = min(
-            seg_gap,
-            float(os.environ.get("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", "7")),
-        )
+    seg_gap = segment_gap_sec(game, soften_level=soften_level)
     vid = vod_youtube_id(vod)
     used_peaks = _used_peak_times(game, vid, sent_set)
     skip_peaks: set[float] = set()
