@@ -1,17 +1,38 @@
 #!/usr/bin/env python3
-"""PUBG/shooter VOD scan state — avoid re-running expensive highlight on dead VODs."""
+"""VOD scan state — avoid re-running expensive highlight on dead VODs (all games)."""
 
 from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import Any, Callable
 
 from vod_peak_gap import filter_blocked_peaks, peak_too_close, used_peak_times_shooter
 
 
-def scan_cooldown_sec() -> int:
+def scan_cooldown_sec(game: str = "") -> int:
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        raw = os.environ.get(
+            "MLBB_VOD_SCAN_COOLDOWN_SEC",
+            os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200"),
+        )
+        return max(60, int(raw))
     return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200")))
+
+
+def strict_peak_tries(game: str = "") -> int:
+    """Presend peak attempts per run at strict (L0) — walk pool without exhausting VOD."""
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        return max(1, int(os.environ.get("MLBB_VOD_STRICT_PEAK_TRIES", "2")))
+    return max(1, int(os.environ.get("SHOOTER_VOD_STRICT_PEAK_TRIES", "2")))
+
+
+def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], int]) -> int:
+    if soften_level > 0:
+        return soft_max_fn()
+    return strict_peak_tries(game)
 
 
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
@@ -49,7 +70,7 @@ def pool_peaks_fully_blocked(
     return True
 
 
-def should_skip_vod_rescan(entry: dict[str, Any] | None) -> bool:
+def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> bool:
     if not entry:
         return False
     if entry.get("exhausted"):
@@ -60,7 +81,7 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None) -> bool:
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec() and entry.get("last_scan_blocked"):
+    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
         return True
     return False
 

@@ -48,6 +48,15 @@ from montage_env import strict_peak_env
 from preview_gate import validate_clips_before_preview
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import reserved_sent_only, segment_gap_sec
+from vod_scan_state import (
+    max_peak_tries,
+    peaks_from_pool,
+    pool_peaks_fully_blocked,
+    record_vod_scan,
+    should_mark_vod_exhausted,
+    should_skip_vod_rescan,
+    used_peaks_for_vod,
+)
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -269,13 +278,15 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[float, float, dict]] = []
+    ranked: list[tuple[int, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
         if vid and vid in exhausted_ids:
             continue
         if row.get("exhausted"):
+            continue
+        if should_skip_vod_rescan(row, game="mlbb"):
             continue
         if vid and vid in seen_ids:
             continue
@@ -287,18 +298,32 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
             continue
         if vid:
             seen_ids.add(vid)
-        ranked.append((abs(dur - target), dur, row))
+        scanned = float(row.get("last_scan_at") or 0)
+        ranked.append((1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
-    ranked.sort(key=lambda item: (item[0], item[1]))
-    pick = ranked[0][2]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    pick = ranked[0][4]
+    dur = ranked[0][3]
     log.info(
-        "pick vod id=%s dur_min=%.0f target_min=%.0f",
+        "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s",
         pick.get("id", ""),
-        ranked[0][1] / 60,
+        dur / 60,
         target / 60,
+        bool(ranked[0][0]),
     )
     return pick
+
+
+def _sync_vod_entry_to_state(state: dict, entry: dict, vod: Path) -> None:
+    """Persist per-VOD scan fields (cooldown cache) into state file."""
+    vid = str(entry.get("id") or vod_youtube_id(vod))
+    path = str(entry.get("path") or vod)
+    for row in state.get("vods", []):
+        if row.get("id") == vid or row.get("path") == path:
+            row.update(entry)
+            return
+    state.setdefault("vods", []).append(dict(entry))
 
 
 def _mark_vod_exhausted(vod: Path) -> None:
@@ -1744,6 +1769,9 @@ def _process_vod_segments(
     pool_cache: list[dict] | None = None
     skip_peaks: set[float] = set()
     peak_tries = 0
+    send_quota_blocked = False
+    labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
     with adaptive_env(streak_in) as level:
         active_level = level
@@ -1765,41 +1793,90 @@ def _process_vod_segments(
                 vod.name,
             )
 
-        while True:
+        max_peak_attempts = max_peak_tries(level, game="mlbb", soft_max_fn=soft_max_peak_tries)
+        gap = segment_gap_sec("mlbb", soften_level=level)
+        blocked_ids = labeled_set | sent
+        index_segments = load_index().get("segments", [])
+        used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
+
+        cached_blocked = False
+        if entry and entry.get("last_pool_peaks"):
+            cached = [float(x) for x in entry["last_pool_peaks"]]
+            if pool_peaks_fully_blocked(
+                cached,
+                used_peaks=used_peaks,
+                gap_sec=gap,
+                blocked_sids=blocked_ids,
+                vod_id=vid,
+                lead_sec=lead,
+            ):
+                log.info("skip highlight rescan — cached peaks blocked vod=%s peaks=%s", vod.name, cached[:4])
+                record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
+                cached_blocked = True
+
+        while not cached_blocked:
             if max_per_vod > 0 and sent_total >= max_per_vod:
                 log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                 break
             to_send, pool_cache = _collect_scan_segments(
                 vod, sig, labeled, sent, probe_limit, pool=pool_cache, skip_peaks=skip_peaks
             )
+            pool_peaks = peaks_from_pool(pool_cache) if pool_cache is not None else []
             if not to_send:
+                blocked = False
+                if not pool_peaks:
+                    blocked = True
+                elif pool_peaks_fully_blocked(
+                    pool_peaks,
+                    used_peaks=used_peaks,
+                    gap_sec=gap,
+                    blocked_sids=blocked_ids,
+                    vod_id=vid,
+                    lead_sec=lead,
+                ):
+                    blocked = True
+                if entry is not None:
+                    record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=blocked)
                 break
             n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
             if n == 0:
                 if to_send and sblock > 0:
                     log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
+                    send_quota_blocked = True
+                    if entry is not None:
+                        record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
                     break
                 if to_send and preskip >= len(to_send):
                     for row in to_send:
                         skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
                     peak_tries += 1
-                    if active_level > 0 and peak_tries < soft_max_peak_tries():
+                    if peak_tries < max_peak_attempts:
                         log.warning(
                             "presend rejected peak — try next (%s/%s) vod=%s",
                             peak_tries,
-                            soft_max_peak_tries(),
+                            max_peak_attempts,
                             vod.name,
                         )
                         continue
                     log.warning("batch presend rejected all — stop vod=%s", vod.name)
+                    if entry is not None:
+                        record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
                     break
                 log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
+                if entry is not None:
+                    record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
                 break
             sent_total += n
             sent = load_feed_sent()
+            blocked_ids = labeled_set | sent
+            used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
             downloader.start_if_idle(registry)
+            if entry is not None:
+                record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
 
     state = _load_state()
+    if entry:
+        _sync_vod_entry_to_state(state, entry, vod)
     state["active_vod"] = vod.name
     scanned = set(state.get("scanned_vods", []))
     scanned.add(vod.name)
@@ -1808,19 +1885,28 @@ def _process_vod_segments(
     state["last_adaptive_level"] = active_level
     _save_state(state)
 
-    if sent_total == 0:
-        _mark_vod_exhausted(vod)
-        if entry:
+    if sent_total == 0 and not send_quota_blocked:
+        if entry and should_mark_vod_exhausted(entry):
+            _mark_vod_exhausted(vod)
             entry["exhausted"] = True
             entry["id"] = vid
+            if not entry.get("reject_reason"):
+                if not entry.get("last_pool_peaks"):
+                    entry["reject_reason"] = "no_combat_peaks"
+                elif entry.get("last_scan_blocked"):
+                    entry["reject_reason"] = "all_peaks_blocked"
             _record_zero_yield_uploader(entry)
-        log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
-        if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
-            send_message(
-                token,
-                chat_id,
-                telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
-            )
+            log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
+            if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
+                send_message(
+                    token,
+                    chat_id,
+                    telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
+                )
+        else:
+            log.info("zero send — keep vod=%s for retry (presend/soften) streak=%s", vod.name, new_streak)
+    elif sent_total == 0 and send_quota_blocked:
+        log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
         if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":

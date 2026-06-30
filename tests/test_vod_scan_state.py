@@ -12,10 +12,12 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from vod_scan_state import (  # noqa: E402
+    max_peak_tries,
     pool_peaks_fully_blocked,
     record_vod_scan,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
+    strict_peak_tries,
 )
 
 
@@ -24,6 +26,16 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
     assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
+
+
+def test_strict_peak_tries_defaults() -> None:
+    assert strict_peak_tries("mlbb") >= 2
+    assert strict_peak_tries("pubg") >= 2
+
+
+def test_max_peak_tries() -> None:
+    assert max_peak_tries(0, game="pubg", soft_max_fn=lambda: 8) == strict_peak_tries("pubg")
+    assert max_peak_tries(2, game="pubg", soft_max_fn=lambda: 8) == 8
 
 
 def test_pool_fully_blocked_when_sent() -> None:

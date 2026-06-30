@@ -47,6 +47,7 @@ from shooter_vod_segment_store import (
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
+    max_peak_tries,
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
@@ -121,6 +122,18 @@ def _vod_registry_entry(state: dict, vod: Path) -> dict | None:
 def _vod_title(state: dict, vod: Path) -> str:
     entry = _vod_registry_entry(state, vod)
     return str((entry or {}).get("title") or "")
+
+
+def _pubg_metro_should_exhaust(title: str, streak: int) -> bool:
+    """Only permanently skip VOD when title and soften cannot override metro reject."""
+    from pubg_metro_royale_gate import title_metro_hint
+    from shooter_vod_adaptive_gate import soften_level
+
+    if title_metro_hint(title):
+        return False
+    if soften_level(streak) >= 2:
+        return False
+    return True
 
 
 def _pubg_metro_vod_ok(
@@ -360,7 +373,7 @@ def _scan_vod(
     skip_peaks: set[float] = set()
     peak_tries = 0
     gate = _adaptive_gate(game)
-    max_tries = gate.soft_max_peak_tries() if soften_level > 0 else 1
+    max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
 
     while peak_tries < max_tries:
         rows: list[dict] = []
@@ -410,8 +423,6 @@ def _scan_vod(
             if entry is not None:
                 record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False)
             return n
-        if soften_level <= 0:
-            break
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
         log.warning(
@@ -453,8 +464,9 @@ def _scan_vod_with_adaptive(
             log.warning("metro reject scan vod=%s reason=%s", vod.name, metro_reason)
             entry = _vod_registry_entry(state, vod)
             if entry:
-                entry["exhausted"] = True
                 entry["reject_reason"] = metro_reason
+                if _pubg_metro_should_exhaust(title, streak_in):
+                    entry["exhausted"] = True
             _save_state(game, state)
             return 0
 
@@ -521,7 +533,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
             continue
-        if should_skip_vod_rescan(entry):
+        if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
@@ -540,8 +552,9 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
-                entry["exhausted"] = True
                 entry["reject_reason"] = metro_reason
+                if _pubg_metro_should_exhaust(title, streak_in):
+                    entry["exhausted"] = True
                 _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
@@ -577,24 +590,27 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         return 0
 
     if game == "pubg":
+        streak_dl = _adaptive_gate(game).streak_from_state(state)
         ok_metro, metro_reason = _pubg_metro_vod_ok(
             vod,
             title=str(pick.get("title") or ""),
-            streak=_adaptive_gate(game).streak_from_state(state),
+            streak=streak_dl,
         )
         if not ok_metro:
             log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)
-            send_message(
-                token,
-                chat_id,
-                f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
-            )
+            if os.environ.get("SHOOTER_VOD_METRO_REJECT_NOTIFY", "1") == "1":
+                send_message(
+                    token,
+                    chat_id,
+                    f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
+                )
+            exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
             registry.append(
                 {
                     "id": pick["id"],
                     "path": str(vod),
                     "title": pick.get("title", ""),
-                    "exhausted": True,
+                    "exhausted": exhausted,
                     "reject_reason": metro_reason,
                 }
             )
