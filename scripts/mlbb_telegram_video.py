@@ -246,12 +246,15 @@ def send_document_file(
     *,
     filename: str | None = None,
     reply_markup: dict | None = None,
+    force_file: bool | None = None,
 ) -> bool:
     """Send as file (no Telegram video recompression). Bot API limit ~50MB."""
     if path.stat().st_size > TELEGRAM_DOCUMENT_MAX_BYTES:
         return False
     url = f"https://api.telegram.org/bot{token}/sendDocument"
     fname = filename or path.name
+    if force_file is None:
+        force_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "0") == "1"
     cmd = [
         "curl",
         "-sS",
@@ -265,6 +268,9 @@ def send_document_file(
         f"document=@{path};filename={fname}",
         url,
     ]
+    if force_file:
+        cmd.insert(-1, "-F")
+        cmd.insert(-1, "disable_content_type_detection=true")
     if reply_markup:
         cmd.insert(-1, "-F")
         cmd.insert(-1, f"reply_markup={json.dumps(reply_markup, ensure_ascii=False)}")
@@ -283,12 +289,21 @@ def send_hq_files(
     caption: str,
     *,
     reply_markup: dict | None = None,
+    filename: str | None = None,
 ) -> bool:
     """HQ delivery: always sendDocument; split only if file >50MB."""
     if not path.exists():
         return False
     if path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
-        return send_document_file(token, chat_id, path, caption, reply_markup=reply_markup)
+        return send_document_file(
+            token,
+            chat_id,
+            path,
+            caption,
+            filename=filename,
+            reply_markup=reply_markup,
+            force_file=True,
+        )
 
     parts = split_for_telegram(path, parts=2, max_bytes=TELEGRAM_DOCUMENT_MAX_BYTES)
     if not parts:

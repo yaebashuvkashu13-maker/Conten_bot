@@ -569,24 +569,48 @@ def _shooter_apply_vseg_label(
     )
 
 
-def _shooter_send_vseg_hq_file(game: str, chat_id: str | int, segment_id: str) -> bool:
-    from mlbb_telegram_video import send_hq_files
-    from shooter_vod_segment_store import find_segment
+def _shooter_vseg_hq_path(game: str, segment_id: str) -> tuple[Path | None, dict]:
+    from shooter_vod_segment_store import _paths, find_segment
 
     game = game.strip().lower()
     sid = segment_id.strip()
-    row = find_segment(game, sid)
-    if not row:
-        return False
-    path = Path(str(row.get('path', '')))
-    if not path.exists():
+    row = find_segment(game, sid) or {}
+    if row:
+        path = Path(str(row.get('path', '')))
+        if path.exists():
+            return path, row
+    direct = _paths(game)['segments'] / f'seg_{sid}.mp4'
+    if direct.exists():
+        merged = {**row, 'segment_id': sid, 'path': str(direct)}
+        return direct, merged
+    return None, row
+
+
+def _shooter_send_vseg_hq_file(game: str, chat_id: str | int, segment_id: str) -> bool:
+    from mlbb_telegram_video import send_hq_files
+
+    game = game.strip().lower()
+    sid = segment_id.strip()
+    path, row = _shooter_vseg_hq_path(game, sid)
+    if path is None:
+        logging.warning('shooter HQ missing seg=%s game=%s', sid, game)
         return False
     caption = (
         f'{game.upper()} HQ файл #{sid}\n'
         f"VOD {row.get('vod_id') or sid.rsplit('_', 1)[0]}\n"
-        f"peak={row.get('peak_start') or row.get('start', '?')}s"
+        f"peak={row.get('peak_start') or row.get('start', '?')}s\n"
+        f'📁 скачай файл — без пережатия Telegram'
     )
-    return send_hq_files(BOT_TOKEN, str(chat_id), path, caption)
+    ok = send_hq_files(
+        BOT_TOKEN,
+        str(chat_id),
+        path,
+        caption,
+        filename=f'{game.upper()}_{sid}.mp4',
+    )
+    if not ok:
+        logging.warning('shooter HQ send failed seg=%s game=%s path=%s', sid, game, path)
+    return ok
 
 
 def _handle_shooter_vseg_callback(
@@ -736,6 +760,13 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
+        if is_good:
+            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
+            if not hq_ok:
+                send_message(
+                    chat_id,
+                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
+                )
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -1314,8 +1345,14 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
+        if mode == 'vseg' and is_good:
+            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
+            if not hq_ok:
+                send_message(
+                    chat_id,
+                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
+                )
     except Exception as exc:
-        logging.exception('mlbb callback failed data=%s', data)
         try:
             api_call(
                 'answerCallbackQuery',
