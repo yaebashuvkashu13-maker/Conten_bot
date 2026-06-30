@@ -700,6 +700,13 @@ def send_video(
     cycle_game: str | None = None,
 ) -> bool:
     from mlbb_learning_first import can_send, record_send
+    from mlbb_telegram_video import (
+        TELEGRAM_DOCUMENT_MAX_BYTES,
+        TELEGRAM_MAX_BYTES,
+        compress_for_inline_video,
+        send_document_file,
+        send_video_file,
+    )
 
     game = (cycle_game or os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
 
@@ -716,45 +723,41 @@ def send_video(
         if not ok_send:
             log.warning("send blocked seg=%s reason=%s", seg_id, reason)
             return False
-    deliver = path
-    if path.stat().st_size > TELEGRAM_MAX_BYTES:
-        from mlbb_telegram_video import compress_for_inline_video
 
-        deliver, compressed = compress_for_inline_video(path)
-        if compressed:
+    markup = reply_markup or inline_keyboard_markup(seg_id)
+    deliver = path
+    is_temp = False
+    if path.stat().st_size > TELEGRAM_MAX_BYTES:
+        deliver, is_temp = compress_for_inline_video(path, max_bytes=TELEGRAM_MAX_BYTES)
+        if is_temp:
             log.info(
                 "telegram compress seg=%s %s -> %s bytes",
                 seg_id,
                 path.stat().st_size,
                 deliver.stat().st_size,
             )
-        if deliver.stat().st_size > TELEGRAM_MAX_BYTES:
+
+    try:
+        sent = False
+        if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+            sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
+        elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+            log.warning(
+                "telegram sendVideo too large seg=%s bytes=%s — sendDocument fallback",
+                seg_id,
+                deliver.stat().st_size,
+            )
+            sent = send_document_file(
+                token,
+                chat_id,
+                deliver,
+                f"{caption}\n(файл — документ, >20MB inline)",
+                reply_markup=markup,
+            )
+        else:
             log.warning("telegram too large seg=%s bytes=%s", seg_id, deliver.stat().st_size)
             return False
-    url = f"https://api.telegram.org/bot{token}/sendVideo"
-    cmd = [
-        "curl",
-        "-sS",
-        "--noproxy",
-        "*",
-        "-m",
-        "600",
-        "-F",
-        f"chat_id={chat_id}",
-        "-F",
-        "supports_streaming=true",
-        "-F",
-        f"caption={caption[:900]}",
-        "-F",
-        f"reply_markup={json.dumps(reply_markup or inline_keyboard_markup(seg_id), ensure_ascii=False)}",
-        "-F",
-        f"video=@{deliver}",
-        url,
-    ]
-    clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
-    result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=620)
-    try:
-        sent = bool(json.loads(result.stdout).get("ok"))
+
         if sent:
             if record_learning:
                 record_send(1)
@@ -763,8 +766,9 @@ def send_video(
 
                 cycle_record_send(game, 1)
         return sent
-    except json.JSONDecodeError:
-        return False
+    finally:
+        if is_temp:
+            deliver.unlink(missing_ok=True)
 
 
 def send_message(token: str, chat_id: str, text: str) -> None:
@@ -978,17 +982,34 @@ def _vod_encode_args() -> list[str]:
     from smart_video_editor import OUTPUT_FPS, output_encode_args
 
     gop = int(float(os.environ.get("MLBB_VOD_GOP_SEC", "1")) * OUTPUT_FPS)
-    return [
-        *output_encode_args(),
-        "-g",
-        str(gop),
-        "-keyint_min",
-        str(gop),
-        "-sc_threshold",
-        "0",
-        "-reset_timestamps",
-        "1",
-    ]
+    saved: dict[str, str | None] = {}
+    for key, vod_key in (
+        ("SMART_OUTPUT_CRF", "MLBB_VOD_ENCODE_CRF"),
+        ("SMART_OUTPUT_AUDIO_K", "MLBB_VOD_ENCODE_AUDIO_K"),
+        ("SMART_OUTPUT_PRESET", "MLBB_VOD_ENCODE_PRESET"),
+    ):
+        if os.environ.get(vod_key):
+            saved[key] = os.environ.get(key)
+            os.environ[key] = str(os.environ[vod_key])
+    try:
+        args = [
+            *output_encode_args(),
+            "-g",
+            str(gop),
+            "-keyint_min",
+            str(gop),
+            "-sc_threshold",
+            "0",
+            "-reset_timestamps",
+            "1",
+        ]
+    finally:
+        for key, prev in saved.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+    return args
 
 
 def _render_from_chunk(

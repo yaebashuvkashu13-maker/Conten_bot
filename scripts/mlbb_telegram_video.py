@@ -40,35 +40,52 @@ def compress_for_inline_video(
     fd, tmp_name = tempfile.mkstemp(prefix="mlbb_tg_", suffix=".mp4")
     os.close(fd)
     tmp = Path(tmp_name)
-    for crf in ("28", "30", "32", "34", "36"):
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-hwaccel",
-            "none",
-            "-i",
-            str(path),
-            "-vf",
-            "scale=-2:720",
-            "-c:v",
-            "libx264",
-            "-preset",
-            os.environ.get("MLBB_TG_PRESET", "fast"),
-            "-crf",
-            crf,
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-movflags",
-            "+faststart",
-            str(tmp),
-        ]
-        subprocess.run(cmd, check=False, timeout=600)
-        if tmp.exists() and tmp.stat().st_size <= max_bytes:
-            return tmp, True
+    duration = max(1.0, probe_duration(path))
+    target_bits = int(max_bytes * 8 * 0.90)
+    audio_k = int(os.environ.get("MLBB_TG_AUDIO_K", "64"))
+    audio_bps = audio_k * 1000
+    video_bps = max(180_000, int(target_bits / duration) - audio_bps)
+
+    heights = [int(x) for x in os.environ.get("MLBB_TG_SCALE_HEIGHTS", "720,540,480,360").split(",") if x.strip()]
+    crf_steps = [x.strip() for x in os.environ.get("MLBB_TG_CRF_STEPS", "26,28,30,32,34,36,38").split(",") if x.strip()]
+
+    for height in heights:
+        scale = f"scale=-2:{height}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"
+        for crf in crf_steps:
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-hwaccel",
+                "none",
+                "-i",
+                str(path),
+                "-vf",
+                scale,
+                "-c:v",
+                "libx264",
+                "-preset",
+                os.environ.get("MLBB_TG_PRESET", "veryfast"),
+                "-crf",
+                crf,
+                "-maxrate",
+                str(video_bps),
+                "-bufsize",
+                str(video_bps * 2),
+                "-c:a",
+                "aac",
+                "-b:a",
+                f"{audio_k}k",
+                "-ac",
+                "2",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ]
+            subprocess.run(cmd, check=False, timeout=600)
+            if tmp.exists() and tmp.stat().st_size <= max_bytes:
+                return tmp, True
     if tmp.exists() and tmp.stat().st_size > 0 and tmp.stat().st_size < path.stat().st_size:
         return tmp, True
     tmp.unlink(missing_ok=True)
@@ -326,6 +343,9 @@ def send_video_file(
     if not ok:
         print(f"sendVideo failed: {err}")
     return ok
+
+
+def main() -> int:
     import argparse
 
     from mlbb_calibration_store import find_candidate, inline_keyboard_markup
