@@ -12,17 +12,27 @@ import logging
 
 log = logging.getLogger("mlbb_death_screen")
 
+# MLBB death UI (RU/EN client): gray spectator overlay, large countdown mid-screen,
+# death caption bottom-center («Вы погибли» / respawn text).
 _DEATH_TEXT_RE = re.compile(
     r"(?:"
     r"respawn|revive|resurrect|reborn|you\s+died|has\s+been\s+slain|defeated|"
-    r"eliminated|slain|killed|death\s+timer|wait\s+to\s+respawn"
-    r"|умер|погиб|убит|смерт|воскрешен|возрожден|оживлен|ожидани.{0,12}возрожд"
-    r"|таймер.{0,8}возрожд|секунд.{0,8}до\s+возрожд"
+    r"eliminated|slain|killed|killed\s+by|death\s+timer|wait\s+to\s+respawn|"
+    r"reborn\s+in|respawning"
+    r"|умер|погиб|убит|убиты|смерт|воскрешен|возрожден|оживлен|"
+    r"ожидани.{0,16}возрожд|возрождени.{0,12}через|перерожден"
+    r"|таймер.{0,8}возрожд|секунд.{0,12}(?:до\s+)?возрожд|"
+    r"вы\s+(?:были\s+)?(?:убит|погиб)"
     r")",
     re.I,
 )
 
-_COUNTDOWN_RE = re.compile(r"(?:respawn|revive|возрожд|ожидани)[^\d]{0,20}(\d{1,2})", re.I)
+_COUNTDOWN_RE = re.compile(
+    r"(?:respawn|revive|reborn|возрожд|ожидани|через)[^\d]{0,24}(\d{1,2})",
+    re.I,
+)
+
+_SEC_COUNTDOWN_RE = re.compile(r"(\d{1,2})\s*(?:сек|sec|s\b)", re.I)
 
 
 @dataclass(frozen=True)
@@ -42,11 +52,11 @@ def _scan_step() -> float:
 
 
 def _timer_max_sec() -> float:
-    return float(os.environ.get("MLBB_DEATH_TIMER_MAX_SEC", "16"))
+    return float(os.environ.get("MLBB_DEATH_TIMER_MAX_SEC", "55"))
 
 
 def _bottom_text_min() -> float:
-    return float(os.environ.get("MLBB_DEATH_BOTTOM_TEXT_MIN", "0.11"))
+    return float(os.environ.get("MLBB_DEATH_BOTTOM_TEXT_MIN", "0.09"))
 
 
 def _min_clip_after_trim() -> float:
@@ -60,7 +70,9 @@ def classify_death_text(text: str) -> bool:
     return bool(_DEATH_TEXT_RE.search(blob))
 
 
-def parse_respawn_countdown(text: str) -> float | None:
+def parse_respawn_countdown(text: str, *, digit_hint: float | None = None) -> float | None:
+    if digit_hint is not None and 1 <= digit_hint <= 60:
+        return float(digit_hint)
     blob = " ".join(str(text or "").split())
     if not blob:
         return None
@@ -70,13 +82,31 @@ def parse_respawn_countdown(text: str) -> float | None:
             return float(m.group(1))
         except ValueError:
             pass
-    nums = [int(x) for x in re.findall(r"\b(\d{1,2})\b", blob) if 1 <= int(x) <= 20]
-    if nums and classify_death_text(blob):
+    m2 = _SEC_COUNTDOWN_RE.search(blob)
+    if m2:
+        try:
+            return float(m2.group(1))
+        except ValueError:
+            pass
+    nums = [int(x) for x in re.findall(r"\b(\d{1,2})\b", blob) if 1 <= int(x) <= 60]
+    if nums and (classify_death_text(blob) or len(blob) <= 8):
         return float(max(nums))
     return None
 
 
-def _ocr_death_zone(frame) -> str:
+def _frame_zones(frame):
+    """Return resized frame + zone slices: caption (bottom-center), timer (mid-center)."""
+    import cv2
+
+    small = cv2.resize(frame, (480, 270))
+    h, w = small.shape[:2]
+    caption = small[int(h * 0.80) : int(h * 0.98), int(w * 0.30) : int(w * 0.70)]
+    timer = small[int(h * 0.48) : int(h * 0.76), int(w * 0.36) : int(w * 0.64)]
+    wide_caption = small[int(h * 0.74) : int(h * 0.96), int(w * 0.22) : int(w * 0.78)]
+    return small, caption, timer, wide_caption
+
+
+def _ocr_zone_text(zone, *, digits_only: bool = False) -> str:
     import cv2
 
     try:
@@ -84,41 +114,86 @@ def _ocr_death_zone(frame) -> str:
     except ImportError:
         return ""
 
-    small = cv2.resize(frame, (480, 270))
-    h, w = small.shape[:2]
-    zones = [
-        small[int(h * 0.70) : int(h * 0.96), int(w * 0.22) : int(w * 0.78)],
-        small[int(h * 0.74) : int(h * 0.94), int(w * 0.30) : int(w * 0.70)],
-    ]
+    if zone.size == 0:
+        return ""
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
+    variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
     texts: list[str] = []
-    for zone in zones:
-        if zone.size == 0:
-            continue
-        gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-        for variant in (
-            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
-            cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
-        ):
-            for psm in (7, 8):
-                try:
-                    text = pytesseract.image_to_string(
-                        variant,
-                        config=f"--psm {psm} -l eng+rus",
-                    )
-                except Exception:
-                    continue
-                text = " ".join(text.split())
-                if text:
-                    texts.append(text)
-                    if classify_death_text(text):
-                        return " ".join(texts)
+    whitelist = " -c tessedit_char_whitelist=0123456789" if digits_only else ""
+    psms = (10, 7, 8) if digits_only else (7, 8, 6)
+    for variant in variants:
+        for psm in psms:
+            try:
+                text = pytesseract.image_to_string(
+                    variant,
+                    config=f"--psm {psm} -l eng+rus{whitelist}",
+                )
+            except Exception:
+                continue
+            text = " ".join(text.split())
+            if text:
+                texts.append(text)
     return " ".join(texts)
 
 
-def _bottom_band_text_score(frame) -> float:
+def _ocr_death_caption(frame) -> str:
+    _small, caption, _timer, wide = _frame_zones(frame)
+    blob = " ".join(filter(None, (_ocr_zone_text(caption), _ocr_zone_text(wide))))
+    if classify_death_text(blob):
+        return blob
+    return blob
+
+
+def _ocr_timer_digits(frame) -> tuple[str, float | None]:
+    _small, _caption, timer, _wide = _frame_zones(frame)
+    raw = _ocr_zone_text(timer, digits_only=True)
+    raw = raw.replace("O", "0").replace("o", "0").replace("l", "1")
+    nums = [int(x) for x in re.findall(r"\d{1,2}", raw) if 1 <= int(x) <= 60]
+    if not nums:
+        text = _ocr_zone_text(timer, digits_only=False)
+        nums = [int(x) for x in re.findall(r"\b(\d{1,2})\b", text) if 1 <= int(x) <= 60]
+        raw = text or raw
+    if nums:
+        return raw, float(nums[0])
+    return raw, None
+
+
+def _ocr_death_zone(frame) -> str:
+    caption = _ocr_death_caption(frame)
+    timer_raw, timer_val = _ocr_timer_digits(frame)
+    parts = [caption, timer_raw]
+    blob = " ".join(p for p in parts if p)
+    if classify_death_text(blob) or timer_val is not None:
+        return blob
+    return blob
+
+
+def _death_overlay_score(frame) -> float:
+    """Gray spectator overlay — arena saturation drops on MLBB death screen."""
+    import cv2
+    import numpy as np
+
+    small = cv2.resize(frame, (320, 180))
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    h, w = small.shape[:2]
+    arena = hsv[int(h * 0.12) : int(h * 0.62), int(w * 0.12) : int(w * 0.88)]
+    if arena.size == 0:
+        return 0.0
+    mean_sat = float(np.mean(arena[:, :, 1]))
+    # Typical death overlay: S mean ~20-45 vs live fight ~55-90
+    if mean_sat <= 38:
+        return min(1.0, (48 - mean_sat) / 22.0)
+    if mean_sat <= 52:
+        return max(0.0, (52 - mean_sat) / 28.0)
+    return 0.0
+
+
+def _bottom_caption_text_score(frame) -> float:
     from gameplay_gate import _band_overlay_text_score
 
-    return _band_overlay_text_score(frame, 0.72, 0.94)
+    # Tight bottom-center band where «умер» / respawn caption sits.
+    return _band_overlay_text_score(frame, 0.80, 0.97)
 
 
 def death_frame_score(vod: Path, sec: float) -> tuple[float, str]:
@@ -132,36 +207,65 @@ def death_frame_score(vod: Path, sec: float) -> tuple[float, str]:
     if frame is None:
         return 0.0, "no_frame"
 
-    bottom = _bottom_band_text_score(frame)
+    caption_bottom = _bottom_caption_text_score(frame)
+    overlay = _death_overlay_score(frame)
     mini, skill, _top = _frame_hud_metrics(frame)
-    ocr = _ocr_death_zone(frame)
-    if classify_death_text(ocr):
-        return 1.0, f"ocr:{ocr[:48]}"
+    ocr_caption = _ocr_death_caption(frame)
+    timer_raw, timer_val = _ocr_timer_digits(frame)
 
-    # Death UI: prominent bottom-center caption, skills frozen/greyed (low std).
+    if classify_death_text(ocr_caption):
+        return 1.0, f"ocr_caption:{ocr_caption[:48]}"
+
     skill_dead = skill < float(os.environ.get("MLBB_DEATH_MAX_SKILL_STD", "5.5"))
-    bottom_strong = bottom >= _bottom_text_min()
-    if bottom_strong and skill_dead:
-        return min(1.0, 0.55 + bottom * 2.0), f"heuristic:bottom={bottom:.3f}:skill={skill:.1f}"
-    if bottom_strong and mini < float(os.environ.get("MLBB_DEATH_MAX_MINI_STD", "6.0")):
-        return min(1.0, 0.50 + bottom * 1.8), f"heuristic:bottom={bottom:.3f}:mini={mini:.1f}"
-    return max(0.0, bottom * 0.6), "weak"
+    caption_strong = caption_bottom >= _bottom_text_min()
+
+    if timer_val is not None and overlay >= 0.28 and (caption_strong or skill_dead):
+        return (
+            min(1.0, 0.88 + overlay * 0.1),
+            f"timer_digit:{int(timer_val)}:overlay={overlay:.2f}",
+        )
+
+    if overlay >= 0.42 and caption_strong and skill_dead:
+        return min(1.0, 0.72 + overlay * 0.2), f"overlay_caption:ov={overlay:.2f}"
+
+    if caption_strong and skill_dead:
+        return min(1.0, 0.58 + caption_bottom * 1.6), f"caption_skill:bottom={caption_bottom:.3f}"
+
+    if caption_strong and mini < float(os.environ.get("MLBB_DEATH_MAX_MINI_STD", "6.0")):
+        return min(1.0, 0.52 + caption_bottom * 1.4), f"caption_mini:bottom={caption_bottom:.3f}"
+
+    if timer_raw and timer_val is not None and overlay >= 0.22:
+        return 0.65, f"timer_weak:{int(timer_val)}"
+
+    return max(0.0, caption_bottom * 0.5), "weak"
 
 
 def probe_death_at(vod: Path, sec: float) -> DeathScreenHit | None:
     score, hint = death_frame_score(vod, sec)
-    if score < float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.62")):
+    if score < float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.58")):
         return None
-    ocr = hint[4:] if hint.startswith("ocr:") else ""
-    if not ocr:
-        frame = None
-        from gameplay_gate import _read_frame_at
 
-        frame = _read_frame_at(vod, sec)
-        if frame is not None:
-            ocr = _ocr_death_zone(frame)
-    timer = parse_respawn_countdown(ocr) if ocr else None
-    return DeathScreenHit(sec=sec, text=ocr or hint, source="ocr" if ocr else "heuristic", timer_sec=timer)
+    from gameplay_gate import _read_frame_at
+
+    frame = _read_frame_at(vod, sec)
+    ocr = ""
+    timer_val = None
+    if frame is not None:
+        ocr = _ocr_death_caption(frame)
+        _raw, timer_val = _ocr_timer_digits(frame)
+        if not ocr:
+            ocr = _raw
+    if hint.startswith("ocr_caption:"):
+        ocr = hint.split(":", 1)[1]
+    elif hint.startswith("timer_digit:"):
+        try:
+            timer_val = float(hint.split(":")[1].split(":")[0])
+        except ValueError:
+            pass
+
+    timer = parse_respawn_countdown(ocr, digit_hint=timer_val)
+    source = "ocr" if classify_death_text(ocr) else ("timer_digit" if timer_val else "heuristic")
+    return DeathScreenHit(sec=sec, text=ocr or hint, source=source, timer_sec=timer)
 
 
 def find_death_start_in_window(vod: Path, start_sec: float, end_sec: float) -> DeathScreenHit | None:
@@ -180,14 +284,15 @@ def find_death_start_in_window(vod: Path, start_sec: float, end_sec: float) -> D
 
 
 def death_window_end(vod: Path, death_start: float, file_dur: float, timer_sec: float | None) -> float:
-    """End of respawn wait — scan until HUD returns or timer elapses."""
-    cap = min(_timer_max_sec(), (timer_sec or 12.0) + 1.5)
+    """End of respawn wait — skip for full countdown length."""
+    cap = min(_timer_max_sec(), (timer_sec or 14.0) + 2.0)
     step = _scan_step()
     t = float(death_start) + step
     limit = min(float(file_dur), float(death_start) + cap)
+    min_score = float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.58"))
     while t < limit:
         score, _ = death_frame_score(vod, t)
-        if score < float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.62")) * 0.85:
+        if score < min_score * 0.82:
             return t
         t += step
     return limit
@@ -227,12 +332,13 @@ def trim_death_tail(
     if hit.timer_sec is not None:
         meta["death_timer_sec"] = hit.timer_sec
     log.info(
-        "death trim %s: %.1f→%.1f (death@%.1fs timer=%s)",
+        "death trim %s: %.1f→%.1f (death@%.1fs timer=%ss skip=%.1fs)",
         vod.name,
         end_sec,
         new_end,
         hit.sec,
         hit.timer_sec,
+        death_end - hit.sec,
     )
     return start_sec, round(new_end, 2), meta
 
@@ -253,7 +359,7 @@ def segment_death_ratio(
     times = np.linspace(start_sec, max(start_sec + 0.1, end - 0.05), num=sample_frames)
     hits = 0
     total = 0
-    min_score = float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.62"))
+    min_score = float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.58"))
     for t in times:
         score, _ = death_frame_score(vod, float(t))
         total += 1
