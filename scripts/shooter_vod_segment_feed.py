@@ -31,6 +31,7 @@ from mlbb_vod_segment_feed import (
     send_video,
 )
 from pubg_combat_gate import pubg_passes_combat_gate
+from pubg_metro_royale_gate import title_metro_hint
 from shooter_vod_segment_store import (
     keyboard,
     labeled_ids,
@@ -86,6 +87,41 @@ def _feed_lock(game: str):
         log.warning("another %s feed running — exit", game)
         return None
     return handle
+
+
+def _vod_registry_entry(state: dict, vod: Path) -> dict | None:
+    vod_path = str(vod)
+    vid = vod_youtube_id(vod)
+    for entry in state.get("vods", []):
+        if entry.get("path") == vod_path or entry.get("id") == vid:
+            return entry
+    return None
+
+
+def _vod_title(state: dict, vod: Path) -> str:
+    entry = _vod_registry_entry(state, vod)
+    return str((entry or {}).get("title") or "")
+
+
+def _pubg_metro_vod_ok(
+    vod: Path,
+    *,
+    title: str = "",
+    streak: int = 0,
+) -> tuple[bool, str]:
+    from pubg_metro_royale_gate import vod_looks_metro_royale
+    from shooter_vod_adaptive_gate import soften_level
+
+    ok, reason = vod_looks_metro_royale(vod, title=title or None)
+    if ok:
+        return True, reason
+    if title_metro_hint(title):
+        log.warning("metro title hint override vod=%s reason=%s", vod.name, reason)
+        return True, f"metro_title_hint ({reason})"
+    if soften_level(streak) >= 2:
+        log.warning("metro soften override vod=%s streak=%s reason=%s", vod.name, streak, reason)
+        return True, f"metro_soften_L{soften_level(streak)} ({reason})"
+    return False, reason
 
 
 def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list[dict]:
@@ -327,26 +363,29 @@ def _scan_vod_with_adaptive(
         telegram_soften_notice,
     )
 
-    if game == "pubg":
-        from pubg_metro_royale_gate import vod_looks_metro_royale
+    vid = vod_youtube_id(vod)
+    title = _vod_title(state, vod)
+    streak_in = streak_from_state(state)
 
-        ok_metro, metro_reason = vod_looks_metro_royale(vod)
+    if game == "pubg":
+        ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
         if not ok_metro:
             log.warning("metro reject scan vod=%s reason=%s", vod.name, metro_reason)
-            for entry in state.get("vods", []):
-                if entry.get("path") == str(vod) or entry.get("id") == vid:
-                    entry["exhausted"] = True
-                    entry["reject_reason"] = metro_reason
+            entry = _vod_registry_entry(state, vod)
+            if entry:
+                entry["exhausted"] = True
+                entry["reject_reason"] = metro_reason
             _save_state(game, state)
             return 0
 
-    streak_in = streak_from_state(state)
     prev_level = int(state.get("last_adaptive_level") or 0)
     active_level = 0
     sent = 0
 
     with adaptive_env(streak_in) as level:
         active_level = level
+        if game == "pubg":
+            os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
         if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
             "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
         ) == "1":
@@ -367,8 +406,9 @@ def _scan_vod_with_adaptive(
                 vod.name,
             )
         sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level)
+        if game == "pubg":
+            os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
 
-    vid = vod_youtube_id(vod)
     new_streak = record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
@@ -402,16 +442,25 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
+        if entry is None:
+            entry = {
+                "id": vod_youtube_id(mp4),
+                "path": str(mp4),
+                "title": "",
+                "exhausted": False,
+            }
+            registry.append(entry)
         if game == "pubg":
-            from pubg_metro_royale_gate import vod_looks_metro_royale
+            from shooter_vod_adaptive_gate import streak_from_state
 
-            ok_metro, metro_reason = vod_looks_metro_royale(mp4)
+            streak_in = streak_from_state(state)
+            title = str(entry.get("title") or "")
+            ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
-                if entry:
-                    entry["exhausted"] = True
-                    entry["reject_reason"] = metro_reason
-                    _save_state(game, state)
+                entry["exhausted"] = True
+                entry["reject_reason"] = metro_reason
+                _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         if n > 0:
@@ -432,9 +481,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         return 0
 
     if game == "pubg":
-        from pubg_metro_royale_gate import vod_looks_metro_royale
+        from shooter_vod_adaptive_gate import streak_from_state
 
-        ok_metro, metro_reason = vod_looks_metro_royale(vod)
+        ok_metro, metro_reason = _pubg_metro_vod_ok(
+            vod,
+            title=str(pick.get("title") or ""),
+            streak=streak_from_state(state),
+        )
         if not ok_metro:
             log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)
             send_message(

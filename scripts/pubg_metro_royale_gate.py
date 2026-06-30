@@ -27,6 +27,25 @@ CLASSIC_MODE_UI_RE = re.compile(
 )
 
 
+def title_metro_hint(title: str | None) -> bool:
+    """YouTube title strongly suggests Metro Royale — relax frame probes."""
+    if not title:
+        return False
+    return bool(METRO_UI_RE.search(title))
+
+
+def _outdoor_reject_min() -> int:
+    if os.environ.get("PUBG_METRO_SEGMENT_RELAX", "0") == "1":
+        return int(os.environ.get("PUBG_METRO_OUTDOOR_REJECT_MIN", "3"))
+    return int(os.environ.get("PUBG_METRO_OUTDOOR_REJECT_MIN", "2"))
+
+
+def _classic_ui_reject_min() -> int:
+    if os.environ.get("PUBG_METRO_SEGMENT_RELAX", "0") == "1":
+        return int(os.environ.get("PUBG_METRO_CLASSIC_UI_REJECT_MIN", "2"))
+    return 1
+
+
 def _ocr_zone_text(frame: np.ndarray, *, y0: float, y1: float, x0: float, x1: float) -> str:
     try:
         import pytesseract
@@ -80,6 +99,8 @@ def segment_looks_metro_royale(
 ) -> tuple[bool, str]:
     if os.environ.get("PUBG_METRO_GATE", "1") != "1":
         return True, "metro_gate_off"
+    if os.environ.get("PUBG_METRO_SEGMENT_TRUST_VOD", "0") == "1":
+        return True, "metro_vod_trusted"
 
     end = start_sec + max(duration_sec, 1.0)
     times = [
@@ -101,7 +122,8 @@ def segment_looks_metro_royale(
         sky = _frame_sky_ratio(frame)
         bright = _frame_mean_brightness(frame)
         metro_ui, classic_ui = _ocr_metro_signals(frame)
-        if sky >= float(os.environ.get("PUBG_METRO_MAX_SKY_RATIO", "0.11")):
+        sky_max = float(os.environ.get("PUBG_METRO_MAX_SKY_RATIO", "0.15"))
+        if sky >= sky_max:
             outdoor_votes += 1
         if bright <= float(os.environ.get("PUBG_METRO_MAX_BRIGHTNESS", "0.42")):
             dark_votes += 1
@@ -113,18 +135,25 @@ def segment_looks_metro_royale(
     if checked == 0:
         return False, "metro_no_frames"
 
-    if classic_ui_votes >= 1:
+    outdoor_need = min(_outdoor_reject_min(), checked)
+    classic_need = min(_classic_ui_reject_min(), checked)
+    if classic_ui_votes >= classic_need:
         return False, f"classic_map_ui={classic_ui_votes}"
-    if outdoor_votes >= 2:
+    if outdoor_votes >= outdoor_need:
         return False, f"classic_outdoor_sky={outdoor_votes}/{checked}"
     if metro_ui_votes >= 1:
         return True, "metro_ui_ok"
-    if dark_votes >= 2 and outdoor_votes == 0:
+    if dark_votes >= 2 and outdoor_votes < outdoor_need:
         return True, "metro_underground"
     return False, f"not_metro=sky{outdoor_votes}:dark{dark_votes}:ui{metro_ui_votes}"
 
 
-def vod_looks_metro_royale(video_path: Path, *, duration_sec: float | None = None) -> tuple[bool, str]:
+def vod_looks_metro_royale(
+    video_path: Path,
+    *,
+    duration_sec: float | None = None,
+    title: str | None = None,
+) -> tuple[bool, str]:
     """Sample a few points in the VOD before investing in a full scan."""
     if os.environ.get("PUBG_METRO_GATE", "1") != "1":
         return True, "metro_gate_off"
@@ -142,7 +171,10 @@ def vod_looks_metro_royale(video_path: Path, *, duration_sec: float | None = Non
         reasons.append(f"{int(t)}s:{reason}")
         if ok:
             oks += 1
-    need = int(os.environ.get("PUBG_METRO_VOD_MIN_PROBES", "2"))
+    need = int(os.environ.get("PUBG_METRO_VOD_MIN_PROBES", "1"))
+    if title_metro_hint(title):
+        need = min(need, int(os.environ.get("PUBG_METRO_TITLE_HINT_MIN_PROBES", "1")))
     if oks >= need:
-        return True, f"metro_vod_ok={oks}/{len(probes)}"
+        hint = "title_hint" if title_metro_hint(title) else "frames"
+        return True, f"metro_vod_ok={oks}/{len(probes)} ({hint})"
     return False, f"metro_vod_reject={oks}/{len(probes)} ({';'.join(reasons[:3])})"

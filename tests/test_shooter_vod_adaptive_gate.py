@@ -52,3 +52,11 @@ def test_l2_has_pov_gate_off() -> None:
     ov = overrides_for_level(2)
     assert ov.get("PUBG_POV_GATE") == "0"
     assert float(ov["VISUAL_MENU_OVERLAY_MAX"]) > float(overrides_for_level(1)["VISUAL_MENU_OVERLAY_MAX"])
+    assert ov.get("PUBG_METRO_VOD_MIN_PROBES") == "1"
+    assert ov.get("PUBG_METRO_SEGMENT_RELAX") == "1"
+
+
+def test_l3_trusts_metro_vod_on_presend() -> None:
+    ov = overrides_for_level(3)
+    assert ov.get("PUBG_METRO_SEGMENT_TRUST_VOD") == "1"
+    assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
