@@ -36,6 +36,7 @@ from shooter_vod_segment_store import (
     keyboard,
     labeled_ids,
     load_feed_sent,
+    load_index,
     mark_feed_sent,
     segment_id,
     stats,
@@ -200,10 +201,16 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
     return True, "shooter_combat_ok", metrics
 
 
-def _used_peak_times(vod_id: str, blocked_ids: set[str]) -> list[float]:
+def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:
+    """Peak times from actually sent segments — bad labels must not block nearby peaks."""
+    index = {str(s.get("segment_id")): s for s in load_index(game).get("segments", [])}
     peaks: list[float] = []
-    for sid in blocked_ids:
+    for sid in sent_set:
         if not sid.startswith(f"{vod_id}_"):
+            continue
+        row = index.get(sid)
+        if row and row.get("peak_start") is not None:
+            peaks.append(float(row["peak_start"]))
             continue
         try:
             peaks.append(float(sid.rsplit("_", 1)[1]))
@@ -298,9 +305,14 @@ def _scan_vod(
         return 0
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
-    seg_gap = float(os.environ.get("SHOOTER_VOD_SEGMENT_GAP_SEC", "45"))
+    seg_gap = float(os.environ.get("SHOOTER_VOD_SEGMENT_GAP_SEC", "18"))
+    if soften_level >= 2:
+        seg_gap = min(
+            seg_gap,
+            float(os.environ.get("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", "12")),
+        )
     vid = vod_youtube_id(vod)
-    used_peaks = _used_peak_times(vid, labeled | sent_set)
+    used_peaks = _used_peak_times(game, vid, sent_set)
     skip_peaks: set[float] = set()
     peak_tries = 0
     max_tries = soft_max_peak_tries() if soften_level > 0 else 1
@@ -327,6 +339,14 @@ def _scan_vod(
                 }
             )
         if not rows:
+            log.warning(
+                "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s",
+                vod.name,
+                len(pool),
+                used_peaks,
+                seg_gap,
+                soften_level,
+            )
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
