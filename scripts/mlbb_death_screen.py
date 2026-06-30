@@ -63,6 +63,25 @@ def _min_clip_after_trim() -> float:
     return float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
 
 
+def _post_death_keep_sec() -> float:
+    """Seconds of death screen to keep after a fight moment (before long respawn wait)."""
+    return float(os.environ.get("MLBB_DEATH_POST_KEEP_SEC", "4"))
+
+
+def death_trim_end(start_sec: float, end_sec: float, death_start_sec: float) -> float | None:
+    """
+    New clip end: fight + up to post_keep sec after death onset.
+    Returns None when trim would not shorten the clip.
+    """
+    keep = _post_death_keep_sec()
+    min_end = float(start_sec) + _min_clip_after_trim()
+    new_end = max(min_end, float(death_start_sec) + keep)
+    new_end = min(new_end, float(end_sec))
+    if new_end >= float(end_sec) - 0.4:
+        return None
+    return round(new_end, 2)
+
+
 def classify_death_text(text: str) -> bool:
     blob = " ".join(str(text or "").split())
     if not blob:
@@ -306,7 +325,7 @@ def trim_death_tail(
     file_dur: float | None = None,
 ) -> tuple[float, float, dict]:
     """
-    Cut clip before death/respawn timer UI.
+    Cut long respawn wait after death; keep a short post-death tail (default 4s).
     Returns (start, end, meta). Meta empty when unchanged.
     """
     if not death_trim_enabled():
@@ -319,28 +338,29 @@ def trim_death_tail(
     if hit is None:
         return start_sec, end_sec, {}
     death_end = death_window_end(vod, hit.sec, file_dur, hit.timer_sec)
-    new_end = max(float(start_sec) + _min_clip_after_trim(), float(hit.sec))
-    if new_end >= end_sec - 0.4:
+    new_end = death_trim_end(start_sec, end_sec, hit.sec)
+    if new_end is None:
         return start_sec, end_sec, {}
     meta = {
         "death_trim": True,
         "death_start": round(hit.sec, 2),
         "death_end": round(death_end, 2),
+        "death_post_keep_sec": _post_death_keep_sec(),
         "death_text": hit.text[:80],
         "death_source": hit.source,
     }
     if hit.timer_sec is not None:
         meta["death_timer_sec"] = hit.timer_sec
     log.info(
-        "death trim %s: %.1f→%.1f (death@%.1fs timer=%ss skip=%.1fs)",
+        "death trim %s: %.1f→%.1f (death@%.1fs keep=%.0fs timer=%ss)",
         vod.name,
         end_sec,
         new_end,
         hit.sec,
+        _post_death_keep_sec(),
         hit.timer_sec,
-        death_end - hit.sec,
     )
-    return start_sec, round(new_end, 2), meta
+    return start_sec, new_end, meta
 
 
 def segment_death_ratio(
@@ -369,7 +389,11 @@ def segment_death_ratio(
 
 
 def segment_mostly_death_screen(vod: Path, start_sec: float, duration_sec: float) -> bool:
-    ratio = segment_death_ratio(vod, start_sec, duration_sec)
+    keep = _post_death_keep_sec()
+    check_dur = duration_sec
+    if duration_sec > keep + 1.0:
+        check_dur = max(1.0, duration_sec - keep)
+    ratio = segment_death_ratio(vod, start_sec, check_dur)
     return ratio >= float(os.environ.get("MLBB_DEATH_REJECT_RATIO", "0.45"))
 
 
