@@ -539,15 +539,22 @@ def _shooter_apply_vseg_label(
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'
+    from daily_game_cycle import profile_for_game
+    from vod_owner_learning import exemplar_counts
+
+    profile = profile_for_game(game)
+    good_n, bad_n = exemplar_counts(profile)
     if is_good:
         return True, (
             f'✅ Ок — {game.upper()} #{sid}\n'
-            f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+            f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}\n'
+            f'exemplars: 👍{good_n} 👎{bad_n}'
         )
     return True, (
         f'❌ Не ок — {game.upper()} #{sid}\n'
         f'Причина: {reason or "—"}\n'
-        f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}'
+        f'Всего: 👍{s["feedback_yes"]} 👎{s["feedback_no"]}\n'
+        f'exemplars: 👍{good_n} 👎{bad_n}'
     )
 
 

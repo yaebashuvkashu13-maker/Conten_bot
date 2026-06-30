@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-game VOD segment store for shooter feeds (PUBG, Standoff)."""
+"""Per-game VOD segment store (PUBG, Standoff, Genshin, WoT)."""
 
 from __future__ import annotations
 
@@ -167,6 +167,11 @@ def apply_owner_label(
     labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
     labels["feedback"].append(feedback)
 
+    peak = row.get("peak_start")
+    if peak is None:
+        peak = row.get("start", 0)
+    entry["peak_start"] = peak
+
     if is_good:
         labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
         labels["bad"] = [b for b in labels.get("bad", []) if b.get("segment_id") != segment_id_str]
@@ -176,8 +181,34 @@ def apply_owner_label(
         labels["good"] = [g for g in labels.get("good", []) if g.get("segment_id") != segment_id_str]
         labels["bad"].append(entry)
 
+    label_name = "good" if is_good else "bad"
+    from daily_game_cycle import profile_for_game
+    from vod_owner_learning import (
+        append_owner_time_label,
+        clear_learning_cache,
+        copy_vod_exemplar,
+        peak_time_sec,
+        vod_id_from_row,
+    )
+
+    profile = profile_for_game(game)
+    exemplar = copy_vod_exemplar(profile, path, label_name, segment_id_str)
+    if exemplar:
+        entry["exemplar"] = str(exemplar)
+
     save_labels(game, labels)
-    return True, "good" if is_good else "bad"
+
+    vid = vod_id_from_row(row, segment_id_str)
+    append_owner_time_label(
+        profile,
+        vid,
+        peak_time_sec({**row, "peak_start": peak}, segment_id_str),
+        label_name,
+        note=reason,
+        source="vod_segment",
+    )
+    clear_learning_cache()
+    return True, label_name
 
 
 def stats(game: str) -> dict:

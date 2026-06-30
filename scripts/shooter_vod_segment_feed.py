@@ -100,6 +100,42 @@ def _save_state(game: str, state: dict) -> None:
     p.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _bootstrap_owner_exemplars(game: str) -> dict:
+    """Load owner 👍/👎 exemplars into CLIP cache for VOD peak scoring."""
+    from daily_game_cycle import profile_for_game
+    from vod_owner_learning import (
+        backfill_owner_labels_from_vod_segments,
+        clear_learning_cache,
+        exemplar_counts,
+    )
+
+    profile = profile_for_game(game)
+    good_n, bad_n = exemplar_counts(profile)
+    out: dict = {
+        "game": game,
+        "profile": profile,
+        "good_exemplars": good_n,
+        "bad_exemplars": bad_n,
+    }
+    if os.environ.get("SHOOTER_VOD_OWNER_BACKFILL", "1") == "1":
+        try:
+            out["backfill_added"] = backfill_owner_labels_from_vod_segments(profile)
+        except Exception as exc:
+            log.warning("owner backfill failed game=%s: %s", game, exc)
+    try:
+        clear_learning_cache()
+    except Exception as exc:
+        log.warning("exemplar cache clear failed game=%s: %s", game, exc)
+    log.info(
+        "shooter owner exemplars game=%s good=%s bad=%s backfill=%s",
+        game,
+        good_n,
+        bad_n,
+        out.get("backfill_added", 0),
+    )
+    return out
+
+
 def _feed_lock(game: str):
     lock_path = Path(f"/tmp/{game}_vod_segment_feed.lock")
     handle = lock_path.open("w")
@@ -376,6 +412,8 @@ def _scan_vod(
     peak_tries = 0
     gate = _adaptive_gate(game)
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
+    min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
+    owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
 
     while peak_tries < max_tries:
         rows: list[dict] = []
@@ -384,6 +422,10 @@ def _scan_vod(
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
                 continue
             if _peak_too_close(peak, used_peaks, seg_gap):
+                continue
+            hm = clip.get("highlight_metrics") or {}
+            clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
+            if owner_exemplars and clip_score < min_clip:
                 continue
             start = max(0.0, peak - lead)
             sid = segment_id(vid, start)
@@ -666,10 +708,25 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
+    os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
+    if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
+        os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
+        os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
+    else:
+        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     lock = _feed_lock(game)
     if lock is None:
         return 0
     env = {**os.environ, **load_env(ENV_PATH)}
+    for key in (
+        "SHOOTER_VOD_OWNER_EXEMPLARS",
+        "SHOOTER_VOD_OWNER_BACKFILL",
+        "SHOOTER_VOD_MIN_CLIP_SCORE",
+        "HIGHLIGHT_USE_OWNER_ANCHORS",
+    ):
+        if key in env:
+            os.environ[key] = str(env[key])
+    _bootstrap_owner_exemplars(game)
     token = env.get("TG_BOT_TOKEN", "").strip()
     chat_id = env.get("TG_CHAT_ID", "").strip()
     if not token or not chat_id:

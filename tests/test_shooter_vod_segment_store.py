@@ -27,6 +27,9 @@ def pubg_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     seg.write_bytes(b"fake")
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
     monkeypatch.setenv("SHOOTER_PUBG_SEGMENTS_ROOT", str(root / "segments"))
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(tmp_path / "exemplars"))
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(tmp_path / "pubg_owner_labels.json"))
+    monkeypatch.setenv("CONTENT_BOT_REPO", str(tmp_path))
     return root
 
 
@@ -45,6 +48,7 @@ def test_apply_owner_label_records_feedback(pubg_data: Path) -> None:
             "path": str(pubg_data / "segments" / "seg_abc123_42.mp4"),
             "vod": "/tmp/vod.mp4",
             "start": 42,
+            "peak_start": 46,
             "score": 0.8,
         },
     )
@@ -55,3 +59,30 @@ def test_apply_owner_label_records_feedback(pubg_data: Path) -> None:
     assert s["feedback_yes"] == 1
     labels = json.loads((pubg_data / "vod_segment_labels.json").read_text(encoding="utf-8"))
     assert len(labels["good"]) == 1
+    assert labels["good"][0].get("exemplar", "").endswith("vod_abc123_42.mp4")
+
+
+def test_apply_owner_label_writes_owner_json_and_exemplar(
+    pubg_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exemplars = tmp_path / "exemplars"
+    owner = tmp_path / "pubg_owner_labels.json"
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(exemplars))
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(owner))
+    upsert_segment(
+        "pubg",
+        {
+            "segment_id": "abc123_42",
+            "path": str(pubg_data / "segments" / "seg_abc123_42.mp4"),
+            "vod": str(pubg_data / "inbox" / "yt_abc12345678.mp4"),
+            "start": 38,
+            "peak_start": 42,
+            "score": 0.8,
+        },
+    )
+    ok, label = apply_owner_label("pubg", "abc123_42", is_good=False, reason="loot", by_chat="1")
+    assert ok and label == "bad"
+    assert (exemplars / "pubg" / "bad" / "vod_abc123_42.mp4").exists()
+    data = json.loads(owner.read_text(encoding="utf-8"))
+    assert data["videos"]["abc12345678"][0]["label"] == "bad"
+    assert data["videos"]["abc12345678"][0]["note"] == "loot"

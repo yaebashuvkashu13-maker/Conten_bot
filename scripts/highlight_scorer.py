@@ -194,16 +194,9 @@ def _labels_for_vod(video_path: Path, profile: str) -> list[dict]:
         from mlbb_owner_learning import owner_labels_for_vod_scan
 
         return owner_labels_for_vod_scan(video_path, profile)
-    rows: list[dict] = []
-    labels_path = _owner_labels_path(profile)
-    if labels_path is not None and labels_path.exists():
-        try:
-            data = json.loads(labels_path.read_text(encoding="utf-8"))
-            vid = _video_id_from_path(video_path)
-            rows.extend(list(data.get("videos", {}).get(vid, [])))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return rows
+    from vod_owner_learning import owner_labels_for_vod_scan
+
+    return owner_labels_for_vod_scan(video_path, profile)
 
 
 def vod_has_owner_labels(video_path: Path, profile: str) -> bool:
