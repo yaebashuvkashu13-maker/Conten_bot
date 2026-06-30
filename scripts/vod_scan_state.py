@@ -86,6 +86,23 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     return False
 
 
+def scan_zero_detail(entry: dict[str, Any] | None) -> str:
+    """Human-readable reason for zero-send scan (Telegram diagnostics)."""
+    if not entry:
+        return ""
+    if entry.get("last_scan_blocked"):
+        return "все пики заняты или отправлены"
+    peaks = entry.get("last_pool_peaks")
+    if peaks is not None and len(peaks) == 0:
+        return "нет боёв в VOD (highlight/panns pool=0)"
+    reason = str(entry.get("reject_reason") or "").strip()
+    if reason:
+        return reason[:140]
+    if peaks:
+        return f"presend отклонил пики (pool={len(peaks)})"
+    return ""
+
+
 def record_vod_scan(
     entry: dict[str, Any],
     *,

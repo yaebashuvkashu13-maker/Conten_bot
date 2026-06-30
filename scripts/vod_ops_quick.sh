@@ -15,8 +15,14 @@ case "${1:-health}" in
   audit)
     "$PY" audit_vod_inbox.py --limit 4 "${@:2}"
     ;;
+  deploy)
+    VPS_BRANCH="${VPS_BRANCH:-cursor/vod-pipeline-base-6cbd}" bash "$ROOT/scripts/vps_apply_vod_only.sh"
+    ;;
+  rev)
+    grep -m1 VOD_PIPELINE_REV "$ROOT/scripts/vod_game_registry.py" || true
+    ;;
   *)
-    echo "usage: $0 {health|reset|audit} [args...]" >&2
+    echo "usage: $0 {health|reset|audit|deploy|rev} [args...]" >&2
     exit 1
     ;;
 esac

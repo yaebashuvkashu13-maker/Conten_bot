@@ -15,6 +15,7 @@ from vod_scan_state import (  # noqa: E402
     max_peak_tries,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    scan_zero_detail,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     strict_peak_tries,
@@ -26,6 +27,14 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
     assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
+
+
+def test_scan_zero_detail() -> None:
+    assert "пики" in scan_zero_detail({"last_scan_blocked": True})
+    assert "pool=0" in scan_zero_detail({"last_pool_peaks": []})
+    assert scan_zero_detail({"last_pool_peaks": [120.0], "last_scan_blocked": False}) == (
+        "presend отклонил пики (pool=1)"
+    )
 
 
 def test_strict_peak_tries_defaults() -> None:

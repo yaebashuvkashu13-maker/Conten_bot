@@ -51,10 +51,12 @@ from vod_scan_state import (
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    scan_zero_detail,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
+from vod_game_registry import VOD_PIPELINE_REV
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
@@ -508,16 +510,24 @@ def _scan_vod_with_adaptive(
 
     if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
         if active_level == 0 or new_streak % 2 == 0:
+            entry = _vod_registry_entry(state, vod)
             send_message(
                 token,
                 chat_id,
-                telegram_exhaust_notice(game, vid, level=active_level, streak=new_streak),
+                telegram_exhaust_notice(
+                    game,
+                    vid,
+                    level=active_level,
+                    streak=new_streak,
+                    detail=scan_zero_detail(entry),
+                ),
             )
 
     return sent
 
 
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
+    log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
     ok_cycle, reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("skip feed game=%s reason=%s", game, reason)
@@ -582,7 +592,16 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
-    pick = candidates[0]
+    pick = None
+    if game == "pubg":
+        for cand in candidates[:8]:
+            if title_metro_hint(str(cand.get("title") or "")):
+                pick = cand
+                break
+        if pick is None:
+            pick = candidates[0]
+    else:
+        pick = candidates[0]
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:

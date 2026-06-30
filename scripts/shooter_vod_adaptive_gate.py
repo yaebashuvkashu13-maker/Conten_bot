@@ -53,6 +53,7 @@ SHOOTER_SOFTEN_L2: dict[str, str] = {
     "PUBG_METRO_VOD_MIN_PROBES": "1",
     "PUBG_METRO_MAX_SKY_RATIO": "0.20",
     "PUBG_METRO_SEGMENT_RELAX": "1",
+    "HIGHLIGHT_PANN_PREFILTER_MIN": "0.10",
 }
 
 
@@ -72,8 +73,16 @@ SHOOTER_SOFTEN_L3: dict[str, str] = {
     "SMART_PUBG_MAX_RUN_MOTION": "0.30",
     "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.040",
     "PUBG_METRO_SEGMENT_TRUST_VOD": "1",
+    "PUBG_METRO_TITLE_TRUST": "1",
     "PUBG_REJECT_BOT_FARM": "0",
     "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
+    "HIGHLIGHT_PANN_PREFILTER_MIN": "0.08",
+    "HIGHLIGHT_PANN_GUN_MIN": "0.15",
+    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.10",
+    "PUBG_COMBAT_PANN_MIN": "0.14",
+    "PUBG_COMBAT_FRAMES_REQUIRED": "1",
+    "VISUAL_PUBG_MIN_HIT_FLASH": "0.0008",
+    "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.008",
 }
 
 
@@ -116,13 +125,19 @@ def telegram_soften_notice(game: str, streak: int, level: int) -> str:
     )
 
 
-def telegram_exhaust_notice(game: str, vod_id: str, *, level: int, streak: int) -> str:
+def telegram_exhaust_notice(
+    game: str, vod_id: str, *, level: int, streak: int, detail: str = ""
+) -> str:
     g = game.strip().upper()
     base = f"⚠️ {g} {vod_id}: 0 клипов"
     if level > 0:
-        return f"{base} (мягкий L{level}, серия={streak})"
-    need = streak_threshold()
-    return f"{base} — ещё {max(0, need - streak)} VOD до смягчения"
+        msg = f"{base} (мягкий L{level}, серия={streak})"
+    else:
+        need = streak_threshold()
+        msg = f"{base} — ещё {max(0, need - streak)} VOD до смягчения"
+    if detail:
+        msg += f"\n{detail[:140]}"
+    return msg
 
 
 def soft_max_peak_tries() -> int:

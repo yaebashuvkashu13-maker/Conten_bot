@@ -118,13 +118,19 @@ def telegram_soften_notice(game: str, streak: int, level: int) -> str:
     )
 
 
-def telegram_exhaust_notice(game: str, vod_id: str, *, level: int, streak: int) -> str:
+def telegram_exhaust_notice(
+    game: str, vod_id: str, *, level: int, streak: int, detail: str = ""
+) -> str:
     g = game.strip().upper()
     base = f"⚠️ {g} {vod_id}: 0 клипов"
     if level > 0:
-        return f"{base} (мягкий L{level}, серия={streak})"
-    need = streak_threshold()
-    return f"{base} — ещё {max(0, need - streak)} VOD до смягчения"
+        msg = f"{base} (мягкий L{level}, серия={streak})"
+    else:
+        need = streak_threshold()
+        msg = f"{base} — ещё {max(0, need - streak)} VOD до смягчения"
+    if detail:
+        msg += f"\n{detail[:140]}"
+    return msg
 
 
 def soft_max_peak_tries() -> int:
