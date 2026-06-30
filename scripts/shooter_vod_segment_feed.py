@@ -356,12 +356,18 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
 
 
 def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
-    """Unscanned VODs first; Metro-titled inbox files before others."""
+    """Unscanned VODs first; Metro + Russian titles before others."""
+    from pubg_metro_royale_gate import title_metro_hint
+    from youtube_game_prefs import russian_score
+
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
     scanned = float((entry or {}).get("last_scan_at") or 0)
     title = str((entry or {}).get("title") or "")
     metro_prio = 0 if title_metro_hint(title) else 1
-    return (1 if scanned else 0, metro_prio, scanned, mp4.stat().st_mtime)
+    ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
+    ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
+    fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
+    return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
 def _scan_vod(
@@ -517,34 +523,66 @@ def _scan_vod_with_adaptive(
     prev_level = int(state.get("last_adaptive_level") or 0)
     active_level = 0
     sent = 0
+    clear_fast_seeds = None
 
-    ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
-    with ctx as level:
-        active_level = level
-        if game == "pubg":
-            os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
-        if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
-            "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
-        ) == "1":
-            log.warning(
-                "adaptive soften active game=%s streak=%s level=%s vod=%s",
-                game,
-                streak_in,
-                level,
-                vod.name,
-            )
-            send_message(token, chat_id, telegram_soften_notice(game, streak_in, level))
-        elif level > 0:
-            log.warning(
-                "adaptive soften active game=%s streak=%s level=%s vod=%s (no tg spam)",
-                game,
-                streak_in,
-                level,
-                vod.name,
-            )
-        sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
-        if game == "pubg":
-            os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
+    if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
+        from shooter_vod_fast_scan import (
+            apply_fast_probe_seeds,
+            clear_fast_probe_seeds,
+            vod_fast_combat_check,
+        )
+
+        clear_fast_seeds = clear_fast_probe_seeds
+        ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
+        if not ok_fast:
+            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
+            if entry is None:
+                entry = _vod_registry_entry(state, vod) or {
+                    "id": vid,
+                    "path": str(vod),
+                    "title": title,
+                    "exhausted": False,
+                }
+            entry["reject_reason"] = fast_reason
+            entry["exhausted"] = True
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _save_state(game, state)
+            if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
+                send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
+            return 0
+        apply_fast_probe_seeds(seed_peaks)
+
+    try:
+        ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
+        with ctx as level:
+            active_level = level
+            if game == "pubg":
+                os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
+            if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
+                "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
+            ) == "1":
+                log.warning(
+                    "adaptive soften active game=%s streak=%s level=%s vod=%s",
+                    game,
+                    streak_in,
+                    level,
+                    vod.name,
+                )
+                send_message(token, chat_id, telegram_soften_notice(game, streak_in, level))
+            elif level > 0:
+                log.warning(
+                    "adaptive soften active game=%s streak=%s level=%s vod=%s (no tg spam)",
+                    game,
+                    streak_in,
+                    level,
+                    vod.name,
+                )
+            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
+            if game == "pubg":
+                os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
+    finally:
+        if clear_fast_seeds is not None:
+            clear_fast_seeds()
 
     new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
@@ -640,14 +678,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         return 0
 
     pick = None
-    if game == "pubg":
-        for cand in candidates[:8]:
-            if title_metro_hint(str(cand.get("title") or "")):
-                pick = cand
-                break
-        if pick is None:
-            pick = candidates[0]
-    else:
+    if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import pick_discovery_candidate
+
+        pick = pick_discovery_candidate(game, candidates)
+    if pick is None:
         pick = candidates[0]
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
@@ -710,6 +745,9 @@ def main() -> int:
     game = _game()
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
+    os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
+    os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
+    os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
@@ -723,6 +761,9 @@ def main() -> int:
     env = {**os.environ, **load_env(ENV_PATH)}
     for key in (
         "SHOOTER_VOD_FEED",
+        "SHOOTER_VOD_FAST_PROBE",
+        "SHOOTER_VOD_PREFER_RUSSIAN",
+        "SHOOTER_VOD_SKIP_INTELLICLIP",
         "SHOOTER_VOD_MAX_PANN_PROBE",
         "HIGHLIGHT_MAX_STAGE1",
         "SHOOTER_VOD_OWNER_EXEMPLARS",

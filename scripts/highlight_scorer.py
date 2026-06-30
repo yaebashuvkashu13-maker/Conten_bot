@@ -1348,7 +1348,12 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
         return out
 
-    if os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
+    skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
+        "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
+    ) == "1"
+    if skip_intelliclip:
+        log.info("intelliclip stage1 skipped %s (shooter fast path)", video_path.name)
+    elif os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
         try:
             from intelliclip_scorer import rank_window_starts
 

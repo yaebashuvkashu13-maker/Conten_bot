@@ -25,7 +25,7 @@ case "${1:-health}" in
     grep -m1 VOD_PIPELINE_REV "$ROOT/scripts/vod_game_registry.py" || true
     ;;
   *)
-    echo "usage: $0 {health|reset|audit|deploy|rev} [args...]" >&2
+    echo "usage: $0 {health|reset|audit|deploy|requeue|rev} [args...]" >&2
     exit 1
     ;;
 esac

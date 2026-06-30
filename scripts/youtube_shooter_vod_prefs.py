@@ -45,6 +45,10 @@ PUBG_CORE_QUERIES = (
     "PUBG Mobile Metro Royale TPP ranked replay",
     "метро рояль пабг мобайл ранкед матч",
     "метро рояль пабг мобайл полный матч",
+    "метро рояль пабг мобайл стрим",
+    "PUBG Mobile Metro Royale стрим полный",
+    "пабг мобайл метро рояль геймплей",
+    "метро рояль пабг стрим русский",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -58,6 +62,8 @@ PUBG_ANGLE_QUERIES = (
     "PUBG Mobile Metro Royale sniper fight",
     "PUBG Mobile Metro Royale close range fight",
     "PUBG Mobile Metro Royale final circle ranked",
+    "метро рояль пабг файт перестрелка",
+    "метро рояль пабг снайпер",
 )
 
 STANDOFF_ANGLE_QUERIES = (
@@ -75,9 +81,15 @@ def _queries_for(game: str) -> tuple[str, ...]:
 
 def title_ok(game: str, title: str) -> bool:
     t = title or ""
+    g = game.strip().lower()
+    if g == "pubg" and has_metro_royale({"title": t}):
+        # RU Metro live VODs — allow «стрим» if title is clearly Metro Royale.
+        if re.search(r"стрим|stream", t, re.I) and not LIVE_TITLE_RE.search(t):
+            if CLASSIC_MODE_TITLE_RE.search(t) or METRO_VAGUE_TITLE_RE.search(t):
+                return False
+            return bool(PUBG_TITLE_RE.search(t))
     if LIVE_TITLE_RE.search(t) or BAD_TITLE_RE.search(t):
         return False
-    g = game.strip().lower()
     if g == "standoff":
         return bool(STANDOFF_TITLE_RE.search(t))
     if g == "pubg":
@@ -85,6 +97,40 @@ def title_ok(game: str, title: str) -> bool:
             return False
         return has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))
     return False
+
+
+def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
+    """Prefer Metro + Russian titles for PUBG discovery."""
+    if not candidates:
+        return candidates
+    g = game.strip().lower()
+    if g != "pubg" or os.environ.get("SHOOTER_VOD_PREFER_RUSSIAN", "1") != "1":
+        return candidates
+    from youtube_game_prefs import rank_candidate
+
+    spec = {"require_metro_royale": True, "prefer_russian": True}
+    return sorted(candidates, key=lambda row: -rank_candidate(row, spec))
+
+
+def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
+    ranked = rank_discovery_candidates(game, candidates)
+    if not ranked:
+        return None
+    if game.strip().lower() == "pubg":
+        from pubg_metro_royale_gate import title_metro_hint
+        from youtube_game_prefs import russian_score
+
+        for cand in ranked[:12]:
+            title = str(cand.get("title") or "")
+            if title_metro_hint(title) and russian_score(cand) >= 0.06:
+                return cand
+        for cand in ranked[:12]:
+            if title_metro_hint(str(cand.get("title") or "")):
+                return cand
+        for cand in ranked[:8]:
+            if russian_score(cand) >= 0.12:
+                return cand
+    return ranked[0]
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
