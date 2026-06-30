@@ -22,6 +22,17 @@ except ImportError:
 
 ENV_FILE = Path('/root/.video_bot.env')
 LOG_FILE = Path('/root/telegram_upload_bot.log')
+
+
+def _ensure_scripts_on_path() -> None:
+    repo = Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml'))
+    for candidate in (Path(__file__).resolve().parent, repo / 'scripts'):
+        path = str(candidate)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+
+_ensure_scripts_on_path()
 STATE_FILE = Path('/root/.telegram_upload_bot_state.json')
 UPLOAD_ROOT = Path('/root/telegram_uploads')
 PENDING_ROOT = UPLOAD_ROOT / 'pending'

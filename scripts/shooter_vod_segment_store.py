@@ -10,6 +10,15 @@ import time
 from pathlib import Path
 
 
+def _ensure_scripts_on_path() -> None:
+    import sys
+
+    repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
+    for candidate in (Path(__file__).resolve().parent, repo / "scripts"):
+        path = str(candidate)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
 
 def _game_root(game: str) -> Path:
     g = game.strip().lower()
@@ -182,6 +191,7 @@ def apply_owner_label(
         labels["bad"].append(entry)
 
     label_name = "good" if is_good else "bad"
+    _ensure_scripts_on_path()
     from daily_game_cycle import profile_for_game
     from vod_owner_learning import (
         append_owner_time_label,

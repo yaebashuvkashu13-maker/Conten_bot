@@ -178,6 +178,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_continuous_worker.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/highlight_scorer.py" \
+  "$REPO/scripts/vod_owner_learning.py" \
   "$REPO/scripts/strict_montage_direct.py" \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
   "$REPO/scripts/mlbb_job_watchdog.py" \
@@ -299,7 +300,8 @@ if systemctl is-active telegram-upload-bot >/dev/null 2>&1; then
 elif pgrep -f telegram_upload_bot.py >/dev/null 2>&1; then
   pkill -f telegram_upload_bot.py 2>/dev/null || true
   sleep 1
-  nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+  nohup env PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO:-/root/content_bot_ml}/scripts" \
+    python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
 fi
 
 sleep 3
