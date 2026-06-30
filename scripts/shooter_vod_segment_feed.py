@@ -46,6 +46,14 @@ from shooter_vod_segment_store import (
 )
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
+from vod_scan_state import (
+    classic_outdoor_vod_reject,
+    peaks_from_pool,
+    pool_peaks_fully_blocked,
+    record_vod_scan,
+    should_skip_vod_rescan,
+    used_peaks_for_vod,
+)
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
@@ -127,9 +135,12 @@ def _pubg_metro_vod_ok(
     ok, reason = vod_looks_metro_royale(vod, title=title or None)
     if ok:
         return True, reason
-    if title_metro_hint(title):
+    if title_metro_hint(title) and not classic_outdoor_vod_reject(reason):
         log.warning("metro title hint override vod=%s reason=%s", vod.name, reason)
         return True, f"metro_title_hint ({reason})"
+    if title_metro_hint(title) and classic_outdoor_vod_reject(reason):
+        log.warning("metro title hint blocked (classic outdoor) vod=%s reason=%s", vod.name, reason)
+        return False, f"metro_classic_outdoor ({reason})"
     if soften_level(streak) >= 2:
         log.warning("metro soften override vod=%s streak=%s reason=%s", vod.name, streak, reason)
         return True, f"metro_soften_L{soften_level(streak)} ({reason})"
@@ -299,6 +310,13 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
+def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
+    """Unscanned VODs first, then least-recently-scanned — avoids hammering the same file."""
+    entry = next((r for r in registry if r.get("path") == str(mp4)), None)
+    scanned = float((entry or {}).get("last_scan_at") or 0)
+    return (1 if scanned else 0, scanned, mp4.stat().st_mtime)
+
+
 def _scan_vod(
     game: str,
     token: str,
@@ -307,20 +325,42 @@ def _scan_vod(
     env: dict[str, str],
     *,
     soften_level: int = 0,
+    entry: dict | None = None,
 ) -> int:
     profile = _profile(game)
     sig = file_sha256(vod)
     labeled = labeled_ids(game)
     sent_set = load_feed_sent(game)
-    pool = discover_strict_candidates(vod, profile, sig, labeled | sent_set)
+    vid = vod_youtube_id(vod)
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    seg_gap = segment_gap_sec(game, soften_level=soften_level)
+    index_segments = load_index(game).get("segments", [])
+    used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
+    blocked_ids = labeled | sent_set
+
+    if entry and entry.get("last_pool_peaks"):
+        cached = [float(x) for x in entry["last_pool_peaks"]]
+        if pool_peaks_fully_blocked(
+            cached,
+            used_peaks=used_peaks,
+            gap_sec=seg_gap,
+            blocked_sids=blocked_ids,
+            vod_id=vid,
+            lead_sec=lead,
+        ):
+            log.info("skip highlight rescan — cached peaks blocked vod=%s peaks=%s", vod.name, cached[:4])
+            record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
+            return 0
+
+    pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+    pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
+        if entry is not None:
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
         return 0
-    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
-    seg_gap = segment_gap_sec(game, soften_level=soften_level)
-    vid = vod_youtube_id(vod)
-    used_peaks = _used_peak_times(game, vid, sent_set)
     skip_peaks: set[float] = set()
     peak_tries = 0
     gate = _adaptive_gate(game)
@@ -335,8 +375,8 @@ def _scan_vod(
             if _peak_too_close(peak, used_peaks, seg_gap):
                 continue
             start = max(0.0, peak - lead)
-            sid = segment_id(vod_youtube_id(vod), start)
-            if sid in labeled or sid in sent_set:
+            sid = segment_id(vid, start)
+            if sid in blocked_ids:
                 continue
             rows.append(
                 {
@@ -348,18 +388,31 @@ def _scan_vod(
                 }
             )
         if not rows:
+            blocked = pool_peaks_fully_blocked(
+                pool_peaks,
+                used_peaks=used_peaks,
+                gap_sec=seg_gap,
+                blocked_sids=blocked_ids,
+                vod_id=vid,
+                lead_sec=lead,
+            )
             log.warning(
-                "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s",
+                "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s blocked=%s",
                 vod.name,
                 len(pool),
                 used_peaks,
                 seg_gap,
                 soften_level,
+                blocked,
             )
+            if entry is not None:
+                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked)
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
         if n > 0:
+            if entry is not None:
+                record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False)
             return n
         if soften_level <= 0:
             break
@@ -372,6 +425,8 @@ def _scan_vod(
             vod.name,
             game,
         )
+    if entry is not None:
+        record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False)
     return 0
 
 
@@ -394,6 +449,7 @@ def _scan_vod_with_adaptive(
     vid = vod_youtube_id(vod)
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
+    entry = _vod_registry_entry(state, vod)
 
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
@@ -434,7 +490,7 @@ def _scan_vod_with_adaptive(
                 level,
                 vod.name,
             )
-        sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level)
+        sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
         if game == "pubg":
             os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
 
@@ -465,9 +521,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
-    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime):
+    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
+            continue
+        if should_skip_vod_rescan(entry):
+            log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
@@ -490,9 +549,17 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
-        if n > 0:
-            print(f"pipeline done sent={n} vods=1 game={game}")
-            return 0
+        state["vods"] = registry
+        if n == 0:
+            entry = _vod_registry_entry(state, mp4) or entry
+            if entry and not entry.get("exhausted"):
+                if entry.get("last_scan_blocked") or entry.get("last_scan_sent", 0) == 0:
+                    entry["exhausted"] = True
+                    entry.setdefault("reject_reason", "zero_send_scan")
+                    log.info("exhausted vod=%s after zero-send scan", mp4.name)
+        _save_state(game, state)
+        print(f"pipeline done sent={n} vods=1 game={game}")
+        return 0
 
     candidates = _discover_candidates(game, env, used)
     if not candidates:
