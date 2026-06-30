@@ -157,13 +157,19 @@ def vod_looks_metro_royale(
     """Sample a few points in the VOD before investing in a full scan."""
     if os.environ.get("PUBG_METRO_GATE", "1") != "1":
         return True, "metro_gate_off"
+    if title_metro_hint(title) and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1":
+        return True, "metro_title_trusted"
     if duration_sec is None:
         from mlbb_vod_segment_feed import _ffprobe_duration
 
         duration_sec = _ffprobe_duration(video_path)
-    intro = float(os.environ.get("PUBG_METRO_VOD_SKIP_INTRO_SEC", "75"))
-    dur = max(float(duration_sec or 0), intro + 30)
-    probes = [intro + 15, intro + 90, min(dur * 0.45, intro + 240)]
+    intro = float(os.environ.get("PUBG_METRO_VOD_SKIP_INTRO_SEC", "120"))
+    dur = max(float(duration_sec or 0), intro + 60)
+    probes = [
+        intro + 60,
+        min(dur * 0.40, intro + 300),
+        min(dur * 0.55, max(intro + 120, dur - 90)),
+    ]
     oks = 0
     reasons: list[str] = []
     for t in probes:

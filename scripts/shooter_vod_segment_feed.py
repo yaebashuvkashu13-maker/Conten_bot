@@ -47,10 +47,10 @@ from shooter_vod_segment_store import (
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
-    classic_outdoor_vod_reject,
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
@@ -135,12 +135,6 @@ def _pubg_metro_vod_ok(
     ok, reason = vod_looks_metro_royale(vod, title=title or None)
     if ok:
         return True, reason
-    if title_metro_hint(title) and not classic_outdoor_vod_reject(reason):
-        log.warning("metro title hint override vod=%s reason=%s", vod.name, reason)
-        return True, f"metro_title_hint ({reason})"
-    if title_metro_hint(title) and classic_outdoor_vod_reject(reason):
-        log.warning("metro title hint blocked (classic outdoor) vod=%s reason=%s", vod.name, reason)
-        return False, f"metro_classic_outdoor ({reason})"
     if soften_level(streak) >= 2:
         log.warning("metro soften override vod=%s streak=%s reason=%s", vod.name, streak, reason)
         return True, f"metro_soften_L{soften_level(streak)} ({reason})"
@@ -311,10 +305,12 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
 
 
 def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
-    """Unscanned VODs first, then least-recently-scanned — avoids hammering the same file."""
+    """Unscanned VODs first; Metro-titled inbox files before others."""
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
     scanned = float((entry or {}).get("last_scan_at") or 0)
-    return (1 if scanned else 0, scanned, mp4.stat().st_mtime)
+    title = str((entry or {}).get("title") or "")
+    metro_prio = 0 if title_metro_hint(title) else 1
+    return (1 if scanned else 0, metro_prio, scanned, mp4.stat().st_mtime)
 
 
 def _scan_vod(
@@ -552,11 +548,17 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         state["vods"] = registry
         if n == 0:
             entry = _vod_registry_entry(state, mp4) or entry
-            if entry and not entry.get("exhausted"):
-                if entry.get("last_scan_blocked") or entry.get("last_scan_sent", 0) == 0:
-                    entry["exhausted"] = True
-                    entry.setdefault("reject_reason", "zero_send_scan")
-                    log.info("exhausted vod=%s after zero-send scan", mp4.name)
+            if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
+                if not entry.get("last_pool_peaks"):
+                    entry.setdefault("reject_reason", "no_combat_peaks")
+                else:
+                    entry.setdefault("reject_reason", "all_peaks_blocked")
+                entry["exhausted"] = True
+                log.info(
+                    "exhausted vod=%s reason=%s",
+                    mp4.name,
+                    entry.get("reject_reason"),
+                )
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0

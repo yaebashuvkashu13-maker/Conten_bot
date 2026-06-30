@@ -14,10 +14,14 @@ def scan_cooldown_sec() -> int:
     return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200")))
 
 
-def classic_outdoor_vod_reject(reason: str) -> bool:
-    """True when frame probes say classic outdoor — title hint must not bypass."""
-    r = reason.lower()
-    return r.count("classic_outdoor_sky=3/3") >= 2 or "classic_outdoor_sky=3/3" in r
+def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
+    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    if entry.get("last_scan_blocked"):
+        return True
+    peaks = entry.get("last_pool_peaks")
+    if peaks is not None and len(peaks) == 0:
+        return True
+    return False
 
 
 def pool_peaks_fully_blocked(

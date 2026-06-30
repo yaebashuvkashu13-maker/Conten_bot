@@ -12,17 +12,18 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from vod_scan_state import (  # noqa: E402
-    classic_outdoor_vod_reject,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    should_mark_vod_exhausted,
     should_skip_vod_rescan,
 )
 
 
-def test_classic_outdoor_reject() -> None:
-    reason = "metro_vod_reject=0/3 (90s:classic_outdoor_sky=3/3;165s:classic_outdoor_sky=3/3)"
-    assert classic_outdoor_vod_reject(reason) is True
-    assert classic_outdoor_vod_reject("metro_vod_ok=1/3 (90s:metro_underground)") is False
+def test_should_mark_vod_exhausted() -> None:
+    assert should_mark_vod_exhausted({"last_scan_blocked": True}) is True
+    assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
+    assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
+    assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
 
 
 def test_pool_fully_blocked_when_sent() -> None:
