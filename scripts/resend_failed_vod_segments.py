@@ -140,7 +140,7 @@ def main() -> int:
     print("TG_BOT_TOKEN or TG_CHAT_ID missing", file=sys.stderr)
     return 1
 
-  ids: list[str] = list(args.ids)
+  ids: list[str] = list(args.ids or [])
   if not ids:
     ids = _failed_ids_from_log(Path(args.log))
   if args.all_large:
