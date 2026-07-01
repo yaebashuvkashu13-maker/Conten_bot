@@ -1,0 +1,47 @@
+{
+  "videos": {
+    "E4Dsp53yvv4": [
+      {"tc": "25:23", "time_sec": 1523, "label": "good"},
+      {"tc": "27:10", "time_sec": 1630, "label": "good"},
+      {"tc": "29:38", "time_sec": 1778, "label": "good"},
+      {"tc": "30:42", "time_sec": 1842, "label": "good"},
+      {"tc": "32:10", "time_sec": 1930, "label": "bad", "note": "owner reject seg2"},
+      {"tc": "35:00", "time_sec": 2100, "label": "good"},
+      {"tc": "46:02", "time_sec": 2762, "label": "good"},
+      {"tc": "48:40", "time_sec": 2920, "label": "bad", "note": "owner reject seg3"}
+    ],
+    "opuealwWYA0": [
+      {"tc": "0:49", "time_sec": 49, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "1:35", "time_sec": 95, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "1hezrcufqhc": [
+      {"tc": "0:16", "time_sec": 16, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "8:59", "time_sec": 539, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "10:27", "time_sec": 627, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "tkQjwO3DIzA": [
+      {"tc": "3:37", "time_sec": 217, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "3:41", "time_sec": 221, "label": "good", "note": "triple_kill", "source": "owner"},
+      {"tc": "13:45", "time_sec": 825, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "13:49", "time_sec": 829, "label": "good", "note": "triple_kill", "source": "owner"}
+    ],
+    "j3an3JmAhHI": [
+      {"tc": "4:02", "time_sec": 242, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "4:37", "time_sec": 277, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "318oBNepZRY": [
+      {"tc": "5:10", "time_sec": 310, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "8:10", "time_sec": 490, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "8:17", "time_sec": 497, "label": "good", "note": "triple_kill", "source": "owner"},
+      {"tc": "8:20", "time_sec": 500, "label": "good", "note": "maniac", "source": "owner"},
+      {"tc": "9:01", "time_sec": 541, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "10:34", "time_sec": 634, "label": "good", "note": "double_kill", "source": "owner"}
+    ],
+    "bez0hBUpH9A": [
+      {"tc": "5:47", "time_sec": 347, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "6:26", "time_sec": 386, "label": "good", "note": "double_kill", "source": "owner"},
+      {"tc": "8:50", "time_sec": 530, "label": "good", "note": "double_kill", "source": "owner"}
+    ]
+  },
+  "updated_at": "2026-06-24 owner kill timestamps batch 2"
+}

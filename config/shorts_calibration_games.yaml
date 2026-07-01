@@ -1,0 +1,57 @@
+# Owner Shorts calibration — 3 clips per game via /shorts_all in Telegram.
+# Every search query includes game-specific + «метро роял» where applicable.
+
+batch_default: 3
+
+games:
+  - id: mlbb
+    profile: mobile_legends
+    label: MLBB
+    prefer_russian: false
+    legacy_module: mlbb
+    queries:
+      - "mlbb savage shorts 2026"
+      - "mobile legends mythic teamfight shorts"
+      - "mlbb triple kill shorts"
+
+  - id: pubg
+    profile: pubg
+    label: PUBG Metro Royale
+    prefer_russian: true
+    queries:
+      - "метро роял 7 карта shorts пабг"
+      - "метро роял 8 карта shorts пабг"
+      - "метро роял с нуля до фул 6 shorts"
+      - "метро роял один против сквадов shorts"
+      - "метро роял пабг перестрелка shorts"
+      - "метро роял соло против отряда shorts"
+
+  - id: standoff
+    profile: standoff
+    label: Standoff 2
+    prefer_russian: true
+    queries:
+      - "стендоф 2 клатч shorts русский"
+      - "standoff 2 ranked перестрелка shorts"
+      - "стендоф 2 эйс shorts"
+      - "standoff 2 1v3 clutch shorts"
+
+  - id: wot
+    profile: wot
+    label: World of Tanks
+    prefer_russian: true
+    queries:
+      - "world of tanks blitz танк фраг shorts русский"
+      - "wot blitz эпичный выстрел shorts"
+      - "танки фраг shorts русский"
+      - "world of tanks лучший момент shorts"
+
+  - id: genshin
+    profile: genshin
+    label: Genshin Impact
+    prefer_russian: true
+    queries:
+      - "genshin impact босс файт shorts русский"
+      - "геншин импакт босс shorts"
+      - "genshin boss fight shorts русский"
+      - "геншин импакт домен shorts"

@@ -1,0 +1,14 @@
+{
+  "videos": {
+    "QbBwJJTio6A": [
+      {"tc": "5:50", "time_sec": 350, "label": "good"},
+      {"tc": "9:51", "time_sec": 591, "label": "good"},
+      {"tc": "12:22", "time_sec": 742, "label": "good"},
+      {"tc": "14:00", "time_sec": 840, "label": "good"},
+      {"tc": "16:10", "time_sec": 970, "label": "good"},
+      {"tc": "20:50", "time_sec": 1250, "label": "good"},
+      {"tc": "23:50", "time_sec": 1430, "label": "good"},
+      {"tc": "26:05", "time_sec": 1565, "label": "good"}
+    ]
+  }
+}

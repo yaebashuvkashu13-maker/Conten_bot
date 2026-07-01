@@ -1,0 +1,30 @@
+{
+  "heroes": [
+    {"id": "masha", "tags": ["masha"]},
+    {"id": "paquito", "tags": ["paquito"]},
+    {"id": "joy", "tags": ["joy", "joymlbb"]},
+    {"id": "hayabusa", "tags": ["hayabusa", "hayabi", "haya"]},
+    {"id": "gusion", "tags": ["gusion"]},
+    {"id": "fanny", "tags": ["fanny", "fannylight"]},
+    {"id": "ling", "tags": ["ling", "lingmlbb"]},
+    {"id": "lancelot", "tags": ["lancelot"]},
+    {"id": "chou", "tags": ["chou", "choumllbb"]},
+    {"id": "pharsa", "tags": ["pharsa"]},
+    {"id": "franco", "tags": ["franco"]},
+    {"id": "kagura", "tags": ["kagura"]},
+    {"id": "yu_zhong", "tags": ["yuzhong", "yu zhong"]},
+    {"id": "moskov", "tags": ["moskov"]},
+    {"id": "beatrix", "tags": ["beatrix"]},
+    {"id": "mathilda", "tags": ["mathilda"]},
+    {"id": "valentina", "tags": ["valentina"]},
+    {"id": "angela", "tags": ["angela"]},
+    {"id": "tigreal", "tags": ["tigreal"]},
+    {"id": "layla", "tags": ["layla"]},
+    {"id": "miya", "tags": ["miya"]},
+    {"id": "aldous", "tags": ["aldous"]},
+    {"id": "benedetta", "tags": ["benedetta"]},
+    {"id": "dyrroth", "tags": ["dyrroth"]},
+    {"id": "harith", "tags": ["harith"]},
+    {"id": "wu_zetian", "tags": ["wu zetian", "zetian", "wu zetian"]}
+  ]
+}
