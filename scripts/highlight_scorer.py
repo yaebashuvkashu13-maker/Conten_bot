@@ -1480,18 +1480,23 @@ def _evaluate_highlight_start_timed(
     *,
     timeout_sec: float,
 ) -> tuple[float, HighlightMetrics] | None:
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        fut = pool.submit(_evaluate_highlight_start, video_path, start, profile)
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(_evaluate_highlight_start, video_path, start, profile)
+    try:
+        return fut.result(timeout=timeout_sec)
+    except TimeoutError:
+        log.warning(
+            "highlight score timeout start=%.1f sec=%.0f vod=%s",
+            start,
+            timeout_sec,
+            video_path.name,
+        )
+        return None
+    finally:
         try:
-            return fut.result(timeout=timeout_sec)
-        except TimeoutError:
-            log.warning(
-                "highlight score timeout start=%.1f sec=%.0f vod=%s",
-                start,
-                timeout_sec,
-                video_path.name,
-            )
-            return None
+            pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            pool.shutdown(wait=False)
 
 
 def _pann_probe_limit(profile: str) -> int:
