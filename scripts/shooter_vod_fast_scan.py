@@ -71,11 +71,18 @@ def vod_fast_combat_check(
         )
     min_hits = max(1, int(os.environ.get("SHOOTER_VOD_FAST_MIN_HITS", "2")))
     strong_min = float(os.environ.get("SHOOTER_VOD_FAST_STRONG_PANN", "0.40"))
+    weak_pass_min = float(os.environ.get("SHOOTER_VOD_FAST_WEAK_PASS_MIN", "0.18"))
     if len(hits) < min_hits:
         if len(hits) == 1 and top_gun >= strong_min:
             return (
                 True,
                 f"fast_panns_strong_1/{len(offsets)} top={top_gun:.3f}",
+                hits,
+            )
+        if top_gun >= weak_pass_min:
+            return (
+                True,
+                f"fast_panns_weak_{len(hits)}/{len(offsets)} top={top_gun:.3f} min_hits={min_hits}",
                 hits,
             )
         return (
