@@ -2019,18 +2019,16 @@ def _bootstrap_shorts_exemplars_for_vod() -> dict:
             sync_owner_learning(rescore_limit=0)
     except Exception as exc:
         log.warning("shorts exemplar sync failed: %s", exc)
+    try:
+        from highlight_scorer import preload_highlight_models
+
+        preload_highlight_models()
+    except Exception as exc:
+        log.warning("highlight preload failed: %s", exc)
         try:
             from highlight_scorer import clear_exemplar_cache
 
             clear_exemplar_cache()
-        except Exception:
-            pass
-    else:
-        try:
-            from highlight_scorer import clear_exemplar_cache, preload_highlight_models
-
-            clear_exemplar_cache()
-            preload_highlight_models()
         except Exception:
             pass
     log.info(

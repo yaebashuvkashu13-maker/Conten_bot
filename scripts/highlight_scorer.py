@@ -539,6 +539,8 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     paths = sorted(folder.glob("*.mp4")) + sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.png"))
     paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
     max_n = int(os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "0"))
+    if max_n <= 0 and os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+        max_n = int(os.environ.get("MLBB_VOD_EXEMPLAR_MAX", "64"))
     if max_n > 0:
         paths = paths[:max_n]
     embs: list[np.ndarray] = []
@@ -1438,7 +1440,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
 
 
 def preload_highlight_models() -> None:
-    """Load PANNs + CLIP once before scoring — avoids parallel duplicate model loads."""
+    """Load PANNs + CLIP + exemplar embeddings once before scoring."""
     try:
         _panns_tagger()
     except Exception as exc:
@@ -1447,6 +1449,14 @@ def preload_highlight_models() -> None:
         _clip_bundle()
     except Exception as exc:
         log.warning("preload clip failed: %s", exc)
+    if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+        game = normalize_profile("mobile_legends")
+        try:
+            g = len(_exemplar_embeddings(game, "good"))
+            b = len(_exemplar_embeddings(game, "bad"))
+            log.info("preload exemplar embeddings good=%s bad=%s", g, b)
+        except Exception as exc:
+            log.warning("preload exemplar embeddings failed: %s", exc)
 
 
 def _parallel_workers() -> int:
