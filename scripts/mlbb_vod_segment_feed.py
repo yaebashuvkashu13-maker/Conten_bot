@@ -1318,7 +1318,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_DEATH_TRIM", "1") == "1":
         from mlbb_death_screen import segment_mostly_death_screen
 
-        if segment_mostly_death_screen(vod, cut_start, dur):
+        already_trimmed = bool(row.get("death_trim") or (row.get("clip") or {}).get("death_trim"))
+        if not already_trimmed and segment_mostly_death_screen(vod, cut_start, dur):
             return False, "death_respawn_timer", report
 
     ok, reason, freezes = _detect_render_freeze(rendered)
@@ -1524,7 +1525,7 @@ def _collect_scan_segments(
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
-        if os.environ.get("MLBB_VOD_DEATH_SKIP_PEAKS", "1") == "1":
+        if os.environ.get("MLBB_VOD_DEATH_SKIP_PEAKS", "0") == "1":
             from mlbb_death_screen import peak_inside_death_window
 
             if peak_inside_death_window(vod, peak):
@@ -1589,6 +1590,7 @@ def _collect_scan_segments(
                 "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
                 "clip_score": float(metrics.get("clip_score") or 0),
                 "gate_reason": reason,
+                "death_trim": bool(lead_clip.get("death_trim")),
             }
         )
         if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
@@ -2128,9 +2130,9 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"
-    max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "25"))
+    max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "90"))
     if max_min <= 0:
-        max_min = 25.0
+        max_min = 90.0
     deadline = time.time() + max_min * 60
     max_vods = int(os.environ.get("MLBB_VOD_PIPELINE_MAX_VODS", "4"))
     if max_vods <= 0:
