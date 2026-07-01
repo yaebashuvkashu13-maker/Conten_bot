@@ -83,3 +83,5 @@ def test_record_vod_scan() -> None:
     record_vod_scan(entry, sent=0, pool_peaks=[124.0], blocked=True)
     assert entry["last_scan_blocked"] is True
     assert entry["last_pool_peaks"] == [124.0]
+    record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+    assert entry["last_pool_peaks"] == []

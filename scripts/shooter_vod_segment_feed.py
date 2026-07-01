@@ -122,10 +122,11 @@ def _bootstrap_owner_exemplars(game: str) -> dict:
             out["backfill_added"] = backfill_owner_labels_from_vod_segments(profile)
         except Exception as exc:
             log.warning("owner backfill failed game=%s: %s", game, exc)
-    try:
-        clear_learning_cache()
-    except Exception as exc:
-        log.warning("exemplar cache clear failed game=%s: %s", game, exc)
+    if int(out.get("backfill_added") or 0) > 0:
+        try:
+            clear_learning_cache()
+        except Exception as exc:
+            log.warning("exemplar cache clear failed game=%s: %s", game, exc)
     log.info(
         "shooter owner exemplars game=%s good=%s bad=%s backfill=%s",
         game,

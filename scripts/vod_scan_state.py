@@ -130,8 +130,7 @@ def record_vod_scan(
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
-    if pool_peaks:
-        entry["last_pool_peaks"] = [round(p, 1) for p in pool_peaks[:12]]
+    entry["last_pool_peaks"] = [round(p, 1) for p in pool_peaks[:12]]
 
 
 def peaks_from_pool(pool: list[dict]) -> list[float]:

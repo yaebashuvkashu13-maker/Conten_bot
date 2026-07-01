@@ -1451,6 +1451,17 @@ def _highlight_send_one_enabled() -> bool:
     return os.environ.get("MLBB_VOD_ONLY", "0") == "1" or _shooter_send_one_enabled()
 
 
+def _preload_exemplar_profile() -> str | None:
+    if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
+        from daily_game_cycle import profile_for_game
+
+        game = (os.environ.get("VOD_SEGMENT_GAME") or "pubg").strip().lower()
+        return profile_for_game(game)
+    if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+        return normalize_profile("mobile_legends")
+    return None
+
+
 def preload_highlight_models() -> None:
     """Load PANNs + CLIP + exemplar embeddings once before scoring."""
     try:
@@ -1461,14 +1472,17 @@ def preload_highlight_models() -> None:
         _clip_bundle()
     except Exception as exc:
         log.warning("preload clip failed: %s", exc)
-    if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
-        game = normalize_profile("mobile_legends")
-        try:
-            g = len(_exemplar_embeddings(game, "good"))
-            b = len(_exemplar_embeddings(game, "bad"))
-            log.info("preload exemplar embeddings good=%s bad=%s", g, b)
-        except Exception as exc:
-            log.warning("preload exemplar embeddings failed: %s", exc)
+    if os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") != "1":
+        return
+    profile = _preload_exemplar_profile()
+    if not profile:
+        return
+    try:
+        g = len(_exemplar_embeddings(profile, "good"))
+        b = len(_exemplar_embeddings(profile, "bad"))
+        log.info("preload exemplar embeddings profile=%s good=%s bad=%s", profile, g, b)
+    except Exception as exc:
+        log.warning("preload exemplar embeddings failed: %s", exc)
 
 
 def _parallel_workers() -> int:
@@ -1734,7 +1748,8 @@ def discover_highlight_candidates(
     elif pending:
         log.info("highlight sequential score %s: %s windows", video_path.name, len(pending))
 
-    preload_highlight_models()
+    if pending:
+        preload_highlight_models()
 
     verified: list[dict] = []
 
