@@ -665,6 +665,39 @@ def _scan_vod_with_adaptive(
     return sent
 
 
+def _maybe_reopen_wrong_fast_skip(game: str, entry: dict | None, vod: Path) -> None:
+    """Re-queue VODs wrongly exhausted by old fast_panns min_hits logic."""
+    if game not in ("pubg", "standoff") or not entry or not entry.get("exhausted"):
+        return
+    reason = str(entry.get("reject_reason") or "")
+    if not reason.startswith("fast_panns") or "min_hits" not in reason:
+        return
+    import re
+
+    m = re.search(r"top=([0-9.]+)", reason)
+    if not m:
+        return
+    top = float(m.group(1))
+    weak = float(os.environ.get("SHOOTER_VOD_FAST_WEAK_PASS_MIN", "0.18"))
+    if top < weak:
+        return
+    from shooter_vod_fast_scan import vod_fast_combat_check
+
+    ok, new_reason, _ = vod_fast_combat_check(vod, _profile(game))
+    if not ok:
+        return
+    log.info(
+        "reopen fast-skip exhaust vod=%s old=%s new=%s top=%.3f",
+        vod.name,
+        reason,
+        new_reason,
+        top,
+    )
+    entry["exhausted"] = False
+    entry.pop("reject_reason", None)
+    entry["last_scan_at"] = 0
+
+
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
     ok_cycle, reason = can_send_for_game(game, 1)
@@ -680,6 +713,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
+        _maybe_reopen_wrong_fast_skip(game, entry, mp4)
         if entry and entry.get("exhausted"):
             continue
         if should_skip_vod_rescan(entry, game=game):

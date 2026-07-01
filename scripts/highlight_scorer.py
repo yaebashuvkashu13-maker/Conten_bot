@@ -551,7 +551,9 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     paths = sorted(folder.glob("*.mp4")) + sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.png"))
     paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
     max_n = int(os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "0"))
-    if max_n <= 0 and os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+    if game in SHOOTER_PROFILES:
+        max_n = int(os.environ.get("SHOOTER_VOD_EXEMPLAR_MAX", os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "12")))
+    elif max_n <= 0 and os.environ.get("MLBB_VOD_ONLY", "0") == "1":
         max_n = int(os.environ.get("MLBB_VOD_EXEMPLAR_MAX", "64"))
     if max_n > 0:
         paths = paths[:max_n]
@@ -559,6 +561,8 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     from gameplay_gate import _read_frame_at
 
     from smart_video_editor import ffprobe_duration
+
+    frame_fracs = (0.5,) if game in SHOOTER_PROFILES else (0.25, 0.5, 0.75)
 
     for path in paths:
         frames_to_encode: list = []
@@ -570,7 +574,7 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
                 frames_to_encode.append(frame)
         else:
             dur = float(ffprobe_duration(path) or 10.0)
-            for frac in (0.25, 0.5, 0.75):
+            for frac in frame_fracs:
                 frame = _read_frame_at(path, max(0.1, dur * frac))
                 if frame is not None:
                     frames_to_encode.append(frame)
@@ -1497,6 +1501,9 @@ def preload_highlight_models() -> None:
     except Exception as exc:
         log.warning("preload clip failed: %s", exc)
     if os.environ.get("HIGHLIGHT_USE_OWNER_ANCHORS", "0") != "1":
+        return
+    # Shooter: lazy exemplar load on first score (cap 12) — skip 6min preload.
+    if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
         return
     profile = _preload_exemplar_profile()
     if not profile:
