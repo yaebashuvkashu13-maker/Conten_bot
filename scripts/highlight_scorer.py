@@ -473,7 +473,18 @@ def _panns_tagger():
         return AudioTagging(device=device)
 
 
+_PANNS_SCORE_CACHE: dict[tuple[str, float], dict[str, float]] = {}
+
+
+def clear_panns_score_cache() -> None:
+    _PANNS_SCORE_CACHE.clear()
+
+
 def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
+    cache_key = (str(video_path.resolve()), round(float(start_sec), 1))
+    cached = _PANNS_SCORE_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
     audio = _extract_audio_32k(video_path, start_sec, duration_sec)
     out = {
         "panns_gunshot": 0.0,
@@ -501,6 +512,7 @@ def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -
         out["panns_explosion"],
         out["panns_artillery"],
     )
+    _PANNS_SCORE_CACHE[cache_key] = dict(out)
     return out
 
 
@@ -1342,19 +1354,25 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
+        seed_count = 0
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
                 continue
             try:
-                s = float(part) - WINDOW_SEC * 0.5
+                peak = float(part)
+                s = round(peak, 1)
                 if s >= 60:
-                    starts.add(round(s, 1))
+                    starts.add(s)
+                    seed_count += 1
             except ValueError:
                 pass
-        out = sorted(starts)[:max_stage1]
-        log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
-        return out
+        if seed_count:
+            log.info(
+                "highlight fast-probe seeds %s: %s peaks (merged into stage1)",
+                video_path.name,
+                seed_count,
+            )
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
         "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
@@ -1381,12 +1399,16 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     from smart_video_editor import analyze_video
 
     analysis = analyze_video(video_path)
-    if not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"):
+    if profile in SHOOTER_PROFILES or (
+        not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot")
+    ):
         peak_limit = int(os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"))
+        if profile in SHOOTER_PROFILES:
+            peak_limit = int(os.environ.get("SHOOTER_VOD_ACTION_PEAK_LIMIT", "24"))
         for peak_start in _action_peak_starts(analysis, profile, limit=peak_limit):
             starts.add(peak_start)
         log.info(
-            "highlight action peaks %s: %s windows (anchors_off)",
+            "highlight action peaks %s: %s windows",
             video_path.name,
             min(peak_limit, len(starts)),
         )
@@ -1446,6 +1468,8 @@ def _shooter_send_one_enabled() -> bool:
 
 
 def _highlight_send_one_enabled() -> bool:
+    if os.environ.get("HIGHLIGHT_BUILD_POOL", "0") == "1":
+        return False
     if os.environ.get("MLBB_VOD_SEND_ONE", "1") != "1":
         return False
     return os.environ.get("MLBB_VOD_ONLY", "0") == "1" or _shooter_send_one_enabled()
@@ -1742,6 +1766,16 @@ def discover_highlight_candidates(
         for start in starts
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
+    if profile in SHOOTER_PROFILES:
+        score_cap = max(1, int(os.environ.get("SHOOTER_VOD_SCORE_MAX", "8")))
+        if len(pending) > score_cap:
+            log.info(
+                "highlight score cap %s: %s -> %s windows",
+                video_path.name,
+                len(pending),
+                score_cap,
+            )
+            pending = pending[:score_cap]
     workers = _parallel_workers()
     if workers > 1 and len(pending) > 1:
         log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)

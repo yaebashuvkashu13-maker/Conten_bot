@@ -375,6 +375,14 @@ def _shooter_scan_max_sec() -> float:
     return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "600")))
 
 
+def _streak_skip_reason(entry: dict | None) -> bool:
+    """Fast rejects are bad VOD picks — do not inflate adaptive soften streak."""
+    reason = str((entry or {}).get("reject_reason") or "")
+    return reason.startswith(
+        ("fast_panns", "fast_probe", "metro_vod", "metro_title", "metro_soften")
+    )
+
+
 def _scan_vod(
     game: str,
     token: str,
@@ -418,7 +426,14 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
         return 0
 
-    pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+    from highlight_scorer import clear_panns_score_cache
+
+    clear_panns_score_cache()
+    os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
+    try:
+        pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+    finally:
+        os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
@@ -589,8 +604,6 @@ def _scan_vod_with_adaptive(
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
         with ctx as level:
             active_level = level
-            if game == "pubg":
-                os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
             if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
                 "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
             ) == "1":
@@ -620,13 +633,17 @@ def _scan_vod_with_adaptive(
                 entry=entry,
                 scan_deadline=scan_deadline,
             )
-            if game == "pubg":
-                os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
     finally:
         if clear_fast_seeds is not None:
             clear_fast_seeds()
 
-    new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
+    entry = _vod_registry_entry(state, vod) or entry
+    new_streak = gate.record_vod_outcome(
+        state,
+        vod_id=vid,
+        sent=sent,
+        streak_skip=_streak_skip_reason(entry),
+    )
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
 

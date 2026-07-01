@@ -14,14 +14,15 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
     if dur < skip_intro + 90:
         return []
     offsets: list[float] = []
-    for delta in (0, 150, 360, 720, 1200, 1800):
+    for delta in (0, 90, 180, 360, 540, 720, 1200, 1800, 2700, 3600):
         t = skip_intro + delta
         if t + WINDOW_SEC < dur - 45:
             offsets.append(round(t, 1))
-    mid = skip_intro + max(0.0, (dur - skip_intro) * 0.42)
-    if mid + WINDOW_SEC < dur - 45 and all(abs(mid - x) > 90 for x in offsets):
-        offsets.append(round(mid, 1))
-    return sorted(set(offsets))[: int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "6"))]
+    for frac in (0.25, 0.42, 0.58, 0.72):
+        t = skip_intro + max(0.0, (dur - skip_intro) * frac)
+        if t + WINDOW_SEC < dur - 45 and all(abs(t - x) > 75 for x in offsets):
+            offsets.append(round(t, 1))
+    return sorted(set(offsets))[: int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "8"))]
 
 
 def vod_fast_combat_check(
@@ -69,7 +70,14 @@ def vod_fast_combat_check(
             [],
         )
     min_hits = max(1, int(os.environ.get("SHOOTER_VOD_FAST_MIN_HITS", "2")))
+    strong_min = float(os.environ.get("SHOOTER_VOD_FAST_STRONG_PANN", "0.40"))
     if len(hits) < min_hits:
+        if len(hits) == 1 and top_gun >= strong_min:
+            return (
+                True,
+                f"fast_panns_strong_1/{len(offsets)} top={top_gun:.3f}",
+                hits,
+            )
         return (
             False,
             f"fast_panns_{len(hits)}/{len(offsets)} top={top_gun:.3f} min_hits={min_hits}",

@@ -16,6 +16,7 @@ from highlight_scorer import (  # noqa: E402
     _owner_anchor_starts,
     audio_passes_shooter,
     calibrated_pann_gun_min,
+    clear_panns_score_cache,
     owner_anchors_enabled,
     rule_gate,
     score_panns_audio,
@@ -138,3 +139,33 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     starts = stage1_candidates(vod, "pubg")
     assert 510.0 not in starts
     assert not owner_anchors_enabled()
+
+
+def test_panns_score_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clear_panns_score_cache()
+    vod = tmp_path / "yt_cache.mp4"
+    vod.write_bytes(b"x")
+    calls = {"n": 0}
+
+    def _fake_extract(_path, _start, _dur):
+        calls["n"] += 1
+        return __import__("numpy").zeros(32000, dtype="float32")
+
+    monkeypatch.setattr("highlight_scorer._extract_audio_32k", _fake_extract)
+    monkeypatch.setattr(
+        "highlight_scorer._panns_tagger",
+        lambda: type(
+            "T",
+            (),
+            {
+                "inference": lambda self, a: (
+                    [__import__("numpy").full(527, 0.05)],
+                    None,
+                )
+            },
+        )(),
+    )
+    a = score_panns_audio(vod, 120.0, 10.0)
+    b = score_panns_audio(vod, 120.0, 10.0)
+    assert a["panns_gun_max"] == b["panns_gun_max"]
+    assert calls["n"] == 1
