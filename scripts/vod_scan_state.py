@@ -42,7 +42,15 @@ def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
         return True
-    presend_limit = max(1, int(os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "3")))
+    presend_limit = max(
+        1,
+        int(
+            os.environ.get(
+                "SHOOTER_VOD_PRESEND_EXHAUST_AFTER",
+                os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2"),
+            )
+        ),
+    )
     if int(entry.get("presend_reject_streak") or 0) >= presend_limit:
         return True
     if str(entry.get("reject_reason") or "") in {"scan_timeout", "presend_exhausted"}:

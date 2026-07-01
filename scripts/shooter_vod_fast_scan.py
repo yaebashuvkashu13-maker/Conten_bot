@@ -68,6 +68,13 @@ def vod_fast_combat_check(
             f"fast_panns_0/{len(offsets)} top={top_gun:.3f} min={gun_min:.2f}",
             [],
         )
+    min_hits = max(1, int(os.environ.get("SHOOTER_VOD_FAST_MIN_HITS", "2")))
+    if len(hits) < min_hits:
+        return (
+            False,
+            f"fast_panns_{len(hits)}/{len(offsets)} top={top_gun:.3f} min_hits={min_hits}",
+            hits,
+        )
     return True, f"fast_panns_{len(hits)}/{len(offsets)} top={top_gun:.3f}", hits
 
 

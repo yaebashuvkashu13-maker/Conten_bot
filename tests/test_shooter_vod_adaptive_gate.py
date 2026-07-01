@@ -63,8 +63,9 @@ def test_l3_trusts_metro_vod_on_presend() -> None:
     assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
 
 
-def test_l4_trusts_panns_and_more_probes() -> None:
+def test_l4_softens_gates_with_fewer_probes() -> None:
     ov = overrides_for_level(4)
     assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "2"
-    assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) >= 24
+    assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) <= 16
+    assert int(ov.get("SHOOTER_VOD_SOFT_MAX_PEAK_TRIES", "0")) <= 3
     assert float(ov.get("PUBG_PANNS_TRUST_MIN", "0")) <= 0.30

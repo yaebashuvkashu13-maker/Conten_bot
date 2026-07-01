@@ -370,6 +370,10 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
+def _shooter_scan_max_sec() -> float:
+    return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "600")))
+
+
 def _scan_vod(
     game: str,
     token: str,
@@ -379,6 +383,7 @@ def _scan_vod(
     *,
     soften_level: int = 0,
     entry: dict | None = None,
+    scan_deadline: float | None = None,
 ) -> int:
     profile = _profile(game)
     sig = file_sha256(vod)
@@ -405,6 +410,13 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
+    if scan_deadline and time.time() >= scan_deadline:
+        log.warning("vod scan timeout before highlight vod=%s", vod.name)
+        if entry is not None:
+            entry["reject_reason"] = "scan_timeout"
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
+        return 0
+
     pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
     pool_peaks = peaks_from_pool(pool)
     if not pool:
@@ -422,6 +434,12 @@ def _scan_vod(
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
 
     while peak_tries < max_tries:
+        if scan_deadline and time.time() >= scan_deadline:
+            log.warning("vod scan timeout vod=%s tries=%s", vod.name, peak_tries)
+            if entry is not None:
+                entry["reject_reason"] = "scan_timeout"
+                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False)
+            return 0
         rows: list[dict] = []
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
@@ -471,10 +489,13 @@ def _scan_vod(
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
         if n > 0:
             if entry is not None:
+                entry["presend_reject_streak"] = 0
                 record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False)
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
+        if entry is not None:
+            entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
         log.warning(
             "presend rejected peak — try next (%s/%s) vod=%s game=%s",
             peak_tries,
@@ -483,6 +504,16 @@ def _scan_vod(
             game,
         )
     if entry is not None:
+        if int(entry.get("presend_reject_streak") or 0) >= max(
+            1,
+            int(
+                os.environ.get(
+                    "SHOOTER_VOD_PRESEND_EXHAUST_AFTER",
+                    os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2"),
+                )
+            ),
+        ):
+            entry.setdefault("reject_reason", "presend_exhausted")
         record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False)
     return 0
 
@@ -524,6 +555,7 @@ def _scan_vod_with_adaptive(
     active_level = 0
     sent = 0
     clear_fast_seeds = None
+    scan_deadline = time.time() + _shooter_scan_max_sec()
 
     if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
         from shooter_vod_fast_scan import (
@@ -577,7 +609,16 @@ def _scan_vod_with_adaptive(
                     level,
                     vod.name,
                 )
-            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
+            sent = _scan_vod(
+                game,
+                token,
+                chat_id,
+                vod,
+                env,
+                soften_level=level,
+                entry=entry,
+                scan_deadline=scan_deadline,
+            )
             if game == "pubg":
                 os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
     finally:
@@ -748,8 +789,9 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
-    os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
-    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
+    os.environ.setdefault("SHOOTER_VOD_SEND_ONE", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "16")
+    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "16")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")

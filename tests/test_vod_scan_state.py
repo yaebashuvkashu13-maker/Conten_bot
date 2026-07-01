@@ -26,7 +26,7 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_scan_blocked": True}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
-    assert should_mark_vod_exhausted({"presend_reject_streak": 3, "last_pool_peaks": [124.0]}) is True
+    assert should_mark_vod_exhausted({"presend_reject_streak": 2, "last_pool_peaks": [124.0]}) is True
     assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
 
 

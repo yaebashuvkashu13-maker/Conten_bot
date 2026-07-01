@@ -61,7 +61,23 @@ def test_fast_probe_passes_and_seeds_env(monkeypatch, tmp_path: Path) -> None:
     assert "HIGHLIGHT_SEED_STARTS" not in os.environ
 
 
-def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
+def test_fast_probe_requires_min_hits(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_MIN_HITS", "2")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(1500.0)
+    n = {"i": 0}
+
+    def _panns(_path, _t, _w):
+        n["i"] += 1
+        return {"panns_gun_max": 0.20 if n["i"] == 1 else 0.05}
+
+    with patch.dict(sys.modules, {"smart_video_editor": sve}):
+        with patch("shooter_vod_fast_scan.score_panns_audio", side_effect=_panns):
+            ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is False
+    assert "min_hits=2" in reason
     monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "0")
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")

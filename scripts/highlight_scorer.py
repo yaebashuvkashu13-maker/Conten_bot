@@ -1439,6 +1439,18 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     return ranked[:max_stage1]
 
 
+def _shooter_send_one_enabled() -> bool:
+    if os.environ.get("SHOOTER_VOD_SEND_ONE", "1") != "1":
+        return False
+    return os.environ.get("SHOOTER_VOD_FEED", "0") == "1"
+
+
+def _highlight_send_one_enabled() -> bool:
+    if os.environ.get("MLBB_VOD_SEND_ONE", "1") != "1":
+        return False
+    return os.environ.get("MLBB_VOD_ONLY", "0") == "1" or _shooter_send_one_enabled()
+
+
 def preload_highlight_models() -> None:
     """Load PANNs + CLIP + exemplar embeddings once before scoring."""
     try:
@@ -1788,11 +1800,7 @@ def discover_highlight_candidates(
                     start, metrics = row
                     if _consume(start, metrics) and len(verified) >= limit:
                         break
-                    if (
-                        verified
-                        and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                        and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                    ):
+                    if verified and _highlight_send_one_enabled():
                         log.info(
                             "vod send_one: stop after first highlight pass start=%.1f",
                             verified[-1]["start"],
@@ -1818,11 +1826,7 @@ def discover_highlight_candidates(
             start, metrics = row
             if _consume(start, metrics) and len(verified) >= limit:
                 break
-            if (
-                verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-            ):
+            if verified and _highlight_send_one_enabled():
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",
                     verified[-1]["start"],
