@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -20,7 +21,11 @@ from typing import Any
 
 import numpy as np
 
+from vod_stage_timeout import stage_timeout_sec
+
 log = logging.getLogger("highlight_scorer")
+
+_PANNS_INIT_LOCK = __import__("threading").Lock()
 
 def _repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
@@ -454,17 +459,18 @@ def _extract_audio_32k(video_path: Path, start_sec: float, duration_sec: float) 
 
 @lru_cache(maxsize=1)
 def _panns_tagger():
-    from panns_inference import AudioTagging
+    with _PANNS_INIT_LOCK:
+        from panns_inference import AudioTagging
 
-    device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
-    try:
-        import torch
+        device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
+        try:
+            import torch
 
-        if device == "cuda" and not torch.cuda.is_available():
+            if device == "cuda" and not torch.cuda.is_available():
+                device = "cpu"
+        except ImportError:
             device = "cpu"
-    except ImportError:
-        device = "cpu"
-    return AudioTagging(device=device)
+        return AudioTagging(device=device)
 
 
 def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
@@ -1431,27 +1437,61 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     return ranked[:max_stage1]
 
 
+def preload_highlight_models() -> None:
+    """Load PANNs + CLIP once before scoring — avoids parallel duplicate model loads."""
+    try:
+        _panns_tagger()
+    except Exception as exc:
+        log.warning("preload panns failed: %s", exc)
+    try:
+        _clip_bundle()
+    except Exception as exc:
+        log.warning("preload clip failed: %s", exc)
+
+
 def _parallel_workers() -> int:
     """CPU workers for parallel PANNs/CLIP window scoring (one thread per core)."""
+    if os.environ.get("MLBB_VOD_ONLY", "0") == "1" and os.environ.get("MLBB_VOD_PARALLEL_SCORE", "0") != "1":
+        return 1
     raw = (os.environ.get("HIGHLIGHT_PARALLEL_WORKERS") or "").strip()
     if raw:
         return max(1, int(raw))
     cpus = os.cpu_count() or 4
-    # ~75% of cores — leave headroom for ffmpeg/OS on 8-core VPS.
-    return max(2, min(6, cpus - 2, int(cpus * 0.75)))
+    return max(1, min(3, cpus - 2, int(cpus * 0.75)))
 
 
 def _window_score_timeout_sec() -> float:
-    """Per-window wall-clock budget for PANNs+CLIP scoring (parallel workers)."""
-    return max(60.0, float(os.environ.get("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", "480")))
+    """Per-window wall-clock budget for PANNs+CLIP scoring."""
+    return max(30.0, float(os.environ.get("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", "120")))
 
 
 def _parallel_batch_timeout_sec(n_windows: int, workers: int) -> float:
     """Overall wall-clock budget for a parallel highlight score batch."""
     per = _window_score_timeout_sec()
-    cap = max(120.0, float(os.environ.get("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", "900")))
+    cap = max(60.0, float(os.environ.get("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", "600")))
     batches = math.ceil(max(1, n_windows) / max(1, workers))
-    return min(cap, per * batches + 30.0)
+    return min(cap, per * batches + 20.0)
+
+
+def _evaluate_highlight_start_timed(
+    video_path: Path,
+    start: float,
+    profile: str,
+    *,
+    timeout_sec: float,
+) -> tuple[float, HighlightMetrics] | None:
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_evaluate_highlight_start, video_path, start, profile)
+        try:
+            return fut.result(timeout=timeout_sec)
+        except TimeoutError:
+            log.warning(
+                "highlight score timeout start=%.1f sec=%.0f vod=%s",
+                start,
+                timeout_sec,
+                video_path.name,
+            )
+            return None
 
 
 def _pann_probe_limit(profile: str) -> int:
@@ -1664,6 +1704,10 @@ def discover_highlight_candidates(
     workers = _parallel_workers()
     if workers > 1 and len(pending) > 1:
         log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
+    elif pending:
+        log.info("highlight sequential score %s: %s windows", video_path.name, len(pending))
+
+    preload_highlight_models()
 
     verified: list[dict] = []
 
@@ -1691,7 +1735,13 @@ def discover_highlight_candidates(
         batch_timeout = _parallel_batch_timeout_sec(len(pending), workers)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(_evaluate_highlight_start, video_path, start, profile): start
+                pool.submit(
+                    _evaluate_highlight_start_timed,
+                    video_path,
+                    start,
+                    profile,
+                    timeout_sec=_window_score_timeout_sec(),
+                ): start
                 for start in pending
             }
             try:
@@ -1741,10 +1791,13 @@ def discover_highlight_candidates(
                     batch_timeout,
                 )
     else:
+        win_timeout = _window_score_timeout_sec()
         for start in pending:
             if len(verified) >= limit:
                 break
-            row = _evaluate_highlight_start(video_path, start, profile)
+            row = _evaluate_highlight_start_timed(
+                video_path, start, profile, timeout_sec=win_timeout
+            )
             if row is None:
                 continue
             start, metrics = row

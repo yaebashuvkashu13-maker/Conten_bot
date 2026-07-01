@@ -18,17 +18,29 @@ def test_parallel_workers_env_override(monkeypatch) -> None:
 
 def test_parallel_workers_default_uses_most_cores(monkeypatch) -> None:
     monkeypatch.delenv("HIGHLIGHT_PARALLEL_WORKERS", raising=False)
+    monkeypatch.delenv("MLBB_VOD_ONLY", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 8)
-    assert _parallel_workers() == 6
+    assert _parallel_workers() == 3
 
 
 def test_window_score_timeout_defaults(monkeypatch) -> None:
-    from highlight_scorer import _parallel_batch_timeout_sec, _window_score_timeout_sec
+    from highlight_scorer import _parallel_batch_timeout_sec, _parallel_workers, _window_score_timeout_sec
 
     monkeypatch.delenv("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", raising=False)
     monkeypatch.delenv("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", raising=False)
-    assert _window_score_timeout_sec() == 480.0
-    assert _parallel_batch_timeout_sec(5, 6) == 510.0
+    monkeypatch.delenv("MLBB_VOD_ONLY", raising=False)
+    monkeypatch.delenv("MLBB_VOD_PARALLEL_SCORE", raising=False)
+    assert _window_score_timeout_sec() == 120.0
+    assert _parallel_batch_timeout_sec(5, 3) == 260.0
+
+
+def test_mlbb_vod_forces_sequential_workers(monkeypatch) -> None:
+    from highlight_scorer import _parallel_workers
+
+    monkeypatch.setenv("MLBB_VOD_ONLY", "1")
+    monkeypatch.setenv("HIGHLIGHT_PARALLEL_WORKERS", "6")
+    monkeypatch.delenv("MLBB_VOD_PARALLEL_SCORE", raising=False)
+    assert _parallel_workers() == 1
 
 
 def test_parallel_batch_timeout_respects_cap(monkeypatch) -> None:

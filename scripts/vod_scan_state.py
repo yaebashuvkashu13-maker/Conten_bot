@@ -36,11 +36,16 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
 
 
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted when no peaks left, scan blocked, or repeated presend rejects."""
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
+        return True
+    presend_limit = max(1, int(os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "3")))
+    if int(entry.get("presend_reject_streak") or 0) >= presend_limit:
+        return True
+    if str(entry.get("reject_reason") or "") in {"scan_timeout", "presend_exhausted"}:
         return True
     return False
 
@@ -82,6 +87,10 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
         return False
     age = time.time() - last
     if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+        return True
+    if int(entry.get("presend_reject_streak") or 0) > 0 and age < scan_cooldown_sec(game):
+        return True
+    if str(entry.get("reject_reason") or "") == "scan_timeout" and age < scan_cooldown_sec(game):
         return True
     return False
 

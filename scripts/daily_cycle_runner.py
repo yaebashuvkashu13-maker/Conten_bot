@@ -84,6 +84,7 @@ def main() -> int:
         [sys.executable, "-u", str(script)] + ([] if game == "mlbb" else [game]),
         env=env,
         check=False,
+        timeout=max(300, int(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "25")) * 60),
     )
     return proc.returncode
 

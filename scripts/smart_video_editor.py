@@ -20,6 +20,12 @@ import cv2
 import numpy as np
 
 try:
+    from vod_stage_timeout import analyze_timeout_sec, ffmpeg_timeout_sec
+except ImportError:
+    analyze_timeout_sec = lambda: 600.0  # type: ignore[misc, assignment]
+    ffmpeg_timeout_sec = lambda: 120.0  # type: ignore[misc, assignment]
+
+try:
     from gameplay_gate import (
         detect_game_viewport_crop,
         is_gameplay_video,
@@ -132,7 +138,10 @@ def run_command(
     text: bool = True,
     input_data=None,
     env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ):
+    if timeout is None:
+        timeout = ffmpeg_timeout_sec()
     logging.debug('running command: %s', ' '.join(shlex.quote(arg) for arg in args))
     return subprocess.run(
         args,
@@ -141,6 +150,7 @@ def run_command(
         text=text,
         input=input_data,
         env=env,
+        timeout=timeout if timeout > 0 else None,
     )
 
 
@@ -459,7 +469,12 @@ def analyze_video(path: Path) -> dict:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         chunk = fw * fh * 3
         frame_idx = 0
+        deadline = time.time() + analyze_timeout_sec()
         while True:
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait(timeout=5)
+                raise TimeoutError(f"analyze_video timeout {path.name} sec={analyze_timeout_sec():.0f}")
             raw = proc.stdout.read(chunk) if proc.stdout else b''
             if len(raw) < chunk:
                 break

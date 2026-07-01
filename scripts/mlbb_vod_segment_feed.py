@@ -85,7 +85,7 @@ def _vod_max_sec() -> float:
 
 def _vod_scan_max_sec() -> float:
     """Wall-clock budget for one VOD scan — avoids infinite PANNs/CLIP hangs."""
-    return max(300.0, float(os.environ.get("MLBB_VOD_SCAN_MAX_SEC", "1800")))
+    return max(300.0, float(os.environ.get("MLBB_VOD_SCAN_MAX_SEC", "900")))
 
 
 def _vod_target_dur_sec() -> float:
@@ -845,7 +845,7 @@ def _apply_lead_start(start: float) -> float:
 def _normalize_clip(clip: dict, vod: Path) -> dict:
     peak = float(clip.get("start", 0))
     if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
-        from mlbb_fight_segment import _analysis_for
+        from mlbb_fight_segment import _analysis_for, detect_fight_bounds
         from mlbb_kill_banner import resolve_fight_bounds
 
         analysis = _analysis_for(vod)
@@ -1917,6 +1917,8 @@ def _process_vod_segments(
                     for row in to_send:
                         skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
                     peak_tries += 1
+                    if entry is not None:
+                        entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
                     if peak_tries < max_peak_attempts:
                         log.warning(
                             "presend rejected peak — try next (%s/%s) vod=%s",
@@ -1927,6 +1929,7 @@ def _process_vod_segments(
                         continue
                     log.warning("batch presend rejected all — stop vod=%s", vod.name)
                     if entry is not None:
+                        entry.setdefault("reject_reason", "presend_exhausted")
                         record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
                     break
                 log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
@@ -1939,6 +1942,7 @@ def _process_vod_segments(
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
             downloader.start_if_idle(registry)
             if entry is not None:
+                entry["presend_reject_streak"] = 0
                 record_vod_scan(entry, sent=sent_total, pool_peaks=pool_peaks, blocked=False)
 
     state = _load_state()
@@ -2023,9 +2027,10 @@ def _bootstrap_shorts_exemplars_for_vod() -> dict:
             pass
     else:
         try:
-            from highlight_scorer import clear_exemplar_cache
+            from highlight_scorer import clear_exemplar_cache, preload_highlight_models
 
             clear_exemplar_cache()
+            preload_highlight_models()
         except Exception:
             pass
     log.info(
@@ -2125,9 +2130,9 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
     auto_download = os.environ.get("MLBB_VOD_AUTO_DOWNLOAD", "1") == "1"
-    max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "360"))
+    max_min = float(os.environ.get("MLBB_VOD_PIPELINE_MAX_MIN", "25"))
     if max_min <= 0:
-        max_min = 24 * 60.0
+        max_min = 25.0
     deadline = time.time() + max_min * 60
     max_vods = int(os.environ.get("MLBB_VOD_PIPELINE_MAX_VODS", "4"))
     if max_vods <= 0:
