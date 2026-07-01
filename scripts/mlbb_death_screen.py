@@ -349,11 +349,13 @@ def death_window_end(vod: Path, death_start: float, file_dur: float, timer_sec: 
     t = float(death_start) + step
     limit = min(float(file_dur), float(death_start) + cap)
     min_score = float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.58"))
-    while t < limit:
+    probes = 0
+    while t < limit and probes < _max_probes():
         score, _ = death_frame_score(vod, t)
         if score < min_score * 0.82:
             return t
         t += step
+        probes += 1
     return limit
 
 
