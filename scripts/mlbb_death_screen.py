@@ -48,7 +48,19 @@ def death_trim_enabled() -> bool:
 
 
 def _scan_step() -> float:
-    return float(os.environ.get("MLBB_DEATH_SCAN_STEP", "0.45"))
+    return float(os.environ.get("MLBB_DEATH_SCAN_STEP", "1.2"))
+
+
+def _ocr_enabled() -> bool:
+    return os.environ.get("MLBB_DEATH_USE_OCR", "0") == "1"
+
+
+def _tail_scan_sec() -> float:
+    return float(os.environ.get("MLBB_DEATH_TAIL_SCAN_SEC", "14"))
+
+
+def _max_probes() -> int:
+    return max(3, int(os.environ.get("MLBB_DEATH_MAX_PROBES", "8")))
 
 
 def _timer_max_sec() -> float:
@@ -127,33 +139,47 @@ def _frame_zones(frame):
 
 def _ocr_zone_text(zone, *, digits_only: bool = False) -> str:
     import cv2
+    import subprocess
+    import tempfile
+
+    if zone.size == 0:
+        return ""
+    if not _ocr_enabled():
+        return ""
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    variant = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    whitelist = "0123456789" if digits_only else ""
+    psm = "10" if digits_only else "7"
+    timeout = float(os.environ.get("MLBB_DEATH_OCR_TIMEOUT_SEC", "2.5"))
 
     try:
         import pytesseract
     except ImportError:
         return ""
 
-    if zone.size == 0:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        import cv2 as _cv2
+
+        _cv2.imwrite(tmp_path, variant)
+        proc = subprocess.run(
+            ["tesseract", tmp_path, "stdout", "-l", "eng+rus", "--psm", psm]
+            + (["-c", f"tessedit_char_whitelist={whitelist}"] if whitelist else []),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return " ".join((proc.stdout or "").split())
+    except (subprocess.TimeoutExpired, OSError):
         return ""
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
-    variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
-    texts: list[str] = []
-    whitelist = " -c tessedit_char_whitelist=0123456789" if digits_only else ""
-    psms = (10, 7, 8) if digits_only else (7, 8, 6)
-    for variant in variants:
-        for psm in psms:
-            try:
-                text = pytesseract.image_to_string(
-                    variant,
-                    config=f"--psm {psm} -l eng+rus{whitelist}",
-                )
-            except Exception:
-                continue
-            text = " ".join(text.split())
-            if text:
-                texts.append(text)
-    return " ".join(texts)
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _ocr_death_caption(frame) -> str:
@@ -218,7 +244,7 @@ def _bottom_caption_text_score(frame) -> float:
 def death_frame_score(vod: Path, sec: float) -> tuple[float, str]:
     """
     Score 0..1 — higher = more likely death/respawn screen.
-    Returns (score, hint).
+    Fast path: heuristics only unless MLBB_DEATH_USE_OCR=1.
     """
     from gameplay_gate import _frame_hud_metrics, _read_frame_at
 
@@ -229,34 +255,45 @@ def death_frame_score(vod: Path, sec: float) -> tuple[float, str]:
     caption_bottom = _bottom_caption_text_score(frame)
     overlay = _death_overlay_score(frame)
     mini, skill, _top = _frame_hud_metrics(frame)
-    ocr_caption = _ocr_death_caption(frame)
-    timer_raw, timer_val = _ocr_timer_digits(frame)
-
-    if classify_death_text(ocr_caption):
-        return 1.0, f"ocr_caption:{ocr_caption[:48]}"
-
     skill_dead = skill < float(os.environ.get("MLBB_DEATH_MAX_SKILL_STD", "5.5"))
     caption_strong = caption_bottom >= _bottom_text_min()
 
+    heuristic = 0.0
+    hint = "weak"
+    if overlay >= 0.42 and caption_strong and skill_dead:
+        heuristic = min(1.0, 0.72 + overlay * 0.2)
+        hint = f"overlay_caption:ov={overlay:.2f}"
+    elif caption_strong and skill_dead:
+        heuristic = min(1.0, 0.58 + caption_bottom * 1.6)
+        hint = f"caption_skill:bottom={caption_bottom:.3f}"
+    elif caption_strong and mini < float(os.environ.get("MLBB_DEATH_MAX_MINI_STD", "6.0")):
+        heuristic = min(1.0, 0.52 + caption_bottom * 1.4)
+        hint = f"caption_mini:bottom={caption_bottom:.3f}"
+    elif overlay >= 0.35 and caption_strong:
+        heuristic = 0.55
+        hint = f"overlay_bottom:ov={overlay:.2f}"
+
+    min_score = float(os.environ.get("MLBB_DEATH_SCORE_MIN", "0.58"))
+    if heuristic >= min_score:
+        return heuristic, hint
+
+    if not _ocr_enabled() or heuristic < 0.35:
+        return max(0.0, heuristic), hint
+
+    ocr_caption = _ocr_death_caption(frame)
+    if classify_death_text(ocr_caption):
+        return 1.0, f"ocr_caption:{ocr_caption[:48]}"
+
+    timer_raw, timer_val = _ocr_timer_digits(frame)
     if timer_val is not None and overlay >= 0.28 and (caption_strong or skill_dead):
         return (
             min(1.0, 0.88 + overlay * 0.1),
             f"timer_digit:{int(timer_val)}:overlay={overlay:.2f}",
         )
-
-    if overlay >= 0.42 and caption_strong and skill_dead:
-        return min(1.0, 0.72 + overlay * 0.2), f"overlay_caption:ov={overlay:.2f}"
-
-    if caption_strong and skill_dead:
-        return min(1.0, 0.58 + caption_bottom * 1.6), f"caption_skill:bottom={caption_bottom:.3f}"
-
-    if caption_strong and mini < float(os.environ.get("MLBB_DEATH_MAX_MINI_STD", "6.0")):
-        return min(1.0, 0.52 + caption_bottom * 1.4), f"caption_mini:bottom={caption_bottom:.3f}"
-
     if timer_raw and timer_val is not None and overlay >= 0.22:
         return 0.65, f"timer_weak:{int(timer_val)}"
 
-    return max(0.0, caption_bottom * 0.5), "weak"
+    return max(heuristic, caption_bottom * 0.5), hint
 
 
 def probe_death_at(vod: Path, sec: float) -> DeathScreenHit | None:
@@ -288,17 +325,20 @@ def probe_death_at(vod: Path, sec: float) -> DeathScreenHit | None:
 
 
 def find_death_start_in_window(vod: Path, start_sec: float, end_sec: float) -> DeathScreenHit | None:
-    """First death/respawn screen inside [start_sec, end_sec)."""
+    """First death/respawn screen inside clip tail (cheap backward scan)."""
     if end_sec <= start_sec + 1.0:
         return None
     step = _scan_step()
-    t = max(0.0, float(start_sec))
+    tail = min(_tail_scan_sec(), max(0.0, end_sec - start_sec))
+    t = max(float(start_sec), float(end_sec) - tail)
     end = float(end_sec)
-    while t < end - 0.35:
+    probes = 0
+    while t < end - 0.35 and probes < _max_probes():
         hit = probe_death_at(vod, t)
         if hit is not None:
             return hit
         t += step
+        probes += 1
     return None
 
 
