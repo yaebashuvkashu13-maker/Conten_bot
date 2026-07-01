@@ -50,11 +50,12 @@ def shift_resend(
     dur = float(row.get("duration") or row.get("fight_dur") or 28.0)
     peak = float(row.get("peak_start") or old_start)
     new_start = max(0.0, round(old_start + shift_sec, 2))
+    new_peak = max(0.0, round(peak + shift_sec, 2))
     new_sid = segment_id(vod, new_start)
 
     clip = {
         "start": new_start,
-        "peak_start": peak,
+        "peak_start": new_peak,
         "input_duration": dur,
         "output_duration": dur,
         "score": float(row.get("score") or 0),
@@ -71,7 +72,7 @@ def shift_resend(
     send_row = {
         "segment_id": new_sid,
         "start": new_start,
-        "peak_start": peak,
+        "peak_start": new_peak,
         "clip": clip,
         "score": clip["score"],
         "hook_score": clip["hook_score"],
@@ -98,7 +99,7 @@ def shift_resend(
         f"↩️ сдвиг {shift_sec:+.0f}с от #{sid}\n"
         f"{vod_youtube_id(vod)} @ {int(new_start)}s | {seg_dur:.0f}с\n"
         f"{clip_line}{report_line}\n"
-        f"cut@{int(new_start)}s peak@{int(peak)}s\n"
+        f"cut@{int(new_start)}s peak@{int(new_peak)}s\n"
         f"✓ presend\n"
         f"👍 Ок / 👎 Не ок"
     )
@@ -116,7 +117,7 @@ def shift_resend(
             "start": new_start,
             "duration": seg_dur,
             "fight_dur": dur,
-            "peak_start": peak,
+            "peak_start": new_peak,
             "score": clip["score"],
             "hook_score": clip["hook_score"],
             "clip_score": clip.get("clip_score"),
