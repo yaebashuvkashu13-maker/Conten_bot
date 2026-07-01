@@ -160,6 +160,8 @@ sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
 printf 'MLBB_VOD_SEARCH_QUERIES="%s"\n' "$VOD_SEARCH_CSV" >>"$ENV_FILE"
 
 install -m 755 \
+  "$REPO/scripts/mlbb_vod_shift_resend.py" \
+  "$REPO/scripts/mlbb_vod_redo_segments.py" \
   "$REPO/scripts/daily_game_cycle.py" \
   "$REPO/scripts/daily_cycle_runner.py" \
   "$REPO/scripts/shooter_vod_segment_feed.py" \
