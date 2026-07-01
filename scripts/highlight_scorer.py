@@ -12,7 +12,7 @@ import logging
 import math
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -1441,6 +1441,19 @@ def _parallel_workers() -> int:
     return max(2, min(6, cpus - 2, int(cpus * 0.75)))
 
 
+def _window_score_timeout_sec() -> float:
+    """Per-window wall-clock budget for PANNs+CLIP scoring (parallel workers)."""
+    return max(60.0, float(os.environ.get("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", "480")))
+
+
+def _parallel_batch_timeout_sec(n_windows: int, workers: int) -> float:
+    """Overall wall-clock budget for a parallel highlight score batch."""
+    per = _window_score_timeout_sec()
+    cap = max(120.0, float(os.environ.get("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", "900")))
+    batches = math.ceil(max(1, n_windows) / max(1, workers))
+    return min(cap, per * batches + 30.0)
+
+
 def _pann_probe_limit(profile: str) -> int:
     profile = normalize_profile(profile)
     if profile in SHOOTER_PROFILES or os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
@@ -1675,31 +1688,58 @@ def discover_highlight_candidates(
         return True
 
     if workers > 1 and len(pending) > 1:
+        batch_timeout = _parallel_batch_timeout_sec(len(pending), workers)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
                 pool.submit(_evaluate_highlight_start, video_path, start, profile): start
                 for start in pending
             }
-            for fut in as_completed(futures):
-                if len(verified) >= limit:
-                    break
-                try:
-                    row = fut.result()
-                except Exception as exc:
-                    log.warning("highlight parallel score failed start=%s: %s", futures[fut], exc)
-                    continue
-                if row is None:
-                    continue
-                start, metrics = row
-                if _consume(start, metrics) and len(verified) >= limit:
-                    break
-                if (
-                    verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                    and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                ):
-                    log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
-                    break
+            try:
+                completed = as_completed(futures, timeout=batch_timeout)
+            except TypeError:
+                completed = as_completed(futures)
+            try:
+                for fut in completed:
+                    if len(verified) >= limit:
+                        break
+                    try:
+                        row = fut.result(timeout=_window_score_timeout_sec())
+                    except TimeoutError:
+                        log.warning(
+                            "highlight parallel score timeout start=%s sec=%.0f",
+                            futures.get(fut),
+                            _window_score_timeout_sec(),
+                        )
+                        continue
+                    except Exception as exc:
+                        log.warning(
+                            "highlight parallel score failed start=%s: %s",
+                            futures.get(fut),
+                            exc,
+                        )
+                        continue
+                    if row is None:
+                        continue
+                    start, metrics = row
+                    if _consume(start, metrics) and len(verified) >= limit:
+                        break
+                    if (
+                        verified
+                        and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                        and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                    ):
+                        log.info(
+                            "vod send_one: stop after first highlight pass start=%.1f",
+                            verified[-1]["start"],
+                        )
+                        break
+            except TimeoutError:
+                log.warning(
+                    "highlight parallel score batch timeout %s: %s windows sec=%.0f",
+                    video_path.name,
+                    len(pending),
+                    batch_timeout,
+                )
     else:
         for start in pending:
             if len(verified) >= limit:

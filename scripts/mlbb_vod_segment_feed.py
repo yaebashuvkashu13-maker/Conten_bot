@@ -83,6 +83,11 @@ def _vod_max_sec() -> float:
     return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
 
 
+def _vod_scan_max_sec() -> float:
+    """Wall-clock budget for one VOD scan — avoids infinite PANNs/CLIP hangs."""
+    return max(300.0, float(os.environ.get("MLBB_VOD_SCAN_MAX_SEC", "1800")))
+
+
 def _vod_target_dur_sec() -> float:
     return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "780"))
 
@@ -1800,6 +1805,9 @@ def _process_vod_segments(
 
     downloader.start_if_idle(registry)
     sent_total = 0
+    scan_started = time.time()
+    scan_deadline = scan_started + _vod_scan_max_sec()
+    scan_timed_out = False
     max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
     sig = file_sha256(vod)
     sent = load_feed_sent()
@@ -1857,6 +1865,23 @@ def _process_vod_segments(
                 cached_blocked = True
 
         while not cached_blocked:
+            if time.time() >= scan_deadline:
+                scan_timed_out = True
+                log.warning(
+                    "vod scan timeout vod=%s elapsed_sec=%.0f max=%.0f",
+                    vod.name,
+                    time.time() - scan_started,
+                    _vod_scan_max_sec(),
+                )
+                if entry is not None:
+                    entry["reject_reason"] = "scan_timeout"
+                    record_vod_scan(
+                        entry,
+                        sent=sent_total,
+                        pool_peaks=peaks_from_pool(pool_cache) if pool_cache else [],
+                        blocked=True,
+                    )
+                break
             if max_per_vod > 0 and sent_total >= max_per_vod:
                 log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                 break
@@ -1928,7 +1953,19 @@ def _process_vod_segments(
     _save_state(state)
 
     if sent_total == 0 and not send_quota_blocked:
-        if entry and should_mark_vod_exhausted(entry):
+        if scan_timed_out and entry is not None:
+            _mark_vod_exhausted(vod)
+            entry["exhausted"] = True
+            entry["id"] = vid
+            entry.setdefault("reject_reason", "scan_timeout")
+            log.info("exhausted vod=%s reason=scan_timeout", vod.name)
+            if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
+                send_message(
+                    token,
+                    chat_id,
+                    f"⏱ Скан VOD {vid} остановлен по таймауту — беру следующий стрим.",
+                )
+        elif entry and should_mark_vod_exhausted(entry):
             _mark_vod_exhausted(vod)
             entry["exhausted"] = True
             entry["id"] = vid
