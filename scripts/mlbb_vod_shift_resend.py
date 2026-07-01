@@ -164,7 +164,7 @@ def main() -> int:
 
     os.environ.setdefault("MLBB_VOD_NO_CROP", "1")
     os.environ.setdefault("MLBB_FORCE_RERENDER", "1")
-    os.environ.setdefault("VOD_CALIBRATION_SEND_AS_FILE", "1")
+    os.environ.setdefault("VOD_CALIBRATION_SEND_AS_FILE", "0")
 
     pause_worker()
     try:

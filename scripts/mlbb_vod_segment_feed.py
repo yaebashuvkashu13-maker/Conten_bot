@@ -766,8 +766,9 @@ def send_video(
 
     try:
         sent = False
-        send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1") == "1"
-        if send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+        force_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "0") == "1"
+        size = path.stat().st_size
+        if force_file and size <= TELEGRAM_DOCUMENT_MAX_BYTES:
             fname = f"{game.upper()}_{seg_id}.mp4"
             sent = send_hq_files(
                 token,
