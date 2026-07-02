@@ -26,6 +26,16 @@ def test_send_batch_skips_render_when_precheck_rejects(tmp_path: Path, monkeypat
         "duration": 15.0,
         "clip": {"start": 120.0, "duration": 15.0},
     }
+    seg_root = tmp_path / "segments"
+    monkeypatch.setattr(
+        feed,
+        "_paths",
+        lambda game: {
+            "inbox": tmp_path / "inbox",
+            "segments": seg_root,
+            "state": tmp_path / "state.json",
+        },
+    )
     with patch.object(feed, "_validate_shooter_candidate_pre_render", return_value=(False, "no_shots", {})):
         with patch.object(feed, "render_single_segment") as render:
             n = feed._send_batch("pubg", "t", "c", vod, [row], sig="s")

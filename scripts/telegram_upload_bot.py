@@ -175,24 +175,26 @@ def game_label_for_chat(chat_id: str, caption: str | None = None) -> str:
     return base
 
 
+from telegram_access import chat_is_allowed as _chat_is_allowed_core
+from telegram_access import is_owner as _is_owner_core
+
+
 def is_owner(chat_id: str) -> bool:
-    cid = str(chat_id)
-    owners = {str(DEFAULT_CHAT_ID)} if DEFAULT_CHAT_ID else set()
-    for item in env.get('AD_OWNER_CHAT_IDS', env.get('OWNER_CHAT_IDS', '')).split(','):
-        item = item.strip()
-        if item:
-            owners.add(item)
-    return cid in owners
+    return _is_owner_core(
+        chat_id,
+        DEFAULT_CHAT_ID,
+        env.get("AD_OWNER_CHAT_IDS", env.get("OWNER_CHAT_IDS", "")),
+    )
 
 
 def chat_is_allowed(chat_id: str) -> bool:
-    """Owner (TG_CHAT_ID) is always allowed even if missing from TG_ALLOWED_CHAT_IDS."""
-    cid = str(chat_id)
-    if is_owner(cid):
-        return True
-    if not ALLOWED_CHAT_IDS:
-        return True
-    return cid in ALLOWED_CHAT_IDS
+    """Owner (TG_CHAT_ID) always allowed; others only if listed in TG_ALLOWED_CHAT_IDS."""
+    return _chat_is_allowed_core(
+        chat_id,
+        owner_chat_id=DEFAULT_CHAT_ID,
+        allowed_chat_ids=ALLOWED_CHAT_IDS,
+        extra_owner_ids=env.get("AD_OWNER_CHAT_IDS", env.get("OWNER_CHAT_IDS", "")),
+    )
 
 
 def is_pubg_chat(chat_id: str) -> bool:

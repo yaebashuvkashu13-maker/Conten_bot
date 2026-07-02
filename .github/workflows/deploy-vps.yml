@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - cursor/vod-pipeline-base-6cbd
+      - cursor/vod-production-ready-d7dd
       - cursor/mlbb-video-pipeline-e712
       - main
   workflow_dispatch:
@@ -54,9 +55,11 @@ jobs:
             REPO="${{ secrets.VPS_REPO_PATH || '/root/content_bot_ml' }}"
             cd "$REPO"
             git fetch origin
-            git checkout cursor/vod-pipeline-base-6cbd || git checkout main
-            git pull --ff-only origin cursor/vod-pipeline-base-6cbd || git pull --ff-only
-            VPS_BRANCH=cursor/vod-pipeline-base-6cbd bash scripts/vps_apply_vod_only.sh
+            git checkout cursor/vod-production-ready-d7dd || git checkout cursor/vod-pipeline-base-6cbd || git checkout main
+            git pull --ff-only origin cursor/vod-production-ready-d7dd \
+              || git pull --ff-only origin cursor/vod-pipeline-base-6cbd \
+              || git pull --ff-only
+            VPS_BRANCH=cursor/vod-production-ready-d7dd bash scripts/vps_apply_vod_only.sh
             echo "=== MLBB VOD-only deploy done ==="
             grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
             pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot' || true

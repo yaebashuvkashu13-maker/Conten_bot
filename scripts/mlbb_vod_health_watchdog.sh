@@ -87,15 +87,23 @@ fi
 
 # Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
 SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
-TOKEN="$(env_val TG_BOT_TOKEN)"
-CHAT="$(env_val TG_CHAT_ID)"
-if [[ -n "$TOKEN" && -n "$CHAT" && "$SILENCE_SEC" -gt 0 ]]; then
-  python3 - "$SILENCE_SEC" "$TOKEN" "$CHAT" <<'PY' >>"$LOG" 2>&1 || true
+if [[ "$SILENCE_SEC" -gt 0 ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  TOKEN="${TG_BOT_TOKEN:-}"
+  CHAT="${TG_CHAT_ID:-}"
+  if [[ -n "$TOKEN" && -n "$CHAT" ]]; then
+    python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
 import json, os, re, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 
 silence = int(sys.argv[1])
-token, chat = sys.argv[2], sys.argv[3]
+token = os.environ.get("TG_BOT_TOKEN", "")
+chat = os.environ.get("TG_CHAT_ID", "")
+if not token or not chat:
+    raise SystemExit(0)
 stamp_path = Path("/root/data/mlbb/vod_silence_alert.json")
 now = time.time()
 
@@ -145,6 +153,7 @@ urllib.request.urlopen(
 stamp_path.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
 print(f"silence alert sent age_sec={int(age)}")
 PY
+  fi
 fi
 
 exit 0

@@ -48,7 +48,10 @@ from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
     max_peak_tries,
+    minimal_pool_from_entry,
+    peak_values_from_entry,
     peaks_from_pool,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     scan_zero_detail,
@@ -85,19 +88,19 @@ def _profile(game: str) -> str:
 
 
 def _load_state(game: str) -> dict:
+    from vod_state_io import load_json_state
+
     p = _paths(game)["state"]
-    if not p.exists():
-        return {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0}
+    return load_json_state(
+        p,
+        lambda: {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0},
+    )
 
 
 def _save_state(game: str, state: dict) -> None:
-    p = _paths(game)["state"]
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(_paths(game)["state"], state)
 
 
 def _bootstrap_owner_exemplars(game: str) -> dict:
@@ -278,6 +281,13 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         from strict_segment_gate import passes_strict_gate
 
         ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
+        if game == "genshin" and ok:
+            from genshin_boss_segment import validate_genshin_boss_segment
+
+            boss_ok, boss_reason, boss_metrics = validate_genshin_boss_segment(vod, start, dur)
+            metrics.update(boss_metrics)
+            if not boss_ok:
+                return False, boss_reason, metrics
         return ok, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     if not ok:
@@ -433,7 +443,7 @@ def _scan_vod(
     blocked_ids = labeled | sent_set
 
     if entry and entry.get("last_pool_peaks"):
-        cached = [float(x) for x in entry["last_pool_peaks"]]
+        cached = peak_values_from_entry(entry)
         if pool_peaks_fully_blocked(
             cached,
             used_peaks=used_peaks,
@@ -456,11 +466,15 @@ def _scan_vod(
     from highlight_scorer import clear_panns_score_cache
 
     clear_panns_score_cache()
-    os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
-    try:
-        pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
-    finally:
-        os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
+    if entry and pool_cache_valid(entry):
+        pool = minimal_pool_from_entry(entry)
+        log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
+    else:
+        os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
+        try:
+            pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+        finally:
+            os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     pool_peaks = peaks_from_pool(pool)
     if entry is not None:
         try:
@@ -547,14 +561,14 @@ def _scan_vod(
                 blocked,
             )
             if entry is not None:
-                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked)
+                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
         if n > 0:
             if entry is not None:
                 entry["presend_reject_streak"] = 0
-                record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False)
+                record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
@@ -578,7 +592,7 @@ def _scan_vod(
             ),
         ):
             entry.setdefault("reject_reason", "presend_exhausted")
-        record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False)
+        record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool)
     return 0
 
 
@@ -647,6 +661,56 @@ def _scan_vod_with_adaptive(
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
             return 0
         apply_fast_probe_seeds(seed_peaks)
+
+    if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":
+        from genshin_vod_fast_scan import (
+            apply_fast_probe_seeds as apply_genshin_seeds,
+            clear_fast_probe_seeds as clear_genshin_seeds,
+            vod_fast_boss_check,
+        )
+
+        clear_fast_seeds = clear_genshin_seeds
+        ok_fast, fast_reason, seed_peaks = vod_fast_boss_check(vod, _profile(game))
+        if not ok_fast:
+            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
+            if entry is None:
+                entry = _vod_registry_entry(state, vod) or {
+                    "id": vid,
+                    "path": str(vod),
+                    "title": title,
+                    "exhausted": False,
+                }
+            entry["reject_reason"] = fast_reason
+            entry["exhausted"] = True
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _save_state(game, state)
+            return 0
+        apply_genshin_seeds(seed_peaks)
+
+    if game == "wot" and os.environ.get("WOT_VOD_FAST_PROBE", "1") == "1":
+        from wot_vod_fast_scan import (
+            apply_fast_probe_seeds as apply_wot_seeds,
+            clear_fast_probe_seeds as clear_wot_seeds,
+            vod_fast_impact_check,
+        )
+
+        clear_fast_seeds = clear_wot_seeds
+        ok_fast, fast_reason, seed_peaks = vod_fast_impact_check(vod, _profile(game))
+        if not ok_fast:
+            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
+            if entry is None:
+                entry = _vod_registry_entry(state, vod) or {
+                    "id": vid,
+                    "path": str(vod),
+                    "title": title,
+                    "exhausted": False,
+                }
+            entry["reject_reason"] = fast_reason
+            entry["exhausted"] = True
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _save_state(game, state)
+            return 0
+        apply_wot_seeds(seed_peaks)
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)

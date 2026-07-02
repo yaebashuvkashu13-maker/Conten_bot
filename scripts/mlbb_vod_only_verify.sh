@@ -29,11 +29,9 @@ check_env MLBB_CALIBRATION_FEED_ENABLED 0
 check_env MLBB_VOD_NO_CROP 1
 check_env MLBB_VOD_LANDSCAPE 1
 check_env MLBB_VOD_VARIABLE_LENGTH 1
-check_env MLBB_VOD_SEND_ONE 0
-check_env MLBB_VOD_DEATH_SKIP_PEAKS 0
+check_env MLBB_VOD_SEND_ONE 1
+check_env MLBB_KILL_BANNER_MIN_TIER double
 check_env HIGHLIGHT_PARALLEL_WORKERS 1
-check_env MLBB_VOD_SCAN_MAX_SEC 900
-check_env MLBB_KILL_BANNER_MIN_TIER single
 check_env MLBB_VOD_BANNER_PRESEND 0
 check_env MLBB_VOD_BANNER_DISCOVER 0
 check_env MLBB_VOD_BANNER_PREFILTER 0
@@ -53,11 +51,13 @@ for pat in "${forbidden[@]}"; do
 done
 
 vod_pids=($(pgrep -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true))
-if [[ ${#vod_pids[@]} -eq 0 ]]; then
-  die "mlbb_vod_segment_feed.py not running"
+cycle_pids=($(pgrep -f 'daily_cycle_runner.py' 2>/dev/null || true))
+supervisor_pids=($(pgrep -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true))
+if [[ ${#vod_pids[@]} -eq 0 && ${#cycle_pids[@]} -eq 0 && ${#supervisor_pids[@]} -eq 0 ]]; then
+  die "mlbb_vod_segment_feed / daily_cycle_runner not running"
 fi
-if [[ ${#vod_pids[@]} -gt 1 ]]; then
-  die "duplicate vod_segment_feed pids: ${vod_pids[*]}"
+if [[ ${#vod_pids[@]} -gt 1 || ${#cycle_pids[@]} -gt 1 ]]; then
+  die "duplicate vod feed pids: vod=${vod_pids[*]} cycle=${cycle_pids[*]}"
 fi
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
@@ -129,7 +129,7 @@ if [[ -f "$LOG" ]]; then
 fi
 
 echo "===== VOD-only verify $(date -Is) ====="
-echo "vod_feed_pids=${vod_pids[*]}"
+echo "vod_feed_pids=${vod_pids[*]:-} cycle_pids=${cycle_pids[*]:-} supervisor=${supervisor_pids[*]:-}"
 echo "load: $(uptime | sed 's/.*load average: //')"
 grep -E '^MLBB_VOD_ONLY=|^MLBB_VOD_DISABLED=|^MLBB_CALIBRATION_FEED_ENABLED=' "$ENV_FILE" || true
 

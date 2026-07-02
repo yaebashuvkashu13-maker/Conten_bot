@@ -489,6 +489,19 @@ def pubg_passes_combat_gate(
             )
             center_motion = max(center_motion, _motion)
         ocr_hits = int(getattr(metrics, "ocr_hits", 0) or 0) if metrics is not None else 0
+        try:
+            from pubg_killfeed_ocr import score_killfeed_segment
+
+            kf_density, kf_row = score_killfeed_segment(
+                video_path, start_sec, duration_sec, profile
+            )
+            out["killfeed_density"] = round(kf_density, 4)
+            out.update({k: v for k, v in kf_row.items() if k not in out})
+            if kf_density >= float(os.environ.get("PUBG_KILLFEED_BONUS_MIN", "0.30")):
+                out["killfeed_bonus"] = True
+                ocr_hits = max(ocr_hits, int(round(kf_density * 3)))
+        except Exception:
+            pass
         bot_reject, bot_reason, bot_row = pubg_rejects_bot_farm(
             video_path,
             start_sec,
