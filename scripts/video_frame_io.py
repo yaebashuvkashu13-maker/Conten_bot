@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -90,7 +91,11 @@ def ffmpeg_read_frame(
     if vf:
         cmd += ["-vf", vf]
     cmd += ["-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
-    proc = subprocess.run(cmd, capture_output=True, check=False)
+    timeout = float(os.environ.get("VIDEO_FRAME_IO_FFMPEG_TIMEOUT_SEC", "20"))
+    try:
+        proc = subprocess.run(cmd, capture_output=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
     if proc.returncode != 0 or not proc.stdout:
         return None
     if width and height:
@@ -119,6 +124,8 @@ def read_frame_at(
     width: int | None = None,
     height: int | None = None,
 ) -> np.ndarray | None:
+    if os.environ.get("VIDEO_FRAME_IO_FORCE_FFMPEG", "0") == "1":
+        return ffmpeg_read_frame(path, t_sec, width=width, height=height)
     if cap is not None and not prefer_ffmpeg_decode(path):
         frame = cv2_read_frame(cap, t_sec)
         if frame is not None:
