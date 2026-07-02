@@ -17,7 +17,7 @@ def peak_lag_sec(game: str) -> float:
     if generic:
         return max(0.0, float(generic))
     if game == "pubg":
-        return max(0.0, float(os.environ.get("PUBG_VOD_PEAK_LAG_SEC", "10")))
+        return max(0.0, float(os.environ.get("PUBG_VOD_PEAK_LAG_SEC", "0")))
     if game == "standoff":
         return max(0.0, float(os.environ.get("STANDOFF_VOD_PEAK_LAG_SEC", "6")))
     return 0.0
