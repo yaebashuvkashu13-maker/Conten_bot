@@ -173,12 +173,15 @@ def _seek_preroll_sec(vod: Path, start: float) -> float:
 
 
 def _load_state() -> dict:
-    if not STATE_PATH.exists():
-        return {"active_vod": "", "scanned_vods": [], "vods": [], "used_youtube_ids": []}
-    try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"active_vod": "", "scanned_vods": [], "vods": [], "used_youtube_ids": []}
+    from vod_state_io import load_json_state
+
+    default = {
+        "active_vod": "",
+        "scanned_vods": [],
+        "vods": [],
+        "used_youtube_ids": [],
+    }
+    data = load_json_state(STATE_PATH, default)
     data.setdefault("vods", [])
     data.setdefault("used_youtube_ids", [])
     data.setdefault("scanned_vods", [])
@@ -186,8 +189,9 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(STATE_PATH, state)
 
 
 def _registry_entry(

@@ -50,11 +50,13 @@ for pat in "${forbidden[@]}"; do
 done
 
 vod_pids=($(pgrep -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true))
-if [[ ${#vod_pids[@]} -eq 0 ]]; then
-  die "mlbb_vod_segment_feed.py not running"
+cycle_pids=($(pgrep -f 'daily_cycle_runner.py' 2>/dev/null || true))
+supervisor_pids=($(pgrep -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true))
+if [[ ${#vod_pids[@]} -eq 0 && ${#cycle_pids[@]} -eq 0 && ${#supervisor_pids[@]} -eq 0 ]]; then
+  die "mlbb_vod_segment_feed / daily_cycle_runner not running"
 fi
-if [[ ${#vod_pids[@]} -gt 1 ]]; then
-  die "duplicate vod_segment_feed pids: ${vod_pids[*]}"
+if [[ ${#vod_pids[@]} -gt 1 || ${#cycle_pids[@]} -gt 1 ]]; then
+  die "duplicate vod feed pids: vod=${vod_pids[*]} cycle=${cycle_pids[*]}"
 fi
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then

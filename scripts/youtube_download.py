@@ -15,16 +15,9 @@ ENV_FILE = Path("/root/.video_bot.env")
 
 
 def load_env(path: Path = ENV_FILE) -> dict[str, str]:
-    env: dict[str, str] = {}
-    if not path.exists():
-        return env
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        env[key.strip()] = value.strip().strip('"').strip("'")
-    return env
+    from vod_env import load_env as _load
+
+    return _load(path)
 
 
 def ytdlp_bin(env: dict[str, str] | None = None) -> str:

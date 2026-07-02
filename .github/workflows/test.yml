@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+      - "cursor/**"
+  pull_request:
+    branches:
+      - main
+      - "cursor/**"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest numpy
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -q \
+            --ignore=tests/test_pubg_combat_gate.py \
+            --ignore=tests/test_content_bot_smoke.py

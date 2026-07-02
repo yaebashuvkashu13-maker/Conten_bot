@@ -49,13 +49,14 @@ def quota_for(game: str) -> int:
 
 
 def load_state() -> dict:
+    from vod_state_io import load_json_state
+
     path = _state_path()
-    if not path.exists():
+
+    def _default() -> dict:
         return {"day": _today_key(), "sends": {g: 0 for g in GAME_ORDER}, "notified": {}}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        data = {}
+
+    data = load_json_state(path, _default)
     data.setdefault("day", _today_key())
     data.setdefault("sends", {})
     data.setdefault("notified", {})
@@ -65,10 +66,10 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    from vod_state_io import save_json_state
+
     state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    path = _state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    save_json_state(_state_path(), state)
 
 
 def reset_if_new_day() -> bool:

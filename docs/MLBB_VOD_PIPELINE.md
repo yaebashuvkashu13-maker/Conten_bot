@@ -2,7 +2,7 @@
 
 Документ для разработчика, который будет поддерживать и дорабатывать пайплайн нарезки teamfight-клипов из YouTube VOD Mobile Legends.
 
-**Актуальная ветка:** `cursor/mlbb-video-pipeline-e712`  
+**Актуальная ветка:** `cursor/vod-pipeline-base-6cbd` (стабилизация: `cursor/stability-hardening-d7dd`)  
 **Режим на VPS:** MLBB VOD-only (Shorts/calibration worker отключены)
 
 ---
@@ -293,7 +293,8 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 |------------|---------|----------|
 | `MLBB_VOD_KILL_BANNER` | 1 | Включить banner gate |
 | `MLBB_KILL_BANNER_REQUIRED` | 1 | Без баннера → reject |
-| `MLBB_KILL_BANNER_MIN_TIER` | triple | Мин. tier (3+) |
+| `MLBB_KILL_BANNER_MIN_TIER` | double | Мин. tier (2+ Savage / Maniac) |
+| `HIGHLIGHT_USE_OWNER_ANCHORS` | 0 | Inference: без injection owner-label окон в stage1 |
 | `MLBB_KILL_BANNER_SCAN_BEFORE` | 14 | Скан до пика, сек |
 | `MLBB_KILL_BANNER_SCAN_AFTER` | 6 | Скан после пика, сек |
 | `MLBB_KILL_BANNER_COLOR_MIN` | 0.045 | Порог color fallback |

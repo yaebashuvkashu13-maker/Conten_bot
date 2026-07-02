@@ -85,19 +85,19 @@ def _profile(game: str) -> str:
 
 
 def _load_state(game: str) -> dict:
+    from vod_state_io import load_json_state
+
     p = _paths(game)["state"]
-    if not p.exists():
-        return {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0}
+    return load_json_state(
+        p,
+        lambda: {"vods": [], "used_youtube_ids": [], "discovery_cycle": 0},
+    )
 
 
 def _save_state(game: str, state: dict) -> None:
-    p = _paths(game)["state"]
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(_paths(game)["state"], state)
 
 
 def _bootstrap_owner_exemplars(game: str) -> dict:

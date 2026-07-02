@@ -5,43 +5,39 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-ENV_FILE = Path("/root/.video_bot.env")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from vod_env import DEFAULT_ENV_PATH, load_env
+
 LOG = Path("/root/data/mlbb/vk_callback.log")
 PORT = int(os.environ.get("VK_CALLBACK_PORT", "8788"))
 PATH = os.environ.get("VK_CALLBACK_PATH", "/vk/callback").rstrip("/") or "/vk/callback"
 
 
-def load_env() -> dict[str, str]:
-    env: dict[str, str] = {}
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip().strip('"').strip("'")
-    for key in (
-        "VK_MLBB_ACCESS_TOKEN",
-        "VK_ACCESS_TOKEN_MLBB",
-        "VK_MLBB_GROUP_ID",
-        "VK_MLBB_CONFIRMATION",
-        "VK_CALLBACK_SECRET",
-        "VK_MLBB_CALLBACK_SECRET",
-    ):
-        if os.environ.get(key):
-            env[key] = os.environ[key]
-    return env
-
-
 def _cfg(env: dict[str, str]) -> tuple[str, str, str]:
     token = env.get("VK_MLBB_ACCESS_TOKEN") or env.get("VK_ACCESS_TOKEN_MLBB") or ""
-    group_id = str(env.get("VK_MLBB_GROUP_ID", "234820335")).strip()
-    confirmation = env.get("VK_MLBB_CONFIRMATION", "c3de1fe9").strip()
+    group_id = str(env.get("VK_MLBB_GROUP_ID", "")).strip()
+    confirmation = (env.get("VK_MLBB_CONFIRMATION") or env.get("VK_CALLBACK_CONFIRMATION") or "").strip()
+    secret = (env.get("VK_CALLBACK_SECRET") or env.get("VK_MLBB_CALLBACK_SECRET") or "").strip()
+    if not secret:
+        raise SystemExit("VK_CALLBACK_SECRET (or VK_MLBB_CALLBACK_SECRET) is required")
+    if not confirmation:
+        raise SystemExit("VK_MLBB_CONFIRMATION (or VK_CALLBACK_CONFIRMATION) is required")
+    if not group_id:
+        raise SystemExit("VK_MLBB_GROUP_ID is required")
     return token, group_id, confirmation
+
+
+def _callback_secret(env: dict[str, str]) -> str:
+    secret = (env.get("VK_CALLBACK_SECRET") or env.get("VK_MLBB_CALLBACK_SECRET") or "").strip()
+    if not secret:
+        raise SystemExit("VK_CALLBACK_SECRET missing")
+    return secret
 
 
 def log(msg: str) -> None:
@@ -75,8 +71,12 @@ class VkCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")
         if path in (PATH, PATH + "/health", "/health", "/vk/health"):
-            env = load_env()
-            token, group_id, confirmation = _cfg(env)
+            env = load_env(DEFAULT_ENV_PATH)
+            try:
+                token, _, confirmation = _cfg(env)
+            except SystemExit:
+                self._write(503, json.dumps({"ok": False, "service": "vk_callback"}), "application/json")
+                return
             self._write(
                 200,
                 json.dumps(
@@ -84,7 +84,6 @@ class VkCallbackHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "service": "vk_callback",
                         "path": PATH,
-                        "group_id": group_id,
                         "token_set": bool(token),
                         "confirmation_set": bool(confirmation),
                     }
@@ -102,11 +101,11 @@ class VkCallbackHandler(BaseHTTPRequestHandler):
 
         payload = self._read_json()
         event_type = str(payload.get("type", ""))
-        env = load_env()
+        env = load_env(DEFAULT_ENV_PATH)
         token, group_id, confirmation = _cfg(env)
-        secret = env.get("VK_MLBB_CALLBACK_SECRET") or env.get("VK_CALLBACK_SECRET", "")
+        secret = _callback_secret(env)
 
-        log(f"event type={event_type} group_id={payload.get('group_id')} keys={list(payload.keys())}")
+        log(f"event type={event_type} keys={list(payload.keys())}")
 
         if event_type == "confirmation":
             req_gid = str(payload.get("group_id", ""))
@@ -114,34 +113,28 @@ class VkCallbackHandler(BaseHTTPRequestHandler):
                 log(f"confirmation refused: group_id mismatch {req_gid} != {group_id}")
                 self._write(403, "group_id_mismatch")
                 return
-            if not confirmation:
-                self._write(500, "confirmation_not_configured")
-                return
-            log(f"confirmation ok group_id={req_gid}")
+            log("confirmation ok")
             self._write(200, confirmation)
             return
 
-        if secret:
-            if str(payload.get("secret", "")) != secret:
-                log("refused: bad secret")
-                self._write(403, "bad_secret")
-                return
+        if str(payload.get("secret", "")) != secret:
+            log("refused: bad secret")
+            self._write(403, "bad_secret")
+            return
 
         if event_type == "wall_post_new":
             log(f"wall_post_new post_id={payload.get('object', {}).get('id')}")
         elif event_type:
             log(f"ack {event_type}")
 
-        # VK expects plain "ok" for handled events.
         self._write(200, "ok")
 
 
 def main() -> int:
-    env = load_env()
+    env = load_env(DEFAULT_ENV_PATH)
     token, group_id, confirmation = _cfg(env)
-    if not confirmation:
-        raise SystemExit("VK_MLBB_CONFIRMATION missing")
-    log(f"start port={PORT} path={PATH} group_id={group_id} token={'yes' if token else 'no'}")
+    _callback_secret(env)
+    log(f"start port={PORT} path={PATH} group_configured=yes token={'yes' if token else 'no'}")
     HTTPServer(("0.0.0.0", PORT), VkCallbackHandler).serve_forever()
     return 0
 
