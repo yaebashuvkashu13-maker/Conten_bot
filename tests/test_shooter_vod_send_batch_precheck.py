@@ -6,11 +6,14 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 
 def test_send_batch_skips_render_when_precheck_rejects(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("cv2")
     import shooter_vod_segment_feed as feed
 
     monkeypatch.setenv("DAILY_GAME_CYCLE_ENABLED", "0")
