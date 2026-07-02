@@ -78,6 +78,7 @@ flowchart TD
 | `/root/data/mlbb/vod_segment_state.json` | Активный VOD, registry, used YouTube IDs, scanned |
 | `/root/data/mlbb/vod_segment_index.json` | Индекс всех сегментов |
 | `/root/data/mlbb/vod_segment_feed_sent.json` | Уже отправленные segment_id |
+| `/root/data/vod_analysis_cache/` | Дисковый кэш `analyze_video()` (invalidation по mtime) |
 | `/root/data/mlbb/mlbb_vod_segment_feed.log` | Основной лог пайплайна |
 | `/root/datasets/mlbb/vod_segments/` | Рендеренные mp4 для калибровки |
 | `/usr/local/bin/mlbb_vod_segment_feed.py` | Симлинк/копия feed-скрипта |
@@ -104,7 +105,20 @@ bash /root/content_bot_ml/scripts/vps_disk_cleanup.sh
 
 ---
 
-## 4. Жизненный цикл одного цикла feed
+## 3.1 Экономия CPU (повторный scan)
+
+| Механизм | Env | Эффект |
+|----------|-----|--------|
+| Дисковый analysis cache | `VOD_ANALYSIS_CACHE_DIR` (default `/root/data/vod_analysis_cache`) | Повторный `analyze_video` ~0 с — invalidation по mtime/size |
+| H.264 proxy для анализа | `VOD_ANALYSIS_USE_PROXY=1` | Декод `{vod}_h264.mp4` вместо AV1 original; render на original |
+| Персистентный peak pool | `VOD_POOL_TTL_SEC=21600` (6h) | Пропуск `discover_strict_candidates` — итерация по сохранённым пикам |
+| Fast preflight MLBB | `MLBB_VOD_FAST_PROBE=1` | 6 sparse probes (banner color + PANNs) до полного highlight |
+| Send-one | `MLBB_VOD_SEND_ONE=1` | Валидация только первого кандидата в pool за проход |
+| Owner anchors off | `HIGHLIGHT_USE_OWNER_ANCHORS=0` | Inference только CLIP exemplar similarity, без time-anchor inject |
+
+**Ожидание:** первый scan VOD 15–30 мин (CPU), повторный с cache + pool **&lt; 5 мин** на 8 vCPU box.
+
+---
 
 Файл: `scripts/mlbb_vod_segment_feed.py`, функция `_run_feed()`.
 

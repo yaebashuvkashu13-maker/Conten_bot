@@ -101,6 +101,22 @@ def probe_segment(
 
 def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject tank cruise: motion without sustained hits."""
+    if os.environ.get("WOT_BRAWL_GATE", "1") == "1":
+        impact = float(metrics.get("impact_density", 0))
+        motion = float(metrics.get("center_motion", 0))
+        flashes = int(metrics.get("hit_flash_count", 0))
+        min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
+        min_flashes = max(1, int(os.environ.get("WOT_BRAWL_MIN_HIT_FLASHES", "2")))
+        if flashes and flashes < min_flashes:
+            return True, f"low_hit_flashes={flashes}:need{min_flashes}"
+        if impact < min_impact:
+            return True, f"no_hits=density{impact:.3f}"
+        if motion >= 0.10 and impact < 0.05:
+            return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
+        burst = float(metrics.get("burst_ratio", 0))
+        if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
+            return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"
+        return False, ""
     impact = float(metrics.get("impact_density", 0))
     motion = float(metrics.get("center_motion", 0))
     burst = float(metrics.get("burst_ratio", 0))
@@ -200,6 +216,15 @@ def passes_strict_gate(
         return False, gate_reason, metrics
 
     if profile == "wot":
+        from wot_brawl_segment import validate_wot_brawl_segment
+
+        brawl_ok, brawl_reason, brawl_metrics = validate_wot_brawl_segment(
+            video_path, start_sec, duration_sec, metrics=metrics
+        )
+        metrics.update(brawl_metrics)
+        if not brawl_ok:
+            metrics["gate_reason"] = brawl_reason
+            return False, brawl_reason, metrics
         bad, extra = _wot_extra_reject(metrics)
         if bad:
             metrics["gate_reason"] = extra

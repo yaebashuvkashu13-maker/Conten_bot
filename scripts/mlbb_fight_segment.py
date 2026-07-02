@@ -37,13 +37,12 @@ _CACHE: dict[str, dict] = {}
 
 
 def _analysis_for(vod: Path) -> dict:
-    """One analyze_video pass per VOD file — pool scan calls this dozens of times."""
-    mtime = vod.stat().st_mtime_ns
-    key = f"{vod.resolve()}:{mtime}"
-    if key not in _CACHE:
-        from smart_video_editor import analyze_video
+    """One analyze_video pass per VOD file — disk cache + in-process memo."""
+    from vod_analysis_cache import analyze_video_cached, cache_key_hash
 
-        _CACHE[key] = analyze_video(vod)
+    key = cache_key_hash(vod)
+    if key not in _CACHE:
+        _CACHE[key] = analyze_video_cached(vod)
     return _CACHE[key]
 
 

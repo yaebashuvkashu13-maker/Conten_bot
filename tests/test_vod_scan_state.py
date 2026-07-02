@@ -13,6 +13,8 @@ sys.path.insert(0, str(SCRIPTS))
 
 from vod_scan_state import (  # noqa: E402
     max_peak_tries,
+    minimal_pool_from_entry,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     scan_zero_detail,
@@ -81,4 +83,25 @@ def test_record_vod_scan() -> None:
     entry: dict = {}
     record_vod_scan(entry, sent=0, pool_peaks=[124.0], blocked=True)
     assert entry["last_scan_blocked"] is True
-    assert entry["last_pool_peaks"] == [124.0]
+    assert entry["last_pool_peaks"][0]["peak_sec"] == 124.0
+
+
+def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_POOL_TTL_SEC", "3600")
+    entry = {
+        "last_pool_at": time.time(),
+        "last_pool_peaks": [
+            {"peak_sec": 120.0, "score": 0.8, "blocked_reason": ""},
+            {"peak_sec": 200.0, "score": 0.4, "blocked_reason": "presend"},
+        ],
+    }
+    assert pool_cache_valid(entry) is True
+    pool = minimal_pool_from_entry(entry)
+    assert len(pool) == 1
+    assert pool[0]["start"] == 120.0
+
+
+def test_pool_cache_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_POOL_TTL_SEC", "60")
+    entry = {"last_pool_at": time.time() - 120, "last_pool_peaks": [{"peak_sec": 1.0, "score": 0, "blocked_reason": ""}]}
+    assert pool_cache_valid(entry) is False
