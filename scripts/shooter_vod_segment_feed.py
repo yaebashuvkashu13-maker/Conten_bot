@@ -841,6 +841,7 @@ def main() -> int:
     # Force ffmpeg frame decode with timeouts on VPS (OpenCV can hang on broken H264 streams).
     os.environ.setdefault("VIDEO_FRAME_IO_FORCE_FFMPEG", "1")
     os.environ.setdefault("VIDEO_FRAME_IO_FFMPEG_TIMEOUT_SEC", "20")
+    os.environ.setdefault("SHOOTER_VOD_STAGE1_FAST", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")

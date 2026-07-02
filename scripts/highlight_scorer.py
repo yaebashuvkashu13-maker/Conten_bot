@@ -1378,6 +1378,33 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                 seed_count,
             )
 
+    # Shooter: avoid expensive full-video analyze on long / broken streams.
+    # Build a sparse stage1 grid (plus any seeds) and rely on PANNs prefilter.
+    if profile in SHOOTER_PROFILES and os.environ.get("SHOOTER_VOD_STAGE1_FAST", "1") == "1":
+        try:
+            from smart_video_editor import ffprobe_duration
+
+            dur = float(ffprobe_duration(video_path) or 0.0)
+        except Exception:
+            dur = 0.0
+        skip_intro = 120.0
+        base: list[float] = []
+        for delta in (0, 90, 180, 360, 540, 720, 1200, 1800, 2700, 3600):
+            t = skip_intro + delta
+            if dur <= 0 or (t + WINDOW_SEC < dur - 45):
+                base.append(round(t, 1))
+        if dur > 0:
+            for frac in (0.25, 0.42, 0.58, 0.72, 0.85):
+                t = skip_intro + max(0.0, (dur - skip_intro) * frac)
+                if t + WINDOW_SEC < dur - 45:
+                    base.append(round(t, 1))
+        for t in base:
+            if t >= 60:
+                starts.add(t)
+        ranked = sorted(starts)
+        ranked = _filter_bad_label_starts(video_path, profile, ranked)
+        return ranked[:max_stage1]
+
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
         "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
     ) == "1"
