@@ -71,3 +71,24 @@ def test_bad_label_blocks_with_90s_pad(monkeypatch, tmp_path: Path) -> None:
     starts = _filter_bad_label_starts(vod, "mobile_legends", [520.0, 200.0])
     assert 520.0 not in starts
     assert 200.0 in starts
+
+
+def test_bad_label_pad_scales_on_short_pubg_vod(monkeypatch, tmp_path: Path) -> None:
+    labels = tmp_path / "pubg_owner_labels.json"
+    labels.write_text(
+        json.dumps({"videos": {"shortvid123": [{"time_sec": 120, "label": "bad"}]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(labels))
+    monkeypatch.setenv("HIGHLIGHT_OWNER_BAD_PAD_SEC", "90")
+
+    vod = tmp_path / "yt_shortvid123.mp4"
+    vod.write_bytes(b"")
+    with __import__("unittest.mock").mock.patch(
+        "highlight_scorer._owner_bad_pad_for_vod",
+        return_value=31.0,
+    ):
+        starts = _filter_bad_label_starts(vod, "pubg", [30.0, 120.0, 170.0])
+    assert 30.0 in starts
+    assert 120.0 not in starts
+    assert 170.0 in starts

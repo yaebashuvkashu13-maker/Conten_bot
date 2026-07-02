@@ -405,8 +405,9 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
 
 
 def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
-    """Unscanned VODs first; Metro + Russian titles before others."""
+    """Unscanned VODs first; owner-calibrated + Metro RU before others."""
     from pubg_metro_royale_gate import title_metro_hint
+    from vod_owner_learning import owner_labels_for_vod_scan
     from youtube_game_prefs import russian_score
 
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
@@ -416,7 +417,14 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
     ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
     fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
-    return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
+    try:
+        owner_good = sum(
+            1 for row in owner_labels_for_vod_scan(mp4, "pubg") if row.get("label") == "good"
+        )
+    except Exception:
+        owner_good = 0
+    owner_prio = 0 if owner_good else 1
+    return (1 if scanned else 0, fast_fail, owner_prio, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
 def _shooter_scan_max_sec() -> float:

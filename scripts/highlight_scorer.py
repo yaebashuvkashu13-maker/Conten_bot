@@ -106,6 +106,24 @@ def _owner_label_pad(label: str) -> float:
     return float(os.environ.get("HIGHLIGHT_SOFT_BAD_PAD_SEC", "60"))
 
 
+def _owner_bad_pad_for_vod(video_path: Path, profile: str) -> float:
+    """Scale bad-label exclusion on short VODs — 90s pad wipes entire 3–4 min fights."""
+    base = _owner_label_pad("bad")
+    try:
+        from smart_video_editor import ffprobe_duration
+
+        dur = float(ffprobe_duration(video_path) or 0.0)
+    except Exception:
+        dur = 0.0
+    if dur <= 0:
+        return base
+    if dur <= 240:
+        return min(base, max(10.0, dur * 0.14))
+    if dur <= 600:
+        return min(base, max(18.0, dur * 0.12))
+    return base
+
+
 def _labels_from_vod_segment_store(video_path: Path, profile: str) -> list[dict]:
     """Owner 👍/👎 on sent VOD clips — must block/rescore on next scan."""
     if normalize_profile(profile) != "mobile_legends":
@@ -252,7 +270,7 @@ def _filter_bad_label_starts(
     *,
     pad_sec: float | None = None,
 ) -> list[float]:
-    pad = pad_sec if pad_sec is not None else _owner_label_pad("bad")
+    pad = pad_sec if pad_sec is not None else _owner_bad_pad_for_vod(video_path, profile)
     kept: list[float] = []
     for start in starts:
         if segment_overlaps_owner_label(
