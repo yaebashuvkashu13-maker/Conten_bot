@@ -48,10 +48,8 @@ from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
     max_peak_tries,
-    minimal_pool_from_entry,
     peak_values_from_entry,
     peaks_from_pool,
-    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     scan_zero_detail,
@@ -264,6 +262,31 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
         return None
 
 
+def _validate_shooter_candidate_pre_render(game: str, vod: Path, row: dict) -> tuple[bool, str, dict]:
+    """Cheap pre-render validation to avoid wasting ffmpeg on obvious rejects."""
+    profile = _profile(game)
+    start = float(row.get("peak_start", row.get("start", 0)))
+    dur = float(row.get("duration") or 15.0)
+    if dur <= 0:
+        dur = 15.0
+    if game == "pubg":
+        from pubg_metro_royale_gate import segment_looks_metro_royale
+
+        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+        if not ok_metro:
+            return False, metro_reason, {"metro": metro_reason}
+    if game in EXTENDED_GAMES:
+        from strict_segment_gate import passes_strict_gate
+
+        ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
+        return ok, reason, metrics
+    scan_fast = os.environ.get("SHOOTER_VOD_COMBAT_FAST", "1") == "1"
+    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=scan_fast)
+    if not ok:
+        return False, reason, metrics
+    return True, "shooter_combat_ok", metrics
+
+
 def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     profile = _profile(game)
     start = float(row.get("peak_start", row.get("start", 0)))
@@ -314,6 +337,10 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     for row in to_send[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
+        pre_ok, pre_reason, _pre_report = _validate_shooter_candidate_pre_render(game, vod, row)
+        if not pre_ok:
+            log.warning("presend PRECHECK REJECT %s: %s", sid, pre_reason)
+            continue
         if not render_single_segment(vod, row["clip"], out):
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
@@ -380,6 +407,18 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
+def _shooter_scan_max_sec() -> float:
+    return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "600")))
+
+
+def _streak_skip_reason(entry: dict | None) -> bool:
+    """Fast rejects / infra failures — do not inflate adaptive soften streak."""
+    reason = str((entry or {}).get("reject_reason") or "")
+    return reason.startswith(
+        ("fast_panns", "fast_probe", "metro_vod", "metro_title", "metro_soften", "score_timeout", "scan_timeout")
+    )
+
+
 def _scan_vod(
     game: str,
     token: str,
@@ -389,6 +428,7 @@ def _scan_vod(
     *,
     soften_level: int = 0,
     entry: dict | None = None,
+    scan_deadline: float | None = None,
 ) -> int:
     profile = _profile(game)
     sig = file_sha256(vod)
@@ -415,15 +455,46 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
-    if entry and pool_cache_valid(entry):
-        pool = minimal_pool_from_entry(entry)
-        log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
-    else:
+    if scan_deadline and time.time() >= scan_deadline:
+        log.warning("vod scan timeout before highlight vod=%s", vod.name)
+        if entry is not None:
+            entry["reject_reason"] = "scan_timeout"
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
+        return 0
+
+    from highlight_scorer import clear_panns_score_cache
+
+    clear_panns_score_cache()
+    os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
+    try:
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+    finally:
+        os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     pool_peaks = peaks_from_pool(pool)
+    if entry is not None:
+        try:
+            from highlight_scorer import last_vod_diag
+
+            diag = last_vod_diag(vod)
+            if diag.get("pann_prefilter"):
+                entry["last_pann_prefilter"] = int(diag["pann_prefilter"])
+        except Exception:
+            pass
     if not pool:
         log.info("no candidates %s", vod.name)
         if entry is not None:
+            try:
+                from highlight_scorer import last_vod_diag
+
+                diag = last_vod_diag(vod)
+                if diag:
+                    entry["last_fail_reasons"] = diag
+                    if diag.get("pann_prefilter"):
+                        entry["last_pann_prefilter"] = int(diag["pann_prefilter"])
+                    if diag.get("timeouts"):
+                        entry["reject_reason"] = f"score_timeout:{diag.get('timeouts')}"
+            except Exception:
+                pass
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
         return 0
 
@@ -433,9 +504,16 @@ def _scan_vod(
     gate = _adaptive_gate(game)
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
+    panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
 
     while peak_tries < max_tries:
+        if scan_deadline and time.time() >= scan_deadline:
+            log.warning("vod scan timeout vod=%s tries=%s", vod.name, peak_tries)
+            if entry is not None:
+                entry["reject_reason"] = "scan_timeout"
+                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False)
+            return 0
         rows: list[dict] = []
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
@@ -445,7 +523,12 @@ def _scan_vod(
                 continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
-            if owner_exemplars and clip_score < min_clip:
+            panns_max = float(hm.get("panns_gun_max") or 0.0)
+            gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
+            combat_trust = panns_max >= panns_trust or gate_reason.startswith(
+                ("panns_trust", "combat_fast", "panns_trust_scan")
+            )
+            if owner_exemplars and clip_score < min_clip and not combat_trust:
                 continue
             start = max(0.0, peak - lead)
             sid = segment_id(vid, start)
@@ -485,10 +568,13 @@ def _scan_vod(
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
         if n > 0:
             if entry is not None:
+                entry["presend_reject_streak"] = 0
                 record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
+        if entry is not None:
+            entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
         log.warning(
             "presend rejected peak — try next (%s/%s) vod=%s game=%s",
             peak_tries,
@@ -497,6 +583,16 @@ def _scan_vod(
             game,
         )
     if entry is not None:
+        if int(entry.get("presend_reject_streak") or 0) >= max(
+            1,
+            int(
+                os.environ.get(
+                    "SHOOTER_VOD_PRESEND_EXHAUST_AFTER",
+                    os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2"),
+                )
+            ),
+        ):
+            entry.setdefault("reject_reason", "presend_exhausted")
         record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool)
     return 0
 
@@ -538,6 +634,7 @@ def _scan_vod_with_adaptive(
     active_level = 0
     sent = 0
     clear_fast_seeds = None
+    scan_deadline = time.time() + _shooter_scan_max_sec()
 
     if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
         from shooter_vod_fast_scan import (
@@ -641,14 +738,29 @@ def _scan_vod_with_adaptive(
                     level,
                     vod.name,
                 )
-            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
+            sent = _scan_vod(
+                game,
+                token,
+                chat_id,
+                vod,
+                env,
+                soften_level=level,
+                entry=entry,
+                scan_deadline=scan_deadline,
+            )
             if game == "pubg":
                 os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
     finally:
         if clear_fast_seeds is not None:
             clear_fast_seeds()
 
-    new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
+    entry = _vod_registry_entry(state, vod) or entry
+    new_streak = gate.record_vod_outcome(
+        state,
+        vod_id=vid,
+        sent=sent,
+        streak_skip=_streak_skip_reason(entry),
+    )
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
 

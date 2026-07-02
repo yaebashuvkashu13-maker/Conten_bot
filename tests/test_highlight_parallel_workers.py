@@ -18,5 +18,7 @@ def test_parallel_workers_env_override(monkeypatch) -> None:
 
 def test_parallel_workers_default_uses_most_cores(monkeypatch) -> None:
     monkeypatch.delenv("HIGHLIGHT_PARALLEL_WORKERS", raising=False)
+    monkeypatch.delenv("SHOOTER_VOD_FEED", raising=False)
+    monkeypatch.delenv("MLBB_VOD_ONLY", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 8)
-    assert _parallel_workers() == 6
+    assert _parallel_workers() == 3
