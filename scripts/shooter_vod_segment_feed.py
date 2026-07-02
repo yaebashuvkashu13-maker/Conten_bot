@@ -56,6 +56,16 @@ from vod_scan_state import (
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
+from shooter_vod_inbox import (
+    discovery_blocked as _inbox_discovery_blocked,
+    fast_probe_top as _fast_probe_top,
+    force_full_scan_backlog as _force_full_scan_backlog,
+    long_inbox_vods as _inbox_long_vods,
+    pending_inbox_work as _inbox_pending_work,
+    reopen_inbox_backlog as _inbox_reopen_backlog,
+    registry_entry as _registry_entry,
+    retryable_reject_reason as _retryable_reject_reason,
+)
 from vod_game_registry import VOD_PIPELINE_REV
 from youtube_download import load_env
 
@@ -383,6 +393,66 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
+def _inbox_ctx():
+    return {"min_sec": _vod_min_sec(), "duration_fn": _ffprobe_duration, "vod_id_fn": vod_youtube_id}
+
+
+def _long_inbox_vods(inbox: Path, registry: list[dict]) -> list[Path]:
+    ctx = _inbox_ctx()
+    return _inbox_long_vods(inbox, **ctx)
+
+
+def _pending_inbox_work(inbox: Path, registry: list[dict]) -> int:
+    return _inbox_pending_work(inbox, registry, **_inbox_ctx())
+
+
+def _discovery_blocked(inbox: Path, registry: list[dict]) -> bool:
+    return _inbox_discovery_blocked(inbox, registry, **_inbox_ctx())
+
+
+def _mark_short_inbox_exhausted(
+    game: str,
+    mp4: Path,
+    registry: list[dict],
+    state: dict,
+    *,
+    entry: dict | None,
+) -> None:
+    """Partial downloads clog the inbox loop — mark once and skip."""
+    if os.environ.get("SHOOTER_VOD_EXHAUST_SHORT", "1") != "1":
+        return
+    vid = vod_youtube_id(mp4)
+    row = entry or _registry_entry(registry, mp4) or {
+        "id": vid,
+        "path": str(mp4),
+        "title": "",
+        "exhausted": False,
+    }
+    if row.get("exhausted"):
+        return
+    dur = _ffprobe_duration(mp4)
+    row["reject_reason"] = f"partial_download={dur:.0f}s"
+    row["exhausted"] = True
+    if row not in registry:
+        registry.append(row)
+    state["vods"] = registry
+    _save_state(game, state)
+    log.info("exhaust short/partial vod=%s dur=%.0fs", mp4.name, dur)
+
+
+def _reopen_inbox_backlog(game: str, inbox: Path, registry: list[dict], state: dict) -> int:
+    reopened = _inbox_reopen_backlog(
+        registry,
+        inbox,
+        log_fn=lambda msg, name: log.info(msg, name),
+        **_inbox_ctx(),
+    )
+    if reopened:
+        state["vods"] = registry
+        _save_state(game, state)
+    return reopened
+
+
 def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     """Unscanned VODs first; Metro + Russian titles before others."""
     from pubg_metro_royale_gate import title_metro_hint
@@ -631,22 +701,38 @@ def _scan_vod_with_adaptive(
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
         if not ok_fast:
-            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = _vod_registry_entry(state, vod) or {
-                    "id": vid,
-                    "path": str(vod),
-                    "title": title,
-                    "exhausted": False,
-                }
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
-            _save_state(game, state)
-            if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
-                send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
-            return 0
-        apply_fast_probe_seeds(seed_peaks)
+            backlog = len(_long_inbox_vods(_paths(game)["inbox"], state.get("vods", [])))
+            weak = float(os.environ.get("SHOOTER_VOD_FAST_WEAK_PASS_MIN", "0.18"))
+            top = _fast_probe_top(fast_reason)
+            force_full = backlog >= _force_full_scan_backlog() or top >= weak
+            if force_full:
+                log.info(
+                    "fast-probe skip ignored — full scan vod=%s reason=%s backlog=%s top=%.3f",
+                    vod.name,
+                    fast_reason,
+                    backlog,
+                    top,
+                )
+                if seed_peaks:
+                    apply_fast_probe_seeds(seed_peaks)
+            else:
+                log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
+                if entry is None:
+                    entry = _vod_registry_entry(state, vod) or {
+                        "id": vid,
+                        "path": str(vod),
+                        "title": title,
+                        "exhausted": False,
+                    }
+                entry["reject_reason"] = fast_reason
+                entry["exhausted"] = True
+                record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+                _save_state(game, state)
+                if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
+                    send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
+                return 0
+        else:
+            apply_fast_probe_seeds(seed_peaks)
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
@@ -759,8 +845,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
+    _reopen_inbox_backlog(game, inbox, registry, state)
+
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
-        entry = next((r for r in registry if r.get("path") == str(mp4)), None)
+        entry = _registry_entry(registry, mp4)
         _maybe_reopen_wrong_fast_skip(game, entry, mp4)
         if entry and entry.get("exhausted"):
             continue
@@ -768,6 +856,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
+            _mark_short_inbox_exhausted(game, mp4, registry, state, entry=entry)
             continue
         if entry is None:
             entry = {
@@ -809,6 +898,19 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 )
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
+        return 0
+
+    pending = _pending_inbox_work(inbox, registry)
+    if _discovery_blocked(inbox, registry):
+        log.info(
+            "skip discovery — inbox backlog long=%s pending=%s game=%s",
+            len(_long_inbox_vods(inbox, registry)),
+            pending,
+            game,
+        )
+        print(
+            f"pipeline done sent=0 vods=0 game={game} inbox_backlog={pending}"
+        )
         return 0
 
     if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":
