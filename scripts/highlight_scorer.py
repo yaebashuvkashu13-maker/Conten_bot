@@ -1775,15 +1775,7 @@ def _accept_highlight_candidate(
         metrics.pass_reason,
     )
     if not metrics.rule_pass or not metrics.visual_pass:
-        if (
-            profile in SHOOTER_PROFILES
-            and metrics.rule_pass
-            and metrics.audio_pass
-            and str(metrics.pass_reason or "").startswith(("panns_trust", "combat_fast"))
-        ):
-            pass
-        else:
-            return False
+        return False
     if profile == "mobile_legends" and not owner_anchors_enabled():
         min_clip = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
         if start < _mlbb_skip_intro_sec() and metrics.clip_score < min_clip:
@@ -1805,7 +1797,7 @@ def _accept_highlight_candidate(
     ):
         hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
     trust_reason = str(metrics.pass_reason or "")
-    if profile in SHOOTER_PROFILES and trust_reason.startswith(("panns_trust", "combat_fast")):
+    if profile in SHOOTER_PROFILES and trust_reason.startswith("combat_fast"):
         hook_min = 0.0
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
@@ -2034,6 +2026,8 @@ def discover_highlight_candidates(
         trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
         gun_min = calibrated_pann_gun_min(video_path, profile)
         trust_starts = starts or stage1_starts
+        from pubg_combat_gate import pubg_combat_visual_fast
+
         for start in trust_starts:
             panns = score_panns_audio(video_path, start, WINDOW_SEC)
             if panns["panns_gun_max"] < trust:
@@ -2042,13 +2036,19 @@ def discover_highlight_candidates(
             if not audio_ok:
                 diag[audio_reason or "audio_fail"] = diag.get(audio_reason or "audio_fail", 0) + 1
                 continue
+            vis_ok, vis_reason, vis_row = pubg_combat_visual_fast(
+                video_path, start, WINDOW_SEC, profile
+            )
+            if not vis_ok:
+                diag[vis_reason or "visual_fail"] = diag.get(vis_reason or "visual_fail", 0) + 1
+                continue
             m = HighlightMetrics(
                 start=start,
                 duration=WINDOW_SEC,
                 profile=profile,
                 clip_score=0.0,
                 panns_gun_threshold=gun_min,
-                pass_reason=f"panns_trust_pool={panns['panns_gun_max']:.3f}",
+                pass_reason=f"combat_fast={panns['panns_gun_max']:.3f}",
                 audio_pass=True,
                 visual_pass=True,
                 rule_pass=True,
@@ -2070,12 +2070,13 @@ def discover_highlight_candidates(
                 }
             )
             log.info(
-                "highlight panns trust fallback %s start=%.1f gun=%.3f",
+                "highlight combat fallback %s start=%.1f gun=%.3f vis=%s",
                 video_path.name,
                 start,
                 m.panns_gun_max,
+                vis_reason,
             )
-            diag["panns_trust_fallback"] = 1
+            diag["combat_visual_fallback"] = 1
             if len(verified) >= limit:
                 break
 

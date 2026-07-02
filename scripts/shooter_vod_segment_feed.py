@@ -311,16 +311,21 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
-    clip = row.get("clip") or {}
-    hm = clip.get("highlight_metrics") or {}
-    gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
-    panns_max = float(hm.get("panns_gun_max") or 0)
-    trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
-    scan_fast = gate_reason.startswith(("panns_trust", "combat_fast", "panns_trust_scan")) and panns_max >= trust
-    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=scan_fast)
+    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=False)
     if not ok:
         return False, reason, metrics
-    return True, "shooter_combat_ok", metrics
+    from shooter_vod_presend_audit import audit_shooter_presend
+
+    audit_ok, audit_reason, audit_report = audit_shooter_presend(
+        game,
+        rendered,
+        source_vod=vod,
+        source_start=start,
+        profile=profile,
+    )
+    if not audit_ok:
+        return False, audit_reason, audit_report
+    return True, "shooter_combat_ok", {**(metrics or {}), **audit_report}
 
 
 def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:
@@ -510,7 +515,6 @@ def _scan_vod(
     gate = _adaptive_gate(game)
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
-    panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
 
     while peak_tries < max_tries:
@@ -531,9 +535,9 @@ def _scan_vod(
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
             panns_max = float(hm.get("panns_gun_max") or 0.0)
             gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
-            combat_trust = panns_max >= panns_trust or gate_reason.startswith(
-                ("panns_trust", "combat_fast", "panns_trust_scan")
-            )
+            combat_trust = panns_max >= float(
+                os.environ.get("PUBG_PANNS_POOL_MIN", "0.48")
+            ) and gate_reason.startswith("combat_fast")
             if owner_exemplars and clip_score < min_clip and not combat_trust:
                 continue
             start = max(0.0, peak - lead)

@@ -436,11 +436,6 @@ def pubg_passes_combat_gate(
     out["panns_gun_threshold"] = round(floor, 4)
 
     if scan_fast:
-        trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
-        if panns_gun >= trust:
-            out["visual_pass"] = True
-            out["pass"] = True
-            return True, f"panns_trust_scan={panns_gun:.3f}", out
         if panns_gun < floor:
             return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
         vis_ok, vis_reason, vis_row = pubg_combat_visual_fast(
@@ -450,8 +445,32 @@ def pubg_passes_combat_gate(
         out["visual_pass"] = vis_ok
         if not vis_ok:
             return False, vis_reason, out
+        shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
+            video_path, start_sec, duration_sec, panns_gun_max=panns_gun
+        )
+        out.update(shoot_row)
+        gun = float(shoot_row.get("gunfire_density", 0))
+        burst = float(shoot_row.get("burst_ratio", 0))
+        min_gun_pool = float(os.environ.get("PUBG_POOL_MIN_GUN_DENSITY", "0.028"))
+        min_burst_pool = float(os.environ.get("PUBG_POOL_MIN_BURST", "3.0"))
+        try:
+            from pubg_killfeed_ocr import score_killfeed_segment
+
+            kf_density, kf_row = score_killfeed_segment(
+                video_path, start_sec, duration_sec, profile
+            )
+            out["killfeed_density"] = round(kf_density, 4)
+            out.update({k: v for k, v in kf_row.items() if k not in out})
+        except Exception:
+            kf_density = 0.0
+        has_audio = gun >= min_gun_pool and burst >= min_burst_pool
+        has_killfeed = kf_density >= float(os.environ.get("PUBG_KILLFEED_POOL_MIN", "0.15"))
+        if not has_audio and not has_killfeed and panns_gun < float(
+            os.environ.get("PUBG_PANNS_POOL_MIN", "0.48")
+        ):
+            return False, f"pool_weak=gun{gun:.3f}:burst{burst:.1f}:kf{kf_density:.2f}", out
         out["pass"] = True
-        return True, f"combat_fast=gun{panns_gun:.3f}", out
+        return True, f"combat_fast=vis+gun{panns_gun:.3f}", out
 
     shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
         video_path, start_sec, duration_sec, panns_gun_max=panns_gun
@@ -492,6 +511,19 @@ def pubg_passes_combat_gate(
             )
             center_motion = max(center_motion, _motion)
         ocr_hits = int(getattr(metrics, "ocr_hits", 0) or 0) if metrics is not None else 0
+        try:
+            from pubg_killfeed_ocr import score_killfeed_segment
+
+            kf_density, kf_row = score_killfeed_segment(
+                video_path, start_sec, duration_sec, profile
+            )
+            out["killfeed_density"] = round(kf_density, 4)
+            out.update({k: v for k, v in kf_row.items() if k not in out})
+            if kf_density >= float(os.environ.get("PUBG_KILLFEED_BONUS_MIN", "0.30")):
+                out["killfeed_bonus"] = True
+                ocr_hits = max(ocr_hits, int(round(kf_density * 3)))
+        except Exception:
+            pass
         bot_reject, bot_reason, bot_row = pubg_rejects_bot_farm(
             video_path,
             start_sec,

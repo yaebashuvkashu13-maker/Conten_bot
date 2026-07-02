@@ -772,6 +772,10 @@ def send_video(
     try:
         sent = False
         send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1") == "1"
+        if game in ("pubg", "standoff", "genshin", "wot") and os.environ.get(
+            "SHOOTER_VOD_SEND_AS_VIDEO", "1"
+        ) == "1":
+            send_as_file = False
         if send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
             fname = f"{game.upper()}_{seg_id}.mp4"
             sent = send_hq_files(
