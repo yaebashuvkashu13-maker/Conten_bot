@@ -7,4 +7,5 @@ mlbb_vod_state_export/
 mlbb_vod_state_bundle_*.tar.gz
 data/highlight_exemplars/**/*.mp4
 /root/data/vod_analysis_cache/
+.ci_test_data/
 
