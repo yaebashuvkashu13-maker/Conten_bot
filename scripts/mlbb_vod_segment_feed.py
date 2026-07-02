@@ -785,6 +785,9 @@ def send_video(
             )
         elif deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
             sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
+            if not sent:
+                time.sleep(2.0)
+                sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
         elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
             log.warning(
                 "telegram sendVideo too large seg=%s bytes=%s — sendDocument fallback",
@@ -1718,7 +1721,13 @@ def _send_segment_batch(
                 send_blocked += 1
                 log.warning("send blocked seg=%s reason=%s", sid, one_reason)
                 continue
-            send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")
+            mb = out.stat().st_size / (1024 * 1024)
+            if mb > 20:
+                fail_note = f"(файл {mb:.0f}MB — не отправился, догоню позже)"
+            else:
+                fail_note = f"(ошибка Telegram при {mb:.0f}MB — догоню позже)"
+            send_message(token, chat_id, f"{caption}\n{fail_note}")
+            log.warning("telegram send failed seg=%s size_mb=%.1f", sid, mb)
             continue
         upsert_segment(
             {
