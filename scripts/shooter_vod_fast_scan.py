@@ -9,6 +9,20 @@ from pathlib import Path
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 
+def _owner_good_anchor_starts(video_path: Path, profile: str) -> list[float]:
+    try:
+        from vod_owner_learning import owner_labels_for_vod_scan
+
+        rows = owner_labels_for_vod_scan(video_path, profile)
+    except Exception:
+        return []
+    return [
+        float(row["time_sec"])
+        for row in rows
+        if row.get("label") == "good" and "time_sec" in row
+    ]
+
+
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
     dur = max(0.0, float(duration))
     if dur < skip_intro + 90:
@@ -36,6 +50,14 @@ def vod_fast_combat_check(
     if os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") != "1":
         return True, "fast_probe_disabled", []
 
+    owner_anchors = _owner_good_anchor_starts(video_path, profile)
+    if owner_anchors:
+        seeds = [
+            round(max(0.0, anchor - WINDOW_SEC * 0.5), 1)
+            for anchor in owner_anchors[:12]
+        ]
+        return True, f"fast_probe_owner_bypass labels={len(owner_anchors)}", seeds
+
     from smart_video_editor import ffprobe_duration
 
     dur = ffprobe_duration(video_path)
@@ -52,7 +74,7 @@ def vod_fast_combat_check(
     if not offsets:
         return False, "fast_probe_too_short", []
 
-    gun_min = float(os.environ.get("SHOOTER_VOD_FAST_PANN_MIN", "0.14"))
+    gun_min = float(os.environ.get("SHOOTER_VOD_FAST_PANN_MIN", "0.10"))
     hits: list[float] = []
     top_gun = 0.0
     for t in offsets:
