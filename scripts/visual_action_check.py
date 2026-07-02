@@ -33,6 +33,8 @@ def _norm_profile(profile: str) -> str:
 def _laplacian_edge_score(frame: np.ndarray, y0: float, y1: float, x0: float, x1: float) -> float:
     small = cv2.resize(frame, (320, 180))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    if not isinstance(gray, np.ndarray) or gray.size == 0 or gray.ndim < 2:
+        return 0.0
     h, w = gray.shape
     roi = gray[int(h * y0) : int(h * y1), int(w * x0) : int(w * x1)]
     if roi.size == 0:

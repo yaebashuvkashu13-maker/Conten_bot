@@ -7,8 +7,14 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# mlbb_vod_segment_feed pulls gameplay_gate → cv2
-sys.modules.setdefault("cv2", MagicMock())
+# mlbb_vod_segment_feed pulls gameplay_gate → cv2; stub only when cv2 is absent.
+try:
+    import cv2  # noqa: F401
+except ImportError:
+    import sys
+    from unittest.mock import MagicMock
+
+    sys.modules.setdefault("cv2", MagicMock())
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_adaptive_gate import peak_near_skipped  # noqa: E402

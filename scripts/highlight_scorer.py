@@ -289,10 +289,27 @@ def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> lis
     return starts
 
 
-def _rank_stage1_starts(analysis: dict, profile: str, starts: list[float]) -> list[float]:
+def _rank_stage1_starts(
+    analysis: dict,
+    profile: str,
+    starts: list[float],
+    *,
+    video_path: Path | None = None,
+) -> list[float]:
     """Score windows by local action — probe high-motion regions before chronological intro."""
     if not starts:
         return []
+    if profile == "mobile_legends" and os.environ.get("MLBB_TEAMFIGHT_RANK", "1") == "1":
+        try:
+            from mlbb_teamfight_detector import rank_starts_by_teamfight
+
+            return rank_starts_by_teamfight(
+                analysis,
+                starts,
+                video_path=video_path,
+            )
+        except Exception as exc:
+            log.warning("teamfight rank failed: %s", exc)
     win = float(analysis.get("window_seconds", 2.0))
     gun = np.asarray(analysis.get("gunfire", analysis["audio"]), dtype=np.float32)
     motion = np.asarray(analysis["center_motion"], dtype=np.float32)
@@ -1370,9 +1387,9 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         except Exception as exc:
             log.warning("intelliclip stage1 failed: %s", exc)
 
-    from smart_video_editor import analyze_video
+    from vod_analysis_cache import analyze_video_cached
 
-    analysis = analyze_video(video_path)
+    analysis = analyze_video_cached(video_path)
     if not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"):
         peak_limit = int(os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"))
         for peak_start in _action_peak_starts(analysis, profile, limit=peak_limit):
@@ -1424,7 +1441,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     if not starts and profile in SHOOTER_PROFILES:
         log.warning("highlight stage1 %s: no combat windows — refusing filler grid", video_path.name)
 
-    ranked = _rank_stage1_starts(analysis, profile, sorted(starts))
+    ranked = _rank_stage1_starts(analysis, profile, sorted(starts), video_path=video_path)
     if not ranked:
         ranked = sorted(starts)
     ranked = _filter_bad_label_starts(video_path, profile, ranked)

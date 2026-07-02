@@ -21,9 +21,6 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest numpy
+          python -m pip install pytest numpy opencv-python-headless yt-dlp pyyaml
       - name: Run tests
-        run: |
-          python -m pytest tests/ -q \
-            --ignore=tests/test_pubg_combat_gate.py \
-            --ignore=tests/test_content_bot_smoke.py
+        run: python -m pytest tests/ -q

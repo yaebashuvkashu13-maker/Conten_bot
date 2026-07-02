@@ -112,6 +112,8 @@ def _frame_hud_metrics(frame: np.ndarray) -> tuple[float, float, float]:
 def _band_overlay_text_score(frame: np.ndarray, y0: float, y1: float) -> float:
     small = cv2.resize(frame, (320, 180))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    if not isinstance(gray, np.ndarray) or gray.size == 0 or gray.ndim < 2:
+        return 0.0
     h, w = gray.shape
     band = gray[int(h * y0) : int(h * y1), int(w * 0.05) : int(w * 0.95)]
     if band.size == 0:

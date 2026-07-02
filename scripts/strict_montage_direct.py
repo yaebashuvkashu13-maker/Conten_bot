@@ -148,10 +148,11 @@ def discover_strict_candidates(
             cand["source_index"] = 0
         return verified
 
-    from smart_video_editor import profile_action_clip_bounds, analyze_video
+    from smart_video_editor import profile_action_clip_bounds
+    from vod_analysis_cache import analyze_video_cached
 
     log.info("legacy analyze %s profile=%s", vod.name, profile)
-    analysis = analyze_video(vod)
+    analysis = analyze_video_cached(vod)
     clip_lo, clip_hi = profile_action_clip_bounds(
         "world_of_tanks" if profile == "wot" else profile
     )
