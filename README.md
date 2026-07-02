@@ -1,5 +1,8 @@
 # Conten_bot
 
+> **Для AI-агентов и новых разработчиков:** вся архитектура, VPS, Telegram, Smart Edit, данные и типичные ошибки — в **[docs/AGENT_HANDBOOK.md](docs/AGENT_HANDBOOK.md)**.  
+> Прочитайте его перед работой; после этого не нужно заново объяснять проект устно.
+
 ## Instagram -> Telegram skeleton
 
 This repository now contains a minimal Python skeleton for pulling Instagram
@@ -43,6 +46,21 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
    ```bash
    python3 -m content_bot.main --config config.yaml
    ```
+
+### State, idempotency, and safety
+
+- `state_path` stores published Instagram `post_id` values — reposts are skipped.
+- State is written **atomically** (temp file + rename). A `.bak` copy is kept.
+- If JSON is corrupt, the bad file is renamed to `.corrupt.*` and `.bak` is restored when possible.
+- If Telegram publish succeeds but state save fails, IDs go to `.recovery.jsonl` and are merged on the next run (no duplicate send).
+- `config.yaml` and cookies are in `.gitignore` — **never commit bot tokens or session cookies**.
+- `dry_run: true` skips Telegram API calls; Instagram is still fetched (use sparingly).
+
+### Current limitations
+
+- Telegram: thumbnail via `sendPhoto` or text link — full Instagram Reels/video files are not uploaded yet.
+- Instagram carousels: first media item only.
+- Post order: after `reverse()`, **oldest entries publish first** (newest last in queue).
 
 ### Notes
 

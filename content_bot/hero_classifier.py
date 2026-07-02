@@ -45,11 +45,15 @@ def train_classifier(
     df = pd.DataFrame(rows)
     feature_columns = [col for col in df.columns if col not in {"path", "label"}]
 
+    stratify = df["label"]
+    if df["label"].value_counts().min() < 2:
+        stratify = None
+
     train_df, test_df = train_test_split(
         df,
         test_size=0.25,
         random_state=42,
-        stratify=df["label"],
+        stratify=stratify,
     )
 
     model = RandomForestClassifier(
@@ -89,8 +93,10 @@ def score_directory(model_dir: str | Path, input_dir: str | Path, output_csv: st
         df = pd.DataFrame([{col: row.get(col, 0.0) for col in feature_columns}])
         proba = model.predict_proba(df)[0]
         classes = list(model.classes_)
-        positive_index = classes.index("positive")
-        row["positive_probability"] = float(proba[positive_index])
+        if "positive" in classes:
+            row["positive_probability"] = float(proba[classes.index("positive")])
+        else:
+            row["positive_probability"] = float(max(proba))
         rows.append(row)
 
     if not rows:

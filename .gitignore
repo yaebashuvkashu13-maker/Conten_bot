@@ -3,4 +3,6 @@ __pycache__/
 .content-bot-state.json
 config.yaml
 datasets/
+mlbb_vod_state_export/
+mlbb_vod_state_bundle_*.tar.gz
 
