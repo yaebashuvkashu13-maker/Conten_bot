@@ -53,6 +53,15 @@
       {"tc": "2:54", "time_sec": 174, "label": "good", "source": "owner", "note": "calibration 2026-07-02"},
       {"tc": "3:16", "time_sec": 196, "label": "good", "source": "owner", "note": "calibration 2026-07-02"},
       {"tc": "3:24", "time_sec": 204, "label": "good", "source": "owner", "note": "calibration 2026-07-02"}
+    ],
+    "DloaOQODvpI": [
+      {"tc": "3:53", "time_sec": 233, "label": "good", "source": "owner", "note": "calibration 2026-07-02"},
+      {"tc": "7:18", "time_sec": 438, "label": "good", "source": "owner", "note": "calibration 2026-07-02"},
+      {"tc": "8:45", "time_sec": 525, "label": "good", "source": "owner", "note": "calibration 2026-07-02"},
+      {"tc": "53:20", "time_sec": 3200, "label": "good", "source": "owner", "note": "calibration 2026-07-02"}
+    ],
+    "wXENaikudvc": [
+      {"tc": "2:33", "time_sec": 153, "label": "good", "source": "owner", "note": "calibration 2026-07-02 anchor-only"}
     ]
   }
 }

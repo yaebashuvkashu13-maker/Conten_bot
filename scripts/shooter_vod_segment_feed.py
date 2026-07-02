@@ -235,7 +235,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if dur <= 0 or not _vod_length_ok(Path("x.mp4"), dur):
                 continue
             out.append(
                 {
@@ -421,6 +421,19 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
 
 def _shooter_scan_max_sec() -> float:
     return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "600")))
+
+
+def _reject_vod_length(vod: Path, entry: dict | None, *, mark_exhausted: bool = True) -> str | None:
+    """Return reject reason when VOD is outside 3–20 min window."""
+    dur = _ffprobe_duration(vod)
+    if _vod_length_ok(vod, dur):
+        return None
+    reason = f"vod_length={dur:.0f}s"
+    if entry is not None:
+        entry["reject_reason"] = reason
+        if mark_exhausted:
+            entry["exhausted"] = True
+    return reason
 
 
 def _streak_skip_reason(entry: dict | None) -> bool:
@@ -817,7 +830,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        length_reason = _reject_vod_length(mp4, entry)
+        if length_reason:
+            log.warning("skip inbox vod=%s reason=%s", mp4.name, length_reason)
+            _save_state(game, state)
             continue
         if entry is None:
             entry = {
@@ -879,6 +895,37 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     vod = _download_vod(game, pick, env)
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
+        return 0
+
+    length_reason = _reject_vod_length(vod, None, mark_exhausted=False)
+    if length_reason:
+        log.warning(
+            "length reject vod=%s title=%s reason=%s",
+            pick.get("id"),
+            pick.get("title", ""),
+            length_reason,
+        )
+        if os.environ.get("SHOOTER_VOD_LENGTH_REJECT_NOTIFY", "1") == "1":
+            send_message(
+                token,
+                chat_id,
+                f"⏭ Пропускаю VOD — неподходящая длина ({length_reason}): "
+                f"{pick.get('title', pick.get('id'))[:80]}",
+            )
+        registry.append(
+            {
+                "id": pick["id"],
+                "path": str(vod),
+                "title": pick.get("title", ""),
+                "exhausted": True,
+                "reject_reason": length_reason,
+            }
+        )
+        used.add(pick["id"])
+        state["vods"] = registry
+        state["used_youtube_ids"] = sorted(used)
+        _save_state(game, state)
+        print(f"pipeline done sent=0 vods=1 game={game} length_reject=1")
         return 0
 
     if game == "pubg":
