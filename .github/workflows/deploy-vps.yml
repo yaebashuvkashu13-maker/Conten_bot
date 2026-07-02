@@ -1,0 +1,66 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - cursor/vod-pipeline-base-6cbd
+      - cursor/vod-production-ready-d7dd
+      - cursor/mlbb-video-pipeline-e712
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve VPS host
+        id: vps
+        run: |
+          host=""
+          if [ -n "${{ secrets.VPS_HOST }}" ]; then
+            host="${{ secrets.VPS_HOST }}"
+          elif [ -n "${{ secrets.SSH_HOST }}" ]; then
+            host="${{ secrets.SSH_HOST }}"
+          fi
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          if [ -z "$host" ]; then
+            echo "::error::Set VPS_HOST or SSH_HOST in repository secrets"
+            exit 1
+          fi
+
+      - name: Resolve VPS SSH key
+        id: sshkey
+        run: |
+          if [ -n "${{ secrets.VPS_SSH_KEY }}" ]; then
+            echo "has_key=1" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "has_key=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Set VPS_SSH_KEY or SSH_PRIVATE_KEY in repository secrets"
+            exit 1
+          fi
+
+      - name: Deploy scripts and restart bot
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ steps.vps.outputs.host }}
+          username: ${{ secrets.VPS_USER || secrets.SSH_USER || 'root' }}
+          key: ${{ secrets.VPS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -Eeuo pipefail
+            REPO="${{ secrets.VPS_REPO_PATH || '/root/content_bot_ml' }}"
+            cd "$REPO"
+            git fetch origin
+            git checkout cursor/vod-production-ready-d7dd || git checkout cursor/vod-pipeline-base-6cbd || git checkout main
+            git pull --ff-only origin cursor/vod-production-ready-d7dd \
+              || git pull --ff-only origin cursor/vod-pipeline-base-6cbd \
+              || git pull --ff-only
+            VPS_BRANCH=cursor/vod-production-ready-d7dd bash scripts/vps_apply_vod_only.sh
+            echo "=== MLBB VOD-only deploy done ==="
+            grep -m1 BOT_VERSION /usr/local/bin/telegram_upload_bot.py || true
+            pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot' || true
+            tail -8 /root/data/mlbb/mlbb_vod_segment_feed.log 2>/dev/null || true

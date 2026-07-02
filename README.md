@@ -1,5 +1,30 @@
 # Conten_bot
 
+> **Для AI-агентов и новых разработчиков:** вся архитектура, VPS, Telegram, Smart Edit, данные и типичные ошибки — в **[docs/AGENT_HANDBOOK.md](docs/AGENT_HANDBOOK.md)**.  
+> VOD pipeline (MLBB / PUBG / multi-game): **[docs/MLBB_VOD_PIPELINE.md](docs/MLBB_VOD_PIPELINE.md)**  
+> Env-шаблон: **[config/video_bot.env.example](config/video_bot.env.example)**
+
+## VOD pipeline (production)
+
+Автоматическая нарезка teamfight/combat клипов из YouTube VOD → Telegram.
+
+| Компонент | Путь |
+|-----------|------|
+| MLBB feed | `scripts/mlbb_vod_segment_feed.py` |
+| PUBG / Standoff / Genshin / WoT | `scripts/shooter_vod_segment_feed.py` + `scripts/daily_cycle_runner.py` |
+| Highlight scoring | `scripts/highlight_scorer.py` |
+| Env (VPS) | `/root/.video_bot.env` |
+| State I/O | `scripts/vod_state_io.py` (atomic JSON + `.bak`) |
+| Deploy | `bash scripts/install_mlbb_vod_only.sh` после `git pull` |
+
+**Актуальная ветка:** `cursor/vod-pipeline-base-6cbd` / `cursor/stability-hardening-d7dd`
+
+```bash
+python3 -m pytest tests/ -q
+```
+
+---
+
 ## Instagram -> Telegram skeleton
 
 This repository now contains a minimal Python skeleton for pulling Instagram
@@ -43,6 +68,21 @@ posts via `yt-dlp` and publishing them into a Telegram channel.
    ```bash
    python3 -m content_bot.main --config config.yaml
    ```
+
+### State, idempotency, and safety
+
+- `state_path` stores published Instagram `post_id` values — reposts are skipped.
+- State is written **atomically** (temp file + rename). A `.bak` copy is kept.
+- If JSON is corrupt, the bad file is renamed to `.corrupt.*` and `.bak` is restored when possible.
+- If Telegram publish succeeds but state save fails, IDs go to `.recovery.jsonl` and are merged on the next run (no duplicate send).
+- `config.yaml` and cookies are in `.gitignore` — **never commit bot tokens or session cookies**.
+- `dry_run: true` skips Telegram API calls; Instagram is still fetched (use sparingly).
+
+### Current limitations
+
+- Telegram: thumbnail via `sendPhoto` or text link — full Instagram Reels/video files are not uploaded yet.
+- Instagram carousels: first media item only.
+- Post order: after `reverse()`, **oldest entries publish first** (newest last in queue).
 
 ### Notes
 
