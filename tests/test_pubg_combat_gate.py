@@ -98,6 +98,26 @@ def test_bot_farm_passes_with_killfeed() -> None:
     assert reason == ""
 
 
+def test_combat_gate_scan_fast_panns_trust(monkeypatch) -> None:
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.28")
+    with patch(
+        "pubg_combat_gate.pubg_passes_shooting_gate",
+        return_value=(True, "panns_trust=0.40", {"gunfire_density": 0.02, "burst_ratio": 2.0}),
+    ), patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={"panns_gun_max": 0.40},
+    ), patch(
+        "highlight_scorer.calibrated_pann_gun_min",
+        return_value=0.18,
+    ):
+        ok, reason, row = pubg_passes_combat_gate(
+            Path("x.mp4"), 100.0, 10.0, "pubg", scan_fast=True
+        )
+    assert ok is True
+    assert reason.startswith("panns_trust_scan")
+    assert row.get("visual_pass") is True
+
+
 def test_combat_gate_rejects_bot_farm_for_pubg() -> None:
     patches = _combat_gate_patches()
     with patches[0], patches[1], patches[2], patches[3], patches[4], patch(

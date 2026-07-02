@@ -114,6 +114,41 @@ def pubg_combat_visual_strict(
     }
 
 
+def pubg_combat_visual_fast(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Single mid-frame visual for highlight pool build (avoids 3x decode stalls)."""
+    profile = _norm_profile(profile)
+    if profile not in COMBAT_PROFILES:
+        return False, "not_combat_profile", {}
+
+    mid = start_sec + max(duration_sec, 0.5) * 0.5
+    frame = _read_frame_at(video_path, mid)
+    if frame is None:
+        return False, "frame_missing", {"frames_passed": 0, "frames_required": 1}
+
+    ok, reason, fmetrics = check_frame_visual(profile, frame)
+    flash = float(fmetrics.get("hit_flash", 0))
+    weapon = float(fmetrics.get("weapon_edge", 0))
+    min_flash = float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", "0.004"))
+    min_weapon = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025"))
+    if ok or flash >= min_flash or weapon >= min_weapon:
+        return True, "combat_visual_fast", {
+            "frames_passed": 1 if ok else 0,
+            "best_hit_flash": flash,
+            "best_weapon_edge": weapon,
+            "frames": [{"label": "mid", "pass": ok, "reason": reason}],
+        }
+    return False, f"no_combat_signal flash={flash:.4f} weapon={weapon:.4f}", {
+        "frames_passed": 0,
+        "best_hit_flash": flash,
+        "best_weapon_edge": weapon,
+    }
+
+
 def _gunfire_spike_indices(pcm: np.ndarray, *, frame: int = 256) -> list[int]:
     if pcm.size < frame * 4:
         return []
@@ -361,6 +396,7 @@ def pubg_passes_combat_gate(
     profile: str,
     *,
     metrics: Any | None = None,
+    scan_fast: bool = False,
 ) -> tuple[bool, str, dict[str, Any]]:
     """
     PASS only if ALL:
@@ -369,6 +405,9 @@ def pubg_passes_combat_gate(
     3. visual 3/3 + hit_flash/weapon_edge on >=1 frame
     4. NOT segment_looks_like_pubg_loot_or_walk
     5. PUBG only: NOT bot farm / training / one-sided PvE spray
+
+    scan_fast=True: highlight pool build only — trust strong PANNs, 1-frame visual,
+    skip loot/bot/POV (presend re-validates strictly).
     """
     profile = _norm_profile(profile)
     if profile not in COMBAT_PROFILES:
@@ -404,6 +443,22 @@ def pubg_passes_combat_gate(
     out["panns_gun_threshold"] = round(floor, 4)
     if panns_gun < floor:
         return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
+
+    if scan_fast:
+        trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        if panns_gun >= trust:
+            out["visual_pass"] = True
+            out["pass"] = True
+            return True, f"panns_trust_scan={panns_gun:.3f}", out
+        vis_ok, vis_reason, vis_row = pubg_combat_visual_fast(
+            video_path, start_sec, duration_sec, profile
+        )
+        out["combat_visual"] = vis_row
+        out["visual_pass"] = vis_ok
+        if not vis_ok:
+            return False, vis_reason, out
+        out["pass"] = True
+        return True, f"combat_fast=gun{panns_gun:.3f}", out
 
     vis_ok, vis_reason, vis_row = pubg_combat_visual_strict(
         video_path, start_sec, duration_sec, profile

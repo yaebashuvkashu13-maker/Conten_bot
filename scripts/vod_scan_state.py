@@ -36,11 +36,28 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
 
 
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted when no peaks left, scan blocked, or repeated presend rejects."""
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
+        reason = str(entry.get("reject_reason") or "")
+        pann_n = int(entry.get("last_pann_prefilter") or 0)
+        if pann_n > 0 and reason.startswith("score_timeout"):
+            return False
+        return True
+    presend_limit = max(
+        1,
+        int(
+            os.environ.get(
+                "SHOOTER_VOD_PRESEND_EXHAUST_AFTER",
+                os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2"),
+            )
+        ),
+    )
+    if int(entry.get("presend_reject_streak") or 0) >= presend_limit:
+        return True
+    if str(entry.get("reject_reason") or "") in {"scan_timeout", "presend_exhausted"}:
         return True
     return False
 
@@ -86,6 +103,10 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     age = time.time() - last
     if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
         return True
+    if int(entry.get("presend_reject_streak") or 0) > 0 and age < scan_cooldown_sec(game):
+        return True
+    if str(entry.get("reject_reason") or "") == "scan_timeout" and age < scan_cooldown_sec(game):
+        return True
     return False
 
 
@@ -96,9 +117,19 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
     if entry.get("last_scan_blocked"):
         return "все пики заняты или отправлены"
     peaks = entry.get("last_pool_peaks")
-    if peaks is not None and len(peaks) == 0:
-        return "нет боёв в VOD (highlight/panns pool=0)"
+    pann_n = int(entry.get("last_pann_prefilter") or 0)
     reason = str(entry.get("reject_reason") or "").strip()
+    if peaks is not None and len(peaks) == 0:
+        if pann_n > 0 and reason.startswith("score_timeout"):
+            n = reason.split(":")[-1] if ":" in reason else "?"
+            return f"panns={pann_n} окон, скоринг timeout×{n} (не «нет боёв»)"
+        if pann_n > 0:
+            fails = entry.get("last_fail_reasons") or {}
+            if fails:
+                top = ", ".join(f"{k}:{v}" for k, v in list(fails.items())[:3])
+                return f"panns={pann_n}, pool=0 ({top})"
+            return f"panns={pann_n} окон, combat gate не прошёл"
+        return "нет боёв в VOD (highlight/panns pool=0)"
     if reason:
         return reason[:140]
     if peaks:
@@ -192,11 +223,17 @@ def record_vod_scan(
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
-    elif pool_peaks:
-        entry["last_pool_peaks"] = [
-            {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
-            for p in pool_peaks[:24]
-        ]
+    elif pool_peaks is not None:
+        if pool_peaks:
+            if isinstance(pool_peaks[0], dict):
+                entry["last_pool_peaks"] = normalize_pool_peak_rows(pool_peaks[:24])
+            else:
+                entry["last_pool_peaks"] = [
+                    {"peak_sec": round(float(p), 1), "score": 0.0, "blocked_reason": ""}
+                    for p in pool_peaks[:24]
+                ]
+        else:
+            entry["last_pool_peaks"] = []
         entry["last_pool_at"] = time.time()
     if analysis_cache_key:
         entry["last_analysis_cache_key"] = analysis_cache_key

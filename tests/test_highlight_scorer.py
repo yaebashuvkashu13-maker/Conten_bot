@@ -16,9 +16,11 @@ from highlight_scorer import (  # noqa: E402
     _owner_anchor_starts,
     audio_passes_shooter,
     calibrated_pann_gun_min,
+    clear_panns_score_cache,
     owner_anchors_enabled,
     rule_gate,
     score_panns_audio,
+    stage1_panns_prefilter,
     stage1_candidates,
 )
 
@@ -110,6 +112,24 @@ def test_score_panns_audio_mock() -> None:
     assert out["panns_gun_max"] >= 0.31
 
 
+def test_stage1_panns_prefilter_expands_probe_when_empty(monkeypatch, tmp_path: Path) -> None:
+    vod = tmp_path / "yt_probe.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("SHOOTER_VOD_MAX_PANN_PROBE", "24")
+    monkeypatch.setenv("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12")
+    starts = [float(i * 10) for i in range(40)]
+    calls = {"n": 0}
+
+    def _panns(_path, _start, _dur):
+        calls["n"] += 1
+        return {"panns_gun_max": 0.05 if calls["n"] <= 16 else 0.20}
+
+    monkeypatch.setattr("highlight_scorer.score_panns_audio", _panns)
+    monkeypatch.setattr("highlight_scorer._parallel_workers", lambda: 1)
+    kept = stage1_panns_prefilter(vod, starts, "pubg")
+    assert kept
+
+
 def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> None:
     pytest.importorskip("cv2")
     labels = tmp_path / "labels.json"
@@ -138,3 +158,33 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     starts = stage1_candidates(vod, "pubg")
     assert 510.0 not in starts
     assert not owner_anchors_enabled()
+
+
+def test_panns_score_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clear_panns_score_cache()
+    vod = tmp_path / "yt_cache.mp4"
+    vod.write_bytes(b"x")
+    calls = {"n": 0}
+
+    def _fake_extract(_path, _start, _dur):
+        calls["n"] += 1
+        return __import__("numpy").zeros(32000, dtype="float32")
+
+    monkeypatch.setattr("highlight_scorer._extract_audio_32k", _fake_extract)
+    monkeypatch.setattr(
+        "highlight_scorer._panns_tagger",
+        lambda: type(
+            "T",
+            (),
+            {
+                "inference": lambda self, a: (
+                    [__import__("numpy").full(527, 0.05)],
+                    None,
+                )
+            },
+        )(),
+    )
+    a = score_panns_audio(vod, 120.0, 10.0)
+    b = score_panns_audio(vod, 120.0, 10.0)
+    assert a["panns_gun_max"] == b["panns_gun_max"]
+    assert calls["n"] == 1
