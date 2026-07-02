@@ -1554,6 +1554,11 @@ def preload_highlight_models() -> None:
 
 def _parallel_workers() -> int:
     """CPU workers for parallel PANNs/CLIP window scoring (one thread per core)."""
+    if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
+        raw = (os.environ.get("HIGHLIGHT_PARALLEL_WORKERS") or "").strip()
+        if raw:
+            return max(1, int(raw))
+        return 1
     if os.environ.get("MLBB_VOD_ONLY", "0") == "1" and os.environ.get("MLBB_VOD_PARALLEL_SCORE", "0") != "1":
         return 1
     raw = (os.environ.get("HIGHLIGHT_PARALLEL_WORKERS") or "").strip()
@@ -1707,7 +1712,10 @@ def _evaluate_highlight_start(
                 return start, m
             from pubg_combat_gate import pubg_passes_combat_gate
 
-            ok, reason, report = pubg_passes_combat_gate(video_path, start, WINDOW_SEC, profile)
+            scan_fast = os.environ.get("SHOOTER_VOD_COMBAT_FAST", "1") == "1"
+            ok, reason, report = pubg_passes_combat_gate(
+                video_path, start, WINDOW_SEC, profile, scan_fast=scan_fast
+            )
             m = HighlightMetrics(
                 start=start,
                 duration=WINDOW_SEC,
@@ -1767,7 +1775,15 @@ def _accept_highlight_candidate(
         metrics.pass_reason,
     )
     if not metrics.rule_pass or not metrics.visual_pass:
-        return False
+        if (
+            profile in SHOOTER_PROFILES
+            and metrics.rule_pass
+            and metrics.audio_pass
+            and str(metrics.pass_reason or "").startswith(("panns_trust", "combat_fast"))
+        ):
+            pass
+        else:
+            return False
     if profile == "mobile_legends" and not owner_anchors_enabled():
         min_clip = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
         if start < _mlbb_skip_intro_sec() and metrics.clip_score < min_clip:
@@ -1788,6 +1804,9 @@ def _accept_highlight_candidate(
         and metrics.visual_pass
     ):
         hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+    trust_reason = str(metrics.pass_reason or "")
+    if profile in SHOOTER_PROFILES and trust_reason.startswith(("panns_trust", "combat_fast")):
+        hook_min = 0.0
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
@@ -1874,6 +1893,8 @@ def discover_highlight_candidates(
                     )
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
+    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+    _LAST_VOD_DIAG[vid] = {"pann_prefilter": len(starts)}
 
     pending = [
         start
@@ -1947,6 +1968,7 @@ def discover_highlight_candidates(
                     try:
                         row = fut.result(timeout=_window_score_timeout_sec())
                     except TimeoutError:
+                        diag["timeouts"] = diag.get("timeouts", 0) + 1
                         log.warning(
                             "highlight parallel score timeout start=%s sec=%.0f",
                             futures.get(fut),
@@ -1961,6 +1983,7 @@ def discover_highlight_candidates(
                         )
                         continue
                     if row is None:
+                        diag["timeouts"] = diag.get("timeouts", 0) + 1
                         continue
                     start, metrics = row
                     if _consume(start, metrics) and len(verified) >= limit:
@@ -2006,6 +2029,55 @@ def discover_highlight_candidates(
                 )
                 break
 
+    if not verified and profile in SHOOTER_PROFILES and starts:
+        trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        had_timeouts = int(diag.get("timeouts", 0)) > 0
+        if had_timeouts or int(diag.get("timeout_cluster_skips", 0)) > 0:
+            gun_min = calibrated_pann_gun_min(video_path, profile)
+            for start in starts:
+                panns = score_panns_audio(video_path, start, WINDOW_SEC)
+                if panns["panns_gun_max"] < trust:
+                    continue
+                audio_ok, audio_reason = audio_passes_shooter(panns, gun_min=gun_min)
+                if not audio_ok:
+                    diag[audio_reason or "audio_fail"] = diag.get(audio_reason or "audio_fail", 0) + 1
+                    continue
+                m = HighlightMetrics(
+                    start=start,
+                    duration=WINDOW_SEC,
+                    profile=profile,
+                    clip_score=0.0,
+                    panns_gun_threshold=gun_min,
+                    pass_reason=f"panns_trust_pool={panns['panns_gun_max']:.3f}",
+                    audio_pass=True,
+                    visual_pass=True,
+                    rule_pass=True,
+                    **{k: float(v) for k, v in panns.items()},
+                )
+                verified.append(
+                    {
+                        "source_path": str(video_path),
+                        "game_name": GAME_LABELS.get(profile, profile),
+                        "start": round(start, 3),
+                        "input_duration": WINDOW_SEC,
+                        "output_duration": WINDOW_SEC,
+                        "speed": 1.0,
+                        "score": m.panns_gun_max,
+                        "strict_score": m.panns_gun_max,
+                        "highlight_metrics": m.to_dict(),
+                        "gate_reason": m.pass_reason,
+                        "strict_metrics": m.to_dict(),
+                    }
+                )
+                log.info(
+                    "highlight panns trust fallback %s start=%.1f gun=%.3f",
+                    video_path.name,
+                    start,
+                    m.panns_gun_max,
+                )
+                diag["panns_trust_fallback"] = 1
+                break
+
     verified.sort(
         key=lambda c: (
             (c.get("highlight_metrics") or {}).get("viral_score", 0),
@@ -2014,8 +2086,9 @@ def discover_highlight_candidates(
         reverse=True,
     )
     log.info("highlight pool %s: %s passed", video_path.name, len(verified))
-    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
-    _LAST_VOD_DIAG[vid] = {k: int(v) for k, v in diag.items() if int(v) > 0}
+    prev = _LAST_VOD_DIAG.get(vid, {})
+    prev.update({k: int(v) for k, v in diag.items() if int(v) > 0})
+    _LAST_VOD_DIAG[vid] = prev
     return verified
 
 

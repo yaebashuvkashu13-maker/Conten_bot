@@ -41,6 +41,10 @@ def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
         return True
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
+        reason = str(entry.get("reject_reason") or "")
+        pann_n = int(entry.get("last_pann_prefilter") or 0)
+        if pann_n > 0 and reason.startswith("score_timeout"):
+            return False
         return True
     presend_limit = max(
         1,
@@ -110,9 +114,19 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
     if entry.get("last_scan_blocked"):
         return "все пики заняты или отправлены"
     peaks = entry.get("last_pool_peaks")
-    if peaks is not None and len(peaks) == 0:
-        return "нет боёв в VOD (highlight/panns pool=0)"
+    pann_n = int(entry.get("last_pann_prefilter") or 0)
     reason = str(entry.get("reject_reason") or "").strip()
+    if peaks is not None and len(peaks) == 0:
+        if pann_n > 0 and reason.startswith("score_timeout"):
+            n = reason.split(":")[-1] if ":" in reason else "?"
+            return f"panns={pann_n} окон, скоринг timeout×{n} (не «нет боёв»)"
+        if pann_n > 0:
+            fails = entry.get("last_fail_reasons") or {}
+            if fails:
+                top = ", ".join(f"{k}:{v}" for k, v in list(fails.items())[:3])
+                return f"panns={pann_n}, pool=0 ({top})"
+            return f"panns={pann_n} окон, combat gate не прошёл"
+        return "нет боёв в VOD (highlight/panns pool=0)"
     if reason:
         return reason[:140]
     if peaks:

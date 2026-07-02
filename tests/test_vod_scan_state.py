@@ -36,6 +36,25 @@ def test_scan_zero_detail() -> None:
     assert scan_zero_detail({"last_pool_peaks": [120.0], "last_scan_blocked": False}) == (
         "presend отклонил пики (pool=1)"
     )
+    assert "не «нет боёв»" in scan_zero_detail(
+        {
+            "last_pool_peaks": [],
+            "last_pann_prefilter": 3,
+            "reject_reason": "score_timeout:2",
+        }
+    )
+    assert "panns=2" in scan_zero_detail(
+        {"last_pool_peaks": [], "last_pann_prefilter": 2, "reject_reason": "combat_gate_fail"}
+    )
+
+
+def test_should_not_exhaust_on_score_timeout_with_panns() -> None:
+    entry = {
+        "last_pool_peaks": [],
+        "last_pann_prefilter": 3,
+        "reject_reason": "score_timeout:2",
+    }
+    assert should_mark_vod_exhausted(entry) is False
 
 
 def test_strict_peak_tries_defaults() -> None:

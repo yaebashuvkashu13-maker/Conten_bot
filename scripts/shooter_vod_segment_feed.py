@@ -403,10 +403,10 @@ def _shooter_scan_max_sec() -> float:
 
 
 def _streak_skip_reason(entry: dict | None) -> bool:
-    """Fast rejects are bad VOD picks — do not inflate adaptive soften streak."""
+    """Fast rejects / infra failures — do not inflate adaptive soften streak."""
     reason = str((entry or {}).get("reject_reason") or "")
     return reason.startswith(
-        ("fast_panns", "fast_probe", "metro_vod", "metro_title", "metro_soften")
+        ("fast_panns", "fast_probe", "metro_vod", "metro_title", "metro_soften", "score_timeout", "scan_timeout")
     )
 
 
@@ -462,6 +462,15 @@ def _scan_vod(
     finally:
         os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     pool_peaks = peaks_from_pool(pool)
+    if entry is not None:
+        try:
+            from highlight_scorer import last_vod_diag
+
+            diag = last_vod_diag(vod)
+            if diag.get("pann_prefilter"):
+                entry["last_pann_prefilter"] = int(diag["pann_prefilter"])
+        except Exception:
+            pass
     if not pool:
         log.info("no candidates %s", vod.name)
         if entry is not None:
@@ -471,6 +480,8 @@ def _scan_vod(
                 diag = last_vod_diag(vod)
                 if diag:
                     entry["last_fail_reasons"] = diag
+                    if diag.get("pann_prefilter"):
+                        entry["last_pann_prefilter"] = int(diag["pann_prefilter"])
                     if diag.get("timeouts"):
                         entry["reject_reason"] = f"score_timeout:{diag.get('timeouts')}"
             except Exception:
@@ -782,8 +793,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if n == 0:
             entry = _vod_registry_entry(state, mp4) or entry
             if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
+                pann_n = int(entry.get("last_pann_prefilter") or 0)
                 if not entry.get("last_pool_peaks"):
-                    entry.setdefault("reject_reason", "no_combat_peaks")
+                    if pann_n > 0:
+                        entry.setdefault("reject_reason", "combat_gate_fail")
+                    else:
+                        entry.setdefault("reject_reason", "no_combat_peaks")
                 else:
                     entry.setdefault("reject_reason", "all_peaks_blocked")
                 entry["exhausted"] = True
