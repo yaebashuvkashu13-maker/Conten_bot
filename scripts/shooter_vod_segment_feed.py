@@ -438,6 +438,16 @@ def _scan_vod(
     if not pool:
         log.info("no candidates %s", vod.name)
         if entry is not None:
+            try:
+                from highlight_scorer import last_vod_diag
+
+                diag = last_vod_diag(vod)
+                if diag:
+                    entry["last_fail_reasons"] = diag
+                    if diag.get("timeouts"):
+                        entry["reject_reason"] = f"score_timeout:{diag.get('timeouts')}"
+            except Exception:
+                pass
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
         return 0
 

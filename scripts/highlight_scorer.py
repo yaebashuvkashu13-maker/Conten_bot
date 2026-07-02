@@ -25,6 +25,15 @@ from vod_stage_timeout import stage_timeout_sec
 
 log = logging.getLogger("highlight_scorer")
 
+# Per-VOD diagnostics for shooter feeds (why we returned 0 passed).
+_LAST_VOD_DIAG: dict[str, dict[str, int]] = {}
+
+
+def last_vod_diag(video_path: Path) -> dict[str, int]:
+    """Return last computed diagnostics for this VOD (best effort)."""
+    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+    return dict(_LAST_VOD_DIAG.get(vid, {}))
+
 _PANNS_INIT_LOCK = __import__("threading").Lock()
 
 def _repo_root() -> Path:
@@ -1556,6 +1565,8 @@ def _parallel_workers() -> int:
 
 def _window_score_timeout_sec() -> float:
     """Per-window wall-clock budget for PANNs+CLIP scoring."""
+    if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
+        return max(15.0, float(os.environ.get("SHOOTER_VOD_WINDOW_TIMEOUT_SEC", "45")))
     return max(30.0, float(os.environ.get("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", "120")))
 
 
@@ -1675,6 +1686,55 @@ def _evaluate_highlight_start(
     start: float,
     profile: str,
 ) -> tuple[float, HighlightMetrics] | None:
+    profile = normalize_profile(profile)
+    # Shooter: combat-only scoring path avoids CLIP hangs; presend uses same gate.
+    if profile in SHOOTER_PROFILES and os.environ.get("SHOOTER_VOD_COMBAT_ONLY", "1") == "1":
+        try:
+            panns = score_panns_audio(video_path, start, WINDOW_SEC)
+            gun_min = calibrated_pann_gun_min(video_path, profile)
+            audio_ok, audio_reason = audio_passes_shooter(panns, gun_min=gun_min)
+            if not audio_ok:
+                m = HighlightMetrics(
+                    start=start,
+                    duration=WINDOW_SEC,
+                    profile=profile,
+                    clip_score=0.0,
+                    panns_gun_threshold=gun_min,
+                    pass_reason=audio_reason,
+                    audio_pass=False,
+                    rule_pass=False,
+                )
+                return start, m
+            from pubg_combat_gate import pubg_passes_combat_gate
+
+            ok, reason, report = pubg_passes_combat_gate(video_path, start, WINDOW_SEC, profile)
+            m = HighlightMetrics(
+                start=start,
+                duration=WINDOW_SEC,
+                profile=profile,
+                clip_score=0.0,
+                panns_gun_threshold=gun_min,
+                pass_reason=reason,
+                audio_pass=True,
+                visual_pass=bool(report.get("visual_pass", ok)),
+                rule_pass=bool(ok),
+                center_motion=float(report.get("peak_motion", 0.0) or 0.0),
+                minimap_delta=float(report.get("peak_mini_delta", 0.0) or 0.0),
+                skill_delta=float(report.get("peak_skill_delta", 0.0) or 0.0),
+                **{k: float(v) for k, v in panns.items()},
+            )
+            return start, m
+        except Exception as exc:
+            m = HighlightMetrics(
+                start=start,
+                duration=WINDOW_SEC,
+                profile=profile,
+                clip_score=0.0,
+                pass_reason=f"combat_exc:{str(exc)[:80]}",
+                rule_pass=False,
+            )
+            return start, m
+
     metrics = score_candidate_window(video_path, start, WINDOW_SEC, profile)
     try:
         from viral_scorer import trim_segment_start
@@ -1840,9 +1900,11 @@ def discover_highlight_candidates(
         preload_highlight_models()
 
     verified: list[dict] = []
+    diag: dict[str, int] = {"timeouts": 0}
 
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
+            diag[metrics.pass_reason or "reject"] = diag.get(metrics.pass_reason or "reject", 0) + 1
             return False
         verified.append(
             {
@@ -1918,14 +1980,22 @@ def discover_highlight_candidates(
                 )
     else:
         win_timeout = _window_score_timeout_sec()
+        last_timeout_at: float | None = None
         for start in pending:
             if len(verified) >= limit:
                 break
+            if last_timeout_at is not None and abs(start - last_timeout_at) <= 20:
+                # Avoid burning time on clusters when decode/score hangs.
+                diag["timeout_cluster_skips"] = diag.get("timeout_cluster_skips", 0) + 1
+                continue
             row = _evaluate_highlight_start_timed(
                 video_path, start, profile, timeout_sec=win_timeout
             )
             if row is None:
+                diag["timeouts"] = diag.get("timeouts", 0) + 1
+                last_timeout_at = start
                 continue
+            last_timeout_at = None
             start, metrics = row
             if _consume(start, metrics) and len(verified) >= limit:
                 break
@@ -1944,6 +2014,8 @@ def discover_highlight_candidates(
         reverse=True,
     )
     log.info("highlight pool %s: %s passed", video_path.name, len(verified))
+    vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+    _LAST_VOD_DIAG[vid] = {k: int(v) for k, v in diag.items() if int(v) > 0}
     return verified
 
 
