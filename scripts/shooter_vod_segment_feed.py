@@ -289,6 +289,29 @@ def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:
     return used_peak_times_shooter(vod_id, sent_set, load_index(game).get("segments", []))
 
 
+def _validate_shooter_candidate_pre_render(game: str, vod: Path, row: dict) -> tuple[bool, str, dict]:
+    """Cheap pre-render validation to avoid wasting ffmpeg on obvious rejects."""
+    profile = _profile(game)
+    start = float(row.get("peak_start", row.get("start", 0)))
+    dur = float(row.get("duration") or 15.0)
+    if dur <= 0:
+        dur = 15.0
+    if game == "pubg":
+        from pubg_metro_royale_gate import segment_looks_metro_royale
+
+        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+        if not ok_metro:
+            return False, metro_reason, {"metro": metro_reason}
+    if game in EXTENDED_GAMES:
+        from strict_segment_gate import passes_strict_gate
+
+        ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
+        return ok, reason, metrics
+    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
+    if not ok:
+        return False, reason, metrics
+    return True, "shooter_combat_ok", metrics
+
 def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> bool:
     return peak_too_close(peak, used_peaks, gap_sec)
 
@@ -305,6 +328,10 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     for row in to_send[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
+        pre_ok, pre_reason, _pre_report = _validate_shooter_candidate_pre_render(game, vod, row)
+        if not pre_ok:
+            log.warning("presend PRECHECK REJECT %s: %s", sid, pre_reason)
+            continue
         if not render_single_segment(vod, row["clip"], out):
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
