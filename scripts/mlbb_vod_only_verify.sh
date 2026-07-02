@@ -128,7 +128,7 @@ if [[ -f "$LOG" ]]; then
 fi
 
 echo "===== VOD-only verify $(date -Is) ====="
-echo "vod_feed_pids=${vod_pids[*]}"
+echo "vod_feed_pids=${vod_pids[*]:-} cycle_pids=${cycle_pids[*]:-} supervisor=${supervisor_pids[*]:-}"
 echo "load: $(uptime | sed 's/.*load average: //')"
 grep -E '^MLBB_VOD_ONLY=|^MLBB_VOD_DISABLED=|^MLBB_CALIBRATION_FEED_ENABLED=' "$ENV_FILE" || true
 
