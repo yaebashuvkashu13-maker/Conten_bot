@@ -431,18 +431,9 @@ def pubg_passes_combat_gate(
         panns_gun = float(panns.get("panns_gun_max", 0))
         panns_thr = calibrated_pann_gun_min(video_path, profile)
 
-    shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
-        video_path, start_sec, duration_sec, panns_gun_max=panns_gun
-    )
-    out.update(shoot_row)
-    if not shoot_ok:
-        return False, shoot_reason, out
-
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
     out["panns_gun_max"] = round(panns_gun, 4)
+    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
     out["panns_gun_threshold"] = round(floor, 4)
-    if panns_gun < floor:
-        return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
 
     if scan_fast:
         trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
@@ -450,6 +441,8 @@ def pubg_passes_combat_gate(
             out["visual_pass"] = True
             out["pass"] = True
             return True, f"panns_trust_scan={panns_gun:.3f}", out
+        if panns_gun < floor:
+            return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
         vis_ok, vis_reason, vis_row = pubg_combat_visual_fast(
             video_path, start_sec, duration_sec, profile
         )
@@ -459,6 +452,16 @@ def pubg_passes_combat_gate(
             return False, vis_reason, out
         out["pass"] = True
         return True, f"combat_fast=gun{panns_gun:.3f}", out
+
+    shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
+        video_path, start_sec, duration_sec, panns_gun_max=panns_gun
+    )
+    out.update(shoot_row)
+    if not shoot_ok:
+        return False, shoot_reason, out
+
+    if panns_gun < floor:
+        return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
 
     vis_ok, vis_reason, vis_row = pubg_combat_visual_strict(
         video_path, start_sec, duration_sec, profile

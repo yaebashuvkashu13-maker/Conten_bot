@@ -311,7 +311,13 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
-    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
+    clip = row.get("clip") or {}
+    hm = clip.get("highlight_metrics") or {}
+    gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
+    panns_max = float(hm.get("panns_gun_max") or 0)
+    trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    scan_fast = gate_reason.startswith(("panns_trust", "combat_fast", "panns_trust_scan")) and panns_max >= trust
+    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=scan_fast)
     if not ok:
         return False, reason, metrics
     return True, "shooter_combat_ok", metrics

@@ -1891,6 +1891,7 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
+    stage1_starts = list(starts)
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
     vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
@@ -2029,10 +2030,11 @@ def discover_highlight_candidates(
                 )
                 break
 
-    if not verified and profile in SHOOTER_PROFILES and starts:
+    if not verified and profile in SHOOTER_PROFILES and (starts or stage1_starts):
         trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
         gun_min = calibrated_pann_gun_min(video_path, profile)
-        for start in starts:
+        trust_starts = starts or stage1_starts
+        for start in trust_starts:
             panns = score_panns_audio(video_path, start, WINDOW_SEC)
             if panns["panns_gun_max"] < trust:
                 continue
