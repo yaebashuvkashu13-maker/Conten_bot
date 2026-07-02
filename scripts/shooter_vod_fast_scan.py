@@ -64,6 +64,11 @@ def vod_fast_combat_check(
     if dur <= 0:
         return False, "fast_probe_no_duration", []
 
+    if os.environ.get("SHOOTER_VOD_FULL_PASS", "1") == "1":
+        max_full = float(os.environ.get("SHOOTER_VOD_FULL_PASS_MAX_SEC", "1200"))
+        if dur <= max_full:
+            return True, f"fast_probe_full_pass dur={dur:.0f}s", []
+
     skip = float(
         os.environ.get(
             "PUBG_METRO_VOD_SKIP_INTRO_SEC",

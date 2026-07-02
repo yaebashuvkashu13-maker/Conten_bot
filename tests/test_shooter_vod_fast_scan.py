@@ -26,6 +26,7 @@ def _mock_smart_video_editor(duration: float) -> MagicMock:
 
 def test_fast_probe_skips_when_no_gun_hits(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FULL_PASS", "0")
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
     sve = _mock_smart_video_editor(1200.0)
@@ -69,6 +70,19 @@ def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
     ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
     assert ok is True
     assert reason == "fast_probe_disabled"
+    assert peaks == []
+
+
+def test_fast_probe_full_pass_short_vod(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FULL_PASS", "1")
+    vod = tmp_path / "yt_short.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(600.0)
+    with patch.dict(sys.modules, {"smart_video_editor": sve}):
+        ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is True
+    assert reason.startswith("fast_probe_full_pass")
     assert peaks == []
 
 

@@ -984,10 +984,12 @@ def main() -> int:
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
+    os.environ.setdefault("SHOOTER_VOD_FULL_PASS", "1")
+    os.environ.setdefault("SHOOTER_VOD_STAGE1_FAST", "0")
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
-    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
+    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "48")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
@@ -1000,6 +1002,8 @@ def main() -> int:
     for key in (
         "SHOOTER_VOD_FEED",
         "SHOOTER_VOD_FAST_PROBE",
+        "SHOOTER_VOD_FULL_PASS",
+        "SHOOTER_VOD_STAGE1_FAST",
         "SHOOTER_VOD_PREFER_RUSSIAN",
         "SHOOTER_VOD_SKIP_INTELLICLIP",
         "SHOOTER_VOD_MAX_PANN_PROBE",

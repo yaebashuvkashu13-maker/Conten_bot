@@ -1387,6 +1387,32 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                 seed_count,
             )
 
+    # Shooter short VOD: one decode pass + dense gunfire curve (faster than sparse PANNs probes).
+    if profile in SHOOTER_PROFILES:
+        try:
+            from shooter_vod_full_pass import stage1_shooter_full_pass
+
+            full_pass = stage1_shooter_full_pass(video_path, profile)
+            if full_pass:
+                for start in full_pass:
+                    starts.add(start)
+                seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+                if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
+                    for part in seed_raw.split(","):
+                        part = part.strip()
+                        if not part:
+                            continue
+                        try:
+                            s = round(float(part), 1)
+                            if s >= 0:
+                                starts.add(s)
+                        except ValueError:
+                            pass
+                ranked = sorted(starts)[:max_stage1]
+                return _filter_bad_label_starts(video_path, profile, ranked)
+        except Exception as exc:
+            log.warning("shooter full-pass stage1 failed: %s", exc)
+
     # Shooter: avoid expensive full-video analyze on long / broken streams.
     # Build a sparse stage1 grid (plus any seeds) and rely on PANNs prefilter.
     if profile in SHOOTER_PROFILES and os.environ.get("SHOOTER_VOD_STAGE1_FAST", "1") == "1":
