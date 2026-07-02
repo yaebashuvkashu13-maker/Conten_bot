@@ -120,6 +120,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   SHOOTER_VOD_SEGMENT_GAP_SEC=45 PUBG_METRO_GATE=1 \
   SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_PREFER_RUSSIAN=1 SHOOTER_VOD_SKIP_INTELLICLIP=1 \
   SHOOTER_VOD_STAGE1_FAST=1 SHOOTER_VOD_COMBAT_FAST=1 SHOOTER_VOD_COMBAT_ONLY=1 \
+  PUBG_VOD_PEAK_LAG_SEC=10 STANDOFF_VOD_PEAK_LAG_SEC=6 \
   SHOOTER_VOD_SEND_AS_VIDEO=1 SHOOTER_VOD_PRESEND_AUDIT=1 \
   PUBG_PRESEND_MIN_GUN_DENSITY=0.040 PUBG_PRESEND_MIN_BURST=3.5 PUBG_KILLFEED_PRESEND_MIN=0.15 \
   PUBG_POOL_MIN_GUN_DENSITY=0.028 PUBG_KILLFEED_POOL_MIN=0.15 \
@@ -175,6 +176,8 @@ install -m 755 \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/shooter_vod_fast_scan.py" \
   "$REPO/scripts/shooter_vod_presend_audit.py" \
+  "$REPO/scripts/shooter_vod_timing.py" \
+  "$REPO/scripts/shooter_vod_redo_segments.py" \
   "$REPO/scripts/mlbb_vod_fast_scan.py" \
   "$REPO/scripts/genshin_vod_fast_scan.py" \
   "$REPO/scripts/wot_vod_fast_scan.py" \

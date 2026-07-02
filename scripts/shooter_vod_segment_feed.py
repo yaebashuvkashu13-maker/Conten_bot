@@ -44,7 +44,7 @@ from shooter_vod_segment_store import (
     vod_youtube_id,
     _paths,
 )
-from strict_montage_direct import discover_strict_candidates, file_sha256
+from shooter_vod_timing import window_times
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
     max_peak_tries,
@@ -540,7 +540,7 @@ def _scan_vod(
             ) and gate_reason.startswith("combat_fast")
             if owner_exemplars and clip_score < min_clip and not combat_trust:
                 continue
-            start = max(0.0, peak - lead)
+            start, peak_eff, _dur = window_times(game, peak)
             sid = segment_id(vid, start)
             if sid in blocked_ids:
                 continue
@@ -548,9 +548,9 @@ def _scan_vod(
                 {
                     "segment_id": sid,
                     "start": start,
-                    "peak_start": peak,
+                    "peak_start": peak_eff,
                     "score": float(clip.get("score", 0)),
-                    "clip": {**clip, "start": start, "peak_start": peak},
+                    "clip": {**clip, "start": start, "peak_start": peak_eff},
                 }
             )
         if not rows:
