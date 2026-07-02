@@ -762,7 +762,7 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
-        if is_good:
+        if is_good and os.environ.get('SHOOTER_VOD_AUTO_HQ_ON_YES', '0') == '1':
             hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
             if not hq_ok:
                 send_message(
