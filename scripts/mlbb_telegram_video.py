@@ -46,8 +46,8 @@ def compress_for_inline_video(
     audio_bps = audio_k * 1000
     video_bps = max(180_000, int(target_bits / duration) - audio_bps)
 
-    heights = [int(x) for x in os.environ.get("MLBB_TG_SCALE_HEIGHTS", "720,540,480,360").split(",") if x.strip()]
-    crf_steps = [x.strip() for x in os.environ.get("MLBB_TG_CRF_STEPS", "26,28,30,32,34,36,38").split(",") if x.strip()]
+    heights = [int(x) for x in os.environ.get("MLBB_TG_SCALE_HEIGHTS", "720,540,480,360,320").split(",") if x.strip()]
+    crf_steps = [x.strip() for x in os.environ.get("MLBB_TG_CRF_STEPS", "26,28,30,32,34,36,38,40,42").split(",") if x.strip()]
 
     for height in heights:
         scale = f"scale=-2:{height}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"

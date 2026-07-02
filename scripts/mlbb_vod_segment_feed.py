@@ -798,8 +798,30 @@ def send_video(
                 f"{caption}\n(файл — документ, >20MB inline)",
                 reply_markup=markup,
             )
-        else:
-            log.warning("telegram too large seg=%s bytes=%s", seg_id, deliver.stat().st_size)
+            if not sent and deliver != path and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+                sent = send_document_file(
+                    token,
+                    chat_id,
+                    path,
+                    f"{caption}\n(файл — документ, оригинал)",
+                    reply_markup=markup,
+                )
+        if not sent:
+            log.warning(
+                "telegram HQ split fallback seg=%s bytes=%s",
+                seg_id,
+                path.stat().st_size,
+            )
+            sent = send_hq_files(
+                token,
+                chat_id,
+                path,
+                f"{caption}\n📁 файл",
+                reply_markup=markup,
+                filename=f"{game.upper()}_{seg_id}.mp4",
+            )
+        if not sent:
+            log.warning("telegram too large seg=%s bytes=%s", seg_id, path.stat().st_size)
             return False
 
         if sent:

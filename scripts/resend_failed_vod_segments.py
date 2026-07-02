@@ -71,7 +71,16 @@ def _send_segment(
         f"{caption}\n📎 файл (догоняющая отправка)",
         reply_markup=markup,
       )
-    return False
+    from mlbb_telegram_video import send_hq_files
+
+    return send_hq_files(
+      token,
+      chat_id,
+      path,
+      f"{caption}\n📁 файл (догоняющая отправка)",
+      reply_markup=markup,
+      filename=f"{sid}.mp4",
+    )
   finally:
     if is_temp:
       deliver.unlink(missing_ok=True)
