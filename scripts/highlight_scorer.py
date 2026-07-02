@@ -1587,10 +1587,8 @@ def _pann_probe_limit(profile: str) -> int:
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
-    max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
     if profile not in SHOOTER_PROFILES:
-        return starts
+        return starts[: _pann_probe_limit(profile)]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1598,18 +1596,34 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
         return start if panns["panns_gun_max"] >= pre_min else None
 
+    # Shooter: If first probe batch finds no gun windows, expand to additional
+    # stage1 windows (up to SHOOTER_VOD_MAX_PANN_PROBE). This avoids false
+    # "pool=0" on long VODs where fights are later than early stage1 picks.
+    max_probe = _pann_probe_limit(profile)
+    probe_cap = max(
+        max_probe,
+        int(os.environ.get("SHOOTER_VOD_MAX_PANN_PROBE", str(max_probe))),
+    )
+    probe_cap = min(probe_cap, max(8, len(starts)))
+
     kept: list[float] = []
-    if workers > 1 and len(starts) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for hit in pool.map(_probe, starts):
+    probed = 0
+    while probed < min(probe_cap, len(starts)) and not kept:
+        batch = starts[probed : min(len(starts), probed + max_probe)]
+        if not batch:
+            break
+        if workers > 1 and len(batch) > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for hit in pool.map(_probe, batch):
+                    if hit is not None:
+                        kept.append(hit)
+            kept.sort()
+        else:
+            for start in batch:
+                hit = _probe(start)
                 if hit is not None:
                     kept.append(hit)
-        kept.sort()
-    else:
-        for start in starts:
-            hit = _probe(start)
-            if hit is not None:
-                kept.append(hit)
+        probed += len(batch)
     if not kept and profile in OWNER_LABEL_PROFILES and _owner_anchor_starts(video_path, profile):
         kept = _owner_vicinity_gun_starts(video_path, profile)
         if kept:
@@ -1619,7 +1633,13 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
                 len(kept),
             )
     if not kept:
-        log.warning("highlight panns prefilter %s: 0/%s passed min=%.3f", video_path.name, len(starts), pre_min)
+        log.warning(
+            "highlight panns prefilter %s: 0/%s passed min=%.3f probed=%s",
+            video_path.name,
+            min(len(starts), probe_cap),
+            pre_min,
+            probed,
+        )
     return kept
 
 
