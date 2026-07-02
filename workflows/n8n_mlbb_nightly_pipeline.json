@@ -1,0 +1,185 @@
+{
+  "name": "MLBB Night → Morning → Publish",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 1 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-night",
+      "name": "01:30 Night Start",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://{{ $env.VPS_HOST }}:8787/trigger/nightly-youtube",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-night",
+      "name": "Trigger VPS Nightly",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-morning",
+      "name": "09:00 Morning",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 280]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://{{ $env.VPS_HOST }}:8787/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        }
+      },
+      "id": "http-status",
+      "name": "VPS Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.youtube_nightly.ok }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-ok",
+      "name": "Montage OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 280]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://{{ $env.VPS_HOST }}:8787/latest-montage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        }
+      },
+      "id": "http-montage",
+      "name": "Get Montage Path",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "content": "## Подключите сюда:\n- TikTok (Upload-Post / Buffer)\n- YouTube Shorts (OAuth)\n- Instagram Reels\n\nВход: {{ $json.montage.path }}"
+      },
+      "id": "note-publish",
+      "name": "Publish TikTok YT IG",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [880, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://{{ $env.VPS_HOST }}:8787/trigger/morning-plan",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        }
+      },
+      "id": "http-plan",
+      "name": "Morning Plan Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 360]
+    }
+  ],
+  "connections": {
+    "01:30 Night Start": {
+      "main": [[{ "node": "Trigger VPS Nightly", "type": "main", "index": 0 }]]
+    },
+    "09:00 Morning": {
+      "main": [
+        [
+          { "node": "VPS Status", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "VPS Status": {
+      "main": [
+        [
+          { "node": "Montage OK?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Montage OK?": {
+      "main": [
+        [
+          { "node": "Get Montage Path", "type": "main", "index": 0 },
+          { "node": "Morning Plan Telegram", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Morning Plan Telegram", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
