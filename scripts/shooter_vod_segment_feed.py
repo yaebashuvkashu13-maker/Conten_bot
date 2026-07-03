@@ -457,6 +457,63 @@ def _streak_skip_reason(entry: dict | None) -> bool:
     )
 
 
+def _owner_label_pool_clips(
+    vod: Path,
+    game: str,
+    vid: str,
+    *,
+    blocked_ids: set[str],
+    used_peaks: list[float],
+    seg_gap: float,
+) -> list[dict]:
+    """Exact owner calibration timestamps — cut at user labels, not shifted detector peaks."""
+    if game != "pubg" or os.environ.get("SHOOTER_VOD_OWNER_LABEL_CUTS", "1") != "1":
+        return []
+    try:
+        from pubg_owner_calibration import has_owner_labels, labels_for_video
+    except ImportError:
+        return []
+    if not has_owner_labels(vod):
+        return []
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    out: list[dict] = []
+    for row in sorted(labels_for_video(vod), key=lambda r: float(r.get("time_sec", 0))):
+        if row.get("label") != "good":
+            continue
+        peak = float(row["time_sec"])
+        if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
+            continue
+        if _peak_too_close(peak, used_peaks, seg_gap):
+            continue
+        start = max(0.0, peak - lead)
+        if segment_id(vid, start) in blocked_ids:
+            continue
+        out.append(
+            {
+                "start": peak,
+                "peak_start": peak,
+                "score": 1.0,
+                "hook_score": 0.0,
+                "gate_reason": "owner_label_cut",
+                "owner_label_cut": True,
+            }
+        )
+    return out
+
+
+def _merge_owner_label_pool(pool: list[dict], owner_pool: list[dict]) -> list[dict]:
+    if not owner_pool:
+        return pool
+    anchor_peaks = [round(float(c["start"]), 0) for c in owner_pool]
+    merged = list(owner_pool)
+    for clip in pool:
+        peak = round(float(clip.get("start", 0)), 0)
+        if any(abs(peak - ap) < 8 for ap in anchor_peaks):
+            continue
+        merged.append(clip)
+    return merged
+
+
 def _scan_vod(
     game: str,
     token: str,
@@ -512,6 +569,22 @@ def _scan_vod(
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
     finally:
         os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
+    owner_pool = _owner_label_pool_clips(
+        vod,
+        game,
+        vid,
+        blocked_ids=blocked_ids,
+        used_peaks=used_peaks,
+        seg_gap=seg_gap,
+    )
+    if owner_pool:
+        pool = _merge_owner_label_pool(pool, owner_pool)
+        log.info(
+            "owner label cuts %s: %s anchors first (detector pool=%s)",
+            vod.name,
+            len(owner_pool),
+            len(pool),
+        )
     pool_peaks = peaks_from_pool(pool)
     if entry is not None:
         try:
@@ -586,7 +659,12 @@ def _scan_vod(
             if sid in blocked_ids:
                 continue
             clip_row = apply_fight_bounds_to_clip(
-                {**clip, "start": start, "peak_start": peak},
+                {
+                    **clip,
+                    "start": start,
+                    "peak_start": peak,
+                    "owner_label_cut": bool(clip.get("owner_label_cut")),
+                },
                 vod,
             )
             clip_start = float(clip_row["start"])
