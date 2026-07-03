@@ -88,7 +88,11 @@ def pool_peaks_fully_blocked(
 def peaks_near_sent_reason(entry: dict[str, Any] | None) -> bool:
     if not entry:
         return False
-    return str(entry.get("reject_reason") or "").startswith("peaks_near_sent")
+    reason = str(entry.get("reject_reason") or "")
+    if not reason.startswith("peaks_near_sent"):
+        return False
+    sent = entry.get("last_sent_peaks") or []
+    return bool(sent)
 
 
 def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> bool:
@@ -120,6 +124,10 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
     if reason.startswith("peaks_near_sent"):
         sent = entry.get("last_sent_peaks") or []
         return f"пики рядом с уже отправленными (sent={sent})"
+    if reason == "presend_reject":
+        return "presend отклонил все пики в пуле"
+    if reason.startswith("pool_filtered"):
+        return "пул есть, но все пики отфильтрованы (gap/presend)"
     if reason:
         return reason[:140]
     if peaks:
