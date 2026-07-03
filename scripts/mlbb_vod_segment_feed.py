@@ -1643,12 +1643,8 @@ def _send_segment_batch(
             f"👍 Ок / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
-            ok_one, one_reason = can_send(1)
-            if not ok_one:
-                send_blocked += 1
-                log.warning("send blocked seg=%s reason=%s", sid, one_reason)
-                continue
-            send_message(token, chat_id, f"{caption}\n(файл >50MB — не отправился)")
+            send_blocked += 1
+            log.warning("send failed seg=%s (cycle or telegram)", sid)
             continue
         upsert_segment(
             {
