@@ -1554,6 +1554,12 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     if not ranked:
         ranked = sorted(starts)
     ranked = _filter_bad_label_starts(video_path, profile, ranked)
+    try:
+        from vod_scan_state import filter_starts_outside_sent
+
+        ranked = filter_starts_outside_sent(ranked)
+    except ImportError:
+        pass
     return ranked[:max_stage1]
 
 
@@ -1941,6 +1947,12 @@ def discover_highlight_candidates(
                     )
     stage1_starts = list(starts)
     starts = stage1_panns_prefilter(video_path, starts, profile)
+    try:
+        from vod_scan_state import filter_starts_outside_sent
+
+        starts = filter_starts_outside_sent(starts)
+    except ImportError:
+        pass
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
     vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
     _LAST_VOD_DIAG[vid] = {"pann_prefilter": len(starts)}

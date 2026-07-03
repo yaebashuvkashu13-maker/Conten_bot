@@ -53,6 +53,8 @@ from vod_scan_state import (
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
+    peaks_near_sent_reason,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_fight_interval,
     record_vod_scan,
@@ -589,9 +591,20 @@ def _scan_vod(
     exclude_env = exclude_intervals_env(sent_intervals)
     if exclude_env:
         os.environ["HIGHLIGHT_EXCLUDE_INTERVALS"] = exclude_env
-        log.info("exclude sent fight windows vod=%s intervals=%s", vod.name, exclude_env[:80])
+        max_hi = max(hi for _, hi in sent_intervals)
+        os.environ["SHOOTER_VOD_MIN_PROBE_START"] = str(max(0.0, max_hi + 4.0))
+        if entry is not None and pool_cache_valid(entry):
+            entry.pop("last_pool_peaks", None)
+            entry.pop("last_pool_at", None)
+        log.info(
+            "exclude sent fight windows vod=%s intervals=%s min_probe=%.0f",
+            vod.name,
+            exclude_env[:80],
+            float(os.environ["SHOOTER_VOD_MIN_PROBE_START"]),
+        )
     else:
         os.environ.pop("HIGHLIGHT_EXCLUDE_INTERVALS", None)
+        os.environ.pop("SHOOTER_VOD_MIN_PROBE_START", None)
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -1037,6 +1050,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
             continue
+        if entry and peaks_near_sent_reason(entry):
+            partial_at = float(entry.get("partial_scan_at") or entry.get("last_scan_at") or 0)
+            if partial_at > 0 and (time.time() - partial_at) < 1800:
+                log.info("skip partial vod (try others first) vod=%s", mp4.name)
+                continue
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
@@ -1066,21 +1084,29 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         state["vods"] = registry
-        if n == 0:
-            entry = _vod_registry_entry(state, mp4) or entry
-            if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
-                if not entry.get("last_pool_peaks"):
-                    entry.setdefault("reject_reason", "no_combat_peaks")
-                else:
-                    entry.setdefault("reject_reason", "all_peaks_blocked")
-                entry["exhausted"] = True
-                log.info(
-                    "exhausted vod=%s reason=%s",
-                    mp4.name,
-                    entry.get("reject_reason"),
-                )
+        if n > 0:
+            _save_state(game, state)
+            print(f"pipeline done sent={n} vods=1 game={game}")
+            return 0
+        entry = _vod_registry_entry(state, mp4) or entry
+        if entry and peaks_near_sent_reason(entry):
+            entry["partial_scan_at"] = time.time()
+            log.info("partial vod — try next inbox vod=%s sent_peaks=%s", mp4.name, entry.get("last_sent_peaks"))
+            _save_state(game, state)
+            continue
+        if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
+            if not entry.get("last_pool_peaks"):
+                entry.setdefault("reject_reason", "no_combat_peaks")
+            else:
+                entry.setdefault("reject_reason", "all_peaks_blocked")
+            entry["exhausted"] = True
+            log.info(
+                "exhausted vod=%s reason=%s",
+                mp4.name,
+                entry.get("reject_reason"),
+            )
         _save_state(game, state)
-        print(f"pipeline done sent={n} vods=1 game={game}")
+        print(f"pipeline done sent=0 vods=1 game={game}")
         return 0
 
     if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":

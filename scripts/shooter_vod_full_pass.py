@@ -65,6 +65,14 @@ def _dense_gunfire_starts(analysis: dict, duration: float) -> list[float]:
     if combined.size == 0:
         return []
     skip = shooter_skip_intro_sec(duration)
+    min_start = 0.0
+    try:
+        from vod_scan_state import min_probe_start_sec
+
+        min_start = min_probe_start_sec()
+    except ImportError:
+        pass
+    skip = max(skip, min_start)
     step = float(os.environ.get("SHOOTER_VOD_FULL_PASS_STEP_SEC", "2"))
     tail_pad = float(os.environ.get("SHOOTER_VOD_FULL_PASS_TAIL_PAD_SEC", "5"))
     pctl = float(os.environ.get("SHOOTER_VOD_FULL_PASS_GUN_PCTL", "68"))

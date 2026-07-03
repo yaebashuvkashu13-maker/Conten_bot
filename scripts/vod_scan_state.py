@@ -37,6 +37,16 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
     return strict_peak_tries(game)
 
 
+def min_probe_start_sec() -> float:
+    raw = (os.environ.get("SHOOTER_VOD_MIN_PROBE_START") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
     """Mark exhausted only when no peaks left to try — not on presend reject."""
     if entry.get("last_scan_blocked"):
@@ -73,6 +83,12 @@ def pool_peaks_fully_blocked(
             if not peak_too_close(peak, used_peaks, gap_sec):
                 return False
     return True
+
+
+def peaks_near_sent_reason(entry: dict[str, Any] | None) -> bool:
+    if not entry:
+        return False
+    return str(entry.get("reject_reason") or "").startswith("peaks_near_sent")
 
 
 def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> bool:
