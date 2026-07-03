@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable
 
+from mlbb_vod_intervals import conflicts_any_interval, interval_gap_sec
 from vod_peak_gap import filter_blocked_peaks, peak_too_close, used_peak_times_shooter
 
 
@@ -213,3 +215,61 @@ def used_peaks_for_vod(
     index_segments: list[dict],
 ) -> list[float]:
     return used_peak_times_shooter(vod_id, sent_set, index_segments)
+
+
+def used_intervals_for_shooter_vod(
+    vod_id: str,
+    blocked_ids: set[str],
+    index_segments: list[dict],
+    *,
+    vod_path: Path | None = None,
+) -> list[tuple[float, float]]:
+    """Reserved [start,end] for sent/labeled shooter segments — blocks duplicate fights."""
+    fallback = float(os.environ.get("PUBG_FIGHT_MAX_SEC", "45"))
+    intervals: list[tuple[float, float]] = []
+    seen_sids: set[str] = set()
+
+    for row in index_segments:
+        row_vid = str(row.get("vod_id") or "")
+        row_vod = str(row.get("vod") or "")
+        if row_vid != vod_id:
+            if not vod_path or (vod_path.name not in row_vod and str(vod_path) not in row_vod):
+                continue
+        sid = str(row.get("segment_id") or "")
+        if not sid or sid not in blocked_ids:
+            continue
+        start = float(row.get("start", 0))
+        dur = float(row.get("duration") or row.get("fight_dur") or 0)
+        if dur <= 0:
+            path = Path(str(row.get("path") or ""))
+            if path.exists():
+                try:
+                    from mlbb_vod_segment_feed import _ffprobe_duration
+
+                    dur = float(_ffprobe_duration(path) or 0)
+                except Exception:
+                    dur = 0.0
+        if dur <= 0:
+            dur = fallback
+        intervals.append((start, start + dur))
+        seen_sids.add(sid)
+
+    for sid in blocked_ids:
+        if not sid.startswith(f"{vod_id}_") or sid in seen_sids:
+            continue
+        try:
+            start = float(sid.rsplit("_", 1)[1])
+        except ValueError:
+            continue
+        intervals.append((start, start + fallback))
+
+    return intervals
+
+
+def shooter_interval_blocked(
+    start: float,
+    end: float,
+    reserved_intervals: list[tuple[float, float]],
+) -> bool:
+    gap = float(os.environ.get("SHOOTER_VOD_INTERVAL_GAP_SEC", str(interval_gap_sec())))
+    return conflicts_any_interval(start, end, reserved_intervals, gap=gap)

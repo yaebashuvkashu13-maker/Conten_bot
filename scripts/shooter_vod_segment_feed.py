@@ -54,8 +54,10 @@ from vod_scan_state import (
     pool_peaks_fully_blocked,
     record_vod_scan,
     scan_zero_detail,
+    shooter_interval_blocked,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
+    used_intervals_for_shooter_vod,
     used_peaks_for_vod,
 )
 from vod_game_registry import VOD_PIPELINE_REV
@@ -473,6 +475,9 @@ def _scan_vod(
     index_segments = load_index(game).get("segments", [])
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
+    reserved_intervals = used_intervals_for_shooter_vod(
+        vid, blocked_ids, index_segments, vod_path=vod
+    )
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -578,6 +583,12 @@ def _scan_vod(
                 {**clip, "start": start, "peak_start": peak},
                 vod,
             )
+            clip_start = float(clip_row["start"])
+            clip_end = clip_start + float(
+                clip_row.get("input_duration") or clip_row.get("fight_dur") or 45.0
+            )
+            if shooter_interval_blocked(clip_start, clip_end, reserved_intervals):
+                continue
             rows.append(
                 {
                     "segment_id": sid,
@@ -617,6 +628,14 @@ def _scan_vod(
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
+        sent_row = rows[0]
+        clip_start = float(sent_row["start"])
+        clip_end = clip_start + float(
+            sent_row.get("clip", {}).get("input_duration")
+            or sent_row.get("clip", {}).get("fight_dur")
+            or 45.0
+        )
+        reserved_intervals.append((clip_start, clip_end))
         if entry is not None:
             entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
         log.warning(
