@@ -211,10 +211,35 @@ def peaks_from_pool(pool: list[dict]) -> list[float]:
 def used_peaks_for_vod(
     game: str,
     vod_id: str,
-    sent_set: set[str],
+    blocked_ids: set[str],
     index_segments: list[dict],
 ) -> list[float]:
-    return used_peak_times_shooter(vod_id, sent_set, index_segments)
+    return used_peak_times_shooter(vod_id, blocked_ids, index_segments)
+
+
+def shooter_fight_peak_span_sec(game: str) -> float:
+    g = game.strip().lower()
+    if g == "pubg":
+        return float(
+            os.environ.get(
+                "SHOOTER_VOD_FIGHT_PEAK_SPAN_SEC",
+                os.environ.get("PUBG_FIGHT_MAX_SEC", "45"),
+            )
+        )
+    return float(os.environ.get("SHOOTER_VOD_FIGHT_PEAK_SPAN_SEC", "30"))
+
+
+def shooter_peak_fight_blocked(
+    peak: float,
+    used_peaks: list[float],
+    *,
+    game: str,
+    soften_gap: float,
+) -> bool:
+    """Block peaks inside the same fight window as an already-sent/labeled peak."""
+    span = shooter_fight_peak_span_sec(game)
+    min_gap = max(soften_gap, span * 0.85)
+    return peak_too_close(peak, used_peaks, min_gap)
 
 
 def used_intervals_for_shooter_vod(
@@ -239,6 +264,9 @@ def used_intervals_for_shooter_vod(
         if not sid or sid not in blocked_ids:
             continue
         start = float(row.get("start", 0))
+        peak = float(row.get("peak_start") or start)
+        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        tail = float(os.environ.get("PUBG_FIGHT_TAIL_PAD_SEC", "6"))
         dur = float(row.get("duration") or row.get("fight_dur") or 0)
         if dur <= 0:
             path = Path(str(row.get("path") or ""))
@@ -251,7 +279,9 @@ def used_intervals_for_shooter_vod(
                     dur = 0.0
         if dur <= 0:
             dur = fallback
-        intervals.append((start, start + dur))
+        lo = min(start, max(0.0, peak - lead))
+        hi = max(start + dur, peak + tail)
+        intervals.append((lo, hi))
         seen_sids.add(sid)
 
     for sid in blocked_ids:

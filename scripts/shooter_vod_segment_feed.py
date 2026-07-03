@@ -55,6 +55,7 @@ from vod_scan_state import (
     record_vod_scan,
     scan_zero_detail,
     shooter_interval_blocked,
+    shooter_peak_fight_blocked,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_intervals_for_shooter_vod,
@@ -473,8 +474,8 @@ def _scan_vod(
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     seg_gap = segment_gap_sec(game, soften_level=soften_level)
     index_segments = load_index(game).get("segments", [])
-    used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
+    used_peaks = used_peaks_for_vod(game, vid, blocked_ids, index_segments)
     reserved_intervals = used_intervals_for_shooter_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
@@ -555,6 +556,8 @@ def _scan_vod(
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
+                continue
+            if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
                 continue
             if _peak_too_close(peak, used_peaks, seg_gap):
                 continue
