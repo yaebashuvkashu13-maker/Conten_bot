@@ -1427,6 +1427,12 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                         except ValueError:
                             pass
                 ranked = sorted(starts)[:max_stage1]
+                try:
+                    from vod_scan_state import filter_starts_outside_sent
+
+                    ranked = filter_starts_outside_sent(ranked)
+                except ImportError:
+                    pass
                 return _filter_bad_label_starts(video_path, profile, ranked)
         except Exception as exc:
             log.warning("shooter full-pass stage1 failed: %s", exc)
@@ -1456,6 +1462,12 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                 starts.add(t)
         ranked = sorted(starts)
         ranked = _filter_bad_label_starts(video_path, profile, ranked)
+        try:
+            from vod_scan_state import filter_starts_outside_sent
+
+            ranked = filter_starts_outside_sent(ranked)
+        except ImportError:
+            pass
         return ranked[:max_stage1]
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(

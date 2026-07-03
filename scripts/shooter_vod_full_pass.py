@@ -77,7 +77,14 @@ def _dense_gunfire_starts(analysis: dict, duration: float) -> list[float]:
         i0 = max(0, int(t / win))
         i1 = min(len(combined), max(i0 + 1, int((t + WINDOW_SEC) / win)))
         if float(np.max(combined[i0:i1])) >= threshold:
-            starts.add(round(t, 1))
+            start = round(t, 1)
+            try:
+                from vod_scan_state import peak_in_exclude_intervals
+
+                if not peak_in_exclude_intervals(start):
+                    starts.add(start)
+            except ImportError:
+                starts.add(start)
         t += step
     return sorted(starts)
 
@@ -97,6 +104,13 @@ def _spread_peaks(analysis: dict, duration: float, *, limit: int) -> list[float]
             continue
         if any(abs(start - s) < min_gap for s in starts):
             continue
+        try:
+            from vod_scan_state import peak_in_exclude_intervals
+
+            if peak_in_exclude_intervals(start):
+                continue
+        except ImportError:
+            pass
         starts.append(round(start, 1))
         if len(starts) >= limit:
             break

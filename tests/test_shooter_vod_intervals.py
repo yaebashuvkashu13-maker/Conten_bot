@@ -45,9 +45,17 @@ def test_peak_fight_span_blocks_nearby_peak() -> None:
     from vod_scan_state import shooter_peak_fight_blocked
 
     used = [104.0]
-    # Peak 96 is 8s from 104 — same fight, must block (span 45 * 0.85 > 8).
+    # Peak 96 is 8s from 104 — same fight, must block (span 45 * 0.40 = 18 > 8).
     assert shooter_peak_fight_blocked(96.0, used, game="pubg", soften_gap=7.0) is True
     assert shooter_peak_fight_blocked(160.0, used, game="pubg", soften_gap=7.0) is False
+
+
+def test_exclude_intervals_filter() -> None:
+    from vod_scan_state import exclude_intervals_env, filter_starts_outside_sent, parse_exclude_intervals
+
+    env = exclude_intervals_env([(72.0, 117.0)])
+    intervals = parse_exclude_intervals(env)
+    assert filter_starts_outside_sent([88.0, 140.0, 174.0], intervals) == [140.0, 174.0]
 
 
 def test_6b07_overlap_case() -> None:

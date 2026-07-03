@@ -48,6 +48,7 @@ from pubg_fight_segment import apply_fight_bounds_to_clip
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
+    exclude_intervals_env,
     fight_intervals_from_entry,
     max_peak_tries,
     peak_values_from_entry,
@@ -487,7 +488,16 @@ def _streak_skip_reason(entry: dict | None) -> bool:
     """Fast rejects / infra failures — do not inflate adaptive soften streak."""
     reason = str((entry or {}).get("reject_reason") or "")
     return reason.startswith(
-        ("fast_panns", "fast_probe", "metro_vod", "metro_title", "metro_soften", "score_timeout", "scan_timeout")
+        (
+            "fast_panns",
+            "fast_probe",
+            "metro_vod",
+            "metro_title",
+            "metro_soften",
+            "score_timeout",
+            "scan_timeout",
+            "peaks_near_sent",
+        )
     )
 
 
@@ -571,7 +581,17 @@ def _scan_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
     presend_intervals = fight_intervals_from_entry(entry)
+    if entry is not None and sent_intervals:
+        entry["fight_intervals"] = []
+        presend_intervals = []
     reserved_intervals = list(sent_intervals) + list(presend_intervals)
+
+    exclude_env = exclude_intervals_env(sent_intervals)
+    if exclude_env:
+        os.environ["HIGHLIGHT_EXCLUDE_INTERVALS"] = exclude_env
+        log.info("exclude sent fight windows vod=%s intervals=%s", vod.name, exclude_env[:80])
+    else:
+        os.environ.pop("HIGHLIGHT_EXCLUDE_INTERVALS", None)
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -752,7 +772,16 @@ def _scan_vod(
                 blocked,
             )
             if entry is not None:
-                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
+                entry["last_sent_peaks"] = list(used_peaks)
+                near_reason = f"peaks_near_sent pool={len(pool)} sent={used_peaks}"
+                record_vod_scan(
+                    entry,
+                    sent=0,
+                    pool_peaks=pool_peaks,
+                    blocked=blocked,
+                    pool=pool,
+                    reject_reason=near_reason if not blocked else "peaks_near_sent",
+                )
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)

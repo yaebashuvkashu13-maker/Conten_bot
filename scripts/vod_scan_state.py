@@ -101,6 +101,9 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
     if peaks is not None and len(peaks) == 0:
         return "нет боёв в VOD (highlight/panns pool=0)"
     reason = str(entry.get("reject_reason") or "").strip()
+    if reason.startswith("peaks_near_sent"):
+        sent = entry.get("last_sent_peaks") or []
+        return f"пики рядом с уже отправленными (sent={sent})"
     if reason:
         return reason[:140]
     if peaks:
@@ -177,10 +180,15 @@ def record_vod_scan(
     blocked: bool,
     pool: list[dict] | None = None,
     analysis_cache_key: str = "",
+    reject_reason: str = "",
 ) -> None:
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
+    if reject_reason:
+        entry["reject_reason"] = reject_reason
+    elif sent > 0:
+        entry.pop("reject_reason", None)
     if pool:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:
@@ -238,8 +246,66 @@ def shooter_peak_fight_blocked(
 ) -> bool:
     """Block peaks inside the same fight window as an already-sent/labeled peak."""
     span = shooter_fight_peak_span_sec(game)
-    min_gap = max(soften_gap, span * 0.85)
+    factor = float(os.environ.get("SHOOTER_VOD_FIGHT_PEAK_SPAN_FACTOR", "0.40"))
+    min_gap = max(soften_gap, span * factor)
     return peak_too_close(peak, used_peaks, min_gap)
+
+
+def parse_exclude_intervals(raw: str = "") -> list[tuple[float, float]]:
+    """Parse HIGHLIGHT_EXCLUDE_INTERVALS env: 'lo-hi;lo-hi'."""
+    text = (raw or os.environ.get("HIGHLIGHT_EXCLUDE_INTERVALS", "")).strip()
+    if not text:
+        return []
+    out: list[tuple[float, float]] = []
+    for part in text.split(";"):
+        part = part.strip()
+        if "-" not in part:
+            continue
+        lo_s, hi_s = part.split("-", 1)
+        try:
+            lo, hi = float(lo_s), float(hi_s)
+        except ValueError:
+            continue
+        if hi > lo:
+            out.append((lo, hi))
+    return out
+
+
+def exclude_intervals_env(
+    sent_intervals: list[tuple[float, float]],
+    *,
+    pad_sec: float | None = None,
+) -> str:
+    if not sent_intervals:
+        return ""
+    pad = float(
+        pad_sec
+        if pad_sec is not None
+        else os.environ.get("SHOOTER_VOD_INTERVAL_GAP_SEC", str(interval_gap_sec()))
+    )
+    parts = [f"{max(0.0, lo - pad)}-{hi + pad}" for lo, hi in sent_intervals]
+    return ";".join(parts)
+
+
+def peak_in_exclude_intervals(
+    peak: float,
+    intervals: list[tuple[float, float]] | None = None,
+) -> bool:
+    blocks = intervals if intervals is not None else parse_exclude_intervals()
+    for lo, hi in blocks:
+        if lo <= peak <= hi:
+            return True
+    return False
+
+
+def filter_starts_outside_sent(
+    starts: list[float],
+    intervals: list[tuple[float, float]] | None = None,
+) -> list[float]:
+    blocks = intervals if intervals is not None else parse_exclude_intervals()
+    if not blocks:
+        return starts
+    return [s for s in starts if not peak_in_exclude_intervals(s, blocks)]
 
 
 def used_intervals_for_shooter_vod(
