@@ -80,16 +80,24 @@ def overrides_for_level(level: int) -> dict[str, str]:
 def trailing_zero_streak(results: list[dict]) -> int:
     n = 0
     for row in reversed(results):
+        if row.get("streak_skip"):
+            continue
         if int(row.get("sent", 0)) > 0:
             break
         n += 1
     return n
 
 
-def record_vod_outcome(state: dict, *, vod_id: str, sent: int) -> int:
+def record_vod_outcome(
+    state: dict,
+    *,
+    vod_id: str,
+    sent: int,
+    streak_skip: bool = False,
+) -> int:
     """Append outcome, return new trailing zero streak."""
     hist = list(state.get("vod_outcomes") or [])
-    hist.append({"id": vod_id, "sent": int(sent)})
+    hist.append({"id": vod_id, "sent": int(sent), "streak_skip": bool(streak_skip)})
     state["vod_outcomes"] = hist[-40:]
     streak = trailing_zero_streak(state["vod_outcomes"])
     state["zero_cut_streak"] = streak

@@ -100,17 +100,50 @@ def send_calibration_video(
     *,
     reply_markup: dict | None = None,
 ) -> bool:
-    """Prefer inline sendVideo (with buttons); compress if >20MB."""
+    """Inline video when <=20MB; otherwise send as file (not on 👍 — pipeline only)."""
+    return send_video_or_document(
+        token,
+        chat_id,
+        path,
+        caption,
+        reply_markup=reply_markup,
+    )
+
+
+def send_video_or_document(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    reply_markup: dict | None = None,
+    filename: str | None = None,
+) -> bool:
+    """
+    1) sendVideo if <=20MB (after compress)
+    2) sendDocument if still too large but <=50MB
+    HQ on demand — only via explicit 📁 HQ button handlers.
+    """
     deliver, is_temp = compress_for_inline_video(path)
     try:
         if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
-            ok = send_video_file(token, chat_id, deliver, caption, reply_markup=reply_markup)
-            if ok:
+            if send_video_file(token, chat_id, deliver, caption, reply_markup=reply_markup):
                 return True
-        ok = send_hq_files(token, chat_id, path, caption, reply_markup=reply_markup)
-        if not ok:
-            print(f"send_calibration_video failed path={path.name} size={path.stat().st_size}")
-        return ok
+        if path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+            doc_cap = f"{caption}\n📁 файл (inline >20MB)"
+            return send_document_file(
+                token,
+                chat_id,
+                path,
+                doc_cap,
+                filename=filename,
+                reply_markup=reply_markup,
+                force_file=True,
+            )
+        print(
+            f"send_video_or_document failed path={path.name} size={path.stat().st_size}",
+        )
+        return False
     finally:
         if is_temp:
             deliver.unlink(missing_ok=True)

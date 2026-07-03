@@ -33,7 +33,17 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
+
+
+def _owner_heuristic_ok(owner_reason: str) -> bool:
+    """Accept owner heuristics including PANNs trust on calibrated fights."""
+    base = owner_reason.split("=", 1)[0].split(":")[0]
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    if base.startswith(("panns_", "relax_")):
+        return True
+    return False
 
 
 def _min_gunfire() -> float:
@@ -127,7 +137,7 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    heuristic_audio = ok_owner and _owner_heuristic_ok(owner_reason)
 
     if owner_reason == "sniper_hold":
         if motion < 0.030:
