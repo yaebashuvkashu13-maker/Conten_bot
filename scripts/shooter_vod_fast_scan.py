@@ -51,7 +51,7 @@ def vod_fast_combat_check(
         return True, "fast_probe_disabled", []
 
     owner_anchors = _owner_good_anchor_starts(video_path, profile)
-    if owner_anchors:
+    if owner_anchors and os.environ.get("SHOOTER_VOD_FAST_PROBE_OWNER_BYPASS", "0") == "1":
         seeds = [
             round(max(0.0, anchor - WINDOW_SEC * 0.5), 1)
             for anchor in owner_anchors[:12]

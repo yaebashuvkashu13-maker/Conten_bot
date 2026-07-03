@@ -22,13 +22,22 @@ def test_snap_peak_to_owner_label() -> None:
     def fake_labels(_vod: Path) -> list:
         return labels["YT6I7rkKLW4"]
 
-    with patch("pubg_owner_calibration.labels_for_video", side_effect=fake_labels), patch(
+    with patch.dict("os.environ", {"SHOOTER_VOD_OWNER_ANCHOR_PEAK": "1"}), patch(
+        "pubg_owner_calibration.labels_for_video", side_effect=fake_labels
+    ), patch(
         "pubg_owner_calibration.nearest_owner_label",
         return_value=("good", 3.0),
     ):
         peak, snapped = snap_peak_to_owner_label(vod, 94.0)
     assert snapped is True
     assert peak == 91.0
+
+
+def test_snap_peak_disabled_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("SHOOTER_VOD_OWNER_ANCHOR_PEAK", raising=False)
+    peak, snapped = snap_peak_to_owner_label(Path("yt_x.mp4"), 94.0)
+    assert snapped is False
+    assert peak == 94.0
 
 
 def test_owner_pinned_clip_does_not_expand_start_left() -> None:

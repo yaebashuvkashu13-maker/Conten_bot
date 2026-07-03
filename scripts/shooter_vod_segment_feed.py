@@ -501,7 +501,7 @@ def _owner_label_pool_clips(
     seg_gap: float,
 ) -> list[dict]:
     """Exact owner calibration timestamps — cut at user labels, not shifted detector peaks."""
-    if game != "pubg" or os.environ.get("SHOOTER_VOD_OWNER_LABEL_CUTS", "1") != "1":
+    if game != "pubg" or os.environ.get("SHOOTER_VOD_OWNER_LABEL_CUTS", "0") != "1":
         return []
     try:
         from pubg_owner_calibration import has_owner_labels, labels_for_video
@@ -607,7 +607,7 @@ def _scan_vod(
     skip_heavy = (
         bool(owner_pool)
         and game == "pubg"
-        and os.environ.get("SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN", "1") == "1"
+        and os.environ.get("SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN", "0") == "1"
     )
     if skip_heavy:
         pool = list(owner_pool)
@@ -1171,11 +1171,12 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "48")
+    os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ.setdefault("SHOOTER_VOD_OWNER_LABEL_CUTS", "0")
+    os.environ.setdefault("SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN", "0")
+    os.environ.setdefault("SHOOTER_VOD_OWNER_ANCHOR_PEAK", "0")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
-        os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
-    else:
-        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     lock = _feed_lock(game)
     if lock is None:
         return 0
@@ -1190,6 +1191,9 @@ def main() -> int:
         "SHOOTER_VOD_MAX_PANN_PROBE",
         "HIGHLIGHT_MAX_STAGE1",
         "SHOOTER_VOD_OWNER_EXEMPLARS",
+        "SHOOTER_VOD_OWNER_LABEL_CUTS",
+        "SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN",
+        "SHOOTER_VOD_OWNER_ANCHOR_PEAK",
         "SHOOTER_VOD_OWNER_BACKFILL",
         "SHOOTER_VOD_MIN_CLIP_SCORE",
         "HIGHLIGHT_USE_OWNER_ANCHORS",

@@ -37,7 +37,7 @@ def _owner_anchor_radius() -> float:
 
 def snap_peak_to_owner_label(vod: Path, peak_sec: float) -> tuple[float, bool]:
     """On calibrated VODs use the owner's exact timestamp, not a nearby detector peak."""
-    if os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_PEAK", "1") != "1":
+    if os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_PEAK", "0") != "1":
         return peak_sec, False
     try:
         from pubg_owner_calibration import labels_for_video, nearest_owner_label
