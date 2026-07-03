@@ -590,7 +590,7 @@ def _scan_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
     presend_intervals = fight_intervals_from_entry(entry)
-    if entry is not None and sent_intervals:
+    if entry is not None and (sent_intervals or not used_peaks):
         entry["fight_intervals"] = []
         presend_intervals = []
     reserved_intervals = list(sent_intervals) + list(presend_intervals)
