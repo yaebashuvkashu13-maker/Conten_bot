@@ -270,6 +270,17 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
 
 def _validate_shooter_candidate_pre_render(game: str, vod: Path, row: dict) -> tuple[bool, str, dict]:
     """Cheap pre-render validation to avoid wasting ffmpeg on obvious rejects."""
+    clip_meta = row.get("clip") or {}
+    if clip_meta.get("owner_label_cut"):
+        if game == "pubg":
+            from pubg_metro_royale_gate import segment_looks_metro_royale
+
+            start = float(row.get("peak_start", row.get("start", 0)))
+            dur = float(clip_meta.get("input_duration") or clip_meta.get("fight_dur") or 45.0)
+            ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+            if not ok_metro:
+                return False, metro_reason, {"metro": metro_reason}
+        return True, "owner_label_cut", {"owner_label_cut": True}
     profile = _profile(game)
     start = float(row.get("peak_start", row.get("start", 0)))
     dur = float(row.get("duration") or 15.0)
@@ -295,6 +306,8 @@ def _validate_shooter_candidate_pre_render(game: str, vod: Path, row: dict) -> t
 
 def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     profile = _profile(game)
+    clip_meta = row.get("clip") or {}
+    is_owner_cut = bool(clip_meta.get("owner_label_cut"))
     start = float(row.get("peak_start", row.get("start", 0)))
     dur = _ffprobe_duration(rendered)
     if dur <= 0:
@@ -305,6 +318,22 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
         if not ok_metro:
             return False, metro_reason, {"metro": metro_reason}
+    if is_owner_cut:
+        if dur < 1.0:
+            return False, "rendered_too_short", {"duration": dur}
+        from shooter_vod_presend_audit import audit_shooter_presend
+
+        audit_ok, audit_reason, audit_report = audit_shooter_presend(
+            game,
+            rendered,
+            source_vod=vod,
+            source_start=start,
+            profile=profile,
+            owner_label_cut=True,
+        )
+        if not audit_ok:
+            return False, audit_reason, audit_report
+        return True, "owner_label_cut", audit_report
     if game in EXTENDED_GAMES:
         from strict_segment_gate import passes_strict_gate
 

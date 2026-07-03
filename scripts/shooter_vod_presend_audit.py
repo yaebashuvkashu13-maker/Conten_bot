@@ -128,9 +128,18 @@ def audit_shooter_presend(
     source_vod: Path | None = None,
     source_start: float = 0.0,
     profile: str = "",
+    owner_label_cut: bool = False,
 ) -> tuple[bool, str, dict[str, Any]]:
     if not _require_rendered_check():
         return True, "audit_disabled", {}
+    if owner_label_cut:
+        from mlbb_vod_segment_feed import _ffprobe_duration
+
+        dur = float(_ffprobe_duration(rendered) or 0.0)
+        if dur < 1.0:
+            return False, "rendered_too_short", {"duration": dur}
+        log.info("presend audit PASS %s owner_label_cut dur=%.1fs", rendered.name, dur)
+        return True, "owner_label_cut", {"duration": dur, "owner_label_cut": True}
     if game == "pubg" or profile in ("pubg", "standoff"):
         return audit_pubg_segment(
             rendered,
