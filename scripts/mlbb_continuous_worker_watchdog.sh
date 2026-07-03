@@ -57,9 +57,9 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
       log "started vod supervisor via wrapper pid=$!"
     else
       nohup env PYTHONPATH="/usr/local/bin" flock -n /tmp/mlbb_vod_segment_feed.lock \
-        python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
+        python3 -u /usr/local/bin/daily_cycle_runner.py \
         >>/root/data/mlbb/vod_only.log 2>&1 &
-      log "started vod_segment_feed direct pid=$!"
+      log "started daily_cycle_runner direct pid=$!"
     fi
   fi
   exit 0

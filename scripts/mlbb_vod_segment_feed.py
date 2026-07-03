@@ -1588,6 +1588,15 @@ def _send_segment_batch(
         )
         return 0, 0, len(to_send)
 
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+        from daily_game_cycle import can_send_for_game
+
+        cycle_game = (os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
+        ok_cycle, cycle_reason = can_send_for_game(cycle_game, 1)
+        if not ok_cycle:
+            log.warning("send batch blocked cycle=%s game=%s", cycle_reason, cycle_game)
+            return 0, 0, len(to_send)
+
     cap_left = max_daily_sends() - daily_send_count()
     if cap_left <= 0:
         log.info("daily cap reached sent_today=%s cap=%s", daily_send_count(), max_daily_sends())
