@@ -296,10 +296,51 @@ def used_intervals_for_shooter_vod(
     return intervals
 
 
+def shooter_min_clip_sep_sec() -> float:
+    return float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SEP_SEC", "30"))
+
+
 def shooter_interval_blocked(
     start: float,
     end: float,
     reserved_intervals: list[tuple[float, float]],
 ) -> bool:
     gap = float(os.environ.get("SHOOTER_VOD_INTERVAL_GAP_SEC", str(interval_gap_sec())))
-    return conflicts_any_interval(start, end, reserved_intervals, gap=gap)
+    if conflicts_any_interval(start, end, reserved_intervals, gap=gap):
+        return True
+    # Clip earlier on timeline but too close before an already-sent/labeled window.
+    min_sep = shooter_min_clip_sep_sec()
+    for lo, hi in reserved_intervals:
+        if end <= lo + gap and (lo - end) < min_sep:
+            return True
+    return False
+
+
+def fight_intervals_from_entry(entry: dict[str, Any] | None) -> list[tuple[float, float]]:
+    if not entry:
+        return []
+    out: list[tuple[float, float]] = []
+    for row in entry.get("fight_intervals") or []:
+        try:
+            lo, hi = float(row[0]), float(row[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if hi > lo:
+            out.append((lo, hi))
+    return out
+
+
+def record_fight_interval(entry: dict[str, Any] | None, start: float, end: float) -> None:
+    if entry is None or end <= start:
+        return
+    rows = entry.setdefault("fight_intervals", [])
+    lo, hi = round(start, 1), round(end, 1)
+    for row in rows:
+        try:
+            if abs(float(row[0]) - lo) < 0.5 and abs(float(row[1]) - hi) < 0.5:
+                return
+        except (TypeError, ValueError, IndexError):
+            continue
+    rows.append([lo, hi])
+    if len(rows) > 32:
+        entry["fight_intervals"] = rows[-32:]

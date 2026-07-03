@@ -63,3 +63,10 @@ def test_6b07_overlap_case() -> None:
     blocked = {"6b07LK4AZco_100"}
     reserved = used_intervals_for_shooter_vod("6b07LK4AZco", blocked, index)
     assert shooter_interval_blocked(49.0, 94.0, reserved) is True
+
+
+def test_quvo_adjacent_fight_blocked() -> None:
+    """_104 (103-148) then _56 (51-96) — only 7s gap, same engagement."""
+    reserved = [(103.0, 148.0)]
+    assert shooter_interval_blocked(51.0, 96.0, reserved) is True
+    assert shooter_interval_blocked(160.0, 190.0, reserved) is False

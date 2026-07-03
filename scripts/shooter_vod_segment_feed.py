@@ -48,10 +48,12 @@ from pubg_fight_segment import apply_fight_bounds_to_clip
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
+    fight_intervals_from_entry,
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
     pool_peaks_fully_blocked,
+    record_fight_interval,
     record_vod_scan,
     scan_zero_detail,
     shooter_interval_blocked,
@@ -479,6 +481,7 @@ def _scan_vod(
     reserved_intervals = used_intervals_for_shooter_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
+    reserved_intervals.extend(fight_intervals_from_entry(entry))
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -627,6 +630,14 @@ def _scan_vod(
         if n > 0:
             if entry is not None:
                 entry["presend_reject_streak"] = 0
+                sent_row = rows[0]
+                cs = float(sent_row["start"])
+                ce = cs + float(
+                    sent_row.get("clip", {}).get("input_duration")
+                    or sent_row.get("clip", {}).get("fight_dur")
+                    or 45.0
+                )
+                record_fight_interval(entry, cs, ce)
                 record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
@@ -638,6 +649,7 @@ def _scan_vod(
             or sent_row.get("clip", {}).get("fight_dur")
             or 45.0
         )
+        record_fight_interval(entry, clip_start, clip_end)
         reserved_intervals.append((clip_start, clip_end))
         if entry is not None:
             entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
