@@ -349,6 +349,24 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
+    try:
+        from standoff_vod_bootstrap import standoff_bootstrap_loose
+
+        bootstrap = standoff_bootstrap_loose(game)
+    except ImportError:
+        bootstrap = False
+        if bootstrap:
+            clip = row.get("clip") or {}
+            hm = clip.get("highlight_metrics") or {}
+            gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
+            from pubg_combat_gate import pubg_passes_combat_gate
+
+            if gate_reason.startswith("combat_fast") or float(hm.get("panns_gun_max") or 0) >= 0.08:
+            ok, reason, metrics = pubg_passes_combat_gate(
+                rendered, 0.0, dur, profile, scan_fast=True
+            )
+            if ok:
+                return True, f"bootstrap_combat_fast:{reason}", metrics
     ok, reason, metrics = pubg_passes_combat_gate(
         vod,
         start,
@@ -706,6 +724,12 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
+    try:
+        from standoff_vod_bootstrap import standoff_bootstrap_loose
+
+        bootstrap_loose = standoff_bootstrap_loose(game)
+    except ImportError:
+        bootstrap_loose = False
 
     while peak_tries < max_tries:
         if scan_deadline and time.time() >= scan_deadline:
@@ -724,9 +748,12 @@ def _scan_vod(
                 if _owner_peak_already_sent(peak, used_peaks):
                     continue
             else:
-                if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
-                    continue
-                if _peak_too_close(peak, used_peaks, seg_gap):
+                if not bootstrap_loose:
+                    if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
+                        continue
+                    if _peak_too_close(peak, used_peaks, seg_gap):
+                        continue
+                elif _owner_peak_already_sent(peak, used_peaks, tol_sec=6.0):
                     continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
@@ -743,7 +770,13 @@ def _scan_vod(
                     )
                 except ImportError:
                     owner_anchor = False
-            if owner_exemplars and clip_score < min_clip and not combat_trust and not owner_anchor:
+            if (
+                owner_exemplars
+                and clip_score < min_clip
+                and not combat_trust
+                and not owner_anchor
+                and not bootstrap_loose
+            ):
                 continue
             start = max(0.0, float(peak) - lead)
             sid = segment_id(vid, start)
@@ -762,7 +795,9 @@ def _scan_vod(
             clip_end = clip_start + float(
                 clip_row.get("input_duration") or clip_row.get("fight_dur") or 45.0
             )
-            if not is_owner_cut and shooter_interval_blocked(clip_start, clip_end, reserved_intervals):
+            if not is_owner_cut and not bootstrap_loose and shooter_interval_blocked(
+                clip_start, clip_end, reserved_intervals
+            ):
                 continue
             rows.append(
                 {

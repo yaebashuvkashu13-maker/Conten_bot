@@ -11,18 +11,25 @@ log = logging.getLogger("standoff_bootstrap")
 BOOTSTRAP_ENV: dict[str, str] = {
     "PUBG_RELAX_OWNER_HEURISTICS": "2",
     "PUBG_PRESEND_COMBAT_FAST": "1",
-    "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.038",
-    "SMART_STANDOFF_MIN_BURST_RATIO": "3.5",
-    "SMART_STANDOFF_MIN_CENTER_MOTION": "0.022",
-    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.038",
-    "SMART_PUBG_MIN_BURST_RATIO": "3.5",
-    "SMART_PUBG_MAX_RUN_MOTION": "0.32",
-    "PUBG_PRESEND_MIN_GUN_DENSITY": "0.028",
-    "PUBG_KILLFEED_PRESEND_MIN": "0.10",
-    "SHOOTER_VOD_MIN_CLIP_SCORE": "0.01",
-    "HIGHLIGHT_PANN_GUN_MIN": "0.14",
-    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.08",
-    "PUBG_COMBAT_PANN_MIN": "0.12",
+    "HIGHLIGHT_PANN_FIXED": "1",
+    "HIGHLIGHT_PANN_GUN_MIN": "0.08",
+    "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.06",
+    "PUBG_COMBAT_PANN_MIN": "0.06",
+    "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.030",
+    "SMART_STANDOFF_MIN_BURST_RATIO": "3.0",
+    "SMART_STANDOFF_MIN_CENTER_MOTION": "0.018",
+    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.030",
+    "SMART_PUBG_MIN_BURST_RATIO": "3.0",
+    "SMART_PUBG_MAX_RUN_MOTION": "0.38",
+    "PUBG_PRESEND_MIN_GUN_DENSITY": "0.022",
+    "PUBG_KILLFEED_PRESEND_MIN": "0.08",
+    "PUBG_PANNS_TRUST_MIN": "0.22",
+    "PUBG_PANNS_POOL_MIN": "0.35",
+    "SHOOTER_VOD_MIN_CLIP_SCORE": "0.0",
+    "SHOOTER_VOD_FIGHT_PEAK_SPAN_FACTOR": "0.22",
+    "SHOOTER_VOD_STRICT_PEAK_TRIES": "10",
+    "SHOOTER_VOD_SOFT_MAX_PEAK_TRIES": "12",
+    "SHOOTER_VOD_SCORE_MAX": "12",
 }
 
 
@@ -53,3 +60,7 @@ def apply_standoff_bootstrap_env() -> bool:
         bootstrap_min_exemplars(),
     )
     return True
+
+
+def standoff_bootstrap_loose(game: str) -> bool:
+    return game == "standoff" and standoff_bootstrap_active()
