@@ -1615,14 +1615,14 @@ def _parallel_workers() -> int:
 def _window_score_timeout_sec() -> float:
     """Per-window wall-clock budget for PANNs+CLIP scoring."""
     if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
-        return max(15.0, float(os.environ.get("SHOOTER_VOD_WINDOW_TIMEOUT_SEC", "45")))
+        return max(15.0, float(os.environ.get("SHOOTER_VOD_WINDOW_TIMEOUT_SEC", "90")))
     return max(30.0, float(os.environ.get("HIGHLIGHT_WINDOW_SCORE_TIMEOUT_SEC", "120")))
 
 
 def _parallel_batch_timeout_sec(n_windows: int, workers: int) -> float:
     """Overall wall-clock budget for a parallel highlight score batch."""
     per = _window_score_timeout_sec()
-    cap = max(60.0, float(os.environ.get("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", "600")))
+    cap = max(60.0, float(os.environ.get("HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC", "900")))
     batches = math.ceil(max(1, n_windows) / max(1, workers))
     return min(cap, per * batches + 20.0)
 

@@ -433,7 +433,12 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
 
 
 def _shooter_scan_max_sec() -> float:
-    return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "600")))
+    return max(300.0, float(os.environ.get("SHOOTER_VOD_SCAN_MAX_SEC", "1200")))
+
+
+def _owner_peak_already_sent(peak: float, used_peaks: list[float], *, tol_sec: float = 4.0) -> bool:
+    """Owner calibration marks each timestamp as its own fight — block only exact/near duplicates."""
+    return any(abs(peak - p) <= tol_sec for p in used_peaks)
 
 
 def _reject_vod_length(vod: Path, entry: dict | None, *, mark_exhausted: bool = True) -> str | None:
@@ -481,9 +486,7 @@ def _owner_label_pool_clips(
         if row.get("label") != "good":
             continue
         peak = float(row["time_sec"])
-        if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
-            continue
-        if _peak_too_close(peak, used_peaks, seg_gap):
+        if _owner_peak_already_sent(peak, used_peaks):
             continue
         start = max(0.0, peak - lead)
         if segment_id(vid, start) in blocked_ids:
@@ -535,10 +538,11 @@ def _scan_vod(
     index_segments = load_index(game).get("segments", [])
     blocked_ids = labeled | sent_set
     used_peaks = used_peaks_for_vod(game, vid, blocked_ids, index_segments)
-    reserved_intervals = used_intervals_for_shooter_vod(
+    sent_intervals = used_intervals_for_shooter_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
-    reserved_intervals.extend(fight_intervals_from_entry(entry))
+    presend_intervals = fight_intervals_from_entry(entry)
+    reserved_intervals = list(sent_intervals) + list(presend_intervals)
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -563,12 +567,6 @@ def _scan_vod(
 
     from highlight_scorer import clear_panns_score_cache
 
-    clear_panns_score_cache()
-    os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
-    try:
-        pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
-    finally:
-        os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     owner_pool = _owner_label_pool_clips(
         vod,
         game,
@@ -577,14 +575,33 @@ def _scan_vod(
         used_peaks=used_peaks,
         seg_gap=seg_gap,
     )
-    if owner_pool:
-        pool = _merge_owner_label_pool(pool, owner_pool)
+    skip_heavy = (
+        bool(owner_pool)
+        and game == "pubg"
+        and os.environ.get("SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN", "1") == "1"
+    )
+    if skip_heavy:
+        pool = list(owner_pool)
         log.info(
-            "owner label cuts %s: %s anchors first (detector pool=%s)",
+            "owner label fast path %s: %s anchors (skip heavy highlight scan)",
             vod.name,
             len(owner_pool),
-            len(pool),
         )
+    else:
+        clear_panns_score_cache()
+        os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
+        try:
+            pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+        finally:
+            os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
+        if owner_pool:
+            pool = _merge_owner_label_pool(pool, owner_pool)
+            log.info(
+                "owner label cuts %s: %s anchors first (detector pool=%s)",
+                vod.name,
+                len(owner_pool),
+                len(pool),
+            )
     pool_peaks = peaks_from_pool(pool)
     if entry is not None:
         try:
@@ -631,19 +648,24 @@ def _scan_vod(
         rows: list[dict] = []
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
+            is_owner_cut = bool(clip.get("owner_label_cut"))
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
                 continue
-            if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
-                continue
-            if _peak_too_close(peak, used_peaks, seg_gap):
-                continue
+            if is_owner_cut:
+                if _owner_peak_already_sent(peak, used_peaks):
+                    continue
+            else:
+                if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
+                    continue
+                if _peak_too_close(peak, used_peaks, seg_gap):
+                    continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
             panns_max = float(hm.get("panns_gun_max") or 0.0)
             gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
             combat_trust = gate_reason.startswith("combat_fast")
-            owner_anchor = False
-            if game == "pubg":
+            owner_anchor = is_owner_cut
+            if not owner_anchor and game == "pubg":
                 try:
                     from pubg_owner_calibration import has_owner_labels, segment_overlaps_owner_label
 
@@ -671,7 +693,7 @@ def _scan_vod(
             clip_end = clip_start + float(
                 clip_row.get("input_duration") or clip_row.get("fight_dur") or 45.0
             )
-            if shooter_interval_blocked(clip_start, clip_end, reserved_intervals):
+            if not is_owner_cut and shooter_interval_blocked(clip_start, clip_end, reserved_intervals):
                 continue
             rows.append(
                 {
@@ -727,8 +749,10 @@ def _scan_vod(
             or sent_row.get("clip", {}).get("fight_dur")
             or 45.0
         )
-        record_fight_interval(entry, clip_start, clip_end)
-        reserved_intervals.append((clip_start, clip_end))
+        is_owner_reject = bool(sent_row.get("clip", {}).get("owner_label_cut"))
+        if not is_owner_reject:
+            record_fight_interval(entry, clip_start, clip_end)
+            reserved_intervals.append((clip_start, clip_end))
         if entry is not None:
             entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
         log.warning(
