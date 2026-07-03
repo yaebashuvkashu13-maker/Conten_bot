@@ -349,7 +349,13 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
-    ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=False)
+    ok, reason, metrics = pubg_passes_combat_gate(
+        vod,
+        start,
+        dur,
+        profile,
+        scan_fast=os.environ.get("PUBG_PRESEND_COMBAT_FAST", "0") == "1",
+    )
     if not ok:
         return False, reason, metrics
     from shooter_vod_presend_audit import audit_shooter_presend
