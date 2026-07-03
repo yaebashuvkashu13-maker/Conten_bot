@@ -100,17 +100,18 @@ def send_calibration_video(
     *,
     reply_markup: dict | None = None,
 ) -> bool:
-    """Prefer inline sendVideo (with buttons); compress if >20MB."""
+    """Inline sendVideo only — HQ file is sent only via explicit 📁 HQ button."""
     deliver, is_temp = compress_for_inline_video(path)
     try:
         if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
             ok = send_video_file(token, chat_id, deliver, caption, reply_markup=reply_markup)
             if ok:
                 return True
-        ok = send_hq_files(token, chat_id, path, caption, reply_markup=reply_markup)
-        if not ok:
-            print(f"send_calibration_video failed path={path.name} size={path.stat().st_size}")
-        return ok
+        print(
+            f"send_calibration_video skip document fallback path={path.name} "
+            f"size={path.stat().st_size}",
+        )
+        return False
     finally:
         if is_temp:
             deliver.unlink(missing_ok=True)

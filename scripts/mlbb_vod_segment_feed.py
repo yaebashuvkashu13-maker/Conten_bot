@@ -732,11 +732,8 @@ def send_video(
 ) -> bool:
     from mlbb_learning_first import can_send, record_send
     from mlbb_telegram_video import (
-        TELEGRAM_DOCUMENT_MAX_BYTES,
         TELEGRAM_MAX_BYTES,
         compress_for_inline_video,
-        send_document_file,
-        send_hq_files,
         send_video_file,
     )
 
@@ -771,38 +768,15 @@ def send_video(
 
     try:
         sent = False
-        send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1") == "1"
-        if game in ("pubg", "standoff", "genshin", "wot") and os.environ.get(
-            "SHOOTER_VOD_SEND_AS_VIDEO", "1"
-        ) == "1":
-            send_as_file = False
-        if send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
-            fname = f"{game.upper()}_{seg_id}.mp4"
-            sent = send_hq_files(
-                token,
-                chat_id,
-                path,
-                f"{caption}\n📁 файл (без пережатия Telegram)",
-                reply_markup=markup,
-                filename=fname,
-            )
-        elif deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+        if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
             sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
-        elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+        else:
             log.warning(
-                "telegram sendVideo too large seg=%s bytes=%s — sendDocument fallback",
+                "telegram skip seg=%s — inline video >20MB after compress (%s bytes); "
+                "use 📁 HQ button if needed",
                 seg_id,
                 deliver.stat().st_size,
             )
-            sent = send_document_file(
-                token,
-                chat_id,
-                deliver,
-                f"{caption}\n(файл — документ, >20MB inline)",
-                reply_markup=markup,
-            )
-        else:
-            log.warning("telegram too large seg=%s bytes=%s", seg_id, deliver.stat().st_size)
             return False
 
         if sent:

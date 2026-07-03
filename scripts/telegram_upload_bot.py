@@ -1347,7 +1347,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'vseg' and is_good:
+        if mode == 'vseg' and is_good and os.environ.get('MLBB_VOD_AUTO_HQ_ON_YES', '0') == '1':
             hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
             if not hq_ok:
                 send_message(
