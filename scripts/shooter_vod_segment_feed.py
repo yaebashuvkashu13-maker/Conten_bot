@@ -557,10 +557,18 @@ def _scan_vod(
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
             panns_max = float(hm.get("panns_gun_max") or 0.0)
             gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
-            combat_trust = panns_max >= float(
-                os.environ.get("PUBG_PANNS_POOL_MIN", "0.48")
-            ) and gate_reason.startswith("combat_fast")
-            if owner_exemplars and clip_score < min_clip and not combat_trust:
+            combat_trust = gate_reason.startswith("combat_fast")
+            owner_anchor = False
+            if game == "pubg":
+                try:
+                    from pubg_owner_calibration import has_owner_labels, segment_overlaps_owner_label
+
+                    owner_anchor = has_owner_labels(vod) and segment_overlaps_owner_label(
+                        vod, peak, 12.0, label="good", pad_sec=10.0
+                    )
+                except ImportError:
+                    owner_anchor = False
+            if owner_exemplars and clip_score < min_clip and not combat_trust and not owner_anchor:
                 continue
             start = max(0.0, float(peak) - lead)
             sid = segment_id(vid, start)

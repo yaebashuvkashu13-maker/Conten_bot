@@ -64,6 +64,25 @@ def audit_pubg_segment(
     burst = float(probe.get("burst_ratio") or 0.0)
     panns = float(combat_row.get("panns_gun_max") or 0.0)
 
+    owner_anchor = False
+    if source_vod is not None:
+        try:
+            from pubg_owner_calibration import has_owner_labels, segment_overlaps_owner_label
+
+            owner_anchor = has_owner_labels(source_vod) and segment_overlaps_owner_label(
+                source_vod,
+                source_start,
+                dur,
+                label="good",
+                pad_sec=10.0,
+            )
+        except ImportError:
+            owner_anchor = False
+    if owner_anchor:
+        min_gun = float(os.environ.get("PUBG_PRESEND_OWNER_MIN_GUN", "0.028"))
+        min_burst = float(os.environ.get("PUBG_PRESEND_OWNER_MIN_BURST", "3.0"))
+        report["owner_anchor"] = True
+
     has_gun_audio = gun >= min_gun and burst >= min_burst
     has_killfeed = kf_density >= min_kf
     has_strong_panns = panns >= float(os.environ.get("PUBG_PANNS_PRESEND_MIN", "0.42"))
