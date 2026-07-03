@@ -731,11 +731,7 @@ def send_video(
     cycle_game: str | None = None,
 ) -> bool:
     from mlbb_learning_first import can_send, record_send
-    from mlbb_telegram_video import (
-        TELEGRAM_MAX_BYTES,
-        compress_for_inline_video,
-        send_video_file,
-    )
+    from mlbb_telegram_video import send_video_or_document
 
     game = (cycle_game or os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
 
@@ -754,42 +750,23 @@ def send_video(
             return False
 
     markup = reply_markup or inline_keyboard_markup(seg_id)
-    deliver = path
-    is_temp = False
-    if path.stat().st_size > TELEGRAM_MAX_BYTES:
-        deliver, is_temp = compress_for_inline_video(path, max_bytes=TELEGRAM_MAX_BYTES)
-        if is_temp:
-            log.info(
-                "telegram compress seg=%s %s -> %s bytes",
-                seg_id,
-                path.stat().st_size,
-                deliver.stat().st_size,
-            )
+    fname = f"{game.upper()}_{seg_id}.mp4" if game != "mlbb" else None
+    sent = send_video_or_document(
+        token,
+        chat_id,
+        path,
+        caption,
+        reply_markup=markup,
+        filename=fname,
+    )
+    if sent:
+        if record_learning:
+            record_send(1)
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import record_send as cycle_record_send
 
-    try:
-        sent = False
-        if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
-            sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
-        else:
-            log.warning(
-                "telegram skip seg=%s — inline video >20MB after compress (%s bytes); "
-                "use 📁 HQ button if needed",
-                seg_id,
-                deliver.stat().st_size,
-            )
-            return False
-
-        if sent:
-            if record_learning:
-                record_send(1)
-            if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
-                from daily_game_cycle import record_send as cycle_record_send
-
-                cycle_record_send(game, 1)
-        return sent
-    finally:
-        if is_temp:
-            deliver.unlink(missing_ok=True)
+            cycle_record_send(game, 1)
+    return sent
 
 
 def send_message(token: str, chat_id: str, text: str) -> None:
@@ -1671,7 +1648,7 @@ def _send_segment_batch(
                 send_blocked += 1
                 log.warning("send blocked seg=%s reason=%s", sid, one_reason)
                 continue
-            send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")
+            send_message(token, chat_id, f"{caption}\n(файл >50MB — не отправился)")
             continue
         upsert_segment(
             {
