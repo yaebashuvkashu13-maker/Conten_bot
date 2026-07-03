@@ -134,13 +134,14 @@ def detect_pubg_fight_bounds(
 
     if owner_pinned:
         start = max(0.0, float(peak_sec) - lead)
-        end = _fight_end_after_peak(
+        gun_end = _fight_end_after_peak(
             peak_sec,
             start=start,
             file_dur=file_dur,
             gun=gun,
             win=win,
         )
+        end = min(file_dur, max(gun_end, start + max_d))
         dur = end - start
         return round(start, 2), round(end, 2), round(dur, 2)
 
