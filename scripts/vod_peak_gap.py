@@ -37,8 +37,8 @@ def segment_gap_sec(
     gap = float(os.environ.get(env_key, str(base)))
     if soften_level >= 2:
         gap = min(gap, float(os.environ.get(soft_key, str(soft_default))))
-    elif soften_level >= 1 and g == "mlbb":
-        gap = min(gap, float(os.environ.get(soft_key, str(soft_default * 1.6))))
+    elif soften_level >= 1:
+        gap = min(gap, float(os.environ.get(soft_key, str(soft_default * (1.6 if g == "mlbb" else 1.0)))))
     return gap
 
 

@@ -349,6 +349,24 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
+    try:
+        from standoff_vod_bootstrap import standoff_bootstrap_loose
+
+        bootstrap = standoff_bootstrap_loose(game)
+    except ImportError:
+        bootstrap = False
+    if bootstrap:
+        clip = row.get("clip") or {}
+        hm = clip.get("highlight_metrics") or {}
+        gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
+        from pubg_combat_gate import pubg_passes_combat_gate
+
+        if gate_reason.startswith("combat_fast") or float(hm.get("panns_gun_max") or 0) >= 0.08:
+            ok, reason, metrics = pubg_passes_combat_gate(
+                rendered, 0.0, dur, profile, scan_fast=True
+            )
+            if ok:
+                return True, f"bootstrap_combat_fast:{reason}", metrics
     ok, reason, metrics = pubg_passes_combat_gate(
         vod,
         start,
@@ -447,12 +465,13 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
-def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
+def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> tuple:
     """Unscanned VODs first; owner-calibrated + Metro RU before others."""
     from pubg_metro_royale_gate import title_metro_hint
     from vod_owner_learning import owner_labels_for_vod_scan
     from youtube_game_prefs import russian_score
 
+    profile = game if game in ("pubg", "standoff") else "pubg"
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
     scanned = float((entry or {}).get("last_scan_at") or 0)
     title = str((entry or {}).get("title") or "")
@@ -462,7 +481,7 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
     try:
         owner_good = sum(
-            1 for row in owner_labels_for_vod_scan(mp4, "pubg") if row.get("label") == "good"
+            1 for row in owner_labels_for_vod_scan(mp4, profile) if row.get("label") == "good"
         )
     except Exception:
         owner_good = 0
@@ -589,7 +608,7 @@ def _scan_vod(
         vid, blocked_ids, index_segments, vod_path=vod
     )
     presend_intervals = fight_intervals_from_entry(entry)
-    if entry is not None and sent_intervals:
+    if entry is not None and (sent_intervals or not used_peaks):
         entry["fight_intervals"] = []
         presend_intervals = []
     reserved_intervals = list(sent_intervals) + list(presend_intervals)
@@ -705,6 +724,12 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
+    try:
+        from standoff_vod_bootstrap import standoff_bootstrap_loose
+
+        bootstrap_loose = standoff_bootstrap_loose(game)
+    except ImportError:
+        bootstrap_loose = False
 
     while peak_tries < max_tries:
         if scan_deadline and time.time() >= scan_deadline:
@@ -723,9 +748,12 @@ def _scan_vod(
                 if _owner_peak_already_sent(peak, used_peaks):
                     continue
             else:
-                if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
-                    continue
-                if _peak_too_close(peak, used_peaks, seg_gap):
+                if not bootstrap_loose:
+                    if shooter_peak_fight_blocked(peak, used_peaks, game=game, soften_gap=seg_gap):
+                        continue
+                    if _peak_too_close(peak, used_peaks, seg_gap):
+                        continue
+                elif _owner_peak_already_sent(peak, used_peaks, tol_sec=6.0):
                     continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
@@ -742,7 +770,13 @@ def _scan_vod(
                     )
                 except ImportError:
                     owner_anchor = False
-            if owner_exemplars and clip_score < min_clip and not combat_trust and not owner_anchor:
+            if (
+                owner_exemplars
+                and clip_score < min_clip
+                and not combat_trust
+                and not owner_anchor
+                and not bootstrap_loose
+            ):
                 continue
             start = max(0.0, float(peak) - lead)
             sid = segment_id(vid, start)
@@ -761,7 +795,9 @@ def _scan_vod(
             clip_end = clip_start + float(
                 clip_row.get("input_duration") or clip_row.get("fight_dur") or 45.0
             )
-            if not is_owner_cut and shooter_interval_blocked(clip_start, clip_end, reserved_intervals):
+            if not is_owner_cut and not bootstrap_loose and shooter_interval_blocked(
+                clip_start, clip_end, reserved_intervals
+            ):
                 continue
             rows.append(
                 {
@@ -792,14 +828,19 @@ def _scan_vod(
             )
             if entry is not None:
                 entry["last_sent_peaks"] = list(used_peaks)
-                near_reason = f"peaks_near_sent pool={len(pool)} sent={used_peaks}"
+                if used_peaks or blocked:
+                    reject_reason = f"peaks_near_sent pool={len(pool)} sent={used_peaks}"
+                elif int(entry.get("presend_reject_streak") or 0) > 0:
+                    reject_reason = "presend_reject"
+                else:
+                    reject_reason = f"pool_filtered pool={len(pool)}"
                 record_vod_scan(
                     entry,
                     sent=0,
                     pool_peaks=pool_peaks,
                     blocked=blocked,
                     pool=pool,
-                    reject_reason=near_reason if not blocked else "peaks_near_sent",
+                    reject_reason=reject_reason,
                 )
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
@@ -827,7 +868,8 @@ def _scan_vod(
             or 45.0
         )
         is_owner_reject = bool(sent_row.get("clip", {}).get("owner_label_cut"))
-        if not is_owner_reject:
+        bootstrap_skip_interval = game == "standoff" and os.environ.get("STANDOFF_VOD_BOOTSTRAP", "1") == "1"
+        if not is_owner_reject and not bootstrap_skip_interval:
             record_fight_interval(entry, clip_start, clip_end)
             reserved_intervals.append((clip_start, clip_end))
         if entry is not None:
@@ -874,6 +916,12 @@ def _scan_vod_with_adaptive(
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
+
+    if game == "standoff":
+        from standoff_vod_bootstrap import apply_standoff_bootstrap_env, standoff_bootstrap_active
+
+        if apply_standoff_bootstrap_env() and standoff_bootstrap_active():
+            streak_in = max(streak_in, int(os.environ.get("STANDOFF_BOOTSTRAP_MIN_STREAK", "3")))
 
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
@@ -1052,7 +1100,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
-    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
+    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game)):
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
             continue
@@ -1223,6 +1271,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
+    if game == "standoff":
+        from standoff_vod_bootstrap import apply_standoff_bootstrap_env
+
+        apply_standoff_bootstrap_env()
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")

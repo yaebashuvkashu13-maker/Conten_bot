@@ -103,6 +103,12 @@ def _spread_peaks(analysis: dict, duration: float, *, limit: int) -> list[float]
     if combined.size == 0:
         return []
     skip = shooter_skip_intro_sec(duration)
+    try:
+        from vod_scan_state import min_probe_start_sec
+
+        skip = max(skip, min_probe_start_sec())
+    except ImportError:
+        pass
     min_gap = peak_min_gap_sec(duration)
     order = np.argsort(combined)[::-1]
     starts: list[float] = []
@@ -165,6 +171,15 @@ def stage1_shooter_full_pass(video_path: Path, profile: str) -> list[float] | No
     if not ranked:
         ranked = sorted(starts)
     ranked = _filter_bad_label_starts(video_path, profile, ranked)
+    try:
+        from vod_scan_state import filter_starts_outside_sent, min_probe_start_sec
+
+        ranked = filter_starts_outside_sent(ranked)
+        min_start = min_probe_start_sec()
+        if min_start > 0:
+            ranked = [s for s in ranked if s >= min_start - 2.0]
+    except ImportError:
+        pass
     out = ranked[:max_stage1]
     log.info(
         "shooter full-pass stage1 %s: dur=%.0fs skip=%.0fs windows=%s peaks=%s",

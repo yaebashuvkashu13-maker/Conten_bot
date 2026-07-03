@@ -10,7 +10,9 @@ MARK="# mlbb-vod-only-mode"
 BIN=/usr/local/bin
 
 mkdir -p /root/data/mlbb /root/datasets/mlbb/vod_segments /root/data/mlbb/logs \
-  /root/data/mlbb/youtube_nightly/inbox
+  /root/data/mlbb/youtube_nightly/inbox \
+  /root/data/standoff/youtube_nightly/inbox /root/datasets/standoff/vod_segments \
+  "$REPO/data/highlight_exemplars/standoff/good" "$REPO/data/highlight_exemplars/standoff/bad"
 
 cat >"$PAUSE" <<'EOF'
 pubg_mlbb_pipeline.py
@@ -130,8 +132,9 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   SHOOTER_VOD_SCAN_MAX_SEC=1200 SHOOTER_VOD_WINDOW_TIMEOUT_SEC=90 HIGHLIGHT_PARALLEL_BATCH_TIMEOUT_SEC=900 \
   SHOOTER_VOD_OWNER_LABEL_CUTS=0 SHOOTER_VOD_OWNER_SKIP_HEAVY_SCAN=0 SHOOTER_VOD_OWNER_ANCHOR_PEAK=0 \
   SHOOTER_VOD_FAST_PROBE_OWNER_BYPASS=0 SHOOTER_VOD_FIGHT_PEAK_SPAN_FACTOR=0.40 HIGHLIGHT_SOFT_ANCHOR=0 \
+  STANDOFF_VOD_BOOTSTRAP=1 STANDOFF_BOOTSTRAP_MIN_EXEMPLARS=5 SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC=7 \
   PUBG_PANNS_TRUST_MIN=0.35 SHOOTER_VOD_SCORE_MAX=8 \
-  VPS_BRANCH=cursor/pubg-combat-sends-6cbd \
+  VPS_BRANCH=cursor/standoff-bootstrap-6cbd \
   SHOOTER_VOD_MAX_PANN_PROBE=24 SHOOTER_VOD_SEED_FROM_FAST_PROBE=1 \
   MLBB_VOD_FAST_PROBE=1 GENSHIN_VOD_FAST_PROBE=1 WOT_VOD_FAST_PROBE=1 \
   VOD_ANALYSIS_USE_PROXY=1 VOD_POOL_TTL_SEC=21600 \
@@ -182,6 +185,7 @@ install -m 755 \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/shooter_vod_fast_scan.py" \
   "$REPO/scripts/shooter_vod_full_pass.py" \
+  "$REPO/scripts/standoff_vod_bootstrap.py" \
   "$REPO/scripts/shooter_vod_presend_audit.py" \
   "$REPO/scripts/pubg_fight_segment.py" \
   "$REPO/scripts/shooter_vod_redo_segments.py" \
