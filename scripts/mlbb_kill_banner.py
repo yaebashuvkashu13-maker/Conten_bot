@@ -300,6 +300,22 @@ def _color_only_allowed() -> bool:
     return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1"
 
 
+def _color_hint_allowed() -> bool:
+    return os.environ.get("MLBB_KILL_BANNER_COLOR_HINT", "1") == "1"
+
+
+def banner_hit_valid(hit: KillBannerHit | None, need: int | None = None) -> bool:
+    """OCR banner preferred; color streak zone accepted when OCR misses on VPS."""
+    if hit is None:
+        return False
+    tier_need = need if need is not None else _min_tier()
+    if hit.tier < tier_need:
+        return False
+    if hit.source == "ocr":
+        return True
+    return _color_hint_allowed() and hit.source == "color"
+
+
 def _candidate_secs(
     frames: list[tuple[float, object]],
     *,
@@ -359,7 +375,7 @@ def scan_window(
     if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
-            if hit is not None and hit.source == "ocr":
+            if banner_hit_valid(hit):
                 hits.append(hit)
                 break
     hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
@@ -380,12 +396,8 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
         return None
     min_tier = _min_tier()
     for hit in hits:
-        if hit.tier >= min_tier and hit.source == "ocr":
+        if banner_hit_valid(hit, min_tier):
             return hit
-    if not _banner_required():
-        for hit in hits:
-            if hit.tier >= min_tier:
-                return hit
     return None
 
 
@@ -429,7 +441,7 @@ def discover_vod_kill_banners(
     probes = 0
 
     def _merge_hit(hit: KillBannerHit) -> None:
-        if hit.tier < need or hit.source != "ocr":
+        if not banner_hit_valid(hit, need):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier:
@@ -533,7 +545,7 @@ def filter_peaks_with_ocr_banner(
     qualified = [
         h
         for h in (known_banners or [])
-        if h.tier >= need and h.source == "ocr"
+        if banner_hit_valid(h, need)
     ]
     if qualified:
         kept: list[float] = []
@@ -547,7 +559,7 @@ def filter_peaks_with_ocr_banner(
     ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
     for peak in peaks[: max(1, ocr_cap)]:
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit and hit.source == "ocr" and hit.tier >= need:
+        if banner_hit_valid(hit, need):
             kept.append(peak)
     return kept
 
@@ -699,8 +711,8 @@ def verify_banner_on_source(
     need = min_tier if min_tier is not None else _min_tier()
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
+        if banner_hit_valid(hit, need):
+            return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"
     return False, f"source_banner_missing_min_tier={need}"
@@ -734,12 +746,8 @@ def verify_rendered_clip(
 
     hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
-    if _color_only_allowed():
-        for hit in hits:
-            if hit.tier >= need:
-                return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
+        if banner_hit_valid(hit, need):
+            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s:{hit.source}"
     if hits and not _banner_required():
         return True, f"banner_weak:{hits[0].label}"
     return False, f"banner_missing_min_tier={need}"
