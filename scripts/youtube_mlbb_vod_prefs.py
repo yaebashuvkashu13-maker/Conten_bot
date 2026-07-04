@@ -136,6 +136,16 @@ GUIDE_TITLE_RE = re.compile(
     re.I,
 )
 
+LISTICLE_VOD_TITLE_RE = re.compile(
+    r"(?:"
+    r"most\s+picked|top\s+\d+\s+(?:best\s+)?(?:hero|tank|roam|mid|jungl|lane)|"
+    r"best\s+heroes?\s+for|heroes?\s+for\s+every\s+role|meta\s+(?:ranking|tier)|"
+    r"types?\s+of\s+(?:roam|exp|mid|jungl|tank)|hero\s+ranking|lane\s+heroes?\s+above|"
+    r"patch\s+preview|rank\s+division|season\s+\d+\s+patch"
+    r")",
+    re.I,
+)
+
 # Support/roam-main streams — weak source for kill-streak teamfight clips.
 SUPPORT_VOD_TITLE_RE = re.compile(
     r"(?:"
@@ -382,6 +392,8 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
     if BAD_TITLE_RE.search(blob):
         return False
     if GUIDE_TITLE_RE.search(blob):
+        return False
+    if LISTICLE_VOD_TITLE_RE.search(blob):
         return False
     if is_support_vod_title(title):
         return False

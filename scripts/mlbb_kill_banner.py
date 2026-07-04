@@ -95,6 +95,13 @@ def _motion_anchor_ok() -> bool:
     return False
 
 
+def banner_strict_required() -> bool:
+    """True when clips must be anchored on OCR kill banner (no motion-only)."""
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return False
+    return _banner_required() and not _motion_anchor_ok()
+
+
 def _scan_step() -> float:
     return float(os.environ.get("MLBB_KILL_BANNER_SCAN_STEP", "0.35"))
 
@@ -451,8 +458,13 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
-    # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
-    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+    # Phase 2 (full VOD motion sweep) when peaks-only missed banners in strict mode.
+    auto_full = (
+        not hits
+        and os.environ.get("MLBB_VOD_BANNER_DISCOVER_AUTO_FULL", "1") == "1"
+        and banner_strict_required()
+    )
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1" and not auto_full:
         hits.sort(key=lambda h: h.sec)
         log.info(
             "banner discover %s: peaks-only probes=%s hits=%s",
@@ -461,6 +473,9 @@ def discover_vod_kill_banners(
             len(hits),
         )
         return hits
+
+    if auto_full:
+        log.info("banner discover %s: peaks-only 0 hits — auto full sweep", vod.name)
 
     # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
     if probes < max_probes and time.monotonic() < deadline:

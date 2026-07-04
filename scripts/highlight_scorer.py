@@ -1941,6 +1941,14 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
+                    from mlbb_kill_banner import banner_strict_required
+
+                    if banner_strict_required() and not banners:
+                        log.warning(
+                            "highlight %s: no OCR kill banners — skip scoring (strict)",
+                            video_path.name,
+                        )
+                        return []
                     cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
                     starts = sorted(start_set)[:cap]
                     log.info(
@@ -1980,6 +1988,16 @@ def discover_highlight_candidates(
         for start in starts
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
+    if profile == "mobile_legends":
+        score_cap = max(1, int(os.environ.get("MLBB_VOD_SCORE_MAX", "6")))
+        if len(pending) > score_cap:
+            log.info(
+                "highlight mlbb score cap %s: %s -> %s windows",
+                video_path.name,
+                len(pending),
+                score_cap,
+            )
+            pending = pending[:score_cap]
     if profile in SHOOTER_PROFILES:
         score_cap = max(1, int(os.environ.get("SHOOTER_VOD_SCORE_MAX", "8")))
         if len(pending) > score_cap:

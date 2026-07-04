@@ -431,7 +431,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         vod_max_age_days,
     )
 
-    min_sec = _vod_min_sec()
+    min_sec = max(_vod_min_sec(), float(os.environ.get("MLBB_VOD_DISCOVERY_MIN_SEC", "300")))
     max_sec = _vod_max_sec()
     target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
@@ -1486,12 +1486,19 @@ def _collect_scan_segments(
         if entry and pool_cache_valid(entry):
             pool = minimal_pool_from_entry(entry)
             used_cache = True
-            log.info(
-                "reuse cached peak pool vod=%s peaks=%s age=%.0fs",
-                vod.name,
-                len(pool),
-                time.time() - float(entry.get("last_pool_at") or entry.get("last_scan_at") or 0),
-            )
+            from mlbb_kill_banner import banner_strict_required
+
+            if banner_strict_required() and pool:
+                log.warning("cached pool without banner proof — rescan vod=%s", vod.name)
+                pool = _discover_fresh()
+                used_cache = False
+            else:
+                log.info(
+                    "reuse cached peak pool vod=%s peaks=%s age=%.0fs",
+                    vod.name,
+                    len(pool),
+                    time.time() - float(entry.get("last_pool_at") or entry.get("last_scan_at") or 0),
+                )
         else:
             pool = _discover_fresh()
     skip_peaks = skip_peaks or set()
