@@ -1894,13 +1894,14 @@ def discover_highlight_candidates(
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     if profile == "mobile_legends":
-        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
-        use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
+        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") == "1"
+        use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") == "1"
+        banners: list = []
+        banner_tiers: dict[float, int] = {}
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
             start_set = set(starts)
-            banners: list = []
             if use_discover:
                 banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
@@ -1913,6 +1914,8 @@ def discover_highlight_candidates(
                 )
                 for hit in banners:
                     start_set.add(max(0.0, hit.sec - lead))
+                    anchor = round(max(0.0, hit.sec - lead), 1)
+                    banner_tiers[anchor] = max(int(banner_tiers.get(anchor, 0)), int(hit.tier))
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
@@ -1945,6 +1948,21 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
+        if os.environ.get("MLBB_VOD_TEAMFIGHT_RANK", "1") == "1" and starts:
+            try:
+                from mlbb_fight_segment import _analysis_for
+                from mlbb_teamfight_detector import rank_starts_by_teamfight
+
+                analysis = _analysis_for(video_path)
+                starts = rank_starts_by_teamfight(
+                    analysis,
+                    starts,
+                    video_path=video_path,
+                    banner_tiers=banner_tiers,
+                )
+                log.info("highlight teamfight rank %s: %s windows", video_path.name, len(starts))
+            except Exception as exc:
+                log.warning("teamfight rank failed %s: %s", video_path.name, exc)
     stage1_starts = list(starts)
     starts = stage1_panns_prefilter(video_path, starts, profile)
     try:

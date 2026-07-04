@@ -1502,8 +1502,19 @@ def _collect_scan_segments(
     gap = _interval_gap_sec()
 
     def _scan_pool(active_pool: list[dict]) -> list[dict]:
+        def _pool_sort_key(clip: dict) -> tuple:
+            hm = clip.get("highlight_metrics") or {}
+            tier_raw = hm.get("kill_banner_tier") or clip.get("kill_banner_tier") or 0
+            tier_map = {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}
+            if isinstance(tier_raw, str):
+                tier = tier_map.get(tier_raw.strip().lower(), 0)
+            else:
+                tier = int(tier_raw or 0)
+            return (tier, float(clip.get("score") or hm.get("viral_score") or 0))
+
+        ranked_pool = sorted(active_pool, key=_pool_sort_key, reverse=True)
         rows: list[dict] = []
-        for clip in active_pool:
+        for clip in ranked_pool:
             peak = float(clip.get("start", 0))
             if peak_near_skipped(peak, skip_peaks):
                 continue
@@ -1575,7 +1586,12 @@ def _collect_scan_segments(
                 }
             )
             if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
-                log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
+                log.info(
+                    "send_one: best-ranked segment %s tier=%s anchor=%s",
+                    sid,
+                    lead_clip.get("kill_banner_tier"),
+                    lead_clip.get("anchor"),
+                )
                 break
         return rows
 
@@ -1613,7 +1629,7 @@ def _mlbb_streak_skip(entry: dict | None, *, send_quota_blocked: bool = False) -
             "score_timeout",
             "presend_reject",
             "presend_exhausted",
-            "pool_filtered",
+            "support_vod",
         )
     )
 
@@ -1855,6 +1871,23 @@ def _process_vod_segments(
     send_quota_blocked = False
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+
+    from youtube_mlbb_vod_prefs import is_support_vod_title
+
+    title = str((entry or {}).get("title") or "")
+    if title and is_support_vod_title(title):
+        log.info("support-skip vod=%s title=%s", vod.name, title[:100])
+        if entry is None:
+            entry = {"id": vid, "path": str(vod), "exhausted": False, "title": title}
+        entry["reject_reason"] = "support_vod"
+        entry["exhausted"] = True
+        record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+        state = _load_state()
+        if entry:
+            _sync_vod_entry_to_state(state, entry, vod)
+        record_vod_outcome(state, vod_id=vid, sent=0, streak_skip=True)
+        _save_state(state)
+        return 0
 
     clear_fast_seeds = None
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":
