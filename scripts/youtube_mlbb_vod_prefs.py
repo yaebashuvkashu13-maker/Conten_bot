@@ -30,8 +30,8 @@ VOD_CORE_SEARCH_QUERIES = (
 VOD_ANGLE_SEARCH_QUERIES = (
     "MLBB mythic placement match full gameplay",
     "Mobile Legends immortal rank push match replay",
-    "MLBB roam mythic ranked full game",
-    "Mobile Legends jungle mythic ranked match gameplay",
+    "MLBB fighter mythic ranked full game",
+    "Mobile Legends assassin mythic ranked match gameplay",
     "MLBB mythic glory savage teamfight ranked match",
     "Mobile Legends ranked match MVP gameplay no commentary",
 )
@@ -61,11 +61,15 @@ VOD_SEARCH_HEROES = (
     "moskov",
     "valentina",
     "joy",
-    "angela",
-    "tigreal",
+    "chou",
+    "beatrix",
+    "moskov",
+    "valentina",
     "layla",
     "kagura",
     "lancelot",
+    "granger",
+    "claude",
 )
 
 # Hard reject — montages, guides, promos, skin showcases.
@@ -131,6 +135,52 @@ GUIDE_TITLE_RE = re.compile(
     r")",
     re.I,
 )
+
+LISTICLE_VOD_TITLE_RE = re.compile(
+    r"(?:"
+    r"most\s+picked|top\s+\d+\s+(?:best\s+)?(?:hero|tank|roam|mid|jungl|lane)|"
+    r"best\s+heroes?\s+for|heroes?\s+for\s+every\s+role|meta\s+(?:ranking|tier)|"
+    r"types?\s+of\s+(?:roam|exp|mid|jungl|tank)|hero\s+ranking|lane\s+heroes?\s+above|"
+    r"patch\s+preview|rank\s+division|season\s+\d+\s+patch"
+    r")",
+    re.I,
+)
+
+# Support/roam-main streams — weak source for kill-streak teamfight clips.
+SUPPORT_VOD_TITLE_RE = re.compile(
+    r"(?:"
+    r"\b(?:main\s+)?(?:support|roam(?:er)?|tank(?:er)?)\s+(?:only|gameplay|ranked|mythic|"
+    r"immortal|legend|guide|tutorial|build)\b|"
+    r"\b(?:support|roam|tank)\s+(?:angela|estes|rafaela|diggie|mathilda|franco|lolita|"
+    r"minotaur|gatot|khufra|baxia|tigreal|nana|belerick|grock|akai|khaleed)\b|"
+    r"\b(?:angela|estes|rafaela|diggie|mathilda|franco|lolita|minotaur|gatot|khufra|"
+    r"baxia|tigreal|nana|belerick|grock|akai|khaleed)\s+"
+    r"(?:support|roam|tank|hook|healer|enchantress)\b|"
+    r"\bfranco\s+hook\b|\bhook\s+only\b|\benchantress\s+support\b"
+    r")",
+    re.I,
+)
+
+SUPPORT_MAIN_HERO_RE = re.compile(
+    r"(?:^|\||\]\s*)"
+    r"(?:support|roam|tank)?\s*"
+    r"(?:angela|estes|rafaela|diggie|mathilda|franco|lolita|minotaur|"
+    r"gatot|khufra|baxia|tigreal|nana|belerick|grock|akai|khaleed)\s+"
+    r"(?:support|roam|tank|gameplay|ranked|mythic|immortal|legend|guide)",
+    re.I,
+)
+
+
+def is_support_vod_title(title: str) -> bool:
+    """True when VOD title signals support/roam-main — skip for kill-highlight pipeline."""
+    blob = (title or "").strip()
+    if not blob:
+        return False
+    if SUPPORT_MAIN_HERO_RE.search(blob):
+        return True
+    if SUPPORT_VOD_TITLE_RE.search(blob):
+        return True
+    return False
 
 
 def vod_current_season() -> int:
@@ -343,6 +393,10 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
         return False
     if GUIDE_TITLE_RE.search(blob):
         return False
+    if LISTICLE_VOD_TITLE_RE.search(blob):
+        return False
+    if is_support_vod_title(title):
+        return False
     if SOFT_BAD_TITLE_RE.search(blob) and not RANKED_SIGNAL_RE.search(blob):
         return False
     if not passes_mlbb_game_title(title):
@@ -409,6 +463,10 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("best build", -4.0),
         ("for every role", -14.0),
         ("best solo carry", -14.0),
+        ("support gameplay", -18.0),
+        ("main roam", -14.0),
+        ("tank gameplay", -12.0),
+        ("franco hook", -16.0),
         ("tutorial", -10.0),
         ("guide", -6.0),
         ("reaction", -8.0),
