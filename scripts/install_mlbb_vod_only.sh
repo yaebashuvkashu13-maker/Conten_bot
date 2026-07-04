@@ -207,6 +207,11 @@ install -m 755 \
   "$REPO/scripts/wot_brawl_segment.py" \
   "$REPO/scripts/vod_scan_state.py" \
   "$REPO/scripts/pubg_metro_royale_gate.py" \
+  "$REPO/scripts/pubg_combat_gate.py" \
+  "$REPO/scripts/pubg_shooting_gate.py" \
+  "$REPO/scripts/gameplay_gate.py" \
+  "$REPO/scripts/visual_action_check.py" \
+  "$REPO/scripts/strict_segment_gate.py" \
   "$REPO/scripts/youtube_shooter_vod_prefs.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
