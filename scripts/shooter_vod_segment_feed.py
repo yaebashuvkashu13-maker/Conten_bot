@@ -301,6 +301,16 @@ def _validate_shooter_candidate_pre_render(game: str, vod: Path, row: dict) -> t
         ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
         return ok, reason, metrics
     scan_fast = os.environ.get("SHOOTER_VOD_COMBAT_FAST", "1") == "1"
+    hm = clip_meta.get("highlight_metrics") or {}
+    gate_reason = str(clip_meta.get("gate_reason") or hm.get("pass_reason") or "")
+    panns_pool = float(hm.get("panns_gun_max") or 0)
+    combat_trust = gate_reason.startswith("combat_fast") or panns_pool >= float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    )
+    if game == "pubg" and combat_trust:
+        return True, f"pool_combat_trust_precheck:{gate_reason or f'panns{panns_pool:.3f}'}", {
+            "panns_gun_max": panns_pool,
+        }
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile, scan_fast=scan_fast)
     if not ok:
         return False, reason, metrics
@@ -367,6 +377,14 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         )
         if ok:
             return True, f"pool_combat_trust:{reason}", metrics
+        if panns_pool >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")) and dur >= float(
+            os.environ.get("PUBG_FIGHT_MIN_SEC", "8")
+        ):
+            return True, f"pool_combat_trust:panns{panns_pool:.3f}", {
+                "duration": dur,
+                "panns_gun_max": panns_pool,
+                "rendered_fast": reason,
+            }
     if bootstrap:
         clip = row.get("clip") or {}
         hm = clip.get("highlight_metrics") or {}
