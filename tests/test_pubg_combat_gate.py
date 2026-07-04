@@ -108,3 +108,27 @@ def test_combat_gate_rejects_bot_farm_for_pubg() -> None:
     assert ok is False
     assert "bot_farm" in reason
     assert "bot_farm" in row
+
+
+def test_combat_gate_scan_fast_panns_trust_when_visual_misses() -> None:
+    with patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={"panns_gun_max": 0.52},
+    ), patch(
+        "highlight_scorer.calibrated_pann_gun_min",
+        return_value=0.25,
+    ), patch(
+        "pubg_combat_gate.pubg_combat_visual_fast",
+        return_value=(False, "no_combat_signal flash=0.0000 weapon=0.0000", {}),
+    ), patch(
+        "pubg_combat_gate.pubg_passes_shooting_gate",
+        return_value=(True, "strict_gun", {"gunfire_density": 0.06, "burst_ratio": 4.5}),
+    ), patch(
+        "pubg_combat_gate.pubg_passes_shooting_gate",
+        return_value=(True, "strict_gun", {"gunfire_density": 0.06, "burst_ratio": 4.5}),
+    ):
+        ok, reason, row = pubg_passes_combat_gate(
+            Path("x.mp4"), 100.0, 10.0, "pubg", scan_fast=True
+        )
+    assert ok is True
+    assert row.get("panns_visual_trust") is True

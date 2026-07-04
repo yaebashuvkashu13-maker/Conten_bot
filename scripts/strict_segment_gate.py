@@ -132,6 +132,8 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
 
 def _standoff_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject run/idle rounds: need sustained gunfire + aim motion."""
+    if os.environ.get("STANDOFF_VOD_BOOTSTRAP", "0") == "1":
+        return False, ""
     gun = float(metrics.get("gunfire_density", 0))
     burst = float(metrics.get("burst_ratio", 0))
     motion = float(metrics.get("center_motion", 0))

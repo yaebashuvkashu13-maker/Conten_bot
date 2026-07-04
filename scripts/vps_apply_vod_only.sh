@@ -2,6 +2,10 @@
 # Single VPS apply: git pull + VOD-only install + verify. Run after every code change.
 set -Eeuo pipefail
 REPO="${VPS_REPO_PATH:-/root/content_bot_ml}"
+ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
+if [[ -z "${VPS_BRANCH:-}" && -f "$ENV_FILE" ]]; then
+  VPS_BRANCH="$(grep -m1 '^VPS_BRANCH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+fi
 BRANCH="${VPS_BRANCH:-cursor/vod-pipeline-base-6cbd}"
 LOG=/root/data/mlbb/vps_apply_vod.log
 mkdir -p /root/data/mlbb
@@ -24,6 +28,8 @@ if [[ -n "$REV_BEFORE" && "$REV_BEFORE" == "$REV_AFTER" ]]; then
   exit 0
 fi
 export MLBB_VOD_INSTALL_RESTART_FEED=1
+find "$REPO/scripts/__pycache__" -name "*.pyc" -delete 2>/dev/null || true
+find /usr/local/bin/__pycache__ -name "*.pyc" -delete 2>/dev/null || true
 bash "$REPO/scripts/install_mlbb_vod_only.sh"
 bash /usr/local/bin/mlbb_vod_health_watchdog.sh || true
 if ! bash /usr/local/bin/mlbb_vod_only_verify.sh; then

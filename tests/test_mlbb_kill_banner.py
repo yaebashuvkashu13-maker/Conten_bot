@@ -72,7 +72,8 @@ def test_reject_enemy_triple() -> None:
 
 
 def test_bounds_from_fight_sustain() -> None:
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_BANNER_PRE_SEC"] = "2"
+    os.environ["MLBB_BANNER_POST_SEC"] = "16"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
@@ -82,17 +83,35 @@ def test_bounds_from_fight_sustain() -> None:
         fight_start=88.0,
         fight_end=118.0,
     )
-    assert start == 88.0
-    assert end == 116.0
-    assert dur == 28.0
+    assert start == 98.0
+    assert end == 118.0
+    assert dur == 20.0
+
+
+def test_bounds_skips_death_before_banner() -> None:
+    os.environ["MLBB_BANNER_PRE_SEC"] = "2"
+    os.environ["MLBB_BANNER_POST_SEC"] = "16"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "32"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "36"
+    start, end, dur = bounds_from_banner(
+        291.0,
+        file_dur=600.0,
+        fight_start=275.0,
+        fight_end=330.0,
+    )
+    assert start >= 289.0
+    assert end >= 307.0
+    assert (291.0 - start) / dur <= 0.15
 
 
 def test_bounds_fallback_without_fight() -> None:
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_BANNER_PRE_SEC"] = "2"
+    os.environ["MLBB_BANNER_POST_SEC"] = "16"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
+    assert start == 48.0
     assert 8.0 <= dur <= 28.0
 
 
@@ -138,7 +157,8 @@ def test_discover_banners_handles_numpy_motion() -> None:
         else:
             os.environ["MLBB_VOD_BANNER_DISCOVER"] = old
 
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_BANNER_PRE_SEC"] = "2"
+    os.environ["MLBB_BANNER_POST_SEC"] = "16"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
@@ -239,12 +259,16 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
     try:
         with (
             patch.object(kb, "find_banner_near_peak", side_effect=fake_find),
-            patch("mlbb_fight_segment.detect_fight_bounds", return_value=(88.0, 116.0, 28.0)),
+            patch(
+                "mlbb_fight_segment.detect_fight_bounds",
+                return_value=(88.0, 116.0, 28.0),
+            ) as det,
         ):
             out = kb.resolve_fight_bounds(vod, 100.0, 600.0)
         assert calls == [True, False]
         assert out is not None
         assert out[3]["anchor"] == "kill_banner"
+        det.assert_called_with(vod, 102.0)
     finally:
         for key, val in old.items():
             if val is None:

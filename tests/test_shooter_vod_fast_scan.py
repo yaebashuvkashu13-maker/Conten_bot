@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,7 @@ def _mock_smart_video_editor(duration: float) -> MagicMock:
 
 def test_fast_probe_skips_when_no_gun_hits(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FULL_PASS", "0")
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
     sve = _mock_smart_video_editor(1200.0)
@@ -69,3 +71,41 @@ def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
     assert ok is True
     assert reason == "fast_probe_disabled"
     assert peaks == []
+
+
+def test_fast_probe_full_pass_short_vod(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FULL_PASS", "1")
+    vod = tmp_path / "yt_short.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(600.0)
+    with patch.dict(sys.modules, {"smart_video_editor": sve}):
+        ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is True
+    assert reason.startswith("fast_probe_full_pass")
+    assert peaks == []
+
+
+def test_fast_probe_bypasses_when_owner_labels(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    vod = tmp_path / "yt_kFZA1C3Ze4s.mp4"
+    vod.write_bytes(b"")
+    labels = tmp_path / "pubg_owner_labels.json"
+    labels.write_text(
+        json.dumps(
+            {
+                "videos": {
+                    "kFZA1C3Ze4s": [
+                        {"time_sec": 81.0, "label": "good", "source": "owner"},
+                        {"time_sec": 121.0, "label": "good", "source": "owner"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(labels))
+    ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is True
+    assert reason.startswith("fast_probe_owner_bypass")
+    assert len(peaks) == 2
