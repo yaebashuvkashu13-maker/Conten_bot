@@ -359,8 +359,6 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         clip = row.get("clip") or {}
         hm = clip.get("highlight_metrics") or {}
         gate_reason = str(clip.get("gate_reason") or hm.get("pass_reason") or "")
-        from pubg_combat_gate import pubg_passes_combat_gate
-
         if gate_reason.startswith("combat_fast") or float(hm.get("panns_gun_max") or 0) >= 0.08:
             ok, reason, metrics = pubg_passes_combat_gate(
                 rendered, 0.0, dur, profile, scan_fast=True
