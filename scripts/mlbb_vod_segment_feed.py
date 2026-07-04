@@ -1457,9 +1457,22 @@ def _collect_scan_segments(
     from vod_analysis_cache import cache_key_hash
     from vod_scan_state import minimal_pool_from_entry, pool_cache_valid
 
+    def _discover_fresh() -> list[dict]:
+        from mlbb_fight_segment import clear_analysis_cache
+
+        clear_analysis_cache()
+        fresh = discover_strict_candidates(vod, PROFILE, sig, set())
+        if entry is not None:
+            entry["last_analysis_cache_key"] = cache_key_hash(vod)
+            entry.pop("last_pool_peaks", None)
+            entry.pop("last_pool_at", None)
+        return fresh
+
+    used_cache = False
     if pool is None:
         if entry and pool_cache_valid(entry):
             pool = minimal_pool_from_entry(entry)
+            used_cache = True
             log.info(
                 "reuse cached peak pool vod=%s peaks=%s age=%.0fs",
                 vod.name,
@@ -1467,87 +1480,98 @@ def _collect_scan_segments(
                 time.time() - float(entry.get("last_pool_at") or entry.get("last_scan_at") or 0),
             )
         else:
-            from mlbb_fight_segment import clear_analysis_cache
-
-            clear_analysis_cache()
-            pool = discover_strict_candidates(vod, PROFILE, sig, set())
-            if entry is not None:
-                entry["last_analysis_cache_key"] = cache_key_hash(vod)
+            pool = _discover_fresh()
     skip_peaks = skip_peaks or set()
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     min_gap = _segment_gap_sec()
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
-    out: list[dict] = []
     min_peak = _vod_min_peak_sec(vod)
     gap = _interval_gap_sec()
-    for clip in pool:
-        peak = float(clip.get("start", 0))
-        if peak_near_skipped(peak, skip_peaks):
-            continue
-        if peak < min_peak:
-            continue
-        lead_clip = _normalize_clip(clip, vod)
-        if lead_clip.get("banner_reject"):
-            log.info(
-                "skip peak=%.1f banner_reject=%s",
-                peak,
-                lead_clip.get("banner_reject"),
+
+    def _scan_pool(active_pool: list[dict]) -> list[dict]:
+        rows: list[dict] = []
+        for clip in active_pool:
+            peak = float(clip.get("start", 0))
+            if peak_near_skipped(peak, skip_peaks):
+                continue
+            if peak < min_peak:
+                continue
+            lead_clip = _normalize_clip(clip, vod)
+            if lead_clip.get("banner_reject"):
+                log.info(
+                    "skip peak=%.1f banner_reject=%s",
+                    peak,
+                    lead_clip.get("banner_reject"),
+                )
+                continue
+            start = float(lead_clip["start"])
+            seg_dur = float(lead_clip.get("input_duration") or 0)
+            if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
+                log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
+                continue
+            end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
+            if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
+                continue
+            sid = segment_id(vod, start)
+            if sid in labeled_set or sid in sent:
+                continue
+            hm = clip.get("highlight_metrics") or {}
+            skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
+            pass_reason = str(hm.get("pass_reason") or "")
+            clip_cached = pass_reason == "cached_pool"
+            clip_scored = float(hm.get("clip_score") or 0.0)
+            already_scored = (
+                bool(hm.get("rule_pass"))
+                and not clip_cached
+                and (clip_scored > 0 or pass_reason.startswith("mlbb_fight"))
             )
-            continue
-        start = float(lead_clip["start"])
-        seg_dur = float(lead_clip.get("input_duration") or 0)
-        if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
-            log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
-            continue
-        end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
-        if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
-            continue
-        sid = segment_id(vod, start)
-        if sid in labeled_set or sid in sent:
-            continue
-        hm = clip.get("highlight_metrics") or {}
-        skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
-        already_scored = bool(hm.get("rule_pass")) or str(hm.get("pass_reason") or "").startswith("mlbb_fight")
-        if skip_revalidate and already_scored:
-            ok, reason = True, str(hm.get("pass_reason") or "highlight_pass")
-            metrics_rows = [hm]
-            visual_rows = [{"visual_pass": hm.get("visual_pass", True)}]
-        else:
-            ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
-                vod, PROFILE, [lead_clip]
+            if skip_revalidate and already_scored:
+                ok, reason = True, pass_reason or "highlight_pass"
+                metrics_rows = [hm]
+                visual_rows = [{"visual_pass": hm.get("visual_pass", True)}]
+            else:
+                ok, reason, _, metrics_rows, visual_rows = validate_clips_before_preview(
+                    vod, PROFILE, [lead_clip]
+                )
+            if not ok:
+                log.info("skip %s gate=%s", sid, reason)
+                continue
+            metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
+            vis = visual_rows[0] if visual_rows else {}
+            clip_score = float(metrics.get("clip_score") or 0.0)
+            min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
+            if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+                log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
+                continue
+            rows.append(
+                {
+                    "segment_id": sid,
+                    "clip": lead_clip,
+                    "start": start,
+                    "peak_start": float(lead_clip.get("peak_start", peak)),
+                    "fight_dur": float(lead_clip.get("input_duration", 0)),
+                    "kill_banner": lead_clip.get("kill_banner"),
+                    "kill_banner_tier": lead_clip.get("kill_banner_tier"),
+                    "score": float(clip.get("score") or metrics.get("viral_score") or 0),
+                    "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
+                    "clip_score": clip_score,
+                    "highlight_metrics": metrics,
+                    "visual_pass": vis.get("visual_pass", True),
+                    "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
+                    "gate_reason": reason,
+                }
             )
-        if not ok:
-            log.info("skip %s gate=%s", sid, reason)
-            continue
-        metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
-        vis = visual_rows[0] if visual_rows else {}
-        clip_score = float(metrics.get("clip_score") or 0.0)
-        min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
-        if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
-            log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
-            continue
-        out.append(
-            {
-                "segment_id": sid,
-                "clip": lead_clip,
-                "start": start,
-                "peak_start": float(lead_clip.get("peak_start", peak)),
-                "fight_dur": float(lead_clip.get("input_duration", 0)),
-                "kill_banner": lead_clip.get("kill_banner"),
-                "kill_banner_tier": lead_clip.get("kill_banner_tier"),
-                "score": float(clip.get("score") or metrics.get("viral_score") or 0),
-                "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
-                "clip_score": clip_score,
-                "highlight_metrics": metrics,
-                "visual_pass": vis.get("visual_pass", True),
-                "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
-                "clip_score": float(metrics.get("clip_score") or 0),
-                "gate_reason": reason,
-            }
-        )
-        if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
-            log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
-            break
+            if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
+                log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
+                break
+        return rows
+
+    out = _scan_pool(pool)
+    if not out and used_cache:
+        log.warning("cached pool yielded 0 candidates — rescan vod=%s", vod.name)
+        pool = _discover_fresh()
+        used_cache = False
+        out = _scan_pool(pool)
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if batch_cap > 0:

@@ -32,6 +32,9 @@ def test_soften_after_three_zeros():
     assert soften_level(3) == 1
     assert soften_level(5) == 1
     assert soften_level(6) == 2
+    assert soften_level(12) == 2
+    assert soften_level(13) == 3
+    assert soften_level(40) == 3
 
 
 def test_soft_overrides_disable_banner_prefilter():
@@ -56,6 +59,13 @@ def test_l2_lenient_uniform_for_presend_tail():
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_LENIENT_UNIFORM"] == "1"
     assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.40
+    assert ov["MLBB_VOD_MIN_PEAK_SEC"] == "180"
+
+
+def test_l3_allows_early_peaks_and_zero_clip_floor():
+    ov = overrides_for_level(3)
+    assert ov["MLBB_VOD_MIN_PEAK_SEC"] == "90"
+    assert ov["MLBB_VOD_MIN_CLIP_SCORE"] == "0"
 
 
 def test_peak_near_skipped_import():
@@ -70,7 +80,8 @@ def test_should_notify_only_on_level_up():
     assert should_notify_soften(5, 1, prev_level=0) is True
     assert should_notify_soften(5, 1, prev_level=1) is False
     assert should_notify_soften(6, 2, prev_level=1) is True
-    assert should_notify_soften(15, 2, prev_level=2) is False
+    assert should_notify_soften(13, 3, prev_level=2) is True
+    assert should_notify_soften(15, 3, prev_level=3) is False
 
 
 def test_adaptive_env_restores():

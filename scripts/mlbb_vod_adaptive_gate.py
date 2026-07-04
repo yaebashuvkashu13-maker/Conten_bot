@@ -35,6 +35,7 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
+    "MLBB_VOD_MIN_PEAK_SEC": "180",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
     "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
@@ -44,6 +45,15 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+}
+
+# Level 3: long zero streak — allow earlier peaks, skip CLIP floor, rescore cached pools.
+SOFTEN_L3: dict[str, str] = {
+    **SOFTEN_L2,
+    "MLBB_VOD_MIN_PEAK_SEC": "90",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0",
+    "MLBB_PRESEND_MIN_MOTION": "0.010",
+    "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "22",
 }
 
 
@@ -60,10 +70,12 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft (streak>=threshold), 2=softer (+3), 3=desperate (+10)."""
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 10:
+        return 3
     if streak >= need + 3:
         return 2
     return 1
@@ -72,6 +84,8 @@ def soften_level(streak: int) -> int:
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
+    if level >= 3:
+        return dict(SOFTEN_L3)
     if level >= 2:
         return dict(SOFTEN_L2)
     return dict(SOFTEN_L1)
@@ -133,6 +147,8 @@ def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
     if level == 1 and streak == need and prev_level == 0:
         return True
     if level == 2 and streak == need + 3 and prev_level < 2:
+        return True
+    if level == 3 and streak == need + 10 and prev_level < 3:
         return True
     return False
 
