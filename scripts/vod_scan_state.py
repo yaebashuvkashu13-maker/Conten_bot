@@ -48,11 +48,23 @@ def min_probe_start_sec() -> float:
 
 
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted only when no peaks left to try — not on first presend reject."""
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
+        return True
+    reason = str(entry.get("reject_reason") or "")
+    if reason == "presend_exhausted":
+        return True
+    exhaust_after = max(
+        1,
+        int(os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2")),
+    )
+    if int(entry.get("presend_reject_streak") or 0) >= exhaust_after:
+        return True
+    zero_limit = max(1, int(os.environ.get("MLBB_VOD_ZERO_SEND_EXHAUST", "3")))
+    if int(entry.get("zero_send_sessions") or 0) >= zero_limit:
         return True
     return False
 
@@ -95,6 +107,31 @@ def peaks_near_sent_reason(entry: dict[str, Any] | None) -> bool:
     return bool(sent)
 
 
+def presend_fail_cooldown_sec(*, game: str = "") -> float:
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        key, default = "MLBB_VOD_PRESEND_COOLDOWN_SEC", "3600"
+    else:
+        key, default = "SHOOTER_VOD_PRESEND_COOLDOWN_SEC", "1800"
+    return max(300.0, float(os.environ.get(key, default)))
+
+
+def fast_fail_cooldown_sec() -> float:
+    return max(300.0, float(os.environ.get("MLBB_VOD_FAST_FAIL_COOLDOWN_SEC", "1800")))
+
+
+def zero_send_rescan_cooldown_sec(*, game: str = "") -> float:
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        return max(300.0, float(os.environ.get("MLBB_VOD_ZERO_SEND_COOLDOWN_SEC", "2700")))
+    return max(300.0, float(os.environ.get("SHOOTER_VOD_ZERO_SEND_COOLDOWN_SEC", "1800")))
+
+
+def invalidate_pool_cache(entry: dict[str, Any]) -> None:
+    entry.pop("last_pool_peaks", None)
+    entry.pop("last_pool_at", None)
+
+
 def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> bool:
     if not entry:
         return False
@@ -107,6 +144,21 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
         return False
     age = time.time() - last
     if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+        return True
+    reason = str(entry.get("reject_reason") or "")
+    if reason in ("presend_reject", "presend_exhausted") or reason.startswith("pool_filtered"):
+        if age < presend_fail_cooldown_sec(game=game):
+            return True
+    if reason.startswith("fast_mlbb") or reason.startswith("fast_probe"):
+        if age < fast_fail_cooldown_sec():
+            return True
+    if (
+        game == "mlbb"
+        and int(entry.get("last_scan_sent") or 0) == 0
+        and entry.get("last_pool_peaks")
+        and not entry.get("last_scan_blocked")
+        and age < zero_send_rescan_cooldown_sec(game=game)
+    ):
         return True
     return False
 

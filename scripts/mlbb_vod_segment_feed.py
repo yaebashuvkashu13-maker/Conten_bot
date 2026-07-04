@@ -49,6 +49,7 @@ from preview_gate import validate_clips_before_preview
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import reserved_sent_only, segment_gap_sec
 from vod_scan_state import (
+    invalidate_pool_cache,
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
@@ -278,12 +279,14 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
 
 def _pick_available_vod(registry: list[dict]) -> dict | None:
     target = _vod_target_dur_sec()
+    now = time.time()
+    zero_cooldown = float(os.environ.get("MLBB_VOD_ZERO_SEND_COOLDOWN_SEC", "2700"))
     exhausted_ids = {
         str(row.get("id") or "")
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[int, float, float, float, dict]] = []
+    ranked: list[tuple[float, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
@@ -304,18 +307,28 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
-        ranked.append((1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        sent = int(row.get("last_scan_sent") or 0)
+        age = now - scanned if scanned else 1e9
+        priority = 0.0
+        if not scanned:
+            priority -= 100.0
+        if scanned and sent == 0 and age < zero_cooldown:
+            priority += 50.0 + min(age / 60.0, 30.0)
+        priority += int(row.get("zero_send_sessions") or 0) * 8.0
+        priority += int(row.get("presend_reject_streak") or 0) * 6.0
+        ranked.append((priority, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
     ranked.sort(key=lambda item: (item[0], item[1], item[2]))
     pick = ranked[0][4]
     dur = ranked[0][3]
     log.info(
-        "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s",
+        "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s priority=%.0f",
         pick.get("id", ""),
         dur / 60,
         target / 60,
-        bool(ranked[0][0]),
+        bool(ranked[0][1]),
+        ranked[0][0],
     )
     return pick
 
@@ -1587,6 +1600,46 @@ def _collect_scan_segments(
     return deduped, pool
 
 
+def _mlbb_streak_skip(entry: dict | None, *, send_quota_blocked: bool = False) -> bool:
+    """Infra / presend / fast-probe failures — do not inflate adaptive soften streak."""
+    if send_quota_blocked:
+        return True
+    reason = str((entry or {}).get("reject_reason") or "")
+    return reason.startswith(
+        (
+            "fast_mlbb",
+            "fast_probe",
+            "scan_timeout",
+            "score_timeout",
+            "presend_reject",
+            "presend_exhausted",
+            "pool_filtered",
+        )
+    )
+
+
+def _note_zero_send_session(entry: dict | None) -> None:
+    if entry is None:
+        return
+    entry["zero_send_sessions"] = int(entry.get("zero_send_sessions") or 0) + 1
+
+
+def _note_presend_reject(entry: dict | None, *, pool_cache: list[dict] | None) -> None:
+    if entry is None:
+        return
+    entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
+    entry["reject_reason"] = "presend_reject"
+    invalidate_pool_cache(entry)
+    exhaust_after = max(1, int(os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2")))
+    if int(entry["presend_reject_streak"]) >= exhaust_after:
+        entry["reject_reason"] = "presend_exhausted"
+        log.info(
+            "presend exhausted vod=%s streak=%s — mark for exhaust",
+            entry.get("id", "?"),
+            entry["presend_reject_streak"],
+        )
+
+
 def _send_segment_batch(
     token: str,
     chat_id: str,
@@ -1818,11 +1871,13 @@ def _process_vod_segments(
             if entry is None:
                 entry = {"id": vid, "path": str(vod), "exhausted": False}
             entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
+            entry["exhausted"] = False
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
             state = _load_state()
             if entry:
                 _sync_vod_entry_to_state(state, entry, vod)
+            _note_zero_send_session(entry)
+            record_vod_outcome(state, vod_id=vid, sent=0, streak_skip=True)
             _save_state(state)
             if clear_fast_seeds:
                 clear_fast_seeds()
@@ -1832,6 +1887,8 @@ def _process_vod_segments(
     try:
         with adaptive_env(streak_in) as level:
             active_level = level
+            if level > prev_level and entry is not None:
+                invalidate_pool_cache(entry)
             if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
                 "MLBB_VOD_ADAPTIVE_NOTIFY", "1"
             ) == "1":
@@ -1900,12 +1957,18 @@ def _process_vod_segments(
                     ):
                         blocked = True
                     if entry is not None:
+                        reject_reason = ""
+                        if blocked and used_peaks:
+                            reject_reason = f"peaks_near_sent pool={len(pool_peaks)} sent={used_peaks[:6]}"
+                        elif int(entry.get("presend_reject_streak") or 0) > 0:
+                            reject_reason = "presend_reject"
                         record_vod_scan(
                             entry,
                             sent=sent_total,
                             pool_peaks=pool_peaks,
                             blocked=blocked,
                             pool=pool_cache,
+                            reject_reason=reject_reason,
                         )
                     break
                 n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
@@ -1926,6 +1989,7 @@ def _process_vod_segments(
                         for row in to_send:
                             skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
                         peak_tries += 1
+                        _note_presend_reject(entry, pool_cache=pool_cache)
                         if peak_tries < max_peak_attempts:
                             log.warning(
                                 "presend rejected peak — try next (%s/%s) vod=%s",
@@ -1942,6 +2006,7 @@ def _process_vod_segments(
                                 pool_peaks=pool_peaks,
                                 blocked=False,
                                 pool=pool_cache,
+                                reject_reason=str(entry.get("reject_reason") or "presend_reject"),
                             )
                         break
                     log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
@@ -1960,6 +2025,9 @@ def _process_vod_segments(
                 used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
                 downloader.start_if_idle(registry)
                 if entry is not None:
+                    entry["presend_reject_streak"] = 0
+                    entry.pop("reject_reason", None)
+                    entry["zero_send_sessions"] = 0
                     record_vod_scan(
                         entry,
                         sent=sent_total,
@@ -1978,11 +2046,17 @@ def _process_vod_segments(
     scanned = set(state.get("scanned_vods", []))
     scanned.add(vod.name)
     state["scanned_vods"] = sorted(scanned)
-    new_streak = record_vod_outcome(state, vod_id=vid, sent=sent_total)
+    new_streak = record_vod_outcome(
+        state,
+        vod_id=vid,
+        sent=sent_total,
+        streak_skip=_mlbb_streak_skip(entry, send_quota_blocked=send_quota_blocked),
+    )
     state["last_adaptive_level"] = active_level
     _save_state(state)
 
     if sent_total == 0 and not send_quota_blocked:
+        _note_zero_send_session(entry)
         if entry and should_mark_vod_exhausted(entry):
             _mark_vod_exhausted(vod)
             entry["exhausted"] = True

@@ -47,11 +47,13 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
 }
 
-# Level 3: long zero streak — allow earlier peaks, skip CLIP floor, rescore cached pools.
+# Level 3: long zero streak — allow earlier peaks, rescore cached pools, wider discovery.
 SOFTEN_L3: dict[str, str] = {
     **SOFTEN_L2,
     "MLBB_VOD_MIN_PEAK_SEC": "90",
     "MLBB_VOD_MIN_CLIP_SCORE": "0",
+    "MLBB_VOD_SKIP_REVALIDATE": "0",
+    "HIGHLIGHT_MAX_PANN_PROBE": "12",
     "MLBB_PRESEND_MIN_MOTION": "0.010",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "22",
 }

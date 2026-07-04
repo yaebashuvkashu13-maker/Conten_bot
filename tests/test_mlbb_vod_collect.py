@@ -133,3 +133,12 @@ def test_collect_rescans_when_cached_pool_unusable(tmp_path: Path):
         assert rows[0]["peak_start"] == 620.0
         assert pool is fresh_pool
         assert "last_pool_peaks" not in entry
+
+
+def test_mlbb_streak_skip_presend_and_fast():
+    from mlbb_vod_segment_feed import _mlbb_streak_skip
+
+    assert _mlbb_streak_skip({"reject_reason": "presend_reject"}) is True
+    assert _mlbb_streak_skip({"reject_reason": "fast_mlbb_0/6 color=0.01 pann=0.05"}) is True
+    assert _mlbb_streak_skip({"reject_reason": "no_combat_peaks"}) is False
+    assert _mlbb_streak_skip(None, send_quota_blocked=True) is True

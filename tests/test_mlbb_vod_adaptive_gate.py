@@ -66,6 +66,8 @@ def test_l3_allows_early_peaks_and_zero_clip_floor():
     ov = overrides_for_level(3)
     assert ov["MLBB_VOD_MIN_PEAK_SEC"] == "90"
     assert ov["MLBB_VOD_MIN_CLIP_SCORE"] == "0"
+    assert ov["MLBB_VOD_SKIP_REVALIDATE"] == "0"
+    assert ov["HIGHLIGHT_MAX_PANN_PROBE"] == "12"
 
 
 def test_peak_near_skipped_import():
