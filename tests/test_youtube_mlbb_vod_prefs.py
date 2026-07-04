@@ -49,10 +49,17 @@ def test_rejects_guide_listicle_titles() -> None:
     assert not passes_mlbb_game_title("BEST SOLO CARRY Heroes For Every Role | Season 41")
 
 
+def test_rejects_listicle_and_support_titles() -> None:
+    assert not passes_mlbb_vod_filters(_meta("Most Picked Roam Heroes Above Mythical Immortal | MLBB Season 41"))
+    assert not passes_mlbb_vod_filters(_meta("Angela Support Mythic Ranked Gameplay | MLBB"))
+    assert not passes_mlbb_vod_filters(_meta("Top 7 Tanks to Solo Carry to Mythic Fast (Season 41 MLBB)"))
+
+
 def test_accepts_ranked_match_titles() -> None:
     assert passes_mlbb_vod_filters(_meta("MLBB Mythic Global Ranked Full Match Season 41"))
     assert passes_mlbb_vod_filters(_meta("Paquito vs Masha Mythic Ranked Match | MLBB"))
     assert passes_mlbb_vod_filters(_meta("Mobile Legends Legend Solo Queue Full Game Replay"))
+    assert passes_mlbb_vod_filters(_meta("MLBB Hayabusa Mythic Savage Teamfight Ranked Full Match"))
 
 
 def test_accepts_implicit_mlbb_ranked_titles() -> None:

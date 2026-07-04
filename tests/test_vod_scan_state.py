@@ -29,6 +29,34 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
     assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
+    assert should_mark_vod_exhausted({"reject_reason": "presend_exhausted"}) is True
+    assert should_mark_vod_exhausted({"presend_reject_streak": 2}) is True
+    assert should_mark_vod_exhausted({"zero_send_sessions": 3}) is True
+
+
+def test_presend_fail_cooldown_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_PRESEND_COOLDOWN_SEC", "3600")
+    entry = {
+        "last_scan_at": time.time(),
+        "last_scan_sent": 0,
+        "last_scan_blocked": False,
+        "reject_reason": "presend_reject",
+        "last_pool_peaks": [{"peak_sec": 120.0, "score": 0.1, "blocked_reason": ""}],
+    }
+    assert should_skip_vod_rescan(entry, game="mlbb") is True
+    entry["last_scan_at"] = time.time() - 7200
+    assert should_skip_vod_rescan(entry, game="mlbb") is False
+
+
+def test_zero_send_cooldown_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_ZERO_SEND_COOLDOWN_SEC", "2700")
+    entry = {
+        "last_scan_at": time.time(),
+        "last_scan_sent": 0,
+        "last_scan_blocked": False,
+        "last_pool_peaks": [{"peak_sec": 620.0, "score": 0.2, "blocked_reason": ""}],
+    }
+    assert should_skip_vod_rescan(entry, game="mlbb") is True
 
 
 def test_scan_zero_detail() -> None:

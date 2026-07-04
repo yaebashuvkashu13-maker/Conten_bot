@@ -82,3 +82,63 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
             vod, "sig", {}, set(), 12, pool=cached, skip_peaks={384.0, 582.0}
         )
         assert third == []
+
+
+def test_collect_rescans_when_cached_pool_unusable(tmp_path: Path):
+    from mlbb_vod_segment_feed import _collect_scan_segments
+
+    vod = tmp_path / "yt_cache.mp4"
+    vod.write_bytes(b"x")
+    entry = {
+        "last_pool_peaks": [{"peak_sec": 114.0, "score": 0.001, "blocked_reason": ""}],
+        "last_pool_at": __import__("time").time(),
+    }
+    fresh_pool = [
+        {
+            "start": 620.0,
+            "score": 0.5,
+            "highlight_metrics": {
+                "rule_pass": True,
+                "pass_reason": "mlbb_fight_ok",
+                "clip_score": 0.2,
+            },
+        }
+    ]
+    fake_clip = {
+        "start": 616.0,
+        "peak_start": 620.0,
+        "input_duration": 12.0,
+        "output_duration": 12.0,
+        "source_path": str(vod),
+        "source_index": 0,
+        "speed": 1.0,
+        "anchor": "motion",
+    }
+
+    os.environ["MLBB_VOD_MIN_PEAK_SEC"] = "300"
+    os.environ["MLBB_VOD_SEND_ONE"] = "1"
+    os.environ["MLBB_VOD_SKIP_REVALIDATE"] = "1"
+    os.environ["MLBB_KILL_BANNER_REQUIRED"] = "0"
+
+    with (
+        patch("mlbb_vod_segment_feed.discover_strict_candidates", return_value=fresh_pool),
+        patch("mlbb_vod_segment_feed._normalize_clip", return_value=fake_clip),
+        patch("mlbb_vod_segment_feed.labeled_ids", return_value={}),
+        patch("mlbb_vod_segment_feed.load_feed_sent", return_value=set()),
+        patch("mlbb_vod_segment_feed._used_intervals_for_vod", return_value=[]),
+        patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=1020.0),
+    ):
+        rows, pool = _collect_scan_segments(vod, "sig", {}, set(), 12, entry=entry)
+        assert len(rows) == 1
+        assert rows[0]["peak_start"] == 620.0
+        assert pool is fresh_pool
+        assert "last_pool_peaks" not in entry
+
+
+def test_mlbb_streak_skip_presend_and_fast():
+    from mlbb_vod_segment_feed import _mlbb_streak_skip
+
+    assert _mlbb_streak_skip({"reject_reason": "presend_reject"}) is True
+    assert _mlbb_streak_skip({"reject_reason": "fast_mlbb_0/6 color=0.01 pann=0.05"}) is True
+    assert _mlbb_streak_skip({"reject_reason": "no_combat_peaks"}) is False
+    assert _mlbb_streak_skip(None, send_quota_blocked=True) is True

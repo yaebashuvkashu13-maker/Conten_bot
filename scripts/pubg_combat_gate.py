@@ -114,6 +114,41 @@ def pubg_combat_visual_strict(
     }
 
 
+def pubg_combat_visual_fast(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Single mid-frame visual for highlight pool build (avoids 3x decode stalls)."""
+    profile = _norm_profile(profile)
+    if profile not in COMBAT_PROFILES:
+        return False, "not_combat_profile", {}
+
+    mid = start_sec + max(duration_sec, 0.5) * 0.5
+    frame = _read_frame_at(video_path, mid)
+    if frame is None:
+        return False, "frame_missing", {"frames_passed": 0, "frames_required": 1}
+
+    ok, reason, fmetrics = check_frame_visual(profile, frame)
+    flash = float(fmetrics.get("hit_flash", 0))
+    weapon = float(fmetrics.get("weapon_edge", 0))
+    min_flash = float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", "0.004"))
+    min_weapon = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025"))
+    if ok or flash >= min_flash or weapon >= min_weapon:
+        return True, "combat_visual_fast", {
+            "frames_passed": 1 if ok else 0,
+            "best_hit_flash": flash,
+            "best_weapon_edge": weapon,
+            "frames": [{"label": "mid", "pass": ok, "reason": reason}],
+        }
+    return False, f"no_combat_signal flash={flash:.4f} weapon={weapon:.4f}", {
+        "frames_passed": 0,
+        "best_hit_flash": flash,
+        "best_weapon_edge": weapon,
+    }
+
+
 def _gunfire_spike_indices(pcm: np.ndarray, *, frame: int = 256) -> list[int]:
     if pcm.size < frame * 4:
         return []
@@ -361,6 +396,7 @@ def pubg_passes_combat_gate(
     profile: str,
     *,
     metrics: Any | None = None,
+    scan_fast: bool = False,
 ) -> tuple[bool, str, dict[str, Any]]:
     """
     PASS only if ALL:
@@ -369,6 +405,9 @@ def pubg_passes_combat_gate(
     3. visual 3/3 + hit_flash/weapon_edge on >=1 frame
     4. NOT segment_looks_like_pubg_loot_or_walk
     5. PUBG only: NOT bot farm / training / one-sided PvE spray
+
+    scan_fast=True: highlight pool build only — trust strong PANNs, 1-frame visual,
+    skip loot/bot/POV (presend re-validates strictly).
     """
     profile = _norm_profile(profile)
     if profile not in COMBAT_PROFILES:
@@ -392,6 +431,47 @@ def pubg_passes_combat_gate(
         panns_gun = float(panns.get("panns_gun_max", 0))
         panns_thr = calibrated_pann_gun_min(video_path, profile)
 
+    out["panns_gun_max"] = round(panns_gun, 4)
+    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    out["panns_gun_threshold"] = round(floor, 4)
+
+    if scan_fast:
+        if panns_gun < floor:
+            return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
+        vis_ok, vis_reason, vis_row = pubg_combat_visual_fast(
+            video_path, start_sec, duration_sec, profile
+        )
+        out["combat_visual"] = vis_row
+        out["visual_pass"] = vis_ok
+        if not vis_ok:
+            return False, vis_reason, out
+        shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
+            video_path, start_sec, duration_sec, panns_gun_max=panns_gun
+        )
+        out.update(shoot_row)
+        gun = float(shoot_row.get("gunfire_density", 0))
+        burst = float(shoot_row.get("burst_ratio", 0))
+        min_gun_pool = float(os.environ.get("PUBG_POOL_MIN_GUN_DENSITY", "0.028"))
+        min_burst_pool = float(os.environ.get("PUBG_POOL_MIN_BURST", "3.0"))
+        try:
+            from pubg_killfeed_ocr import score_killfeed_segment
+
+            kf_density, kf_row = score_killfeed_segment(
+                video_path, start_sec, duration_sec, profile
+            )
+            out["killfeed_density"] = round(kf_density, 4)
+            out.update({k: v for k, v in kf_row.items() if k not in out})
+        except Exception:
+            kf_density = 0.0
+        has_audio = gun >= min_gun_pool and burst >= min_burst_pool
+        has_killfeed = kf_density >= float(os.environ.get("PUBG_KILLFEED_POOL_MIN", "0.15"))
+        if not has_audio and not has_killfeed and panns_gun < float(
+            os.environ.get("PUBG_PANNS_POOL_MIN", "0.48")
+        ):
+            return False, f"pool_weak=gun{gun:.3f}:burst{burst:.1f}:kf{kf_density:.2f}", out
+        out["pass"] = True
+        return True, f"combat_fast=vis+gun{panns_gun:.3f}", out
+
     shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
         video_path, start_sec, duration_sec, panns_gun_max=panns_gun
     )
@@ -399,9 +479,6 @@ def pubg_passes_combat_gate(
     if not shoot_ok:
         return False, shoot_reason, out
 
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
-    out["panns_gun_max"] = round(panns_gun, 4)
-    out["panns_gun_threshold"] = round(floor, 4)
     if panns_gun < floor:
         return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
 

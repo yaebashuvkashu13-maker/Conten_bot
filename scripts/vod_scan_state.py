@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable
 
+from mlbb_vod_intervals import conflicts_any_interval, interval_gap_sec
 from vod_peak_gap import filter_blocked_peaks, peak_too_close, used_peak_times_shooter
 
 
@@ -35,12 +37,36 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
     return strict_peak_tries(game)
 
 
+def min_probe_start_sec() -> float:
+    raw = (os.environ.get("SHOOTER_VOD_MIN_PROBE_START") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted only when no peaks left to try — not on first presend reject."""
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
+        return True
+    reason = str(entry.get("reject_reason") or "")
+    if reason.startswith("score_timeout"):
+        return False
+    if reason == "presend_exhausted":
+        return True
+    exhaust_after = max(
+        1,
+        int(os.environ.get("MLBB_VOD_PRESEND_EXHAUST_AFTER", "2")),
+    )
+    if int(entry.get("presend_reject_streak") or 0) >= exhaust_after:
+        return True
+    zero_limit = max(1, int(os.environ.get("MLBB_VOD_ZERO_SEND_EXHAUST", "3")))
+    if int(entry.get("zero_send_sessions") or 0) >= zero_limit:
         return True
     return False
 
@@ -73,6 +99,41 @@ def pool_peaks_fully_blocked(
     return True
 
 
+def peaks_near_sent_reason(entry: dict[str, Any] | None) -> bool:
+    if not entry:
+        return False
+    reason = str(entry.get("reject_reason") or "")
+    if not reason.startswith("peaks_near_sent"):
+        return False
+    sent = entry.get("last_sent_peaks") or []
+    return bool(sent)
+
+
+def presend_fail_cooldown_sec(*, game: str = "") -> float:
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        key, default = "MLBB_VOD_PRESEND_COOLDOWN_SEC", "3600"
+    else:
+        key, default = "SHOOTER_VOD_PRESEND_COOLDOWN_SEC", "1800"
+    return max(300.0, float(os.environ.get(key, default)))
+
+
+def fast_fail_cooldown_sec() -> float:
+    return max(300.0, float(os.environ.get("MLBB_VOD_FAST_FAIL_COOLDOWN_SEC", "1800")))
+
+
+def zero_send_rescan_cooldown_sec(*, game: str = "") -> float:
+    g = (game or "").strip().lower()
+    if g == "mlbb":
+        return max(300.0, float(os.environ.get("MLBB_VOD_ZERO_SEND_COOLDOWN_SEC", "2700")))
+    return max(300.0, float(os.environ.get("SHOOTER_VOD_ZERO_SEND_COOLDOWN_SEC", "1800")))
+
+
+def invalidate_pool_cache(entry: dict[str, Any]) -> None:
+    entry.pop("last_pool_peaks", None)
+    entry.pop("last_pool_at", None)
+
+
 def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> bool:
     if not entry:
         return False
@@ -85,6 +146,21 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
         return False
     age = time.time() - last
     if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+        return True
+    reason = str(entry.get("reject_reason") or "")
+    if reason in ("presend_reject", "presend_exhausted") or reason.startswith("pool_filtered"):
+        if age < presend_fail_cooldown_sec(game=game):
+            return True
+    if reason.startswith("fast_mlbb") or reason.startswith("fast_probe"):
+        if age < fast_fail_cooldown_sec():
+            return True
+    if (
+        game == "mlbb"
+        and int(entry.get("last_scan_sent") or 0) == 0
+        and entry.get("last_pool_peaks")
+        and not entry.get("last_scan_blocked")
+        and age < zero_send_rescan_cooldown_sec(game=game)
+    ):
         return True
     return False
 
@@ -99,6 +175,13 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
     if peaks is not None and len(peaks) == 0:
         return "нет боёв в VOD (highlight/panns pool=0)"
     reason = str(entry.get("reject_reason") or "").strip()
+    if reason.startswith("peaks_near_sent"):
+        sent = entry.get("last_sent_peaks") or []
+        return f"пики рядом с уже отправленными (sent={sent})"
+    if reason == "presend_reject":
+        return "presend отклонил все пики в пуле"
+    if reason.startswith("pool_filtered"):
+        return "пул есть, но все пики отфильтрованы (gap/presend)"
     if reason:
         return reason[:140]
     if peaks:
@@ -175,10 +258,15 @@ def record_vod_scan(
     blocked: bool,
     pool: list[dict] | None = None,
     analysis_cache_key: str = "",
+    reject_reason: str = "",
 ) -> None:
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
+    if reject_reason:
+        entry["reject_reason"] = reject_reason
+    elif sent > 0:
+        entry.pop("reject_reason", None)
     if pool:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:
@@ -209,7 +297,194 @@ def peaks_from_pool(pool: list[dict]) -> list[float]:
 def used_peaks_for_vod(
     game: str,
     vod_id: str,
-    sent_set: set[str],
+    blocked_ids: set[str],
     index_segments: list[dict],
 ) -> list[float]:
-    return used_peak_times_shooter(vod_id, sent_set, index_segments)
+    return used_peak_times_shooter(vod_id, blocked_ids, index_segments)
+
+
+def shooter_fight_peak_span_sec(game: str) -> float:
+    g = game.strip().lower()
+    if g == "pubg":
+        return float(
+            os.environ.get(
+                "SHOOTER_VOD_FIGHT_PEAK_SPAN_SEC",
+                os.environ.get("PUBG_FIGHT_MAX_SEC", "45"),
+            )
+        )
+    return float(os.environ.get("SHOOTER_VOD_FIGHT_PEAK_SPAN_SEC", "30"))
+
+
+def shooter_peak_fight_blocked(
+    peak: float,
+    used_peaks: list[float],
+    *,
+    game: str,
+    soften_gap: float,
+) -> bool:
+    """Block peaks inside the same fight window as an already-sent/labeled peak."""
+    span = shooter_fight_peak_span_sec(game)
+    factor = float(os.environ.get("SHOOTER_VOD_FIGHT_PEAK_SPAN_FACTOR", "0.40"))
+    min_gap = max(soften_gap, span * factor)
+    return peak_too_close(peak, used_peaks, min_gap)
+
+
+def parse_exclude_intervals(raw: str = "") -> list[tuple[float, float]]:
+    """Parse HIGHLIGHT_EXCLUDE_INTERVALS env: 'lo-hi;lo-hi'."""
+    text = (raw or os.environ.get("HIGHLIGHT_EXCLUDE_INTERVALS", "")).strip()
+    if not text:
+        return []
+    out: list[tuple[float, float]] = []
+    for part in text.split(";"):
+        part = part.strip()
+        if "-" not in part:
+            continue
+        lo_s, hi_s = part.split("-", 1)
+        try:
+            lo, hi = float(lo_s), float(hi_s)
+        except ValueError:
+            continue
+        if hi > lo:
+            out.append((lo, hi))
+    return out
+
+
+def exclude_intervals_env(
+    sent_intervals: list[tuple[float, float]],
+    *,
+    pad_sec: float | None = None,
+) -> str:
+    if not sent_intervals:
+        return ""
+    pad = float(
+        pad_sec
+        if pad_sec is not None
+        else os.environ.get("SHOOTER_VOD_INTERVAL_GAP_SEC", str(interval_gap_sec()))
+    )
+    parts = [f"{max(0.0, lo - pad)}-{hi + pad}" for lo, hi in sent_intervals]
+    return ";".join(parts)
+
+
+def peak_in_exclude_intervals(
+    peak: float,
+    intervals: list[tuple[float, float]] | None = None,
+) -> bool:
+    blocks = intervals if intervals is not None else parse_exclude_intervals()
+    for lo, hi in blocks:
+        if lo <= peak <= hi:
+            return True
+    return False
+
+
+def filter_starts_outside_sent(
+    starts: list[float],
+    intervals: list[tuple[float, float]] | None = None,
+) -> list[float]:
+    blocks = intervals if intervals is not None else parse_exclude_intervals()
+    if not blocks:
+        return starts
+    return [s for s in starts if not peak_in_exclude_intervals(s, blocks)]
+
+
+def used_intervals_for_shooter_vod(
+    vod_id: str,
+    blocked_ids: set[str],
+    index_segments: list[dict],
+    *,
+    vod_path: Path | None = None,
+) -> list[tuple[float, float]]:
+    """Reserved [start,end] for sent/labeled shooter segments — blocks duplicate fights."""
+    fallback = float(os.environ.get("PUBG_FIGHT_MAX_SEC", "45"))
+    intervals: list[tuple[float, float]] = []
+    seen_sids: set[str] = set()
+
+    for row in index_segments:
+        row_vid = str(row.get("vod_id") or "")
+        row_vod = str(row.get("vod") or "")
+        if row_vid != vod_id:
+            if not vod_path or (vod_path.name not in row_vod and str(vod_path) not in row_vod):
+                continue
+        sid = str(row.get("segment_id") or "")
+        if not sid or sid not in blocked_ids:
+            continue
+        start = float(row.get("start", 0))
+        peak = float(row.get("peak_start") or start)
+        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        tail = float(os.environ.get("PUBG_FIGHT_TAIL_PAD_SEC", "6"))
+        dur = float(row.get("duration") or row.get("fight_dur") or 0)
+        if dur <= 0:
+            path = Path(str(row.get("path") or ""))
+            if path.exists():
+                try:
+                    from mlbb_vod_segment_feed import _ffprobe_duration
+
+                    dur = float(_ffprobe_duration(path) or 0)
+                except Exception:
+                    dur = 0.0
+        if dur <= 0:
+            dur = fallback
+        lo = min(start, max(0.0, peak - lead))
+        hi = max(start + dur, peak + tail)
+        intervals.append((lo, hi))
+        seen_sids.add(sid)
+
+    for sid in blocked_ids:
+        if not sid.startswith(f"{vod_id}_") or sid in seen_sids:
+            continue
+        try:
+            start = float(sid.rsplit("_", 1)[1])
+        except ValueError:
+            continue
+        intervals.append((start, start + fallback))
+
+    return intervals
+
+
+def shooter_min_clip_sep_sec() -> float:
+    return float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SEP_SEC", "30"))
+
+
+def shooter_interval_blocked(
+    start: float,
+    end: float,
+    reserved_intervals: list[tuple[float, float]],
+) -> bool:
+    gap = float(os.environ.get("SHOOTER_VOD_INTERVAL_GAP_SEC", str(interval_gap_sec())))
+    if conflicts_any_interval(start, end, reserved_intervals, gap=gap):
+        return True
+    # Clip earlier on timeline but too close before an already-sent/labeled window.
+    min_sep = shooter_min_clip_sep_sec()
+    for lo, hi in reserved_intervals:
+        if end <= lo + gap and (lo - end) < min_sep:
+            return True
+    return False
+
+
+def fight_intervals_from_entry(entry: dict[str, Any] | None) -> list[tuple[float, float]]:
+    if not entry:
+        return []
+    out: list[tuple[float, float]] = []
+    for row in entry.get("fight_intervals") or []:
+        try:
+            lo, hi = float(row[0]), float(row[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if hi > lo:
+            out.append((lo, hi))
+    return out
+
+
+def record_fight_interval(entry: dict[str, Any] | None, start: float, end: float) -> None:
+    if entry is None or end <= start:
+        return
+    rows = entry.setdefault("fight_intervals", [])
+    lo, hi = round(start, 1), round(end, 1)
+    for row in rows:
+        try:
+            if abs(float(row[0]) - lo) < 0.5 and abs(float(row[1]) - hi) < 0.5:
+                return
+        except (TypeError, ValueError, IndexError):
+            continue
+    rows.append([lo, hi])
+    if len(rows) > 32:
+        entry["fight_intervals"] = rows[-32:]

@@ -10,15 +10,8 @@ from typing import Iterator
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: productive fallback — motion peaks, banner checked at presend only.
+# Level 1: relax presend tails only — keep double+ kill banner + teamfight targeting.
 SOFTEN_L1: dict[str, str] = {
-    "MLBB_VOD_BANNER_PREFILTER": "0",
-    "MLBB_VOD_BANNER_DISCOVER": "0",
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
-    "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
@@ -29,14 +22,14 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_QUICK_AFTER": "8",
 }
 
-# Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
+# Level 2: earlier peaks + relaxed clip — still require double+ banner (no motion-only).
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
+    "MLBB_VOD_MIN_PEAK_SEC": "180",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
-    "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
@@ -44,6 +37,20 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+}
+
+# Level 3: last resort — motion anchor allowed, single-kill banner floor.
+SOFTEN_L3: dict[str, str] = {
+    **SOFTEN_L2,
+    "MLBB_VOD_MIN_PEAK_SEC": "90",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0",
+    "MLBB_VOD_SKIP_REVALIDATE": "0",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
+    "MLBB_KILL_BANNER_REQUIRED": "0",
+    "HIGHLIGHT_MAX_PANN_PROBE": "12",
+    "MLBB_PRESEND_MIN_MOTION": "0.010",
+    "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "22",
 }
 
 
@@ -60,10 +67,12 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft (streak>=threshold), 2=softer (+3), 3=desperate (+10)."""
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 10:
+        return 3
     if streak >= need + 3:
         return 2
     return 1
@@ -72,6 +81,8 @@ def soften_level(streak: int) -> int:
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
+    if level >= 3:
+        return dict(SOFTEN_L3)
     if level >= 2:
         return dict(SOFTEN_L2)
     return dict(SOFTEN_L1)
@@ -80,16 +91,24 @@ def overrides_for_level(level: int) -> dict[str, str]:
 def trailing_zero_streak(results: list[dict]) -> int:
     n = 0
     for row in reversed(results):
+        if row.get("streak_skip"):
+            continue
         if int(row.get("sent", 0)) > 0:
             break
         n += 1
     return n
 
 
-def record_vod_outcome(state: dict, *, vod_id: str, sent: int) -> int:
+def record_vod_outcome(
+    state: dict,
+    *,
+    vod_id: str,
+    sent: int,
+    streak_skip: bool = False,
+) -> int:
     """Append outcome, return new trailing zero streak."""
     hist = list(state.get("vod_outcomes") or [])
-    hist.append({"id": vod_id, "sent": int(sent)})
+    hist.append({"id": vod_id, "sent": int(sent), "streak_skip": bool(streak_skip)})
     state["vod_outcomes"] = hist[-40:]
     streak = trailing_zero_streak(state["vod_outcomes"])
     state["zero_cut_streak"] = streak
@@ -107,12 +126,12 @@ def streak_from_state(state: dict) -> int:
 
 def soften_summary(level: int) -> str:
     if level <= 0:
-        return "strict"
+        return "strict (double+ kill banner, teamfight)"
     ov = overrides_for_level(level)
-    tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "?")
-    pre = "off" if ov.get("MLBB_VOD_BANNER_PREFILTER") == "0" else "on"
-    anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "banner_required"
-    return f"soft L{level} tier={tier} prefilter={pre} {anchor}"
+    tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "double")
+    if level >= 3:
+        return f"soft L{level} last-resort tier={tier} motion_ok"
+    return f"soft L{level} tier>={tier} presend relaxed"
 
 
 def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
@@ -125,6 +144,8 @@ def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
     if level == 1 and streak == need and prev_level == 0:
         return True
     if level == 2 and streak == need + 3 and prev_level < 2:
+        return True
+    if level == 3 and streak == need + 10 and prev_level < 3:
         return True
     return False
 
@@ -158,7 +179,7 @@ def adaptive_env(streak: int) -> Iterator[int]:
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"Режу teamfight по motion; kill-banner — бонус, не обязателен."
+        f"Цель: teamfight + double kill (OCR баннер). L3 — только запасной режим."
     )
 
 
