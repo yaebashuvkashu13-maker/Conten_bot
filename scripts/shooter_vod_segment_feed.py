@@ -716,6 +716,11 @@ def _scan_vod(
                 max(hi for _, hi in reserved_intervals),
             )
         pool_peaks = peaks_from_pool(pool)
+        if not pool and before > 0 and entry is not None:
+            entry["reject_reason"] = (
+                f"sent_tail_exhausted sent_end={max(hi for _, hi in reserved_intervals):.0f}"
+            )
+            entry["last_scan_blocked"] = True
     if entry is not None:
         try:
             from highlight_scorer import last_vod_diag
