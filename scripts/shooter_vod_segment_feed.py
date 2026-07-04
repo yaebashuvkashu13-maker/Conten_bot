@@ -874,18 +874,6 @@ def _scan_vod(
             return n
         skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
         peak_tries += 1
-        sent_row = rows[0]
-        clip_start = float(sent_row["start"])
-        clip_end = clip_start + float(
-            sent_row.get("clip", {}).get("input_duration")
-            or sent_row.get("clip", {}).get("fight_dur")
-            or 45.0
-        )
-        is_owner_reject = bool(sent_row.get("clip", {}).get("owner_label_cut"))
-        bootstrap_skip_interval = game == "standoff" and os.environ.get("STANDOFF_VOD_BOOTSTRAP", "1") == "1"
-        if not is_owner_reject and not bootstrap_skip_interval:
-            record_fight_interval(entry, clip_start, clip_end)
-            reserved_intervals.append((clip_start, clip_end))
         if entry is not None:
             entry["presend_reject_streak"] = int(entry.get("presend_reject_streak") or 0) + 1
         log.warning(

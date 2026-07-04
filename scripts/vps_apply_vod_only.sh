@@ -28,6 +28,8 @@ if [[ -n "$REV_BEFORE" && "$REV_BEFORE" == "$REV_AFTER" ]]; then
   exit 0
 fi
 export MLBB_VOD_INSTALL_RESTART_FEED=1
+find "$REPO/scripts/__pycache__" -name "*.pyc" -delete 2>/dev/null || true
+find /usr/local/bin/__pycache__ -name "*.pyc" -delete 2>/dev/null || true
 bash "$REPO/scripts/install_mlbb_vod_only.sh"
 bash /usr/local/bin/mlbb_vod_health_watchdog.sh || true
 if ! bash /usr/local/bin/mlbb_vod_only_verify.sh; then
