@@ -34,7 +34,7 @@ def test_send_video_prefers_inline_for_shooter(monkeypatch, tmp_path) -> None:
     hq.assert_not_called()
 
 
-def test_scan_fast_requires_visual_not_audio_only(monkeypatch) -> None:
+def test_scan_fast_panns_trust_when_visual_zero_signal(monkeypatch) -> None:
     monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
 
     from pubg_combat_gate import pubg_passes_combat_gate
@@ -45,12 +45,17 @@ def test_scan_fast_requires_visual_not_audio_only(monkeypatch) -> None:
         patch("highlight_scorer.calibrated_pann_gun_min", return_value=0.22),
         patch(
             "pubg_combat_gate.pubg_combat_visual_fast",
-            return_value=(False, "no_combat_signal", {}),
+            return_value=(False, "no_combat_signal flash=0.0000 weapon=0.0000", {}),
+        ),
+        patch(
+            "pubg_combat_gate.pubg_passes_shooting_gate",
+            return_value=(True, "strict_gun", {"gunfire_density": 0.06, "burst_ratio": 4.5}),
         ),
     ):
-        ok, reason, _ = pubg_passes_combat_gate(vod, 100.0, 15.0, "pubg", scan_fast=True)
-    assert ok is False
-    assert "no_combat" in reason or "combat" in reason
+        ok, reason, row = pubg_passes_combat_gate(vod, 100.0, 15.0, "pubg", scan_fast=True)
+    assert ok is True
+    assert row.get("panns_visual_trust") is True
+    assert "panns_trust" in reason or "combat_fast" in reason
 
 
 def test_presend_audit_rejects_weak_gunfire(monkeypatch) -> None:

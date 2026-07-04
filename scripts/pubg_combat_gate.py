@@ -130,6 +130,11 @@ def pubg_combat_visual_fast(
     if frame is None:
         return False, "frame_missing", {"frames_passed": 0, "frames_required": 1}
 
+    crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    if crop is not None:
+        x, y, w, h = crop
+        frame = frame[y : y + h, x : x + w]
+
     ok, reason, fmetrics = check_frame_visual(profile, frame)
     flash = float(fmetrics.get("hit_flash", 0))
     weapon = float(fmetrics.get("weapon_edge", 0))
@@ -432,7 +437,10 @@ def pubg_passes_combat_gate(
         panns_thr = calibrated_pann_gun_min(video_path, profile)
 
     out["panns_gun_max"] = round(panns_gun, 4)
+    pool_thr_cap = float(os.environ.get("PUBG_POOL_PANN_MAX_THR", "0.22"))
     floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    if scan_fast:
+        floor = max(PANN_GUN_INFERENCE_FLOOR, min(floor, pool_thr_cap))
     out["panns_gun_threshold"] = round(floor, 4)
 
     if scan_fast:
@@ -443,6 +451,12 @@ def pubg_passes_combat_gate(
         )
         out["combat_visual"] = vis_row
         out["visual_pass"] = vis_ok
+        panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        if not vis_ok and panns_gun >= panns_trust:
+            vis_ok = True
+            vis_reason = f"combat_fast=panns_trust{panns_gun:.3f}"
+            out["visual_pass"] = True
+            out["panns_visual_trust"] = True
         if not vis_ok:
             return False, vis_reason, out
         shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(

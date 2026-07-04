@@ -690,6 +690,22 @@ def _scan_vod(
                 len(pool),
             )
     pool_peaks = peaks_from_pool(pool)
+    if reserved_intervals and pool:
+        from vod_scan_state import shooter_min_clip_sep_sec
+
+        min_peak = max(hi for _, hi in reserved_intervals) + shooter_min_clip_sep_sec() * 0.85
+        before = len(pool)
+        pool = [c for c in pool if float(c.get("start", 0)) >= min_peak]
+        if len(pool) < before:
+            log.info(
+                "pool sent-tail filter vod=%s %s->%s min_peak=%.0f sent_end=%.0f",
+                vod.name,
+                before,
+                len(pool),
+                min_peak,
+                max(hi for _, hi in reserved_intervals),
+            )
+        pool_peaks = peaks_from_pool(pool)
     if entry is not None:
         try:
             from highlight_scorer import last_vod_diag

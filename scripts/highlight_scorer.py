@@ -1620,8 +1620,9 @@ def _parallel_workers() -> int:
     """CPU workers for parallel PANNs/CLIP window scoring (one thread per core)."""
     if os.environ.get("SHOOTER_VOD_FEED", "0") == "1":
         raw = (os.environ.get("HIGHLIGHT_PARALLEL_WORKERS") or "").strip()
+        cap = max(1, int(os.environ.get("SHOOTER_VOD_PARALLEL_CAP", "2")))
         if raw:
-            return max(1, int(raw))
+            return max(1, min(cap, int(raw)))
         return 1
     if os.environ.get("MLBB_VOD_ONLY", "0") == "1" and os.environ.get("MLBB_VOD_PARALLEL_SCORE", "0") != "1":
         return 1
