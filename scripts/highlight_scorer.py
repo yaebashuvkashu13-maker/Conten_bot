@@ -27,6 +27,8 @@ log = logging.getLogger("highlight_scorer")
 
 # Per-VOD diagnostics for shooter feeds (why we returned 0 passed).
 _LAST_VOD_DIAG: dict[str, dict[str, int]] = {}
+# Banner anchor tiers from discover phase — keyed by youtube id (no yt_ prefix).
+_MLBB_VOD_BANNER_TIERS: dict[str, dict[float, int]] = {}
 
 
 def last_vod_diag(video_path: Path) -> dict[str, int]:
@@ -581,7 +583,7 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     if game in SHOOTER_PROFILES:
         max_n = int(os.environ.get("SHOOTER_VOD_EXEMPLAR_MAX", os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "12")))
     elif max_n <= 0 and os.environ.get("MLBB_VOD_ONLY", "0") == "1":
-        max_n = int(os.environ.get("MLBB_VOD_EXEMPLAR_MAX", "64"))
+        max_n = int(os.environ.get("MLBB_VOD_EXEMPLAR_MAX", "8"))
     if max_n > 0:
         paths = paths[:max_n]
     embs: list[np.ndarray] = []
@@ -1748,12 +1750,107 @@ def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) 
     return kept
 
 
+def _mlbb_banner_score_enabled() -> bool:
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return False
+    if os.environ.get("MLBB_VOD_ONLY", "0") == "1":
+        return os.environ.get("MLBB_VOD_BANNER_SCORE", "1") == "1"
+    return os.environ.get("MLBB_VOD_BANNER_SCORE", "0") == "1"
+
+
+def _evaluate_mlbb_banner_fast(
+    video_path: Path,
+    start: float,
+    profile: str,
+    *,
+    banner_tiers: dict[float, int] | None = None,
+) -> tuple[float, HighlightMetrics] | None:
+    """Fast MLBB window score: banner + motion + PANNs — no CLIP exemplar load."""
+    from mlbb_kill_banner import TIER_LABELS, KillBannerHit, _min_tier, banner_hit_valid, find_banner_near_peak
+
+    profile = normalize_profile(profile)
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    peak = start + lead
+    tier_hint = 0
+    if banner_tiers:
+        for anchor, tier in banner_tiers.items():
+            if abs(anchor - start) <= 15.0:
+                tier_hint = max(tier_hint, int(tier))
+
+    hit = find_banner_near_peak(video_path, peak, quick=True)
+    if not banner_hit_valid(hit):
+        if tier_hint >= _min_tier():
+            hit = KillBannerHit(
+                sec=peak,
+                tier=tier_hint,
+                label=TIER_LABELS.get(tier_hint, "double"),
+                text="",
+                source="color",
+            )
+        else:
+            return None
+
+    panns = score_panns_audio(video_path, start, WINDOW_SEC)
+    motion = _motion_context(video_path, start, WINDOW_SEC)
+    from visual_action_check import extract_and_check_segment
+
+    vis_row = extract_and_check_segment(video_path, start, WINDOW_SEC, profile)
+    visual_pass = bool(vis_row.get("visual_pass"))
+    tier = int(hit.tier)
+    clip_proxy = min(0.4, 0.1 + tier * 0.05)
+
+    m = HighlightMetrics(
+        start=start,
+        duration=WINDOW_SEC,
+        profile=profile,
+        clip_score=clip_proxy,
+        pass_reason=f"banner_fast={hit.label}:{hit.source}",
+        audio_pass=True,
+        visual_pass=visual_pass,
+        center_motion=motion["center_motion"],
+        minimap_delta=motion["minimap_delta"],
+        skill_delta=motion["skill_delta"],
+        hook_score=0.5,
+        **{k: float(v) for k, v in panns.items()},
+    )
+    m.rule_pass, rule_reason = rule_gate(
+        profile, m, video_path=video_path, start_sec=start, duration_sec=WINDOW_SEC
+    )
+    m.pass_reason = rule_reason if m.rule_pass else (m.pass_reason or rule_reason)
+    if m.rule_pass:
+        m.combined_score = (
+            tier * 0.12
+            + motion["center_motion"] * 0.28
+            + m.panns_gun_max * 0.2
+            + clip_proxy * 0.25
+        )
+        m.viral_score = m.combined_score
+    return start, m
+
+
 def _evaluate_highlight_start(
     video_path: Path,
     start: float,
     profile: str,
 ) -> tuple[float, HighlightMetrics] | None:
     profile = normalize_profile(profile)
+    if profile == "mobile_legends" and _mlbb_banner_score_enabled():
+        vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+        tiers = _MLBB_VOD_BANNER_TIERS.get(vid, {})
+        row = _evaluate_mlbb_banner_fast(video_path, start, profile, banner_tiers=tiers)
+        if row is not None:
+            return row
+        return (
+            start,
+            HighlightMetrics(
+                start=start,
+                duration=WINDOW_SEC,
+                profile=profile,
+                clip_score=0.0,
+                pass_reason="banner_fast_miss",
+                rule_pass=False,
+            ),
+        )
     # Shooter: combat-only scoring path avoids CLIP hangs; presend uses same gate.
     if profile in SHOOTER_PROFILES and os.environ.get("SHOOTER_VOD_COMBAT_ONLY", "1") == "1":
         try:
@@ -1861,6 +1958,8 @@ def _accept_highlight_candidate(
     trust_reason = str(metrics.pass_reason or "")
     if profile in SHOOTER_PROFILES and trust_reason.startswith("combat_fast"):
         hook_min = 0.0
+    if profile == "mobile_legends" and trust_reason.startswith("banner_fast"):
+        hook_min = 0.0
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
@@ -1898,6 +1997,8 @@ def discover_highlight_candidates(
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") == "1"
         banners: list = []
         banner_tiers: dict[float, int] = {}
+        vid_mlbb = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
+        _MLBB_VOD_BANNER_TIERS[vid_mlbb] = {}
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
@@ -1916,6 +2017,7 @@ def discover_highlight_candidates(
                     start_set.add(max(0.0, hit.sec - lead))
                     anchor = round(max(0.0, hit.sec - lead), 1)
                     banner_tiers[anchor] = max(int(banner_tiers.get(anchor, 0)), int(hit.tier))
+                _MLBB_VOD_BANNER_TIERS[vid_mlbb] = dict(banner_tiers)
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
@@ -2024,21 +2126,23 @@ def discover_highlight_candidates(
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
             diag[metrics.pass_reason or "reject"] = diag.get(metrics.pass_reason or "reject", 0) + 1
             return False
-        verified.append(
-            {
-                "source_path": str(video_path),
-                "game_name": GAME_LABELS.get(profile, profile),
-                "start": round(start, 3),
-                "input_duration": WINDOW_SEC,
-                "output_duration": WINDOW_SEC,
-                "speed": 1.0,
-                "score": metrics.viral_score or metrics.combined_score,
-                "strict_score": metrics.viral_score or metrics.combined_score,
-                "highlight_metrics": metrics.to_dict(),
-                "gate_reason": metrics.pass_reason,
-                "strict_metrics": metrics.to_dict(),
-            }
-        )
+        row = {
+            "source_path": str(video_path),
+            "game_name": GAME_LABELS.get(profile, profile),
+            "start": round(start, 3),
+            "input_duration": WINDOW_SEC,
+            "output_duration": WINDOW_SEC,
+            "speed": 1.0,
+            "score": metrics.viral_score or metrics.combined_score,
+            "strict_score": metrics.viral_score or metrics.combined_score,
+            "highlight_metrics": metrics.to_dict(),
+            "gate_reason": metrics.pass_reason,
+            "strict_metrics": metrics.to_dict(),
+        }
+        pr = str(metrics.pass_reason or "")
+        if pr.startswith("banner_fast="):
+            row["kill_banner_tier"] = pr.split("=", 1)[1].split(":")[0]
+        verified.append(row)
         return True
 
     if workers > 1 and len(pending) > 1:
@@ -2183,6 +2287,29 @@ def discover_highlight_candidates(
             diag["combat_visual_fallback"] = 1
             if len(verified) >= limit:
                 break
+
+    if not verified and profile == "mobile_legends" and _mlbb_banner_score_enabled():
+        tiers = _MLBB_VOD_BANNER_TIERS.get(vid, {})
+        if tiers:
+            for start in sorted(tiers.keys(), key=lambda s: (-tiers[s], s)):
+                if segment_key_fn and sig and segment_key_fn(sig, start) in used_keys:
+                    continue
+                row = _evaluate_mlbb_banner_fast(video_path, start, profile, banner_tiers=tiers)
+                if row is None:
+                    continue
+                start, metrics = row
+                if _consume(start, metrics):
+                    log.info(
+                        "highlight banner fallback %s start=%.1f tier=%s",
+                        video_path.name,
+                        start,
+                        tiers.get(start),
+                    )
+                    diag["banner_fallback"] = 1
+                    if verified and _highlight_send_one_enabled():
+                        break
+                    if len(verified) >= limit:
+                        break
 
     verified.sort(
         key=lambda c: (

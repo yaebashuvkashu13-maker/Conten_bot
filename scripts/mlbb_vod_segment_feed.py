@@ -1554,7 +1554,11 @@ def _collect_scan_segments(
             already_scored = (
                 bool(hm.get("rule_pass"))
                 and not clip_cached
-                and (clip_scored > 0 or pass_reason.startswith("mlbb_fight"))
+                and (
+                    clip_scored > 0
+                    or pass_reason.startswith("mlbb_fight")
+                    or pass_reason.startswith("banner_fast")
+                )
             )
             if skip_revalidate and already_scored:
                 ok, reason = True, pass_reason or "highlight_pass"
@@ -1571,7 +1575,11 @@ def _collect_scan_segments(
             vis = visual_rows[0] if visual_rows else {}
             clip_score = float(metrics.get("clip_score") or 0.0)
             min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
-            if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+            if (
+                clip_score < min_clip
+                and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1"
+                and not pass_reason.startswith("banner_fast")
+            ):
                 log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
                 continue
             rows.append(
@@ -2002,6 +2010,16 @@ def _process_vod_segments(
                             reject_reason = f"peaks_near_sent pool={len(pool_peaks)} sent={used_peaks[:6]}"
                         elif int(entry.get("presend_reject_streak") or 0) > 0:
                             reject_reason = "presend_reject"
+                        elif not pool_peaks:
+                            try:
+                                from highlight_scorer import last_vod_diag
+
+                                diag = last_vod_diag(vod)
+                                if diag.get("timeouts"):
+                                    reject_reason = f"score_timeout:{diag.get('timeouts')}"
+                                    entry["last_fail_reasons"] = diag
+                            except Exception:
+                                pass
                         record_vod_scan(
                             entry,
                             sent=sent_total,

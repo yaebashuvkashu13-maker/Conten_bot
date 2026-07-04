@@ -55,6 +55,8 @@ def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
     if peaks is not None and len(peaks) == 0:
         return True
     reason = str(entry.get("reject_reason") or "")
+    if reason.startswith("score_timeout"):
+        return False
     if reason == "presend_exhausted":
         return True
     exhaust_after = max(
