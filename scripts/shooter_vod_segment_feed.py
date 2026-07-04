@@ -355,6 +355,18 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
         bootstrap = standoff_bootstrap_loose(game)
     except ImportError:
         bootstrap = False
+    hm = clip_meta.get("highlight_metrics") or {}
+    gate_reason = str(clip_meta.get("gate_reason") or hm.get("pass_reason") or "")
+    panns_pool = float(hm.get("panns_gun_max") or 0)
+    combat_trust = gate_reason.startswith("combat_fast") or panns_pool >= float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    )
+    if game == "pubg" and combat_trust:
+        ok, reason, metrics = pubg_passes_combat_gate(
+            rendered, 0.0, dur, profile, scan_fast=True
+        )
+        if ok:
+            return True, f"pool_combat_trust:{reason}", metrics
     if bootstrap:
         clip = row.get("clip") or {}
         hm = clip.get("highlight_metrics") or {}
