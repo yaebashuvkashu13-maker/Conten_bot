@@ -564,6 +564,19 @@ def filter_peaks_with_ocr_banner(
     return kept
 
 
+def _banner_pre_sec() -> float:
+    """Seconds before kill-banner announce — tight hook, skip death/recall."""
+    raw = (os.environ.get("MLBB_BANNER_PRE_SEC") or "").strip()
+    if raw:
+        return max(0.5, float(raw))
+    return min(2.5, max(1.0, float(os.environ.get("MLBB_VOD_LEAD_SEC", "2"))))
+
+
+def _banner_post_min_sec() -> float:
+    """Minimum teamfight tail after banner (charge-in + kills)."""
+    return max(8.0, float(os.environ.get("MLBB_BANNER_POST_SEC", "16")))
+
+
 def bounds_from_banner(
     banner_sec: float,
     file_dur: float,
@@ -571,45 +584,44 @@ def bounds_from_banner(
     fight_start: float | None = None,
     fight_end: float | None = None,
 ) -> tuple[float, float, float]:
-    """Clip bounds: fight sustain window anchored on banner, not fixed lead/post."""
-    from mlbb_fight_segment import _fight_min_sec, _fight_max_sec, _fight_hard_max_sec, _lead_sec
+    """
+    Clip bounds anchored on kill-banner: short pre (no death screen), long post (teamfight).
+    Ignores fight_start when it sits before banner (death / recall before streak).
+    When capped by max duration, trims pre-banner excess — keeps post-fight tail.
+    """
+    from mlbb_fight_segment import _fight_hard_max_sec, _fight_max_sec, _fight_min_sec
 
     min_d = _fight_min_sec()
     max_d = _fight_max_sec()
     hard_max = _fight_hard_max_sec()
-    lead = _lead_sec()
+    pre = _banner_pre_sec()
+    post_min = _banner_post_min_sec()
+    banner = float(banner_sec)
 
-    if fight_start is not None and fight_end is not None and fight_end > fight_start:
-        start = max(0.0, float(fight_start))
+    start = max(0.0, banner - pre)
+    end = min(float(file_dur), banner + post_min)
+    if fight_end is not None and float(fight_end) > end:
         end = min(float(file_dur), float(fight_end))
-    else:
-        start = max(0.0, float(banner_sec) - lead)
-        tail = max(min_d * 0.5, (max_d - lead) * 0.55)
-        end = min(float(file_dur), float(banner_sec) + tail)
-
-    if float(banner_sec) < start:
-        start = max(0.0, float(banner_sec) - lead)
-    if float(banner_sec) > end:
-        end = min(float(file_dur), float(banner_sec) + max(2.0, min_d * 0.4))
 
     dur = end - start
     if dur < min_d:
         end = min(file_dur, start + min_d)
         dur = end - start
-    if dur > hard_max:
-        end = start + hard_max
-        dur = hard_max
-    elif dur > max_d:
-        end = start + max_d
-        dur = max_d
 
-    # Montage: banner should not sit in the last ~30% (post-fight running / idle tail).
-    banner_rel = (float(banner_sec) - start) / max(dur, 1e-6)
+    cap = hard_max if dur > hard_max else (max_d if dur > max_d else 0.0)
+    if cap > 0.0:
+        excess = dur - cap
+        start = max(0.0, min(start + excess, banner - 0.8))
+        end = min(file_dur, start + cap)
+        dur = end - start
+
+    # Banner in last ~30% → idle tail after fight; pull end earlier.
+    banner_rel = (banner - start) / max(dur, 1e-6)
     if dur >= 10.0 and banner_rel > 0.68:
-        post = max(3.0, lead * 0.85)
-        pre = max(min_d - post, min_d * 0.5)
-        start = max(0.0, float(banner_sec) - pre)
-        end = min(float(file_dur), float(banner_sec) + post)
+        post = max(4.0, post_min * 0.35)
+        pre_tail = max(1.2, min(pre, min_d * 0.35))
+        start = max(0.0, banner - pre_tail)
+        end = min(float(file_dur), banner + post)
         dur = end - start
         if dur < min_d:
             end = min(file_dur, start + min_d)
@@ -648,11 +660,12 @@ def resolve_fight_bounds(
 
     if _motion_anchor_ok():
         if hit is not None and hit.tier >= min_tier:
+            b_start, b_end, b_dur = detect_fight_bounds(vod, hit.sec)
             start, end, dur = bounds_from_banner(
                 hit.sec,
                 file_dur,
-                fight_start=fight_start,
-                fight_end=fight_end,
+                fight_start=b_start,
+                fight_end=b_end,
             )
             return (
                 start,
@@ -665,9 +678,9 @@ def resolve_fight_bounds(
                     "kill_banner_tier": hit.tier,
                     "banner_text": hit.text,
                     "banner_source": hit.source,
-                    "fight_start": fight_start,
-                    "fight_end": fight_end,
-                    "fight_dur": fight_dur,
+                    "fight_start": b_start,
+                    "fight_end": b_end,
+                    "fight_dur": b_dur,
                 },
             )
         return fight_start, fight_end, fight_dur, motion_meta
@@ -675,11 +688,12 @@ def resolve_fight_bounds(
     if hit is None or hit.tier < min_tier:
         return None
 
+    b_start, b_end, b_dur = detect_fight_bounds(vod, hit.sec)
     start, end, dur = bounds_from_banner(
         hit.sec,
         file_dur,
-        fight_start=fight_start,
-        fight_end=fight_end,
+        fight_start=b_start,
+        fight_end=b_end,
     )
     return (
         start,
@@ -692,9 +706,9 @@ def resolve_fight_bounds(
             "kill_banner_tier": hit.tier,
             "banner_text": hit.text,
             "banner_source": hit.source,
-            "fight_start": fight_start,
-            "fight_end": fight_end,
-            "fight_dur": fight_dur,
+            "fight_start": b_start,
+            "fight_end": b_end,
+            "fight_dur": b_dur,
         },
     )
 
