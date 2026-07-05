@@ -2143,18 +2143,27 @@ def main() -> int:
         return _run_feed(env, token, chat_id)
 
 
-def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
-    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
-        from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+def _daily_cycle_mlbb_allowed() -> tuple[bool, str]:
+    """True when daily cycle allows MLBB sends (re-check each VOD — avoid blocking PUBG/Standoff)."""
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") != "1":
+        return True, "cycle_disabled"
+    from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
 
-        reset_if_new_day()
-        if active_game() != "mlbb":
-            log.info("daily cycle: active_game=%s — mlbb feed idle", active_game())
-            return 0
-        ok_mlbb, why = can_send_for_game("mlbb", 1)
-        if not ok_mlbb:
-            log.info("daily cycle mlbb blocked: %s", why)
-            return 0
+    reset_if_new_day()
+    active = active_game()
+    if active != "mlbb":
+        return False, f"active_game={active}"
+    ok_mlbb, why = can_send_for_game("mlbb", 1)
+    if not ok_mlbb:
+        return False, why
+    return True, "ok"
+
+
+def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
+    ok_start, why_start = _daily_cycle_mlbb_allowed()
+    if not ok_start:
+        log.info("daily cycle mlbb idle: %s", why_start)
+        return 0
 
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
@@ -2178,6 +2187,11 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
+        if not ok_cycle:
+            log.info("daily cycle yield after %s vods: %s", vods_done, cycle_reason)
+            break
+
         vod, entry = _resolve_next_vod(
             env,
             registry,
