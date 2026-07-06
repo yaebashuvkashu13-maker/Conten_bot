@@ -150,7 +150,7 @@ def test_discover_banners_handles_numpy_motion() -> None:
         fight_end=28.0,
     )
     rel = (27.0 - start) / dur
-    assert rel <= 0.68
+    assert rel <= 0.58
 
 
 def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:

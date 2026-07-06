@@ -557,7 +557,8 @@ def bounds_from_banner(
         end = min(float(file_dur), float(fight_end))
     else:
         start = max(0.0, float(banner_sec) - lead)
-        tail = max(min_d * 0.5, (max_d - lead) * 0.55)
+        post_cap = float(os.environ.get("MLBB_BANNER_POST_SEC", "5"))
+        tail = min(post_cap, max(min_d * 0.45, (max_d - lead) * 0.32))
         end = min(float(file_dur), float(banner_sec) + tail)
 
     if float(banner_sec) < start:
@@ -576,11 +577,12 @@ def bounds_from_banner(
         end = start + max_d
         dur = max_d
 
-    # Montage: banner should not sit in the last ~30% (post-fight running / idle tail).
+    # Montage: banner should not sit in the last ~40% (post-fight death / idle tail).
+    banner_rel_max = float(os.environ.get("MLBB_BANNER_MAX_REL_POS", "0.58"))
     banner_rel = (float(banner_sec) - start) / max(dur, 1e-6)
-    if dur >= 10.0 and banner_rel > 0.68:
-        post = max(3.0, lead * 0.85)
-        pre = max(min_d - post, min_d * 0.5)
+    if dur >= 10.0 and banner_rel > banner_rel_max:
+        post = min(float(os.environ.get("MLBB_BANNER_POST_SEC", "5")), lead * 0.85)
+        pre = max(min_d - post, min_d * 0.55)
         start = max(0.0, float(banner_sec) - pre)
         end = min(float(file_dur), float(banner_sec) + post)
         dur = end - start
@@ -685,6 +687,12 @@ def verify_banner_on_source(
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
         if hit.tier >= need and hit.source == "ocr":
+            if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
+                from mlbb_banner_pov_match import banner_pov_hero_match
+
+                pov_ok, pov_reason, _sim = banner_pov_hero_match(vod, hit.sec)
+                if not pov_ok:
+                    continue
             return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"

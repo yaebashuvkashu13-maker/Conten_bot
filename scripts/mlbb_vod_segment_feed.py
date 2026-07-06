@@ -1336,6 +1336,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
+            if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
+                from mlbb_banner_pov_match import banner_pov_hero_match
+
+                pov_ok, pov_reason, pov_sim = banner_pov_hero_match(vod, banner_sec)
+                report["pov_hero_sim"] = round(pov_sim, 4)
+                if not pov_ok:
+                    return False, pov_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1371,6 +1378,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     report["render_motion"] = round(rend_motion, 4)
     if rend_motion < _presend_min_motion() * 0.75:
         return False, f"render_idle_motion={rend_motion:.4f}", report
+
+    from mlbb_fight_segment import clip_action_sustain_ok
+
+    tail_ok, tail_reason = clip_action_sustain_ok(vod, cut_start, dur, crop_box=crop)
+    report["tail_action"] = tail_reason
+    if not tail_ok:
+        return False, tail_reason, report
 
     report["pass_reason"] = row.get("pass_reason") or row.get("gate_reason") or "presend_ok"
     return True, "presend_ok", report
@@ -1846,20 +1860,10 @@ def _process_vod_segments(
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, PROFILE)
         if not ok_fast:
-            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = {"id": vid, "path": str(vod), "exhausted": False}
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
-            state = _load_state()
-            if entry:
-                _sync_vod_entry_to_state(state, entry, vod)
-            _save_state(state)
-            if clear_fast_seeds:
-                clear_fast_seeds()
-            return 0
-        apply_fast_probe_seeds(seed_peaks)
+            log.info("fast-probe weak vod=%s reason=%s — continue full scan", vod.name, fast_reason)
+            seed_peaks = []
+        elif seed_peaks:
+            apply_fast_probe_seeds(seed_peaks)
 
     try:
         with adaptive_env(streak_in) as level:
