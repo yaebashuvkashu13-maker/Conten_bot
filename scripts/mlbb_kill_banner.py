@@ -479,10 +479,16 @@ def discover_vod_kill_banners(
         if probes >= max_probes or time.monotonic() >= deadline:
             return False
         probes += 1
+        if quick:
+            before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
+            after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
+        else:
+            before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
+            after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
         for hit in scan_window(
             vod,
-            t - 0.5,
-            t + 2.5,
+            t - before,
+            t + after,
             focus_sec=t,
             deep=deep,
             quick=quick,
