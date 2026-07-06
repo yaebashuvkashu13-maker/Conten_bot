@@ -2,7 +2,11 @@
 # Single VPS apply: git pull + VOD-only install + verify. Run after every code change.
 set -Eeuo pipefail
 REPO="${VPS_REPO_PATH:-/root/content_bot_ml}"
-BRANCH="${VPS_BRANCH:-cursor/vod-pipeline-base-6cbd}"
+ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
+if [[ -z "${VPS_BRANCH:-}" && -f "$ENV_FILE" ]]; then
+  VPS_BRANCH="$(grep -m1 '^VPS_BRANCH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+fi
+BRANCH="${VPS_BRANCH:-cursor/mlbb-cycle-stuck-fix-6cbd}"
 LOG=/root/data/mlbb/vps_apply_vod.log
 mkdir -p /root/data/mlbb
 exec >>"$LOG" 2>&1

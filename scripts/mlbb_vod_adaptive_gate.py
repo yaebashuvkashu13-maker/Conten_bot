@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -103,6 +104,23 @@ def streak_from_state(state: dict) -> int:
         from_hist = trailing_zero_streak(hist)
     legacy = int(state.get("zero_cut_streak") or 0)
     return max(from_hist, legacy)
+
+
+def streak_circuit_max() -> int:
+    """After this many consecutive zero-VOD runs, reset soften state (avoid infinite L2 loop)."""
+    return max(6, int(os.environ.get("MLBB_VOD_STREAK_CIRCUIT_MAX", "12")))
+
+
+def apply_circuit_breaker(state: dict) -> bool:
+    """Reset adaptive streak when stuck too long. Returns True if reset happened."""
+    streak = streak_from_state(state)
+    if streak < streak_circuit_max():
+        return False
+    state["zero_cut_streak"] = 0
+    state["vod_outcomes"] = []
+    state["last_adaptive_level"] = 0
+    state["circuit_breaker_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return True
 
 
 def soften_summary(level: int) -> str:
