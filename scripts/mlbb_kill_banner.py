@@ -451,6 +451,8 @@ def discover_vod_kill_banners(
         min(200, int(scan_span / max(step, 1.0)) + 8),
     )
     max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
+    tail_reserve = min(4, max(2, max_probes // 6))
+    core_probe_cap = max(4, max_probes - tail_reserve)
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
@@ -500,7 +502,7 @@ def discover_vod_kill_banners(
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
     peak_probe_cap = max(4, min(peak_limit, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES", "8"))))
     for peak in _stratified_peak_hints(hint_peaks or [], peak_limit):
-        if probes >= peak_probe_cap or time.monotonic() >= deadline:
+        if probes >= peak_probe_cap or probes >= core_probe_cap or time.monotonic() >= deadline:
             break
         probes += 1
         hit = find_banner_near_peak(vod, peak, quick=True)
@@ -512,7 +514,7 @@ def discover_vod_kill_banners(
     full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     if timestep or full_sweep:
         span = max(8.0, duration - t0 - 4.0)
-        remaining = max(0, max_probes - probes)
+        remaining = max(0, core_probe_cap - probes)
         stride_count = max(remaining, int(span / max(step, 1.0)) + 1)
         stride_count = min(stride_count, remaining) if remaining else 0
         for i in range(stride_count):
@@ -535,11 +537,11 @@ def discover_vod_kill_banners(
                     max_probes,
                     len(hits),
                 )
-        # Late-VOD pass: direct peak OCR (strided color prefilter often misses exact banner frame).
-        for frac in (0.90, 0.95, 0.99):
+        # Late-VOD pass: direct peak OCR near file end (banner frame is often a few sec before EOF).
+        for tail_off in (8.0, 14.0, 22.0):
             if probes >= max_probes or time.monotonic() >= deadline:
                 break
-            t = max(t0 + 8.0, duration * frac)
+            t = max(t0 + 8.0, duration - tail_off)
             probes += 1
             hit = find_banner_near_peak(vod, t, quick=True)
             if hit:
