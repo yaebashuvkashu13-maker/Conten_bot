@@ -370,6 +370,11 @@ def scan_window(
 
 def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
+    frame = _read_frame(vod, peak_sec)
+    if frame is not None:
+        hit = _classify_frame(peak_sec, frame, deep=True)
+        if hit and hit.tier >= _min_tier() and hit.source == "ocr":
+            return hit
     if quick:
         before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
         after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
