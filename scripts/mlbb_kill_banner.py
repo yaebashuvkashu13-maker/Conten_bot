@@ -53,14 +53,21 @@ _ENEMY_STREAK_RE = re.compile(
 )
 
 _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
-    (re.compile(r"savage|саваж", re.I), 5, "savage"),
-    (re.compile(r"legendary|легендар", re.I), 5, "legendary"),
-    (re.compile(r"maniac|маньяк", re.I), 4, "maniac"),
+    (re.compile(r"savage|саваж|saa?x?e|sav.?g", re.I), 5, "savage"),
+    (re.compile(r"legendary|легендар|legenda", re.I), 5, "legendary"),
+    (re.compile(r"maniac|маньяк|man1ac|mani.?ac", re.I), 4, "maniac"),
     (re.compile(r"ruthless|беспощад|безжалост", re.I), 4, "ruthless"),
-    (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
+    (re.compile(r"triple\s*kill|тройн.{0,12}убий|tripl|tr1ple", re.I), 3, "triple"),
     (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
-    (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill", re.I), 2, "double"),
-    (re.compile(r"\bkill\b|убийств", re.I), 1, "single"),
+    (
+        re.compile(
+            r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill|doub.?e|doubl",
+            re.I,
+        ),
+        2,
+        "double",
+    ),
+    (re.compile(r"\bkill\b|убийств|ki11|k1ll", re.I), 1, "single"),
 ]
 
 
@@ -145,7 +152,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     except ImportError:
         return ""
 
-    small = cv2.resize(frame, (480, 270))
+    small = cv2.resize(frame, (960, 540))
     h, w = small.shape[:2]
     zones = [
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
@@ -154,7 +161,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     if deep:
         zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
     texts: list[str] = []
-    psms = (7, 8, 6) if deep else (7,)
+    psms = (7, 8, 6, 13) if deep else (7, 8)
     for zone in zones:
         if zone.size == 0:
             continue
@@ -162,6 +169,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
         if deep:
             variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
+            variants.append(cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5))
         for variant in variants:
             for psm in psms:
                 try:
@@ -174,7 +182,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
                 text = " ".join(text.split())
                 if text:
                     texts.append(text)
-                    if not deep and classify_banner_text(text) is not None:
+                    if classify_banner_text(text) is not None:
                         return " ".join(texts)
     return " ".join(texts)
 
