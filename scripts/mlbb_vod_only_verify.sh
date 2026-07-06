@@ -44,6 +44,7 @@ check_env MLBB_VOD_BANNER_TIMESTEP_SCAN 1
 check_env MLBB_VOD_HIGHLIGHT_SEND_ONE 0
 check_env MLBB_VOD_COLLECT_ONE 0
 check_env MLBB_KILL_BANNER_DISCOVER_MAX_PROBES 72
+check_env MLBB_CLIP_MIN_HUD_RATE 0.42
 
 forbidden=(
   mlbb_continuous_worker.py

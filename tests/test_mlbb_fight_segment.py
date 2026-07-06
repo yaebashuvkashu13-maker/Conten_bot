@@ -64,12 +64,12 @@ class ClipActionSustainTest(unittest.TestCase):
     def test_idle_full_clip_rejected(self) -> None:
         from mlbb_fight_segment import clip_active_gameplay_ok
 
-        with patch("gameplay_gate.score_segment_combat", return_value=(0.001, 0.001, 0.0, "")):
-            with patch("gameplay_gate.segment_hud_frame_pass_rate", return_value=0.1):
+        with patch("gameplay_gate.score_segment_combat", return_value=(0.01, 0.01, 0.0, "")):
+            with patch("gameplay_gate.segment_hud_frame_pass_rate", return_value=0.15):
                 with patch("gameplay_gate.segment_looks_like_draft_or_queue", return_value=False):
                     ok, reason = clip_active_gameplay_ok(Path("/tmp/x.mp4"), 100.0, 20.0)
         self.assertFalse(ok)
-        self.assertIn("idle_clip", reason)
+        self.assertIn("death_or_tavern", reason)
 
     def test_idle_tail_rejected(self) -> None:
         from mlbb_fight_segment import clip_action_sustain_ok

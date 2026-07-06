@@ -179,10 +179,11 @@ def clip_active_gameplay_ok(
 
     samples = max(6, int(os.environ.get("MLBB_CLIP_COMBAT_SAMPLES", "10")))
     min_active = float(os.environ.get("MLBB_CLIP_MIN_ACTIVE_RATIO", "0.40"))
-    min_motion = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MOTION", "0.016"))
-    min_mini = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MINIMAP", "0.007"))
-    min_skill = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_SKILL", "0.005"))
-    min_hud = float(os.environ.get("MLBB_CLIP_MIN_HUD_RATE", "0.36"))
+    min_motion = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MOTION", "0.018"))
+    min_mini = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MINIMAP", "0.010"))
+    min_skill = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_SKILL", "0.006"))
+    min_hud = float(os.environ.get("MLBB_CLIP_MIN_HUD_RATE", "0.42"))
+    mini_active = min_mini * float(os.environ.get("MLBB_CLIP_MINI_ACTIVE_MULT", "2.2"))
 
     window = max(1.2, dur / max(samples, 1))
     active_windows = 0
@@ -200,17 +201,22 @@ def clip_active_gameplay_ok(
             sample_frames=4,
         )
         total_windows += 1
-        if motion >= min_motion or mini >= min_mini or skill >= min_skill:
+        window_active = (
+            motion >= min_motion
+            or mini >= mini_active
+            or skill >= min_skill * 1.4
+        )
+        if window_active:
             active_windows += 1
 
     hud_rate = segment_hud_frame_pass_rate(
         vod, start_sec, dur, crop_box=crop_box, sample_frames=samples
     )
     active_ratio = active_windows / max(total_windows, 1)
+    if hud_rate < min_hud:
+        return False, f"death_or_tavern hud={hud_rate:.2f} need>={min_hud}"
     if active_ratio < min_active:
         return False, f"idle_clip ratio={active_ratio:.2f} need>={min_active}"
-    if hud_rate < min_hud and active_ratio < 0.52:
-        return False, f"death_or_tavern hud={hud_rate:.2f} active={active_ratio:.2f}"
     return True, f"active_ok ratio={active_ratio:.2f} hud={hud_rate:.2f}"
 
 
