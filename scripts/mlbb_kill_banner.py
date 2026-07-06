@@ -408,6 +408,17 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
+def _stratified_peak_hints(peaks: list[float], limit: int) -> list[float]:
+    """Sample motion peaks across the full timeline — not only early laning."""
+    ordered = sorted(set(float(p) for p in peaks))
+    if len(ordered) <= limit:
+        return ordered
+    if limit <= 1:
+        return [ordered[-1]]
+    slots = [int(round(i * (len(ordered) - 1) / (limit - 1))) for i in range(limit)]
+    return [ordered[i] for i in sorted(set(slots))]
+
+
 def discover_vod_kill_banners(
     vod: Path,
     *,
@@ -479,36 +490,42 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
-    # Phase 1: narrow scan around stage1 motion peaks (fast).
+    # Phase 1: quick OCR around motion peaks spread across the whole VOD.
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
-    for peak in sorted(set(hint_peaks or []))[:peak_limit]:
-        if probes >= max_probes or time.monotonic() >= deadline:
+    peak_probe_cap = max(4, min(peak_limit, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES", "8"))))
+    for peak in _stratified_peak_hints(hint_peaks or [], peak_limit):
+        if probes >= peak_probe_cap or time.monotonic() >= deadline:
             break
         probes += 1
         hit = find_banner_near_peak(vod, peak, quick=True)
         if hit:
             _merge_hit(hit)
 
-    # Phase 2: full-VOD timestep scan — color prefilter every N sec, OCR on hits.
+    # Phase 2: evenly spaced probes across entire VOD (late savages at 10+ min).
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
     full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     if timestep or full_sweep:
-        t = t0
-        while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+        span = max(8.0, duration - t0 - 4.0)
+        remaining = max(0, max_probes - probes)
+        stride_count = max(remaining, int(span / max(step, 1.0)) + 1)
+        stride_count = min(stride_count, remaining) if remaining else 0
+        for i in range(stride_count):
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            t = t0 + (i + 0.5) * span / max(stride_count, 1)
             deep = (probes % 5) == 4
             quick = not deep
             if not _probe_at(t, deep=deep, quick=quick):
                 break
-            if int(t) % 60 == 0 and int(t) > int(t0):
+            if int(t) % 90 == 0 and int(t) > int(t0):
                 log.info(
-                    "banner discover %s: timestep t=%.0fs probes=%s/%s hits=%s",
+                    "banner discover %s: strided t=%.0fs probes=%s/%s hits=%s",
                     vod.name,
                     t,
                     probes,
                     max_probes,
                     len(hits),
                 )
-            t += step
         if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
             win = float(analysis.get("window_seconds", 2.0))
             motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
