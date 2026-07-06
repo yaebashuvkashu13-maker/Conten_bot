@@ -38,6 +38,8 @@ check_env MLBB_BANNER_POV_MATCH 1
 check_env MLBB_VOD_FAST_PROBE 0
 check_env MLBB_VOD_MOTION_ANCHOR_OK 0
 check_env MLBB_VOD_OWNER_EXEMPLARS 1
+check_env MLBB_FIGHT_POST_SEC 4
+check_env MLBB_VOD_ZERO_STREAK_SOFTEN 4
 
 forbidden=(
   mlbb_continuous_worker.py

@@ -6,7 +6,7 @@ ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 if [[ -z "${VPS_BRANCH:-}" && -f "$ENV_FILE" ]]; then
   VPS_BRANCH="$(grep -m1 '^VPS_BRANCH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
 fi
-BRANCH="${VPS_BRANCH:-cursor/mlbb-quality-fullscan-6cbd}"
+BRANCH="${VPS_BRANCH:-cursor/mlbb-ideal-clip-spec-6cbd}"
 LOG=/root/data/mlbb/vps_apply_vod.log
 mkdir -p /root/data/mlbb
 exec >>"$LOG" 2>&1

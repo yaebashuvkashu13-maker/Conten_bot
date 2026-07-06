@@ -252,6 +252,7 @@ export MLBB_VOD_PROBE_LIMIT=48
 export MLBB_VOD_SEGMENT_GAP_SEC=75
 export MLBB_FIGHT_MAX_SEC=28
 export MLBB_FIGHT_HARD_MAX_SEC=32
+export MLBB_FIGHT_POST_SEC=4
 export MLBB_FIGHT_TRIM_LONG=1
 export MLBB_BANNER_POST_SEC=5
 export MLBB_BANNER_POV_MATCH=1
@@ -338,7 +339,7 @@ sleep 3
 bash "$BIN/mlbb_vod_only_verify.sh" || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
-DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-quality-fullscan-6cbd}"
+DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-ideal-clip-spec-6cbd}"
 if [[ -f "$ENV_FILE" ]]; then
   if grep -q '^VPS_BRANCH=' "$ENV_FILE"; then
     sed -i "s|^VPS_BRANCH=.*|VPS_BRANCH=$DEPLOY_BRANCH|" "$ENV_FILE"
