@@ -415,7 +415,14 @@ def discover_vod_kill_banners(
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "16")))
+    step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
+    t0 = _adaptive_banner_scan_start(vod, duration)
+    scan_span = max(60.0, duration - t0)
+    max_probes = max(
+        4,
+        int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "16")),
+        min(200, int(scan_span / max(step, 1.0)) + 8),
+    )
     max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
@@ -447,8 +454,6 @@ def discover_vod_kill_banners(
         probes += 1
         for hit in scan_window(vod, t - 0.5, t + 2.5, focus_sec=t, deep=deep):
             _merge_hit(hit)
-            if hits:
-                return True
         return probes < max_probes and time.monotonic() < deadline
 
     # Phase 1: narrow scan around stage1 motion peaks (fast).
@@ -465,15 +470,20 @@ def discover_vod_kill_banners(
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
     full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     if timestep or full_sweep:
-        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
-        t0 = _adaptive_banner_scan_start(vod, duration)
-        color_min = _color_min_score() * 0.55
         t = t0
         while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
-            frame = _read_frame(vod, t)
-            if frame is not None and _announce_color_score(frame) >= color_min:
-                if not _probe_at(t, deep=True):
-                    break
+            deep = (probes % 5) == 4
+            if not _probe_at(t, deep=deep):
+                break
+            if int(t) % 60 == 0 and int(t) > int(t0):
+                log.info(
+                    "banner discover %s: timestep t=%.0fs probes=%s/%s hits=%s",
+                    vod.name,
+                    t,
+                    probes,
+                    max_probes,
+                    len(hits),
+                )
             t += step
         if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
             win = float(analysis.get("window_seconds", 2.0))
