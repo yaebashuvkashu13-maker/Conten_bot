@@ -509,6 +509,16 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
+    # Phase 1b: tail pass before strided sweep (late savages must not wait for deadline).
+    for tail_off in (8.0, 14.0, 22.0):
+        if probes >= max_probes or time.monotonic() >= deadline:
+            break
+        t = max(t0 + 8.0, duration - tail_off)
+        probes += 1
+        hit = find_banner_near_peak(vod, t, quick=True)
+        if hit:
+            _merge_hit(hit)
+
     # Phase 2: evenly spaced probes across entire VOD (late savages at 10+ min).
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
     full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
@@ -537,15 +547,6 @@ def discover_vod_kill_banners(
                     max_probes,
                     len(hits),
                 )
-        # Late-VOD pass: direct peak OCR near file end (banner frame is often a few sec before EOF).
-        for tail_off in (8.0, 14.0, 22.0):
-            if probes >= max_probes or time.monotonic() >= deadline:
-                break
-            t = max(t0 + 8.0, duration - tail_off)
-            probes += 1
-            hit = find_banner_near_peak(vod, t, quick=True)
-            if hit:
-                _merge_hit(hit)
         if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
             win = float(analysis.get("window_seconds", 2.0))
             motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
