@@ -389,6 +389,8 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
         return 15.0
     if duration <= 480:
         return min(base, 90.0)
+    if duration <= 900:
+        return min(base, 120.0)
     return base
 
 
@@ -447,12 +449,19 @@ def discover_vod_kill_banners(
         else:
             hits.append(hit)
 
-    def _probe_at(t: float, *, deep: bool) -> bool:
+    def _probe_at(t: float, *, deep: bool, quick: bool = False) -> bool:
         nonlocal probes
         if probes >= max_probes or time.monotonic() >= deadline:
             return False
         probes += 1
-        for hit in scan_window(vod, t - 0.5, t + 2.5, focus_sec=t, deep=deep):
+        for hit in scan_window(
+            vod,
+            t - 0.5,
+            t + 2.5,
+            focus_sec=t,
+            deep=deep,
+            quick=quick,
+        ):
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
@@ -473,7 +482,8 @@ def discover_vod_kill_banners(
         t = t0
         while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
             deep = (probes % 5) == 4
-            if not _probe_at(t, deep=deep):
+            quick = not deep
+            if not _probe_at(t, deep=deep, quick=quick):
                 break
             if int(t) % 60 == 0 and int(t) > int(t0):
                 log.info(
@@ -506,7 +516,7 @@ def discover_vod_kill_banners(
                         t,
                         len(hits),
                     )
-                if not _probe_at(t, deep=False):
+                if not _probe_at(t, deep=False, quick=True):
                     break
                 t += step
         hits.sort(key=lambda h: h.sec)
