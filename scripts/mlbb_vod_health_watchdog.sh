@@ -63,6 +63,28 @@ if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
   fi
 fi
 
+# Daily cycle: when MLBB is active, shooter feeds must not block the pipeline.
+if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]]; then
+  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
+  ACTIVE_GAME="$(python3 - <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+try:
+    from daily_game_cycle import active_game, reset_if_new_day
+    reset_if_new_day()
+    print(active_game() or "")
+except Exception:
+    print("")
+PY
+)"
+  if [[ "$ACTIVE_GAME" == "mlbb" ]] && pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; then
+    log "active_game=mlbb but shooter feed running — kill to unblock MLBB"
+    pkill -9 -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
+    sleep 2
+    rm -f /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
+  fi
+fi
+
 # Daily cycle: MLBB feed must not run when another game is active (quota done).
 if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]] && pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
