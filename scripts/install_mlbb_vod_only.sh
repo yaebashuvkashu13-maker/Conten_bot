@@ -173,6 +173,7 @@ printf 'MLBB_VOD_SEARCH_QUERIES="%s"\n' "$VOD_SEARCH_CSV" >>"$ENV_FILE"
 install -m 755 \
   "$REPO/scripts/daily_game_cycle.py" \
   "$REPO/scripts/daily_cycle_runner.py" \
+  "$REPO/scripts/daily_cycle_start_quota_now.py" \
   "$REPO/scripts/shooter_vod_segment_feed.py" \
   "$REPO/scripts/shooter_vod_segment_store.py" \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
