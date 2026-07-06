@@ -1533,6 +1533,7 @@ def _collect_scan_segments(
         if peak_near_skipped(peak, skip_peaks):
             continue
         if peak < min_peak:
+            log.info("skip peak=%.1f before min_peak=%.0f vod=%s", peak, min_peak, vod.name)
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
@@ -1920,7 +1921,18 @@ def _process_vod_segments(
                 pool_peaks = peaks_from_pool(pool_cache) if pool_cache is not None else []
                 if not to_send:
                     blocked = False
-                    if not pool_peaks:
+                    min_peak = _vod_min_peak_sec(vod)
+                    if pool_peaks and all(float(p) < min_peak for p in pool_peaks):
+                        blocked = True
+                        if entry is not None:
+                            entry["reject_reason"] = "peaks_before_min_peak"
+                        log.info(
+                            "all pool peaks before min_peak=%.0f vod=%s peaks=%s",
+                            min_peak,
+                            vod.name,
+                            pool_peaks[:6],
+                        )
+                    elif not pool_peaks:
                         blocked = True
                     elif pool_peaks_fully_blocked(
                         pool_peaks,
