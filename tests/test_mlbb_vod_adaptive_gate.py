@@ -10,10 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_adaptive_gate import (  # noqa: E402
     adaptive_env,
+    apply_circuit_breaker,
     overrides_for_level,
     record_vod_outcome,
     should_notify_soften,
     soften_level,
+    streak_circuit_max,
     streak_from_state,
     trailing_zero_streak,
 )
@@ -104,3 +106,17 @@ def test_streak_from_state_uses_legacy_zero_cut_streak():
     assert streak_from_state(state2) == 3
     state3 = {"zero_cut_streak": 40, "vod_outcomes": [{"sent": 0}] * 3}
     assert streak_from_state(state3) == 40
+
+
+def test_circuit_breaker_resets_stuck_streak(monkeypatch):
+    monkeypatch.setenv("MLBB_VOD_STREAK_CIRCUIT_MAX", "10")
+    state = {"zero_cut_streak": 40, "vod_outcomes": [{"id": "x", "sent": 0}] * 10, "last_adaptive_level": 2}
+    assert apply_circuit_breaker(state) is True
+    assert state["zero_cut_streak"] == 0
+    assert state["vod_outcomes"] == []
+    assert state["last_adaptive_level"] == 0
+    assert apply_circuit_breaker(state) is False
+
+
+def test_streak_circuit_max_default():
+    assert streak_circuit_max() >= 6

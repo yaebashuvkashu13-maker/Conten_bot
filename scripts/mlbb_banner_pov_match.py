@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Match kill-banner hero portrait with POV skill-bar hero (reject spectator kills)."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def _pov_match_enabled() -> bool:
+    return os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1"
+
+
+def _similarity_min() -> float:
+    return float(os.environ.get("MLBB_BANNER_POV_MIN_SIM", "0.42"))
+
+
+def extract_banner_hero_patch(frame) -> object | None:
+    """Circular hero icon left of kill-streak banner text."""
+    import cv2
+
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    if h < 80 or w < 160:
+        return None
+    y0, y1 = int(h * 0.03), int(h * 0.24)
+    x0, x1 = int(w * 0.06), int(w * 0.22)
+    patch = frame[y0:y1, x0:x1]
+    if patch.size == 0:
+        return None
+    return cv2.resize(patch, (48, 48))
+
+
+def extract_pov_hero_patch(frame) -> object | None:
+    """Player hero portrait in bottom-left skill bar."""
+    import cv2
+
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    if h < 80 or w < 160:
+        return None
+    y0, y1 = int(h * 0.70), int(h * 0.94)
+    x0, x1 = int(w * 0.015), int(w * 0.13)
+    patch = frame[y0:y1, x0:x1]
+    if patch.size == 0:
+        return None
+    return cv2.resize(patch, (48, 48))
+
+
+def portrait_similarity(patch_a, patch_b) -> float:
+    """0..1 histogram correlation in HSV (hue-robust for skin/portrait)."""
+    import cv2
+    import numpy as np
+
+    if patch_a is None or patch_b is None:
+        return 0.0
+    try:
+        a = cv2.cvtColor(patch_a, cv2.COLOR_BGR2HSV)
+        b = cv2.cvtColor(patch_b, cv2.COLOR_BGR2HSV)
+        hist_a = cv2.calcHist([a], [0, 1], None, [24, 16], [0, 180, 0, 256])
+        hist_b = cv2.calcHist([b], [0, 1], None, [24, 16], [0, 180, 0, 256])
+        cv2.normalize(hist_a, hist_a)
+        cv2.normalize(hist_b, hist_b)
+        corr = float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
+        return max(0.0, min(1.0, corr))
+    except Exception:
+        return 0.0
+
+
+def banner_pov_hero_match(
+    vod: Path,
+    banner_sec: float,
+    *,
+    sample_offsets: tuple[float, ...] = (-0.4, 0.0, 0.35),
+) -> tuple[bool, str, float]:
+    """
+    True when banner hero icon matches POV skill-bar hero at banner time.
+  Spectator / teammate kill banners typically fail this check.
+    """
+    if not _pov_match_enabled():
+        return True, "pov_match_off", 1.0
+
+    from gameplay_gate import _read_frame_at
+
+    best = 0.0
+    for off in sample_offsets:
+        frame = _read_frame_at(vod, max(0.0, float(banner_sec) + off))
+        if frame is None:
+            continue
+        banner_patch = extract_banner_hero_patch(frame)
+        pov_patch = extract_pov_hero_patch(frame)
+        sim = portrait_similarity(banner_patch, pov_patch)
+        best = max(best, sim)
+
+    need = _similarity_min()
+    if best >= need:
+        return True, f"pov_hero_ok sim={best:.3f}", best
+    return False, f"pov_hero_mismatch sim={best:.3f} need>={need:.2f}", best

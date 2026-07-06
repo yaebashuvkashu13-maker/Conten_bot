@@ -33,5 +33,22 @@ class FightSegmentBoundsTest(unittest.TestCase):
         self.assertLess(start, end)
 
 
+class ClipActionSustainTest(unittest.TestCase):
+    def test_short_clip_passes(self) -> None:
+        from mlbb_fight_segment import clip_action_sustain_ok
+
+        ok, reason = clip_action_sustain_ok(Path("/tmp/x.mp4"), 0.0, 4.0)
+        self.assertTrue(ok)
+        self.assertEqual(reason, "short_clip_ok")
+
+    def test_idle_tail_rejected(self) -> None:
+        from mlbb_fight_segment import clip_action_sustain_ok
+
+        with patch("gameplay_gate.score_segment_combat", return_value=(0.001, 0.001, 0.0, "")):
+            ok, reason = clip_action_sustain_ok(Path("/tmp/x.mp4"), 100.0, 20.0)
+        self.assertFalse(ok)
+        self.assertIn("idle_death_tail", reason)
+
+
 if __name__ == "__main__":
     unittest.main()

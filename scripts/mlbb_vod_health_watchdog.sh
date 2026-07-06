@@ -63,6 +63,82 @@ if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
   fi
 fi
 
+# Daily cycle: MLBB feed must not run when another game is active (quota done).
+if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]] && pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
+  WRONG_GAME="$(python3 - <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+try:
+    from daily_game_cycle import active_game, reset_if_new_day
+    reset_if_new_day()
+    active = active_game()
+    print("" if active == "mlbb" else (active or "done"))
+except Exception:
+    print("")
+PY
+)"
+  if [[ -n "$WRONG_GAME" ]]; then
+    log "mlbb feed running but active_game=$WRONG_GAME — kill to unblock cycle"
+    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+    sleep 2
+    rm -f /tmp/mlbb_vod_segment_feed.lock
+  fi
+fi
+
+# Zero-send streak: reset state when feed scans but nothing reaches Telegram.
+if pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+  CB_OUT="$(python3 - <<'PY' 2>/dev/null || true
+import json, os, re, sys, time
+from pathlib import Path
+
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+state_path = Path("/root/data/mlbb/vod_segment_state.json")
+if not state_path.exists():
+    raise SystemExit(0)
+try:
+    from mlbb_vod_adaptive_gate import apply_circuit_breaker, streak_circuit_max, streak_from_state
+    from vod_scan_state import invalidate_pool_cache
+except Exception:
+    raise SystemExit(0)
+
+state = json.loads(state_path.read_text(encoding="utf-8"))
+streak = streak_from_state(state)
+if streak < streak_circuit_max():
+    raise SystemExit(0)
+
+log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+now = time.time()
+last_send = 0.0
+ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+if log_path.exists():
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-6000:]:
+        m = ts_re.match(line)
+        if m and "sent=1 vod=" in line:
+            try:
+                last_send = max(last_send, time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")))
+            except ValueError:
+                pass
+silence = int(os.environ.get("MLBB_VOD_CIRCUIT_SILENCE_SEC", "7200"))
+if last_send and (now - last_send) < silence:
+    raise SystemExit(0)
+
+if not apply_circuit_breaker(state):
+    raise SystemExit(0)
+for row in state.get("vods") or []:
+    invalidate_pool_cache(row)
+state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"circuit_breaker_reset streak={streak}")
+PY
+)"
+  if [[ -n "$CB_OUT" ]]; then
+    log "$CB_OUT — kill feed for clean restart"
+    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+    sleep 2
+    rm -f /tmp/mlbb_vod_segment_feed.lock
+  fi
+fi
+
 # Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
 FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
 if [[ -f "$FEED_LOG" ]]; then
@@ -120,12 +196,21 @@ def last_sent_age() -> float:
     log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
     if not log_path.exists():
         return silence + 1
-    last = 0.0
+    last_ts = 0.0
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    sent_re = re.compile(r"sent=(\d+) vod=")
     for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-8000:]:
-        m = re.search(r"sent=(\d+) vod=", line)
-        if m and int(m.group(1)) > 0:
-            last = now
-    return now - last if last else silence + 1
+        tm = ts_re.match(line)
+        if not tm:
+            continue
+        try:
+            line_ts = time.mktime(time.strptime(tm.group(1), "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        sm = sent_re.search(line)
+        if sm and int(sm.group(1)) > 0:
+            last_ts = max(last_ts, line_ts)
+    return now - last_ts if last_ts else silence + 1
 
 age = last_sent_age()
 if age < silence:

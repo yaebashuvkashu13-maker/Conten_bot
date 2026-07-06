@@ -137,3 +137,34 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
 
 def variable_length_enabled() -> bool:
     return os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1"
+
+
+def clip_action_sustain_ok(
+    vod: Path,
+    start_sec: float,
+    dur_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> tuple[bool, str]:
+    """
+    Reject clips where the second half is mostly idle (death screen / respawn tail).
+    """
+    dur = float(dur_sec)
+    if dur < 6.0:
+        return True, "short_clip_ok"
+    min_tail_motion = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MOTION", "0.016"))
+    min_tail_mini = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MINIMAP", "0.007"))
+    tail_start = float(start_sec) + dur * 0.42
+    tail_dur = max(2.5, float(start_sec) + dur - tail_start)
+    from gameplay_gate import score_segment_combat
+
+    motion, mini, _skill, _text = score_segment_combat(
+        vod,
+        tail_start,
+        tail_dur,
+        crop_box=crop_box,
+        sample_frames=max(4, int(os.environ.get("MLBB_CLIP_TAIL_SAMPLES", "5"))),
+    )
+    if motion < min_tail_motion and mini < min_tail_mini:
+        return False, f"idle_death_tail motion={motion:.4f} mini={mini:.4f}"
+    return True, "action_tail_ok"

@@ -52,9 +52,12 @@ from vod_scan_state import (
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     should_mark_vod_exhausted,
+    invalidate_pool_cache,
+    note_zero_send_session,
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
@@ -1333,6 +1336,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
+            if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
+                from mlbb_banner_pov_match import banner_pov_hero_match
+
+                pov_ok, pov_reason, pov_sim = banner_pov_hero_match(vod, banner_sec)
+                report["pov_hero_sim"] = round(pov_sim, 4)
+                if not pov_ok:
+                    return False, pov_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1368,6 +1378,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     report["render_motion"] = round(rend_motion, 4)
     if rend_motion < _presend_min_motion() * 0.75:
         return False, f"render_idle_motion={rend_motion:.4f}", report
+
+    from mlbb_fight_segment import clip_action_sustain_ok
+
+    tail_ok, tail_reason = clip_action_sustain_ok(vod, cut_start, dur, crop_box=crop)
+    report["tail_action"] = tail_reason
+    if not tail_ok:
+        return False, tail_reason, report
 
     report["pass_reason"] = row.get("pass_reason") or row.get("gate_reason") or "presend_ok"
     return True, "presend_ok", report
@@ -1530,6 +1547,7 @@ def _collect_scan_segments(
         if peak_near_skipped(peak, skip_peaks):
             continue
         if peak < min_peak:
+            log.info("skip peak=%.1f before min_peak=%.0f vod=%s", peak, min_peak, vod.name)
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
@@ -1566,7 +1584,9 @@ def _collect_scan_segments(
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
         vis = visual_rows[0] if visual_rows else {}
-        clip_score = float(metrics.get("clip_score") or 0.0)
+        clip_score = float(
+            metrics.get("clip_score") or clip.get("clip_score") or clip.get("score") or 0.0
+        )
         min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
         if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
             log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
@@ -1632,6 +1652,15 @@ def _send_segment_batch(
             f"(LEARNING_FIRST gate — проверь MLBB_SEND_ENABLED=1 на VPS)",
         )
         return 0, 0, len(to_send)
+
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+        from daily_game_cycle import can_send_for_game
+
+        cycle_game = (os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
+        ok_cycle, cycle_reason = can_send_for_game(cycle_game, 1)
+        if not ok_cycle:
+            log.warning("send batch blocked cycle=%s game=%s", cycle_reason, cycle_game)
+            return 0, 0, len(to_send)
 
     cap_left = max_daily_sends() - daily_send_count()
     if cap_left <= 0:
@@ -1794,6 +1823,7 @@ def _process_vod_segments(
     """Drain all scorable segments from one VOD; kick off next download in parallel."""
     from mlbb_vod_adaptive_gate import (
         adaptive_env,
+        apply_circuit_breaker,
         record_vod_outcome,
         should_notify_soften,
         soft_max_peak_tries,
@@ -1830,20 +1860,10 @@ def _process_vod_segments(
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, PROFILE)
         if not ok_fast:
-            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = {"id": vid, "path": str(vod), "exhausted": False}
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
-            state = _load_state()
-            if entry:
-                _sync_vod_entry_to_state(state, entry, vod)
-            _save_state(state)
-            if clear_fast_seeds:
-                clear_fast_seeds()
-            return 0
-        apply_fast_probe_seeds(seed_peaks)
+            log.info("fast-probe weak vod=%s reason=%s — continue full scan", vod.name, fast_reason)
+            seed_peaks = []
+        elif seed_peaks:
+            apply_fast_probe_seeds(seed_peaks)
 
     try:
         with adaptive_env(streak_in) as level:
@@ -1873,6 +1893,7 @@ def _process_vod_segments(
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
 
             cached_blocked = False
+            force_rescan = False
             if entry and entry.get("last_pool_peaks"):
                 cached = peak_values_from_entry(entry)
                 if pool_peaks_fully_blocked(
@@ -1904,7 +1925,18 @@ def _process_vod_segments(
                 pool_peaks = peaks_from_pool(pool_cache) if pool_cache is not None else []
                 if not to_send:
                     blocked = False
-                    if not pool_peaks:
+                    min_peak = _vod_min_peak_sec(vod)
+                    if pool_peaks and all(float(p) < min_peak for p in pool_peaks):
+                        blocked = True
+                        if entry is not None:
+                            entry["reject_reason"] = "peaks_before_min_peak"
+                        log.info(
+                            "all pool peaks before min_peak=%.0f vod=%s peaks=%s",
+                            min_peak,
+                            vod.name,
+                            pool_peaks[:6],
+                        )
+                    elif not pool_peaks:
                         blocked = True
                     elif pool_peaks_fully_blocked(
                         pool_peaks,
@@ -1915,6 +1947,21 @@ def _process_vod_segments(
                         lead_sec=lead,
                     ):
                         blocked = True
+                    if (
+                        not blocked
+                        and not force_rescan
+                        and entry is not None
+                        and pool_cache_valid(entry)
+                    ):
+                        log.warning(
+                            "cached pool zero yield — invalidate and rescan vod=%s peaks=%s",
+                            vod.name,
+                            len(pool_peaks),
+                        )
+                        invalidate_pool_cache(entry)
+                        pool_cache = None
+                        force_rescan = True
+                        continue
                     if entry is not None:
                         record_vod_scan(
                             entry,
@@ -1999,6 +2046,9 @@ def _process_vod_segments(
     _save_state(state)
 
     if sent_total == 0 and not send_quota_blocked:
+        if entry is not None:
+            sessions = note_zero_send_session(entry)
+            log.info("zero_send_sessions=%s vod=%s", sessions, vod.name)
         if entry and should_mark_vod_exhausted(entry):
             _mark_vod_exhausted(vod)
             entry["exhausted"] = True
@@ -2143,18 +2193,36 @@ def main() -> int:
         return _run_feed(env, token, chat_id)
 
 
-def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
-    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
-        from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+def _daily_cycle_mlbb_allowed() -> tuple[bool, str]:
+    """True when daily cycle allows MLBB sends (re-check each VOD — avoid blocking PUBG/Standoff)."""
+    if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") != "1":
+        return True, "cycle_disabled"
+    from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
 
-        reset_if_new_day()
-        if active_game() != "mlbb":
-            log.info("daily cycle: active_game=%s — mlbb feed idle", active_game())
-            return 0
-        ok_mlbb, why = can_send_for_game("mlbb", 1)
-        if not ok_mlbb:
-            log.info("daily cycle mlbb blocked: %s", why)
-            return 0
+    reset_if_new_day()
+    active = active_game()
+    if active != "mlbb":
+        return False, f"active_game={active}"
+    ok_mlbb, why = can_send_for_game("mlbb", 1)
+    if not ok_mlbb:
+        return False, why
+    return True, "ok"
+
+
+def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
+    ok_start, why_start = _daily_cycle_mlbb_allowed()
+    if not ok_start:
+        log.info("daily cycle mlbb idle: %s", why_start)
+        return 0
+
+    from mlbb_vod_adaptive_gate import apply_circuit_breaker, streak_circuit_max
+
+    state_cb = _load_state()
+    if apply_circuit_breaker(state_cb):
+        for row in state_cb.get("vods") or []:
+            invalidate_pool_cache(row)
+        _save_state(state_cb)
+        log.warning("circuit breaker: reset zero streak (max=%s)", streak_circuit_max())
 
     labeled = labeled_ids()
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "12"))
@@ -2178,6 +2246,11 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
+        if not ok_cycle:
+            log.info("daily cycle yield after %s vods: %s", vods_done, cycle_reason)
+            break
+
         vod, entry = _resolve_next_vod(
             env,
             registry,

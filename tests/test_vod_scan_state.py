@@ -12,8 +12,10 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from vod_scan_state import (  # noqa: E402
+    invalidate_pool_cache,
     max_peak_tries,
     minimal_pool_from_entry,
+    note_zero_send_session,
     pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
@@ -29,6 +31,8 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_pool_peaks": []}) is True
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "last_scan_blocked": False}) is False
     assert should_mark_vod_exhausted({"last_scan_sent": 0}) is False
+    assert should_mark_vod_exhausted({"zero_send_sessions": 3}) is True
+    assert should_mark_vod_exhausted({"zero_send_sessions": 2}) is False
 
 
 def test_scan_zero_detail() -> None:
@@ -99,6 +103,20 @@ def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> N
     pool = minimal_pool_from_entry(entry)
     assert len(pool) == 1
     assert pool[0]["start"] == 120.0
+    assert pool[0]["clip_score"] == 0.8
+    assert pool[0]["highlight_metrics"]["clip_score"] == 0.8
+
+
+def test_invalidate_pool_cache() -> None:
+    entry = {"last_pool_peaks": [{"peak_sec": 1.0}], "last_pool_at": 1.0}
+    invalidate_pool_cache(entry)
+    assert "last_pool_peaks" not in entry
+
+
+def test_note_zero_send_session() -> None:
+    entry: dict = {}
+    assert note_zero_send_session(entry) == 1
+    assert note_zero_send_session(entry) == 2
 
 
 def test_pool_cache_expired(monkeypatch: pytest.MonkeyPatch) -> None:
