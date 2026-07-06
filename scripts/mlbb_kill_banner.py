@@ -552,13 +552,14 @@ def bounds_from_banner(
     hard_max = _fight_hard_max_sec()
     lead = _lead_sec()
 
+    post = float(os.environ.get("MLBB_FIGHT_POST_SEC", os.environ.get("MLBB_BANNER_POST_SEC", "4")))
     if fight_start is not None and fight_end is not None and fight_end > fight_start:
-        start = max(0.0, float(fight_start))
-        end = min(float(file_dur), float(fight_end))
+        start = max(0.0, float(fight_start) - lead)
+        end = min(float(file_dur), float(fight_end) + post)
     else:
         start = max(0.0, float(banner_sec) - lead)
-        post_cap = float(os.environ.get("MLBB_BANNER_POST_SEC", "5"))
-        tail = min(post_cap, max(min_d * 0.45, (max_d - lead) * 0.32))
+        post_cap = float(os.environ.get("MLBB_BANNER_POST_SEC", str(post)))
+        tail = min(post_cap, max(post, min_d * 0.45, (max_d - lead) * 0.32))
         end = min(float(file_dur), float(banner_sec) + tail)
 
     if float(banner_sec) < start:
@@ -566,9 +567,12 @@ def bounds_from_banner(
     if float(banner_sec) > end:
         end = min(float(file_dur), float(banner_sec) + max(2.0, min_d * 0.4))
 
+    from mlbb_fight_segment import ideal_clip_min_sec
+
     dur = end - start
-    if dur < min_d:
-        end = min(file_dur, start + min_d)
+    need = ideal_clip_min_sec()
+    if dur < need:
+        end = min(file_dur, start + need)
         dur = end - start
     if dur > hard_max:
         end = start + hard_max

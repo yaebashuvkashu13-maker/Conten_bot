@@ -49,12 +49,15 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
     fake_clip = {
         "start": 10.0,
         "peak_start": 582.0,
-        "input_duration": 12.0,
-        "output_duration": 12.0,
+        "input_duration": 18.0,
+        "output_duration": 18.0,
         "source_path": str(vod),
         "source_index": 0,
         "speed": 1.0,
-        "anchor": "motion",
+        "anchor": "kill_banner",
+        "kill_banner": "double",
+        "kill_banner_tier": 2,
+        "banner_sec": 582.0,
     }
 
     os.environ["MLBB_VOD_MIN_PEAK_SEC"] = "0"

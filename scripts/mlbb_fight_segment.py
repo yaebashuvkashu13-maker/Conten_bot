@@ -33,6 +33,16 @@ def _lead_sec() -> float:
     return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
+def _fight_post_sec() -> float:
+    """Seconds of gameplay after fight sustain ends (viewer outro)."""
+    return float(os.environ.get("MLBB_FIGHT_POST_SEC", "4"))
+
+
+def ideal_clip_min_sec() -> float:
+    """Minimum clip: lead before fight + fight body + post after fight."""
+    return _lead_sec() + _fight_min_sec() + _fight_post_sec()
+
+
 _CACHE: dict[str, dict] = {}
 
 
@@ -111,14 +121,18 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
 
     region_start = left * win
     region_end = min(file_dur, (right + 1) * win)
-    region_dur = max(min_d, region_end - region_start)
+    post = _fight_post_sec()
+    fight_body = max(min_d, region_end - region_start)
 
-    start = max(0.0, min(region_start, float(peak_sec) - lead))
-    end = min(file_dur, max(start + region_dur, float(peak_sec) + (region_dur - lead)))
+    start = max(0.0, region_start - lead)
+    end = min(file_dur, region_end + post)
     dur = end - start
 
-    if dur < min_d:
-        end = min(file_dur, start + min_d)
+    if dur < ideal_clip_min_sec():
+        end = min(file_dur, start + ideal_clip_min_sec())
+        dur = end - start
+    if fight_body < min_d:
+        end = min(file_dur, max(end, region_start + min_d + post))
         dur = end - start
 
     hard_max = _fight_hard_max_sec()

@@ -1559,9 +1559,30 @@ def _collect_scan_segments(
             continue
         start = float(lead_clip["start"])
         seg_dur = float(lead_clip.get("input_duration") or 0)
+        from mlbb_fight_segment import ideal_clip_min_sec
+
+        min_ideal = ideal_clip_min_sec()
+        if seg_dur < min_ideal:
+            log.info("skip peak=%.1f short_ideal_clip dur=%.1f need=%.1f", peak, seg_dur, min_ideal)
+            continue
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
             continue
+        if lead_clip.get("anchor") == "motion" and not lead_clip.get("kill_banner"):
+            log.info("skip peak=%.1f motion_anchor_no_banner", peak)
+            continue
+        tier = lead_clip.get("kill_banner_tier")
+        if tier is None and lead_clip.get("kill_banner"):
+            tier = 0
+        min_tier = 2 if os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double") == "double" else 1
+        if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
+            try:
+                if int(tier or 0) < min_tier:
+                    log.info("skip peak=%.1f banner_tier=%s need>=%s", peak, tier, min_tier)
+                    continue
+            except (TypeError, ValueError):
+                log.info("skip peak=%.1f banner_tier_invalid", peak)
+                continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
         if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
             continue

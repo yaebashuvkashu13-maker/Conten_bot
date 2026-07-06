@@ -11,6 +11,26 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 
+class IdealClipSpecTest(unittest.TestCase):
+    def test_ideal_clip_min_includes_lead_fight_post(self) -> None:
+        os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+        os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+        os.environ["MLBB_FIGHT_POST_SEC"] = "4"
+        from mlbb_fight_segment import ideal_clip_min_sec
+
+        self.assertEqual(ideal_clip_min_sec(), 16.0)
+
+    def test_k8u1a_style_8s_clip_below_ideal(self) -> None:
+        """Regression: k8u1a-xri2g_900 was 8s — must fail ideal min (4+8+4=16)."""
+        os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+        os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+        os.environ["MLBB_FIGHT_POST_SEC"] = "4"
+        from mlbb_fight_segment import ideal_clip_min_sec
+
+        sent_dur = 8.0
+        self.assertLess(sent_dur, ideal_clip_min_sec())
+
+
 class FightSegmentBoundsTest(unittest.TestCase):
     def test_hard_max_allows_longer_than_soft_max(self) -> None:
         os.environ["MLBB_FIGHT_MAX_SEC"] = "35"

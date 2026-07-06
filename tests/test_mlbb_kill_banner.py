@@ -82,9 +82,9 @@ def test_bounds_from_fight_sustain() -> None:
         fight_start=88.0,
         fight_end=118.0,
     )
-    assert start == 88.0
+    assert start == 84.0
     assert end == 116.0
-    assert dur == 28.0
+    assert dur == 32.0
 
 
 def test_bounds_fallback_without_fight() -> None:
