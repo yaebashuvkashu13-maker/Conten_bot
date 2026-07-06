@@ -160,3 +160,40 @@ def mark_notified(key: str) -> None:
 
 def was_notified(key: str) -> bool:
     return key in load_state().get("notified", {})
+
+
+def start_next_quota_now(*, notify: bool = False) -> dict:
+    """
+    Owner override: fresh daily quotas immediately (do not wait for MSK midnight).
+    Resets send counters and clears active-game notification latch.
+    """
+    state = load_state()
+    prev_day = str(state.get("day") or "")
+    prev_sends = dict(state.get("sends") or {})
+    state = {
+        "day": _today_key(),
+        "sends": {g: 0 for g in GAME_ORDER},
+        "notified": {},
+        "reset_from": prev_day,
+        "forced_early_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "prev_sends": prev_sends,
+    }
+    save_state(state)
+    summary = status_summary()
+    if notify:
+        token = os.environ.get("TG_BOT_TOKEN", "").strip()
+        chat_id = os.environ.get("TG_CHAT_ID", "").strip()
+        if token and chat_id:
+            try:
+                from mlbb_vod_segment_feed import send_message
+
+                send_message(
+                    token,
+                    chat_id,
+                    "🔄 Досрочный старт дневной квоты\n"
+                    f"Активна: {summary.get('active_game', '?')}\n"
+                    f"Осталось: {summary.get('remaining', {})}",
+                )
+            except Exception:
+                pass
+    return summary
