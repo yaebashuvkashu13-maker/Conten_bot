@@ -512,7 +512,10 @@ def discover_vod_kill_banners(
         for i in range(stride_count):
             if probes >= max_probes or time.monotonic() >= deadline:
                 break
-            t = t0 + (i + 0.5) * span / max(stride_count, 1)
+            if stride_count <= 1:
+                t = t0 + span * 0.5
+            else:
+                t = t0 + i * span / (stride_count - 1)
             deep = (probes % 5) == 4
             quick = not deep
             if not _probe_at(t, deep=deep, quick=quick):
