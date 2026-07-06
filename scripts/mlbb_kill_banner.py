@@ -152,7 +152,8 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     except ImportError:
         return ""
 
-    small = cv2.resize(frame, (960, 540))
+    target = (960, 540) if deep else (640, 360)
+    small = cv2.resize(frame, target)
     h, w = small.shape[:2]
     zones = [
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
