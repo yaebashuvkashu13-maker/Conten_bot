@@ -535,6 +535,15 @@ def discover_vod_kill_banners(
                     max_probes,
                     len(hits),
                 )
+        # Late-VOD pass: direct peak OCR (strided color prefilter often misses exact banner frame).
+        for frac in (0.90, 0.95, 0.99):
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            t = max(t0 + 8.0, duration * frac)
+            probes += 1
+            hit = find_banner_near_peak(vod, t, quick=True)
+            if hit:
+                _merge_hit(hit)
         if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
             win = float(analysis.get("window_seconds", 2.0))
             motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
