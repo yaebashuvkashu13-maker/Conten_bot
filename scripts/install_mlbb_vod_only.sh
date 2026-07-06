@@ -116,6 +116,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_BANNER_PRESEND=0 MLBB_VOD_BANNER_SKIP_ON_MISS=0 MLBB_VOD_MOTION_ANCHOR_OK=1 \
   MLBB_KILL_BANNER_DISCOVER_STEP=5 MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=12 MLBB_KILL_BANNER_DISCOVER_MAX_SEC=90 \
   MLBB_VOD_ZERO_STREAK_SOFTEN=1 MLBB_VOD_ADAPTIVE_NOTIFY=1 MLBB_VOD_EXHAUST_NOTIFY=1 \
+  MLBB_VOD_STREAK_CIRCUIT_MAX=12 MLBB_VOD_ZERO_YIELD_MAX=3 MLBB_VOD_CIRCUIT_SILENCE_SEC=7200 \
   SHOOTER_VOD_ZERO_STREAK_SOFTEN=2 SHOOTER_VOD_ADAPTIVE_NOTIFY=1 SHOOTER_VOD_EXHAUST_NOTIFY=1 \
   SHOOTER_VOD_SEGMENT_GAP_SEC=45 PUBG_METRO_GATE=1 \
   SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_PREFER_RUSSIAN=1 SHOOTER_VOD_SKIP_INTELLICLIP=1 \
@@ -328,6 +329,14 @@ sleep 3
 bash "$BIN/mlbb_vod_only_verify.sh" || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
+DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-cycle-stuck-fix-6cbd}"
+if [[ -f "$ENV_FILE" ]]; then
+  if grep -q '^VPS_BRANCH=' "$ENV_FILE"; then
+    sed -i "s|^VPS_BRANCH=.*|VPS_BRANCH=$DEPLOY_BRANCH|" "$ENV_FILE"
+  else
+    echo "VPS_BRANCH=$DEPLOY_BRANCH" >>"$ENV_FILE"
+  fi
+fi
 echo "Supervisor: 1x mlbb_vod_segment_feed.sh loop | Shorts worker: OFF"
 pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot' || echo "(starting…)"
 tail -5 /root/data/mlbb/mlbb_vod_segment_feed.log 2>/dev/null || echo "(log empty yet)"
