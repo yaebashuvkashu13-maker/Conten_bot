@@ -421,8 +421,18 @@ def discover_vod_kill_banners(
     hits: list[KillBannerHit] = []
     probes = 0
 
+    def _banner_hit_passes_pov(hit: KillBannerHit) -> bool:
+        if os.environ.get("MLBB_BANNER_POV_MATCH", "1") != "1":
+            return True
+        from mlbb_banner_pov_match import banner_pov_hero_match
+
+        ok, _reason, _sim = banner_pov_hero_match(vod, hit.sec)
+        return ok
+
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or hit.source != "ocr":
+            return
+        if not _banner_hit_passes_pov(hit):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier:
@@ -451,52 +461,61 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
-    # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
-    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+    # Phase 2: full-VOD timestep scan — color prefilter every N sec, OCR on hits.
+    timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
+    full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
+    if timestep or full_sweep:
+        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
+        t0 = _adaptive_banner_scan_start(vod, duration)
+        color_min = _color_min_score() * 0.55
+        t = t0
+        while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+            frame = _read_frame(vod, t)
+            if frame is not None and _announce_color_score(frame) >= color_min:
+                if not _probe_at(t, deep=True):
+                    break
+            t += step
+        if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
+            win = float(analysis.get("window_seconds", 2.0))
+            motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
+            audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
+            combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+            motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
+            t = t0
+            while t < duration - 4.0 and probes < max_probes and time.monotonic() < deadline:
+                bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
+                if combined.size > bi and float(combined[bi]) < motion_thr:
+                    t += step
+                    continue
+                if probes % 5 == 0:
+                    log.info(
+                        "banner discover %s: motion_probe=%s/%s t=%.0fs hits=%s",
+                        vod.name,
+                        probes,
+                        max_probes,
+                        t,
+                        len(hits),
+                    )
+                if not _probe_at(t, deep=False):
+                    break
+                t += step
         hits.sort(key=lambda h: h.sec)
         log.info(
-            "banner discover %s: peaks-only probes=%s hits=%s",
+            "banner discover %s: timestep=%s full=%s probes=%s hits=%s",
             vod.name,
+            timestep,
+            full_sweep,
             probes,
             len(hits),
         )
         return hits
 
-    # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
-    if probes < max_probes and time.monotonic() < deadline:
-        win = float(analysis.get("window_seconds", 2.0))
-        motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
-        audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
-        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
-        motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
-        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "5.0"))
-        t0 = _adaptive_banner_scan_start(vod, duration)
-        t = t0
-        while t < duration - 4.0 and probes < max_probes and time.monotonic() < deadline:
-            bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
-            if combined.size > bi and float(combined[bi]) < motion_thr:
-                t += step
-                continue
-            if probes % 5 == 0:
-                log.info(
-                    "banner discover %s: probe=%s/%s t=%.0fs hits=%s",
-                    vod.name,
-                    probes,
-                    max_probes,
-                    t,
-                    len(hits),
-                )
-            if not _probe_at(t, deep=False):
-                break
-            t += step
-
     hits.sort(key=lambda h: h.sec)
     log.info(
-        "banner discover %s: done probes=%s hits=%s elapsed=%.0fs",
+        "banner discover %s: peaks-only probes=%s hits=%s",
         vod.name,
         probes,
         len(hits),
-        max_sec - max(0.0, deadline - time.monotonic()),
     )
     return hits
 

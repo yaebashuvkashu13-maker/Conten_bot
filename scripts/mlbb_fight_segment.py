@@ -153,7 +153,7 @@ def variable_length_enabled() -> bool:
     return os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1"
 
 
-def clip_action_sustain_ok(
+def clip_active_gameplay_ok(
     vod: Path,
     start_sec: float,
     dur_sec: float,
@@ -161,11 +161,73 @@ def clip_action_sustain_ok(
     crop_box: tuple[int, int, int, int] | None = None,
 ) -> tuple[bool, str]:
     """
-    Reject clips where the second half is mostly idle (death screen / respawn tail).
+    Reject clips where the hero is dead/idle for most of the window (tavern / death screen).
+    Samples the FULL clip — not only the tail.
     """
     dur = float(dur_sec)
+    if dur < 2.5:
+        return False, "clip_too_short"
+
+    from gameplay_gate import (
+        score_segment_combat,
+        segment_hud_frame_pass_rate,
+        segment_looks_like_draft_or_queue,
+    )
+
+    if segment_looks_like_draft_or_queue(vod, start_sec, dur, crop_box=crop_box):
+        return False, "draft_or_queue"
+
+    samples = max(6, int(os.environ.get("MLBB_CLIP_COMBAT_SAMPLES", "10")))
+    min_active = float(os.environ.get("MLBB_CLIP_MIN_ACTIVE_RATIO", "0.40"))
+    min_motion = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MOTION", "0.016"))
+    min_mini = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MINIMAP", "0.007"))
+    min_skill = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_SKILL", "0.005"))
+    min_hud = float(os.environ.get("MLBB_CLIP_MIN_HUD_RATE", "0.36"))
+
+    window = max(1.2, dur / max(samples, 1))
+    active_windows = 0
+    total_windows = 0
+    for i in range(samples):
+        if samples == 1:
+            t0 = start_sec
+        else:
+            t0 = start_sec + i * max(0.0, dur - window) / (samples - 1)
+        motion, mini, skill, _text = score_segment_combat(
+            vod,
+            t0,
+            window,
+            crop_box=crop_box,
+            sample_frames=4,
+        )
+        total_windows += 1
+        if motion >= min_motion or mini >= min_mini or skill >= min_skill:
+            active_windows += 1
+
+    hud_rate = segment_hud_frame_pass_rate(
+        vod, start_sec, dur, crop_box=crop_box, sample_frames=samples
+    )
+    active_ratio = active_windows / max(total_windows, 1)
+    if active_ratio < min_active:
+        return False, f"idle_clip ratio={active_ratio:.2f} need>={min_active}"
+    if hud_rate < min_hud and active_ratio < 0.52:
+        return False, f"death_or_tavern hud={hud_rate:.2f} active={active_ratio:.2f}"
+    return True, f"active_ok ratio={active_ratio:.2f} hud={hud_rate:.2f}"
+
+
+def clip_action_sustain_ok(
+    vod: Path,
+    start_sec: float,
+    dur_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> tuple[bool, str]:
+    """Full-clip gameplay check (death/tavern/idle) + tail sustain."""
+    ok, reason = clip_active_gameplay_ok(vod, start_sec, dur_sec, crop_box=crop_box)
+    if not ok:
+        return ok, reason
+    dur = float(dur_sec)
     if dur < 6.0:
-        return True, "short_clip_ok"
+        return True, reason
     min_tail_motion = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MOTION", "0.016"))
     min_tail_mini = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MINIMAP", "0.007"))
     tail_start = float(start_sec) + dur * 0.42
@@ -181,4 +243,4 @@ def clip_action_sustain_ok(
     )
     if motion < min_tail_motion and mini < min_tail_mini:
         return False, f"idle_death_tail motion={motion:.4f} mini={mini:.4f}"
-    return True, "action_tail_ok"
+    return True, reason

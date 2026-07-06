@@ -1650,6 +1650,12 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
+                    if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
+                        log.warning(
+                            "highlight %s: no OCR banner peaks — skip motion fallback",
+                            video_path.name,
+                        )
+                        return []
                     cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
                     starts = sorted(start_set)[:cap]
                     log.info(
@@ -1712,7 +1718,7 @@ def discover_highlight_candidates(
                     break
                 if (
                     verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                    and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
@@ -1729,7 +1735,7 @@ def discover_highlight_candidates(
                 break
             if (
                 verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
             ):
                 log.info(

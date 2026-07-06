@@ -1583,6 +1583,23 @@ def _collect_scan_segments(
             except (TypeError, ValueError):
                 log.info("skip peak=%.1f banner_tier_invalid", peak)
                 continue
+        banner_sec = float(lead_clip.get("banner_sec", lead_clip.get("peak_start", peak)))
+        if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
+            from mlbb_banner_pov_match import banner_pov_hero_match
+
+            pov_ok, pov_reason, pov_sim = banner_pov_hero_match(vod, banner_sec)
+            if not pov_ok:
+                log.info("skip peak=%.1f pov_fail=%s sim=%.3f", peak, pov_reason, pov_sim)
+                continue
+        crop_probe = _vod_crop_box(vod, float(lead_clip.get("start", start)), seg_dur)
+        from mlbb_fight_segment import clip_active_gameplay_ok
+
+        active_ok, active_reason = clip_active_gameplay_ok(
+            vod, float(lead_clip.get("start", start)), seg_dur, crop_box=crop_probe
+        )
+        if not active_ok:
+            log.info("skip peak=%.1f %s", peak, active_reason)
+            continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
         if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
             continue
@@ -1631,8 +1648,8 @@ def _collect_scan_segments(
                 "gate_reason": reason,
             }
         )
-        if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
-            log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
+        if os.environ.get("MLBB_VOD_COLLECT_ONE", "0") == "1":
+            log.info("collect_one: first validated segment %s — skip validating rest of pool", sid)
             break
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
