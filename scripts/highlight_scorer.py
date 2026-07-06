@@ -1623,12 +1623,19 @@ def discover_highlight_candidates(
                     len(banners),
                     os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
                 )
-                for hit in banners:
-                    start_set.add(max(0.0, hit.sec - lead))
+                anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                for anchor in anchor_starts:
+                    start_set.add(anchor)
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
-                starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                filtered = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                if banners:
+                    anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    near = [s for s in filtered if any(abs(s - a) <= 45 for a in anchor_starts)]
+                    starts = sorted(set(near) | set(anchor_starts))
+                else:
+                    starts = filtered
                 log.info(
                     "highlight banner prefilter %s: %s/%s windows",
                     video_path.name,

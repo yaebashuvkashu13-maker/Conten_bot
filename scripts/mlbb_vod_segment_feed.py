@@ -105,6 +105,8 @@ def _vod_min_peak_sec(vod: Path | None = None) -> float:
         return min(base, 45.0)
     if dur <= 480:
         return min(base, 120.0)
+    if dur <= 900:
+        return min(base, 180.0)
     return base
 
 
@@ -1546,7 +1548,7 @@ def _collect_scan_segments(
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
-        if peak < min_peak:
+        if peak < min_peak and not clip.get("kill_banner") and clip.get("anchor") != "kill_banner":
             log.info("skip peak=%.1f before min_peak=%.0f vod=%s", peak, min_peak, vod.name)
             continue
         lead_clip = _normalize_clip(clip, vod)
