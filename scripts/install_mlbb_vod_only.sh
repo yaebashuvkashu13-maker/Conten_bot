@@ -355,8 +355,7 @@ sleep 3
 bash "$BIN/mlbb_vod_only_verify.sh" || true
 
 echo "===== MLBB banner reference bank $(date -Is) ====="
-python3 "$REPO/scripts/mlbb_banner_ref_ingest.py" --wiki || true
-python3 "$REPO/scripts/mlbb_banner_ref_ingest.py" --from-labels --vod-root /root/data/mlbb/youtube_nightly/inbox || true
+python3 "$REPO/scripts/mlbb_banner_ref_ingest.py" --all --vod-root /root/data/mlbb/youtube_nightly/inbox || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
 DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-ideal-clip-spec-6cbd}"

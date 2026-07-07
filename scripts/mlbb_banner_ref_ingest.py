@@ -248,7 +248,7 @@ def write_manifest(*, wiki_rows: list[dict] | None = None, vod_rows: list[dict] 
     for row in wiki_rows:
         if row.get("ok") and row.get("path"):
             p = Path(str(row["path"]))
-            rel = p.relative_to(root) if p.is_absolute() and str(p).startswith(str(root)) else p.name
+            rel = p.relative_to(root) if p.is_absolute() and str(p).startswith(str(root)) else Path("wiki") / p.name
             refs.append(
                 {
                     "name": row["name"],
@@ -257,6 +257,20 @@ def write_manifest(*, wiki_rows: list[dict] | None = None, vod_rows: list[dict] 
                     "tier_hint": "unknown",
                 }
             )
+    seen_paths = {r["path"] for r in refs}
+    for path in sorted((root / "wiki").glob("*.png")):
+        rel = path.relative_to(root)
+        if str(rel) in seen_paths:
+            continue
+        refs.append(
+            {
+                "name": path.stem,
+                "source": "wiki",
+                "path": str(rel),
+                "tier_hint": "unknown",
+            }
+        )
+        seen_paths.add(str(rel))
     for path in sorted(root.glob("vod_crops/**/*.png")):
         tier = path.parent.name
         rel = path.relative_to(root)

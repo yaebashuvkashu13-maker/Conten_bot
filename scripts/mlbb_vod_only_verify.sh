@@ -35,7 +35,7 @@ check_env MLBB_VOD_BANNER_PRESEND 1
 check_env MLBB_VOD_BANNER_DISCOVER 1
 check_env MLBB_VOD_BANNER_PREFILTER 1
 check_env MLBB_BANNER_POV_MATCH 1
-check_env MLBB_VOD_FAST_PROBE 0
+check_env MLBB_VOD_FAST_PROBE 1
 check_env MLBB_VOD_MOTION_ANCHOR_OK 0
 check_env MLBB_VOD_OWNER_EXEMPLARS 1
 check_env MLBB_FIGHT_POST_SEC 4
@@ -43,7 +43,8 @@ check_env MLBB_VOD_ZERO_STREAK_SOFTEN 4
 check_env MLBB_VOD_BANNER_TIMESTEP_SCAN 1
 check_env MLBB_VOD_HIGHLIGHT_SEND_ONE 0
 check_env MLBB_VOD_COLLECT_ONE 0
-check_env MLBB_KILL_BANNER_DISCOVER_MAX_PROBES 72
+check_env MLBB_KILL_BANNER_DISCOVER_MAX_PROBES 96
+check_env MLBB_BANNER_REF_MATCH 1
 check_env MLBB_CLIP_MIN_HUD_RATE 0.42
 
 forbidden=(
@@ -82,6 +83,12 @@ BAD=$(find /root/content_bot_ml/data/highlight_exemplars/mobile_legends/bad -nam
 echo "exemplars good=$GOOD bad=$BAD"
 if [[ "$GOOD" -lt 50 ]]; then
   warn "good exemplars < 50 — owner scoring weak"
+fi
+
+BANNER_REFS=$(find /root/content_bot_ml/data/mlbb_kill_banners/wiki -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
+echo "banner_refs wiki=$BANNER_REFS"
+if [[ "$BANNER_REFS" -lt 8 ]]; then
+  warn "wiki banner refs < 8 — run mlbb_banner_ref_ingest.py --wiki"
 fi
 
 if crontab -l 2>/dev/null | grep -qE 'mlbb_calibration_feed|mlbb_youtube_shorts_ingest|mlbb_continuous_worker\.py|install_mlbb_only_mode|vps_auto_update'; then
