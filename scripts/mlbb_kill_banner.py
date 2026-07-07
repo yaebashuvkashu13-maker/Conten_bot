@@ -508,6 +508,25 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
+    def _timestep_color_probe(t: float) -> None:
+        """
+        Cheap timestep scan: read ONE frame at t, use color prefilter,
+        then run OCR near t only when color is promising.
+        """
+        nonlocal probes
+        if probes >= max_probes or time.monotonic() >= deadline:
+            return
+        frame = _read_frame(vod, t)
+        if frame is None:
+            return
+        # Same heuristic as scan_window() candidate picking.
+        if _announce_color_score(frame) < _color_min_score() * 0.75:
+            return
+        probes += 1
+        hit = find_banner_near_peak(vod, t, quick=True)
+        if hit:
+            _merge_hit(hit)
+
     # Phase 1: quick OCR around motion peaks spread across the whole VOD.
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
     peak_probe_cap = max(4, min(peak_limit, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES", "8"))))
@@ -533,30 +552,48 @@ def discover_vod_kill_banners(
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
     full_sweep = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     if timestep or full_sweep:
-        span = max(8.0, duration - t0 - 4.0)
-        remaining = max(0, core_probe_cap - probes)
-        stride_count = max(remaining, int(span / max(step, 1.0)) + 1)
-        stride_count = min(stride_count, remaining) if remaining else 0
-        for i in range(stride_count):
-            if probes >= max_probes or time.monotonic() >= deadline:
-                break
-            if stride_count <= 1:
-                t = t0 + span * 0.5
-            else:
-                t = t0 + i * span / (stride_count - 1)
-            deep = (probes % 5) == 4
-            quick = not deep
-            if not _probe_at(t, deep=deep, quick=quick):
-                break
-            if int(t) % 90 == 0 and int(t) > int(t0):
-                log.info(
-                    "banner discover %s: strided t=%.0fs probes=%s/%s hits=%s",
-                    vod.name,
-                    t,
-                    probes,
-                    max_probes,
-                    len(hits),
-                )
+        # Instead of expensive scan_window() at every timestep, do a cheap per-step
+        # color probe and OCR only on promising frames. This greatly increases recall.
+        if timestep:
+            t = t0
+            while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+                _timestep_color_probe(t)
+                if int(t) % 120 == 0 and int(t) > int(t0):
+                    log.info(
+                        "banner discover %s: timestep t=%.0fs probes=%s/%s hits=%s",
+                        vod.name,
+                        t,
+                        probes,
+                        max_probes,
+                        len(hits),
+                    )
+                t += step
+        else:
+            # Fallback: keep previous strided window probes for full_sweep-only mode.
+            span = max(8.0, duration - t0 - 4.0)
+            remaining = max(0, core_probe_cap - probes)
+            stride_count = max(remaining, int(span / max(step, 1.0)) + 1)
+            stride_count = min(stride_count, remaining) if remaining else 0
+            for i in range(stride_count):
+                if probes >= max_probes or time.monotonic() >= deadline:
+                    break
+                if stride_count <= 1:
+                    t = t0 + span * 0.5
+                else:
+                    t = t0 + i * span / (stride_count - 1)
+                deep = (probes % 5) == 4
+                quick = not deep
+                if not _probe_at(t, deep=deep, quick=quick):
+                    break
+                if int(t) % 90 == 0 and int(t) > int(t0):
+                    log.info(
+                        "banner discover %s: strided t=%.0fs probes=%s/%s hits=%s",
+                        vod.name,
+                        t,
+                        probes,
+                        max_probes,
+                        len(hits),
+                    )
         if full_sweep and not timestep and probes < max_probes and time.monotonic() < deadline:
             win = float(analysis.get("window_seconds", 2.0))
             motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)

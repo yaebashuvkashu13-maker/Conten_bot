@@ -73,7 +73,7 @@ def banner_pov_hero_match(
     vod: Path,
     banner_sec: float,
     *,
-    sample_offsets: tuple[float, ...] = (-0.4, 0.0, 0.35),
+    sample_offsets: tuple[float, ...] = (-0.7, -0.35, 0.0, 0.35, 0.7),
 ) -> tuple[bool, str, float]:
     """
     True when banner hero icon matches POV skill-bar hero at banner time.
