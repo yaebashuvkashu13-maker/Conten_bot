@@ -463,14 +463,6 @@ def discover_vod_kill_banners(
     hits: list[KillBannerHit] = []
     probes = 0
 
-    def _banner_hit_passes_pov(hit: KillBannerHit) -> bool:
-        if os.environ.get("MLBB_BANNER_POV_MATCH", "1") != "1":
-            return True
-        from mlbb_banner_pov_match import banner_pov_hero_match
-
-        ok, _reason, _sim = banner_pov_hero_match(vod, hit.sec)
-        return ok
-
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or hit.source != "ocr":
             return
@@ -478,8 +470,8 @@ def discover_vod_kill_banners(
 
         if banner_in_vod_tail(vod, hit.sec):
             return
-        if not _banner_hit_passes_pov(hit):
-            return
+        # Do NOT gate by POV match here: some POV layouts shift the portrait,
+        # and we'd rather keep banner candidates and let presend validate POV.
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier:
                 hits[-1] = hit

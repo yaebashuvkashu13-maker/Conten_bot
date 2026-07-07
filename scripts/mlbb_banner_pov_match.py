@@ -32,6 +32,23 @@ def extract_banner_hero_patch(frame) -> object | None:
     return cv2.resize(patch, (48, 48))
 
 
+def _extract_patch_variants(frame, boxes: list[tuple[float, float, float, float]]) -> list[object]:
+    import cv2
+
+    if frame is None:
+        return []
+    h, w = frame.shape[:2]
+    out = []
+    for (y0r, y1r, x0r, x1r) in boxes:
+        y0, y1 = int(h * y0r), int(h * y1r)
+        x0, x1 = int(w * x0r), int(w * x1r)
+        patch = frame[y0:y1, x0:x1]
+        if patch.size == 0:
+            continue
+        out.append(cv2.resize(patch, (48, 48)))
+    return out
+
+
 def extract_pov_hero_patch(frame) -> object | None:
     """Player hero portrait in bottom-left skill bar."""
     import cv2
@@ -89,10 +106,26 @@ def banner_pov_hero_match(
         frame = _read_frame_at(vod, max(0.0, float(banner_sec) + off))
         if frame is None:
             continue
-        banner_patch = extract_banner_hero_patch(frame)
-        pov_patch = extract_pov_hero_patch(frame)
-        sim = portrait_similarity(banner_patch, pov_patch)
-        best = max(best, sim)
+        # Some MLBB layouts shift portraits; try a few nearby crops and take best similarity.
+        banner_patches = _extract_patch_variants(
+            frame,
+            [
+                (0.03, 0.24, 0.06, 0.22),
+                (0.03, 0.26, 0.04, 0.20),
+                (0.04, 0.26, 0.07, 0.23),
+            ],
+        )
+        pov_patches = _extract_patch_variants(
+            frame,
+            [
+                (0.70, 0.94, 0.015, 0.13),
+                (0.68, 0.93, 0.010, 0.135),
+                (0.72, 0.95, 0.020, 0.14),
+            ],
+        )
+        for bp in banner_patches:
+            for pp in pov_patches:
+                best = max(best, portrait_similarity(bp, pp))
 
     need = _similarity_min()
     if best >= need:
