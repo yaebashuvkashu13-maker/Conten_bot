@@ -322,9 +322,14 @@ def _candidate_secs(
         if len(picks) >= max_ocr:
             break
     if focus_sec is not None:
-        nearest = min(frames, key=lambda row: abs(row[0] - focus_sec))[0]
+        ordered = sorted(frames, key=lambda row: abs(row[0] - focus_sec))
+        nearest = ordered[0][0]
+        second = ordered[1][0] if len(ordered) > 1 else None
+        # Always include focus-adjacent frames even when color prefilter is weak.
         if nearest not in picks:
             picks.insert(0, nearest)
+        if second is not None and second not in picks and len(picks) < max_ocr + 1:
+            picks.insert(1, second)
     return picks[: max_ocr + 1]
 
 
@@ -345,7 +350,8 @@ def scan_window(
         frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
         if not frames:
             frames = _sample_frames(vod, t0, t1)[:6]
-        max_ocr = 2
+        # quick mode: allow one extra OCR attempt to avoid missing short banners.
+        max_ocr = 3
     else:
         frames = _sample_frames(vod, t0, t1)
         max_ocr = 6 if deep else 4
