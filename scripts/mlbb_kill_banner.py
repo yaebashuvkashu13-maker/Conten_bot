@@ -500,7 +500,7 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
-    def _timestep_color_probe(t: float) -> None:
+    def _timestep_color_probe(t: float, cap=None) -> None:
         """
         Cheap timestep scan: read ONE frame at t, use color prefilter,
         then run OCR near t only when color is promising.
@@ -508,7 +508,12 @@ def discover_vod_kill_banners(
         nonlocal probes
         if probes >= max_probes or time.monotonic() >= deadline:
             return
-        frame = _read_frame(vod, t)
+        if cap is not None:
+            from gameplay_gate import _read_frame_at
+
+            frame = _read_frame_at(vod, float(t), cap)
+        else:
+            frame = _read_frame(vod, t)
         if frame is None:
             return
         # Same heuristic as scan_window() candidate picking.
@@ -547,19 +552,37 @@ def discover_vod_kill_banners(
         # Instead of expensive scan_window() at every timestep, do a cheap per-step
         # color probe and OCR only on promising frames. This greatly increases recall.
         if timestep:
-            t = t0
-            while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
-                _timestep_color_probe(t)
-                if int(t) % 120 == 0 and int(t) > int(t0):
+            # Spread sampling across the whole VOD under tight time budget.
+            span = max(8.0, duration - t0 - 2.0)
+            sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))
+            k = max(12, min(sample_cap, max_probes - probes, int(span / max(step, 1.0)) + 1))
+            try:
+                import cv2
+
+                cap = cv2.VideoCapture(str(vod))
+            except Exception:
+                cap = None
+            for i in range(k):
+                if probes >= max_probes or time.monotonic() >= deadline:
+                    break
+                t = t0 + (i * span / max(k - 1, 1))
+                _timestep_color_probe(t, cap=cap)
+                if i in (0, k // 2, k - 1):
                     log.info(
-                        "banner discover %s: timestep t=%.0fs probes=%s/%s hits=%s",
+                        "banner discover %s: timestep_sample i=%s/%s t=%.0fs probes=%s/%s hits=%s",
                         vod.name,
+                        i + 1,
+                        k,
                         t,
                         probes,
                         max_probes,
                         len(hits),
                     )
-                t += step
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
         else:
             # Fallback: keep previous strided window probes for full_sweep-only mode.
             span = max(8.0, duration - t0 - 4.0)
