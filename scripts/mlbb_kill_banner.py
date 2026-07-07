@@ -834,6 +834,17 @@ def resolve_fight_bounds(
     if hit is None:
         hit = find_banner_near_peak(vod, peak_sec, quick=False)
     min_tier = _min_tier()
+    max_banner_dist = float(os.environ.get("MLBB_BANNER_PEAK_MAX_DIST_SEC", "25"))
+
+    if hit is not None and abs(float(hit.sec) - float(peak_sec)) > max_banner_dist:
+        log.info(
+            "banner too far from peak vod=%s banner=%.1f peak=%.1f max=%.0f",
+            vod.name,
+            hit.sec,
+            peak_sec,
+            max_banner_dist,
+        )
+        hit = None
 
     if _motion_anchor_ok():
         if hit is not None and hit.tier >= min_tier:

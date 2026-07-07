@@ -1286,6 +1286,50 @@ def _detect_render_freeze(path: Path) -> tuple[bool, str, list[dict[str, float]]
     return True, "freeze_ok", freezes
 
 
+def _presend_visual_ok(
+    vis: dict,
+    report: dict,
+    row: dict,
+) -> tuple[bool, str]:
+    """Allow verified kill-banner clips when only the opening frame looks like menu/HUD."""
+    if vis.get("visual_pass"):
+        return True, ""
+    fail = str(vis.get("fail_reason") or "")
+    if not fail:
+        return False, "visual:fail"
+    banner_ok = str(report.get("kill_banner") or "").startswith(("banner_ok", "source_banner_ok"))
+    tier = row.get("kill_banner_tier")
+    try:
+        tier_i = int(tier) if tier is not None else 0
+    except (TypeError, ValueError):
+        tier_i = 0
+    if row.get("kill_banner") and tier_i <= 0:
+        tier_i = 2
+    min_tier = 2
+    try:
+        from mlbb_kill_banner import _min_tier
+
+        min_tier = _min_tier()
+    except Exception:
+        pass
+    if not banner_ok or tier_i < min_tier:
+        return False, f"visual:{fail}"
+    if os.environ.get("MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER", "1") != "1":
+        return False, f"visual:{fail}"
+    allowed_fails = {"menu_overlay", "hud_missing", "no_fight_in_frame"}
+    reasons = [part.split(":", 1)[-1] for part in fail.split(",") if part]
+    if not reasons or not all(r in allowed_fails for r in reasons):
+        return False, f"visual:{fail}"
+    cut_motion = float(report.get("cut_motion") or 0)
+    peak_motion = float(report.get("peak_motion") or 0)
+    cut_mini = float(report.get("cut_mini_delta") or 0)
+    if max(cut_motion, peak_motion) < _presend_min_motion() * 0.85:
+        return False, f"visual:{fail}"
+    if cut_mini < _presend_min_minimap_delta() * 0.75:
+        return False, f"visual:{fail}"
+    return True, "visual_banner_bypass"
+
+
 def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     """
     Final gate on rendered mp4 + source window that will be sent.
@@ -1314,6 +1358,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier
 
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
+            if abs(banner_sec - peak_start) > 25.0:
+                banner_sec = peak_start
             banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
             if not banner_ok:
                 banner_ok, banner_reason = verify_rendered_clip(
@@ -1387,8 +1433,12 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     vis = extract_and_check_segment(vod, cut_start, dur, PROFILE, crop_box=crop)
     report["visual_pass"] = vis.get("visual_pass")
     report["visual_fail"] = vis.get("fail_reason", "")
-    if not vis.get("visual_pass"):
-        return False, f"visual:{vis.get('fail_reason', 'fail')}", report
+    vis_ok, vis_reason = _presend_visual_ok(vis, report, row)
+    if not vis_ok:
+        return False, vis_reason, report
+    if vis_reason == "visual_banner_bypass":
+        report["visual_pass"] = True
+        report["visual_fail"] = vis.get("fail_reason", "")
 
     rend_motion, rend_mini, rend_skill, _ = score_segment_combat(
         rendered, 0.0, min(dur, _ffprobe_duration(rendered)), sample_frames=6
@@ -1607,6 +1657,15 @@ def _collect_scan_segments(
                 log.info("skip peak=%.1f banner_tier_invalid", peak)
                 continue
         banner_sec = float(lead_clip.get("banner_sec", lead_clip.get("peak_start", peak)))
+        peak_ref = float(lead_clip.get("peak_start", peak))
+        if abs(banner_sec - peak_ref) > float(os.environ.get("MLBB_BANNER_PEAK_MAX_DIST_SEC", "25")):
+            log.info(
+                "skip peak=%.1f banner_far_from_peak banner=%.1f peak_ref=%.1f",
+                peak,
+                banner_sec,
+                peak_ref,
+            )
+            continue
         from mlbb_fight_segment import banner_in_vod_tail, clip_in_vod_tail
 
         if banner_in_vod_tail(vod, banner_sec):
@@ -1674,6 +1733,9 @@ def _collect_scan_segments(
             "clip": lead_clip,
             "start": start,
             "peak_start": float(lead_clip.get("peak_start", peak)),
+            "banner_sec": float(
+                lead_clip.get("banner_sec", lead_clip.get("peak_start", peak))
+            ),
             "fight_dur": float(lead_clip.get("input_duration", 0)),
             "kill_banner": lead_clip.get("kill_banner"),
             "kill_banner_tier": lead_clip.get("kill_banner_tier"),
@@ -1962,13 +2024,19 @@ def _process_vod_segments(
             rated = 0
         target = float(os.environ.get("MLBB_VOD_BAD_SHARE_TARGET", "0.20"))
         if bad_share > target:
-            # Tighten gates when current precision is poor.
-            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.12")
-            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06")
-            os.environ["SMART_UNIFORM_MIN_HUD_RATE"] = os.environ.get("SMART_UNIFORM_MIN_HUD_RATE", "0.70")
-            os.environ["MLBB_VOD_TAIL_MIN_HUD_RATE"] = os.environ.get("MLBB_VOD_TAIL_MIN_HUD_RATE", "0.55")
-            os.environ["VISUAL_MLBB_MENU_OVERLAY_MAX"] = os.environ.get("VISUAL_MLBB_MENU_OVERLAY_MAX", "0.42")
-            os.environ["MLBB_VOD_DISABLE_SOFTEN"] = "1"
+            # Tighten score/hook only — MLBB HUD triggers false menu_overlay if visual is tightened.
+            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.10")
+            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.05")
+            if os.environ.get("MLBB_VOD_QUALITY_MODE_VISUAL_TIGHTEN", "0") == "1":
+                os.environ["SMART_UNIFORM_MIN_HUD_RATE"] = os.environ.get(
+                    "SMART_UNIFORM_MIN_HUD_RATE", "0.70"
+                )
+                os.environ["MLBB_VOD_TAIL_MIN_HUD_RATE"] = os.environ.get(
+                    "MLBB_VOD_TAIL_MIN_HUD_RATE", "0.55"
+                )
+                os.environ["VISUAL_MLBB_MENU_OVERLAY_MAX"] = os.environ.get(
+                    "VISUAL_MLBB_MENU_OVERLAY_MAX", "0.78"
+                )
             log.warning(
                 "quality_mode tighten: rated=%s bad_share=%.2f target=%.2f",
                 rated,
@@ -2115,6 +2183,12 @@ def _process_vod_segments(
                     if to_send and preskip >= len(to_send):
                         for row in to_send:
                             skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+                            clip_peak = float(
+                                (row.get("clip") or {}).get("start", row.get("start", 0))
+                            )
+                            skip_peaks.add(round(clip_peak, 1))
+                            if row.get("banner_sec") is not None:
+                                skip_peaks.add(round(float(row["banner_sec"]), 1))
                         peak_tries += 1
                         if peak_tries < max_peak_attempts:
                             log.warning(

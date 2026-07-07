@@ -20,6 +20,8 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
     "MLBB_BANNER_POV_MIN_SIM": "0.28",
+    "VISUAL_MLBB_MENU_OVERLAY_MAX": "0.85",
+    "VISUAL_MLBB_MIN_FRAMES_PASS": "2",
 }
 
 # Level 2: more peak tries + relaxed presend motion — still require verified double+ banner.
