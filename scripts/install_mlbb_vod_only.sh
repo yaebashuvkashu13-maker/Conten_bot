@@ -128,6 +128,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_KILL_BANNER_DISCOVER_STEP=2 MLBB_VOD_HIGHLIGHT_SEND_ONE=0 MLBB_VOD_COLLECT_ONE=0 \
   MLBB_KILL_BANNER_TAIL_PASS=0 MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN=0.12 \
   MLBB_BANNER_REF_MATCH=1 MLBB_BANNER_REF_MIN_SIM=0.38 \
+  MLBB_FEEDBACK_GATE=1 \
   MLBB_VOD_STRICT_PEAK_TRIES=16 \
   MLBB_VOD_FAST_PROBE=1 MLBB_VOD_SEED_FROM_FAST_PROBE=1 \
   MLBB_VOD_ZERO_STREAK_SOFTEN=4 MLBB_VOD_ADAPTIVE_NOTIFY=1 MLBB_VOD_EXHAUST_NOTIFY=1 \
@@ -204,6 +205,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_pov_match.py" \
   "$REPO/scripts/mlbb_banner_ref_ingest.py" \
   "$REPO/scripts/mlbb_banner_ref_match.py" \
+  "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
+  "$REPO/scripts/mlbb_feedback_gate_tune.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_vod_adaptive_gate.py" \
   "$REPO/scripts/audit_mlbb_vod_inbox.py" \
@@ -356,6 +359,7 @@ bash "$BIN/mlbb_vod_only_verify.sh" || true
 
 echo "===== MLBB banner reference bank $(date -Is) ====="
 python3 "$REPO/scripts/mlbb_banner_ref_ingest.py" --all --vod-root /root/data/mlbb/youtube_nightly/inbox || true
+python3 "$REPO/scripts/mlbb_feedback_pattern_miner.py" --write --print || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
 DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-ideal-clip-spec-6cbd}"

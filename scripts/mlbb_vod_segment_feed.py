@@ -1496,9 +1496,14 @@ def _dedupe_segments_by_gap(
     """Keep best clip per fight — no time overlap between highlight windows."""
 
     def _rank_key(r: dict) -> tuple[float, float, float]:
-        metrics = r.get("highlight_metrics") or {}
-        clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
-        return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)))
+        try:
+            from mlbb_feedback_gate_tune import feedback_rank_key
+
+            return feedback_rank_key(r)
+        except Exception:
+            metrics = r.get("highlight_metrics") or {}
+            clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
+            return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)), 0.0)
 
     gap = _interval_gap_sec()
     ranked = sorted(rows, key=_rank_key, reverse=True)
@@ -1655,25 +1660,32 @@ def _collect_scan_segments(
         if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
             log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
             continue
-        out.append(
-            {
-                "segment_id": sid,
-                "clip": lead_clip,
-                "start": start,
-                "peak_start": float(lead_clip.get("peak_start", peak)),
-                "fight_dur": float(lead_clip.get("input_duration", 0)),
-                "kill_banner": lead_clip.get("kill_banner"),
-                "kill_banner_tier": lead_clip.get("kill_banner_tier"),
-                "score": float(clip.get("score") or metrics.get("viral_score") or 0),
-                "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
-                "clip_score": clip_score,
-                "highlight_metrics": metrics,
-                "visual_pass": vis.get("visual_pass", True),
-                "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
-                "clip_score": float(metrics.get("clip_score") or 0),
-                "gate_reason": reason,
-            }
-        )
+        candidate = {
+            "segment_id": sid,
+            "clip": lead_clip,
+            "start": start,
+            "peak_start": float(lead_clip.get("peak_start", peak)),
+            "fight_dur": float(lead_clip.get("input_duration", 0)),
+            "kill_banner": lead_clip.get("kill_banner"),
+            "kill_banner_tier": lead_clip.get("kill_banner_tier"),
+            "score": float(clip.get("score") or metrics.get("viral_score") or 0),
+            "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
+            "clip_score": clip_score,
+            "highlight_metrics": metrics,
+            "visual_pass": vis.get("visual_pass", True),
+            "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
+            "gate_reason": reason,
+        }
+        try:
+            from mlbb_feedback_gate_tune import feedback_reject_row
+
+            reject, why = feedback_reject_row(candidate)
+            if reject:
+                log.info("skip %s %s", sid, why)
+                continue
+        except Exception:
+            pass
+        out.append(candidate)
         if os.environ.get("MLBB_VOD_COLLECT_ONE", "0") == "1":
             log.info("collect_one: first validated segment %s — skip validating rest of pool", sid)
             break
@@ -1912,6 +1924,17 @@ def _process_vod_segments(
     send_quota_blocked = False
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+
+    # Owner-feedback gates from mined 👍/👎 patterns (hook/fight duration).
+    if os.environ.get("MLBB_FEEDBACK_GATE", "1") == "1":
+        try:
+            from mlbb_feedback_gate_tune import apply_feedback_gates
+
+            applied = apply_feedback_gates()
+            if applied:
+                log.info("feedback_gate applied=%s", applied)
+        except Exception as exc:
+            log.warning("feedback_gate skipped: %s", exc)
 
     # Quality mode: target owner 👎 share <= 20% by sending only high-confidence clips.
     # This can reduce volume but should improve precision quickly.
