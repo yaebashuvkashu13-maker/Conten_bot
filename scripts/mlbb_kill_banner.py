@@ -517,11 +517,22 @@ def discover_vod_kill_banners(
         if frame is None:
             return
         # Same heuristic as scan_window() candidate picking.
-        if _announce_color_score(frame) < _color_min_score() * 0.75:
+        color = _announce_color_score(frame)
+        if color < _color_min_score() * 0.75:
             return
         # OCR on the single frame is far cheaper than scanning a +/- window.
         # Try a couple close-by frames to avoid missing a short-lived banner.
         from gameplay_gate import _read_frame_at
+
+        # If the banner color is very strong, it's worth doing a fast +/- window scan
+        # to catch the exact frames where the text is fully visible.
+        win_thr = float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12"))
+        if color >= win_thr:
+            probes += 1
+            hit = find_banner_near_peak(vod, t, quick=True)
+            if hit is not None:
+                _merge_hit(hit)
+            return
 
         for off in (0.0, 0.6):
             if probes >= max_probes or time.monotonic() >= deadline:
@@ -554,8 +565,12 @@ def discover_vod_kill_banners(
         frame = _read_frame(vod, t)
         if frame is None:
             continue
+        color = _announce_color_score(frame)
         probes += 1
-        hit = _classify_frame(t, frame, deep=False)
+        if color >= float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12")):
+            hit = find_banner_near_peak(vod, t, quick=True)
+        else:
+            hit = _classify_frame(t, frame, deep=False)
         if hit is not None:
             _merge_hit(hit)
 
