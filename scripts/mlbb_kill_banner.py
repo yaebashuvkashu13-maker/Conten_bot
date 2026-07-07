@@ -127,6 +127,10 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
     return KillBannerHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:120])
 
 
+def _banner_hit_source_ok(source: str) -> bool:
+    return source in ("ocr", "ref")
+
+
 def _announce_color_score(frame) -> float:
     import cv2
     import numpy as np
@@ -139,7 +143,8 @@ def _announce_color_score(frame) -> float:
         return 0.0
     gold = cv2.inRange(zone, np.array([8, 100, 140]), np.array([40, 255, 255]))
     white = cv2.inRange(zone, np.array([0, 0, 210]), np.array([180, 50, 255]))
-    combined = cv2.bitwise_or(gold, white)
+    cyan = cv2.inRange(zone, np.array([85, 70, 120]), np.array([115, 255, 255]))
+    combined = cv2.bitwise_or(cv2.bitwise_or(gold, white), cyan)
     ratio = float(np.count_nonzero(combined)) / float(combined.size)
     return min(1.0, ratio * 11.0)
 
@@ -287,6 +292,15 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 source="ocr",
             )
         if not _color_only_allowed():
+            if color >= _color_min_score() * 0.55:
+                try:
+                    from mlbb_banner_ref_match import classify_banner_reference
+
+                    ref_hit = classify_banner_reference(sec, frame)
+                    if ref_hit is not None:
+                        return ref_hit
+                except Exception:
+                    pass
             return None
         return KillBannerHit(
             sec=round(sec, 2),
@@ -367,10 +381,10 @@ def scan_window(
     if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
-            if hit is not None and hit.source == "ocr":
+            if hit is not None and _banner_hit_source_ok(hit.source):
                 hits.append(hit)
                 break
-    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
+    hits.sort(key=lambda h: (-h.tier, 0 if _banner_hit_source_ok(h.source) else 1, h.sec))
     return hits
 
 
@@ -379,7 +393,7 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
     frame = _read_frame(vod, peak_sec)
     if frame is not None:
         hit = _classify_frame(peak_sec, frame, deep=True)
-        if hit and hit.tier >= _min_tier() and hit.source == "ocr":
+        if hit and hit.tier >= _min_tier() and _banner_hit_source_ok(hit.source):
             return hit
     if quick:
         before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
@@ -393,7 +407,7 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
         return None
     min_tier = _min_tier()
     for hit in hits:
-        if hit.tier >= min_tier and hit.source == "ocr":
+        if hit.tier >= min_tier and _banner_hit_source_ok(hit.source):
             return hit
     if not _banner_required():
         for hit in hits:
@@ -464,7 +478,7 @@ def discover_vod_kill_banners(
     probes = 0
 
     def _merge_hit(hit: KillBannerHit) -> None:
-        if hit.tier < need or hit.source != "ocr":
+        if hit.tier < need or not _banner_hit_source_ok(hit.source):
             return
         from mlbb_fight_segment import banner_in_vod_tail
 
@@ -703,7 +717,7 @@ def filter_peaks_with_ocr_banner(
     qualified = [
         h
         for h in (known_banners or [])
-        if h.tier >= need and h.source == "ocr"
+        if h.tier >= need and _banner_hit_source_ok(h.source)
     ]
     if qualified:
         kept: list[float] = []
@@ -717,7 +731,7 @@ def filter_peaks_with_ocr_banner(
     ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
     for peak in peaks[: max(1, ocr_cap)]:
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit and hit.source == "ocr" and hit.tier >= need:
+        if hit and _banner_hit_source_ok(hit.source) and hit.tier >= need:
             kept.append(peak)
     return kept
 
@@ -884,7 +898,7 @@ def verify_banner_on_source(
     need = min_tier if min_tier is not None else _min_tier()
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
+        if hit.tier >= need and _banner_hit_source_ok(hit.source):
             if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
                 from mlbb_banner_pov_match import banner_pov_hero_match
 
@@ -925,7 +939,7 @@ def verify_rendered_clip(
 
     hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
+        if hit.tier >= need and _banner_hit_source_ok(hit.source):
             return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
     if _color_only_allowed():
         for hit in hits:
