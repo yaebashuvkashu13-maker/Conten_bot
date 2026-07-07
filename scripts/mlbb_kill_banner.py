@@ -520,25 +520,19 @@ def discover_vod_kill_banners(
         color = _announce_color_score(frame)
         if color < _color_min_score() * 0.75:
             return
-        # OCR on the single frame is far cheaper than scanning a +/- window.
-        # Try a couple close-by frames to avoid missing a short-lived banner.
+        # Single-frame OCR only — never scan_window() here; dense 2s timestep must stay cheap.
         from gameplay_gate import _read_frame_at
 
-        # If the banner color is very strong, it's worth doing a fast +/- window scan
-        # to catch the exact frames where the text is fully visible.
         win_thr = float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12"))
-        if color >= win_thr:
-            probes += 1
-            hit = find_banner_near_peak(vod, t, quick=True)
-            if hit is not None:
-                _merge_hit(hit)
-            return
+        offsets = (-0.35, 0.0, 0.35, 0.7) if color >= win_thr else (0.0, 0.6)
 
-        for off in (0.0, 0.6):
+        for off in offsets:
             if probes >= max_probes or time.monotonic() >= deadline:
                 return
             probes += 1
-            fr = frame if off == 0.0 else (_read_frame_at(vod, float(t) + off, cap) if cap is not None else _read_frame(vod, float(t) + off))
+            fr = frame if off == 0.0 else (
+                _read_frame_at(vod, float(t) + off, cap) if cap is not None else _read_frame(vod, float(t) + off)
+            )
             if fr is None:
                 continue
             hit = _classify_frame(float(t) + off, fr, deep=False)
@@ -567,13 +561,21 @@ def discover_vod_kill_banners(
             if frame is None:
                 continue
             color = _announce_color_score(frame)
-            probes += 1
-            if color >= float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12")):
-                hit = find_banner_near_peak(vod, t, quick=True)
-            else:
-                hit = _classify_frame(t, frame, deep=False)
-            if hit is not None:
-                _merge_hit(hit)
+            if color < _color_min_score() * 0.75:
+                continue
+            win_thr = float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12"))
+            offsets = (-0.35, 0.0, 0.35, 0.7) if color >= win_thr else (0.0, 0.6)
+            for off in offsets:
+                if probes >= max_probes or time.monotonic() >= deadline:
+                    break
+                probes += 1
+                fr = frame if off == 0.0 else _read_frame(vod, float(t) + off)
+                if fr is None:
+                    continue
+                hit = _classify_frame(float(t) + off, fr, deep=False)
+                if hit is not None:
+                    _merge_hit(hit)
+                    break
 
     # Phase 2: evenly spaced probes across entire VOD (late savages at 10+ min).
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
