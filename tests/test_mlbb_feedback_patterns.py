@@ -51,13 +51,33 @@ def test_mine_patterns_and_gates(tmp_path: Path, monkeypatch) -> None:
     assert payload["sources"]["vod_bad"] == 2
     assert payload["precision"] == 0.0  # no feedback bucket rated
     assert "boring" in dict(payload["bad_reasons_vod"])
-    assert payload["gates"]["VIRAL_MLBB_HOOK_MIN"] >= 0.08
+    assert payload["gates"]["MLBB_VOD_MIN_CLIP_SCORE"] <= 0.16
+    assert "VIRAL_MLBB_HOOK_MIN" not in payload["gates"]
 
     save_patterns(payload)
     clear_patterns_cache()
     os.environ.pop("VIRAL_MLBB_HOOK_MIN", None)
     applied = apply_feedback_gates(force=True)
-    assert applied["VIRAL_MLBB_HOOK_MIN"] >= 0.08
+    assert applied["MLBB_VOD_MIN_CLIP_SCORE"] <= 0.16
+
+
+def test_feedback_reject_skips_banner_anchored(tmp_path: Path, monkeypatch) -> None:
+    patterns = {
+        "gates": {
+            "MLBB_FEEDBACK_REJECT_HOOK_BELOW": 0.15,
+            "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW": 30,
+        },
+        "rank_profile": {},
+    }
+    path = tmp_path / "feedback_patterns.json"
+    path.write_text(json.dumps(patterns), encoding="utf-8")
+    monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
+    monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
+    clear_patterns_cache()
+
+    bad = {"hook_score": 0.04, "fight_dur": 26, "clip_score": 0.2, "kill_banner": "double", "kill_banner_tier": 2}
+    reject, _ = feedback_reject_row(bad)
+    assert not reject
 
 
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:

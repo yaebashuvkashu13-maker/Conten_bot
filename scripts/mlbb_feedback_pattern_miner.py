@@ -174,24 +174,23 @@ def _recommend_gates(good: list[dict], bad: list[dict], bad_by_reason: dict[str,
 
     hook_min = 0.08
     if boring:
-        hook_min = max(hook_min, min(0.18, float(boring.get("p75") or 0) + 0.03))
+        hook_min = max(hook_min, min(0.12, float(boring.get("p75") or 0) + 0.02))
     if g_hook:
-        hook_min = max(hook_min, min(float(g_hook.get("p25") or 0) * 0.5, float(g_hook.get("p50") or 0) * 0.35))
+        hook_min = max(hook_min, min(0.10, float(g_hook.get("p25") or 0) * 0.5))
 
     fight_min = 32.0
     if g_fight and b_fight:
-        fight_min = max(28.0, min(45.0, (float(g_fight.get("p25") or 32) + float(b_fight.get("p75") or 32)) / 2))
+        fight_min = max(28.0, min(40.0, (float(g_fight.get("p25") or 32) + float(b_fight.get("p75") or 32)) / 2))
 
     clip_min = 0.12
     if g_clip and b_clip:
-        clip_min = max(0.10, min(0.22, float(g_clip.get("p25") or 0.12)))
+        clip_min = max(0.10, min(0.16, float(g_clip.get("p25") or 0.12)))
 
     return {
-        "VIRAL_MLBB_HOOK_MIN": round(hook_min, 3),
         "MLBB_VOD_MIN_CLIP_SCORE": round(clip_min, 3),
         "MLBB_FEEDBACK_MIN_FIGHT_DUR": round(fight_min, 1),
-        "MLBB_FEEDBACK_REJECT_HOOK_BELOW": round(max(0.06, hook_min * 0.75), 3),
-        "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW": round(max(24.0, fight_min - 8.0), 1),
+        "MLBB_FEEDBACK_REJECT_HOOK_BELOW": round(max(0.06, hook_min * 0.7), 3),
+        "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW": round(max(24.0, fight_min - 10.0), 1),
     }
 
 

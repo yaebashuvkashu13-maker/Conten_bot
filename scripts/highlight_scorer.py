@@ -1171,9 +1171,9 @@ def score_candidate_window(
         profile == "mobile_legends"
         and m.rule_pass
         and m.visual_pass
-        and os.environ.get("MLBB_USE_CLASSIFIER", "0") != "1"
+        and (not classifier_available(profile) or os.environ.get("MLBB_USE_CLASSIFIER", "0") != "1")
     ):
-        # Legacy bypass when no MLBB-trained classifier is active.
+        # No trained classifier on disk — do not block MLBB windows.
         clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
@@ -1548,6 +1548,8 @@ def _accept_highlight_candidate(
     start: float,
     metrics: HighlightMetrics,
     profile: str,
+    *,
+    banner_anchored: bool = False,
 ) -> bool:
     status = "PASS" if metrics.rule_pass else "FAIL"
     log.info(
@@ -1576,6 +1578,11 @@ def _accept_highlight_candidate(
     hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
     if profile == "mobile_legends" and metrics.rule_pass and metrics.visual_pass:
         hook_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
+        if banner_anchored:
+            hook_min = min(
+                hook_min,
+                float(os.environ.get("MLBB_BANNER_ANCHOR_HOOK_MIN", "0.04")),
+            )
     elif (
         metrics.hook_score < hook_min
         and profile in SHOOTER_PROFILES
@@ -1584,9 +1591,10 @@ def _accept_highlight_candidate(
     ):
         hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
     if metrics.hook_score < hook_min:
-        if profile == "mobile_legends" and metrics.clip_score >= float(
-            os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
-        ):
+        clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12"))
+        if profile == "mobile_legends" and metrics.clip_score >= clip_bypass:
+            return True
+        if profile == "mobile_legends" and banner_anchored and metrics.clip_score >= 0.06:
             return True
         log.info(
             "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
@@ -1706,14 +1714,17 @@ def discover_highlight_candidates(
     verified: list[dict] = []
 
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
-        if not _accept_highlight_candidate(video_path, start, metrics, profile):
-            return False
         banner_hit = banner_by_anchor.get(start)
         if banner_hit is None and banner_by_anchor:
             for anchor, hit in banner_by_anchor.items():
                 if abs(start - anchor) <= 6.0:
                     banner_hit = hit
                     break
+        anchored = banner_hit is not None
+        if not _accept_highlight_candidate(
+            video_path, start, metrics, profile, banner_anchored=anchored
+        ):
+            return False
         row = {
             "source_path": str(video_path),
             "game_name": GAME_LABELS.get(profile, profile),

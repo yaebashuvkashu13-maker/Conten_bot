@@ -10,6 +10,24 @@ from pathlib import Path
 from typing import Any
 
 
+# Keys applied at send/collect only — never tighten highlight discovery hook.
+SEND_GATE_KEYS = frozenset(
+    {
+        "MLBB_VOD_MIN_CLIP_SCORE",
+        "MLBB_FEEDBACK_MIN_FIGHT_DUR",
+        "MLBB_FEEDBACK_REJECT_HOOK_BELOW",
+        "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW",
+    }
+)
+
+# Cap auto-tuned thresholds so feedback mining cannot stall the pipeline.
+SEND_GATE_CAPS = {
+    "MLBB_VOD_MIN_CLIP_SCORE": 0.16,
+    "MLBB_FEEDBACK_REJECT_HOOK_BELOW": 0.10,
+    "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW": 26.0,
+}
+
+
 def _enabled() -> bool:
     return os.environ.get("MLBB_FEEDBACK_GATE", "1") == "1"
 
@@ -47,7 +65,14 @@ def apply_feedback_gates(*, force: bool = False) -> dict[str, float]:
         return {}
     applied: dict[str, float] = {}
     force_apply = force or os.environ.get("MLBB_FEEDBACK_GATE_FORCE", "0") == "1"
+    discovery = os.environ.get("MLBB_FEEDBACK_GATE_DISCOVERY", "0") == "1"
     for key, val in gates.items():
+        if key == "VIRAL_MLBB_HOOK_MIN" and not discovery:
+            continue
+        if key not in SEND_GATE_KEYS and not discovery:
+            continue
+        if key in SEND_GATE_CAPS:
+            val = min(float(val), float(SEND_GATE_CAPS[key]))
         if not force_apply and os.environ.get(key):
             continue
         os.environ[key] = str(val)
@@ -58,6 +83,10 @@ def apply_feedback_gates(*, force: bool = False) -> dict[str, float]:
 def feedback_reject_row(row: dict) -> tuple[bool, str]:
     """Hard reject candidates that look like frequent 👎 patterns."""
     if not _enabled():
+        return False, ""
+    if row.get("kill_banner") or row.get("anchor") == "kill_banner":
+        return False, ""
+    if int(row.get("kill_banner_tier") or 0) >= 2:
         return False, ""
     payload = load_patterns()
     gates = payload.get("gates") or {}

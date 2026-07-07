@@ -27,6 +27,18 @@ def test_trailing_zero_streak():
     assert trailing_zero_streak([{"sent": 0}, {"sent": 2}]) == 0
 
 
+def test_soften_disabled_in_quality_mode_until_recovery():
+    os.environ["MLBB_VOD_DISABLE_SOFTEN"] = "1"
+    os.environ["MLBB_VOD_ZERO_RECOVERY_SOFTEN"] = "8"
+    try:
+        assert soften_level(7) == 0
+        assert soften_level(8) == 1
+        assert soften_level(12) == 2
+    finally:
+        os.environ.pop("MLBB_VOD_DISABLE_SOFTEN", None)
+        os.environ.pop("MLBB_VOD_ZERO_RECOVERY_SOFTEN", None)
+
+
 def test_soften_after_three_zeros():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     assert soften_level(0) == 0

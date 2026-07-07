@@ -301,6 +301,17 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                         return ref_hit
                 except Exception:
                     pass
+            deep_text = _ocr_banner_zones(frame, deep=True)
+            if classify_banner_text(deep_text) is not None:
+                classified = classify_banner_text(deep_text)
+                assert classified is not None
+                return KillBannerHit(
+                    sec=round(sec, 2),
+                    tier=classified.tier,
+                    label=classified.label,
+                    text=classified.text,
+                    source="ocr",
+                )
             return None
         return KillBannerHit(
             sec=round(sec, 2),
