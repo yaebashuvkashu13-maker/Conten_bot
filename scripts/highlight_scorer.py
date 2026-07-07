@@ -1476,13 +1476,23 @@ def _pann_probe_limit(profile: str) -> int:
     return max_pann
 
 
-def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
+def stage1_panns_prefilter(
+    video_path: Path,
+    starts: list[float],
+    profile: str,
+    *,
+    pinned: set[float] | None = None,
+) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
     max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
+    pinned_set = pinned or set()
+    pinned_list = sorted(s for s in starts if any(abs(s - p) <= 1.0 for p in pinned_set))
+    rest = [s for s in starts if s not in pinned_list]
     if profile not in SHOOTER_PROFILES:
-        return starts
+        cap = max(0, max_pann - len(pinned_list))
+        return sorted(set(pinned_list + rest[:cap]))
+    starts = rest[:max_pann]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1608,6 +1618,8 @@ def discover_highlight_candidates(
     if profile == "mobile_legends":
         use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
+        banner_pin: set[float] = set()
+        banner_by_anchor: dict[float, object] = {}
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
@@ -1623,12 +1635,25 @@ def discover_highlight_candidates(
                     len(banners),
                     os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
                 )
+                anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                banner_pin = set(anchor_starts)
                 for hit in banners:
-                    start_set.add(max(0.0, hit.sec - lead))
+                    anchor = max(0.0, hit.sec - lead)
+                    prev = banner_by_anchor.get(anchor)
+                    if prev is None or hit.tier > prev.tier:
+                        banner_by_anchor[anchor] = hit
+                for anchor in anchor_starts:
+                    start_set.add(anchor)
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
-                starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                filtered = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                if banners:
+                    anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    near = [s for s in filtered if any(abs(s - a) <= 45 for a in anchor_starts)]
+                    starts = sorted(set(near) | set(anchor_starts))
+                else:
+                    starts = filtered
                 log.info(
                     "highlight banner prefilter %s: %s/%s windows",
                     video_path.name,
@@ -1650,6 +1675,12 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
+                    if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
+                        log.warning(
+                            "highlight %s: no OCR banner peaks — skip motion fallback",
+                            video_path.name,
+                        )
+                        return []
                     cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
                     starts = sorted(start_set)[:cap]
                     log.info(
@@ -1657,7 +1688,10 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
-    starts = stage1_panns_prefilter(video_path, starts, profile)
+    else:
+        banner_pin = set()
+        banner_by_anchor = {}
+    starts = stage1_panns_prefilter(video_path, starts, profile, pinned=banner_pin)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 
     pending = [
@@ -1674,21 +1708,35 @@ def discover_highlight_candidates(
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
             return False
-        verified.append(
-            {
-                "source_path": str(video_path),
-                "game_name": GAME_LABELS.get(profile, profile),
-                "start": round(start, 3),
-                "input_duration": WINDOW_SEC,
-                "output_duration": WINDOW_SEC,
-                "speed": 1.0,
-                "score": metrics.viral_score or metrics.combined_score,
-                "strict_score": metrics.viral_score or metrics.combined_score,
-                "highlight_metrics": metrics.to_dict(),
-                "gate_reason": metrics.pass_reason,
-                "strict_metrics": metrics.to_dict(),
-            }
-        )
+        banner_hit = banner_by_anchor.get(start)
+        if banner_hit is None and banner_by_anchor:
+            for anchor, hit in banner_by_anchor.items():
+                if abs(start - anchor) <= 6.0:
+                    banner_hit = hit
+                    break
+        row = {
+            "source_path": str(video_path),
+            "game_name": GAME_LABELS.get(profile, profile),
+            "start": round(start, 3),
+            "input_duration": WINDOW_SEC,
+            "output_duration": WINDOW_SEC,
+            "speed": 1.0,
+            "score": metrics.viral_score or metrics.combined_score,
+            "strict_score": metrics.viral_score or metrics.combined_score,
+            "highlight_metrics": metrics.to_dict(),
+            "gate_reason": metrics.pass_reason,
+            "strict_metrics": metrics.to_dict(),
+        }
+        if banner_hit is not None:
+            row.update(
+                {
+                    "kill_banner": getattr(banner_hit, "label", None) or getattr(banner_hit, "tier_name", ""),
+                    "kill_banner_tier": int(getattr(banner_hit, "tier", 0) or 0),
+                    "anchor": "kill_banner",
+                    "banner_sec": float(getattr(banner_hit, "sec", start)),
+                }
+            )
+        verified.append(row)
         return True
 
     if workers > 1 and len(pending) > 1:
@@ -1712,7 +1760,7 @@ def discover_highlight_candidates(
                     break
                 if (
                     verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                    and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
@@ -1729,7 +1777,7 @@ def discover_highlight_candidates(
                 break
             if (
                 verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
             ):
                 log.info(

@@ -38,10 +38,14 @@ VOD_ANGLE_SEARCH_QUERIES = (
 
 # Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
 VOD_COMBAT_SEARCH_QUERIES = (
+    "MLBB savage maniac ruthless ranked full match gameplay",
+    "Mobile Legends savage teamfight mythic ranked no montage",
+    "MLBB maniac triple kill ranked match replay",
+    "MLBB беспощадный маньяк savage ranked полный матч",
     "MLBB ranked match double kill teamfight replay",
     "MLBB mythic ranked savage teamfight full match",
     "Mobile Legends maniac triple kill ranked gameplay",
-    "Mobile Legends mythic glory 20 kills full game",
+    "Mobile Legends mythic glory 20 kills savage full game",
     "MLBB mythic ranked mvp teamfight no montage",
 )
 
@@ -386,10 +390,14 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("replay", 2.5),
         ("match", 2.0),
         (" vs ", 2.5),
-        ("savage", 3.5),
-        ("maniac", 3.0),
-        ("triple kill", 3.0),
-        ("double kill", 2.5),
+        ("savage", 5.0),
+        ("maniac", 4.5),
+        ("ruthless", 4.0),
+        ("беспощад", 4.0),
+        ("маньяк", 4.0),
+        ("саваж", 4.5),
+        ("triple kill", 3.5),
+        ("double kill", 3.0),
         ("teamfight", 2.0),
         (" kills", 2.0),
         ("mvp", 1.5),
