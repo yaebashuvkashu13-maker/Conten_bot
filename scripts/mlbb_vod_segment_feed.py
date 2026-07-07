@@ -1349,6 +1349,17 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
 
+    from gameplay_gate import segment_looks_like_rank_promo
+    from mlbb_fight_segment import banner_in_vod_tail, clip_in_vod_tail
+
+    banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
+    if banner_in_vod_tail(vod, banner_sec):
+        return False, f"vod_tail_banner@{banner_sec:.1f}s", report
+    if clip_in_vod_tail(vod, cut_start, dur):
+        return False, f"vod_tail_clip@{cut_start:.1f}s", report
+    if segment_looks_like_rank_promo(vod, cut_start, dur, crop_box=crop):
+        return False, "rank_promo_or_menu", report
+
     for label, t0 in (("cut", cut_start), ("peak", peak_start)):
         motion, mini, skill, _text = score_segment_combat(
             vod, t0, dur, crop_box=crop, sample_frames=6
@@ -1586,6 +1597,19 @@ def _collect_scan_segments(
                 log.info("skip peak=%.1f banner_tier_invalid", peak)
                 continue
         banner_sec = float(lead_clip.get("banner_sec", lead_clip.get("peak_start", peak)))
+        from mlbb_fight_segment import banner_in_vod_tail, clip_in_vod_tail
+
+        if banner_in_vod_tail(vod, banner_sec):
+            log.info(
+                "skip peak=%.1f vod_tail_banner banner=%.1fs vod=%s",
+                peak,
+                banner_sec,
+                vod.name,
+            )
+            continue
+        if clip_in_vod_tail(vod, float(lead_clip.get("start", start)), seg_dur):
+            log.info("skip peak=%.1f vod_tail_clip start=%.1f dur=%.1f", peak, start, seg_dur)
+            continue
         if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
             from mlbb_banner_pov_match import banner_pov_hero_match
 

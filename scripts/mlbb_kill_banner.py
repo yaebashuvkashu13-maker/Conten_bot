@@ -468,6 +468,10 @@ def discover_vod_kill_banners(
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or hit.source != "ocr":
             return
+        from mlbb_fight_segment import banner_in_vod_tail
+
+        if banner_in_vod_tail(vod, hit.sec):
+            return
         if not _banner_hit_passes_pov(hit):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
@@ -718,6 +722,10 @@ def resolve_fight_bounds(
 
     if _motion_anchor_ok():
         if hit is not None and hit.tier >= min_tier:
+            from mlbb_fight_segment import banner_in_vod_tail
+
+            if banner_in_vod_tail(vod, hit.sec):
+                return None
             start, end, dur = bounds_from_banner(
                 hit.sec,
                 file_dur,
@@ -743,6 +751,11 @@ def resolve_fight_bounds(
         return fight_start, fight_end, fight_dur, motion_meta
 
     if hit is None or hit.tier < min_tier:
+        return None
+
+    from mlbb_fight_segment import banner_in_vod_tail
+
+    if banner_in_vod_tail(vod, hit.sec):
         return None
 
     start, end, dur = bounds_from_banner(

@@ -43,6 +43,59 @@ def ideal_clip_min_sec() -> float:
     return _lead_sec() + _fight_min_sec() + _fight_post_sec()
 
 
+def vod_tail_exclude_sec() -> float:
+    """No clips from the last N seconds — rank-up, results, outro menus."""
+    return float(os.environ.get("MLBB_VOD_TAIL_EXCLUDE_SEC", "75"))
+
+
+def _vod_duration(vod: Path) -> float:
+    analysis = _analysis_for(vod)
+    dur = float(analysis.get("duration") or 0.0)
+    if dur > 0:
+        return dur
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(vod),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        return float((proc.stdout or "0").strip())
+    except ValueError:
+        return 0.0
+
+
+def banner_in_vod_tail(vod: Path, banner_sec: float) -> bool:
+    dur = _vod_duration(vod)
+    if dur <= 0:
+        return False
+    return float(banner_sec) >= dur - vod_tail_exclude_sec()
+
+
+def clip_in_vod_tail(vod: Path, start_sec: float, dur_sec: float) -> bool:
+    dur = _vod_duration(vod)
+    if dur <= 0:
+        return False
+    margin = vod_tail_exclude_sec()
+    end = float(start_sec) + float(dur_sec)
+    if float(start_sec) >= dur - margin:
+        return True
+    # Clip must not extend into the absolute file tail (rank promo / menu).
+    return end > dur - min(20.0, margin * 0.3)
+
+
 _CACHE: dict[str, dict] = {}
 
 
@@ -176,6 +229,14 @@ def clip_active_gameplay_ok(
 
     if segment_looks_like_draft_or_queue(vod, start_sec, dur, crop_box=crop_box):
         return False, "draft_or_queue"
+
+    if clip_in_vod_tail(vod, start_sec, dur):
+        return False, f"vod_tail start={start_sec:.1f}"
+
+    from gameplay_gate import segment_looks_like_rank_promo
+
+    if segment_looks_like_rank_promo(vod, start_sec, dur, crop_box=crop_box):
+        return False, "rank_promo_or_menu"
 
     samples = max(6, int(os.environ.get("MLBB_CLIP_COMBAT_SAMPLES", "10")))
     min_active = float(os.environ.get("MLBB_CLIP_MIN_ACTIVE_RATIO", "0.40"))
