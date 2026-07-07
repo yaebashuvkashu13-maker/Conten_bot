@@ -557,22 +557,23 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
-    # Phase 1b: tail pass (single-frame OCR only — avoid expensive +/- window scans).
-    for tail_off in (8.0, 14.0, 22.0):
-        if probes >= max_probes or time.monotonic() >= deadline:
-            break
-        t = max(t0 + 8.0, duration - tail_off)
-        frame = _read_frame(vod, t)
-        if frame is None:
-            continue
-        color = _announce_color_score(frame)
-        probes += 1
-        if color >= float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12")):
-            hit = find_banner_near_peak(vod, t, quick=True)
-        else:
-            hit = _classify_frame(t, frame, deep=False)
-        if hit is not None:
-            _merge_hit(hit)
+    # Phase 1b: optional tail pass (usually disabled — VOD tails are often rank/menu).
+    if os.environ.get("MLBB_KILL_BANNER_TAIL_PASS", "0") == "1":
+        for tail_off in (8.0, 14.0, 22.0):
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            t = max(t0 + 8.0, duration - tail_off)
+            frame = _read_frame(vod, t)
+            if frame is None:
+                continue
+            color = _announce_color_score(frame)
+            probes += 1
+            if color >= float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12")):
+                hit = find_banner_near_peak(vod, t, quick=True)
+            else:
+                hit = _classify_frame(t, frame, deep=False)
+            if hit is not None:
+                _merge_hit(hit)
 
     # Phase 2: evenly spaced probes across entire VOD (late savages at 10+ min).
     timestep = os.environ.get("MLBB_VOD_BANNER_TIMESTEP_SCAN", "1") == "1"
