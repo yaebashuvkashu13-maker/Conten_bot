@@ -132,6 +132,8 @@ def _labels_from_vod_segment_store(video_path: Path, profile: str) -> list[dict]
                     "time_sec": float(time_sec),
                     "label": label,
                     "source": "vod_segment_labels",
+                    "reason": str(row.get("reason") or ""),
+                    "by_chat": str(row.get("by_chat") or ""),
                 }
             )
     return out
@@ -212,6 +214,22 @@ def soft_anchor_enabled(video_path: Path, profile: str) -> bool:
     return vod_has_owner_labels(video_path, profile)
 
 
+def _owner_bad_blocks_scan(row: dict, profile: str) -> bool:
+    """Only real owner 👎 should veto kill-banner windows — not auto backfill noise."""
+    if normalize_profile(profile) != "mobile_legends":
+        return True
+    source = str(row.get("source") or "")
+    if source == "vod_segment_backfill":
+        return os.environ.get("MLBB_BLOCK_BACKFILL_BAD", "0") == "1"
+    if source == "vod_segment_labels":
+        if row.get("by_chat"):
+            return True
+        reason = str(row.get("reason") or "").strip().lower()
+        if reason in ("boring", "unspecified", "", "button_dislike"):
+            return os.environ.get("MLBB_BLOCK_AUTO_BAD", "0") == "1"
+    return True
+
+
 def segment_overlaps_owner_label(
     video_path: Path,
     start_sec: float,
@@ -224,6 +242,8 @@ def segment_overlaps_owner_label(
     end_sec = start_sec + duration_sec
     for row in _labels_for_vod(video_path, profile):
         if row.get("label") != label:
+            continue
+        if label == "bad" and not _owner_bad_blocks_scan(row, profile):
             continue
         center = float(row["time_sec"])
         if start_sec - pad_sec <= center <= end_sec + pad_sec:
@@ -1085,6 +1105,8 @@ def score_candidate_window(
     start_sec: float,
     duration_sec: float,
     profile: str,
+    *,
+    skip_owner_bad: bool = False,
 ) -> HighlightMetrics:
     profile = normalize_profile(profile)
     os.environ["_HIGHLIGHT_PROFILE"] = profile
@@ -1145,8 +1167,11 @@ def score_candidate_window(
         except Exception:
             m.heatmap_intensity = 0.0
 
-    if segment_overlaps_owner_label(
+    if (
+        not skip_owner_bad
+        and segment_overlaps_owner_label(
         video_path, start_sec, duration_sec, profile, label="bad", pad_sec=_owner_label_pad("bad")
+    )
     ):
         m.rule_pass = False
         m.pass_reason = "owner_bad_window"
@@ -1171,9 +1196,9 @@ def score_candidate_window(
         profile == "mobile_legends"
         and m.rule_pass
         and m.visual_pass
-        and os.environ.get("MLBB_USE_CLASSIFIER", "0") != "1"
+        and (not classifier_available(profile) or os.environ.get("MLBB_USE_CLASSIFIER", "0") != "1")
     ):
-        # Legacy bypass when no MLBB-trained classifier is active.
+        # No trained classifier on disk — do not block MLBB windows.
         clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
@@ -1476,13 +1501,23 @@ def _pann_probe_limit(profile: str) -> int:
     return max_pann
 
 
-def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
+def stage1_panns_prefilter(
+    video_path: Path,
+    starts: list[float],
+    profile: str,
+    *,
+    pinned: set[float] | None = None,
+) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
     max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
+    pinned_set = pinned or set()
+    pinned_list = sorted(s for s in starts if any(abs(s - p) <= 1.0 for p in pinned_set))
+    rest = [s for s in starts if s not in pinned_list]
     if profile not in SHOOTER_PROFILES:
-        return starts
+        cap = max(0, max_pann - len(pinned_list))
+        return sorted(set(pinned_list + rest[:cap]))
+    starts = rest[:max_pann]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1519,14 +1554,20 @@ def _evaluate_highlight_start(
     video_path: Path,
     start: float,
     profile: str,
+    *,
+    skip_owner_bad: bool = False,
 ) -> tuple[float, HighlightMetrics] | None:
-    metrics = score_candidate_window(video_path, start, WINDOW_SEC, profile)
+    metrics = score_candidate_window(
+        video_path, start, WINDOW_SEC, profile, skip_owner_bad=skip_owner_bad
+    )
     try:
         from viral_scorer import trim_segment_start
 
         trimmed = trim_segment_start(video_path, start, profile, window_sec=WINDOW_SEC)
         if abs(trimmed - start) > 0.1:
-            metrics = score_candidate_window(video_path, trimmed, WINDOW_SEC, profile)
+            metrics = score_candidate_window(
+                video_path, trimmed, WINDOW_SEC, profile, skip_owner_bad=skip_owner_bad
+            )
             start = trimmed
     except Exception:
         pass
@@ -1538,6 +1579,8 @@ def _accept_highlight_candidate(
     start: float,
     metrics: HighlightMetrics,
     profile: str,
+    *,
+    banner_anchored: bool = False,
 ) -> bool:
     status = "PASS" if metrics.rule_pass else "FAIL"
     log.info(
@@ -1566,6 +1609,11 @@ def _accept_highlight_candidate(
     hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
     if profile == "mobile_legends" and metrics.rule_pass and metrics.visual_pass:
         hook_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
+        if banner_anchored:
+            hook_min = min(
+                hook_min,
+                float(os.environ.get("MLBB_BANNER_ANCHOR_HOOK_MIN", "0.04")),
+            )
     elif (
         metrics.hook_score < hook_min
         and profile in SHOOTER_PROFILES
@@ -1574,9 +1622,10 @@ def _accept_highlight_candidate(
     ):
         hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
     if metrics.hook_score < hook_min:
-        if profile == "mobile_legends" and metrics.clip_score >= float(
-            os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
-        ):
+        clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12"))
+        if profile == "mobile_legends" and metrics.clip_score >= clip_bypass:
+            return True
+        if profile == "mobile_legends" and banner_anchored and metrics.clip_score >= 0.06:
             return True
         log.info(
             "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
@@ -1608,6 +1657,8 @@ def discover_highlight_candidates(
     if profile == "mobile_legends":
         use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
+        banner_pin: set[float] = set()
+        banner_by_anchor: dict[float, object] = {}
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
@@ -1623,12 +1674,25 @@ def discover_highlight_candidates(
                     len(banners),
                     os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
                 )
+                anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                banner_pin = set(anchor_starts)
                 for hit in banners:
-                    start_set.add(max(0.0, hit.sec - lead))
+                    anchor = max(0.0, hit.sec - lead)
+                    prev = banner_by_anchor.get(anchor)
+                    if prev is None or hit.tier > prev.tier:
+                        banner_by_anchor[anchor] = hit
+                for anchor in anchor_starts:
+                    start_set.add(anchor)
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
-                starts = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                filtered = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
+                if banners:
+                    anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    near = [s for s in filtered if any(abs(s - a) <= 45 for a in anchor_starts)]
+                    starts = sorted(set(near) | set(anchor_starts))
+                else:
+                    starts = filtered
                 log.info(
                     "highlight banner prefilter %s: %s/%s windows",
                     video_path.name,
@@ -1650,6 +1714,12 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
+                    if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
+                        log.warning(
+                            "highlight %s: no OCR banner peaks — skip motion fallback",
+                            video_path.name,
+                        )
+                        return []
                     cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
                     starts = sorted(start_set)[:cap]
                     log.info(
@@ -1657,7 +1727,10 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
-    starts = stage1_panns_prefilter(video_path, starts, profile)
+    else:
+        banner_pin = set()
+        banner_by_anchor = {}
+    starts = stage1_panns_prefilter(video_path, starts, profile, pinned=banner_pin)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 
     pending = [
@@ -1672,23 +1745,50 @@ def discover_highlight_candidates(
     verified: list[dict] = []
 
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
-        if not _accept_highlight_candidate(video_path, start, metrics, profile):
+        banner_hit = banner_by_anchor.get(start)
+        if banner_hit is None and banner_by_anchor:
+            for anchor, hit in banner_by_anchor.items():
+                if abs(start - anchor) <= 6.0:
+                    banner_hit = hit
+                    break
+        anchored = banner_hit is not None
+        if (
+            anchored
+            and (not metrics.rule_pass or not metrics.visual_pass)
+            and metrics.pass_reason == "owner_bad_window"
+        ):
+            rescored = _evaluate_highlight_start(
+                video_path, start, profile, skip_owner_bad=True
+            )
+            if rescored is not None:
+                start, metrics = rescored
+        if not _accept_highlight_candidate(
+            video_path, start, metrics, profile, banner_anchored=anchored
+        ):
             return False
-        verified.append(
-            {
-                "source_path": str(video_path),
-                "game_name": GAME_LABELS.get(profile, profile),
-                "start": round(start, 3),
-                "input_duration": WINDOW_SEC,
-                "output_duration": WINDOW_SEC,
-                "speed": 1.0,
-                "score": metrics.viral_score or metrics.combined_score,
-                "strict_score": metrics.viral_score or metrics.combined_score,
-                "highlight_metrics": metrics.to_dict(),
-                "gate_reason": metrics.pass_reason,
-                "strict_metrics": metrics.to_dict(),
-            }
-        )
+        row = {
+            "source_path": str(video_path),
+            "game_name": GAME_LABELS.get(profile, profile),
+            "start": round(start, 3),
+            "input_duration": WINDOW_SEC,
+            "output_duration": WINDOW_SEC,
+            "speed": 1.0,
+            "score": metrics.viral_score or metrics.combined_score,
+            "strict_score": metrics.viral_score or metrics.combined_score,
+            "highlight_metrics": metrics.to_dict(),
+            "gate_reason": metrics.pass_reason,
+            "strict_metrics": metrics.to_dict(),
+        }
+        if banner_hit is not None:
+            row.update(
+                {
+                    "kill_banner": getattr(banner_hit, "label", None) or getattr(banner_hit, "tier_name", ""),
+                    "kill_banner_tier": int(getattr(banner_hit, "tier", 0) or 0),
+                    "anchor": "kill_banner",
+                    "banner_sec": float(getattr(banner_hit, "sec", start)),
+                }
+            )
+        verified.append(row)
         return True
 
     if workers > 1 and len(pending) > 1:
@@ -1712,7 +1812,7 @@ def discover_highlight_candidates(
                     break
                 if (
                     verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                    and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
@@ -1729,7 +1829,7 @@ def discover_highlight_candidates(
                 break
             if (
                 verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+                and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
             ):
                 log.info(
