@@ -301,6 +301,19 @@ def apply_owner_label(
         "by_chat": by_chat,
         "source": "vod_segment",
     }
+    for key in (
+        "clip_score",
+        "fight_dur",
+        "duration",
+        "peak_start",
+        "vod_id",
+        "kill_banner",
+        "kill_banner_tier",
+        "gate_reason",
+        "pass_reason",
+    ):
+        if row.get(key) not in (None, ""):
+            entry[key] = row.get(key)
     feedback = {**entry, "owner_label": "yes" if is_good else "no"}
 
     labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
