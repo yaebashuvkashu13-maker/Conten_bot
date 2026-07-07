@@ -171,4 +171,6 @@ def telegram_exhaust_notice(vod_id: str, *, level: int, streak: int) -> str:
     base = f"⚠️ {vod_id}: 0 клипов"
     if level > 0:
         return f"{base} (уже мягкий режим L{level}, серия нулей={streak})"
+    if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
+        return f"{base} — серия нулей={streak} (смягчение отключено: quality mode)"
     return f"{base} — серия нулей {streak}/{streak_threshold()} до смягчения"
