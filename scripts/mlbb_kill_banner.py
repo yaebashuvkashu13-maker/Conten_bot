@@ -546,14 +546,17 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
-    # Phase 1b: tail pass before strided sweep (late savages must not wait for deadline).
+    # Phase 1b: tail pass (single-frame OCR only — avoid expensive +/- window scans).
     for tail_off in (8.0, 14.0, 22.0):
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         t = max(t0 + 8.0, duration - tail_off)
+        frame = _read_frame(vod, t)
+        if frame is None:
+            continue
         probes += 1
-        hit = find_banner_near_peak(vod, t, quick=True)
-        if hit:
+        hit = _classify_frame(t, frame, deep=False)
+        if hit is not None:
             _merge_hit(hit)
 
     # Phase 2: evenly spaced probes across entire VOD (late savages at 10+ min).
