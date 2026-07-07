@@ -82,9 +82,9 @@ def test_bounds_from_fight_sustain() -> None:
         fight_start=88.0,
         fight_end=118.0,
     )
-    assert start == 88.0
+    assert start == 84.0
     assert end == 116.0
-    assert dur == 28.0
+    assert dur == 32.0
 
 
 def test_bounds_fallback_without_fight() -> None:
@@ -150,7 +150,7 @@ def test_discover_banners_handles_numpy_motion() -> None:
         fight_end=28.0,
     )
     rel = (27.0 - start) / dur
-    assert rel <= 0.68
+    assert rel <= 0.58
 
 
 def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:

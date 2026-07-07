@@ -89,3 +89,13 @@ def test_disabled_cycle_allows_all(isolated_state: Path, monkeypatch: pytest.Mon
     ok, reason = cycle.can_send_for_game("standoff", 1)
     assert ok is True
     assert reason == "cycle_disabled"
+
+
+def test_start_next_quota_now_resets_mlbb(isolated_state: Path) -> None:
+    for _ in range(10):
+        cycle.record_send("mlbb", 1)
+    assert cycle.active_game() == "pubg"
+    summary = cycle.start_next_quota_now(notify=False)
+    assert summary["active_game"] == "mlbb"
+    assert summary["remaining"]["mlbb"] == 10
+    assert cycle.send_count("mlbb") == 0
