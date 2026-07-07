@@ -49,10 +49,16 @@ def vod_tail_exclude_sec() -> float:
 
 
 def _vod_duration(vod: Path) -> float:
-    analysis = _analysis_for(vod)
-    dur = float(analysis.get("duration") or 0.0)
-    if dur > 0:
-        return dur
+    p = Path(vod)
+    if not p.is_file():
+        return 0.0
+    try:
+        analysis = _analysis_for(p)
+        dur = float(analysis.get("duration") or 0.0)
+        if dur > 0:
+            return dur
+    except Exception:
+        pass
     import subprocess
 
     proc = subprocess.run(
@@ -64,7 +70,7 @@ def _vod_duration(vod: Path) -> float:
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            str(vod),
+            str(p),
         ],
         capture_output=True,
         text=True,
