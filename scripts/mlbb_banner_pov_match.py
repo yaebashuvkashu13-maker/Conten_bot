@@ -131,3 +131,41 @@ def banner_pov_hero_match(
     if best >= need:
         return True, f"pov_hero_ok sim={best:.3f}", best
     return False, f"pov_hero_mismatch sim={best:.3f} need>={need:.2f}", best
+
+
+def banner_pov_hero_match_for_peak(
+    vod: Path,
+    peak_sec: float,
+    *,
+    banner_sec: float | None = None,
+) -> tuple[bool, str, float]:
+    """
+    Try POV at explicit banner time, then re-scan OCR banner near peak.
+    Highlight windows often sit a few seconds after the kill banner frame.
+    """
+    candidates: list[float] = []
+    if banner_sec is not None:
+        candidates.append(float(banner_sec))
+    candidates.append(float(peak_sec))
+    try:
+        from mlbb_kill_banner import find_banner_near_peak
+
+        hit = find_banner_near_peak(vod, float(peak_sec), quick=True)
+        if hit is not None:
+            candidates.append(float(hit.sec))
+        if hit is None:
+            hit = find_banner_near_peak(vod, float(peak_sec), quick=False)
+            if hit is not None:
+                candidates.append(float(hit.sec))
+    except Exception:
+        pass
+
+    best_sim = 0.0
+    best_reason = "pov_no_samples"
+    for sec in sorted({round(c, 2) for c in candidates if c >= 0}):
+        ok, reason, sim = banner_pov_hero_match(vod, sec)
+        best_sim = max(best_sim, sim)
+        if ok:
+            return True, reason, sim
+        best_reason = reason
+    return False, best_reason, best_sim

@@ -132,6 +132,8 @@ def _labels_from_vod_segment_store(video_path: Path, profile: str) -> list[dict]
                     "time_sec": float(time_sec),
                     "label": label,
                     "source": "vod_segment_labels",
+                    "reason": str(row.get("reason") or ""),
+                    "by_chat": str(row.get("by_chat") or ""),
                 }
             )
     return out
@@ -212,6 +214,22 @@ def soft_anchor_enabled(video_path: Path, profile: str) -> bool:
     return vod_has_owner_labels(video_path, profile)
 
 
+def _owner_bad_blocks_scan(row: dict, profile: str) -> bool:
+    """Only real owner 👎 should veto kill-banner windows — not auto backfill noise."""
+    if normalize_profile(profile) != "mobile_legends":
+        return True
+    source = str(row.get("source") or "")
+    if source == "vod_segment_backfill":
+        return os.environ.get("MLBB_BLOCK_BACKFILL_BAD", "0") == "1"
+    if source == "vod_segment_labels":
+        if row.get("by_chat"):
+            return True
+        reason = str(row.get("reason") or "").strip().lower()
+        if reason in ("boring", "unspecified", "", "button_dislike"):
+            return os.environ.get("MLBB_BLOCK_AUTO_BAD", "0") == "1"
+    return True
+
+
 def segment_overlaps_owner_label(
     video_path: Path,
     start_sec: float,
@@ -224,6 +242,8 @@ def segment_overlaps_owner_label(
     end_sec = start_sec + duration_sec
     for row in _labels_for_vod(video_path, profile):
         if row.get("label") != label:
+            continue
+        if label == "bad" and not _owner_bad_blocks_scan(row, profile):
             continue
         center = float(row["time_sec"])
         if start_sec - pad_sec <= center <= end_sec + pad_sec:

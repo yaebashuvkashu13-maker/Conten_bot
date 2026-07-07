@@ -847,7 +847,8 @@ def _apply_lead_start(start: float) -> float:
 
 
 def _normalize_clip(clip: dict, vod: Path) -> dict:
-    peak = float(clip.get("start", 0))
+    # Prefer OCR banner time over highlight window start (POV + fight bounds).
+    peak = float(clip.get("banner_sec") or clip.get("peak_start") or clip.get("start", 0))
     if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
         from mlbb_fight_segment import _analysis_for
         from mlbb_kill_banner import resolve_fight_bounds
@@ -1339,9 +1340,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         report,
                     )
             if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
-                from mlbb_banner_pov_match import banner_pov_hero_match
+                from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
 
-                pov_ok, pov_reason, pov_sim = banner_pov_hero_match(vod, banner_sec)
+                pov_ok, pov_reason, pov_sim = banner_pov_hero_match_for_peak(
+                    vod,
+                    peak_start,
+                    banner_sec=float(row.get("banner_sec")) if row.get("banner_sec") else None,
+                )
                 report["pov_hero_sim"] = round(pov_sim, 4)
                 if not pov_ok:
                     return False, pov_reason, report
@@ -1616,9 +1621,13 @@ def _collect_scan_segments(
             log.info("skip peak=%.1f vod_tail_clip start=%.1f dur=%.1f", peak, start, seg_dur)
             continue
         if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
-            from mlbb_banner_pov_match import banner_pov_hero_match
+            from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
 
-            pov_ok, pov_reason, pov_sim = banner_pov_hero_match(vod, banner_sec)
+            pov_ok, pov_reason, pov_sim = banner_pov_hero_match_for_peak(
+                vod,
+                peak,
+                banner_sec=float(lead_clip.get("banner_sec")) if lead_clip.get("banner_sec") else None,
+            )
             if not pov_ok:
                 log.info("skip peak=%.1f pov_fail=%s sim=%.3f", peak, pov_reason, pov_sim)
                 continue

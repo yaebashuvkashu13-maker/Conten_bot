@@ -55,3 +55,25 @@ def test_banner_pov_match_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ok is True
     assert reason == "pov_match_off"
     assert sim == 1.0
+
+
+def test_banner_pov_for_peak_tries_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
+
+    calls: list[float] = []
+
+    def fake_match(vod: Path, sec: float) -> tuple[bool, str, float]:
+        calls.append(sec)
+        if abs(sec - 79.3) < 0.1:
+            return True, "pov_hero_ok sim=0.58", 0.58
+        return False, "pov_hero_mismatch", 0.06
+
+    monkeypatch.setattr("mlbb_banner_pov_match.banner_pov_hero_match", fake_match)
+    monkeypatch.setattr(
+        "mlbb_kill_banner.find_banner_near_peak",
+        lambda vod, peak, quick=True: type("Hit", (), {"sec": 79.3})(),
+    )
+
+    ok, reason, sim = banner_pov_hero_match_for_peak(Path("x.mp4"), 84.0, banner_sec=84.0)
+    assert ok is True
+    assert 79.3 in calls

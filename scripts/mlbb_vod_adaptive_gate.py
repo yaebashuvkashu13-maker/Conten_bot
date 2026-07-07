@@ -19,6 +19,7 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_PRESEND_MIN_MOTION": "0.014",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
+    "MLBB_BANNER_POV_MIN_SIM": "0.28",
 }
 
 # Level 2: more peak tries + relaxed presend motion — still require verified double+ banner.
@@ -31,6 +32,7 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+    "MLBB_BANNER_POV_MIN_SIM": "0.22",
 }
 
 
@@ -49,10 +51,10 @@ def streak_threshold() -> int:
 def soften_level(streak: int) -> int:
     """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
     if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
-        recovery = max(6, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "8")))
+        recovery = max(4, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "5")))
         if streak < recovery:
             return 0
-        # Quality mode: allow recovery soften after long zero streak (hook/motion only).
+        # Quality mode: allow recovery soften after long zero streak (hook/motion/POV).
         return 1 if streak < recovery + 4 else 2
     need = streak_threshold()
     if streak < need:
@@ -176,7 +178,7 @@ def telegram_exhaust_notice(vod_id: str, *, level: int, streak: int) -> str:
     if level > 0:
         return f"{base} (уже мягкий режим L{level}, серия нулей={streak})"
     if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
-        recovery = max(6, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "8")))
+        recovery = max(4, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "5")))
         if streak >= recovery:
             return (
                 f"{base} — серия нулей={streak} (recovery soften L1, quality mode)"

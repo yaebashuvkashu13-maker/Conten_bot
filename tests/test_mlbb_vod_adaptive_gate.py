@@ -29,11 +29,11 @@ def test_trailing_zero_streak():
 
 def test_soften_disabled_in_quality_mode_until_recovery():
     os.environ["MLBB_VOD_DISABLE_SOFTEN"] = "1"
-    os.environ["MLBB_VOD_ZERO_RECOVERY_SOFTEN"] = "8"
+    os.environ["MLBB_VOD_ZERO_RECOVERY_SOFTEN"] = "5"
     try:
-        assert soften_level(7) == 0
-        assert soften_level(8) == 1
-        assert soften_level(12) == 2
+        assert soften_level(4) == 0
+        assert soften_level(5) == 1
+        assert soften_level(9) == 2
     finally:
         os.environ.pop("MLBB_VOD_DISABLE_SOFTEN", None)
         os.environ.pop("MLBB_VOD_ZERO_RECOVERY_SOFTEN", None)
@@ -60,6 +60,7 @@ def test_l1_only_lowers_score_and_motion():
     ov = overrides_for_level(1)
     assert ov["MLBB_VOD_LENIENT_UNIFORM"] == "1"
     assert float(ov["MLBB_PRESEND_MIN_MOTION"]) == 0.014
+    assert float(ov["MLBB_BANNER_POV_MIN_SIM"]) == 0.28
 
 
 def test_l2_keeps_banner_presend_strict():
