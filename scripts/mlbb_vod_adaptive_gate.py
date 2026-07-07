@@ -48,6 +48,8 @@ def streak_threshold() -> int:
 
 def soften_level(streak: int) -> int:
     """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0

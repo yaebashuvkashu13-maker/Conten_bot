@@ -1913,6 +1913,37 @@ def _process_vod_segments(
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
+    # Quality mode: target owner 👎 share <= 20% by sending only high-confidence clips.
+    # This can reduce volume but should improve precision quickly.
+    quality_mode = os.environ.get("MLBB_VOD_QUALITY_MODE", "1") == "1"
+    if quality_mode:
+        try:
+            from mlbb_vod_segment_store import stats as vod_stats
+
+            st = vod_stats()
+            yes = int(st.get("feedback_yes") or 0)
+            no = int(st.get("feedback_no") or 0)
+            rated = yes + no
+            bad_share = (no / rated) if rated else 1.0
+        except Exception:
+            bad_share = 1.0
+            rated = 0
+        target = float(os.environ.get("MLBB_VOD_BAD_SHARE_TARGET", "0.20"))
+        if bad_share > target:
+            # Tighten gates when current precision is poor.
+            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.12")
+            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06")
+            os.environ["SMART_UNIFORM_MIN_HUD_RATE"] = os.environ.get("SMART_UNIFORM_MIN_HUD_RATE", "0.70")
+            os.environ["MLBB_VOD_TAIL_MIN_HUD_RATE"] = os.environ.get("MLBB_VOD_TAIL_MIN_HUD_RATE", "0.55")
+            os.environ["VISUAL_MLBB_MENU_OVERLAY_MAX"] = os.environ.get("VISUAL_MLBB_MENU_OVERLAY_MAX", "0.42")
+            os.environ["MLBB_VOD_DISABLE_SOFTEN"] = "1"
+            log.warning(
+                "quality_mode tighten: rated=%s bad_share=%.2f target=%.2f",
+                rated,
+                bad_share,
+                target,
+            )
+
     clear_fast_seeds = None
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":
         from mlbb_vod_fast_scan import (
