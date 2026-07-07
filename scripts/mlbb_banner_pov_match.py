@@ -147,6 +147,9 @@ def banner_pov_hero_match_for_peak(
     if banner_sec is not None:
         candidates.append(float(banner_sec))
     candidates.append(float(peak_sec))
+    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    for back in (lead, lead * 2, lead * 3, 8.0, 12.0):
+        candidates.append(max(0.0, float(peak_sec) - back))
     try:
         from mlbb_kill_banner import find_banner_near_peak
 

@@ -1105,6 +1105,8 @@ def score_candidate_window(
     start_sec: float,
     duration_sec: float,
     profile: str,
+    *,
+    skip_owner_bad: bool = False,
 ) -> HighlightMetrics:
     profile = normalize_profile(profile)
     os.environ["_HIGHLIGHT_PROFILE"] = profile
@@ -1165,8 +1167,11 @@ def score_candidate_window(
         except Exception:
             m.heatmap_intensity = 0.0
 
-    if segment_overlaps_owner_label(
+    if (
+        not skip_owner_bad
+        and segment_overlaps_owner_label(
         video_path, start_sec, duration_sec, profile, label="bad", pad_sec=_owner_label_pad("bad")
+    )
     ):
         m.rule_pass = False
         m.pass_reason = "owner_bad_window"
@@ -1549,14 +1554,20 @@ def _evaluate_highlight_start(
     video_path: Path,
     start: float,
     profile: str,
+    *,
+    skip_owner_bad: bool = False,
 ) -> tuple[float, HighlightMetrics] | None:
-    metrics = score_candidate_window(video_path, start, WINDOW_SEC, profile)
+    metrics = score_candidate_window(
+        video_path, start, WINDOW_SEC, profile, skip_owner_bad=skip_owner_bad
+    )
     try:
         from viral_scorer import trim_segment_start
 
         trimmed = trim_segment_start(video_path, start, profile, window_sec=WINDOW_SEC)
         if abs(trimmed - start) > 0.1:
-            metrics = score_candidate_window(video_path, trimmed, WINDOW_SEC, profile)
+            metrics = score_candidate_window(
+                video_path, trimmed, WINDOW_SEC, profile, skip_owner_bad=skip_owner_bad
+            )
             start = trimmed
     except Exception:
         pass
@@ -1741,6 +1752,16 @@ def discover_highlight_candidates(
                     banner_hit = hit
                     break
         anchored = banner_hit is not None
+        if (
+            anchored
+            and (not metrics.rule_pass or not metrics.visual_pass)
+            and metrics.pass_reason == "owner_bad_window"
+        ):
+            rescored = _evaluate_highlight_start(
+                video_path, start, profile, skip_owner_bad=True
+            )
+            if rescored is not None:
+                start, metrics = rescored
         if not _accept_highlight_candidate(
             video_path, start, metrics, profile, banner_anchored=anchored
         ):
