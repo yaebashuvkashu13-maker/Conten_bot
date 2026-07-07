@@ -1360,7 +1360,22 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
             if abs(banner_sec - peak_start) > 25.0:
                 banner_sec = peak_start
-            banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
+            fast_banner = os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") == "1"
+            tier = row.get("kill_banner_tier")
+            if tier is None and row.get("kill_banner"):
+                tier = (row.get("kill_banner") or {}).get("tier")
+            try:
+                tier_i = int(tier) if tier is not None else 0
+            except (TypeError, ValueError):
+                tier_i = 0
+            min_tier = _min_tier()
+            banner_ok = False
+            banner_reason = ""
+            if fast_banner and tier_i >= min_tier and row.get("kill_banner"):
+                banner_ok = True
+                banner_reason = f"collect_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
+            if not banner_ok:
+                banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
             if not banner_ok:
                 banner_ok, banner_reason = verify_rendered_clip(
                     rendered,
@@ -1371,14 +1386,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if not banner_ok:
                 return False, banner_reason, report
             if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
-                tier = row.get("kill_banner_tier")
-                if tier is None and row.get("kill_banner"):
-                    tier = (row.get("kill_banner") or {}).get("tier")
-                try:
-                    tier_i = int(tier) if tier is not None else 0
-                except (TypeError, ValueError):
-                    tier_i = 0
-                min_tier = _min_tier()
                 if tier_i < min_tier:
                     return (
                         False,
