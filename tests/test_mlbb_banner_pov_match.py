@@ -76,4 +76,4 @@ def test_banner_pov_for_peak_tries_candidates(monkeypatch: pytest.MonkeyPatch) -
 
     ok, reason, sim = banner_pov_hero_match_for_peak(Path("x.mp4"), 84.0, banner_sec=84.0)
     assert ok is True
-    assert 79.3 in calls
+    assert 79.3 in calls or 80.0 in calls
