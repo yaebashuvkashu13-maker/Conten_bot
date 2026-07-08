@@ -248,6 +248,15 @@ def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int) ->
     return frames
 
 
+def _ffmpeg_dense_timeline_frames(
+    vod: Path, t0: float, t1: float, step: float = 1.0
+) -> list[tuple[float, object]]:
+    """One ffmpeg pass: ~1 frame per `step` sec — avoids slow per-second cv2 seek."""
+    duration = max(0.5, t1 - t0)
+    sample_count = max(1, min(1800, int(duration / max(step, 0.25)) + 1))
+    return _ffmpeg_sample_frames(vod, t0, t1, sample_count)
+
+
 def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]]:
     step = max(0.25, _scan_step())
     span = max(0.0, t1 - t0)
@@ -572,7 +581,7 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
-    def _timestep_color_probe(t: float, cap=None) -> None:
+    def _timestep_color_probe(t: float, cap=None, frame=None) -> None:
         """
         Cheap timestep scan: read ONE frame at t, use color prefilter,
         then run OCR near t only when color is promising.
@@ -580,12 +589,13 @@ def discover_vod_kill_banners(
         nonlocal probes
         if probes >= max_probes or time.monotonic() >= deadline:
             return
-        if cap is not None:
-            from gameplay_gate import _read_frame_at
+        if frame is None:
+            if cap is not None:
+                from gameplay_gate import _read_frame_at
 
-            frame = _read_frame_at(vod, float(t), cap)
-        else:
-            frame = _read_frame(vod, t)
+                frame = _read_frame_at(vod, float(t), cap)
+            else:
+                frame = _read_frame(vod, t)
         if frame is None:
             return
         # Same heuristic as scan_window() candidate picking.
@@ -667,20 +677,23 @@ def discover_vod_kill_banners(
             except Exception:
                 cap = None
             if dense:
-                # True 1 Hz sweep — no stratified subsampling between seconds.
-                t = t0
-                step_i = 0
+                # True 1 Hz sweep via one ffmpeg batch — no per-second cv2 seek.
+                t_end = duration - 2.0
+                batch = _ffmpeg_dense_timeline_frames(vod, t0, t_end, step)
                 log.info(
-                    "banner discover %s: dense_1hz start=%.0fs span=%.0fs max_probes=%s max_sec=%.0f",
+                    "banner discover %s: dense_1hz start=%.0fs span=%.0fs frames=%s max_probes=%s max_sec=%.0f",
                     vod.name,
                     t0,
                     span,
+                    len(batch),
                     max_probes,
                     max_sec,
                 )
-                while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
-                    _timestep_color_probe(t, cap=cap)
-                    if step_i % 60 == 0 or step_i < 3:
+                for i, (t, frame) in enumerate(batch):
+                    if probes >= max_probes or time.monotonic() >= deadline:
+                        break
+                    _timestep_color_probe(t, frame=frame)
+                    if i % 60 == 0 or i < 3 or i == len(batch) - 1:
                         log.info(
                             "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
                             vod.name,
@@ -689,8 +702,6 @@ def discover_vod_kill_banners(
                             max_probes,
                             len(hits),
                         )
-                    t += step
-                    step_i += 1
             else:
                 # Spread sampling across the whole VOD under tight time budget.
                 sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))

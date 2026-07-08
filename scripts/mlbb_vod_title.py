@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 _SAVAGE_RE = re.compile(r"savage|саваж|legendary|легендар", re.I)
@@ -25,6 +26,44 @@ def _video_id_from_path(vod: Path) -> str:
     return stem
 
 
+def _title_cache_path(video_id: str) -> Path:
+    root = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
+    return root / "title_cache" / f"{video_id}.txt"
+
+
+def _ytdlp_title(video_id: str) -> str:
+    if not video_id or os.environ.get("MLBB_VOD_TITLE_YTDLP", "1") != "1":
+        return ""
+    cache = _title_cache_path(video_id)
+    if cache.exists():
+        try:
+            return cache.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    try:
+        proc = subprocess.run(
+            [
+                "yt-dlp",
+                "--no-playlist",
+                "--print",
+                "title",
+                f"https://www.youtube.com/watch?v={video_id}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        title = (proc.stdout or "").strip().splitlines()[0] if proc.stdout else ""
+        if title and "ERROR" not in title.upper():
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(title, encoding="utf-8")
+            return title
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
 def vod_title_blob(vod: Path, entry: dict | None = None) -> str:
     """Lowercased title + id for keyword gates (savage in title → require savage banner)."""
     env_title = os.environ.get("MLBB_VOD_SCAN_TITLE", "").strip()
@@ -36,6 +75,7 @@ def vod_title_blob(vod: Path, entry: dict | None = None) -> str:
     else:
         vid = _video_id_from_path(vod)
         reg = _registry_path()
+        found = False
         if reg.exists():
             try:
                 rows = json.loads(reg.read_text(encoding="utf-8"))
@@ -43,9 +83,14 @@ def vod_title_blob(vod: Path, entry: dict | None = None) -> str:
                     for row in rows:
                         if str(row.get("id", "")) == vid and row.get("title"):
                             parts.append(str(row["title"]))
+                            found = True
                             break
             except (json.JSONDecodeError, OSError):
                 pass
+        if not found:
+            yt_title = _ytdlp_title(vid)
+            if yt_title:
+                parts.append(yt_title)
     return " ".join(parts).lower()
 
 
