@@ -327,7 +327,8 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
-        ranked.append((1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        priority = 1 if row.get("title_rescan_priority") else 0
+        ranked.append((-priority, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
     ranked.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -1324,6 +1325,8 @@ def _presend_visual_ok(
         tier_i = 0
     if row.get("kill_banner") and tier_i <= 0:
         tier_i = 2
+    if os.environ.get("MLBB_VOD_AUDIT_SEND", "0") == "1" and tier_i >= 2 and row.get("kill_banner"):
+        return True, "audit_visual_bypass"
     min_tier = 2
     try:
         from mlbb_kill_banner import _min_tier
@@ -1380,6 +1383,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if abs(banner_sec - peak_start) > 25.0:
                 banner_sec = peak_start
             fast_banner = os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") == "1"
+            audit_send = os.environ.get("MLBB_VOD_AUDIT_SEND", "0") == "1"
             tier = row.get("kill_banner_tier")
             if tier is None and row.get("kill_banner"):
                 tier = (row.get("kill_banner") or {}).get("tier")
@@ -1396,6 +1400,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if fast_banner and tier_i >= min_tier and row.get("kill_banner"):
                 banner_ok = True
                 banner_reason = f"collect_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
+            if audit_send and tier_i >= min_tier:
+                banner_ok = True
+                banner_reason = f"audit_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
             if not banner_ok:
                 banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
             if not banner_ok:
@@ -2040,6 +2047,13 @@ def _process_vod_segments(
             )
     except Exception as exc:
         log.warning("title_gate skipped: %s", exc)
+    if entry and entry.get("title_rescan_priority"):
+        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
+            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900"
+        )
+        log.info("title_rescan_priority dense 1Hz vod=%s", vod.name)
     state_pre = _load_state()
     streak_in = streak_from_state(state_pre)
     prev_level = int(state_pre.get("last_adaptive_level") or 0)
@@ -2292,6 +2306,7 @@ def _process_vod_segments(
 
     state = _load_state()
     if entry:
+        entry.pop("title_rescan_priority", None)
         _sync_vod_entry_to_state(state, entry, vod)
     state["active_vod"] = vod.name
     scanned = set(state.get("scanned_vods", []))

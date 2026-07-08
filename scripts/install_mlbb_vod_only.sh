@@ -208,6 +208,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_kill_banner.py" \
   "$REPO/scripts/mlbb_vod_title.py" \
   "$REPO/scripts/mlbb_vod_dense_audit.py" \
+  "$REPO/scripts/mlbb_vod_audit_send.py" \
+  "$REPO/scripts/mlbb_vod_title_rescan.py" \
   "$REPO/scripts/mlbb_banner_pov_match.py" \
   "$REPO/scripts/mlbb_banner_ref_ingest.py" \
   "$REPO/scripts/mlbb_banner_ref_match.py" \
