@@ -70,7 +70,8 @@ def _rows_from_audit(vod: Path, hits: list[dict], sig: str) -> list[dict]:
         norm["banner_sec"] = float(hit["sec"])
         norm["peak_start"] = float(hit["sec"])
         start = float(norm["start"])
-        sid = segment_id(vod, start)
+        peak_i = int(round(float(hit["sec"])))
+        sid = f"{vod_youtube_id(vod)}_{peak_i}"
         if sid in sent:
             log.info("skip already sent %s", sid)
             continue
