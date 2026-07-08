@@ -427,6 +427,24 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
     return None
 
 
+def _dense_scan_enabled() -> bool:
+    return os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1"
+
+
+def _discover_scan_start(vod: Path, duration: float) -> float:
+    """Earliest sec to scan — title-promised savage fights often start in first 2–3 min."""
+    try:
+        from mlbb_vod_title import title_scan_start_sec, vod_title_blob
+
+        blob = vod_title_blob(vod)
+        title_start = title_scan_start_sec(blob, duration)
+        if title_start is not None:
+            return float(title_start)
+    except Exception:
+        pass
+    return _adaptive_banner_scan_start(vod, duration)
+
+
 def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     """Earliest sec to scan for banners — short VODs have fights before 5 min."""
     base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300"))
@@ -437,6 +455,19 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     if duration <= 900:
         return min(base, 120.0)
     return base
+
+
+def _title_min_tier_override() -> int:
+    raw = os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "").strip()
+    if raw.isdigit():
+        return max(0, int(raw))
+    return 0
+
+
+def _effective_discover_min_tier(min_tier: int | None) -> int:
+    need = min_tier if min_tier is not None else _min_tier()
+    title_need = _title_min_tier_override()
+    return max(need, title_need) if title_need > 0 else need
 
 
 def _stratified_peak_hints(peaks: list[float], limit: int) -> list[float]:
@@ -472,16 +503,32 @@ def discover_vod_kill_banners(
     duration = float(analysis.get("duration") or 0.0)
     if duration < 20.0:
         return []
-    need = min_tier if min_tier is not None else _min_tier()
-    step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
-    t0 = _adaptive_banner_scan_start(vod, duration)
+    dense = _dense_scan_enabled()
+    need = _effective_discover_min_tier(min_tier)
+    if dense:
+        step = min(1.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "1.0")))
+    else:
+        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
+    t0 = _discover_scan_start(vod, duration)
     scan_span = max(60.0, duration - t0)
-    max_probes = max(
-        4,
-        int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "16")),
-        min(200, int(scan_span / max(step, 1.0)) + 8),
-    )
-    max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
+    if dense:
+        per_sec = int(scan_span / max(step, 1.0)) + 16
+        max_probes = max(
+            int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "96")),
+            per_sec,
+            min(1800, int(duration) + 32),
+        )
+        max_sec = max(
+            120.0,
+            float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900")),
+        )
+    else:
+        max_probes = max(
+            4,
+            int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "16")),
+            min(200, int(scan_span / max(step, 1.0)) + 8),
+        )
+        max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
     tail_reserve = min(4, max(2, max_probes // 6))
     core_probe_cap = max(4, max_probes - tail_reserve)
     deadline = time.monotonic() + max_sec
@@ -543,7 +590,10 @@ def discover_vod_kill_banners(
             return
         # Same heuristic as scan_window() candidate picking.
         color = _announce_color_score(frame)
-        if color < _color_min_score() * 0.75:
+        color_floor = _color_min_score() * (
+            0.65 if dense else 0.75
+        )
+        if color < color_floor:
             return
         # Single-frame OCR only — never scan_window() here; dense 2s timestep must stay cheap.
         from gameplay_gate import _read_frame_at
@@ -609,32 +659,58 @@ def discover_vod_kill_banners(
         # Instead of expensive scan_window() at every timestep, do a cheap per-step
         # color probe and OCR only on promising frames. This greatly increases recall.
         if timestep:
-            # Spread sampling across the whole VOD under tight time budget.
             span = max(8.0, duration - t0 - 2.0)
-            sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))
-            k = max(12, min(sample_cap, max_probes - probes, int(span / max(step, 1.0)) + 1))
             try:
                 import cv2
 
                 cap = cv2.VideoCapture(str(vod))
             except Exception:
                 cap = None
-            for i in range(k):
-                if probes >= max_probes or time.monotonic() >= deadline:
-                    break
-                t = t0 + (i * span / max(k - 1, 1))
-                _timestep_color_probe(t, cap=cap)
-                if i in (0, k // 2, k - 1):
-                    log.info(
-                        "banner discover %s: timestep_sample i=%s/%s t=%.0fs probes=%s/%s hits=%s",
-                        vod.name,
-                        i + 1,
-                        k,
-                        t,
-                        probes,
-                        max_probes,
-                        len(hits),
-                    )
+            if dense:
+                # True 1 Hz sweep — no stratified subsampling between seconds.
+                t = t0
+                step_i = 0
+                log.info(
+                    "banner discover %s: dense_1hz start=%.0fs span=%.0fs max_probes=%s max_sec=%.0f",
+                    vod.name,
+                    t0,
+                    span,
+                    max_probes,
+                    max_sec,
+                )
+                while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+                    _timestep_color_probe(t, cap=cap)
+                    if step_i % 60 == 0 or step_i < 3:
+                        log.info(
+                            "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
+                            vod.name,
+                            t,
+                            probes,
+                            max_probes,
+                            len(hits),
+                        )
+                    t += step
+                    step_i += 1
+            else:
+                # Spread sampling across the whole VOD under tight time budget.
+                sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))
+                k = max(12, min(sample_cap, max_probes - probes, int(span / max(step, 1.0)) + 1))
+                for i in range(k):
+                    if probes >= max_probes or time.monotonic() >= deadline:
+                        break
+                    t = t0 + (i * span / max(k - 1, 1))
+                    _timestep_color_probe(t, cap=cap)
+                    if i in (0, k // 2, k - 1):
+                        log.info(
+                            "banner discover %s: timestep_sample i=%s/%s t=%.0fs probes=%s/%s hits=%s",
+                            vod.name,
+                            i + 1,
+                            k,
+                            t,
+                            probes,
+                            max_probes,
+                            len(hits),
+                        )
             if cap is not None:
                 try:
                     cap.release()
@@ -692,12 +768,14 @@ def discover_vod_kill_banners(
                 t += step
         hits.sort(key=lambda h: h.sec)
         log.info(
-            "banner discover %s: timestep=%s full=%s probes=%s hits=%s",
+            "banner discover %s: dense=%s timestep=%s full=%s probes=%s hits=%s need_tier=%s",
             vod.name,
+            dense,
             timestep,
             full_sweep,
             probes,
             len(hits),
+            need,
         )
         return hits
 

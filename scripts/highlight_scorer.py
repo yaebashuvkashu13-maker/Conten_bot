@@ -1665,7 +1665,17 @@ def discover_highlight_candidates(
             start_set = set(starts)
             banners: list = []
             if use_discover:
-                banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
+                from mlbb_vod_title import title_min_banner_tier, vod_title_blob
+
+                title_blob = vod_title_blob(video_path)
+                title_tier = title_min_banner_tier(title_blob)
+                if title_tier > 0:
+                    os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
+                banners = discover_vod_kill_banners(
+                    video_path,
+                    hint_peaks=starts,
+                    min_tier=title_tier if title_tier > 0 else None,
+                )
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
             if banners:
                 log.info(
