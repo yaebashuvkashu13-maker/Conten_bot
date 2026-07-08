@@ -77,7 +77,7 @@ def _rows_from_audit(vod: Path, hits: list[dict], sig: str) -> list[dict]:
                 "peak_start": float(norm.get("peak_start", hit["sec"])),
                 "banner_sec": float(norm.get("banner_sec", hit["sec"])),
                 "kill_banner": str(norm.get("kill_banner") or label),
-                "kill_banner_tier": int(norm.get("kill_banner_tier") or tier),
+                "kill_banner_tier": tier,
                 "fight_dur": float(norm.get("input_duration") or 0),
                 "score": 0.5,
                 "hook_score": 0.3,
@@ -102,8 +102,8 @@ def send_audit_vod(
         return 0
     tier_need = title_min_banner_tier(title_blob)
     if tier_need > 0:
-        os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(tier_need)
         os.environ["MLBB_VOD_SCAN_TITLE"] = title_blob
+    os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
     os.environ["MLBB_VOD_AUDIT_SEND"] = "1"
     os.environ["MLBB_VOD_SEND_ONE"] = "0"
     os.environ["MLBB_VOD_PRESEND_FAST_BANNER"] = "1"

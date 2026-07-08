@@ -1418,7 +1418,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             report["kill_banner"] = banner_reason
             if not banner_ok:
                 return False, banner_reason, report
-            if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
+            if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1" and not audit_send:
                 if tier_i < min_tier:
                     return (
                         False,
