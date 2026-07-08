@@ -630,15 +630,26 @@ def discover_vod_kill_banners(
         from gameplay_gate import _read_frame_at
 
         win_thr = float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12"))
-        offsets = (-0.35, 0.0, 0.35, 0.7) if color >= win_thr else (0.0, 0.6)
+        if frame is not None and dense:
+            # Dense batch already samples ~1 Hz — avoid slow per-offset seeks.
+            offsets = (0.0,)
+        elif color >= win_thr:
+            offsets = (-0.35, 0.0, 0.35, 0.7)
+        else:
+            offsets = (0.0, 0.6)
 
         for off in offsets:
             if probes >= max_probes or time.monotonic() >= deadline:
                 return
             probes += 1
-            fr = frame if off == 0.0 else (
-                _read_frame_at(vod, float(t) + off, cap) if cap is not None else _read_frame(vod, float(t) + off)
-            )
+            if off == 0.0 and frame is not None:
+                fr = frame
+            elif cap is not None:
+                from gameplay_gate import _read_frame_at
+
+                fr = _read_frame_at(vod, float(t) + off, cap)
+            else:
+                fr = _read_frame(vod, float(t) + off)
             if fr is None:
                 continue
             hit = _classify_frame(float(t) + off, fr, deep=False)
