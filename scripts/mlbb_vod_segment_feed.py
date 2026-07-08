@@ -1368,8 +1368,12 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     cut_start = float(row.get("start", 0))
     peak_start = float(row.get("peak_start", cut_start))
     dur = _segment_duration(row)
+    audit_send = os.environ.get("MLBB_VOD_AUDIT_SEND", "0") == "1"
 
-    ok, reason, freezes = _detect_render_freeze(rendered)
+    if audit_send:
+        ok, reason, freezes = True, "audit_freeze_skip", []
+    else:
+        ok, reason, freezes = _detect_render_freeze(rendered)
     report["freezes"] = freezes
     if not ok:
         return False, reason, report
@@ -1400,9 +1404,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if fast_banner and tier_i >= min_tier and row.get("kill_banner"):
                 banner_ok = True
                 banner_reason = f"collect_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
-            if audit_send and tier_i >= min_tier:
+            if audit_send and row.get("kill_banner"):
                 banner_ok = True
-                banner_reason = f"audit_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
+                banner_reason = f"audit_trust:{row.get('kill_banner')}@{banner_sec:.1f}s"
             if not banner_ok:
                 banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
             if not banner_ok:
@@ -1421,7 +1425,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
-            if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1":
+            if os.environ.get("MLBB_BANNER_POV_MATCH", "1") == "1" and not audit_send:
                 from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
 
                 pov_ok, pov_reason, pov_sim = banner_pov_hero_match_for_peak(

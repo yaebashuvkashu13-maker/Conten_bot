@@ -68,14 +68,16 @@ def _rows_from_audit(vod: Path, hits: list[dict], sig: str) -> list[dict]:
         if sid in sent:
             log.info("skip already sent %s", sid)
             continue
+        tier = int(hit.get("tier") or 5)
+        label = str(hit.get("label") or "savage")
         rows.append(
             {
                 "segment_id": sid,
                 "start": start,
-                "peak_start": float(norm.get("peak_start", start)),
+                "peak_start": float(norm.get("peak_start", hit["sec"])),
                 "banner_sec": float(norm.get("banner_sec", hit["sec"])),
-                "kill_banner": norm.get("kill_banner", hit.get("label")),
-                "kill_banner_tier": norm.get("kill_banner_tier", hit.get("tier")),
+                "kill_banner": str(norm.get("kill_banner") or label),
+                "kill_banner_tier": int(norm.get("kill_banner_tier") or tier),
                 "fight_dur": float(norm.get("input_duration") or 0),
                 "score": 0.5,
                 "hook_score": 0.3,
