@@ -203,11 +203,12 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
-def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int) -> list[tuple[float, object]]:
+def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int, *, timeout: float | None = None) -> list[tuple[float, object]]:
     import numpy as np
 
     duration = max(0.25, t1 - t0)
     fps = max(1.0, sample_count / duration)
+    wait = timeout if timeout is not None else max(45.0, min(180.0, duration * 0.35 + 30.0))
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -231,7 +232,7 @@ def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int) ->
         "bgr24",
         "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True, check=False, timeout=45)
+    proc = subprocess.run(cmd, capture_output=True, check=False, timeout=wait)
     if proc.returncode != 0 or not proc.stdout:
         return []
     frame_bytes = 480 * 270 * 3
@@ -251,10 +252,30 @@ def _ffmpeg_sample_frames(vod: Path, t0: float, t1: float, sample_count: int) ->
 def _ffmpeg_dense_timeline_frames(
     vod: Path, t0: float, t1: float, step: float = 1.0
 ) -> list[tuple[float, object]]:
-    """One ffmpeg pass: ~1 frame per `step` sec — avoids slow per-second cv2 seek."""
-    duration = max(0.5, t1 - t0)
-    sample_count = max(1, min(1800, int(duration / max(step, 0.25)) + 1))
-    return _ffmpeg_sample_frames(vod, t0, t1, sample_count)
+    """One or more ffmpeg passes: ~1 frame per `step` sec — chunked for large VODs."""
+    chunk_sec = float(os.environ.get("MLBB_BANNER_DENSE_CHUNK_SEC", "120"))
+    out: list[tuple[float, object]] = []
+    cursor = max(0.0, t0)
+    end = max(cursor, t1)
+    while cursor < end - 0.25:
+        chunk_end = min(end, cursor + chunk_sec)
+        span = max(0.5, chunk_end - cursor)
+        sample_count = max(1, min(600, int(span / max(step, 0.25)) + 1))
+        frames = _ffmpeg_sample_frames(vod, cursor, chunk_end, sample_count)
+        out.extend(frames)
+        if not frames and chunk_sec > 60:
+            # Fallback: smaller chunks if ffmpeg batch failed.
+            sub = max(30.0, chunk_sec / 2.0)
+            sub_cursor = cursor
+            while sub_cursor < chunk_end - 0.25:
+                sub_end = min(chunk_end, sub_cursor + sub)
+                sub_span = max(0.5, sub_end - sub_cursor)
+                sub_count = max(1, int(sub_span / max(step, 0.25)) + 1)
+                out.extend(_ffmpeg_sample_frames(vod, sub_cursor, sub_end, sub_count))
+                sub_cursor = sub_end
+            break
+        cursor = chunk_end
+    return out
 
 
 def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]]:
