@@ -15,15 +15,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_vod_segment_feed import (  # noqa: E402
     INBOX,
+    _ffprobe_duration,
     _normalize_clip,
-    _send_segment_batch,
-    _validate_before_send,
     file_sha256,
     render_single_segment,
     send_message,
+    send_video,
 )
-from mlbb_vod_segment_store import load_feed_sent, segment_id, segments_root, vod_youtube_id
-from mlbb_vod_title import title_min_banner_tier, vod_title_blob
+from mlbb_vod_segment_store import load_feed_sent, segment_id, segments_root, upsert_segment, vod_youtube_id
+from mlbb_vod_title import vod_title_blob
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -41,7 +41,7 @@ def _audit_path() -> Path:
 
 def _clip_from_banner(vod: Path, hit: dict) -> dict:
     banner_sec = float(hit["sec"])
-    tier = int(hit.get("tier") or 0)
+    tier = int(hit.get("tier") or 5)
     label = str(hit.get("label") or "savage")
     return {
         "start": banner_sec,
@@ -58,25 +58,29 @@ def _rows_from_audit(vod: Path, hits: list[dict], sig: str) -> list[dict]:
     sent = load_feed_sent()
     rows: list[dict] = []
     for hit in hits:
+        tier = int(hit.get("tier") or 5)
+        label = str(hit.get("label") or "savage")
         raw = _clip_from_banner(vod, hit)
         norm = _normalize_clip(raw, vod)
         if norm.get("banner_reject"):
             log.warning("skip banner %.1fs reject=%s", hit["sec"], norm.get("banner_reject"))
             continue
+        norm["kill_banner"] = label
+        norm["kill_banner_tier"] = tier
+        norm["banner_sec"] = float(hit["sec"])
+        norm["peak_start"] = float(hit["sec"])
         start = float(norm["start"])
         sid = segment_id(vod, start)
         if sid in sent:
             log.info("skip already sent %s", sid)
             continue
-        tier = int(hit.get("tier") or 5)
-        label = str(hit.get("label") or "savage")
         rows.append(
             {
                 "segment_id": sid,
                 "start": start,
-                "peak_start": float(norm.get("peak_start", hit["sec"])),
-                "banner_sec": float(norm.get("banner_sec", hit["sec"])),
-                "kill_banner": str(norm.get("kill_banner") or label),
+                "peak_start": float(hit["sec"]),
+                "banner_sec": float(hit["sec"]),
+                "kill_banner": label,
                 "kill_banner_tier": tier,
                 "fight_dur": float(norm.get("input_duration") or 0),
                 "score": 0.5,
@@ -100,29 +104,67 @@ def send_audit_vod(
     if not vod.exists():
         log.error("missing vod %s", vod)
         return 0
-    tier_need = title_min_banner_tier(title_blob)
-    if tier_need > 0:
-        os.environ["MLBB_VOD_SCAN_TITLE"] = title_blob
-    os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
+
     os.environ["MLBB_VOD_AUDIT_SEND"] = "1"
-    os.environ["MLBB_VOD_SEND_ONE"] = "0"
-    os.environ["MLBB_VOD_PRESEND_FAST_BANNER"] = "1"
-    os.environ["MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER"] = "1"
+    os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
+    os.environ["DAILY_GAME_CYCLE_ENABLED"] = "0"
 
     sig = file_sha256(vod)
     rows = _rows_from_audit(vod, hits, sig)
     if not rows:
         return 0
+
     vid = vod_youtube_id(vod)
-    send_message(
-        token,
-        chat_id,
-        f"🎯 Аудит dense 1Hz — {vid}\n"
-        f"{title_blob[:90]}\n"
-        f"Отправляю {len(rows)} savage-момент(ов)…",
-    )
-    n, _, _ = _send_segment_batch(token, chat_id, vod, rows, sig)
-    return n
+    root = segments_root()
+    root.mkdir(parents=True, exist_ok=True)
+    sent_n = 0
+
+    for row in rows:
+        sid = row["segment_id"]
+        peak = int(row["peak_start"])
+        label = str(row["kill_banner"]).upper()
+        out = root / f"seg_{sid}.mp4"
+
+        if not render_single_segment(vod, row["clip"], out):
+            log.warning("render fail %s", sid)
+            send_message(token, chat_id, f"❌ {vid} @{peak}s — render fail")
+            continue
+
+        if not out.exists() or out.stat().st_size < 100_000:
+            log.warning("render too small %s", sid)
+            continue
+
+        seg_dur = _ffprobe_duration(out)
+        caption = (
+            f"🎯 АУДИТ {label} @ {peak}s\n"
+            f"{vid} | {seg_dur:.0f}с\n"
+            f"{title_blob[:70]}\n"
+            f"👍 Ок / 👎 Не ок"
+        )
+        if send_video(token, chat_id, out, caption, seg_id=sid, record_learning=False):
+            upsert_segment(
+                {
+                    "segment_id": sid,
+                    "path": str(out),
+                    "vod": str(vod),
+                    "vod_id": vid,
+                    "start": row["start"],
+                    "duration": seg_dur,
+                    "peak_start": peak,
+                    "kill_banner": row["kill_banner"],
+                    "kill_banner_tier": row["kill_banner_tier"],
+                    "sig": sig,
+                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            sent_n += 1
+            log.info("sent audit clip %s peak=%s", sid, peak)
+        else:
+            log.warning("telegram fail %s size=%s", sid, out.stat().st_size)
+            send_message(token, chat_id, f"⚠️ {vid} @{peak}s — видео не ушло (размер {out.stat().st_size // 1024}KB)")
+        time.sleep(1.5)
+
+    return sent_n
 
 
 def main() -> int:
@@ -160,11 +202,14 @@ def main() -> int:
         if args.dry_run:
             print(vid, len(hits), [h["sec"] for h in hits])
             continue
-        total += send_audit_vod(vod, hits, token=token, chat_id=chat_id, title_blob=title_blob)
-        time.sleep(2)
+        n = send_audit_vod(vod, hits, token=token, chat_id=chat_id, title_blob=title_blob)
+        total += n
+        if n:
+            send_message(token, chat_id, f"✅ {vid}: отправлено {n} видео из аудита")
+        time.sleep(1)
 
     if not args.dry_run:
-        send_message(token, chat_id, f"✅ Аудит-отправка: {total} кусков из dense scan")
+        send_message(token, chat_id, f"🏁 Аудит-отправка завершена: {total} видео")
     print(f"audit_send total={total}")
     return 0 if total > 0 or args.dry_run else 1
 
