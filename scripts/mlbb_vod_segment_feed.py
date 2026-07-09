@@ -1680,6 +1680,11 @@ def _collect_scan_segments(
         from mlbb_fight_segment import ideal_clip_min_sec
 
         min_ideal = ideal_clip_min_sec()
+        tier_i = int(lead_clip.get("kill_banner_tier") or 0)
+        if tier_i >= 5:
+            min_ideal = float(os.environ.get("MLBB_SAVAGE_CLIP_MIN_SEC", "8"))
+        elif tier_i >= 4:
+            min_ideal = float(os.environ.get("MLBB_MANIAC_CLIP_MIN_SEC", "12"))
         if seg_dur < min_ideal:
             log.info("skip peak=%.1f short_ideal_clip dur=%.1f need=%.1f", peak, seg_dur, min_ideal)
             continue
@@ -1742,8 +1747,17 @@ def _collect_scan_segments(
                 banner_sec=float(lead_clip.get("banner_sec")) if lead_clip.get("banner_sec") else None,
             )
             if not pov_ok:
-                log.info("skip peak=%.1f pov_fail=%s sim=%.3f", peak, pov_reason, pov_sim)
-                continue
+                title_need = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+                if tier_i >= 5 and title_need >= 5:
+                    log.info(
+                        "peak=%.1f pov_soft_pass savage title+banner sim=%.3f reason=%s",
+                        peak,
+                        pov_sim,
+                        pov_reason,
+                    )
+                else:
+                    log.info("skip peak=%.1f pov_fail=%s sim=%.3f", peak, pov_reason, pov_sim)
+                    continue
         crop_probe = _vod_crop_box(vod, float(lead_clip.get("start", start)), seg_dur)
         from mlbb_fight_segment import clip_active_gameplay_ok
 
