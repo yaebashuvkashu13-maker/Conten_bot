@@ -1676,7 +1676,8 @@ def discover_highlight_candidates(
                     hint_peaks=starts,
                     min_tier=title_tier if title_tier > 0 else None,
                 )
-            lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+            from mlbb_fight_segment import banner_lead_sec
+
             if banners:
                 log.info(
                     "highlight banner discover %s: %s tier>=%s hits",
@@ -1684,10 +1685,14 @@ def discover_highlight_candidates(
                     len(banners),
                     os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
                 )
-                anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+
+                def _anchor_for_hit(hit) -> float:
+                    return max(0.0, float(hit.sec) - banner_lead_sec(int(hit.tier or 0)))
+
+                anchor_starts = sorted({_anchor_for_hit(hit) for hit in banners})
                 banner_pin = set(anchor_starts)
                 for hit in banners:
-                    anchor = max(0.0, hit.sec - lead)
+                    anchor = _anchor_for_hit(hit)
                     prev = banner_by_anchor.get(anchor)
                     if prev is None or hit.tier > prev.tier:
                         banner_by_anchor[anchor] = hit
@@ -1698,7 +1703,9 @@ def discover_highlight_candidates(
                 before = len(starts)
                 filtered = filter_peaks_with_ocr_banner(video_path, starts, known_banners=banners)
                 if banners:
-                    anchor_starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    anchor_starts = sorted(
+                        {max(0.0, hit.sec - banner_lead_sec(int(hit.tier or 0))) for hit in banners}
+                    )
                     near = [s for s in filtered if any(abs(s - a) <= 45 for a in anchor_starts)]
                     starts = sorted(set(near) | set(anchor_starts))
                 else:
@@ -1710,7 +1717,9 @@ def discover_highlight_candidates(
                     before,
                 )
                 if not starts and banners:
-                    starts = sorted({max(0.0, hit.sec - lead) for hit in banners})
+                    starts = sorted(
+                        {max(0.0, hit.sec - banner_lead_sec(int(hit.tier or 0))) for hit in banners}
+                    )
                     log.info(
                         "highlight banner prefilter %s: using %s banner anchors (peaks missed)",
                         video_path.name,

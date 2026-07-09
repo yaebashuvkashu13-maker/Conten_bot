@@ -903,6 +903,7 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             file_dur,
             fight_start=fight_start,
             fight_end=fight_end,
+            banner_tier=tier_known,
         )
         return {
             **clip,

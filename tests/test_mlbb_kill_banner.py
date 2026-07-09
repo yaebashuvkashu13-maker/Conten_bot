@@ -96,6 +96,17 @@ def test_bounds_fallback_without_fight() -> None:
     assert 8.0 <= dur <= 28.0
 
 
+def test_savage_banner_lead_starts_earlier() -> None:
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_SAVAGE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    start, end, dur = bounds_from_banner(9.0, file_dur=120.0, banner_tier=5)
+    assert start == 0.0
+    assert dur >= 8.0
+
+
 def test_discover_banners_handles_numpy_motion() -> None:
     import numpy as np
     import mlbb_kill_banner as kb

@@ -33,6 +33,17 @@ def _lead_sec() -> float:
     return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
+def banner_lead_sec(banner_tier: int | None = None) -> float:
+    """Pre-roll before kill banner — savage needs more setup (owner: +10s vs default)."""
+    base = _lead_sec()
+    tier = int(banner_tier or 0)
+    if tier >= 5:
+        return float(os.environ.get("MLBB_SAVAGE_BANNER_LEAD_SEC", str(base + 10.0)))
+    if tier >= 4:
+        return float(os.environ.get("MLBB_MANIAC_BANNER_LEAD_SEC", str(base + 6.0)))
+    return base
+
+
 def _fight_post_sec() -> float:
     """Seconds of gameplay after fight sustain ends (viewer outro)."""
     return float(os.environ.get("MLBB_FIGHT_POST_SEC", "4"))

@@ -946,14 +946,20 @@ def bounds_from_banner(
     *,
     fight_start: float | None = None,
     fight_end: float | None = None,
+    banner_tier: int | None = None,
 ) -> tuple[float, float, float]:
     """Clip bounds: fight sustain window anchored on banner, not fixed lead/post."""
-    from mlbb_fight_segment import _fight_min_sec, _fight_max_sec, _fight_hard_max_sec, _lead_sec
+    from mlbb_fight_segment import (
+        _fight_min_sec,
+        _fight_max_sec,
+        _fight_hard_max_sec,
+        banner_lead_sec,
+    )
 
     min_d = _fight_min_sec()
     max_d = _fight_max_sec()
     hard_max = _fight_hard_max_sec()
-    lead = _lead_sec()
+    lead = banner_lead_sec(banner_tier)
 
     post = float(os.environ.get("MLBB_FIGHT_POST_SEC", os.environ.get("MLBB_BANNER_POST_SEC", "4")))
     if fight_start is not None and fight_end is not None and fight_end > fight_start:
@@ -1050,6 +1056,7 @@ def resolve_fight_bounds(
                 file_dur,
                 fight_start=fight_start,
                 fight_end=fight_end,
+                banner_tier=hit.tier,
             )
             return (
                 start,
@@ -1082,6 +1089,7 @@ def resolve_fight_bounds(
         file_dur,
         fight_start=fight_start,
         fight_end=fight_end,
+        banner_tier=hit.tier,
     )
     return (
         start,
