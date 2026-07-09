@@ -147,51 +147,62 @@ def main() -> int:
 
     seg_limit = int(os.environ.get("MLBB_BANNER_FLOOD_SEGMENT_LIMIT", "25"))
     scan_limit = int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25"))
-    candidates: list[tuple[Path, KillBannerHit, str]] = []
-    seen: set[str] = set()
-
-    for source in (
-        _collect_segment_peaks(inbox, labeled, sent, limit=seg_limit),
-        _collect_scan_hits(
-            inbox,
-            labeled,
-            sent,
-            vod_limit=int(os.environ.get("MLBB_BANNER_FLOOD_VODS", "20")),
-            samples_per_vod=int(os.environ.get("MLBB_BANNER_FLOOD_SAMPLES", "10")),
-            limit=scan_limit,
-        ),
-    ):
-        for item in source:
-            if item[2] in seen:
-                continue
-            seen.add(item[2])
-            candidates.append(item)
-            if len(candidates) >= max_send:
-                break
-        if len(candidates) >= max_send:
-            break
-
-    candidates = candidates[:max_send]
-    print(json.dumps({"candidates": len(candidates), "max_send": max_send}, ensure_ascii=False))
+    scan_vods = int(os.environ.get("MLBB_BANNER_FLOOD_VODS", "20"))
+    samples = int(os.environ.get("MLBB_BANNER_FLOOD_SAMPLES", "10"))
+    delay = float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.35"))
 
     sent_n = 0
-    for i, (vod, hit, cid) in enumerate(candidates, start=1):
-        try:
-            shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
-        except Exception as exc:
-            print(f"capture_fail {cid}: {exc}")
+    seen: set[str] = set()
+
+    def _send_batch(batch: list[tuple[Path, KillBannerHit, str]]) -> int:
+        nonlocal sent_n
+        n = 0
+        for i, (vod, hit, cid) in enumerate(batch, start=sent_n + 1):
+            if sent_n >= max_send:
+                break
+            try:
+                shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
+            except Exception as exc:
+                print(f"capture_fail {cid}: {exc}")
+                continue
+            st = stats()
+            caption = (
+                f"🎯 Банер {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
+                f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s | {hit.label} t{hit.tier}\n"
+                f"#{cid}"
+            )
+            if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
+                mark_sent([cid])
+                sent_n += 1
+                n += 1
+                print(f"sent {cid}")
+            time.sleep(delay)
+        return n
+
+    seg_rows = _collect_segment_peaks(inbox, labeled, sent, limit=seg_limit)
+    for item in seg_rows:
+        if item[2] in seen:
             continue
-        st = stats()
-        caption = (
-            f"🎯 Банер {i}/{len(candidates)} | {st['labeled']}/{target}\n"
-            f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s | {hit.label} t{hit.tier}\n"
-            f"#{cid}"
+        seen.add(item[2])
+    _send_batch([r for r in seg_rows if r[2] in seen][:max_send])
+
+    if sent_n < max_send and int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25")) > 0:
+        known = set(labeled.keys()) | load_sent()
+        scan_rows = _collect_scan_hits(
+            inbox,
+            {k: labeled[k] for k in known if k in labeled},
+            load_sent(),
+            vod_limit=scan_vods,
+            samples_per_vod=samples,
+            limit=min(int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25")), max_send - sent_n),
         )
-        if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
-            mark_sent([cid])
-            sent_n += 1
-            print(f"sent {cid}")
-        time.sleep(float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.35")))
+        fresh: list[tuple[Path, KillBannerHit, str]] = []
+        for item in scan_rows:
+            if item[2] in seen or item[2] in labeled or item[2] in sent:
+                continue
+            seen.add(item[2])
+            fresh.append(item)
+        _send_batch(fresh)
 
     print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False))
     return 0
