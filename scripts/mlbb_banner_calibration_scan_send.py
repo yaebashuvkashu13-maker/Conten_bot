@@ -73,7 +73,11 @@ def main() -> int:
     sent_n = 0
     target = calibration_target()
     for i, (vod, hit, cid, score) in enumerate(candidates, start=1):
-        shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
+        try:
+            shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
+        except Exception as exc:
+            print(f"capture_fail {cid}: {exc}", flush=True)
+            continue
         st = stats()
         caption = (
             f"✅ Кандидат {i}/{len(candidates)} | {st['labeled']}/{target}\n"
