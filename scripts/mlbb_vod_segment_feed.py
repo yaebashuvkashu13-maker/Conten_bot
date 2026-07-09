@@ -1463,7 +1463,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 min_tier = title_min
             banner_ok = False
             banner_reason = ""
-            if fast_banner and tier_i >= min_tier and row.get("kill_banner"):
+            owner_gate = os.environ.get("MLBB_BANNER_OWNER_GATE", "1") == "1"
+            if fast_banner and tier_i >= min_tier and row.get("kill_banner") and not owner_gate:
                 banner_ok = True
                 banner_reason = f"collect_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
             if audit_send and row.get("kill_banner"):

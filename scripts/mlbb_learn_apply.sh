@@ -70,6 +70,7 @@ PY
 python3 /usr/local/bin/eval_learning_first_gate.py 2>/dev/null || true
 
 python3 "${CONTENT_BOT_REPO}/scripts/mlbb_feedback_pattern_miner.py" --write --print 2>/dev/null || true
+python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_apply.py" 2>/dev/null || true
 python3 - <<'PY'
 import sys
 sys.path.insert(0, "/root/content_bot_ml/scripts")

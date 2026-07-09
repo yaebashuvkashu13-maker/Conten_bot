@@ -1138,6 +1138,17 @@ def verify_banner_on_source(
                 pov_ok, pov_reason, _sim = banner_pov_hero_match(vod, hit.sec)
                 if not pov_ok:
                     continue
+            if os.environ.get("MLBB_BANNER_OWNER_GATE", "1") == "1":
+                frame = _read_frame(vod, hit.sec)
+                if frame is not None:
+                    try:
+                        from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+                        ok_owner, owner_reason = check_banner_frame_passes(frame, tier=int(hit.tier))
+                        if not ok_owner:
+                            continue
+                    except Exception:
+                        pass
             return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"

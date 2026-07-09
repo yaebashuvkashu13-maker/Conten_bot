@@ -1119,6 +1119,15 @@ def handle_callback_query(query: dict) -> None:
             return
         try:
             ok, reply = apply_owner_label(item_id.strip(), reason, by_chat=str(chat_id))
+            if ok:
+                try:
+                    from mlbb_banner_ref_match import clear_banner_ref_cache
+                    from mlbb_banner_calibration_apply import write_profile
+
+                    clear_banner_ref_cache()
+                    write_profile()
+                except Exception:
+                    pass
             if not ok:
                 api_call(
                     'answerCallbackQuery',

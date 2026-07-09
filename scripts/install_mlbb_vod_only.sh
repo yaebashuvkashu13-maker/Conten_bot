@@ -226,6 +226,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_capture.py" \
   "$REPO/scripts/mlbb_banner_calibration_feed.py" \
   "$REPO/scripts/mlbb_banner_calibration_burst.py" \
+  "$REPO/scripts/mlbb_banner_calibration_apply.py" \
+  "$REPO/scripts/mlbb_banner_calibration_gate.py" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
   "$REPO/scripts/mlbb_feedback_gate_tune.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
@@ -296,6 +298,8 @@ export MLBB_FIGHT_POST_SEC=4
 export MLBB_FIGHT_TRIM_LONG=1
 export MLBB_BANNER_POST_SEC=5
 export MLBB_BANNER_NEG_REF_MATCH=1
+export MLBB_BANNER_OWNER_GATE=1
+export MLBB_BANNER_POS_REF_MATCH=1
 export MLBB_BANNER_CALIB_TARGET=50
 export MLBB_BANNER_CALIB_BATCH=3
 export MLBB_BANNER_CALIB_VODS=2
