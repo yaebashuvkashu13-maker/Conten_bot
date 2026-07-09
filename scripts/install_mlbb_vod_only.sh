@@ -127,7 +127,9 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_TAIL_EXCLUDE_SEC=75 MLBB_VOD_RANK_SCREEN_SEC=90 \
   MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=96 MLBB_KILL_BANNER_DISCOVER_MAX_SEC=900 \
   MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS=16 MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES=8 MLBB_TEAMFIGHT_HUD_CAP=32 \
-  MLBB_KILL_BANNER_DISCOVER_STEP=1 MLBB_VOD_BANNER_DENSE_SEC=1 MLBB_VOD_HIGHLIGHT_SEND_ONE=0 MLBB_VOD_COLLECT_ONE=0 \
+  MLBB_KILL_BANNER_DISCOVER_STEP=1 MLBB_VOD_BANNER_DENSE_SEC=1 MLBB_BANNER_DENSE_CHUNK_SEC=60 \
+  MLBB_SAVAGE_DENSE_MAX_SPAN_SEC=360 MLBB_DENSE_STOP_ON_SAVAGE=1 \
+  MLBB_VOD_HIGHLIGHT_SEND_ONE=0 MLBB_VOD_COLLECT_ONE=0 \
   MLBB_TITLE_SAVAGE_MIN_TIER=1 MLBB_BANNER_SAVAGE_TITLE_START_SEC=3 MLBB_VOD_SAVAGE_SHORT_OK=1 MLBB_VOD_SAVAGE_SHORT_MIN_SEC=60 \
   MLBB_KILL_BANNER_TAIL_PASS=0 MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN=0.12 \
   MLBB_BANNER_REF_MATCH=1 MLBB_BANNER_REF_MIN_SIM=0.34 \
@@ -210,6 +212,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_vod_title.py" \
   "$REPO/scripts/mlbb_vod_dense_audit.py" \
   "$REPO/scripts/mlbb_vod_audit_send.py" \
+  "$REPO/scripts/mlbb_vod_dense_hints.py" \
   "$REPO/scripts/mlbb_vod_title_rescan.py" \
   "$REPO/scripts/mlbb_banner_pov_match.py" \
   "$REPO/scripts/mlbb_banner_ref_ingest.py" \
@@ -371,7 +374,8 @@ python3 "$REPO/scripts/mlbb_banner_ref_ingest.py" --all --vod-root /root/data/ml
 python3 "$REPO/scripts/mlbb_feedback_pattern_miner.py" --write --print || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
-DEPLOY_BRANCH="${VPS_BRANCH:-cursor/mlbb-ideal-clip-spec-6cbd}"
+CURRENT_BRANCH="$(cd "$REPO" && git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+DEPLOY_BRANCH="${VPS_BRANCH:-${CURRENT_BRANCH:-cursor/mlbb-dense-savage-scan-6cbd}}"
 if [[ -f "$ENV_FILE" ]]; then
   if grep -q '^VPS_BRANCH=' "$ENV_FILE"; then
     sed -i "s|^VPS_BRANCH=.*|VPS_BRANCH=$DEPLOY_BRANCH|" "$ENV_FILE"

@@ -2054,15 +2054,20 @@ def _process_vod_segments(
                 title_tier,
                 title_blob[:80],
             )
+        if title_tier >= 5 or (entry and entry.get("title_rescan_priority")):
+            os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+            os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
+            os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
+                "MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900"
+            )
+            log.info(
+                "dense_1hz vod=%s title_tier=%s rescan=%s",
+                vod.name,
+                title_tier,
+                bool(entry and entry.get("title_rescan_priority")),
+            )
     except Exception as exc:
         log.warning("title_gate skipped: %s", exc)
-    if entry and entry.get("title_rescan_priority"):
-        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
-        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
-        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
-            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900"
-        )
-        log.info("title_rescan_priority dense 1Hz vod=%s", vod.name)
     state_pre = _load_state()
     streak_in = streak_from_state(state_pre)
     prev_level = int(state_pre.get("last_adaptive_level") or 0)

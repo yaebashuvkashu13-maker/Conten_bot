@@ -457,6 +457,24 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
     return None
 
 
+def _dense_scan_end(vod: Path, duration: float, t0: float) -> float:
+    """Cap dense sweep — savage montages rarely need full 13-min 1Hz scan."""
+    end = max(t0 + 8.0, duration - 2.0)
+    try:
+        from mlbb_vod_title import title_min_banner_tier, vod_title_blob
+
+        tier = title_min_banner_tier(vod_title_blob(vod))
+        if tier >= 5:
+            cap = float(os.environ.get("MLBB_SAVAGE_DENSE_MAX_SPAN_SEC", "360"))
+            return min(end, t0 + max(60.0, cap))
+        if tier >= 4:
+            cap = float(os.environ.get("MLBB_MANIAC_DENSE_MAX_SPAN_SEC", "480"))
+            return min(end, t0 + max(90.0, cap))
+    except Exception:
+        pass
+    return end
+
+
 def _dense_scan_enabled() -> bool:
     return os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1"
 
@@ -540,7 +558,8 @@ def discover_vod_kill_banners(
     else:
         step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "3.0"))
     t0 = _discover_scan_start(vod, duration)
-    scan_span = max(60.0, duration - t0)
+    t_end = _dense_scan_end(vod, duration, t0) if dense else max(t0 + 8.0, duration - 2.0)
+    scan_span = max(60.0, t_end - t0)
     if dense:
         per_sec = int(scan_span / max(step, 1.0)) + 16
         max_probes = max(
@@ -579,6 +598,32 @@ def discover_vod_kill_banners(
                 hits[-1] = hit
         else:
             hits.append(hit)
+
+    # Phase 0: audit-known banner seconds (from prior dense audit) — instant savage recall.
+    try:
+        from mlbb_vod_dense_hints import audit_banner_hints
+        from mlbb_vod_segment_store import vod_youtube_id
+
+        audit_secs = audit_banner_hints(vod_youtube_id(vod), min_tier=need)
+        for sec in audit_secs[:8]:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            hit = find_banner_near_peak(vod, sec, quick=True)
+            if hit:
+                _merge_hit(hit)
+        if audit_secs:
+            log.info(
+                "banner discover %s: audit_hints=%s merged_hits=%s",
+                vod.name,
+                [round(s, 1) for s in audit_secs[:6]],
+                len(hits),
+            )
+            if hits and need >= 5 and any(h.tier >= need for h in hits):
+                if os.environ.get("MLBB_DENSE_STOP_ON_SAVAGE", "1") == "1":
+                    log.info("banner discover %s: stop early — savage hit from audit hints", vod.name)
+                    return hits
+    except Exception as exc:
+        log.debug("audit hints skipped: %s", exc)
 
     def _probe_at(t: float, *, deep: bool, quick: bool = False) -> bool:
         nonlocal probes
@@ -622,7 +667,7 @@ def discover_vod_kill_banners(
         # Same heuristic as scan_window() candidate picking.
         color = _announce_color_score(frame)
         color_floor = _color_min_score() * (
-            0.65 if dense else 0.75
+            0.85 if dense else 0.75
         )
         if color < color_floor:
             return
@@ -709,31 +754,58 @@ def discover_vod_kill_banners(
             except Exception:
                 cap = None
             if dense:
-                # True 1 Hz sweep via one ffmpeg batch — no per-second cv2 seek.
-                t_end = duration - 2.0
-                batch = _ffmpeg_dense_timeline_frames(vod, t0, t_end, step)
+                # Chunked 1 Hz ffmpeg decode — never preload entire VOD into RAM.
+                chunk_sec = float(os.environ.get("MLBB_BANNER_DENSE_CHUNK_SEC", "60"))
+                cursor = t0
+                frame_i = 0
                 log.info(
-                    "banner discover %s: dense_1hz start=%.0fs span=%.0fs frames=%s max_probes=%s max_sec=%.0f",
+                    "banner discover %s: dense_1hz start=%.0fs end=%.0fs span=%.0fs max_probes=%s max_sec=%.0f",
                     vod.name,
                     t0,
-                    span,
-                    len(batch),
+                    t_end,
+                    t_end - t0,
                     max_probes,
                     max_sec,
                 )
-                for i, (t, frame) in enumerate(batch):
+                while cursor < t_end - 0.25:
                     if probes >= max_probes or time.monotonic() >= deadline:
                         break
-                    _timestep_color_probe(t, frame=frame)
-                    if i % 60 == 0 or i < 3 or i == len(batch) - 1:
-                        log.info(
-                            "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
-                            vod.name,
-                            t,
-                            probes,
-                            max_probes,
-                            len(hits),
-                        )
+                    chunk_end = min(t_end, cursor + chunk_sec)
+                    span = max(0.5, chunk_end - cursor)
+                    sample_count = max(1, min(120, int(span / max(step, 0.25)) + 1))
+                    batch = _ffmpeg_sample_frames(vod, cursor, chunk_end, sample_count)
+                    if not batch:
+                        cursor = chunk_end
+                        continue
+                    for t, frame in batch:
+                        if probes >= max_probes or time.monotonic() >= deadline:
+                            break
+                        _timestep_color_probe(t, frame=frame)
+                        if frame_i % 60 == 0 or frame_i < 3:
+                            log.info(
+                                "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
+                                vod.name,
+                                t,
+                                probes,
+                                max_probes,
+                                len(hits),
+                            )
+                        frame_i += 1
+                        if (
+                            hits
+                            and need >= 5
+                            and any(h.tier >= need for h in hits)
+                            and os.environ.get("MLBB_DENSE_STOP_ON_SAVAGE", "1") == "1"
+                        ):
+                            log.info(
+                                "banner discover %s: stop early — tier>=%s hit at t=%.0fs",
+                                vod.name,
+                                need,
+                                hits[-1].sec,
+                            )
+                            cursor = t_end
+                            break
+                    cursor = chunk_end
             else:
                 # Spread sampling across the whole VOD under tight time budget.
                 sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))

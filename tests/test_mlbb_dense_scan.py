@@ -40,3 +40,31 @@ def test_dense_scan_enabled() -> None:
             os.environ.pop("MLBB_VOD_BANNER_DENSE_SEC", None)
         else:
             os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = old
+
+
+def test_dense_scan_end_caps_savage_title() -> None:
+    vod = Path("/tmp/yt_savage_cap.mp4")
+    with patch("mlbb_vod_title.title_min_banner_tier", return_value=5):
+        end = kb._dense_scan_end(vod, 780.0, 3.0)
+        assert end <= 3.0 + 360.0 + 1
+
+
+def test_pick_available_vod_returns_row_not_duration() -> None:
+    from mlbb_vod_segment_feed import _pick_available_vod
+
+    registry = [
+        {
+            "id": "abc123",
+            "path": "/nonexistent/yt_abc123.mp4",
+            "last_scan_at": 0,
+            "title_rescan_priority": True,
+        }
+    ]
+    with patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=780.0):
+        with patch("mlbb_vod_segment_feed._vod_length_ok", return_value=True):
+            with patch("mlbb_vod_segment_feed.should_skip_vod_rescan", return_value=False):
+                with patch.object(Path, "exists", return_value=True):
+                    pick = _pick_available_vod(registry)
+    assert pick is not None
+    assert pick.get("id") == "abc123"
+
