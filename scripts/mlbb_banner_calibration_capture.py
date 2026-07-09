@@ -93,7 +93,7 @@ def discover_candidates(vod: Path, *, limit: int = 12) -> list:
     hint_secs = audit_banner_hints(vid, min_tier=min_tier)
     hits: list = []
     if hint_secs:
-        for sec in hint_secs:
+        for sec in hint_secs[: max(limit * 2, limit)]:
             hit = find_banner_near_peak(vod, sec, quick=True)
             if hit is None:
                 hit = KillBannerHit(

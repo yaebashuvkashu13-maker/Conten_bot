@@ -116,13 +116,18 @@ def _register_candidates(vod: Path) -> int:
             from mlbb_vod_segment_store import load_index
 
             vid = vod.stem.replace("yt_", "")[:11]
+            seg_limit = int(os.environ.get("MLBB_BANNER_CALIB_SEGMENT_HINTS", "6"))
             for row in load_index().get("segments", []):
                 seg_vod = str(row.get("vod_id") or row.get("vod") or "")
                 if vid not in seg_vod:
                     continue
+                if row.get("kill_banner") in (None, ""):
+                    continue
                 peak = row.get("peak_start", row.get("start"))
                 if peak is not None:
                     extra_secs.append(float(peak))
+                if len(extra_secs) >= seg_limit:
+                    break
         except Exception:
             pass
     for sec in audit_banner_hints(vod.stem.replace("yt_", "")[:11], min_tier=1):
