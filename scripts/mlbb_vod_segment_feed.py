@@ -796,8 +796,11 @@ def send_video(
 
     try:
         sent = False
-        send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1") == "1"
-        if send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+        send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "0") == "1"
+        # Inline sendVideo (preview + 👍/👎) — default. Document only when forced or >20MB after compress.
+        if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+            sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
+        elif send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
             fname = f"{game.upper()}_{seg_id}.mp4"
             sent = send_hq_files(
                 token,
@@ -807,8 +810,6 @@ def send_video(
                 reply_markup=markup,
                 filename=fname,
             )
-        elif deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
-            sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
         elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
             log.warning(
                 "telegram sendVideo too large seg=%s bytes=%s — sendDocument fallback",

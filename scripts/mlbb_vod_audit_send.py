@@ -23,7 +23,7 @@ from mlbb_vod_segment_feed import (  # noqa: E402
     send_video,
 )
 from mlbb_vod_segment_store import load_feed_sent, segment_id, segments_root, upsert_segment, vod_youtube_id
-from mlbb_vod_title import vod_title_blob
+from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -136,12 +136,17 @@ def send_audit_vod(
             continue
 
         seg_dur = _ffprobe_duration(out)
+        max_dur = float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "32"))
+        if seg_dur > max_dur + 2:
+            log.warning("skip audit %s dur=%.1f > %.0f", sid, seg_dur, max_dur)
+            continue
         caption = (
             f"🎯 АУДИТ {label} @ {peak}s\n"
             f"{vid} | {seg_dur:.0f}с\n"
             f"{title_blob[:70]}\n"
             f"👍 Ок / 👎 Не ок"
         )
+        os.environ["VOD_CALIBRATION_SEND_AS_FILE"] = "0"
         if send_video(token, chat_id, out, caption, seg_id=sid, record_learning=False):
             upsert_segment(
                 {
@@ -170,6 +175,13 @@ def send_audit_vod(
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if os.environ.get("MLBB_AUDIT_SEND_ENABLED", "0") != "1":
+        print(
+            "audit send disabled — set MLBB_AUDIT_SEND_ENABLED=1 for debug only; "
+            "production uses mlbb_vod_segment_feed dense 1Hz",
+            file=sys.stderr,
+        )
+        return 0
     parser = argparse.ArgumentParser(description="Send dense-audit savage moments to Telegram")
     parser.add_argument("--audit", type=Path, default=None)
     parser.add_argument("--vod-id", action="append", default=[], help="Limit to these youtube ids")
@@ -200,8 +212,20 @@ def main() -> int:
         if not hits:
             continue
         title_blob = str(block.get("title_blob") or vod_title_blob(vod))
+        title_tier = title_min_banner_tier(title_blob)
+        if title_tier == 0:
+            log.info("skip audit %s — title does not promise kill streak/savage", vid)
+            continue
+        if title_tier >= 5:
+            hits = [h for h in hits if int(h.get("tier") or 0) >= 5]
+        elif title_tier >= 2:
+            hits = [h for h in hits if int(h.get("tier") or 0) >= title_tier]
+        elif not title_promises_kill_streak(title_blob):
+            hits = [h for h in hits if int(h.get("tier") or 0) >= 3]
         if args.dry_run:
             print(vid, len(hits), [h["sec"] for h in hits])
+            continue
+        if not hits:
             continue
         n = send_audit_vod(vod, hits, token=token, chat_id=chat_id, title_blob=title_blob)
         total += n
