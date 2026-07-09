@@ -33,6 +33,14 @@ def _ref_min_sim() -> float:
     return float(os.environ.get("MLBB_BANNER_REF_MIN_SIM", "0.38"))
 
 
+def _neg_ref_min_sim() -> float:
+    return float(os.environ.get("MLBB_BANNER_NEG_REF_MIN_SIM", "0.42"))
+
+
+def _neg_ref_match_enabled() -> bool:
+    return os.environ.get("MLBB_BANNER_NEG_REF_MATCH", "1") == "1"
+
+
 def _tier_from_hint(hint: str) -> int:
     return {
         "savage": 5,
@@ -115,8 +123,44 @@ def _load_ref_rows() -> tuple[tuple[str, str, str, str], ...]:
     return tuple(rows)
 
 
+@lru_cache(maxsize=1)
+def _load_negative_ref_rows() -> tuple[tuple[str, str, str], ...]:
+    rows: list[tuple[str, str, str]] = []
+    root = banner_ref_root() / "owner_cal" / "negative"
+    if not root.exists():
+        return tuple()
+    for path in sorted(root.rglob("*.png")):
+        reason = path.parent.name if path.parent != root else "unknown"
+        rows.append((str(path), reason, reason))
+    return tuple(rows)
+
+
 def clear_banner_ref_cache() -> None:
     _load_ref_rows.cache_clear()
+    _load_negative_ref_rows.cache_clear()
+
+
+def match_negative_banner_reference(frame) -> tuple[float, str, str] | None:
+    """Return (score, reason, path) if frame matches owner-labeled negative crop."""
+    if not _neg_ref_match_enabled():
+        return None
+    patch = extract_banner_zone_patch(frame)
+    if patch is None:
+        return None
+    rows = _load_negative_ref_rows()
+    if not rows:
+        return None
+    best: tuple[float, str, str] | None = None
+    for path, reason, _tag in rows:
+        ref = _ref_patch_cached(path)
+        if ref is None:
+            continue
+        score = patch_similarity(patch, ref)
+        if best is None or score > best[0]:
+            best = (score, reason, path)
+    if best is None or best[0] < _neg_ref_min_sim():
+        return None
+    return best
 
 
 @lru_cache(maxsize=256)
@@ -132,6 +176,9 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     Return (score, ref_name, source, tier) for best reference match, or None.
     """
     if not _ref_match_enabled():
+        return None
+    neg = match_negative_banner_reference(frame)
+    if neg is not None:
         return None
     patch = extract_banner_zone_patch(frame)
     if patch is None:

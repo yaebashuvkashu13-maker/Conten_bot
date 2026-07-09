@@ -297,8 +297,18 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
+    def _neg_block() -> bool:
+        try:
+            from mlbb_banner_ref_match import match_negative_banner_reference
+
+            return match_negative_banner_reference(frame) is not None
+        except Exception:
+            return False
+
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
+        if _neg_block():
+            return None
         return KillBannerHit(
             sec=round(sec, 2),
             tier=classified.tier,

@@ -282,6 +282,20 @@ def write_manifest(*, wiki_rows: list[dict] | None = None, vod_rows: list[dict] 
                 "tier_hint": tier,
             }
         )
+    owner_root = root / "owner_cal" / "positive"
+    if owner_root.exists():
+        for path in sorted(owner_root.rglob("*.png")):
+            reason = path.parent.name
+            tier = _TIER_FROM_NOTE.get(reason, "unknown")
+            rel = path.relative_to(root)
+            refs.append(
+                {
+                    "name": path.stem,
+                    "source": f"owner_cal:{reason}",
+                    "path": str(rel),
+                    "tier_hint": tier if tier != "unknown" else "savage" if reason == "savage_tier" else "triple",
+                }
+            )
     payload = {
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "root": str(root),

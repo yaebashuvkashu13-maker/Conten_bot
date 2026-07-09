@@ -10,6 +10,9 @@ mlbb_kill_banners/
   wiki/                  # notification frame previews (Fandom wiki)
   vod_crops/
     double/ triple/ maniac/ savage/ unknown/
+  owner_cal/
+    positive/   # owner-labeled good banner crops (banner calibration)
+    negative/   # owner-labeled reject patterns (no_banner, enemy_kill, …)
 ```
 
 ## Build on VPS
@@ -31,6 +34,19 @@ Env:
 - `MLBB_BANNER_REF_ROOT` — this directory
 - `MLBB_BANNER_REF_MATCH=1` — enable visual fallback
 - `MLBB_BANNER_REF_MIN_SIM=0.38` — histogram correlation threshold
+- `MLBB_BANNER_NEG_REF_MATCH=1` — reject HUD patches similar to owner negative crops
+- `MLBB_BANNER_NEG_REF_MIN_SIM=0.42` — negative match threshold
+
+## Owner banner calibration (screenshots)
+
+Bot sends kill-banner screenshots with inline buttons; owner labels ~50 checks.
+Crops land in `owner_cal/positive` and `owner_cal/negative`, then feed into ref match.
+
+```bash
+python3 scripts/mlbb_banner_calibration_feed.py
+```
+
+Env: `MLBB_BANNER_CALIB_TARGET=50`, `MLBB_BANNER_CALIB_BATCH=3`
 
 ## Note on “all skins”
 

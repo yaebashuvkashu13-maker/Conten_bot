@@ -11,8 +11,11 @@ BIN=/usr/local/bin
 
 mkdir -p /root/data/mlbb /root/datasets/mlbb/vod_segments /root/data/mlbb/logs \
   /root/data/mlbb/youtube_nightly/inbox \
+  /root/datasets/mlbb/banner_calibration \
   "$REPO/data/mlbb_kill_banners/wiki" \
-  "$REPO/data/mlbb_kill_banners/vod_crops"
+  "$REPO/data/mlbb_kill_banners/vod_crops" \
+  "$REPO/data/mlbb_kill_banners/owner_cal/positive" \
+  "$REPO/data/mlbb_kill_banners/owner_cal/negative"
 
 cat >"$PAUSE" <<'EOF'
 pubg_mlbb_pipeline.py
@@ -218,6 +221,10 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_pov_match.py" \
   "$REPO/scripts/mlbb_banner_ref_ingest.py" \
   "$REPO/scripts/mlbb_banner_ref_match.py" \
+  "$REPO/scripts/mlbb_banner_calibration_reasons.py" \
+  "$REPO/scripts/mlbb_banner_calibration_store.py" \
+  "$REPO/scripts/mlbb_banner_calibration_capture.py" \
+  "$REPO/scripts/mlbb_banner_calibration_feed.py" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
   "$REPO/scripts/mlbb_feedback_gate_tune.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
@@ -287,7 +294,11 @@ export MLBB_FIGHT_HARD_MAX_SEC=32
 export MLBB_FIGHT_POST_SEC=4
 export MLBB_FIGHT_TRIM_LONG=1
 export MLBB_BANNER_POST_SEC=5
-export MLBB_BANNER_POV_MATCH=1
+export MLBB_BANNER_NEG_REF_MATCH=1
+export MLBB_BANNER_CALIB_TARGET=50
+export MLBB_BANNER_CALIB_BATCH=3
+export MLBB_BANNER_CALIB_VODS=2
+export MLBB_BANNER_CALIB_MIN_TIER=1
 export MLBB_VOD_BANNER_PRESEND=1
 export MLBB_VOD_MOTION_ANCHOR_OK=0
 export MLBB_VOD_FAST_PROBE=1
@@ -351,7 +362,7 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   >"$TMP" || true
 echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_watchdog.log 2>&1 $MARK watchdog" >>"$TMP"
 echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
-echo "*/15 * * * * $REPO/scripts/vps_apply_vod_only.sh >>/root/data/mlbb/vps_apply_vod.log 2>&1 $MARK auto-apply" >>"$TMP"
+echo "*/20 * * * * cd $REPO && python3 $REPO/scripts/mlbb_banner_calibration_feed.py >>/root/data/mlbb/logs/mlbb_banner_calibration_feed.log 2>&1 $MARK banner-cal" >>"$TMP"
 crontab "$TMP"
 rm -f "$TMP"
 
