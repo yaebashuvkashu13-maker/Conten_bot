@@ -115,6 +115,18 @@ def _vod_skip_long_sec() -> float:
 
 def _vod_min_peak_sec(vod: Path | None = None) -> float:
     """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
+    if vod is not None:
+        try:
+            from mlbb_vod_title import title_min_banner_tier, title_scan_start_sec, vod_title_blob
+
+            blob = vod_title_blob(vod)
+            if title_min_banner_tier(blob) >= 2:
+                dur = _ffprobe_duration(vod)
+                early = title_scan_start_sec(blob, dur)
+                if early is not None:
+                    return max(0.0, early)
+        except Exception:
+            pass
     base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
     if vod is None:
         return base
@@ -906,6 +918,11 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             }
         start, end, dur, meta = resolved
         banner_sec = float(meta.get("banner_sec", peak))
+        prior_tier = int(clip.get("kill_banner_tier") or 0)
+        prior_label = str(clip.get("kill_banner") or "")
+        meta_tier = int(meta.get("kill_banner_tier") or 0)
+        tier_out = max(prior_tier, meta_tier)
+        label_out = prior_label if prior_tier >= meta_tier and prior_label else meta.get("kill_banner")
         return {
             **clip,
             "start": start,
@@ -917,6 +934,8 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             "output_duration": dur,
             "speed": 1.0,
             **meta,
+            "kill_banner_tier": tier_out,
+            "kill_banner": label_out or meta.get("kill_banner"),
         }
 
     from smart_video_editor import profile_action_clip_bounds
@@ -2219,15 +2238,23 @@ def _process_vod_segments(
                     blocked = False
                     min_peak = _vod_min_peak_sec(vod)
                     if pool_peaks and all(float(p) < min_peak for p in pool_peaks):
-                        blocked = True
-                        if entry is not None:
-                            entry["reject_reason"] = "peaks_before_min_peak"
-                        log.info(
-                            "all pool peaks before min_peak=%.0f vod=%s peaks=%s",
-                            min_peak,
-                            vod.name,
-                            pool_peaks[:6],
+                        has_banner_peak = bool(
+                            pool_cache
+                            and any(
+                                c.get("kill_banner") or c.get("anchor") == "kill_banner"
+                                for c in pool_cache
+                            )
                         )
+                        if not has_banner_peak:
+                            blocked = True
+                            if entry is not None:
+                                entry["reject_reason"] = "peaks_before_min_peak"
+                            log.info(
+                                "all pool peaks before min_peak=%.0f vod=%s peaks=%s",
+                                min_peak,
+                                vod.name,
+                                pool_peaks[:6],
+                            )
                     elif not pool_peaks:
                         blocked = True
                     elif pool_peaks_fully_blocked(
