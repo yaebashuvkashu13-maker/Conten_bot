@@ -1817,9 +1817,13 @@ def _collect_scan_segments(
         crop_probe = _vod_crop_box(vod, float(lead_clip.get("start", start)), seg_dur)
         from mlbb_fight_segment import clip_active_gameplay_ok
 
-        active_ok, active_reason = clip_active_gameplay_ok(
-            vod, float(lead_clip.get("start", start)), seg_dur, crop_box=crop_probe
-        )
+        title_need = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+        if tier_i >= 5 and title_need >= 5:
+            active_ok, active_reason = True, "savage_title_trust"
+        else:
+            active_ok, active_reason = clip_active_gameplay_ok(
+                vod, float(lead_clip.get("start", start)), seg_dur, crop_box=crop_probe
+            )
         if not active_ok:
             log.info("skip peak=%.1f %s", peak, active_reason)
             continue
