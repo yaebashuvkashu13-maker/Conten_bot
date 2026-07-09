@@ -52,9 +52,7 @@ def _fast_candidates(limit: int) -> list[tuple[Path, KillBannerHit, str, float]]
                 cid = check_id(vod, sec)
                 if cid in labeled:
                     continue
-                hit = find_banner_near_peak(vod, sec, quick=True)
-                if hit is None:
-                    hit = KillBannerHit(sec=sec, tier=5, label="owner_good", text="owner", source="owner")
+                hit = KillBannerHit(sec=sec, tier=5, label="owner_good", text="owner", source="owner")
                 frame = _read_frame(vod, hit.sec)
                 score = _score_candidate(hit, frame)
                 if score >= 0:
