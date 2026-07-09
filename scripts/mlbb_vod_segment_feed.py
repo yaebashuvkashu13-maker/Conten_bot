@@ -882,6 +882,43 @@ def _apply_lead_start(start: float) -> float:
 def _normalize_clip(clip: dict, vod: Path) -> dict:
     # Prefer OCR banner time over highlight window start (POV + fight bounds).
     peak = float(clip.get("banner_sec") or clip.get("peak_start") or clip.get("start", 0))
+    tier_known = int(clip.get("kill_banner_tier") or 0)
+    if (
+        clip.get("anchor") == "kill_banner"
+        and clip.get("kill_banner")
+        and tier_known >= int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+        and tier_known >= 2
+    ):
+        from mlbb_fight_segment import _analysis_for, detect_fight_bounds
+        from mlbb_kill_banner import bounds_from_banner
+
+        banner_sec = float(clip.get("banner_sec") or peak)
+        analysis = _analysis_for(vod)
+        file_dur = float(analysis.get("duration") or 0.0)
+        if file_dur <= 0:
+            file_dur = _ffprobe_duration(vod)
+        fight_start, fight_end, fight_dur = detect_fight_bounds(vod, banner_sec)
+        start, end, dur = bounds_from_banner(
+            banner_sec,
+            file_dur,
+            fight_start=fight_start,
+            fight_end=fight_end,
+        )
+        return {
+            **clip,
+            "start": start,
+            "peak_start": banner_sec,
+            "banner_sec": banner_sec,
+            "fight_end": end,
+            "source_path": str(vod),
+            "source_index": 0,
+            "input_duration": dur,
+            "output_duration": dur,
+            "speed": 1.0,
+            "anchor": "kill_banner",
+            "kill_banner": clip.get("kill_banner"),
+            "kill_banner_tier": tier_known,
+        }
     if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
         from mlbb_fight_segment import _analysis_for
         from mlbb_kill_banner import resolve_fight_bounds
