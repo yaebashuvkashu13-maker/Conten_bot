@@ -113,7 +113,7 @@ def _audit_candidates(inbox: Path, labeled: dict, sent: set, *, min_tier: int) -
                 continue
             sec = float(row["sec"])
             cid = check_id(vod, sec)
-            if cid in labeled or cid in sent:
+            if cid in labeled:
                 continue
             hit = KillBannerHit(
                 sec=sec,
@@ -153,7 +153,7 @@ def _segment_candidates(inbox: Path, labeled: dict, sent: set, *, min_tier: int)
             continue
         sec = float(row.get("peak_start") if row.get("peak_start") is not None else row.get("start") or 0)
         cid = check_id(vod, sec)
-        if cid in labeled or cid in sent:
+        if cid in labeled:
             continue
         hit = find_banner_near_peak(vod, sec, quick=True)
         if hit is None:
@@ -184,31 +184,33 @@ def _peak_scan_candidates(
 ) -> list[tuple[Path, KillBannerHit, str, float]]:
     from mlbb_kill_banner import _ffmpeg_sample_frames, _classify_frame
 
-    used = {cid.rsplit("_", 1)[0].lower() for cid in list(labeled) + list(sent)}
+    skip_ids = set(labeled.keys())
     vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     out: list[tuple[Path, KillBannerHit, str, float]] = []
+    vods_scanned = 0
     for vod in vods:
-        if vod_youtube_id(vod).lower() in used:
-            continue
         frames = _ffmpeg_sample_frames(
             vod,
             float(os.environ.get("MLBB_POS_CAL_T0", "90")),
             float(os.environ.get("MLBB_POS_CAL_T1", "1200")),
             int(os.environ.get("MLBB_POS_CAL_SAMPLES", "14")),
         )
+        found_on_vod = 0
         for sec, frame in frames:
             hit = _classify_frame(sec, frame)
             if hit is None or int(hit.tier) < min_tier:
                 continue
             cid = check_id(vod, hit.sec)
-            if cid in labeled or cid in sent or cid in {x[2] for x in out}:
+            if cid in skip_ids or cid in {x[2] for x in out}:
                 continue
             score = _score_candidate(hit, frame)
-            if score < float(os.environ.get("MLBB_POS_CAL_MIN_SCORE", "8")):
+            if score < float(os.environ.get("MLBB_POS_CAL_MIN_SCORE", "6")):
                 continue
             out.append((vod, hit, cid, score))
-        used.add(vod_youtube_id(vod).lower())
-        if len(used) >= vod_limit:
+            found_on_vod += 1
+        if found_on_vod > 0 or True:
+            vods_scanned += 1
+        if vods_scanned >= vod_limit:
             break
     return out
 
@@ -216,7 +218,8 @@ def _peak_scan_candidates(
 def collect_positive_candidates(*, limit: int) -> list[tuple[Path, KillBannerHit, str, float]]:
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
-    sent = load_sent()
+    skip_sent = os.environ.get("MLBB_POS_CAL_SKIP_SENT", "0") == "1"
+    sent = load_sent() if skip_sent else set()
     min_tier = int(os.environ.get("MLBB_POS_CAL_MIN_TIER", "4"))
 
     merged: dict[str, tuple[Path, KillBannerHit, str, float]] = {}
