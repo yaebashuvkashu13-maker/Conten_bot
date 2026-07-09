@@ -194,6 +194,8 @@ def extract_and_check_segment(
     need = int(os.environ.get("VISUAL_MIN_FRAMES_PASS", "3"))
     if profile in ("pubg", "standoff"):
         need = int(os.environ.get("VISUAL_PUBG_MIN_FRAMES_PASS", "3"))
+    elif profile == "mobile_legends":
+        need = int(os.environ.get("VISUAL_MLBB_MIN_FRAMES_PASS", "2"))
     seg_pass = passed_frames >= need
     fail_reason = ""
     if not seg_pass:
