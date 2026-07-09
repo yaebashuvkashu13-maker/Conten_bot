@@ -331,15 +331,15 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         ranked.append((-priority, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-    pick = ranked[0][4]
-    dur = ranked[0][3]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    pick = ranked[0][5]
+    dur = ranked[0][4]
     log.info(
         "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s",
         pick.get("id", ""),
         dur / 60,
         target / 60,
-        bool(ranked[0][0]),
+        bool(ranked[0][1]),
     )
     return pick
 
