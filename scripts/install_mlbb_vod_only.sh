@@ -225,6 +225,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_store.py" \
   "$REPO/scripts/mlbb_banner_calibration_capture.py" \
   "$REPO/scripts/mlbb_banner_calibration_feed.py" \
+  "$REPO/scripts/mlbb_banner_calibration_burst.py" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
   "$REPO/scripts/mlbb_feedback_gate_tune.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
