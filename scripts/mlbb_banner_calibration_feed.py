@@ -108,7 +108,42 @@ def _register_candidates(vod: Path) -> int:
     labeled = labeled_ids()
     sent = load_sent()
     added = 0
-    for hit in discover_candidates(vod):
+    from mlbb_vod_dense_hints import audit_banner_hints
+
+    extra_secs: list[float] = []
+    if os.environ.get("MLBB_BANNER_CALIB_USE_SEGMENT_INDEX", "1") == "1":
+        try:
+            from mlbb_vod_segment_store import load_index
+
+            vid = vod.stem.replace("yt_", "")[:11]
+            for row in load_index().get("segments", []):
+                seg_vod = str(row.get("vod_id") or row.get("vod") or "")
+                if vid not in seg_vod:
+                    continue
+                peak = row.get("peak_start", row.get("start"))
+                if peak is not None:
+                    extra_secs.append(float(peak))
+        except Exception:
+            pass
+    for sec in audit_banner_hints(vod.stem.replace("yt_", "")[:11], min_tier=1):
+        extra_secs.append(sec)
+
+    hits = discover_candidates(vod)
+    if extra_secs:
+        from mlbb_kill_banner import KillBannerHit, find_banner_near_peak
+
+        seen = {round(h.sec, 1) for h in hits}
+        for sec in sorted(set(extra_secs)):
+            if any(abs(sec - s) < 5 for s in seen):
+                continue
+            hit = find_banner_near_peak(vod, sec, quick=True)
+            if hit is None:
+                hit = KillBannerHit(sec=round(sec, 2), tier=3, label="segment", text="index", source="index")
+            hits.append(hit)
+            seen.add(round(sec, 1))
+
+    hits = sorted(hits, key=lambda h: (-int(h.tier), h.sec))
+    for hit in hits:
         cid = check_id(vod, hit.sec)
         if cid in labeled or cid in sent:
             continue

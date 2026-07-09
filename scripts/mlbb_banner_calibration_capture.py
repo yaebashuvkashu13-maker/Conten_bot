@@ -85,10 +85,36 @@ def render_check_screenshot(
 
 def discover_candidates(vod: Path, *, limit: int = 12) -> list:
     """Return banner hits worth sending for owner calibration."""
-    from mlbb_kill_banner import discover_vod_kill_banners
+    from mlbb_kill_banner import KillBannerHit, discover_vod_kill_banners, find_banner_near_peak
+    from mlbb_vod_dense_hints import audit_banner_hints
 
     min_tier = int(os.environ.get("MLBB_BANNER_CALIB_MIN_TIER", "1"))
-    hits = discover_vod_kill_banners(vod, min_tier=min_tier)
+    vid = vod_youtube_id(vod)
+    hint_secs = audit_banner_hints(vid, min_tier=min_tier)
+    hits: list = []
+    if hint_secs:
+        for sec in hint_secs:
+            hit = find_banner_near_peak(vod, sec, quick=True)
+            if hit is None:
+                hit = KillBannerHit(
+                    sec=round(sec, 2),
+                    tier=max(min_tier, 3),
+                    label="audit",
+                    text="dense_audit_hint",
+                    source="audit",
+                )
+            hits.append(hit)
+    if not hits:
+        max_sec = float(os.environ.get("MLBB_BANNER_CALIB_DISCOVER_MAX_SEC", "900"))
+        prev = os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC")
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max_sec)
+        try:
+            hits = discover_vod_kill_banners(vod, min_tier=min_tier)
+        finally:
+            if prev is None:
+                os.environ.pop("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", None)
+            else:
+                os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = prev
     if not hits:
         return []
     hits = sorted(hits, key=lambda h: (-int(h.tier), h.sec))
