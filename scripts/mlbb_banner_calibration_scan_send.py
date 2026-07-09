@@ -30,6 +30,9 @@ def main() -> int:
         print("missing telegram creds", flush=True)
         return 1
 
+    os.environ.setdefault("MLBB_BANNER_OWNER_GATE", "0")
+    os.environ.setdefault("MLBB_BANNER_NEG_REF_MATCH", "0")
+
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
     batch = int(os.environ.get("MLBB_POS_SCAN_BATCH", "15"))
@@ -57,6 +60,8 @@ def main() -> int:
             if cid in labeled or cid in {c[2] for c in candidates}:
                 continue
             score = _score_candidate(hit, frame)
+            if score < 0:
+                score = float(hit.tier) * 2.0 + (3.0 if hit.source == "ocr" else 1.0)
             if score < min_score:
                 continue
             candidates.append((vod, hit, cid, score))
