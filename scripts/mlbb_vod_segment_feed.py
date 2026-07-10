@@ -1419,7 +1419,17 @@ def _verified_discovery_banner(row: dict, min_tier: int) -> tuple[bool, str]:
     except (TypeError, ValueError):
         tier = 0
     banner = row.get("kill_banner")
-    if not banner or tier < int(min_tier):
+    if not banner:
+        return False, ""
+    trust_min = int(min_tier)
+    if os.environ.get("MLBB_VOD_DISCOVERY_TRUST_BASE_TIER", "1") == "1":
+        try:
+            from mlbb_kill_banner import _min_tier
+
+            trust_min = _min_tier()
+        except Exception:
+            pass
+    if tier < trust_min:
         return False, ""
     sec = float(row.get("banner_sec") or row.get("peak_start") or 0)
     return True, f"verified_discovery_banner:{banner}@{sec:.1f}s"
@@ -1482,7 +1492,11 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 banner_ok = True
                 banner_reason = f"audit_trust:{row.get('kill_banner')}@{banner_sec:.1f}s"
             if not banner_ok:
-                banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
+                banner_ok, banner_reason = verify_banner_on_source(
+                    vod,
+                    banner_sec,
+                    discovery_row=row,
+                )
             if not banner_ok:
                 banner_ok, banner_reason = verify_rendered_clip(
                     rendered,

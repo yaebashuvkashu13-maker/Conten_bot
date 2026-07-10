@@ -1159,11 +1159,33 @@ def verify_banner_on_source(
     banner_sec: float,
     *,
     min_tier: int | None = None,
+    discovery_row: dict | None = None,
 ) -> tuple[bool, str]:
     """Presend: verify streak banner on source VOD (rendered mp4 OCR is unreliable)."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
     need = min_tier if min_tier is not None else _min_tier()
+
+    if discovery_row and discovery_row.get("kill_banner") and os.environ.get("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "1") == "1":
+        try:
+            tier_i = int(discovery_row.get("kill_banner_tier") or 0)
+        except (TypeError, ValueError):
+            tier_i = 0
+        if tier_i >= need:
+            frame = _read_frame(vod, banner_sec)
+            if frame is not None:
+                if os.environ.get("MLBB_BANNER_OWNER_GATE", "1") == "1":
+                    try:
+                        from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+                        ok_owner, owner_reason = check_banner_frame_passes(frame, tier=tier_i)
+                        if not ok_owner:
+                            return False, owner_reason
+                    except Exception:
+                        pass
+                label = str(discovery_row.get("kill_banner") or "banner")
+                return True, f"source_banner_trust:{label}@{banner_sec:.1f}s"
+
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
         if hit.tier >= need and _banner_hit_source_ok(hit.source):
