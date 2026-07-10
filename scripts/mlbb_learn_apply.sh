@@ -58,11 +58,18 @@ PY
 
 TRAIN_OK=0
 if [[ "${MLBB_LEARN_APPLY_TRAIN:-1}" == "1" ]]; then
-  if python3 /usr/local/bin/highlight_train.py --profile mobile_legends 2>/dev/null \
-    || python3 "${CONTENT_BOT_REPO}/scripts/highlight_train.py" --profile mobile_legends; then
+  if python3 /usr/local/bin/mlbb_vod_quality_model.py --train --json 2>/dev/null \
+    || python3 "${CONTENT_BOT_REPO}/scripts/mlbb_vod_quality_model.py" --train --json; then
     TRAIN_OK=1
   else
-    echo "model candidate held: VOD-grouped quality gate failed"
+    echo "VOD quality model candidate held: grouped quality gate failed"
+  fi
+  if [[ "${MLBB_TRAIN_HEAVY_FEATURES:-0}" == "1" ]]; then
+    python3 /usr/local/bin/highlight_train.py --profile mobile_legends 2>/dev/null \
+      || python3 "${CONTENT_BOT_REPO}/scripts/highlight_train.py" --profile mobile_legends \
+      || echo "heavy highlight model candidate held"
+  else
+    echo "skip heavy highlight feature extraction: incremental VOD quality model active"
   fi
 else
   echo "skip highlight_train: MLBB_LEARN_APPLY_TRAIN=0"

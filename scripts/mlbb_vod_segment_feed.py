@@ -1886,6 +1886,18 @@ def _collect_scan_segments(
                 continue
         except Exception:
             pass
+        try:
+            from mlbb_vod_quality_model import quality_gate
+
+            quality_ok, quality_reason, quality_prob = quality_gate(candidate)
+            candidate["quality_probability"] = quality_prob
+            if not quality_ok:
+                log.info("skip %s %s", sid, quality_reason)
+                continue
+        except Exception as exc:
+            if os.environ.get("MLBB_VOD_QUALITY_MODEL_REQUIRED", "1") == "1":
+                log.warning("skip %s quality_model_error=%s", sid, exc)
+                continue
         out.append(candidate)
         if os.environ.get("MLBB_VOD_COLLECT_ONE", "0") == "1":
             log.info("collect_one: first validated segment %s — skip validating rest of pool", sid)
