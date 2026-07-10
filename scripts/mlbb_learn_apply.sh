@@ -69,6 +69,16 @@ PY
 
 python3 /usr/local/bin/eval_learning_first_gate.py 2>/dev/null || true
 
+python3 "${CONTENT_BOT_REPO}/scripts/mlbb_feedback_pattern_miner.py" --write --print 2>/dev/null || true
+python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_apply.py" 2>/dev/null || true
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+from mlbb_feedback_gate_tune import apply_feedback_gates, clear_patterns_cache
+clear_patterns_cache()
+print("feedback_gate", apply_feedback_gates(force=True))
+PY
+
 if [[ "${MLBB_LEARN_APPLY_FEED:-0}" == "1" ]]; then
   set -a
   # shellcheck disable=SC1091

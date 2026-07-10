@@ -1096,6 +1096,63 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_bcal:'):
+        try:
+            _, item_id, short = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return
+        from mlbb_banner_calibration_reasons import (
+            labeled_keyboard_markup as bcal_markup,
+            reason_from_short,
+            reason_label,
+        )
+        from mlbb_banner_calibration_store import apply_owner_label, stats as bcal_stats
+
+        reason = reason_from_short(short.strip())
+        if not reason:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Неизвестная кнопка', 'show_alert': True},
+                timeout=15,
+            )
+            return
+        try:
+            ok, reply = apply_owner_label(item_id.strip(), reason, by_chat=str(chat_id))
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return
+            st = bcal_stats()
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': f'{reason_label(reason)} ({st["labeled"]}/{st["target"]})',
+                },
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': bcal_markup(reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_bcal callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
