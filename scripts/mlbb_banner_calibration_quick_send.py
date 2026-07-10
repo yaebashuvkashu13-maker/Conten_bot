@@ -95,12 +95,12 @@ def _segment_peak_candidates(
         if cid in labeled or cid in seen:
             continue
         seen.add(cid)
-        hit = find_banner_near_peak(vod, sec, quick=True)
-        if hit is None:
-            hit = KillBannerHit(sec=sec, tier=tier, label=kb or "segment", text="segment_peak", source="segment")
-        frame = _read_frame(vod, hit.sec)
+        frame = _read_frame(vod, sec)
         if frame is None:
             continue
+        hit = _ocr_hit(sec, frame, deep=True)
+        if hit is None:
+            hit = KillBannerHit(sec=sec, tier=tier, label=kb or "segment", text="segment_peak", source="segment")
         ok, why = verified_before_send(vod, hit, frame)
         if not ok:
             print(f"skip_peak {cid}: {why}", flush=True)
