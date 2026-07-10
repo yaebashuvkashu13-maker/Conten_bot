@@ -160,6 +160,7 @@ def purge_bad_vod_crops_from_labels() -> dict:
 def purge_unverified_pending_index() -> dict:
     """Drop queued screenshots that fail owner-negative / OCR gates."""
     from mlbb_banner_calibration_positive_feed import _read_frame, hit_from_check_row, verified_before_send
+    from mlbb_banner_calibration_store import labeled_ids, load_index, remove_check_from_index
 
     labeled = labeled_ids()
     removed: list[dict] = []
