@@ -154,6 +154,13 @@ def main() -> int:
         except Exception as exc:
             print(f"capture_fail {cid}: {exc}")
             continue
+        from mlbb_banner_calibration_positive_feed import _read_frame, verified_before_send
+
+        frame = _read_frame(vod, sec)
+        ok, why = verified_before_send(vod, kh, frame)
+        if not ok:
+            print(f"skip_burst {cid}: {why}")
+            continue
         st = stats()
         caption = (
             f"🎯 Банер-калибровка {i}/{len(rows)} | размечено {st['labeled']}/{st['target']}\n"

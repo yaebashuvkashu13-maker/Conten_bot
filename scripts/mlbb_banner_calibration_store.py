@@ -289,6 +289,19 @@ def _append_owner_time_label(row: dict, reason: str) -> None:
         pass
 
 
+def sync_learning_after_label() -> None:
+    """Apply owner button press to live ref bank + profile immediately."""
+    _refresh_ref_manifest()
+    try:
+        from mlbb_banner_ref_match import clear_banner_ref_cache
+        from mlbb_banner_calibration_apply import write_profile
+
+        clear_banner_ref_cache()
+        write_profile()
+    except Exception:
+        pass
+
+
 def apply_owner_label(
     check_id_str: str,
     reason: str,
@@ -326,8 +339,7 @@ def apply_owner_label(
     save_labels(labels)
 
     _append_owner_time_label(row, reason)
-    if reason in POSITIVE_REASONS or crop_path or purged:
-        _refresh_ref_manifest()
+    sync_learning_after_label()
     return True, reason
 
 

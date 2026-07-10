@@ -67,7 +67,9 @@ def write_profile() -> dict:
 
     # Tune thresholds from label volume
     neg_sim = 0.42
-    if neg_files >= 40:
+    if neg_files >= 50:
+        neg_sim = 0.38
+    elif neg_files >= 40:
         neg_sim = 0.40
     elif neg_files >= 20:
         neg_sim = 0.41

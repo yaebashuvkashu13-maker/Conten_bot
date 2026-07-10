@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_banner_calibration_capture import render_check_screenshot
-from mlbb_banner_calibration_positive_feed import _read_frame, _score_candidate, positive_candidate_ok
+from mlbb_banner_calibration_positive_feed import _read_frame, _score_candidate, positive_candidate_ok, verified_before_send
 from mlbb_banner_calibration_reasons import inline_keyboard_markup
 from mlbb_banner_calibration_store import calibration_target, check_id, labeled_ids, mark_sent, stats
 from mlbb_kill_banner import KillBannerHit, _classify_frame, _ffmpeg_sample_frames
@@ -144,6 +144,11 @@ def _run() -> int:
     sent_n = 0
     target = calibration_target()
     for i, (vod, hit, cid, score) in enumerate(candidates, start=1):
+        frame = _read_frame(vod, hit.sec)
+        ok, why = verified_before_send(vod, hit, frame)
+        if not ok:
+            print(f"skip_send {cid}: {why}", flush=True)
+            continue
         try:
             shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
         except Exception as exc:

@@ -68,6 +68,9 @@ def positive_candidate_ok(hit: KillBannerHit, frame, *, vod: Path | None = None)
         accepted = True
     elif match_positive_owner_reference(frame) is not None:
         accepted = True
+    elif hit.source in ("segment", "audit", "index", "burst"):
+        ocr = classify_banner_text(_ocr_banner_zones(frame, deep=True))
+        accepted = ocr is not None and int(ocr.tier) >= max(2, int(hit.tier) - 1)
     elif hit.source == "ref":
         return False
     else:
@@ -87,6 +90,30 @@ def positive_candidate_ok(hit: KillBannerHit, frame, *, vod: Path | None = None)
         except Exception:
             pass
     return True
+
+
+def verified_before_send(
+    vod: Path,
+    hit: KillBannerHit,
+    frame=None,
+) -> tuple[bool, str]:
+    """Final gate before Telegram send — must pass owner negatives + OCR/pos."""
+    if frame is None:
+        frame = _read_frame(vod, hit.sec)
+    if frame is None:
+        return False, "no_frame"
+    if not positive_candidate_ok(hit, frame, vod=vod):
+        return False, "candidate_filter"
+    if os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1":
+        try:
+            from mlbb_banner_calibration_gate import check_banner_frame
+
+            decision, reason = check_banner_frame(frame, tier=int(hit.tier))
+            if decision == "reject":
+                return False, reason
+        except ImportError:
+            pass
+    return True, "ok"
 
 
 def _score_candidate(hit: KillBannerHit, frame) -> float:
