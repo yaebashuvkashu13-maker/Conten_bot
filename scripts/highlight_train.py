@@ -125,7 +125,7 @@ def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
         vod = resolve_vod(str(vid))
         if not vod:
             continue
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             if "time_sec" not in row:
                 continue
             label = 1 if row.get("label") == "good" else 0
@@ -194,6 +194,13 @@ def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
             y.append(int(row["label"]))
             groups.append(str(row.get("group") or path.stem))
             weights.append(float(row.get("weight") or 1.0))
+            if cache_changed and row_index % 25 == 0:
+                save_feature_cache(cache)
+                cache_changed = False
+                print(
+                    f"feature_progress={row_index}/{len(rows)} cached={len(cached_features)}",
+                    flush=True,
+                )
         if cache_changed:
             save_feature_cache(cache)
         manifest = build_training_manifest(profile)
