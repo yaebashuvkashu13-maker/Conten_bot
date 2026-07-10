@@ -88,8 +88,12 @@ def clear_banner_discovery_cache() -> None:
 
 
 def _discovery_cache_key(vod: Path, need: int, dense: bool) -> tuple[str, int, int, int, bool]:
-    stat = vod.stat()
-    return (str(vod.resolve()), stat.st_mtime_ns, stat.st_size, int(need), bool(dense))
+    try:
+        stat = vod.stat()
+        mtime_ns, size = stat.st_mtime_ns, stat.st_size
+    except OSError:
+        mtime_ns, size = 0, 0
+    return (str(vod.resolve()), mtime_ns, size, int(need), bool(dense))
 
 
 def _min_tier() -> int:
