@@ -26,4 +26,5 @@ if ! flock -n 9; then
   exit 0
 fi
 echo "===== $(date -Is) positive scan =====" >>"$LOG"
-python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_scan_send.py" >>"$LOG" 2>&1
+python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_quick_send.py" >>"$LOG" 2>&1 \
+  || python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_scan_send.py" >>"$LOG" 2>&1

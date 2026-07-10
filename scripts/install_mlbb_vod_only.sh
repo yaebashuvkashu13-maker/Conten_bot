@@ -231,6 +231,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_positive_feed.py" \
   "$REPO/scripts/mlbb_banner_calibration_positive_fast.py" \
   "$REPO/scripts/mlbb_banner_calibration_scan_send.py" \
+  "$REPO/scripts/mlbb_banner_calibration_quick_send.py" \
   "$REPO/scripts/mlbb_banner_positive_scan.sh" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
   "$REPO/scripts/mlbb_feedback_gate_tune.py" \
