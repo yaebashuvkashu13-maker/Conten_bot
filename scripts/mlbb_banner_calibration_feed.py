@@ -105,9 +105,12 @@ def format_caption(row: dict, idx: int, total: int) -> str:
 
 
 def _register_candidates(vod: Path) -> int:
+    from mlbb_banner_calibration_positive_feed import _read_frame, verified_before_send
+
     labeled = labeled_ids()
     sent = load_sent()
     added = 0
+    skipped = 0
     from mlbb_vod_dense_hints import audit_banner_hints
 
     extra_secs: list[float] = []
@@ -152,16 +155,25 @@ def _register_candidates(vod: Path) -> int:
         cid = check_id(vod, hit.sec)
         if cid in labeled or cid in sent:
             continue
+        frame = _read_frame(vod, hit.sec)
+        ok, why = verified_before_send(vod, hit, frame)
+        if not ok:
+            skipped += 1
+            print(f"skip_register {cid}: {why}")
+            continue
         try:
             render_check_screenshot(vod, hit.sec, hit=hit)
             added += 1
         except Exception as exc:
             print(f"capture failed {vod.name}@{hit.sec}: {exc}")
+    if skipped:
+        print(json.dumps({"skipped_unverified": skipped}, ensure_ascii=False))
     return added
 
 
 def _send_batch(token: str, chat_id: str) -> int:
-    from mlbb_banner_calibration_store import pending_for_send
+    from mlbb_banner_calibration_positive_feed import _read_frame, hit_from_check_row, verified_before_send
+    from mlbb_banner_calibration_store import pending_for_send, remove_check_from_index
 
     pending = pending_for_send(limit=BATCH_SIZE)
     if not pending:
@@ -172,6 +184,15 @@ def _send_batch(token: str, chat_id: str) -> int:
         shot = Path(str(row.get("screenshot", "")))
         if not shot.exists():
             continue
+        vod = Path(str(row.get("vod", "")))
+        if vod.exists():
+            hit = hit_from_check_row(row)
+            frame = _read_frame(vod, hit.sec)
+            ok, why = verified_before_send(vod, hit, frame)
+            if not ok:
+                print(f"skip_send {cid}: {why}")
+                remove_check_from_index(cid)
+                continue
         markup = inline_keyboard_markup(cid)
         caption = format_caption(row, i, len(pending))
         if send_photo(token, chat_id, shot, caption, reply_markup=markup):
@@ -203,6 +224,16 @@ def _run_feed() -> int:
     force = os.environ.get("MLBB_BANNER_CALIB_FORCE", "0") == "1"
     if not force and st["labeled"] >= calibration_target():
         print(json.dumps({"status": "target_reached", **st}, ensure_ascii=False))
+        return 0
+    no_banner = int((st.get("by_reason") or {}).get("no_banner", 0))
+    neg_stop = int(os.environ.get("MLBB_BANNER_CALIB_NEG_STOP", "50"))
+    if not force and no_banner >= neg_stop:
+        print(
+            json.dumps(
+                {"status": "neg_bank_sufficient", "no_banner": no_banner, "note": "use positive scan only", **st},
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     inbox = _inbox_root()

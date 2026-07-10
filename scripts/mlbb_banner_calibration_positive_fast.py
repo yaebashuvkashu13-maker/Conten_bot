@@ -16,6 +16,7 @@ from mlbb_banner_calibration_positive_feed import (
     _resolve_vod,
     _score_candidate,
     collect_positive_candidates,
+    verified_before_send,
 )
 from mlbb_banner_calibration_capture import render_check_screenshot
 from mlbb_banner_calibration_reasons import inline_keyboard_markup
@@ -55,7 +56,7 @@ def _fast_candidates(limit: int) -> list[tuple[Path, KillBannerHit, str, float]]
                 hit = KillBannerHit(sec=sec, tier=5, label="owner_good", text="owner", source="owner")
                 frame = _read_frame(vod, hit.sec)
                 score = _score_candidate(hit, frame)
-                if score >= 0:
+                if score >= 0 and verified_before_send(vod, hit, frame)[0]:
                     rows.append((vod, hit, cid, score))
 
     idx_path = Path(os.environ.get("MLBB_VOD_SEGMENT_INDEX", "/root/data/mlbb/vod_segment_index.json"))
@@ -98,7 +99,7 @@ def _fast_candidates(limit: int) -> list[tuple[Path, KillBannerHit, str, float]]
                 )
             frame = _read_frame(vod, hit.sec)
             score = _score_candidate(hit, frame) + clip_score * 3.0
-            if score >= 0:
+            if score >= 0 and verified_before_send(vod, hit, frame)[0]:
                 rows.append((vod, hit, cid, score))
 
     merged: dict[str, tuple[Path, KillBannerHit, str, float]] = {}
@@ -136,6 +137,11 @@ def main() -> int:
     sent_n = 0
     target = calibration_target()
     for i, (vod, hit, cid, score) in enumerate(candidates, start=1):
+        frame = _read_frame(vod, hit.sec)
+        ok, why = verified_before_send(vod, hit, frame)
+        if not ok:
+            print(f"skip_send {cid}: {why}")
+            continue
         try:
             shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
         except Exception as exc:

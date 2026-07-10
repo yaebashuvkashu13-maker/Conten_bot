@@ -372,7 +372,6 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   >"$TMP" || true
 echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_watchdog.log 2>&1 $MARK watchdog" >>"$TMP"
 echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
-echo "*/20 * * * * cd $REPO && python3 $REPO/scripts/mlbb_banner_calibration_feed.py >>/root/data/mlbb/logs/mlbb_banner_calibration_feed.log 2>&1 $MARK banner-cal" >>"$TMP"
 echo "*/10 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh >>/root/data/mlbb/logs/mlbb_banner_positive_scan.log 2>&1 $MARK banner-pos" >>"$TMP"
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
 crontab "$TMP"

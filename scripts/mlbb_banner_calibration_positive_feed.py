@@ -46,6 +46,17 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
+def hit_from_check_row(row: dict) -> KillBannerHit:
+    tier = row.get("banner_tier")
+    return KillBannerHit(
+        sec=float(row.get("sec", 0)),
+        tier=int(tier) if tier is not None else 0,
+        label=str(row.get("banner_label") or ""),
+        text=str(row.get("detected_text") or ""),
+        source=str(row.get("banner_source") or "index"),
+    )
+
+
 def positive_candidate_ok(hit: KillBannerHit, frame, *, vod: Path | None = None) -> bool:
     """
     Owner positive feed: only OCR-confirmed or owner-good patches.
@@ -324,6 +335,11 @@ def main() -> int:
     sent_n = 0
     target = calibration_target()
     for i, (vod, hit, cid, score) in enumerate(candidates, start=1):
+        frame = _read_frame(vod, hit.sec)
+        ok, why = verified_before_send(vod, hit, frame)
+        if not ok:
+            print(f"skip_send {cid}: {why}")
+            continue
         try:
             shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
         except Exception as exc:

@@ -98,6 +98,20 @@ def save_index(data: dict) -> None:
     _write_json(_index_path(), data)
 
 
+def remove_check_from_index(check_id_str: str) -> bool:
+    cid = check_id_str.strip()
+    if not cid:
+        return False
+    data = load_index()
+    rows: list[dict] = data.get("checks", [])
+    kept = [row for row in rows if str(row.get("check_id", "")) != cid]
+    if len(kept) == len(rows):
+        return False
+    data["checks"] = kept
+    save_index(data)
+    return True
+
+
 def upsert_check(row: dict) -> None:
     data = load_index()
     rows: list[dict] = data["checks"]
@@ -339,6 +353,8 @@ def apply_owner_label(
     save_labels(labels)
 
     _append_owner_time_label(row, reason)
+    if reason in NEGATIVE_REASONS:
+        remove_check_from_index(check_id_str)
     sync_learning_after_label()
     return True, reason
 

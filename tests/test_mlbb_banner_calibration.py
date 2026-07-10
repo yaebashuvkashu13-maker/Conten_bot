@@ -111,6 +111,43 @@ def test_apply_owner_label_saves_crop(tmp_path: Path, monkeypatch) -> None:
     assert labels["labels"][0]["reason"] == "savage_tier"
 
 
+def test_apply_owner_label_removes_negative_from_index(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "data"
+    shots = tmp_path / "shots"
+    ref_root = tmp_path / "banners"
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"x" * 1000)
+    shots.mkdir(parents=True)
+    shot = shots / "abcdefghijk_120.jpg"
+    shot.write_bytes(b"fakejpg")
+
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("MLBB_BANNER_CALIB_SHOTS", str(shots))
+    monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(ref_root))
+    monkeypatch.setenv("MLBB_BANNER_CALIB_INDEX", str(data_root / "index.json"))
+    monkeypatch.setenv("MLBB_BANNER_CALIB_LABELS", str(data_root / "labels.json"))
+    monkeypatch.setenv("MLBB_BANNER_CALIB_SENT", str(data_root / "sent.json"))
+
+    import mlbb_banner_calibration_store as store
+
+    monkeypatch.setattr(store, "_data_mlbb", lambda: data_root)
+    monkeypatch.setattr(store, "_shots_root", lambda: shots)
+
+    cid = check_id(vod, 120.0)
+    upsert_check({"check_id": cid, "vod": str(vod), "sec": 120.0, "screenshot": str(shot)})
+
+    fake_patch = np.zeros((48, 160, 3), dtype=np.uint8)
+    with (
+        patch("mlbb_banner_ref_ingest.write_manifest", return_value={}),
+        patch("mlbb_banner_ref_match.clear_banner_ref_cache"),
+        patch("gameplay_gate._read_frame_at", return_value=fake_patch),
+        patch("mlbb_banner_ref_ingest.extract_banner_crop", return_value=fake_patch),
+    ):
+        ok, reason = apply_owner_label(cid, "no_banner", by_chat="123")
+    assert ok and reason == "no_banner"
+    assert store.load_index().get("checks") == []
+
+
 def test_stats_target_remaining(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "data"
     monkeypatch.setenv("MLBB_DATA_ROOT", str(data_root))

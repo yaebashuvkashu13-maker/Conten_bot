@@ -67,7 +67,9 @@ def write_profile() -> dict:
 
     # Tune thresholds from label volume
     neg_sim = 0.42
-    if neg_files >= 50:
+    if neg_files >= 60:
+        neg_sim = 0.36
+    elif neg_files >= 50:
         neg_sim = 0.38
     elif neg_files >= 40:
         neg_sim = 0.40
@@ -155,9 +157,33 @@ def purge_bad_vod_crops_from_labels() -> dict:
     return {"purged": len(removed), "paths": removed[:40]}
 
 
+def purge_unverified_pending_index() -> dict:
+    """Drop queued screenshots that fail owner-negative / OCR gates."""
+    from mlbb_banner_calibration_positive_feed import _read_frame, hit_from_check_row, verified_before_send
+
+    labeled = labeled_ids()
+    removed: list[dict] = []
+    for row in load_index().get("checks", []):
+        cid = str(row.get("check_id", ""))
+        if not cid or cid in labeled:
+            continue
+        vod = Path(str(row.get("vod", "")))
+        if not vod.exists():
+            continue
+        hit = hit_from_check_row(row)
+        frame = _read_frame(vod, hit.sec)
+        ok, why = verified_before_send(vod, hit, frame)
+        if ok:
+            continue
+        if remove_check_from_index(cid):
+            removed.append({"check_id": cid, "why": why})
+    return {"purged": len(removed), "samples": removed[:20]}
+
+
 def main() -> int:
     crop_report = rebuild_crops_from_labels()
     purge_report = purge_bad_vod_crops_from_labels()
+    pending_purge = purge_unverified_pending_index()
     try:
         from mlbb_banner_ref_ingest import write_manifest
 
@@ -181,6 +207,7 @@ def main() -> int:
             {
                 "crops": crop_report,
                 "purge": purge_report,
+                "pending_purge": pending_purge,
                 "manifest_refs": manifest.get("count") if isinstance(manifest, dict) else manifest,
                 "profile": profile,
                 "owner_time_labels_synced": owner_sync,

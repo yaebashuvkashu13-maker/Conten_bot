@@ -22,6 +22,7 @@ from mlbb_banner_calibration_store import (
     stats,
     vod_youtube_id,
 )
+from mlbb_banner_calibration_positive_feed import _read_frame, verified_before_send
 from mlbb_kill_banner import KillBannerHit, _announce_color_score, _classify_frame, _ffmpeg_sample_frames
 from mlbb_telegram_video import send_photo_file
 from youtube_download import load_env
@@ -160,6 +161,11 @@ def main() -> int:
         for i, (vod, hit, cid) in enumerate(batch, start=sent_n + 1):
             if sent_n >= max_send:
                 break
+            frame = _read_frame(vod, hit.sec)
+            ok, why = verified_before_send(vod, hit, frame)
+            if not ok:
+                print(f"skip_send {cid}: {why}")
+                continue
             try:
                 shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
             except Exception as exc:
