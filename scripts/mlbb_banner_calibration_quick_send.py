@@ -98,9 +98,10 @@ def _segment_peak_candidates(
         frame = _read_frame(vod, sec)
         if frame is None:
             continue
-        hit = _ocr_hit(sec, frame, deep=True)
+        hit = _ocr_hit(sec, frame, deep=False)
         if hit is None:
-            hit = KillBannerHit(sec=sec, tier=tier, label=kb or "segment", text="segment_peak", source="segment")
+            print(f"skip_peak {cid}: no_ocr", flush=True)
+            continue
         ok, why = verified_before_send(vod, hit, frame)
         if not ok:
             print(f"skip_peak {cid}: {why}", flush=True)
