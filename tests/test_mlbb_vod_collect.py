@@ -71,6 +71,16 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
         patch("mlbb_vod_segment_feed.labeled_ids", return_value={}),
         patch("mlbb_vod_segment_feed.load_feed_sent", return_value=set()),
         patch("mlbb_vod_segment_feed._used_intervals_for_vod", return_value=[]),
+            patch(
+                "mlbb_vod_segment_feed.validate_clips_before_preview",
+                return_value=(
+                    True,
+                    "ok",
+                    [],
+                    [{"rule_pass": True, "clip_score": 0.25}],
+                    [{"visual_pass": True}],
+                ),
+            ),
         patch("mlbb_banner_pov_match.banner_pov_hero_match", return_value=(True, "ok", 0.9)),
         patch("mlbb_fight_segment.clip_active_gameplay_ok", return_value=(True, "active_ok")),
     ):

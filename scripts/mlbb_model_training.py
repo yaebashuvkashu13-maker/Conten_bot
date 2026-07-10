@@ -121,7 +121,7 @@ def passes_quality_gate(metrics: dict) -> tuple[bool, list[str]]:
         failures.append(f"precision<{min_precision:.2f}")
     if float(metrics.get("recall") or 0) < min_recall:
         failures.append(f"recall<{min_recall:.2f}")
-    if float(metrics.get("bad_false_pass") or 1) > max_bad_fp:
+    if float(metrics.get("bad_false_pass", 1)) > max_bad_fp:
         failures.append(f"bad_false_pass>{max_bad_fp:.2f}")
     return not failures, failures
 
