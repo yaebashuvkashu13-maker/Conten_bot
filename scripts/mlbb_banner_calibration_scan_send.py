@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mlbb_banner_calibration_capture import render_check_screenshot
-from mlbb_banner_calibration_positive_feed import _read_frame, _score_candidate
+from mlbb_banner_calibration_positive_feed import _read_frame, _score_candidate, positive_candidate_ok
 from mlbb_banner_calibration_reasons import inline_keyboard_markup
 from mlbb_banner_calibration_store import calibration_target, check_id, labeled_ids, mark_sent, stats
 from mlbb_kill_banner import KillBannerHit, _classify_frame, _ffmpeg_sample_frames
@@ -29,9 +29,6 @@ def main() -> int:
     if not token or not chat_id:
         print("missing telegram creds", flush=True)
         return 1
-
-    os.environ.setdefault("MLBB_BANNER_OWNER_GATE", "0")
-    os.environ.setdefault("MLBB_BANNER_NEG_REF_MATCH", "0")
 
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
@@ -56,12 +53,12 @@ def main() -> int:
             hit = _classify_frame(sec, frame)
             if hit is None or int(hit.tier) < min_tier:
                 continue
+            if not positive_candidate_ok(hit, frame):
+                continue
             cid = check_id(vod, hit.sec)
             if cid in labeled or cid in {c[2] for c in candidates}:
                 continue
             score = _score_candidate(hit, frame)
-            if score < 0:
-                score = float(hit.tier) * 2.0 + (3.0 if hit.source == "ocr" else 1.0)
             if score < min_score:
                 continue
             candidates.append((vod, hit, cid, score))

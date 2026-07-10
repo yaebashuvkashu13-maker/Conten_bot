@@ -338,6 +338,15 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
 
                     ref_hit = classify_banner_reference(sec, frame)
                     if ref_hit is not None:
+                        ref_blob = str(ref_hit.text or "")
+                        if "vod_crop" in ref_blob:
+                            return None
+                        if ref_hit.tier >= 5:
+                            ocr_hit = classify_banner_text(
+                                _ocr_banner_zones(frame, deep=True)
+                            )
+                            if ocr_hit is None or ocr_hit.tier < 4:
+                                return None
                         return ref_hit
                 except Exception:
                     pass

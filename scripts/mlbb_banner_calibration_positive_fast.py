@@ -62,7 +62,13 @@ def _fast_candidates(limit: int) -> list[tuple[Path, KillBannerHit, str, float]]
     if idx_path.exists():
         data = json.loads(idx_path.read_text(encoding="utf-8"))
         min_clip = float(os.environ.get("MLBB_POS_CAL_MIN_CLIP", "0.18"))
-        for row in data.get("segments", []):
+        segments = sorted(
+            data.get("segments", []),
+            key=lambda r: float(r.get("clip_score") or r.get("score") or 0),
+            reverse=True,
+        )
+        seg_cap = int(os.environ.get("MLBB_POS_CAL_SEGMENT_CAP", "120"))
+        for row in segments[:seg_cap]:
             clip_score = float(row.get("clip_score") or row.get("score") or 0)
             kb = str(row.get("kill_banner") or "").lower()
             if clip_score < min_clip and kb not in ("savage", "legendary", "maniac", "triple"):
@@ -78,10 +84,18 @@ def _fast_candidates(limit: int) -> list[tuple[Path, KillBannerHit, str, float]]
             cid = check_id(vod, sec)
             if cid in labeled:
                 continue
+            tier = int(row.get("kill_banner_tier") or 0)
+            if tier <= 0 and kb in ("savage", "legendary", "maniac", "triple"):
+                tier = {"savage": 5, "legendary": 5, "maniac": 4, "triple": 3}.get(kb, 3)
             hit = find_banner_near_peak(vod, sec, quick=True)
             if hit is None:
-                tier = 5 if kb in ("savage", "legendary") else 4 if kb == "maniac" else 3
-                hit = KillBannerHit(sec=sec, tier=tier, label=kb or "segment", text="segment", source="segment")
+                hit = KillBannerHit(
+                    sec=sec,
+                    tier=max(tier, 3),
+                    label=kb or "segment",
+                    text="segment",
+                    source="segment",
+                )
             frame = _read_frame(vod, hit.sec)
             score = _score_candidate(hit, frame) + clip_score * 3.0
             if score >= 0:

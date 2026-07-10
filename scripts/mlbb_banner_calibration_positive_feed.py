@@ -46,9 +46,37 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
+def positive_candidate_ok(hit: KillBannerHit, frame) -> bool:
+    """
+    Owner positive feed: only OCR-confirmed or owner-good patches.
+    Ref-only vod_crop/wiki histogram matches are too noisy.
+    """
+    if frame is None:
+        return False
+    try:
+        from mlbb_banner_ref_match import (
+            match_negative_banner_reference,
+            match_positive_owner_reference,
+        )
+        from mlbb_kill_banner import _ocr_banner_zones, classify_banner_text
+    except ImportError:
+        return hit.source == "ocr"
+
+    if match_negative_banner_reference(frame) is not None:
+        return False
+    if hit.source in ("ocr", "owner"):
+        return True
+    if match_positive_owner_reference(frame) is not None:
+        return True
+    if hit.source == "ref":
+        return False
+    ocr = classify_banner_text(_ocr_banner_zones(frame, deep=True))
+    return ocr is not None and int(ocr.tier) >= max(2, int(hit.tier) - 1)
+
+
 def _score_candidate(hit: KillBannerHit, frame) -> float:
     """Higher = bot more confident this is a good kill banner."""
-    if frame is None:
+    if frame is None or not positive_candidate_ok(hit, frame):
         return -1.0
     try:
         from mlbb_banner_ref_match import (
@@ -167,6 +195,8 @@ def _segment_candidates(inbox: Path, labeled: dict, sent: set, *, min_tier: int)
         if int(hit.tier) < min_tier:
             continue
         frame = _read_frame(vod, hit.sec)
+        if not positive_candidate_ok(hit, frame):
+            continue
         score = _score_candidate(hit, frame) + clip_score * 2.0
         if score < 0:
             continue

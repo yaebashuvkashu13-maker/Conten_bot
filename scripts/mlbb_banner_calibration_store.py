@@ -182,6 +182,47 @@ def _banner_ref_root() -> Path:
     return Path(os.environ.get("MLBB_BANNER_REF_ROOT", str(_repo_root() / "data" / "mlbb_kill_banners")))
 
 
+def purge_vod_crops_for_row(row: dict) -> list[str]:
+    """Remove VOD crop refs that a negative owner label proved wrong."""
+    removed: list[str] = []
+    root = _banner_ref_root() / "vod_crops"
+    if not root.exists():
+        return removed
+    cid = str(row.get("check_id", "")).strip()
+    vod = Path(str(row.get("vod", "")))
+    sec = int(float(row.get("sec", 0)))
+    vid = ""
+    if vod.exists():
+        vid = vod_youtube_id(vod).lower()
+    needles = {cid.lower(), f"{vid}_{sec}s" if vid else ""}
+    needles.discard("")
+    for path in list(root.rglob("*.png")):
+        stem = path.stem.lower()
+        if any(n and n in stem for n in needles):
+            try:
+                path.unlink()
+                removed.append(str(path))
+            except OSError:
+                pass
+    return removed
+
+
+def purge_positive_crops_for_check(check_id_str: str) -> list[str]:
+    """Drop stale owner-positive crops when owner re-labels as negative."""
+    removed: list[str] = []
+    root = _banner_ref_root() / "owner_cal" / "positive"
+    if not root.exists():
+        return removed
+    cid = check_id_str.strip()
+    for path in list(root.rglob(f"{cid}.png")):
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except OSError:
+            pass
+    return removed
+
+
 def _save_ref_crop(row: dict, reason: str) -> Path | None:
     from mlbb_banner_ref_ingest import crop_from_vod, extract_banner_crop
 
@@ -261,6 +302,10 @@ def apply_owner_label(
         return False, f"unknown_check:{check_id_str}"
 
     crop_path = _save_ref_crop(row, reason)
+    purged: list[str] = []
+    if reason in NEGATIVE_REASONS:
+        purged.extend(purge_vod_crops_for_row({**row, "check_id": check_id_str}))
+        purged.extend(purge_positive_crops_for_check(check_id_str))
     entry = {
         "check_id": check_id_str,
         "reason": reason,
@@ -281,7 +326,7 @@ def apply_owner_label(
     save_labels(labels)
 
     _append_owner_time_label(row, reason)
-    if reason in POSITIVE_REASONS or crop_path:
+    if reason in POSITIVE_REASONS or crop_path or purged:
         _refresh_ref_manifest()
     return True, reason
 

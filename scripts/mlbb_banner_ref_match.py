@@ -33,6 +33,19 @@ def _ref_min_sim() -> float:
     return float(os.environ.get("MLBB_BANNER_REF_MIN_SIM", "0.38"))
 
 
+def _vod_crop_ref_enabled() -> bool:
+    """VOD crops are error-prone; off by default for generic ref matching."""
+    return os.environ.get("MLBB_BANNER_REF_VOD_CROP", "0") == "1"
+
+
+def _vod_crop_ref_min_sim() -> float:
+    return float(os.environ.get("MLBB_BANNER_REF_VOD_CROP_MIN_SIM", "0.62"))
+
+
+def _generic_ref_sources() -> frozenset[str]:
+    return frozenset({"wiki", "glob"})
+
+
 def _neg_ref_min_sim() -> float:
     return float(os.environ.get("MLBB_BANNER_NEG_REF_MIN_SIM", "0.42"))
 
@@ -224,6 +237,23 @@ def _ref_patch_cached(path: str):
     return _prep_ref_patch(img)
 
 
+def _ref_min_sim_for_source(source: str) -> float:
+    if source == "vod_crop":
+        return _vod_crop_ref_min_sim()
+    return _ref_min_sim()
+
+
+def _row_allowed_for_generic_match(source: str) -> bool:
+    """Generic HUD match uses wiki frames only; VOD/owner crops use dedicated paths."""
+    if source in _generic_ref_sources():
+        return True
+    if source == "vod_crop" and _vod_crop_ref_enabled():
+        return True
+    if source.startswith("owner_cal:"):
+        return False
+    return False
+
+
 def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     """
     Return (score, ref_name, source, tier) for best reference match, or None.
@@ -241,14 +271,19 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         return None
     best: tuple[float, str, str, int] | None = None
     for path, name, source, tier_hint in rows:
+        if not _row_allowed_for_generic_match(source):
+            continue
         ref = _ref_patch_cached(path)
         if ref is None:
             continue
         score = patch_similarity(patch, ref)
         tier = _tier_from_hint(tier_hint)
+        min_sim = _ref_min_sim_for_source(source)
+        if score < min_sim:
+            continue
         if best is None or score > best[0]:
             best = (score, name, source, tier)
-    if best is None or best[0] < _ref_min_sim():
+    if best is None:
         return None
     return best
 

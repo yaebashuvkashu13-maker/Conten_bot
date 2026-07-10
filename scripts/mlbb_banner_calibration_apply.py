@@ -91,6 +91,7 @@ def write_profile() -> dict:
             "MLBB_BANNER_OWNER_GATE": "1",
             "MLBB_BANNER_NEG_REF_MATCH": "1",
             "MLBB_BANNER_REF_MATCH": "1",
+            "MLBB_BANNER_REF_VOD_CROP": "0",
         },
     }
     path = _profile_path()
@@ -126,8 +127,35 @@ def apply_env_thresholds(profile: dict) -> list[str]:
     return [f"{k}={v}" for k, v in th.items()]
 
 
+def purge_bad_vod_crops_from_labels() -> dict:
+    """Delete vod_crops for every owner-marked negative banner check."""
+    removed: list[str] = []
+    seen: set[str] = set()
+    for row in load_labels().get("labels", []):
+        reason = str(row.get("reason", ""))
+        if reason not in NEGATIVE_REASONS:
+            continue
+        cid = str(row.get("check_id", ""))
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        from mlbb_banner_calibration_store import purge_positive_crops_for_check, purge_vod_crops_for_row
+
+        removed.extend(purge_vod_crops_for_row(row))
+        removed.extend(purge_positive_crops_for_check(cid))
+    if removed:
+        try:
+            from mlbb_banner_ref_match import clear_banner_ref_cache
+
+            clear_banner_ref_cache()
+        except Exception:
+            pass
+    return {"purged": len(removed), "paths": removed[:40]}
+
+
 def main() -> int:
     crop_report = rebuild_crops_from_labels()
+    purge_report = purge_bad_vod_crops_from_labels()
     try:
         from mlbb_banner_ref_ingest import write_manifest
 
@@ -150,6 +178,7 @@ def main() -> int:
         json.dumps(
             {
                 "crops": crop_report,
+                "purge": purge_report,
                 "manifest_refs": manifest.get("count") if isinstance(manifest, dict) else manifest,
                 "profile": profile,
                 "owner_time_labels_synced": owner_sync,
