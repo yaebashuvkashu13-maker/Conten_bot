@@ -112,10 +112,23 @@ def evaluate_binary(
     }
 
 
-def passes_quality_gate(metrics: dict) -> tuple[bool, list[str]]:
-    min_precision = float(os.environ.get("MLBB_TRAIN_MIN_PRECISION", "0.85"))
-    min_recall = float(os.environ.get("MLBB_TRAIN_MIN_RECALL", "0.70"))
-    max_bad_fp = float(os.environ.get("MLBB_TRAIN_MAX_BAD_FALSE_PASS", "0.10"))
+def passes_quality_gate(
+    metrics: dict,
+    *,
+    env_prefix: str = "MLBB_TRAIN",
+) -> tuple[bool, list[str]]:
+    min_precision = float(
+        os.environ.get(f"{env_prefix}_MIN_PRECISION", os.environ.get("VOD_TRAIN_MIN_PRECISION", "0.85"))
+    )
+    min_recall = float(
+        os.environ.get(f"{env_prefix}_MIN_RECALL", os.environ.get("VOD_TRAIN_MIN_RECALL", "0.70"))
+    )
+    max_bad_fp = float(
+        os.environ.get(
+            f"{env_prefix}_MAX_BAD_FALSE_PASS",
+            os.environ.get("VOD_TRAIN_MAX_BAD_FALSE_PASS", "0.10"),
+        )
+    )
     failures: list[str] = []
     if float(metrics.get("precision") or 0) < min_precision:
         failures.append(f"precision<{min_precision:.2f}")

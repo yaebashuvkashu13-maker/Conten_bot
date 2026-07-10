@@ -483,6 +483,24 @@ def _schedule_mlbb_retrain() -> None:
         logging.exception('mlbb retrain schedule failed')
 
 
+def _schedule_vod_retrain(game: str) -> None:
+    """Retrain one non-MLBB quality ranker without blocking Telegram."""
+    script = Path('/usr/local/bin/vod_learn_apply.sh')
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'vod_learn_apply.sh'
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ['bash', str(script), game.strip().lower()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        logging.exception('%s VOD retrain schedule failed', game)
+
+
 def _mlbb_apply_vseg_label(
     chat_id: str | int,
     segment_id: str,
@@ -552,6 +570,7 @@ def _shooter_apply_vseg_label(
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'
+    _schedule_vod_retrain(game)
     from daily_game_cycle import profile_for_game
     from vod_owner_learning import exemplar_counts
 
@@ -1164,7 +1183,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,

@@ -572,7 +572,7 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
     max_n = int(os.environ.get("HIGHLIGHT_EXEMPLAR_MAX", "0"))
     if max_n > 0:
         paths = paths[:max_n]
-    embs: list[np.ndarray] = []
+    tensors: list = []
     from gameplay_gate import _read_frame_at
 
     from smart_video_editor import ffprobe_duration
@@ -587,16 +587,25 @@ def _exemplar_embeddings(game: str, label: str) -> tuple[np.ndarray, ...]:
                 frames_to_encode.append(frame)
         else:
             dur = float(ffprobe_duration(path) or 10.0)
-            for frac in (0.25, 0.5, 0.75):
+            fractions = tuple(
+                float(value)
+                for value in os.environ.get("HIGHLIGHT_EXEMPLAR_FRAME_FRACTIONS", "0.5").split(",")
+                if value.strip()
+            )
+            for frac in fractions:
                 frame = _read_frame_at(path, max(0.1, dur * frac))
                 if frame is not None:
                     frames_to_encode.append(frame)
         for frame in frames_to_encode:
-            tensor = preprocess(_frame_to_pil(frame)).unsqueeze(0).to(device)
-            with torch.no_grad():
-                emb = model.encode_image(tensor)
-                emb = emb / emb.norm(dim=-1, keepdim=True)
-            embs.append(emb.cpu().numpy()[0])
+            tensors.append(preprocess(_frame_to_pil(frame)))
+    embs: list[np.ndarray] = []
+    batch_size = max(1, int(os.environ.get("HIGHLIGHT_CLIP_BATCH_SIZE", "8")))
+    for offset in range(0, len(tensors), batch_size):
+        batch = torch.stack(tensors[offset : offset + batch_size]).to(device)
+        with torch.no_grad():
+            encoded = model.encode_image(batch)
+            encoded = encoded / encoded.norm(dim=-1, keepdim=True)
+        embs.extend(encoded.cpu().numpy())
     return tuple(embs)
 
 
@@ -769,9 +778,10 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
 
     profile = normalize_profile(profile)
     game = profile
-    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
+    text_score = 0.0
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
         if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+            text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
             )
@@ -786,6 +796,7 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
         model, preprocess, _, device = _clip_bundle()
     except Exception as exc:
         if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+            text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
             )

@@ -144,6 +144,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_VOD_FAST_PROBE=1 MLBB_VOD_SEED_FROM_FAST_PROBE=1 \
   MLBB_VOD_ZERO_STREAK_SOFTEN=4 MLBB_VOD_ADAPTIVE_NOTIFY=1 MLBB_VOD_EXHAUST_NOTIFY=1 \
   MLBB_VOD_STREAK_CIRCUIT_MAX=12 MLBB_VOD_ZERO_YIELD_MAX=3 MLBB_VOD_CIRCUIT_SILENCE_SEC=7200 \
+  SHOOTER_VOD_DISABLE_SOFTEN=1 EXTENDED_VOD_DISABLE_SOFTEN=1 \
   SHOOTER_VOD_ZERO_STREAK_SOFTEN=2 SHOOTER_VOD_ADAPTIVE_NOTIFY=1 SHOOTER_VOD_EXHAUST_NOTIFY=1 \
   SHOOTER_VOD_SEGMENT_GAP_SEC=45 PUBG_METRO_GATE=1 \
   SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_PREFER_RUSSIAN=1 SHOOTER_VOD_SKIP_INTELLICLIP=1 \
@@ -161,7 +162,11 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_TRAIN_MIN_RECALL=0.70 MLBB_TRAIN_MAX_BAD_FALSE_PASS=0.10 \
   VOD_CALIBRATION_SEND_AS_FILE=0 \
   HIGHLIGHT_MAX_PANN_PROBE=12 HIGHLIGHT_MAX_STAGE1=48 HIGHLIGHT_HEATMAP=0 \
-  HIGHLIGHT_PARALLEL_WORKERS=6 SMART_FFMPEG_THREADS=6 \
+  HIGHLIGHT_EXEMPLAR_MAX=4 HIGHLIGHT_EXEMPLAR_FRAME_FRACTIONS=0.5 HIGHLIGHT_CLIP_BATCH_SIZE=8 \
+  HIGHLIGHT_PARALLEL_WORKERS=3 SMART_FFMPEG_THREADS=4 \
+  VOD_TRAIN_MIN_PRECISION=0.85 VOD_TRAIN_MIN_RECALL=0.70 VOD_TRAIN_MAX_BAD_FALSE_PASS=0.10 \
+  VOD_PUBG_QUALITY_MODEL=1 VOD_STANDOFF_QUALITY_MODEL=1 \
+  VOD_GENSHIN_QUALITY_MODEL=1 VOD_WOT_QUALITY_MODEL=1 \
   VISUAL_MLBB_MENU_OVERLAY_MAX=0.85 VISUAL_MLBB_MIN_FRAMES_PASS=2 \
   OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
   YTDLP_SLEEP_REQUESTS=2 YTDLP_SLEEP_INTERVAL=5 YTDLP_MAX_SLEEP_INTERVAL=15 \
@@ -261,6 +266,9 @@ install -m 755 \
   "$REPO/scripts/telegram_access.py" \
   "$REPO/scripts/extended_vod_fast_scan.py" \
   "$REPO/scripts/vod_owner_learning.py" \
+  "$REPO/scripts/vod_owner_feedback.py" \
+  "$REPO/scripts/vod_quality_model.py" \
+  "$REPO/scripts/vod_learn_apply.sh" \
   "$REPO/scripts/strict_montage_direct.py" \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
   "$REPO/scripts/mlbb_job_watchdog.py" \
@@ -325,8 +333,11 @@ export MLBB_VOD_MOTION_ANCHOR_OK=0
 export MLBB_VOD_FAST_PROBE=1
 export HIGHLIGHT_MAX_PANN_PROBE=12
 export HIGHLIGHT_MAX_STAGE1=48
-export HIGHLIGHT_PARALLEL_WORKERS=6
-export SMART_FFMPEG_THREADS=6
+export HIGHLIGHT_EXEMPLAR_MAX=4
+export HIGHLIGHT_EXEMPLAR_FRAME_FRACTIONS=0.5
+export HIGHLIGHT_CLIP_BATCH_SIZE=8
+export HIGHLIGHT_PARALLEL_WORKERS=3
+export SMART_FFMPEG_THREADS=4
 export MLBB_VOD_MIN_PEAK_SEC=300
 export MLBB_VOD_SKIP_REVALIDATE=0
 export OMP_NUM_THREADS=1
@@ -385,6 +396,7 @@ echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs
 echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
 echo "*/10 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh >>/root/data/mlbb/logs/mlbb_banner_positive_scan.log 2>&1 $MARK banner-pos" >>"$TMP"
 echo "25 3 * * * /usr/local/bin/mlbb_learn_apply.sh >>/root/data/mlbb/logs/mlbb_learn_apply.log 2>&1 $MARK daily-learn" >>"$TMP"
+echo "40 3 * * * /usr/local/bin/vod_learn_apply.sh all >>/root/data/mlbb/logs/vod_learn_apply.log 2>&1 $MARK daily-all-game-learn" >>"$TMP"
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
 crontab "$TMP"
 rm -f "$TMP"
