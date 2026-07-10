@@ -48,6 +48,12 @@ def test_record_owner_feedback_versions_manifest(tmp_path: Path, monkeypatch) ->
         str(tmp_path / "owner_feedback_manifest.json"),
     )
     monkeypatch.setenv("MLBB_LEARNING_STATE", str(tmp_path / "learning_state.json"))
+    monkeypatch.setenv("MLBB_LEARNING_FIRST", "1")
+    monkeypatch.setenv("MLBB_SEND_ENABLED", "0")
+    (tmp_path / "learning_state.json").write_text(
+        json.dumps({"transition_passed": True, "daily_sends": {}}),
+        encoding="utf-8",
+    )
 
     first = record_owner_feedback(
         source="vod_segment",
@@ -71,4 +77,33 @@ def test_record_owner_feedback_versions_manifest(tmp_path: Path, monkeypatch) ->
     assert second["version"] == 2
     assert manifest["counts"]["vod_segment:bad"] == 1
     assert manifest["counts"]["banner_calibration:good"] == 1
-    assert json.loads((tmp_path / "learning_state.json").read_text())["transition_passed"] is False
+    state = json.loads((tmp_path / "learning_state.json").read_text())
+    assert state["transition_passed"] is False
+
+
+def test_good_feedback_does_not_pause_sends(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_VOD_STATE_PATH", str(tmp_path / "missing_state.json"))
+    monkeypatch.setenv(
+        "MLBB_OWNER_FEEDBACK_MANIFEST",
+        str(tmp_path / "owner_feedback_manifest.json"),
+    )
+    monkeypatch.setenv("MLBB_LEARNING_STATE", str(tmp_path / "learning_state.json"))
+    monkeypatch.setenv("MLBB_LEARNING_FIRST", "1")
+    monkeypatch.setenv("MLBB_SEND_ENABLED", "0")
+    (tmp_path / "learning_state.json").write_text(
+        json.dumps({"transition_passed": True, "daily_sends": {}}),
+        encoding="utf-8",
+    )
+
+    record_owner_feedback(
+        source="vod_segment",
+        video_id="abcdefghijk",
+        time_sec=100,
+        label="good",
+        reason="ok",
+        item_id="abcdefghijk_90",
+    )
+
+    state = json.loads((tmp_path / "learning_state.json").read_text())
+    assert state["transition_passed"] is True

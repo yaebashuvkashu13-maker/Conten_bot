@@ -159,12 +159,18 @@ def record_owner_feedback(
     )
     save_json_state(path, manifest)
     _clear_runtime_caches()
-    try:
-        from mlbb_learning_first import set_transition_passed
+    # Do not pause all sends on every owner tap while learning — only on bad when gate is strict.
+    if (
+        label == "bad"
+        and os.environ.get("MLBB_LEARNING_FIRST", "0") == "1"
+        and os.environ.get("MLBB_SEND_ENABLED", "1") != "1"
+    ):
+        try:
+            from mlbb_learning_first import set_transition_passed
 
-        set_transition_passed(False)
-    except Exception:
-        pass
+            set_transition_passed(False)
+        except Exception:
+            pass
     return {
         "version": version,
         "invalidated_vods": invalidated,
