@@ -26,7 +26,7 @@ from mlbb_banner_calibration_store import (
     mark_sent,
     stats,
 )
-from mlbb_kill_banner import KillBannerHit, classify_banner_text, _ocr_banner_zones
+from mlbb_kill_banner import KillBannerHit, classify_banner_text, find_banner_near_peak, _ocr_banner_zones
 from mlbb_telegram_video import send_photo_file
 from youtube_download import load_env
 
@@ -61,16 +61,76 @@ def _vod_label_counts() -> dict[str, int]:
     return counts
 
 
+def _segment_peak_candidates(
+    inbox: Path,
+    labeled: dict[str, str],
+    *,
+    limit: int,
+) -> list[tuple[Path, KillBannerHit, str, float]]:
+    """OCR-verified peaks from segment index — not blind segment_near sends."""
+    if os.environ.get("MLBB_QUICK_SEND_SEGMENT_PEAKS", "1") != "1":
+        return []
+    idx_path = Path(os.environ.get("MLBB_VOD_SEGMENT_INDEX", "/root/data/mlbb/vod_segment_index.json"))
+    if not idx_path.exists():
+        return []
+    data = json.loads(idx_path.read_text(encoding="utf-8"))
+    from mlbb_banner_calibration_store import vod_youtube_id
+
+    inbox_by_id = {vod_youtube_id(p): p for p in inbox.glob("yt_*.mp4")}
+    out: list[tuple[Path, KillBannerHit, str, float]] = []
+    seen: set[str] = set()
+    for row in data.get("segments", []):
+        vid = str(row.get("vod_id") or row.get("vod") or "")[:11]
+        vod = inbox_by_id.get(vid)
+        if vod is None:
+            continue
+        kb = str(row.get("kill_banner") or "").lower()
+        tier = int(row.get("kill_banner_tier") or 0)
+        if tier <= 0 and kb in ("savage", "legendary", "maniac", "triple", "double"):
+            tier = {"savage": 5, "legendary": 5, "maniac": 4, "triple": 3, "double": 2}.get(kb, 0)
+        if tier < int(os.environ.get("MLBB_QUICK_SEND_MIN_TIER", "2")):
+            continue
+        sec = float(row.get("peak_start") if row.get("peak_start") is not None else row.get("start") or 0)
+        cid = check_id(vod, sec)
+        if cid in labeled or cid in seen:
+            continue
+        seen.add(cid)
+        hit = find_banner_near_peak(vod, sec, quick=True)
+        if hit is None:
+            hit = KillBannerHit(sec=sec, tier=tier, label=kb or "segment", text="segment_peak", source="segment")
+        frame = _read_frame(vod, hit.sec)
+        if frame is None:
+            continue
+        ok, why = verified_before_send(vod, hit, frame)
+        if not ok:
+            print(f"skip_peak {cid}: {why}", flush=True)
+            continue
+        score = _score_candidate(hit, frame)
+        if score < float(os.environ.get("MLBB_QUICK_SEND_MIN_SCORE", "4")):
+            continue
+        out.append((vod, hit, cid, score))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def collect_candidates() -> list[tuple[Path, KillBannerHit, str, float]]:
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
     batch = int(os.environ.get("MLBB_QUICK_SEND_BATCH", "12"))
     vod_n = int(os.environ.get("MLBB_QUICK_SEND_VODS", "10"))
     step = float(os.environ.get("MLBB_QUICK_SEND_STEP_SEC", "55"))
-    t0 = float(os.environ.get("MLBB_QUICK_SEND_T0", "120"))
-    t1 = float(os.environ.get("MLBB_QUICK_SEND_T1", "900"))
+    t0 = float(os.environ.get("MLBB_QUICK_SEND_T0", "30"))
+    t1 = float(os.environ.get("MLBB_QUICK_SEND_T1", "1500"))
     min_tier = int(os.environ.get("MLBB_QUICK_SEND_MIN_TIER", "2"))
     min_score = float(os.environ.get("MLBB_QUICK_SEND_MIN_SCORE", "4"))
+
+    out: list[tuple[Path, KillBannerHit, str, float]] = []
+    for row in _segment_peak_candidates(inbox, labeled, limit=batch):
+        if row[2] not in {x[2] for x in out}:
+            out.append(row)
+    if len(out) >= batch:
+        return sorted(out, key=lambda x: -x[3])[:batch]
 
     label_counts = _vod_label_counts()
     all_vods = sorted(

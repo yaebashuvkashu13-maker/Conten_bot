@@ -12,9 +12,12 @@ export MLBB_BANNER_SEND_STRICT="${MLBB_BANNER_SEND_STRICT:-1}"
 export MLBB_QUICK_SEND_SEGMENT_FIRST=0
 export MLBB_BANNER_POS_POV_MATCH="${MLBB_BANNER_POS_POV_MATCH:-0}"
 export MLBB_POS_SCAN_SKIP_INNER_LOCK=1
-export MLBB_QUICK_SEND_BATCH="${MLBB_QUICK_SEND_BATCH:-12}"
-export MLBB_QUICK_SEND_VODS="${MLBB_QUICK_SEND_VODS:-10}"
-export MLBB_QUICK_SEND_STEP_SEC="${MLBB_QUICK_SEND_STEP_SEC:-55}"
+export MLBB_QUICK_SEND_BATCH="${MLBB_QUICK_SEND_BATCH:-8}"
+export MLBB_QUICK_SEND_VODS="${MLBB_QUICK_SEND_VODS:-8}"
+export MLBB_QUICK_SEND_STEP_SEC="${MLBB_QUICK_SEND_STEP_SEC:-60}"
+export MLBB_QUICK_SEND_T0="${MLBB_QUICK_SEND_T0:-30}"
+export MLBB_QUICK_SEND_T1="${MLBB_QUICK_SEND_T1:-1500}"
+export MLBB_QUICK_SEND_SEGMENT_PEAKS="${MLBB_QUICK_SEND_SEGMENT_PEAKS:-1}"
 export MLBB_POS_SCAN_BATCH="${MLBB_POS_SCAN_BATCH:-12}"
 export MLBB_POS_SCAN_VODS="${MLBB_POS_SCAN_VODS:-10}"
 export MLBB_POS_SCAN_SAMPLES="${MLBB_POS_SCAN_SAMPLES:-10}"
@@ -23,6 +26,11 @@ export MLBB_POS_SCAN_MIN_SCORE="${MLBB_POS_SCAN_MIN_SCORE:-4}"
 LOG=/root/data/mlbb/logs/mlbb_banner_positive_scan.log
 mkdir -p /root/data/mlbb/logs
 LOCK=/tmp/mlbb_banner_positive_scan.lock
+if [[ -f "$LOCK" ]] && find "$LOCK" -mmin +25 2>/dev/null | grep -q .; then
+  if ! pgrep -f mlbb_banner_calibration_quick_send.py >/dev/null 2>&1; then
+    rm -f "$LOCK"
+  fi
+fi
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "$(date -Is) skip: another positive scan running" >>"$LOG"
