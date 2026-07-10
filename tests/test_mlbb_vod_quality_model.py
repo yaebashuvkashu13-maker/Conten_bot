@@ -24,6 +24,7 @@ def test_quality_features_include_missingness() -> None:
 
 def test_missing_required_model_fails_closed(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MLBB_VOD_QUALITY_MODEL_PATH", str(tmp_path / "missing.joblib"))
+    monkeypatch.setenv("MLBB_VOD_QUALITY_MODEL", "1")
     monkeypatch.setenv("MLBB_VOD_QUALITY_MODEL_REQUIRED", "1")
     clear_model_cache()
     ok, reason, probability = quality_gate({"score": 1})
