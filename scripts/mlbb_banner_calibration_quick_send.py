@@ -34,9 +34,12 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
-def _ocr_hit(sec: float, frame) -> KillBannerHit | None:
-    blob = _ocr_banner_zones(frame, deep=True)
+def _ocr_hit(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
+    blob = _ocr_banner_zones(frame, deep=deep)
     row = classify_banner_text(blob)
+    if row is None and not deep:
+        blob = _ocr_banner_zones(frame, deep=True)
+        row = classify_banner_text(blob)
     if row is None:
         return None
     return KillBannerHit(
@@ -48,36 +51,32 @@ def _ocr_hit(sec: float, frame) -> KillBannerHit | None:
     )
 
 
+def _vod_label_counts() -> dict[str, int]:
+    from mlbb_banner_calibration_store import load_labels
+
+    counts: dict[str, int] = {}
+    for row in load_labels().get("labels", []):
+        name = Path(str(row.get("vod", ""))).name
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def collect_candidates() -> list[tuple[Path, KillBannerHit, str, float]]:
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
     batch = int(os.environ.get("MLBB_QUICK_SEND_BATCH", "15"))
-    vod_n = int(os.environ.get("MLBB_QUICK_SEND_VODS", "25"))
-    step = float(os.environ.get("MLBB_QUICK_SEND_STEP_SEC", "75"))
+    vod_n = int(os.environ.get("MLBB_QUICK_SEND_VODS", "12"))
+    step = float(os.environ.get("MLBB_QUICK_SEND_STEP_SEC", "45"))
     t0 = float(os.environ.get("MLBB_QUICK_SEND_T0", "90"))
-    t1 = float(os.environ.get("MLBB_QUICK_SEND_T1", "2100"))
+    t1 = float(os.environ.get("MLBB_QUICK_SEND_T1", "900"))
 
-    state_path = Path(os.environ.get("MLBB_QUICK_SEND_STATE", "/root/data/mlbb/banner_quick_send_state.json"))
-    offset = 0
-    if state_path.exists():
-        try:
-            offset = int(json.loads(state_path.read_text(encoding="utf-8")).get("offset", 0))
-        except (json.JSONDecodeError, OSError, ValueError, TypeError):
-            offset = 0
-
+    label_counts = _vod_label_counts()
     all_vods = sorted(
         [p for p in inbox.glob("yt_*.mp4") if p.is_file() and p.stat().st_size > 500_000],
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: (label_counts.get(p.name, 0), -p.stat().st_mtime),
     )
-    if not all_vods:
-        return []
-    offset %= len(all_vods)
-    vods = [all_vods[(offset + i) % len(all_vods)] for i in range(min(vod_n, len(all_vods)))]
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps({"offset": (offset + len(vods)) % len(all_vods), "vods": [v.name for v in vods[:5]]}),
-        encoding="utf-8",
-    )
+    vods = all_vods[:vod_n]
 
     out: list[tuple[Path, KillBannerHit, str, float]] = []
     for vod in vods:
@@ -85,7 +84,7 @@ def collect_candidates() -> list[tuple[Path, KillBannerHit, str, float]]:
         while sec < t1 and len(out) < batch:
             frame = _read_frame(vod, sec)
             if frame is not None:
-                hit = _ocr_hit(sec, frame)
+                hit = _ocr_hit(sec, frame, deep=False)
                 if hit is not None and hit.tier >= int(os.environ.get("MLBB_QUICK_SEND_MIN_TIER", "2")):
                     cid = check_id(vod, hit.sec)
                     if cid not in labeled and cid not in {x[2] for x in out}:
