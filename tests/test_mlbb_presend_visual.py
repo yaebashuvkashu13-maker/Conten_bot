@@ -8,7 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from mlbb_vod_segment_feed import _presend_visual_ok  # noqa: E402
+from mlbb_vod_segment_feed import (  # noqa: E402
+    _presend_visual_ok,
+    _verified_discovery_banner,
+)
 
 
 def test_presend_visual_bypass_menu_on_verified_banner(monkeypatch) -> None:
@@ -36,3 +39,27 @@ def test_presend_visual_no_bypass_without_banner(monkeypatch) -> None:
     ok, reason = _presend_visual_ok(vis, report, row)
     assert ok is False
     assert reason.startswith("visual:")
+
+
+def test_presend_reuses_verified_discovery_banner(monkeypatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_PRESEND_FAST_BANNER", "1")
+    ok, reason = _verified_discovery_banner(
+        {
+            "kill_banner": "savage",
+            "kill_banner_tier": 5,
+            "banner_sec": 616.0,
+        },
+        5,
+    )
+    assert ok is True
+    assert reason == "verified_discovery_banner:savage@616.0s"
+
+
+def test_presend_does_not_trust_low_tier_discovery(monkeypatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_PRESEND_FAST_BANNER", "1")
+    ok, reason = _verified_discovery_banner(
+        {"kill_banner": "double", "kill_banner_tier": 2, "banner_sec": 50},
+        5,
+    )
+    assert ok is False
+    assert reason == ""

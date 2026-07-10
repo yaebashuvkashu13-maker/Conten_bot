@@ -1410,6 +1410,21 @@ def _presend_visual_ok(
     return True, "visual_banner_bypass"
 
 
+def _verified_discovery_banner(row: dict, min_tier: int) -> tuple[bool, str]:
+    """Reuse an internally verified discovery hit; later POV/action gates still run."""
+    if os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") != "1":
+        return False, ""
+    try:
+        tier = int(row.get("kill_banner_tier") or 0)
+    except (TypeError, ValueError):
+        tier = 0
+    banner = row.get("kill_banner")
+    if not banner or tier < int(min_tier):
+        return False, ""
+    sec = float(row.get("banner_sec") or row.get("peak_start") or 0)
+    return True, f"verified_discovery_banner:{banner}@{sec:.1f}s"
+
+
 def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     """
     Final gate on rendered mp4 + source window that will be sent.
@@ -1448,7 +1463,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
             if abs(banner_sec - peak_start) > 25.0:
                 banner_sec = peak_start
-            fast_banner = os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") == "1"
             audit_send = os.environ.get("MLBB_VOD_AUDIT_SEND", "0") == "1"
             tier = row.get("kill_banner_tier")
             if tier is None and row.get("kill_banner"):
@@ -1463,10 +1477,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 min_tier = title_min
             banner_ok = False
             banner_reason = ""
-            owner_gate = os.environ.get("MLBB_BANNER_OWNER_GATE", "1") == "1"
-            if fast_banner and tier_i >= min_tier and row.get("kill_banner") and not owner_gate:
-                banner_ok = True
-                banner_reason = f"collect_banner:{row.get('kill_banner')}@{banner_sec:.1f}s"
+            banner_ok, banner_reason = _verified_discovery_banner(row, min_tier)
             if audit_send and row.get("kill_banner"):
                 banner_ok = True
                 banner_reason = f"audit_trust:{row.get('kill_banner')}@{banner_sec:.1f}s"
