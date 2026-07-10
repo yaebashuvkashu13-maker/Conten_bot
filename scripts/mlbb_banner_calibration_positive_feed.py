@@ -46,7 +46,7 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
-def positive_candidate_ok(hit: KillBannerHit, frame) -> bool:
+def positive_candidate_ok(hit: KillBannerHit, frame, *, vod: Path | None = None) -> bool:
     """
     Owner positive feed: only OCR-confirmed or owner-good patches.
     Ref-only vod_crop/wiki histogram matches are too noisy.
@@ -65,13 +65,28 @@ def positive_candidate_ok(hit: KillBannerHit, frame) -> bool:
     if match_negative_banner_reference(frame) is not None:
         return False
     if hit.source in ("ocr", "owner"):
-        return True
-    if match_positive_owner_reference(frame) is not None:
-        return True
-    if hit.source == "ref":
+        accepted = True
+    elif match_positive_owner_reference(frame) is not None:
+        accepted = True
+    elif hit.source == "ref":
         return False
-    ocr = classify_banner_text(_ocr_banner_zones(frame, deep=True))
-    return ocr is not None and int(ocr.tier) >= max(2, int(hit.tier) - 1)
+    else:
+        ocr = classify_banner_text(_ocr_banner_zones(frame, deep=True))
+        accepted = ocr is not None and int(ocr.tier) >= max(2, int(hit.tier) - 1)
+
+    if not accepted:
+        return False
+
+    if vod is not None and os.environ.get("MLBB_BANNER_POS_POV_MATCH", "1") == "1":
+        try:
+            from mlbb_banner_pov_match import banner_pov_hero_match
+
+            pov_ok, _pov_reason, _sim = banner_pov_hero_match(vod, hit.sec)
+            if not pov_ok:
+                return False
+        except Exception:
+            pass
+    return True
 
 
 def _score_candidate(hit: KillBannerHit, frame) -> float:
@@ -195,7 +210,7 @@ def _segment_candidates(inbox: Path, labeled: dict, sent: set, *, min_tier: int)
         if int(hit.tier) < min_tier:
             continue
         frame = _read_frame(vod, hit.sec)
-        if not positive_candidate_ok(hit, frame):
+        if not positive_candidate_ok(hit, frame, vod=vod):
             continue
         score = _score_candidate(hit, frame) + clip_score * 2.0
         if score < 0:
