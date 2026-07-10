@@ -33,6 +33,86 @@ def _lead_sec() -> float:
     return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
+def banner_lead_sec(banner_tier: int | None = None) -> float:
+    """Pre-roll before kill banner — savage needs more setup (owner: +10s vs default)."""
+    base = _lead_sec()
+    tier = int(banner_tier or 0)
+    if tier >= 5:
+        return float(os.environ.get("MLBB_SAVAGE_BANNER_LEAD_SEC", str(base + 10.0)))
+    if tier >= 4:
+        return float(os.environ.get("MLBB_MANIAC_BANNER_LEAD_SEC", str(base + 6.0)))
+    return base
+
+
+def _fight_post_sec() -> float:
+    """Seconds of gameplay after fight sustain ends (viewer outro)."""
+    return float(os.environ.get("MLBB_FIGHT_POST_SEC", "4"))
+
+
+def ideal_clip_min_sec() -> float:
+    """Minimum clip: lead before fight + fight body + post after fight."""
+    return _lead_sec() + _fight_min_sec() + _fight_post_sec()
+
+
+def vod_tail_exclude_sec() -> float:
+    """No clips from the last N seconds — rank-up, results, outro menus."""
+    return float(os.environ.get("MLBB_VOD_TAIL_EXCLUDE_SEC", "75"))
+
+
+def _vod_duration(vod: Path) -> float:
+    p = Path(vod)
+    if not p.is_file():
+        return 0.0
+    try:
+        analysis = _analysis_for(p)
+        dur = float(analysis.get("duration") or 0.0)
+        if dur > 0:
+            return dur
+    except Exception:
+        pass
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(p),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    try:
+        return float((proc.stdout or "0").strip())
+    except ValueError:
+        return 0.0
+
+
+def banner_in_vod_tail(vod: Path, banner_sec: float) -> bool:
+    dur = _vod_duration(vod)
+    if dur <= 0:
+        return False
+    return float(banner_sec) >= dur - vod_tail_exclude_sec()
+
+
+def clip_in_vod_tail(vod: Path, start_sec: float, dur_sec: float) -> bool:
+    dur = _vod_duration(vod)
+    if dur <= 0:
+        return False
+    margin = vod_tail_exclude_sec()
+    end = float(start_sec) + float(dur_sec)
+    if float(start_sec) >= dur - margin:
+        return True
+    # Clip must not extend into the absolute file tail (rank promo / menu).
+    return end > dur - min(20.0, margin * 0.3)
+
+
 _CACHE: dict[str, dict] = {}
 
 
@@ -111,14 +191,18 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
 
     region_start = left * win
     region_end = min(file_dur, (right + 1) * win)
-    region_dur = max(min_d, region_end - region_start)
+    post = _fight_post_sec()
+    fight_body = max(min_d, region_end - region_start)
 
-    start = max(0.0, min(region_start, float(peak_sec) - lead))
-    end = min(file_dur, max(start + region_dur, float(peak_sec) + (region_dur - lead)))
+    start = max(0.0, region_start - lead)
+    end = min(file_dur, region_end + post)
     dur = end - start
 
-    if dur < min_d:
-        end = min(file_dur, start + min_d)
+    if dur < ideal_clip_min_sec():
+        end = min(file_dur, start + ideal_clip_min_sec())
+        dur = end - start
+    if fight_body < min_d:
+        end = min(file_dur, max(end, region_start + min_d + post))
         dur = end - start
 
     hard_max = _fight_hard_max_sec()
@@ -137,3 +221,110 @@ def detect_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float
 
 def variable_length_enabled() -> bool:
     return os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1"
+
+
+def clip_active_gameplay_ok(
+    vod: Path,
+    start_sec: float,
+    dur_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> tuple[bool, str]:
+    """
+    Reject clips where the hero is dead/idle for most of the window (tavern / death screen).
+    Samples the FULL clip — not only the tail.
+    """
+    dur = float(dur_sec)
+    if dur < 2.5:
+        return False, "clip_too_short"
+
+    from gameplay_gate import (
+        score_segment_combat,
+        segment_hud_frame_pass_rate,
+        segment_looks_like_draft_or_queue,
+    )
+
+    if segment_looks_like_draft_or_queue(vod, start_sec, dur, crop_box=crop_box):
+        return False, "draft_or_queue"
+
+    if clip_in_vod_tail(vod, start_sec, dur):
+        return False, f"vod_tail start={start_sec:.1f}"
+
+    from gameplay_gate import segment_looks_like_rank_promo
+
+    if segment_looks_like_rank_promo(vod, start_sec, dur, crop_box=crop_box):
+        return False, "rank_promo_or_menu"
+
+    samples = max(6, int(os.environ.get("MLBB_CLIP_COMBAT_SAMPLES", "10")))
+    min_active = float(os.environ.get("MLBB_CLIP_MIN_ACTIVE_RATIO", "0.40"))
+    min_motion = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MOTION", "0.018"))
+    min_mini = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_MINIMAP", "0.010"))
+    min_skill = float(os.environ.get("MLBB_CLIP_WINDOW_MIN_SKILL", "0.006"))
+    min_hud = float(os.environ.get("MLBB_CLIP_MIN_HUD_RATE", "0.42"))
+    mini_active = min_mini * float(os.environ.get("MLBB_CLIP_MINI_ACTIVE_MULT", "2.2"))
+
+    window = max(1.2, dur / max(samples, 1))
+    active_windows = 0
+    total_windows = 0
+    for i in range(samples):
+        if samples == 1:
+            t0 = start_sec
+        else:
+            t0 = start_sec + i * max(0.0, dur - window) / (samples - 1)
+        motion, mini, skill, _text = score_segment_combat(
+            vod,
+            t0,
+            window,
+            crop_box=crop_box,
+            sample_frames=4,
+        )
+        total_windows += 1
+        window_active = (
+            motion >= min_motion
+            or mini >= mini_active
+            or skill >= min_skill * 1.4
+        )
+        if window_active:
+            active_windows += 1
+
+    hud_rate = segment_hud_frame_pass_rate(
+        vod, start_sec, dur, crop_box=crop_box, sample_frames=samples
+    )
+    active_ratio = active_windows / max(total_windows, 1)
+    if hud_rate < min_hud:
+        return False, f"death_or_tavern hud={hud_rate:.2f} need>={min_hud}"
+    if active_ratio < min_active:
+        return False, f"idle_clip ratio={active_ratio:.2f} need>={min_active}"
+    return True, f"active_ok ratio={active_ratio:.2f} hud={hud_rate:.2f}"
+
+
+def clip_action_sustain_ok(
+    vod: Path,
+    start_sec: float,
+    dur_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> tuple[bool, str]:
+    """Full-clip gameplay check (death/tavern/idle) + tail sustain."""
+    ok, reason = clip_active_gameplay_ok(vod, start_sec, dur_sec, crop_box=crop_box)
+    if not ok:
+        return ok, reason
+    dur = float(dur_sec)
+    if dur < 6.0:
+        return True, reason
+    min_tail_motion = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MOTION", "0.016"))
+    min_tail_mini = float(os.environ.get("MLBB_CLIP_MIN_TAIL_MINIMAP", "0.007"))
+    tail_start = float(start_sec) + dur * 0.42
+    tail_dur = max(2.5, float(start_sec) + dur - tail_start)
+    from gameplay_gate import score_segment_combat
+
+    motion, mini, _skill, _text = score_segment_combat(
+        vod,
+        tail_start,
+        tail_dur,
+        crop_box=crop_box,
+        sample_frames=max(4, int(os.environ.get("MLBB_CLIP_TAIL_SAMPLES", "5"))),
+    )
+    if motion < min_tail_motion and mini < min_tail_mini:
+        return False, f"idle_death_tail motion={motion:.4f} mini={mini:.4f}"
+    return True, reason
