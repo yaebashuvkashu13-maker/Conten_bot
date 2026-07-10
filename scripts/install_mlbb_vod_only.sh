@@ -394,7 +394,6 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   >"$TMP" || true
 echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_watchdog.log 2>&1 $MARK watchdog" >>"$TMP"
 echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
-echo "*/10 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh >>/root/data/mlbb/logs/mlbb_banner_positive_scan.log 2>&1 $MARK banner-pos" >>"$TMP"
 echo "25 3 * * * /usr/local/bin/mlbb_learn_apply.sh >>/root/data/mlbb/logs/mlbb_learn_apply.log 2>&1 $MARK daily-learn" >>"$TMP"
 echo "40 3 * * * /usr/local/bin/vod_learn_apply.sh all >>/root/data/mlbb/logs/vod_learn_apply.log 2>&1 $MARK daily-all-game-learn" >>"$TMP"
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
