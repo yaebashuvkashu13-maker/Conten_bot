@@ -90,6 +90,12 @@ def _clear_runtime_caches() -> None:
     except Exception:
         pass
     try:
+        from mlbb_kill_banner import clear_banner_discovery_cache
+
+        clear_banner_discovery_cache()
+    except Exception:
+        pass
+    try:
         from mlbb_feedback_gate_tune import clear_patterns_cache
 
         clear_patterns_cache()

@@ -80,6 +80,18 @@ class KillBannerHit:
     source: str = "ocr"
 
 
+_DISCOVERY_CACHE: dict[tuple[str, int, int, int, bool], tuple[KillBannerHit, ...]] = {}
+
+
+def clear_banner_discovery_cache() -> None:
+    _DISCOVERY_CACHE.clear()
+
+
+def _discovery_cache_key(vod: Path, need: int, dense: bool) -> tuple[str, int, int, int, bool]:
+    stat = vod.stat()
+    return (str(vod.resolve()), stat.st_mtime_ns, stat.st_size, int(need), bool(dense))
+
+
 def _min_tier() -> int:
     raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "double").strip().lower()
     if raw.isdigit():
@@ -572,6 +584,11 @@ def discover_vod_kill_banners(
         return []
     dense = _dense_scan_enabled()
     need = _effective_discover_min_tier(min_tier)
+    cache_key = _discovery_cache_key(vod, need, dense)
+    cached_hits = _DISCOVERY_CACHE.get(cache_key)
+    if cached_hits:
+        log.info("banner discover %s: reuse cached hits=%s", vod.name, len(cached_hits))
+        return list(cached_hits)
     if dense:
         step = min(1.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "1.0")))
     else:
@@ -640,6 +657,7 @@ def discover_vod_kill_banners(
             if hits and need >= 5 and any(h.tier >= need for h in hits):
                 if os.environ.get("MLBB_DENSE_STOP_ON_SAVAGE", "1") == "1":
                     log.info("banner discover %s: stop early — savage hit from audit hints", vod.name)
+                    _DISCOVERY_CACHE[cache_key] = tuple(hits)
                     return hits
     except Exception as exc:
         log.debug("audit hints skipped: %s", exc)
@@ -911,6 +929,8 @@ def discover_vod_kill_banners(
             len(hits),
             need,
         )
+        if hits:
+            _DISCOVERY_CACHE[cache_key] = tuple(hits)
         return hits
 
     hits.sort(key=lambda h: h.sec)
@@ -920,6 +940,8 @@ def discover_vod_kill_banners(
         probes,
         len(hits),
     )
+    if hits:
+        _DISCOVERY_CACHE[cache_key] = tuple(hits)
     return hits
 
 

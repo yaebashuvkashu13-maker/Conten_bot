@@ -8,8 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_kill_banner import (  # noqa: E402
+    _DISCOVERY_CACHE,
+    _discovery_cache_key,
     bounds_from_banner,
     classify_banner_text,
+    clear_banner_discovery_cache,
 )
 
 
@@ -41,6 +44,18 @@ def test_classify_double_kill() -> None:
     partial = classify_banner_text("OUBLE KILL")
     assert partial is not None
     assert partial.tier == 2
+
+
+def test_discovery_cache_key_tracks_source_file(tmp_path: Path) -> None:
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"first")
+    first = _discovery_cache_key(vod, 5, True)
+    vod.write_bytes(b"second-version")
+    second = _discovery_cache_key(vod, 5, True)
+    assert first != second
+    _DISCOVERY_CACHE[first] = tuple()
+    clear_banner_discovery_cache()
+    assert not _DISCOVERY_CACHE
 
 
 def test_min_tier_double_accepts_double_rejects_single() -> None:
