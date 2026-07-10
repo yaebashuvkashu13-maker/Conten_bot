@@ -26,7 +26,7 @@ from mlbb_banner_calibration_store import (
     mark_sent,
     stats,
 )
-from mlbb_kill_banner import KillBannerHit, classify_banner_text, find_banner_near_peak, _ocr_banner_zones
+from mlbb_kill_banner import KillBannerHit, classify_banner_text, _ocr_banner_zones
 from mlbb_telegram_video import send_photo_file
 from youtube_download import load_env
 
@@ -143,8 +143,11 @@ def collect_candidates() -> list[tuple[Path, KillBannerHit, str, float]]:
     rejected: dict[str, int] = {}
     for vod in vods:
         sec = t0
-        while sec < t1 and len(out) < batch:
+        frames_checked = 0
+        max_frames = int(os.environ.get("MLBB_QUICK_SEND_MAX_FRAMES", "12"))
+        while sec < t1 and len(out) < batch and frames_checked < max_frames:
             frame = _read_frame(vod, sec)
+            frames_checked += 1
             if frame is not None:
                 hit = _ocr_hit(sec, frame, deep=False)
                 if hit is not None and hit.tier >= min_tier:
