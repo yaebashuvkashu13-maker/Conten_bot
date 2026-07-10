@@ -183,8 +183,8 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
                 "score": score,
                 "clip_score": score,
                 "highlight_metrics": {
-                    "rule_pass": True,
-                    "pass_reason": "cached_pool",
+                    "rule_pass": False,
+                    "pass_reason": "cached_pool_needs_revalidation",
                     "clip_score": score,
                 },
             }

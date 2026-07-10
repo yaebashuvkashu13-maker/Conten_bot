@@ -117,10 +117,24 @@ def sync_owner_time_labels() -> int:
         sec = float(row.get("sec", 0))
         vid = vod_youtube_id(Path(vod))
         if reason in POSITIVE_REASONS:
-            append_owner_label_json(vid, sec, "good", note=reason, source="banner_calibration_apply")
+            append_owner_label_json(
+                vid,
+                sec,
+                "good",
+                note=reason,
+                source="banner_calibration_apply",
+                scope="banner",
+            )
             added += 1
         elif reason in NEGATIVE_REASONS:
-            append_owner_label_json(vid, sec, "bad", note=reason, source="banner_calibration_apply")
+            append_owner_label_json(
+                vid,
+                sec,
+                "bad",
+                note=reason,
+                source="banner_calibration_apply",
+                scope="banner",
+            )
             added += 1
     return added
 

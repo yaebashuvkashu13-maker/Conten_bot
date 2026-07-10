@@ -921,7 +921,7 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             "kill_banner_tier": tier_known,
         }
     if os.environ.get("MLBB_VOD_VARIABLE_LENGTH", "1") == "1":
-        from mlbb_fight_segment import _analysis_for
+        from mlbb_fight_segment import _analysis_for, detect_fight_bounds
         from mlbb_kill_banner import resolve_fight_bounds
 
         analysis = _analysis_for(vod)
@@ -1836,7 +1836,7 @@ def _collect_scan_segments(
         if sid in labeled_set or sid in sent:
             continue
         hm = clip.get("highlight_metrics") or {}
-        skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
+        skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "0") == "1"
         already_scored = bool(hm.get("rule_pass")) or str(hm.get("pass_reason") or "").startswith("mlbb_fight")
         if skip_revalidate and already_scored:
             ok, reason = True, str(hm.get("pass_reason") or "highlight_pass")

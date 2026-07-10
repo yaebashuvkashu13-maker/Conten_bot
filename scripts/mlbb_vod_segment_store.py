@@ -73,8 +73,15 @@ def _read_json(path: Path, default: dict | list) -> dict | list:
 
 
 def _write_json(path: Path, payload: dict | list) -> None:
+    if isinstance(payload, dict):
+        from vod_state_io import save_json_state
+
+        save_json_state(path, payload)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp = path.with_suffix(f"{path.suffix}.tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def vod_youtube_id(path: Path) -> str:
@@ -205,6 +212,7 @@ def append_owner_label_json(
     *,
     note: str = "",
     source: str = "vod_segment",
+    scope: str = "",
 ) -> None:
     """Append hard-negative / gold anchor to mobile_legends_owner_labels.json."""
     from mlbb_owner_learning import append_owner_time_label
@@ -215,7 +223,7 @@ def append_owner_label_json(
         label,
         note=note,
         source=source,
-        scope="segment" if source.startswith("vod") else "",
+        scope=scope or ("segment" if source.startswith("vod") else ""),
     )
 
 
@@ -346,6 +354,19 @@ def apply_owner_label(
         note=reason,
         source="vod_segment",
     )
+    try:
+        from mlbb_owner_feedback import record_owner_feedback
+
+        record_owner_feedback(
+            source="vod_segment",
+            video_id=vid,
+            time_sec=peak_sec,
+            label=label_name,
+            reason=reason,
+            item_id=segment_id_str,
+        )
+    except Exception:
+        pass
     return True, label_name
 
 

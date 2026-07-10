@@ -15,7 +15,7 @@ export CONTENT_BOT_REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 export MLBB_DATA_ROOT="${MLBB_DATA_ROOT:-/root/data/mlbb}"
 export PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO}/scripts:${PYTHONPATH:-}"
 export HIGHLIGHT_HEATMAP=0
-export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export HIGHLIGHT_USE_OWNER_ANCHORS=1
 export HIGHLIGHT_OWNER_BAD_PAD_SEC="${HIGHLIGHT_OWNER_BAD_PAD_SEC:-90}"
 export HIGHLIGHT_OWNER_GOOD_PAD_SEC="${HIGHLIGHT_OWNER_GOOD_PAD_SEC:-45}"
 export MLBB_LEARNING_FIRST="${MLBB_LEARNING_FIRST:-0}"
@@ -52,10 +52,21 @@ print(
     f"rebuild_index={n} purged={purged} shorts_pending={s['pending']} owner_rank={s.get('owner_rank')} "
     f"vseg_pending={vs['pending']}"
 )
+from mlbb_owner_learning import build_training_manifest
+print("training_manifest", build_training_manifest())
 PY
 
-python3 /usr/local/bin/highlight_train.py --profile mobile_legends 2>/dev/null \
-  || python3 "${CONTENT_BOT_REPO}/scripts/highlight_train.py" --profile mobile_legends
+TRAIN_OK=0
+if [[ "${MLBB_LEARN_APPLY_TRAIN:-1}" == "1" ]]; then
+  if python3 /usr/local/bin/highlight_train.py --profile mobile_legends 2>/dev/null \
+    || python3 "${CONTENT_BOT_REPO}/scripts/highlight_train.py" --profile mobile_legends; then
+    TRAIN_OK=1
+  else
+    echo "model candidate held: VOD-grouped quality gate failed"
+  fi
+else
+  echo "skip highlight_train: MLBB_LEARN_APPLY_TRAIN=0"
+fi
 
 python3 - <<'PY'
 import sys
@@ -67,8 +78,6 @@ print("owner_sync", sync_owner_learning())
 print("stats", stats())
 PY
 
-python3 /usr/local/bin/eval_learning_first_gate.py 2>/dev/null || true
-
 python3 "${CONTENT_BOT_REPO}/scripts/mlbb_feedback_pattern_miner.py" --write --print 2>/dev/null || true
 python3 "${CONTENT_BOT_REPO}/scripts/mlbb_banner_calibration_apply.py" 2>/dev/null || true
 python3 - <<'PY'
@@ -78,6 +87,24 @@ from mlbb_feedback_gate_tune import apply_feedback_gates, clear_patterns_cache
 clear_patterns_cache()
 print("feedback_gate", apply_feedback_gates(force=True))
 PY
+
+if [[ "$TRAIN_OK" == "1" ]]; then
+  if python3 /usr/local/bin/eval_learning_first_gate.py \
+    --require-pass --holdout-min "${MLBB_TRAIN_MIN_PRECISION:-0.85}" 2>/dev/null \
+    || python3 "${CONTENT_BOT_REPO}/scripts/eval_learning_first_gate.py" \
+      --require-pass --holdout-min "${MLBB_TRAIN_MIN_PRECISION:-0.85}"; then
+    python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/local/bin")
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+from mlbb_learning_first import set_transition_passed
+set_transition_passed(True)
+print("learning transition promoted")
+PY
+  else
+    echo "learning transition remains blocked: pipeline eval failed"
+  fi
+fi
 
 if [[ "${MLBB_LEARN_APPLY_FEED:-0}" == "1" ]]; then
   set -a

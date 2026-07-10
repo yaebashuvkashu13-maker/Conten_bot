@@ -1126,6 +1126,7 @@ def handle_callback_query(query: dict) -> None:
                     timeout=15,
                 )
                 return
+            _schedule_mlbb_retrain()
             st = bcal_stats()
             api_call(
                 'answerCallbackQuery',
@@ -2850,6 +2851,8 @@ def _approve_preview_worker(chat_id: str, preview_id: str) -> None:
         if not pkg:
             send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
             return
+        if str(pkg.get("profile") or "").lower() in ("mlbb", "mobile_legends"):
+            _schedule_mlbb_retrain()
         env_map = dict(os.environ)
         if ENV_FILE.exists():
             for line in ENV_FILE.read_text().splitlines():
@@ -3410,6 +3413,7 @@ def handle_message(message: dict):
             from segment_preview import reject_preview
 
             reject_preview(preview_id, by_chat=str(chat_id), reason='owner_rejected')
+            _schedule_mlbb_retrain()
             send_message(chat_id, f'REFUSED: preview_id={preview_id}, reason=owner_rejected')
         except Exception as exc:
             send_message(chat_id, f'REFUSED: preview, reason={exc}')

@@ -53,11 +53,7 @@ def streak_threshold() -> int:
 def soften_level(streak: int) -> int:
     """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
     if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
-        recovery = max(4, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "5")))
-        if streak < recovery:
-            return 0
-        # Quality mode: allow recovery soften after long zero streak (hook/motion/POV).
-        return 1 if streak < recovery + 4 else 2
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0
@@ -180,10 +176,5 @@ def telegram_exhaust_notice(vod_id: str, *, level: int, streak: int) -> str:
     if level > 0:
         return f"{base} (уже мягкий режим L{level}, серия нулей={streak})"
     if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
-        recovery = max(4, int(os.environ.get("MLBB_VOD_ZERO_RECOVERY_SOFTEN", "5")))
-        if streak >= recovery:
-            return (
-                f"{base} — серия нулей={streak} (recovery soften L1, quality mode)"
-            )
         return f"{base} — серия нулей={streak} (смягчение отключено: quality mode)"
     return f"{base} — серия нулей {streak}/{streak_threshold()} до смягчения"

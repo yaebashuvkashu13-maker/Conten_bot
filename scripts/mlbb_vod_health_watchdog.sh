@@ -23,8 +23,11 @@ if [[ "$(env_val MLBB_VOD_ONLY)" != "1" || "$(env_val MLBB_VOD_DISABLED)" == "1"
 fi
 
 # Zombies that have repeatedly killed the box.
-for pat in highlight_train.py mlbb_continuous_worker mlbb_calibration_feed \
-  mlbb_youtube_shorts_ingest mlbb_hero_shorts_montage; do
+FORBIDDEN_PATTERNS="mlbb_continuous_worker mlbb_calibration_feed mlbb_youtube_shorts_ingest mlbb_hero_shorts_montage"
+if [[ "$(env_val MLBB_LEARN_APPLY_TRAIN)" != "1" ]]; then
+  FORBIDDEN_PATTERNS="highlight_train.py $FORBIDDEN_PATTERNS"
+fi
+for pat in $FORBIDDEN_PATTERNS; do
   if pgrep -f "$pat" >/dev/null 2>&1; then
     log "kill forbidden $pat"
     pkill -9 -f "$pat" 2>/dev/null || true

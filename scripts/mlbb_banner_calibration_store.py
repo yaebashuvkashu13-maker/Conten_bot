@@ -296,9 +296,23 @@ def _append_owner_time_label(row: dict, reason: str) -> None:
         vid = vod_youtube_id(str(row.get("vod", "")))
         sec = float(row.get("sec", 0))
         if reason in POSITIVE_REASONS:
-            append_owner_label_json(vid, sec, "good", note=reason, source="banner_calibration")
+            append_owner_label_json(
+                vid,
+                sec,
+                "good",
+                note=reason,
+                source="banner_calibration",
+                scope="banner",
+            )
         elif reason in NEGATIVE_REASONS:
-            append_owner_label_json(vid, sec, "bad", note=reason, source="banner_calibration")
+            append_owner_label_json(
+                vid,
+                sec,
+                "bad",
+                note=reason,
+                source="banner_calibration",
+                scope="banner",
+            )
     except Exception:
         pass
 
@@ -353,6 +367,20 @@ def apply_owner_label(
     save_labels(labels)
 
     _append_owner_time_label(row, reason)
+    try:
+        from mlbb_owner_feedback import record_owner_feedback
+
+        label = "good" if reason in POSITIVE_REASONS else "bad"
+        record_owner_feedback(
+            source="banner_calibration",
+            video_id=str(row.get("vod", "")),
+            time_sec=float(row.get("sec", 0)),
+            label=label,
+            reason=reason,
+            item_id=check_id_str,
+        )
+    except Exception:
+        pass
     if reason in NEGATIVE_REASONS:
         remove_check_from_index(check_id_str)
     sync_learning_after_label()

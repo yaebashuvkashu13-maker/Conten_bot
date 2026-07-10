@@ -105,6 +105,8 @@ def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> N
     assert pool[0]["start"] == 120.0
     assert pool[0]["clip_score"] == 0.8
     assert pool[0]["highlight_metrics"]["clip_score"] == 0.8
+    assert pool[0]["highlight_metrics"]["rule_pass"] is False
+    assert pool[0]["highlight_metrics"]["pass_reason"] == "cached_pool_needs_revalidation"
 
 
 def test_invalidate_pool_cache() -> None:
