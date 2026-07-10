@@ -21,7 +21,7 @@ from mlbb_telegram_video import send_photo_file
 from youtube_download import load_env
 
 ENV_PATH = Path("/root/.video_bot.env")
-LOCK_PATH = Path(os.environ.get("MLBB_POS_SCAN_LOCK", "/tmp/mlbb_banner_positive_scan.lock"))
+LOCK_PATH = Path(os.environ.get("MLBB_POS_SCAN_LOCK", "/tmp/mlbb_banner_scan_send.pid"))
 
 
 def _scan_state_path() -> Path:
@@ -85,6 +85,8 @@ def _singleton_lock():
 
 
 def main() -> int:
+    if os.environ.get("MLBB_POS_SCAN_SKIP_INNER_LOCK", "0") == "1":
+        return _run()
     with _singleton_lock() as acquired:
         if not acquired:
             print("skip positive scan: another instance running", flush=True)

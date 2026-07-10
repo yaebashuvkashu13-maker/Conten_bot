@@ -200,7 +200,8 @@ def _run_feed() -> int:
         return 1
 
     st = stats()
-    if st["labeled"] >= calibration_target():
+    force = os.environ.get("MLBB_BANNER_CALIB_FORCE", "0") == "1"
+    if not force and st["labeled"] >= calibration_target():
         print(json.dumps({"status": "target_reached", **st}, ensure_ascii=False))
         return 0
 
