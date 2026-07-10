@@ -64,6 +64,7 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
     os.environ["MLBB_VOD_SEND_ONE"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "0"
     os.environ["MLBB_FEEDBACK_GATE"] = "0"
+    os.environ["MLBB_VOD_QUALITY_MODEL"] = "0"
 
     with (
         patch("mlbb_vod_segment_feed.discover_strict_candidates", return_value=pool),
