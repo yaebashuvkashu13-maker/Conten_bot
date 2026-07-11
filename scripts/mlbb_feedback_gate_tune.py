@@ -80,26 +80,54 @@ def apply_feedback_gates(*, force: bool = False) -> dict[str, float]:
     return applied
 
 
+def _banner_clip(row: dict) -> bool:
+    if row.get("kill_banner") or row.get("anchor") == "kill_banner":
+        return True
+    try:
+        return int(row.get("kill_banner_tier") or 0) >= 2
+    except (TypeError, ValueError):
+        return False
+
+
+def banner_min_hook() -> float:
+    return float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.06"))
+
+
+def banner_min_fight_sec() -> float:
+    return float(os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "12"))
+
+
 def feedback_reject_row(row: dict) -> tuple[bool, str]:
     """Hard reject candidates that look like frequent 👎 patterns."""
     if not _enabled():
         return False, ""
-    if row.get("kill_banner") or row.get("anchor") == "kill_banner":
-        return False, ""
-    if int(row.get("kill_banner_tier") or 0) >= 2:
-        return False, ""
-    payload = load_patterns()
-    gates = payload.get("gates") or {}
     hook = float(row.get("hook_score") or 0)
     fight_dur = float(row.get("fight_dur") or row.get("duration") or 0)
+    has_banner = _banner_clip(row)
+
+    if has_banner:
+        min_hook = banner_min_hook()
+        min_fight = banner_min_fight_sec()
+        if min_hook > 0 and hook < min_hook:
+            return True, f"banner_low_hook:{hook:.3f}<{min_hook:.3f}"
+        if min_fight > 0 and fight_dur > 0 and fight_dur < min_fight:
+            return True, f"banner_short_fight:{fight_dur:.1f}<{min_fight:.1f}"
+        hook_mult = float(os.environ.get("MLBB_FEEDBACK_BANNER_HOOK_MULT", "0.55"))
+        fight_mult = float(os.environ.get("MLBB_FEEDBACK_BANNER_FIGHT_MULT", "0.55"))
+    else:
+        hook_mult = 1.0
+        fight_mult = 1.0
+
+    payload = load_patterns()
+    gates = payload.get("gates") or {}
     hook_floor = float(
         gates.get("MLBB_FEEDBACK_REJECT_HOOK_BELOW")
         or os.environ.get("MLBB_FEEDBACK_REJECT_HOOK_BELOW", "0.08")
-    )
+    ) * hook_mult
     fight_floor = float(
         gates.get("MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW")
         or os.environ.get("MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW", "28")
-    )
+    ) * fight_mult
     if hook_floor > 0 and hook < hook_floor:
         return True, f"feedback_low_hook:{hook:.3f}<{hook_floor:.3f}"
     if fight_floor > 0 and fight_dur > 0 and fight_dur < fight_floor:

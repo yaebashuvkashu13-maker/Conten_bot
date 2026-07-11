@@ -1583,6 +1583,15 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if not tail_ok:
         return False, tail_reason, report
 
+    try:
+        from mlbb_feedback_gate_tune import feedback_reject_row
+
+        reject, reject_reason = feedback_reject_row(row)
+        if reject:
+            return False, reject_reason, report
+    except Exception:
+        pass
+
     report["pass_reason"] = row.get("pass_reason") or row.get("gate_reason") or "presend_ok"
     return True, "presend_ok", report
 
@@ -2222,8 +2231,12 @@ def _process_vod_segments(
         target = float(os.environ.get("MLBB_VOD_BAD_SHARE_TARGET", "0.20"))
         if bad_share > target:
             # Tighten score/hook only — MLBB HUD triggers false menu_overlay if visual is tightened.
-            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.10")
-            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.05")
+            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.12")
+            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.08")
+            os.environ["MLBB_BANNER_MIN_HOOK"] = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.10")
+            os.environ["MLBB_BANNER_MIN_FIGHT_SEC"] = os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "16")
+            os.environ["MLBB_PRESEND_MIN_MOTION"] = os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.018")
+            os.environ["MLBB_SAVAGE_CLIP_MIN_SEC"] = os.environ.get("MLBB_SAVAGE_CLIP_MIN_SEC", "14")
             if os.environ.get("MLBB_VOD_QUALITY_MODE_VISUAL_TIGHTEN", "0") == "1":
                 os.environ["SMART_UNIFORM_MIN_HUD_RATE"] = os.environ.get(
                     "SMART_UNIFORM_MIN_HUD_RATE", "0.70"
