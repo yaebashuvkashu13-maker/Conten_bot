@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from mlbb_owner_learning import (  # noqa: E402
     append_owner_time_label,
     backfill_shorts_to_owner_labels,
+    build_training_manifest,
     load_owner_labels_json,
     load_unified_training_samples,
     owner_kill_anchor_secs,
@@ -104,3 +105,51 @@ def test_append_owner_time_label_dedupes(tmp_path: Path, monkeypatch) -> None:
     assert append_owner_time_label("vid12345678", 100.0, "good", source="vod_segment")
     assert not append_owner_time_label("vid12345678", 100.0, "good", source="vod_segment")
     assert len(load_owner_labels_json()["videos"]["vid12345678"]) == 1
+
+
+def test_banner_scope_is_not_clip_ranker_training_data(tmp_path: Path, monkeypatch) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    vod = inbox / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"x" * 5000)
+    owner = tmp_path / "owner.json"
+    monkeypatch.setenv("HIGHLIGHT_INBOX", str(inbox))
+    monkeypatch.setenv("MLBB_OWNER_LABELS_PATH", str(owner))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(tmp_path / "shorts.json"))
+    monkeypatch.setenv("MLBB_VOD_SEGMENT_LABELS", str(tmp_path / "vseg.json"))
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(tmp_path / "exemplars"))
+
+    append_owner_time_label(
+        "abcdefghijk",
+        50,
+        "good",
+        source="banner_calibration",
+        scope="banner",
+    )
+    append_owner_time_label(
+        "abcdefghijk",
+        100,
+        "bad",
+        source="preview_bad",
+        scope="segment",
+    )
+
+    samples = load_unified_training_samples("mobile_legends")
+    assert len(samples) == 1
+    assert samples[0][2] == 0
+
+
+def test_training_manifest_keeps_banner_task_separate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("mlbb_owner_learning.DATA_MLBB", tmp_path)
+    monkeypatch.setenv("MLBB_OWNER_LABELS_PATH", str(tmp_path / "owner.json"))
+    monkeypatch.setenv("MLBB_CALIBRATION_LABELS", str(tmp_path / "shorts.json"))
+    monkeypatch.setenv("MLBB_VOD_SEGMENT_LABELS", str(tmp_path / "vseg.json"))
+    monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(tmp_path / "exemplars"))
+    (tmp_path / "banner_calibration_labels.json").write_text(
+        json.dumps({"labels": [{"reason": "no_banner"}, {"reason": "own_kill_good"}]})
+    )
+
+    manifest = build_training_manifest(write=False)
+    assert manifest["clip_ranker"]["banner_scope_excluded"] is True
+    assert manifest["banner_event"]["samples"] == 2
+    assert manifest["banner_event"]["by_reason"]["no_banner"] == 1

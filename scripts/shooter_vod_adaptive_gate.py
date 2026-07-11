@@ -108,6 +108,8 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
 
 
 def soften_level(streak: int) -> int:
+    if os.environ.get("SHOOTER_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0

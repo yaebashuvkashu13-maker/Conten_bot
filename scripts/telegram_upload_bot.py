@@ -483,6 +483,24 @@ def _schedule_mlbb_retrain() -> None:
         logging.exception('mlbb retrain schedule failed')
 
 
+def _schedule_vod_retrain(game: str) -> None:
+    """Retrain one non-MLBB quality ranker without blocking Telegram."""
+    script = Path('/usr/local/bin/vod_learn_apply.sh')
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'vod_learn_apply.sh'
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ['bash', str(script), game.strip().lower()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        logging.exception('%s VOD retrain schedule failed', game)
+
+
 def _mlbb_apply_vseg_label(
     chat_id: str | int,
     segment_id: str,
@@ -552,6 +570,7 @@ def _shooter_apply_vseg_label(
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'
+    _schedule_vod_retrain(game)
     from daily_game_cycle import profile_for_game
     from vod_owner_learning import exemplar_counts
 
@@ -1096,6 +1115,64 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_bcal:'):
+        try:
+            _, item_id, short = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return
+        from mlbb_banner_calibration_reasons import (
+            labeled_keyboard_markup as bcal_markup,
+            reason_from_short,
+            reason_label,
+        )
+        from mlbb_banner_calibration_store import apply_owner_label, stats as bcal_stats
+
+        reason = reason_from_short(short.strip())
+        if not reason:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Неизвестная кнопка', 'show_alert': True},
+                timeout=15,
+            )
+            return
+        try:
+            ok, reply = apply_owner_label(item_id.strip(), reason, by_chat=str(chat_id))
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return
+            _schedule_mlbb_retrain()
+            st = bcal_stats()
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': f'{reason_label(reason)} ({st["labeled"]}/{st["target"]})',
+                },
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': bcal_markup(reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_bcal callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
@@ -1106,7 +1183,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -2793,6 +2870,8 @@ def _approve_preview_worker(chat_id: str, preview_id: str) -> None:
         if not pkg:
             send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
             return
+        if str(pkg.get("profile") or "").lower() in ("mlbb", "mobile_legends"):
+            _schedule_mlbb_retrain()
         env_map = dict(os.environ)
         if ENV_FILE.exists():
             for line in ENV_FILE.read_text().splitlines():
@@ -3353,6 +3432,7 @@ def handle_message(message: dict):
             from segment_preview import reject_preview
 
             reject_preview(preview_id, by_chat=str(chat_id), reason='owner_rejected')
+            _schedule_mlbb_retrain()
             send_message(chat_id, f'REFUSED: preview_id={preview_id}, reason=owner_rejected')
         except Exception as exc:
             send_message(chat_id, f'REFUSED: preview, reason={exc}')
