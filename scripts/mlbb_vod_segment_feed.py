@@ -339,7 +339,8 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
-        priority = 1 if row.get("title_rescan_priority") else 0
+        zero_sessions = int(row.get("zero_send_sessions") or 0)
+        priority = 1 if row.get("title_rescan_priority") and zero_sessions < 2 else 0
         ranked.append((-priority, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
@@ -2441,7 +2442,6 @@ def _process_vod_segments(
 
     state = _load_state()
     if entry:
-        entry.pop("title_rescan_priority", None)
         _sync_vod_entry_to_state(state, entry, vod)
     state["active_vod"] = vod.name
     scanned = set(state.get("scanned_vods", []))
@@ -2449,21 +2449,25 @@ def _process_vod_segments(
     state["scanned_vods"] = sorted(scanned)
     new_streak = record_vod_outcome(state, vod_id=vid, sent=sent_total)
     state["last_adaptive_level"] = active_level
-    _save_state(state)
 
     if sent_total == 0 and not send_quota_blocked:
         if entry is not None:
             sessions = note_zero_send_session(entry)
             log.info("zero_send_sessions=%s vod=%s", sessions, vod.name)
+            if sessions >= 2:
+                entry.pop("title_rescan_priority", None)
         if entry and should_mark_vod_exhausted(entry):
             _mark_vod_exhausted(vod)
             entry["exhausted"] = True
             entry["id"] = vid
+            entry.pop("title_rescan_priority", None)
             if not entry.get("reject_reason"):
                 if not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
                 elif entry.get("last_scan_blocked"):
                     entry["reject_reason"] = "all_peaks_blocked"
+                else:
+                    entry["reject_reason"] = "presend_rejected_all_peaks"
             _record_zero_yield_uploader(entry)
             log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
             if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
@@ -2478,12 +2482,19 @@ def _process_vod_segments(
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
+        if entry is not None:
+            entry["zero_send_sessions"] = 0
+            entry.pop("title_rescan_priority", None)
         if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
             send_message(
                 token,
                 chat_id,
                 f"✅ {sent_total} клип(ов) с мягких фильтров (L{active_level}) — возврат к strict после серии",
             )
+
+    if entry:
+        _sync_vod_entry_to_state(state, entry, vod)
+    _save_state(state)
     return sent_total
 
 
