@@ -90,11 +90,11 @@ def _banner_clip(row: dict) -> bool:
 
 
 def banner_min_hook() -> float:
-    return float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.06"))
+    return float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05"))
 
 
 def banner_min_fight_sec() -> float:
-    return float(os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "12"))
+    return float(os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "10"))
 
 
 def feedback_reject_row(row: dict) -> tuple[bool, str]:

@@ -73,8 +73,8 @@ def test_feedback_reject_banner_has_soft_floors_not_full_bypass(tmp_path: Path, 
     path.write_text(json.dumps(patterns), encoding="utf-8")
     monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
     monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
-    monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.06")
-    monkeypatch.setenv("MLBB_BANNER_MIN_FIGHT_SEC", "12")
+    monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.05")
+    monkeypatch.setenv("MLBB_BANNER_MIN_FIGHT_SEC", "10")
     clear_patterns_cache()
 
     weak_banner = {

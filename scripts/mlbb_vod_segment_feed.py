@@ -2231,12 +2231,12 @@ def _process_vod_segments(
         target = float(os.environ.get("MLBB_VOD_BAD_SHARE_TARGET", "0.20"))
         if bad_share > target:
             # Tighten score/hook only — MLBB HUD triggers false menu_overlay if visual is tightened.
-            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.12")
-            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.08")
-            os.environ["MLBB_BANNER_MIN_HOOK"] = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.10")
-            os.environ["MLBB_BANNER_MIN_FIGHT_SEC"] = os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "16")
-            os.environ["MLBB_PRESEND_MIN_MOTION"] = os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.018")
-            os.environ["MLBB_SAVAGE_CLIP_MIN_SEC"] = os.environ.get("MLBB_SAVAGE_CLIP_MIN_SEC", "14")
+            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.10")
+            os.environ["VIRAL_MLBB_HOOK_MIN"] = os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06")
+            os.environ["MLBB_BANNER_MIN_HOOK"] = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.07")
+            os.environ["MLBB_BANNER_MIN_FIGHT_SEC"] = os.environ.get("MLBB_BANNER_MIN_FIGHT_SEC", "12")
+            os.environ["MLBB_PRESEND_MIN_MOTION"] = os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.015")
+            os.environ["MLBB_SAVAGE_CLIP_MIN_SEC"] = os.environ.get("MLBB_SAVAGE_CLIP_MIN_SEC", "12")
             if os.environ.get("MLBB_VOD_QUALITY_MODE_VISUAL_TIGHTEN", "0") == "1":
                 os.environ["SMART_UNIFORM_MIN_HUD_RATE"] = os.environ.get(
                     "SMART_UNIFORM_MIN_HUD_RATE", "0.70"

@@ -99,3 +99,11 @@ def test_start_next_quota_now_resets_mlbb(isolated_state: Path) -> None:
     assert summary["active_game"] == "mlbb"
     assert summary["remaining"]["mlbb"] == 10
     assert cycle.send_count("mlbb") == 0
+
+
+def test_quota_for_uses_higher_of_per_game_and_game_wide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DAILY_MLBB_QUOTA", "2")
+    monkeypatch.setenv("DAILY_GAME_MLBB_QUOTA", "30")
+    assert cycle.quota_for("mlbb") == 30
