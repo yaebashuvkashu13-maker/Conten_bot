@@ -7,13 +7,86 @@
 ```
 Ты Cloud Agent для репозитория yaebashuvkashu13-maker/Conten_bot.
 ПЕРВЫМ ДЕЛОМ прочитай:
+- docs/PROJECT_AUDIT_2026-07-10.md (актуальный аудит кода и production)
 - docs/AGENT_HANDBOOK.md (§6 Viral Highlight Engine, §5 strict peak)
 - docs/SESSION_HANDOFF_2026-06-08.md (контекст качества, без VK)
 - docs/CLOUD_AGENT_MISSION.md (этот файл — полная миссия)
 
-Ветка: cursor/mlbb-video-pipeline-e712, PR #4 → main.
+Не доверяй зафиксированному имени ветки: сначала сравни main, текущую ветку
+и commit на VPS. На 2026-07-10 production был на 93 commit впереди main.
 VPS: /root/content_bot_ml, env /root/.video_bot.env.
 Бот: @programofloyalbot, владелец @PMAntonShapkin (TG_CHAT_ID).
+
+══════════════════════════════════════════════════════════════
+ОБЯЗАТЕЛЬНЫЙ ПРОТОКОЛ ПОСЛЕ АУДИТА 2026-07-10
+══════════════════════════════════════════════════════════════
+Проблема НЕ в количестве разметки. На production уже есть сотни good/bad
+exemplar, но активный VOD path обходит feedback через cached_pool,
+MLBB_VOD_SKIP_REVALIDATE=1, отключённый train и раздельные label stores.
+
+Не добавляй новые эвристики и не ослабляй thresholds, пока не исправлен
+контур label → invalidate → train/calibrate → holdout eval → deploy.
+
+P0 — выполнять строго по порядку:
+  1. Убрать quality-degrading fallback:
+     — zero_cut_streak никогда не отключает banner/event requirements;
+     — sent=0 — допустимый результат, filler отправлять запрещено;
+     — adaptive режим может увеличивать exploration/search budget,
+       но не понижать quality threshold.
+  2. Починить корректность:
+     — импорт detect_fight_bounds;
+     — atomic + locked JSON writes;
+     — durable mark сразу после успешного Telegram send;
+     — non-zero exit/status для пустого или сломанного запуска.
+  3. Подключить feedback:
+     — каждый dislike блокирует окно ±60–90s;
+     — очищает last_pool_peaks/last_pool_at и versioned decision cache;
+     — cached_pool никогда не получает rule_pass без revalidation;
+     — reason сохраняется как отдельный hard-negative класс.
+  4. Сделать единый manifest данных:
+     — VOD segment labels, owner timestamps, Shorts labels,
+       banner screenshots и exemplar clips;
+     — записать counts, source VOD, class, reason, checksum;
+     — split train/validation только по VOD, не по соседним frames.
+  5. Зафиксировать baseline до изменения порогов:
+     — event recall, bad false-pass, sent precision, owner approval;
+     — empty-VOD rate и CPU-minutes per input-hour;
+     — отчёт содержит конкретные VOD/time_sec ошибок.
+  6. Разделить модели:
+     — event detector: own kill banner / teamfight;
+     — highlight ranker: интересен ли весь clip;
+     — 149 banner screenshots не считать clip-level feedback.
+  7. Перестроить поиск кандидатов без роста нагрузки:
+     — один дешёвый 360p scan: audio onset/RMS, motion, scene/HUD delta,
+       OCR confidence, Most Replayed при наличии;
+     — buckets по всей временной шкале + top кандидаты каждого bucket;
+     — exploration budget обязателен, sparse fast probe не exhaust VOD;
+     — дорогие OCR/CLIP проверки только для top 2–6% видео;
+     — сначала оценить все кандидаты, потом выбрать global top-K.
+  8. Source discovery:
+     — score по metadata, thumbnail HUD, прошлому yield/approval uploader;
+     — один zero-yield VOD не блокирует канал;
+     — сначала 360p proxy+audio, full quality только для выбранных окон.
+  9. Active learning:
+     — запрашивать uncertainty/disagreement/hard negatives,
+       а не случайные кадры;
+     — не просить владельца размечать новые данные, пока текущие метки
+       не проходят через production scorer.
+ 10. Shadow deploy:
+     — новая версия сначала только пишет decision JSONL;
+     — auto-send включать при holdout precision ≥0.85,
+       bad false-pass ≤0.10 и event recall ≥0.70;
+     — не обучать и не оценивать на одном наборе.
+
+Ограничения ресурсов:
+  — frozen embeddings + LogisticRegression/LightGBM вместо большой VLM;
+  — feature cache key = video checksum + interval + model/config version;
+  — ML/ffmpeg worker budget ограничивать load average и числом потоков;
+  — MLBB_FORCE_RERENDER=0, если source и render signature не изменились;
+  — не повторять OCR/PANN/CLIP для неизменившегося versioned candidate.
+
+После КАЖДОЙ правки приложи before/after eval. Фраза «качество стало лучше»
+без holdout JSON/CSV и списка false positives запрещена.
 
 ══════════════════════════════════════════════════════════════
 МИССИЯ
@@ -93,7 +166,7 @@ streamer talk без боя, intro/credits.
      — Обучить hook_min per game из silver clips (median hook score топ-100)
 
 ══════════════════════════════════════════════════════════════
-ФАЗА 0 — АУДИТ (день 1, без правок логики)
+ФАЗА 0 — АУДИТ (без правок логики)
 ══════════════════════════════════════════════════════════════
 1. Инвентаризация данных:
    - data/*_owner_labels.json — сколько good/bad per VOD per game
