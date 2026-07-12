@@ -113,6 +113,10 @@ def _vod_skip_long_sec() -> float:
     return float(os.environ.get("MLBB_VOD_SKIP_LONG_SEC", str(_vod_max_sec())))
 
 
+def _vod_max_process_sec() -> float:
+    return max(300.0, float(os.environ.get("MLBB_VOD_MAX_PROCESS_MIN", "50")) * 60.0)
+
+
 def _vod_min_peak_sec(vod: Path | None = None) -> float:
     """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
     if vod is not None:
@@ -1524,7 +1528,15 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 )
                 report["pov_hero_sim"] = round(pov_sim, 4)
                 if not pov_ok:
-                    return False, pov_reason, report
+                    try:
+                        tier_i = int(row.get("kill_banner_tier") or 0)
+                    except (TypeError, ValueError):
+                        tier_i = 0
+                    pov_floor = float(os.environ.get("MLBB_BANNER_POV_MIN_SIM", "0.30"))
+                    if tier_i >= 5 and pov_sim >= pov_floor * 0.45:
+                        report["pov_soft_pass"] = True
+                    else:
+                        return False, pov_reason, report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1757,9 +1769,6 @@ def _collect_scan_segments(
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
             continue
-        if peak < min_peak and not clip.get("kill_banner") and clip.get("anchor") != "kill_banner":
-            log.info("skip peak=%.1f before min_peak=%.0f vod=%s", peak, min_peak, vod.name)
-            continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
             log.info(
@@ -1767,6 +1776,15 @@ def _collect_scan_segments(
                 peak,
                 lead_clip.get("banner_reject"),
             )
+            continue
+        has_banner = bool(
+            clip.get("kill_banner")
+            or clip.get("anchor") == "kill_banner"
+            or lead_clip.get("kill_banner")
+            or lead_clip.get("anchor") == "kill_banner"
+        )
+        if peak < min_peak and not has_banner:
+            log.info("skip peak=%.1f before min_peak=%.0f vod=%s", peak, min_peak, vod.name)
             continue
         start = float(lead_clip["start"])
         seg_dur = float(lead_clip.get("input_duration") or 0)
@@ -1778,7 +1796,8 @@ def _collect_scan_segments(
             min_ideal = float(os.environ.get("MLBB_SAVAGE_CLIP_MIN_SEC", "8"))
         elif tier_i >= 4:
             min_ideal = float(os.environ.get("MLBB_MANIAC_CLIP_MIN_SEC", "12"))
-        if seg_dur < min_ideal:
+        clip_tol = float(os.environ.get("MLBB_CLIP_DUR_TOLERANCE_SEC", "0.75"))
+        if seg_dur + clip_tol < min_ideal:
             log.info("skip peak=%.1f short_ideal_clip dur=%.1f need=%.1f", peak, seg_dur, min_ideal)
             continue
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
@@ -1840,10 +1859,9 @@ def _collect_scan_segments(
                 banner_sec=float(lead_clip.get("banner_sec")) if lead_clip.get("banner_sec") else None,
             )
             if not pov_ok:
-                title_need = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
-                if tier_i >= 5 and title_need >= 5:
+                if tier_i >= 5:
                     log.info(
-                        "peak=%.1f pov_soft_pass savage title+banner sim=%.3f reason=%s",
+                        "peak=%.1f pov_soft_pass savage banner sim=%.3f reason=%s",
                         peak,
                         pov_sim,
                         pov_reason,
@@ -2199,6 +2217,7 @@ def _process_vod_segments(
     skip_peaks: set[float] = set()
     peak_tries = 0
     send_quota_blocked = False
+    vod_deadline = time.time() + _vod_max_process_sec()
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
@@ -2314,6 +2333,14 @@ def _process_vod_segments(
                     cached_blocked = True
 
             while not cached_blocked:
+                if time.time() >= vod_deadline:
+                    log.warning(
+                        "vod process deadline — stop vod=%s sent=%s max_min=%.0f",
+                        vod.name,
+                        sent_total,
+                        _vod_max_process_sec() / 60.0,
+                    )
+                    break
                 if max_per_vod > 0 and sent_total >= max_per_vod:
                     log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                     break
