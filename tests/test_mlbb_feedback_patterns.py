@@ -61,7 +61,7 @@ def test_mine_patterns_and_gates(tmp_path: Path, monkeypatch) -> None:
     assert applied["MLBB_VOD_MIN_CLIP_SCORE"] <= 0.16
 
 
-def test_feedback_reject_skips_banner_anchored(tmp_path: Path, monkeypatch) -> None:
+def test_feedback_reject_banner_has_soft_floors_not_full_bypass(tmp_path: Path, monkeypatch) -> None:
     patterns = {
         "gates": {
             "MLBB_FEEDBACK_REJECT_HOOK_BELOW": 0.15,
@@ -73,11 +73,29 @@ def test_feedback_reject_skips_banner_anchored(tmp_path: Path, monkeypatch) -> N
     path.write_text(json.dumps(patterns), encoding="utf-8")
     monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
     monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.05")
+    monkeypatch.setenv("MLBB_BANNER_MIN_FIGHT_SEC", "10")
     clear_patterns_cache()
 
-    bad = {"hook_score": 0.04, "fight_dur": 26, "clip_score": 0.2, "kill_banner": "double", "kill_banner_tier": 2}
-    reject, _ = feedback_reject_row(bad)
-    assert not reject
+    weak_banner = {
+        "hook_score": 0.04,
+        "fight_dur": 9,
+        "clip_score": 0.2,
+        "kill_banner": "savage",
+        "kill_banner_tier": 5,
+    }
+    reject, why = feedback_reject_row(weak_banner)
+    assert reject and ("hook" in why or "fight" in why)
+
+    ok_banner = {
+        "hook_score": 0.12,
+        "fight_dur": 18,
+        "clip_score": 0.2,
+        "kill_banner": "double",
+        "kill_banner_tier": 2,
+    }
+    reject_ok, _ = feedback_reject_row(ok_banner)
+    assert not reject_ok
 
 
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:

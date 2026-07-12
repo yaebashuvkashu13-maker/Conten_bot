@@ -37,6 +37,31 @@ def test_gate_rejects_negative_match(tmp_path: Path, monkeypatch) -> None:
     assert "no_banner" in reason
 
 
+def test_strict_send_rejects_neutral_without_visual_proof(tmp_path: Path, monkeypatch) -> None:
+    prof = tmp_path / "banner_calibration_profile.json"
+    prof.write_text(json.dumps({"labeled": 75, "by_reason": {"no_banner": 75}}))
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_SEND_STRICT", "1")
+
+    from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    with patch(
+        "mlbb_banner_ref_match.match_negative_banner_reference",
+        return_value=None,
+    ), patch(
+        "mlbb_banner_ref_match.match_positive_owner_reference",
+        return_value=None,
+    ), patch(
+        "mlbb_banner_ref_match.match_banner_reference",
+        return_value=None,
+    ):
+        ok, reason = check_banner_frame_passes(frame, tier=2)
+    assert not ok
+    assert "no_banner_visual_proof" in reason
+
+
 def test_write_profile_from_stats(tmp_path: Path, monkeypatch) -> None:
     labels = tmp_path / "labels.json"
     labels.write_text(

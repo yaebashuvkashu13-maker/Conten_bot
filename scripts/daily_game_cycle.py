@@ -39,13 +39,19 @@ def enabled() -> bool:
 def quota_for(game: str) -> int:
     game = game.strip().lower()
     defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
-    env_key = f"DAILY_{game.upper()}_QUOTA"
-    fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
-    raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return defaults.get(game, 10)
+    candidates: list[int] = []
+    for key in (f"DAILY_{game.upper()}_QUOTA", f"DAILY_GAME_{game.upper()}_QUOTA"):
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        try:
+            candidates.append(max(0, int(raw)))
+        except ValueError:
+            continue
+    if candidates:
+        # When both DAILY_MLBB_QUOTA and DAILY_GAME_MLBB_QUOTA are set, use the higher.
+        return max(candidates)
+    return defaults.get(game, 10)
 
 
 def load_state() -> dict:
