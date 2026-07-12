@@ -1691,6 +1691,7 @@ def discover_highlight_candidates(
 
             start_set = set(starts)
             banners: list = []
+            title_tier = 0
             if use_discover:
                 from mlbb_vod_title import title_min_banner_tier, vod_title_blob
 
@@ -1703,6 +1704,19 @@ def discover_highlight_candidates(
                     hint_peaks=starts,
                     min_tier=title_tier if title_tier > 0 else None,
                 )
+            if (
+                use_discover
+                and title_tier >= 4
+                and not banners
+                and os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+            ):
+                log.warning(
+                    "highlight %s: dense multi-kill title scan found no tier>=%s banner — skip",
+                    video_path.name,
+                    title_tier,
+                )
+                _hb("highlight_banner_none", progress=1.0, candidates=0)
+                return []
             from mlbb_fight_segment import banner_lead_sec
 
             if banners:
