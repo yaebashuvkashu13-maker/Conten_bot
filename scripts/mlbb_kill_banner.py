@@ -959,6 +959,17 @@ def discover_vod_kill_banners(
                         break
                     t = t0 + (i * span / max(k - 1, 1))
                     _timestep_color_probe(t, cap=cap)
+                    try:
+                        from vod_pipeline_heartbeat import heartbeat
+
+                        heartbeat(
+                            "banner_sparse_scan",
+                            vod_id=vod.stem,
+                            progress=(i + 1) / max(k, 1),
+                            candidates_out=len(hits),
+                        )
+                    except Exception:
+                        pass
                     if i in (0, k // 2, k - 1):
                         log.info(
                             "banner discover %s: timestep_sample i=%s/%s t=%.0fs probes=%s/%s hits=%s",
