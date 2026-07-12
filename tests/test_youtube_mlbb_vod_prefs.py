@@ -102,9 +102,16 @@ def test_discovery_search_cycle_rotates_modes() -> None:
 
 def test_upload_freshness_filter() -> None:
     now = datetime(2026, 6, 21, tzinfo=timezone.utc)
-    fresh = _meta("MLBB Mythic Ranked", upload_date="20260619")
-    stale = _meta("MLBB Mythic Ranked", upload_date="20260101")
     assert upload_age_days("20260619", now=now) == 2
+    today = datetime.now(timezone.utc).date()
+    fresh = _meta(
+        "MLBB Mythic Ranked",
+        upload_date=(today - timedelta(days=2)).strftime("%Y%m%d"),
+    )
+    stale = _meta(
+        "MLBB Mythic Ranked",
+        upload_date=(today - timedelta(days=40)).strftime("%Y%m%d"),
+    )
     assert passes_upload_freshness(fresh, max_age_days=21)
     assert not passes_upload_freshness(stale, max_age_days=21)
 
