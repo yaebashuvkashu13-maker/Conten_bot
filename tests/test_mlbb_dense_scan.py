@@ -49,6 +49,26 @@ def test_dense_scan_end_caps_savage_title() -> None:
         assert end <= 3.0 + 360.0 + 1
 
 
+def test_scan_policy_resets_dense_for_generic_vod(monkeypatch) -> None:
+    from mlbb_vod_segment_feed import _configure_banner_scan_policy
+
+    monkeypatch.setenv("MLBB_VOD_BANNER_DENSE_SEC", "1")
+    monkeypatch.setenv("MLBB_KILL_BANNER_SPARSE_MAX_SEC", "120")
+    assert _configure_banner_scan_policy(0) is False
+    assert os.environ["MLBB_VOD_BANNER_DENSE_SEC"] == "0"
+    assert os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] == "120"
+
+
+def test_scan_policy_enables_dense_for_maniac_title(monkeypatch) -> None:
+    from mlbb_vod_segment_feed import _configure_banner_scan_policy
+
+    monkeypatch.setenv("MLBB_KILL_BANNER_DENSE_MAX_SEC", "360")
+    assert _configure_banner_scan_policy(4) is True
+    assert os.environ["MLBB_VOD_BANNER_DENSE_SEC"] == "1"
+    assert os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] == "1"
+    assert os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] == "360"
+
+
 def test_pick_available_vod_returns_row_not_duration() -> None:
     from mlbb_vod_segment_feed import _pick_available_vod
 

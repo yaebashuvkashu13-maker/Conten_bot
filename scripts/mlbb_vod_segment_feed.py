@@ -117,6 +117,25 @@ def _vod_max_process_sec() -> float:
     return max(300.0, float(os.environ.get("MLBB_VOD_MAX_PROCESS_MIN", "50")) * 60.0)
 
 
+def _configure_banner_scan_policy(title_tier: int, *, priority_rescan: bool = False) -> bool:
+    """Reset leaked per-VOD OCR env and enable dense scan only for Maniac/Savage."""
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = os.environ.get(
+        "MLBB_KILL_BANNER_SPARSE_STEP", "3"
+    )
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
+        "MLBB_KILL_BANNER_SPARSE_MAX_SEC", "180"
+    )
+    dense = int(title_tier) >= 4 or priority_rescan
+    if dense:
+        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
+            "MLBB_KILL_BANNER_DENSE_MAX_SEC", "360"
+        )
+    return dense
+
+
 def _vod_min_peak_sec(vod: Path | None = None) -> float:
     """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
     if vod is not None:
@@ -2209,6 +2228,7 @@ def _process_vod_segments(
         heartbeat("vod_start", vod_id=vid, force=True)
     except Exception:
         pass
+    _configure_banner_scan_policy(0)
     # Title-aware scan: savage in title → early start + require savage banner tier.
     try:
         from mlbb_vod_title import title_min_banner_tier, vod_title_blob
@@ -2224,12 +2244,11 @@ def _process_vod_segments(
                 title_tier,
                 title_blob[:80],
             )
-        if title_tier >= 5 or (entry and entry.get("title_rescan_priority")):
-            os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
-            os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
-            os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
-                "MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900"
-            )
+        dense_scan = _configure_banner_scan_policy(
+            title_tier,
+            priority_rescan=bool(entry and entry.get("title_rescan_priority")),
+        )
+        if dense_scan:
             log.info(
                 "dense_1hz vod=%s title_tier=%s rescan=%s",
                 vod.name,
