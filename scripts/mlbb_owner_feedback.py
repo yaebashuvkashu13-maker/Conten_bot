@@ -159,6 +159,12 @@ def record_owner_feedback(
     )
     save_json_state(path, manifest)
     _clear_runtime_caches()
+    try:
+        from mlbb_source_yield import record_owner_feedback as record_source_feedback
+
+        record_source_feedback(vid, label=label, item_id=item_id)
+    except Exception:
+        pass
     # Do not pause all sends on every owner tap while learning — only on bad when gate is strict.
     if (
         label == "bad"

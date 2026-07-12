@@ -9,7 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_kill_banner import (  # noqa: E402
     _DISCOVERY_CACHE,
+    _cache_discovery_hits,
+    _cached_discovery_hits,
     _discovery_cache_key,
+    KillBannerHit,
     bounds_from_banner,
     classify_banner_text,
     clear_banner_discovery_cache,
@@ -56,6 +59,23 @@ def test_discovery_cache_key_tracks_source_file(tmp_path: Path) -> None:
     _DISCOVERY_CACHE[first] = tuple()
     clear_banner_discovery_cache()
     assert not _DISCOVERY_CACHE
+
+
+def test_discovery_hits_survive_process_cache_clear(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "banner_cache.json"
+    monkeypatch.setenv("MLBB_BANNER_DISCOVERY_CACHE", str(cache))
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"video")
+    key = _discovery_cache_key(vod, 5, True)
+    _cache_discovery_hits(
+        key,
+        [KillBannerHit(sec=616.0, tier=5, label="savage", text="SAVAGE")],
+    )
+    _DISCOVERY_CACHE.clear()
+    hits = _cached_discovery_hits(key)
+    assert hits is not None
+    assert hits[0].tier == 5
+    assert hits[0].sec == 616.0
 
 
 def test_min_tier_double_accepts_double_rejects_single() -> None:

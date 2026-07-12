@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,91 @@ _DISCOVERY_CACHE: dict[tuple[str, int, int, int, bool], tuple[KillBannerHit, ...
 
 def clear_banner_discovery_cache() -> None:
     _DISCOVERY_CACHE.clear()
+    try:
+        _discovery_disk_cache_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _discovery_disk_cache_path() -> Path:
+    root = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
+    return Path(
+        os.environ.get(
+            "MLBB_BANNER_DISCOVERY_CACHE",
+            str(root / "banner_discovery_cache.json"),
+        )
+    )
+
+
+def _disk_key(key: tuple[str, int, int, int, bool]) -> str:
+    return hashlib.sha256(repr(key).encode()).hexdigest()
+
+
+def _cached_discovery_hits(
+    key: tuple[str, int, int, int, bool],
+) -> tuple[KillBannerHit, ...] | None:
+    cached = _DISCOVERY_CACHE.get(key)
+    if cached:
+        return cached
+    try:
+        from vod_state_io import load_json_state
+
+        data = load_json_state(_discovery_disk_cache_path(), {"entries": {}})
+        row = data.get("entries", {}).get(_disk_key(key))
+        if not isinstance(row, dict):
+            return None
+        hits = tuple(
+            KillBannerHit(
+                sec=float(item["sec"]),
+                tier=int(item["tier"]),
+                label=str(item["label"]),
+                text=str(item.get("text") or ""),
+                source=str(item.get("source") or "ocr"),
+            )
+            for item in row.get("hits", [])
+        )
+        if hits:
+            _DISCOVERY_CACHE[key] = hits
+            return hits
+    except Exception:
+        return None
+    return None
+
+
+def _cache_discovery_hits(
+    key: tuple[str, int, int, int, bool],
+    hits: list[KillBannerHit],
+) -> None:
+    if not hits:
+        return
+    packed = tuple(hits)
+    _DISCOVERY_CACHE[key] = packed
+    try:
+        from vod_state_io import load_json_state, save_json_state
+
+        path = _discovery_disk_cache_path()
+        data = load_json_state(path, {"entries": {}})
+        entries = data.setdefault("entries", {})
+        entries[_disk_key(key)] = {
+            "hits": [
+                {
+                    "sec": hit.sec,
+                    "tier": hit.tier,
+                    "label": hit.label,
+                    "text": hit.text,
+                    "source": hit.source,
+                }
+                for hit in packed
+            ],
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        if len(entries) > 300:
+            oldest = sorted(entries, key=lambda item: str(entries[item].get("updated_at") or ""))
+            for item in oldest[: len(entries) - 300]:
+                entries.pop(item, None)
+        save_json_state(path, data)
+    except Exception:
+        pass
 
 
 def _discovery_cache_key(vod: Path, need: int, dense: bool) -> tuple[str, int, int, int, bool]:
@@ -589,10 +675,16 @@ def discover_vod_kill_banners(
     dense = _dense_scan_enabled()
     need = _effective_discover_min_tier(min_tier)
     cache_key = _discovery_cache_key(vod, need, dense)
-    cached_hits = _DISCOVERY_CACHE.get(cache_key)
+    cached_hits = _cached_discovery_hits(cache_key)
     if cached_hits:
         log.info("banner discover %s: reuse cached hits=%s", vod.name, len(cached_hits))
         return list(cached_hits)
+    try:
+        from vod_pipeline_heartbeat import heartbeat
+
+        heartbeat("banner_discovery", vod_id=vod.stem, progress=0.0, force=True)
+    except Exception:
+        pass
     if dense:
         step = min(1.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "1.0")))
     else:
@@ -661,7 +753,7 @@ def discover_vod_kill_banners(
             if hits and need >= 5 and any(h.tier >= need for h in hits):
                 if os.environ.get("MLBB_DENSE_STOP_ON_SAVAGE", "1") == "1":
                     log.info("banner discover %s: stop early — savage hit from audit hints", vod.name)
-                    _DISCOVERY_CACHE[cache_key] = tuple(hits)
+                    _cache_discovery_hits(cache_key, hits)
                     return hits
     except Exception as exc:
         log.debug("audit hints skipped: %s", exc)
@@ -822,6 +914,17 @@ def discover_vod_kill_banners(
                         if probes >= max_probes or time.monotonic() >= deadline:
                             break
                         _timestep_color_probe(t, frame=frame)
+                        try:
+                            from vod_pipeline_heartbeat import heartbeat
+
+                            heartbeat(
+                                "banner_dense_scan",
+                                vod_id=vod.stem,
+                                progress=(t - t0) / max(1.0, t_end - t0),
+                                candidates_out=len(hits),
+                            )
+                        except Exception:
+                            pass
                         if frame_i % 60 == 0 or frame_i < 3:
                             log.info(
                                 "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
@@ -934,7 +1037,7 @@ def discover_vod_kill_banners(
             need,
         )
         if hits:
-            _DISCOVERY_CACHE[cache_key] = tuple(hits)
+            _cache_discovery_hits(cache_key, hits)
         return hits
 
     hits.sort(key=lambda h: h.sec)
@@ -945,7 +1048,7 @@ def discover_vod_kill_banners(
         len(hits),
     )
     if hits:
-        _DISCOVERY_CACHE[cache_key] = tuple(hits)
+        _cache_discovery_hits(cache_key, hits)
     return hits
 
 

@@ -235,7 +235,12 @@ def _save_state(state: dict) -> None:
 
 
 def _registry_entry(
-    path: Path, *, title: str = "", uploader: str = "", exhausted: bool = False
+    path: Path,
+    *,
+    title: str = "",
+    uploader: str = "",
+    search_query: str = "",
+    exhausted: bool = False,
 ) -> dict:
     vid = vod_youtube_id(path)
     return {
@@ -243,6 +248,7 @@ def _registry_entry(
         "path": str(path),
         "title": title or path.name,
         "uploader": uploader,
+        "search_query": search_query,
         "exhausted": exhausted,
         "duration_min": int(_ffprobe_duration(path) // 60),
     }
@@ -422,26 +428,14 @@ def _ytdlp_download_lock(blocking: bool = True):
 
 
 def _zero_yield_uploaders() -> set[str]:
-    state = _load_state()
-    return {str(u).casefold() for u in state.get("zero_yield_uploaders", []) if str(u).strip()}
+    """Legacy compatibility; source-yield decisions now require repeated evidence."""
+    return set()
 
 
 def _record_zero_yield_uploader(meta: dict | None) -> None:
-    if not meta:
-        return
-    from youtube_mlbb_vod_prefs import normalize_uploader
-
-    uploader = normalize_uploader(meta)
-    if not uploader:
-        return
-    state = _load_state()
-    blocked = {str(u).casefold() for u in state.get("zero_yield_uploaders", [])}
-    if uploader in blocked:
-        return
-    blocked.add(uploader)
-    state["zero_yield_uploaders"] = sorted(blocked)[-200:]
-    _save_state(state)
-    log.info("zero-yield uploader blocked: %s", uploader)
+    """Deprecated one-strike block; outcomes are stored in mlbb_source_yield."""
+    if meta:
+        log.info("zero-yield source recorded without one-strike block: %s", meta.get("uploader", ""))
 
 
 def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, throttled: bool = False) -> list[dict]:
@@ -458,13 +452,15 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         vod_discovery_search_cycle,
         vod_max_age_days,
     )
+    from mlbb_hero_roles import passes_vod_hero_gate
+    from mlbb_source_yield import source_rank_adjustment, uploader_hard_blocked
+    from mlbb_correspondence import corresponds_to_mlbb_search
 
     min_sec = _effective_vod_min_sec()
     max_sec = _vod_max_sec()
     target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
     search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", "25"))
-    blocked_uploaders = _zero_yield_uploaders()
     all_queries = [
         q.strip()
         for q in os.environ.get("MLBB_VOD_SEARCH_QUERIES", DEFAULT_SEARCH_QUERIES).split(",")
@@ -506,6 +502,8 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             youtube_freshness_sp=str(search_params.get("youtube_freshness_sp") or ""),
             max_age_days=int(search_params.get("max_age_days") or vod_max_age_days(env)),
         )
+        for meta in batch:
+            meta.setdefault("search_query", query)
         raw.extend(batch)
 
     out: list[dict] = []
@@ -530,9 +528,26 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         if dur < eff_min or dur > max_sec:
             skipped["duration"] = skipped.get("duration", 0) + 1
             continue
-        uploader = normalize_uploader(meta)
-        if uploader and uploader in blocked_uploaders:
-            skipped["zero_yield_uploader"] = skipped.get("zero_yield_uploader", 0) + 1
+        hero_ok, hero_reason = passes_vod_hero_gate(title)
+        if not hero_ok:
+            skipped["support_hero"] = skipped.get("support_hero", 0) + 1
+            log.info("skip support title id=%s reason=%s title=%s", vid, hero_reason, title[:70])
+            continue
+        correspondence_ok, correspondence_reason = corresponds_to_mlbb_search(
+            title=title,
+            search_query=str(meta.get("search_query") or ""),
+        )
+        if not correspondence_ok:
+            skipped["no_correspondence"] = skipped.get("no_correspondence", 0) + 1
+            log.info(
+                "skip correspondence id=%s reason=%s title=%s",
+                vid,
+                correspondence_reason,
+                title[:70],
+            )
+            continue
+        if uploader_hard_blocked(meta):
+            skipped["low_yield_uploader"] = skipped.get("low_yield_uploader", 0) + 1
             continue
         if not passes_mlbb_vod_filters(meta):
             skipped["bad_title"] = skipped.get("bad_title", 0) + 1
@@ -546,7 +561,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         log.info("discovery filtered raw=%s kept=%s skipped=%s", len(raw), len(out), skipped)
     out.sort(
         key=lambda m: (
-            -rank_mlbb_vod_candidate(m, target_dur_sec=target),
+            -(rank_mlbb_vod_candidate(m, target_dur_sec=target) + source_rank_adjustment(m)),
             -(int(parse_upload_date_ymd(str(m.get("upload_date") or "")) or 0)),
             abs(float(m.get("duration") or 0) - target),
         )
@@ -554,9 +569,11 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     if out:
         top = out[0]
         log.info(
-            "discovery pick id=%s score=%.2f dur_min=%.0f title=%s",
+            "discovery pick id=%s score=%.2f source=%.2f query=%s dur_min=%.0f title=%s",
             top.get("id"),
             rank_mlbb_vod_candidate(top, target_dur_sec=target),
+            source_rank_adjustment(top),
+            str(top.get("search_query") or "")[:60],
             float(top.get("duration") or 0) / 60,
             str(top.get("title", ""))[:70],
         )
@@ -639,6 +656,7 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
         path,
         title=str(pick.get("title", ""))[:120],
         uploader=str(pick.get("uploader") or ""),
+        search_query=str(pick.get("search_query") or "")[:240],
     )
     registry.append(entry)
     state = _load_state()
@@ -2032,7 +2050,7 @@ def _send_segment_batch(
     for row in to_send:
         sid = row["segment_id"]
         out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
-        force = os.environ.get("MLBB_FORCE_RERENDER", "1") == "1"
+        force = os.environ.get("MLBB_FORCE_RERENDER", "0") == "1"
         if force or not out.exists() or out.stat().st_size < 500_000:
             if not render_single_segment(vod, row["clip"], out):
                 skipped.append(f"{sid}:render_fail")
@@ -2185,6 +2203,12 @@ def _process_vod_segments(
     sig = file_sha256(vod)
     sent = load_feed_sent()
     vid = vod_youtube_id(vod)
+    try:
+        from vod_pipeline_heartbeat import heartbeat
+
+        heartbeat("vod_start", vod_id=vid, force=True)
+    except Exception:
+        pass
     # Title-aware scan: savage in title → early start + require savage banner tier.
     try:
         from mlbb_vod_title import title_min_banner_tier, vod_title_blob
@@ -2293,6 +2317,17 @@ def _process_vod_segments(
             seed_peaks = []
         elif seed_peaks:
             apply_fast_probe_seeds(seed_peaks)
+        try:
+            from vod_pipeline_heartbeat import heartbeat
+
+            heartbeat(
+                "fast_probe_done",
+                vod_id=vid,
+                candidates_out=len(seed_peaks),
+                force=True,
+            )
+        except Exception:
+            pass
 
     try:
         with adaptive_env(streak_in) as level:
@@ -2346,6 +2381,17 @@ def _process_vod_segments(
                         _vod_max_process_sec() / 60.0,
                     )
                     break
+                try:
+                    from vod_pipeline_heartbeat import heartbeat
+
+                    heartbeat(
+                        "candidate_scan",
+                        vod_id=vid,
+                        candidates_in=len(pool_cache or []),
+                        force=True,
+                    )
+                except Exception:
+                    pass
                 if max_per_vod > 0 and sent_total >= max_per_vod:
                     log.info("vod cap reached sent=%s max_per_vod=%s vod=%s", sent_total, max_per_vod, vod.name)
                     break
@@ -2536,6 +2582,28 @@ def _process_vod_segments(
                 chat_id,
                 f"✅ {sent_total} клип(ов) с мягких фильтров (L{active_level}) — возврат к strict после серии",
             )
+
+    try:
+        from mlbb_source_yield import record_vod_outcome as record_source_outcome
+
+        record_source_outcome(
+            entry,
+            sent=sent_total,
+            reject_reason=str((entry or {}).get("reject_reason") or ""),
+        )
+    except Exception as exc:
+        log.warning("source yield record failed vod=%s: %s", vid, exc)
+    try:
+        from vod_pipeline_heartbeat import heartbeat
+
+        heartbeat(
+            "vod_done",
+            vod_id=vid,
+            candidates_out=sent_total,
+            force=True,
+        )
+    except Exception:
+        pass
 
     if entry:
         _sync_vod_entry_to_state(state, entry, vod)

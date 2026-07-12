@@ -30,7 +30,7 @@ VOD_CORE_SEARCH_QUERIES = (
 VOD_ANGLE_SEARCH_QUERIES = (
     "MLBB mythic placement match full gameplay",
     "Mobile Legends immortal rank push match replay",
-    "MLBB roam mythic ranked full game",
+    "MLBB assassin jungle mythic savage full match",
     "Mobile Legends jungle mythic ranked match gameplay",
     "MLBB mythic glory savage teamfight ranked match",
     "Mobile Legends ranked match MVP gameplay no commentary",
@@ -54,22 +54,28 @@ YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
 # Popular heroes for rotating VOD search (includes Masha from user examples).
 VOD_SEARCH_HEROES = (
-    "masha",
-    "paquito",
     "hayabusa",
     "gusion",
     "fanny",
     "ling",
-    "chou",
+    "lancelot",
+    "aamon",
+    "nolan",
+    "saber",
+    "dyrroth",
+    "benedetta",
     "beatrix",
     "moskov",
+    "granger",
+    "hanabi",
+    "miya",
+    "layla",
+    "paquito",
+    "masha",
+    "chou",
     "valentina",
     "joy",
-    "angela",
-    "tigreal",
-    "layla",
     "kagura",
-    "lancelot",
 )
 
 # Hard reject — montages, guides, promos, skin showcases.
@@ -351,6 +357,11 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
         return False
     if not passes_mlbb_game_title(title):
         return False
+    from mlbb_hero_roles import passes_vod_hero_gate
+
+    hero_ok, _hero_reason = passes_vod_hero_gate(title)
+    if not hero_ok:
+        return False
     return True
 
 
@@ -449,6 +460,10 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
     for needle, weight in penalties:
         if needle in blob:
             score += weight
+
+    from mlbb_hero_roles import vod_hero_rank_adjustment
+
+    score += vod_hero_rank_adjustment(str(meta.get("title") or ""))
 
     return score
 

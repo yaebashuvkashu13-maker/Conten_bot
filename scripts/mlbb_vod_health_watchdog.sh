@@ -173,7 +173,11 @@ if [[ -f "$FEED_LOG" ]]; then
   fi
   LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
   STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
+  HEARTBEAT=/root/data/mlbb/vod_pipeline_heartbeat.json
+  HEARTBEAT_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0) ))
+  HEARTBEAT_FRESH_SEC="${VOD_HEARTBEAT_FRESH_SEC:-180}"
   if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
+    [[ "$HEARTBEAT_AGE_SEC" -gt "$HEARTBEAT_FRESH_SEC" ]] && \
     { pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
       || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
       || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; }; then

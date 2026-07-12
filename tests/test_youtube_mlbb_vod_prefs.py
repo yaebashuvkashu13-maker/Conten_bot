@@ -55,6 +55,15 @@ def test_accepts_ranked_match_titles() -> None:
     assert passes_mlbb_vod_filters(_meta("Mobile Legends Legend Solo Queue Full Game Replay"))
 
 
+def test_rejects_support_vod_without_kill_signal() -> None:
+    assert not passes_mlbb_vod_filters(
+        _meta("Angela Roam Mythic Ranked Full Match Gameplay MLBB")
+    )
+    assert passes_mlbb_vod_filters(
+        _meta("Angela 18 Kills Savage MVP Mythic Ranked Full Match MLBB")
+    )
+
+
 def test_accepts_implicit_mlbb_ranked_titles() -> None:
     assert passes_mlbb_game_title("MID Hayabusa Full Highlights Ranked Game Mythical Glory")
     assert passes_mlbb_vod_filters(_meta("OBISIDIA DESTROYS RANKED MATCH MYTHIC Gameplay"))
@@ -65,8 +74,10 @@ def test_build_queries_returns_twenty() -> None:
     queries = build_vod_search_queries(season=41)
     assert len(queries) == 20
     assert queries[0] == "MLBB mythic ranked full match gameplay"
-    assert any("masha" in q for q in queries)
+    assert any("hayabusa" in q for q in queries)
     assert any("placement" in q for q in queries)
+    assert all(" roam " not in f" {q.lower()} " for q in queries)
+    assert all("angela" not in q.lower() and "tigreal" not in q.lower() for q in queries)
     assert all("minute" not in q.lower() for q in queries)
 
 
