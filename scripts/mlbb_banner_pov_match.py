@@ -150,13 +150,17 @@ def banner_pov_hero_match_for_peak(
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
     for back in (lead, lead * 2, lead * 3, 8.0, 12.0):
         candidates.append(max(0.0, float(peak_sec) - back))
+    should_rescan = (
+        banner_sec is None
+        or os.environ.get("MLBB_BANNER_POV_RESCAN", "0") == "1"
+    )
     try:
         from mlbb_kill_banner import find_banner_near_peak
 
-        hit = find_banner_near_peak(vod, float(peak_sec), quick=True)
+        hit = find_banner_near_peak(vod, float(peak_sec), quick=True) if should_rescan else None
         if hit is not None:
             candidates.append(float(hit.sec))
-        if hit is None:
+        if hit is None and should_rescan:
             hit = find_banner_near_peak(vod, float(peak_sec), quick=False)
             if hit is not None:
                 candidates.append(float(hit.sec))

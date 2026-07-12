@@ -60,6 +60,7 @@ def test_banner_pov_match_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_banner_pov_for_peak_tries_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
     from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
 
+    monkeypatch.setenv("MLBB_BANNER_POV_RESCAN", "1")
     calls: list[float] = []
 
     def fake_match(vod: Path, sec: float) -> tuple[bool, str, float]:
@@ -77,3 +78,28 @@ def test_banner_pov_for_peak_tries_candidates(monkeypatch: pytest.MonkeyPatch) -
     ok, reason, sim = banner_pov_hero_match_for_peak(Path("x.mp4"), 84.0, banner_sec=84.0)
     assert ok is True
     assert 79.3 in calls or 80.0 in calls
+
+
+def test_explicit_banner_time_skips_redundant_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mlbb_banner_pov_match import banner_pov_hero_match_for_peak
+
+    monkeypatch.setenv("MLBB_BANNER_POV_RESCAN", "0")
+    monkeypatch.setattr(
+        "mlbb_banner_pov_match.banner_pov_hero_match",
+        lambda _vod, sec: (True, "pov_hero_ok", 0.8)
+        if abs(sec - 84.0) < 0.1
+        else (False, "mismatch", 0.0),
+    )
+
+    def unexpected_rescan(*_args, **_kwargs):
+        raise AssertionError("OCR rescan should not run for explicit banner_sec")
+
+    monkeypatch.setattr("mlbb_kill_banner.find_banner_near_peak", unexpected_rescan)
+    ok, reason, sim = banner_pov_hero_match_for_peak(
+        Path("x.mp4"),
+        84.0,
+        banner_sec=84.0,
+    )
+    assert ok is True
+    assert reason == "pov_hero_ok"
+    assert sim == 0.8
