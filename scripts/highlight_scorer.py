@@ -1658,6 +1658,21 @@ def discover_highlight_candidates(
     limit: int = 40,
 ) -> list[dict]:
     profile = normalize_profile(profile)
+    def _hb(stage: str, *, progress: float | None = None, candidates: int | None = None) -> None:
+        try:
+            from vod_pipeline_heartbeat import heartbeat
+
+            heartbeat(
+                stage,
+                game=profile,
+                vod_id=video_path.stem,
+                progress=progress,
+                candidates_out=candidates,
+                force=True,
+            )
+        except Exception:
+            pass
+
     used_keys = used_keys or set()
     ready, refuse_reason = require_inference_ready(profile)
     if not ready:
@@ -1665,6 +1680,7 @@ def discover_highlight_candidates(
         return []
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
+    _hb("highlight_stage1_done", candidates=len(starts))
     if profile == "mobile_legends":
         use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
@@ -1757,11 +1773,13 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
+            _hb("highlight_banner_done", candidates=len(starts))
     else:
         banner_pin = set()
         banner_by_anchor = {}
     starts = stage1_panns_prefilter(video_path, starts, profile, pinned=banner_pin)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
+    _hb("highlight_panns_done", candidates=len(starts))
 
     pending = [
         start
@@ -1827,7 +1845,12 @@ def discover_highlight_candidates(
                 pool.submit(_evaluate_highlight_start, video_path, start, profile): start
                 for start in pending
             }
-            for fut in as_completed(futures):
+            for done_index, fut in enumerate(as_completed(futures), start=1):
+                _hb(
+                    "highlight_scoring",
+                    progress=done_index / max(len(futures), 1),
+                    candidates=len(verified),
+                )
                 if len(verified) >= limit:
                     break
                 try:
@@ -1848,7 +1871,12 @@ def discover_highlight_candidates(
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
     else:
-        for start in pending:
+        for done_index, start in enumerate(pending, start=1):
+            _hb(
+                "highlight_scoring",
+                progress=done_index / max(len(pending), 1),
+                candidates=len(verified),
+            )
             if len(verified) >= limit:
                 break
             row = _evaluate_highlight_start(video_path, start, profile)
@@ -1876,6 +1904,7 @@ def discover_highlight_candidates(
         reverse=True,
     )
     log.info("highlight pool %s: %s passed", video_path.name, len(verified))
+    _hb("highlight_pool_done", progress=1.0, candidates=len(verified))
     return verified
 
 
