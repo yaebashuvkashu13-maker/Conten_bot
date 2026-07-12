@@ -360,6 +360,41 @@ def send_video_file(
     return ok
 
 
+def send_photo_file(
+    token: str,
+    chat_id: str,
+    path: Path,
+    caption: str,
+    *,
+    reply_markup: dict | None = None,
+) -> bool:
+    if not path.exists():
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    cmd = [
+        "curl",
+        "-sS",
+        "-m",
+        "120",
+        "-F",
+        f"chat_id={chat_id}",
+        "-F",
+        f"caption={caption[:900]}",
+        "-F",
+        f"photo=@{path}",
+        url,
+    ]
+    if reply_markup:
+        cmd.insert(-1, "-F")
+        cmd.insert(-1, f"reply_markup={json.dumps(reply_markup, ensure_ascii=False)}")
+    clean_env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
+    result = subprocess.run(cmd, capture_output=True, text=True, env=clean_env, timeout=130)
+    ok, err = _telegram_api_ok(result.stdout)
+    if not ok:
+        print(f"sendPhoto failed: {err}")
+    return ok
+
+
 def main() -> int:
     import argparse
 
