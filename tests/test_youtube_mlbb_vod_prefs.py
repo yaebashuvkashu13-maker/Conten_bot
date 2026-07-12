@@ -140,6 +140,8 @@ def test_rank_prefers_kill_heavy_title() -> None:
 def test_build_queries_includes_combat_angle() -> None:
     queries = build_vod_search_queries(season=41)
     lowered = [q.lower() for q in queries]
+    assert any("double kill" in q for q in lowered)
+    assert any("triple kill" in q for q in lowered)
     assert any("savage" in q or "maniac" in q for q in lowered)
     assert any("ruthless" in q or "triple kill" in q or "беспощад" in q for q in lowered)
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 _SAVAGE_RE = re.compile(r"savage|саваж|legendary|легендар", re.I)
 _MANIAC_RE = re.compile(r"maniac|маньяк|ruthless|беспощад", re.I)
+_TRIPLE_RE = re.compile(r"triple\s*kill|тройн", re.I)
 _DOUBLE_RE = re.compile(r"double\s*kill|двойн", re.I)
 
 
@@ -102,6 +103,8 @@ def title_min_banner_tier(blob: str) -> int:
         return 5
     if _MANIAC_RE.search(blob):
         return 4
+    if _TRIPLE_RE.search(blob):
+        return 3
     if _DOUBLE_RE.search(blob):
         return 2
     return 0

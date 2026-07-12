@@ -24,6 +24,10 @@ def test_double_title_requires_tier_2() -> None:
     assert title_min_banner_tier("double kill highlight") == 2
 
 
+def test_triple_title_requires_tier_3() -> None:
+    assert title_min_banner_tier("TRIPLE KILL ranked full match") == 3
+
+
 def test_neutral_title_no_tier() -> None:
     assert title_min_banner_tier("mobile legends ranked gameplay") == 0
 

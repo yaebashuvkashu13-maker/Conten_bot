@@ -126,12 +126,26 @@ def _configure_banner_scan_policy(title_tier: int, *, priority_rescan: bool = Fa
     os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
         "MLBB_KILL_BANNER_SPARSE_MAX_SEC", "180"
     )
+    os.environ["MLBB_KILL_BANNER_TIMESTEP_SAMPLES"] = os.environ.get(
+        "MLBB_KILL_BANNER_SPARSE_SAMPLES", "48"
+    )
     dense = int(title_tier) >= 4 or priority_rescan
     if dense:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
         os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
         os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
             "MLBB_KILL_BANNER_DENSE_MAX_SEC", "360"
+        )
+    elif int(title_tier) >= 2:
+        # Double/Triple titles get wider recall than generic VODs without full dense OCR.
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = os.environ.get(
+            "MLBB_KILL_BANNER_TITLE_STEP", "2"
+        )
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = os.environ.get(
+            "MLBB_KILL_BANNER_TITLE_MAX_SEC", "240"
+        )
+        os.environ["MLBB_KILL_BANNER_TIMESTEP_SAMPLES"] = os.environ.get(
+            "MLBB_KILL_BANNER_TITLE_SAMPLES", "64"
         )
     return dense
 

@@ -38,6 +38,8 @@ VOD_ANGLE_SEARCH_QUERIES = (
 
 # Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
 VOD_COMBAT_SEARCH_QUERIES = (
+    "MLBB double kill triple kill mythic ranked full match gameplay",
+    "Mobile Legends triple kill double kill ranked full game",
     "MLBB savage maniac ruthless ranked full match gameplay",
     "Mobile Legends savage teamfight mythic ranked no montage",
     "MLBB maniac triple kill ranked match replay",
@@ -204,7 +206,8 @@ def build_vod_search_queries(
         hero = heroes[idx % len(heroes)]
         tpl = hero_templates[idx % len(hero_templates)]
         queries.append(tpl.format(hero=hero))
-    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
+    # Reserve one season supplement, but prioritize three kill-tier searches.
+    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 1))
     for idx in range(combat_slots):
         queries.append(VOD_COMBAT_SEARCH_QUERIES[idx % len(VOD_COMBAT_SEARCH_QUERIES)])
     for angle in VOD_ANGLE_SEARCH_QUERIES:
