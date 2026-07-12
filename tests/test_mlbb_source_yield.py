@@ -12,6 +12,7 @@ from mlbb_source_yield import (  # noqa: E402
     record_vod_outcome,
     source_rank_adjustment,
     uploader_hard_blocked,
+    video_rank_adjustment,
 )
 
 
@@ -41,6 +42,14 @@ def test_uploader_not_blocked_after_one_empty_vod(tmp_path: Path, monkeypatch) -
     meta = _meta("emptyvideo1", "New Channel", "mlbb ranked")
     record_vod_outcome(meta, sent=0)
     assert uploader_hard_blocked(meta) is False
+
+
+def test_video_rank_uses_owner_feedback(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MLBB_SOURCE_YIELD_PATH", str(tmp_path / "yield.json"))
+    meta = _meta("ratedvideo1", "Mixed Channel", "mlbb ranked")
+    record_vod_outcome(meta, sent=1)
+    record_owner_feedback("ratedvideo1", label="bad", item_id="bad-segment")
+    assert video_rank_adjustment("ratedvideo1") < 0
 
 
 def test_uploader_block_requires_repeated_failure_and_bad_feedback(

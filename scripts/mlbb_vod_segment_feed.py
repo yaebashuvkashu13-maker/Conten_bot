@@ -341,13 +341,15 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
 
 
 def _pick_available_vod(registry: list[dict]) -> dict | None:
+    from mlbb_source_yield import source_rank_adjustment, video_rank_adjustment
+
     target = _vod_target_dur_sec()
     exhausted_ids = {
         str(row.get("id") or "")
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[int, float, float, float, dict]] = []
+    ranked: list[tuple[int, int, float, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
@@ -370,12 +372,23 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         scanned = float(row.get("last_scan_at") or 0)
         zero_sessions = int(row.get("zero_send_sessions") or 0)
         priority = 1 if row.get("title_rescan_priority") and zero_sessions < 2 else 0
-        ranked.append((-priority, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        learned_source = source_rank_adjustment(row) + video_rank_adjustment(vid)
+        ranked.append(
+            (
+                -priority,
+                1 if scanned else 0,
+                -learned_source,
+                scanned,
+                abs(dur - target),
+                dur,
+                row,
+            )
+        )
     if not ranked:
         return None
-    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
-    pick = ranked[0][5]
-    dur = ranked[0][4]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+    pick = ranked[0][6]
+    dur = ranked[0][5]
     log.info(
         "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s",
         pick.get("id", ""),

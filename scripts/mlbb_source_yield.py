@@ -142,6 +142,16 @@ def source_rank_adjustment(meta: dict) -> float:
     return score
 
 
+def video_rank_adjustment(video_id: str) -> float:
+    video = load_source_yield().get("videos", {}).get(str(video_id), {})
+    labels = list((video.get("labels") or {}).values()) if isinstance(video, dict) else []
+    good = sum(label == "good" for label in labels)
+    bad = sum(label == "bad" for label in labels)
+    if good + bad == 0:
+        return 0.0
+    return 4.0 * (good - bad) / (good + bad)
+
+
 def uploader_hard_blocked(meta: dict) -> bool:
     """Require repeated failure plus negative feedback; never block after one VOD."""
     uploader = normalize_uploader(meta)

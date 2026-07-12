@@ -88,3 +88,34 @@ def test_pick_available_vod_returns_row_not_duration() -> None:
     assert pick is not None
     assert pick.get("id") == "abc123"
 
+
+def test_pick_available_vod_prefers_learned_good_source(tmp_path: Path, monkeypatch) -> None:
+    from mlbb_source_yield import record_owner_feedback, record_vod_outcome
+    from mlbb_vod_segment_feed import _pick_available_vod
+
+    monkeypatch.setenv("MLBB_SOURCE_YIELD_PATH", str(tmp_path / "yield.json"))
+    good_path = tmp_path / "yt_goodvideo01.mp4"
+    weak_path = tmp_path / "yt_weakvideo01.mp4"
+    good_path.write_bytes(b"x")
+    weak_path.write_bytes(b"x")
+    good = {
+        "id": "goodvideo01",
+        "path": str(good_path),
+        "uploader": "Approved Channel",
+        "search_query": "mlbb savage",
+    }
+    weak = {
+        "id": "weakvideo01",
+        "path": str(weak_path),
+        "uploader": "Empty Channel",
+        "search_query": "mlbb ranked",
+    }
+    record_vod_outcome(good, sent=1)
+    record_owner_feedback("goodvideo01", label="good", item_id="good-segment")
+    record_vod_outcome(weak, sent=0)
+    with patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=780.0):
+        with patch("mlbb_vod_segment_feed._vod_length_ok", return_value=True):
+            pick = _pick_available_vod([weak, good])
+    assert pick is not None
+    assert pick["id"] == "goodvideo01"
+
