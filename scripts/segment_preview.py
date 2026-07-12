@@ -203,6 +203,43 @@ def is_owner_approved(preview_id: str) -> bool:
     return bool(data.get("approved"))
 
 
+def _record_mlbb_preview_feedback(
+    preview_id: str,
+    pkg: dict[str, Any],
+    *,
+    label: str,
+    reason: str = "",
+) -> None:
+    if str(pkg.get("profile") or "").lower() not in ("mlbb", "mobile_legends"):
+        return
+    video_path = Path(str(pkg.get("video_source") or ""))
+    try:
+        from mlbb_owner_feedback import record_owner_feedback
+        from mlbb_vod_segment_store import append_owner_label_json, vod_youtube_id
+
+        vid = vod_youtube_id(video_path)
+        for index, segment in enumerate(pkg.get("segments", [])):
+            sec = float(segment.get("start") or 0) + float(segment.get("duration") or 0) * 0.5
+            append_owner_label_json(
+                vid,
+                sec,
+                label,
+                note=reason,
+                source=f"preview_{label}",
+                scope="segment",
+            )
+            record_owner_feedback(
+                source=f"preview_{label}",
+                video_id=vid,
+                time_sec=sec,
+                label=label,
+                reason=reason,
+                item_id=f"{preview_id}:{index}",
+            )
+    except Exception:
+        return
+
+
 def approve_preview(preview_id: str, *, by_chat: str = "") -> dict[str, Any] | None:
     from preview_gate import validate_clips_before_preview
 
@@ -235,6 +272,7 @@ def approve_preview(preview_id: str, *, by_chat: str = "") -> dict[str, Any] | N
         json.dumps({"approved": True, "by": by_chat, "at": pkg["approved_at"]}, indent=2),
         encoding="utf-8",
     )
+    _record_mlbb_preview_feedback(preview_id, pkg, label="good", reason="owner_approved")
     return pkg
 
 
@@ -248,6 +286,12 @@ def reject_preview(preview_id: str, *, by_chat: str = "", reason: str = "") -> N
     pkg["rejected_by"] = by_chat
     pkg["reject_reason"] = reason
     proof_path.write_text(json.dumps(pkg, ensure_ascii=False, indent=2), encoding="utf-8")
+    _record_mlbb_preview_feedback(
+        preview_id,
+        pkg,
+        label="bad",
+        reason=reason or "owner_rejected",
+    )
 
 
 def send_approved_montage(pkg: dict[str, Any], env: dict[str, str], caption: str) -> None:

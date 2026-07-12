@@ -31,6 +31,11 @@ def test_soften_after_two_zero_vods(monkeypatch: pytest.MonkeyPatch) -> None:
     assert soften_level(10) == 4
 
 
+def test_soften_can_be_fully_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_DISABLE_SOFTEN", "1")
+    assert soften_level(999) == 0
+
+
 def test_adaptive_env_applies_menu_relax(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "2")
     monkeypatch.delenv("VISUAL_MENU_OVERLAY_MAX", raising=False)
