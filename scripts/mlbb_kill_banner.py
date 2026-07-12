@@ -1166,7 +1166,12 @@ def verify_banner_on_source(
         return True, "banner_check_off"
     need = min_tier if min_tier is not None else _min_tier()
 
-    if discovery_row and discovery_row.get("kill_banner") and os.environ.get("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "1") == "1":
+    if (
+        discovery_row
+        and discovery_row.get("kill_banner")
+        and os.environ.get("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "1") == "1"
+        and os.environ.get("MLBB_BANNER_SEND_STRICT", "1") != "1"
+    ):
         try:
             tier_i = int(discovery_row.get("kill_banner_tier") or 0)
         except (TypeError, ValueError):

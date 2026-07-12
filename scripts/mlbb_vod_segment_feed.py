@@ -1417,6 +1417,8 @@ def _presend_visual_ok(
 
 def _verified_discovery_banner(row: dict, min_tier: int) -> tuple[bool, str]:
     """Reuse an internally verified discovery hit; later POV/action gates still run."""
+    if os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1":
+        return False, ""
     if os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") != "1":
         return False, ""
     try:
@@ -2049,6 +2051,9 @@ def _send_segment_batch(
         banner_line = ""
         if row.get("kill_banner"):
             banner_line = f"🎯 {str(row['kill_banner']).upper()} @ {peak}s\n"
+        proof = str(presend_report.get("kill_banner") or "")
+        if proof and ("owner_pos:" in proof or "ref_match:" in proof):
+            banner_line += f"✓ {proof}\n"
         caption = (
             f"MLBB кусок #{sid}\n"
             f"{banner_line}"
