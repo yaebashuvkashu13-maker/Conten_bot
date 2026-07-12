@@ -533,7 +533,20 @@ def scan_window(
         max_ocr = 6 if deep else 4
     hits: list[KillBannerHit] = []
     frame_map = {sec: frame for sec, frame in frames}
-    for sec in _candidate_secs(frames, focus_sec=focus_sec, max_ocr=max_ocr):
+    candidates = _candidate_secs(frames, focus_sec=focus_sec, max_ocr=max_ocr)
+    for index, sec in enumerate(candidates, start=1):
+        try:
+            from vod_pipeline_heartbeat import heartbeat
+
+            heartbeat(
+                "banner_window_ocr",
+                vod_id=vod.stem,
+                progress=index / max(len(candidates), 1),
+                candidates_out=len(hits),
+                force=True,
+            )
+        except Exception:
+            pass
         frame = frame_map.get(sec)
         if frame is None:
             continue
@@ -541,7 +554,19 @@ def scan_window(
         if hit is not None:
             hits.append(hit)
     if not hits and frames and not quick:
-        for sec, frame in frames:
+        for index, (sec, frame) in enumerate(frames, start=1):
+            try:
+                from vod_pipeline_heartbeat import heartbeat
+
+                heartbeat(
+                    "banner_window_deep_ocr",
+                    vod_id=vod.stem,
+                    progress=index / max(len(frames), 1),
+                    candidates_out=len(hits),
+                    force=True,
+                )
+            except Exception:
+                pass
             hit = _classify_frame(sec, frame, deep=True)
             if hit is not None and _banner_hit_source_ok(hit.source):
                 hits.append(hit)
