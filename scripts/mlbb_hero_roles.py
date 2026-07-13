@@ -41,6 +41,12 @@ COMBAT_SIGNAL_RE = re.compile(
     r"саваж|маньяк|тройн\w*\s+убийств|двойн\w*\s+убийств)",
     re.I,
 )
+MULTIKILL_SIGNAL_RE = re.compile(
+    r"(?:savage|maniac|triple\s+kill|double\s+kill|ruthless|"
+    r"\b\d{1,2}\s*(?:kills?|убийств)|team\s*wipe|wipe(?:s|d)?\s+(?:the\s+)?enemy|"
+    r"саваж|маньяк|тройн\w*\s+убийств|двойн\w*\s+убийств)",
+    re.I,
+)
 ROAM_CONTEXT_RE = re.compile(r"\b(?:roam(?:er)?|support|tank)\b", re.I)
 
 
@@ -91,7 +97,7 @@ def passes_vod_hero_gate(title: str) -> tuple[bool, str]:
     roam_context = bool(ROAM_CONTEXT_RE.search(str(title or "")))
     if not supports and not roam_context:
         return True, "carry_or_unknown"
-    if COMBAT_SIGNAL_RE.search(str(title or "")):
+    if MULTIKILL_SIGNAL_RE.search(str(title or "")):
         return True, "support_with_combat_signal"
     detail = ",".join(supports) if supports else "roam"
     return False, f"support_without_multikill:{detail}"
@@ -101,4 +107,4 @@ def vod_hero_rank_adjustment(title: str) -> float:
     supports = support_heroes_from_title(title)
     if not supports and not ROAM_CONTEXT_RE.search(str(title or "")):
         return 0.0
-    return 2.0 if COMBAT_SIGNAL_RE.search(str(title or "")) else -14.0
+    return 2.0 if MULTIKILL_SIGNAL_RE.search(str(title or "")) else -14.0

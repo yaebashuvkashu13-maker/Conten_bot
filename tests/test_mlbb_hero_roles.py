@@ -37,6 +37,14 @@ def test_allows_support_when_title_proves_multikill() -> None:
     assert reason == "support_with_combat_signal"
 
 
+def test_support_mvp_or_assists_without_kills_still_rejected() -> None:
+    ok, reason = passes_vod_hero_gate(
+        "Top Global Atlas Perfect Sets 24 Assists MVP Tank Gameplay MLBB"
+    )
+    assert ok is False
+    assert reason == "support_without_multikill:atlas"
+
+
 def test_carry_heroes_are_not_blocked() -> None:
     title = "Hayabusa 20 Kills Savage Mythic Full Match MLBB"
     assert heroes_from_title(title) == ["hayabusa"]
