@@ -98,6 +98,39 @@ def test_feedback_reject_banner_has_soft_floors_not_full_bypass(tmp_path: Path, 
     assert not reject_ok
 
 
+def test_verified_high_tier_banner_gets_narrow_hook_relief(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "feedback_patterns.json"
+    path.write_text(
+        json.dumps(
+            {
+                "gates": {
+                    "MLBB_FEEDBACK_REJECT_HOOK_BELOW": 0.08,
+                    "MLBB_FEEDBACK_REJECT_FIGHT_DUR_BELOW": 28,
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
+    monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.05")
+    monkeypatch.setenv("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.80")
+    clear_patterns_cache()
+    verified = {
+        "hook_score": 0.048,
+        "fight_dur": 32,
+        "kill_banner": "savage",
+        "kill_banner_tier": 5,
+        "kill_banner_source": "ocr_verified",
+    }
+    assert feedback_reject_row(verified)[0] is False
+    unverified = {**verified, "kill_banner_source": "ocr"}
+    rejected, reason = feedback_reject_row(unverified)
+    assert rejected is True
+    assert "banner_low_hook" in reason
+
+
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:
     patterns = {
         "gates": {

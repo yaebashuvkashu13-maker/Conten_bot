@@ -89,8 +89,21 @@ def _banner_clip(row: dict) -> bool:
         return False
 
 
-def banner_min_hook() -> float:
-    return float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05"))
+def banner_min_hook(row: dict | None = None) -> float:
+    base = float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05"))
+    row = row or {}
+    source = str(row.get("kill_banner_source") or "")
+    if not source.endswith("_verified"):
+        return base
+    try:
+        tier = int(row.get("kill_banner_tier") or 0)
+    except (TypeError, ValueError):
+        tier = 0
+    if tier >= 4:
+        return base * float(os.environ.get("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.80"))
+    if tier >= 3:
+        return base * float(os.environ.get("MLBB_BANNER_TRIPLE_HOOK_MULT", "0.90"))
+    return base
 
 
 def banner_min_fight_sec() -> float:
@@ -106,7 +119,7 @@ def feedback_reject_row(row: dict) -> tuple[bool, str]:
     has_banner = _banner_clip(row)
 
     if has_banner:
-        min_hook = banner_min_hook()
+        min_hook = banner_min_hook(row)
         min_fight = banner_min_fight_sec()
         if min_hook > 0 and hook < min_hook:
             return True, f"banner_low_hook:{hook:.3f}<{min_hook:.3f}"
