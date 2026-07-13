@@ -1531,7 +1531,10 @@ def _verified_discovery_banner(row: dict, min_tier: int) -> tuple[bool, str]:
     source = str(row.get("kill_banner_source") or "")
     if strict and not source.endswith("_verified"):
         return False, ""
-    if os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") != "1":
+    if (
+        not strict
+        and os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") != "1"
+    ):
         return False, ""
     try:
         tier = int(row.get("kill_banner_tier") or 0)
