@@ -9,7 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 
-_SAVAGE_RE = re.compile(r"savage|саваж|legendary|легендар", re.I)
+_SAVAGE_RE = re.compile(r"savage|саваж", re.I)
 _MANIAC_RE = re.compile(r"maniac|маньяк|ruthless|беспощад", re.I)
 _TRIPLE_RE = re.compile(r"triple\s*kill|тройн", re.I)
 _DOUBLE_RE = re.compile(r"double\s*kill|двойн", re.I)

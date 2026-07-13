@@ -30,6 +30,7 @@ def test_triple_title_requires_tier_3() -> None:
 
 def test_neutral_title_no_tier() -> None:
     assert title_min_banner_tier("mobile legends ranked gameplay") == 0
+    assert title_min_banner_tier("Legendary Sun Monster 26 Kills") == 0
 
 
 def test_title_scan_start_early_for_savage() -> None:
