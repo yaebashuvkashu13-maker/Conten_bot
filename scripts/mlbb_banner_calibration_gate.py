@@ -84,15 +84,24 @@ def check_banner_frame(frame, *, tier: int = 0) -> tuple[str, str]:
     except ImportError:
         return "neutral", ""
 
-    neg = match_negative_banner_reference(frame)
-    if neg is not None:
-        score, reason, _path = neg
-        return "reject", f"owner_neg:{reason}:{score:.3f}"
-
     pos = match_positive_owner_reference(frame)
-    if pos is not None:
+    neg = match_negative_banner_reference(frame)
+    margin = float(os.environ.get("MLBB_BANNER_OWNER_EVIDENCE_MARGIN", "0.05"))
+    if pos is not None and (
+        neg is None or float(pos[0]) >= float(neg[0]) + margin
+    ):
         score, reason, _path = pos
         return "pass", f"owner_pos:{reason}:{score:.3f}"
+    if neg is not None and (
+        pos is None or float(neg[0]) >= float(pos[0]) + margin
+    ):
+        score, reason, _path = neg
+        return "reject", f"owner_neg:{reason}:{score:.3f}"
+    if pos is not None and neg is not None:
+        return (
+            "neutral",
+            f"owner_ambiguous:pos={float(pos[0]):.3f}:neg={float(neg[0]):.3f}",
+        )
 
     if savage_strict_enabled() and tier >= 5:
         return "reject", "owner_pos_required_savage"
