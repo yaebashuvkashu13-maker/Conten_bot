@@ -159,8 +159,18 @@ def _load_negative_ref_rows() -> tuple[tuple[str, str, str], ...]:
     root = banner_ref_root() / "owner_cal" / "negative"
     if not root.exists():
         return tuple()
+    excluded = {
+        reason.strip()
+        for reason in os.environ.get(
+            "MLBB_BANNER_NEG_EXCLUDE_REASONS",
+            "wrong_hero",
+        ).split(",")
+        if reason.strip()
+    }
     for path in sorted(root.rglob("*.png")):
         reason = path.parent.name if path.parent != root else "unknown"
+        if reason in excluded:
+            continue
         rows.append((str(path), reason, reason))
     return tuple(rows)
 

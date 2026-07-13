@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_banner_ref_ingest import download_wiki_notifications, write_manifest  # noqa: E402
 from mlbb_banner_ref_match import (  # noqa: E402
+    _load_negative_ref_rows,
     clear_banner_ref_cache,
     extract_banner_zone_patch,
     match_banner_reference,
@@ -57,3 +58,18 @@ def test_extract_banner_zone_patch_shape() -> None:
     patch = extract_banner_zone_patch(frame)
     assert patch is not None
     assert patch.shape == (48, 160, 3)
+
+
+def test_wrong_hero_is_not_global_banner_negative(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "owner_cal" / "negative"
+    (root / "wrong_hero").mkdir(parents=True)
+    (root / "no_banner").mkdir(parents=True)
+    cv2.imwrite(str(root / "wrong_hero" / "wrong.png"), np.zeros((48, 160, 3)))
+    cv2.imwrite(str(root / "no_banner" / "empty.png"), np.zeros((48, 160, 3)))
+    monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_NEG_EXCLUDE_REASONS", "wrong_hero")
+    clear_banner_ref_cache()
+    rows = _load_negative_ref_rows()
+    assert {reason for _path, reason, _tag in rows} == {"no_banner"}
