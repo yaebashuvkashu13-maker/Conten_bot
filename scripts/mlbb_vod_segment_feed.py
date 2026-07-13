@@ -1030,6 +1030,51 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
         meta_tier = int(meta.get("kill_banner_tier") or 0)
         tier_out = max(prior_tier, meta_tier)
         label_out = prior_label if prior_tier >= meta_tier and prior_label else meta.get("kill_banner")
+        source_out = str(
+            clip.get("kill_banner_source")
+            or meta.get("kill_banner_source")
+            or meta.get("banner_source")
+            or ""
+        )
+        if (
+            tier_out >= 2
+            and os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1"
+            and not source_out.endswith("_verified")
+        ):
+            try:
+                from gameplay_gate import _read_frame_at
+                from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+                frame = _read_frame_at(vod, banner_sec)
+                proof_ok, proof_reason = check_banner_frame_passes(
+                    frame,
+                    tier=tier_out,
+                )
+                if not proof_ok:
+                    return {
+                        **clip,
+                        "start": start,
+                        "peak_start": banner_sec,
+                        "input_duration": 0.0,
+                        "output_duration": 0.0,
+                        "banner_reject": proof_reason,
+                        "source_path": str(vod),
+                        "source_index": 0,
+                        "speed": 1.0,
+                    }
+                source_out = f"{source_out or 'ocr'}_verified"
+            except Exception:
+                return {
+                    **clip,
+                    "start": start,
+                    "peak_start": banner_sec,
+                    "input_duration": 0.0,
+                    "output_duration": 0.0,
+                    "banner_reject": "banner_visual_proof_error",
+                    "source_path": str(vod),
+                    "source_index": 0,
+                    "speed": 1.0,
+                }
         return {
             **clip,
             "start": start,
@@ -1043,6 +1088,7 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             **meta,
             "kill_banner_tier": tier_out,
             "kill_banner": label_out or meta.get("kill_banner"),
+            "kill_banner_source": source_out,
         }
 
     from smart_video_editor import profile_action_clip_bounds
@@ -1990,7 +2036,8 @@ def _collect_scan_segments(
             "fight_dur": float(lead_clip.get("input_duration", 0)),
             "kill_banner": lead_clip.get("kill_banner"),
             "kill_banner_tier": lead_clip.get("kill_banner_tier"),
-            "kill_banner_source": lead_clip.get("kill_banner_source"),
+            "kill_banner_source": lead_clip.get("kill_banner_source")
+            or lead_clip.get("banner_source"),
             "score": float(clip.get("score") or metrics.get("viral_score") or 0),
             "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
             "clip_score": clip_score,
