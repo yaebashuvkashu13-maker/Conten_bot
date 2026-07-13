@@ -86,7 +86,7 @@ def check_banner_frame(frame, *, tier: int = 0) -> tuple[str, str]:
 
     pos = match_positive_owner_reference(frame)
     neg = match_negative_banner_reference(frame)
-    margin = float(os.environ.get("MLBB_BANNER_OWNER_EVIDENCE_MARGIN", "0.05"))
+    margin = float(os.environ.get("MLBB_BANNER_OWNER_EVIDENCE_MARGIN", "0.10"))
     if pos is not None and (
         neg is None or float(pos[0]) >= float(neg[0]) + margin
     ):

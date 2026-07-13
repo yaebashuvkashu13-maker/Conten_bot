@@ -76,6 +76,27 @@ def test_stronger_negative_evidence_still_rejects(tmp_path: Path, monkeypatch) -
     assert "enemy_kill" in reason
 
 
+def test_close_positive_negative_evidence_is_ambiguous(
+    tmp_path: Path, monkeypatch
+) -> None:
+    prof = tmp_path / "banner_calibration_profile.json"
+    prof.write_text(json.dumps({"labeled": 110}))
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_OWNER_EVIDENCE_MARGIN", "0.10")
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    with patch(
+        "mlbb_banner_ref_match.match_positive_owner_reference",
+        return_value=(0.715, "double_triple", "/positive.png"),
+    ), patch(
+        "mlbb_banner_ref_match.match_negative_banner_reference",
+        return_value=(0.790, "not_kill", "/negative.png"),
+    ):
+        decision, reason = check_banner_frame(frame, tier=3)
+    assert decision == "neutral"
+    assert reason.startswith("owner_ambiguous")
+
+
 def test_strict_send_rejects_neutral_without_visual_proof(tmp_path: Path, monkeypatch) -> None:
     prof = tmp_path / "banner_calibration_profile.json"
     prof.write_text(json.dumps({"labeled": 75, "by_reason": {"no_banner": 75}}))
