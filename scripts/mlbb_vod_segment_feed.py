@@ -1481,7 +1481,9 @@ def _presend_visual_ok(
 
 def _verified_discovery_banner(row: dict, min_tier: int) -> tuple[bool, str]:
     """Reuse an internally verified discovery hit; later POV/action gates still run."""
-    if os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1":
+    strict = os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1"
+    source = str(row.get("kill_banner_source") or "")
+    if strict and not source.endswith("_verified"):
         return False, ""
     if os.environ.get("MLBB_VOD_PRESEND_FAST_BANNER", "1") != "1":
         return False, ""
@@ -1988,6 +1990,7 @@ def _collect_scan_segments(
             "fight_dur": float(lead_clip.get("input_duration", 0)),
             "kill_banner": lead_clip.get("kill_banner"),
             "kill_banner_tier": lead_clip.get("kill_banner_tier"),
+            "kill_banner_source": lead_clip.get("kill_banner_source"),
             "score": float(clip.get("score") or metrics.get("viral_score") or 0),
             "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
             "clip_score": clip_score,
@@ -2156,7 +2159,11 @@ def _send_segment_batch(
         time.sleep(1.5)
     if skipped:
         log.info("presend skipped=%s", "; ".join(skipped[:12]))
-    if not sent_ids and skipped:
+    if (
+        not sent_ids
+        and skipped
+        and os.environ.get("MLBB_VOD_PRESEND_REJECT_NOTIFY", "0") == "1"
+    ):
         send_message(
             token,
             chat_id,

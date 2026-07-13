@@ -88,3 +88,19 @@ def test_strict_banner_mode_requires_fresh_visual_proof(monkeypatch) -> None:
     )
     assert ok is False
     assert reason == ""
+
+
+def test_strict_banner_mode_reuses_owner_verified_discovery(monkeypatch) -> None:
+    monkeypatch.setenv("MLBB_BANNER_SEND_STRICT", "1")
+    monkeypatch.setenv("MLBB_VOD_PRESEND_FAST_BANNER", "1")
+    ok, reason = _verified_discovery_banner(
+        {
+            "kill_banner": "triple",
+            "kill_banner_tier": 3,
+            "kill_banner_source": "ocr_verified",
+            "banner_sec": 80,
+        },
+        2,
+    )
+    assert ok is True
+    assert reason == "verified_discovery_banner:triple@80.0s"

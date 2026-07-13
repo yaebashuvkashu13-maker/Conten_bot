@@ -230,7 +230,7 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
 
 
 def _banner_hit_source_ok(source: str) -> bool:
-    return source in ("ocr", "ref")
+    return source.startswith("ocr") or source.startswith("ref")
 
 
 def _announce_color_score(frame) -> float:

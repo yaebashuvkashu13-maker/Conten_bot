@@ -13,7 +13,7 @@ import math
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -1704,6 +1704,34 @@ def discover_highlight_candidates(
                     hint_peaks=starts,
                     min_tier=title_tier if title_tier > 0 else None,
                 )
+                if (
+                    banners
+                    and os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1"
+                ):
+                    from gameplay_gate import _read_frame_at
+                    from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+                    visually_verified: list = []
+                    for hit in banners:
+                        frame = _read_frame_at(video_path, float(hit.sec))
+                        if frame is None:
+                            continue
+                        proof_ok, proof_reason = check_banner_frame_passes(
+                            frame,
+                            tier=int(hit.tier),
+                        )
+                        if not proof_ok:
+                            log.info(
+                                "strict banner reject sec=%.1f tier=%s reason=%s",
+                                hit.sec,
+                                hit.tier,
+                                proof_reason,
+                            )
+                            continue
+                        visually_verified.append(
+                            replace(hit, source=f"{hit.source}_verified")
+                        )
+                    banners = visually_verified
             if (
                 use_discover
                 and title_tier >= 4
@@ -1846,6 +1874,7 @@ def discover_highlight_candidates(
                 {
                     "kill_banner": getattr(banner_hit, "label", None) or getattr(banner_hit, "tier_name", ""),
                     "kill_banner_tier": int(getattr(banner_hit, "tier", 0) or 0),
+                    "kill_banner_source": str(getattr(banner_hit, "source", "")),
                     "anchor": "kill_banner",
                     "banner_sec": float(getattr(banner_hit, "sec", start)),
                 }
