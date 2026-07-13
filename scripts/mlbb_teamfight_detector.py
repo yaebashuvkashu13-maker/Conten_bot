@@ -126,6 +126,10 @@ def passes_teamfight_threshold(score: float) -> bool:
     return score >= _min_teamfight_score()
 
 
+def _hud_probe_cap() -> int:
+    return max(8, int(os.environ.get("MLBB_TEAMFIGHT_HUD_CAP", "32")))
+
+
 def rank_starts_by_teamfight(
     analysis: dict[str, Any],
     starts: list[float],
@@ -137,13 +141,25 @@ def rank_starts_by_teamfight(
     if not starts:
         return []
     tiers = banner_tiers or {}
+    use_hud = video_path is not None and os.environ.get("MLBB_TEAMFIGHT_HUD", "1") == "1"
+    hud_cap = _hud_probe_cap()
+    hud_starts: set[float] = set()
+    if use_hud and len(starts) > hud_cap:
+        cheap = sorted(
+            ((score_teamfight_bins(analysis, start), start) for start in starts),
+            key=lambda row: row[0],
+            reverse=True,
+        )
+        hud_starts = {start for _, start in cheap[:hud_cap]}
+
     scored: list[tuple[float, float]] = []
     for start in starts:
         tier = tiers.get(round(start, 1)) or tiers.get(start)
+        probe_path = video_path if (use_hud and (not hud_starts or start in hud_starts)) else None
         sc = combined_teamfight_score(
             analysis,
             start,
-            video_path=video_path,
+            video_path=probe_path,
             banner_tier=tier,
         )
         scored.append((sc, start))

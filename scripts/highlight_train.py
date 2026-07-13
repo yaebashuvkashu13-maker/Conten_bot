@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -124,7 +125,7 @@ def load_all_owner_samples(profile: str) -> list[tuple[Path, float, int]]:
         vod = resolve_vod(str(vid))
         if not vod:
             continue
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             if "time_sec" not in row:
                 continue
             label = 1 if row.get("label") == "good" else 0
@@ -159,18 +160,60 @@ def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
 
     X: list[list[float]] = []
     y: list[int] = []
+    groups: list[str] = []
+    weights: list[float] = []
     if profile == "mobile_legends":
-        from mlbb_owner_learning import load_unified_training_samples
+        from mlbb_model_training import (
+            feature_key,
+            load_feature_cache,
+            save_feature_cache,
+        )
+        from mlbb_owner_learning import (
+            build_training_manifest,
+            load_unified_training_rows,
+        )
 
-        samples = load_unified_training_samples(profile)
-        for path, start, label in samples:
-            X.append(extract_features(path, start, profile))
-            y.append(label)
-        print(f"unified_mlbb_samples={len(samples)}")
+        rows = load_unified_training_rows(profile)
+        cache = load_feature_cache()
+        cached_features = cache.setdefault("features", {})
+        cache_changed = False
+        for row in rows:
+            path = Path(row["path"])
+            start = float(row["start"])
+            key = feature_key(path, start, profile)
+            features = cached_features.get(key)
+            if not isinstance(features, list):
+                try:
+                    features = extract_features(path, start, profile)
+                except Exception as exc:
+                    print(f"skip_feature path={path} start={start:.1f} error={exc}")
+                    continue
+                cached_features[key] = [float(value) for value in features]
+                cache_changed = True
+            X.append([float(value) for value in features])
+            y.append(int(row["label"]))
+            groups.append(str(row.get("group") or path.stem))
+            weights.append(float(row.get("weight") or 1.0))
+            if cache_changed and row_index % 25 == 0:
+                save_feature_cache(cache)
+                cache_changed = False
+                print(
+                    f"feature_progress={row_index}/{len(rows)} cached={len(cached_features)}",
+                    flush=True,
+                )
+        if cache_changed:
+            save_feature_cache(cache)
+        manifest = build_training_manifest(profile)
+        print(
+            f"unified_mlbb_samples={len(rows)} usable={len(X)} "
+            f"groups={len(set(groups))} dataset={manifest.get('dataset_version')}"
+        )
     else:
         for vod, start, label in load_all_owner_samples(profile):
             X.append(extract_features(vod, start, profile))
             y.append(label)
+            groups.append(vod.stem)
+            weights.append(1.0)
 
     if profile != "mobile_legends":
         exemplar_root = REPO / "data" / "highlight_exemplars" / profile
@@ -181,21 +224,71 @@ def train_profile(profile: str, *, max_exemplar: int = 30) -> int:
             for clip in sorted(folder.glob("*.mp4"))[:max_exemplar]:
                 X.append(extract_features(clip, 0.5, profile))
                 y.append(cls)
+                groups.append(clip.stem)
+                weights.append(1.0)
 
-    if len(X) < 8:
-        print(f"REFUSED: train profile={profile}, reason=insufficient_samples n={len(X)}")
+    if len(X) < 12 or len(set(y)) < 2:
+        print(f"REFUSED: train profile={profile}, reason=insufficient_or_one_class n={len(X)}")
         return 1
 
     from sklearn.linear_model import LogisticRegression
-    import joblib
+    from mlbb_model_training import (
+        evaluate_binary,
+        grouped_holdout_indices,
+        passes_quality_gate,
+        promote_candidate,
+        write_candidate,
+    )
 
-    clf = LogisticRegression(max_iter=500, class_weight="balanced")
-    clf.fit(np.array(X), np.array(y))
+    X_arr = np.asarray(X, dtype=float)
+    y_arr = np.asarray(y, dtype=int)
+    weight_arr = np.asarray(weights, dtype=float)
+    try:
+        train_idx, test_idx = grouped_holdout_indices(y_arr, groups)
+    except ValueError as exc:
+        print(f"REFUSED: train profile={profile}, reason={exc}")
+        return 1
+
+    validation_model = LogisticRegression(max_iter=500, class_weight="balanced")
+    validation_model.fit(
+        X_arr[train_idx],
+        y_arr[train_idx],
+        sample_weight=weight_arr[train_idx],
+    )
+    metrics = evaluate_binary(validation_model, X_arr[test_idx], y_arr[test_idx])
+    passed, failures = passes_quality_gate(metrics)
     out_path = classifier_path_for_profile(profile)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(clf, out_path)
-    acc = clf.score(np.array(X), np.array(y))
-    print(f"OK classifier profile={profile} path={out_path} samples={len(X)} train_acc={acc:.3f}")
+    final_model = LogisticRegression(max_iter=500, class_weight="balanced")
+    final_model.fit(X_arr, y_arr, sample_weight=weight_arr)
+    metadata = {
+        "schema_version": 1,
+        "profile": profile,
+        "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "samples": len(X),
+        "groups": len(set(groups)),
+        "features": 6 if profile == "mobile_legends" else len(X[0]),
+        "holdout": metrics,
+        "quality_pass": passed,
+        "failures": failures,
+        "sources": manifest.get("clip_ranker", {}).get("sources", {})
+        if profile == "mobile_legends"
+        else {},
+        "dataset_version": manifest.get("dataset_version", "")
+        if profile == "mobile_legends"
+        else "",
+    }
+    candidate, _candidate_meta = write_candidate(final_model, out_path, metadata)
+    if not passed:
+        print(
+            f"REFUSED: promote profile={profile} candidate={candidate} "
+            f"metrics={metrics} failures={','.join(failures)}"
+        )
+        return 2
+    promote_candidate(out_path, candidate, metadata)
+    print(
+        f"OK classifier profile={profile} path={out_path} samples={len(X)} "
+        f"groups={len(set(groups))} holdout={metrics}"
+    )
     return 0
 
 

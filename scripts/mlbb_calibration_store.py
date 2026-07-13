@@ -722,6 +722,19 @@ def apply_owner_label(
     from mlbb_owner_learning import sync_shorts_label_to_owner_json
 
     sync_shorts_label_to_owner_json(vid, is_good=is_good, reason=reason)
+    try:
+        from mlbb_owner_feedback import record_owner_feedback
+
+        record_owner_feedback(
+            source="youtube_shorts",
+            video_id=vid,
+            time_sec=0.0,
+            label="good" if is_good else "bad",
+            reason=reason,
+            item_id=vid,
+        )
+    except Exception:
+        pass
     if not is_good:
         block_reason = reason or "owner_dislike"
         mark_feed_blocked(vid, reason=block_reason, score=0.0)

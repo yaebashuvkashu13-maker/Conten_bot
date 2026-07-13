@@ -30,7 +30,7 @@ VOD_CORE_SEARCH_QUERIES = (
 VOD_ANGLE_SEARCH_QUERIES = (
     "MLBB mythic placement match full gameplay",
     "Mobile Legends immortal rank push match replay",
-    "MLBB roam mythic ranked full game",
+    "MLBB assassin jungle mythic savage full match",
     "Mobile Legends jungle mythic ranked match gameplay",
     "MLBB mythic glory savage teamfight ranked match",
     "Mobile Legends ranked match MVP gameplay no commentary",
@@ -38,10 +38,16 @@ VOD_ANGLE_SEARCH_QUERIES = (
 
 # Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
 VOD_COMBAT_SEARCH_QUERIES = (
+    "MLBB double kill triple kill mythic ranked full match gameplay",
+    "Mobile Legends triple kill double kill ranked full game",
+    "MLBB savage maniac ruthless ranked full match gameplay",
+    "Mobile Legends savage teamfight mythic ranked no montage",
+    "MLBB maniac triple kill ranked match replay",
+    "MLBB беспощадный маньяк savage ranked полный матч",
     "MLBB ranked match double kill teamfight replay",
     "MLBB mythic ranked savage teamfight full match",
     "Mobile Legends maniac triple kill ranked gameplay",
-    "Mobile Legends mythic glory 20 kills full game",
+    "Mobile Legends mythic glory 20 kills savage full game",
     "MLBB mythic ranked mvp teamfight no montage",
 )
 
@@ -50,22 +56,28 @@ YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
 # Popular heroes for rotating VOD search (includes Masha from user examples).
 VOD_SEARCH_HEROES = (
-    "masha",
-    "paquito",
     "hayabusa",
     "gusion",
     "fanny",
     "ling",
-    "chou",
+    "lancelot",
+    "aamon",
+    "nolan",
+    "saber",
+    "dyrroth",
+    "benedetta",
     "beatrix",
     "moskov",
+    "granger",
+    "hanabi",
+    "miya",
+    "layla",
+    "paquito",
+    "masha",
+    "chou",
     "valentina",
     "joy",
-    "angela",
-    "tigreal",
-    "layla",
     "kagura",
-    "lancelot",
 )
 
 # Hard reject — montages, guides, promos, skin showcases.
@@ -194,7 +206,8 @@ def build_vod_search_queries(
         hero = heroes[idx % len(heroes)]
         tpl = hero_templates[idx % len(hero_templates)]
         queries.append(tpl.format(hero=hero))
-    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
+    # Reserve one season supplement, but prioritize three kill-tier searches.
+    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 1))
     for idx in range(combat_slots):
         queries.append(VOD_COMBAT_SEARCH_QUERIES[idx % len(VOD_COMBAT_SEARCH_QUERIES)])
     for angle in VOD_ANGLE_SEARCH_QUERIES:
@@ -347,6 +360,11 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
         return False
     if not passes_mlbb_game_title(title):
         return False
+    from mlbb_hero_roles import passes_vod_hero_gate
+
+    hero_ok, _hero_reason = passes_vod_hero_gate(title)
+    if not hero_ok:
+        return False
     return True
 
 
@@ -386,10 +404,14 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
         ("replay", 2.5),
         ("match", 2.0),
         (" vs ", 2.5),
-        ("savage", 3.5),
-        ("maniac", 3.0),
-        ("triple kill", 3.0),
-        ("double kill", 2.5),
+        ("savage", 5.0),
+        ("maniac", 4.5),
+        ("ruthless", 4.0),
+        ("беспощад", 4.0),
+        ("маньяк", 4.0),
+        ("саваж", 4.5),
+        ("triple kill", 3.5),
+        ("double kill", 3.0),
         ("teamfight", 2.0),
         (" kills", 2.0),
         ("mvp", 1.5),
@@ -441,6 +463,10 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
     for needle, weight in penalties:
         if needle in blob:
             score += weight
+
+    from mlbb_hero_roles import vod_hero_rank_adjustment
+
+    score += vod_hero_rank_adjustment(str(meta.get("title") or ""))
 
     return score
 

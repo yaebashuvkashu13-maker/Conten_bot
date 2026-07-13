@@ -370,10 +370,15 @@ def _ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
-def eval_transition_gate(*, write_report: bool = True) -> dict:
+def eval_transition_gate(
+    *,
+    write_report: bool = True,
+    holdout_min_precision: float = 0.85,
+    dry_min_rejected: int = 7,
+) -> dict:
     bad = eval_bad_block_tests()
-    holdout = eval_holdout_precision()
-    dry = dry_run_gate_rejection()
+    holdout = eval_holdout_precision(min_precision=holdout_min_precision)
+    dry = dry_run_gate_rejection(min_rejected=dry_min_rejected)
     prec7 = precision_7d()
     all_pass = bad["pass"] and holdout["pass"] and dry["pass"]
     report = {
