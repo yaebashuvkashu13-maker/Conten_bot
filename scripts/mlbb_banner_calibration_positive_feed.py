@@ -73,8 +73,20 @@ def positive_candidate_ok(hit: KillBannerHit, frame, *, vod: Path | None = None)
     except ImportError:
         return hit.source == "ocr"
 
-    if match_negative_banner_reference(frame) is not None:
-        return False
+    neg = match_negative_banner_reference(frame)
+    if neg is not None:
+        score, reason, _path = neg
+        # OCR already named Double+; weak no_banner HUD matches must not kill teach/send paths.
+        ocr_tier = int(getattr(hit, "tier", 0) or 0)
+        if str(reason) == "no_banner" and ocr_tier >= 2 and str(getattr(hit, "source", "") or "") in (
+            "ocr",
+            "owner",
+        ):
+            min_sim = float(os.environ.get("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90"))
+            if float(score) < min_sim:
+                neg = None
+        if neg is not None:
+            return False
     if hit.source in ("ocr", "owner"):
         accepted = True
     elif match_positive_owner_reference(frame) is not None:
@@ -140,8 +152,15 @@ def _score_candidate(hit: KillBannerHit, frame) -> float:
     except ImportError:
         return float(hit.tier)
 
-    if match_negative_banner_reference(frame) is not None:
-        return -1.0
+    neg = match_negative_banner_reference(frame)
+    if neg is not None:
+        nscore, nreason, _ = neg
+        if not (
+            str(nreason) == "no_banner"
+            and int(hit.tier or 0) >= 2
+            and float(nscore) < float(os.environ.get("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90"))
+        ):
+            return -1.0
 
     score = float(hit.tier) * 2.0
     label = str(hit.label or "").lower()
