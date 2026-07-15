@@ -47,3 +47,37 @@ def test_panns_trust_owner_reason_passes_when_density_low(monkeypatch, tmp_path:
                     )
     assert ok is True, reason
     assert "panns_trust" in reason
+
+
+def test_panns_trust_bypasses_loot_walk(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
+    vod = tmp_path / "yt_x.mp4"
+    vod.write_bytes(b"")
+    metrics = {
+        "start": 108.0,
+        "duration": 12.0,
+        "gunfire_density": 0.017,
+        "burst_ratio": 2.5,
+        "audio_rms": 0.05,
+        "center_motion": 0.05,
+        "center_text": 0.1,
+        "crop_box": None,
+    }
+    with patch("pubg_shooting_gate.pubg_probe_segment", return_value=metrics):
+        with patch(
+            "pubg_owner_calibration.pubg_passes_owner_heuristics",
+            return_value=(True, "panns_trust=0.711"),
+        ):
+            with patch(
+                "pubg_shooting_gate.segment_looks_like_pubg_loot_or_walk",
+                return_value=True,
+            ):
+                with patch(
+                    "pubg_shooting_gate.segment_is_valid_for_montage",
+                    return_value=(False, "run_fake_gun=motion0.178:gun0.028"),
+                ):
+                    ok, reason, _ = pubg_passes_shooting_gate(
+                        vod, 108.0, 12.0, panns_gun_max=0.711
+                    )
+    assert ok is True, reason
+    assert "panns_trust" in reason
