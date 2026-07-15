@@ -827,14 +827,16 @@ def discover_vod_kill_banners(
         from mlbb_vod_segment_store import vod_youtube_id
 
         vid = vod_youtube_id(vod).lower()
-        owner_secs: list[float] = []
+        reason_rank = {
+            "savage_tier": 0,
+            "double_triple": 1,
+            "own_kill_good": 2,
+            "not_enemy_kill": 3,
+        }
+        owner_rows: list[tuple[int, float]] = []
         for row in load_labels().get("labels", []):
-            if str(row.get("reason") or "") not in {
-                "own_kill_good",
-                "double_triple",
-                "savage_tier",
-                "not_enemy_kill",
-            }:
+            reason = str(row.get("reason") or "")
+            if reason not in reason_rank:
                 continue
             cid = str(row.get("check_id") or "")
             if cid.startswith("ownerphoto"):
@@ -846,27 +848,48 @@ def discover_vod_kill_banners(
             path_vid = str(row.get("vod") or "")
             if row_vid != vid and vid not in path_vid.lower():
                 continue
-            owner_secs.append(sec)
-        owner_secs = sorted(set(round(s, 1) for s in owner_secs))[:12]
-        # Exact labeled seconds first — deep OCR is slow; neighborhood can burn the budget.
+            owner_rows.append((reason_rank[reason], float(sec)))
+        # Prefer Double/Triple/Savage labels; dig exact frames before any neighbors.
+        owner_rows.sort(key=lambda r: (r[0], r[1]))
+        owner_secs: list[float] = []
+        seen_sec: set[float] = set()
+        for _rank, sec in owner_rows:
+            key = round(sec, 1)
+            if key in seen_sec:
+                continue
+            seen_sec.add(key)
+            owner_secs.append(key)
+            if len(owner_secs) >= 12:
+                break
+        # One deep OCR per exact labeled second (neighborhood burns wall clock).
         for sec in owner_secs:
             if probes >= max_probes or time.monotonic() >= deadline:
                 break
-            for delta in (0.0, 0.5, -0.5, 1.0, -1.0, 1.5):
+            frame = _read_frame(vod, sec)
+            if frame is None:
+                continue
+            probes += 1
+            hit = _classify_frame(sec, frame, deep=True)
+            if hit is not None:
+                _merge_hit(hit)
+                if hit.tier >= need:
+                    break
+        if not hits:
+            for sec in owner_secs[:4]:
                 if probes >= max_probes or time.monotonic() >= deadline:
                     break
-                t = max(1.0, sec + delta)
-                frame = _read_frame(vod, t)
-                if frame is None:
-                    continue
-                probes += 1
-                # Exact/near labeled peaks deserve deep OCR; wider offsets stay shallow.
-                deep = abs(delta) <= 0.5
-                hit = _classify_frame(t, frame, deep=deep)
-                if hit is not None:
-                    _merge_hit(hit)
-                    if hit.tier >= need:
-                        break  # one solid hit near this label is enough
+                for delta in (0.5, -0.5, 1.0):
+                    if probes >= max_probes or time.monotonic() >= deadline:
+                        break
+                    t = max(1.0, sec + delta)
+                    frame = _read_frame(vod, t)
+                    if frame is None:
+                        continue
+                    probes += 1
+                    hit = _classify_frame(t, frame, deep=False)
+                    if hit is not None:
+                        _merge_hit(hit)
+                        break
         if owner_secs:
             log.info(
                 "banner discover %s: owner_label_seeds=%s probes=%s merged_hits=%s",
@@ -875,7 +898,6 @@ def discover_vod_kill_banners(
                 probes,
                 len(hits),
             )
-        # Keep leftover wall time for sparse timestep if seeds already found banners.
         if hits and os.environ.get("MLBB_OWNER_SEED_STOP_ON_HIT", "1") == "1":
             log.info(
                 "banner discover %s: stop after owner seeds hits=%s",
