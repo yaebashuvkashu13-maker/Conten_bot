@@ -168,7 +168,8 @@ def _send_one(
         f"{hit.label.upper()} t{hit.tier} score={score:.1f}\n"
         f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s\n"
         f"#{cid}\n"
-        f"Жми ✅ Свой kill / ⚡ Double-Triple / 🔥 Savage — или ❌ если ошибка OCR"
+        f"источник: {hit.source} | {hit.text[:60]}\n"
+        f"Жми ✅/⚡/🔥 если kill-банер виден — или ❌ Нет банера"
     )
     if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
         mark_sent([cid])
@@ -287,6 +288,73 @@ def main() -> int:
                 sent_n += 1
                 sent = load_sent()
                 time.sleep(delay)
+
+    # Pass C: owner-edge candidates (uses the 70+ UI/kill screenshots productively).
+    # OCR often fails on ornate RU banners; structural match surfaces real HUD banners
+    # for the owner to confirm — still never color-only spam.
+    if sent_n < max_send and os.environ.get("MLBB_SMART_TEACH_EDGE_PASS", "1") == "1":
+        from mlbb_banner_ref_match import match_positive_owner_reference_strict
+        from mlbb_kill_banner import _ffmpeg_sample_frames
+
+        edge_vods = int(os.environ.get("MLBB_SMART_TEACH_EDGE_VODS", "8"))
+        edge_samples = int(os.environ.get("MLBB_SMART_TEACH_EDGE_SAMPLES", "16"))
+        edge_min = float(os.environ.get("MLBB_SMART_TEACH_EDGE_MIN", "0.40"))
+        print(f"edge_pass vods={edge_vods} min={edge_min}", flush=True)
+        for i, vod in enumerate(vods[:edge_vods]):
+            if sent_n >= max_send or time.time() > global_deadline:
+                break
+            print(f"edge_scan {vod_youtube_id(vod)} ({i+1}/{edge_vods}) sent={sent_n}", flush=True)
+            frames = _ffmpeg_sample_frames(
+                vod,
+                float(os.environ.get("MLBB_SMART_TEACH_T0", "90")),
+                float(os.environ.get("MLBB_SMART_TEACH_T1", "1200")),
+                edge_samples,
+            )
+            for sec, low in frames:
+                if sent_n >= max_send or time.time() > global_deadline:
+                    break
+                # Cheap gate on low-res, confirm on full-res
+                if _announce_color_score(low) < float(os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.05")):
+                    continue
+                frame = _read_frame(vod, sec)
+                if frame is None:
+                    continue
+                # Prefer OCR if available
+                ocr_hit = _ocr_confirm(vod, sec, min_tier=min_tier)
+                edge_row = match_positive_owner_reference_strict(frame)
+                if ocr_hit is None and (edge_row is None or float(edge_row[0]) < edge_min):
+                    continue
+                if ocr_hit is not None:
+                    hit = ocr_hit
+                    score = float(hit.tier) * 3.0 + (float(edge_row[0]) * 4.0 if edge_row else 0.0)
+                else:
+                    # Edge-only candidate — owner must confirm; still a real banner lookalike
+                    hit = KillBannerHit(
+                        sec=round(float(sec), 2),
+                        tier=3,
+                        label=str(edge_row[1]),
+                        text=f"edge={float(edge_row[0]):.3f}",
+                        source="owner_edge",
+                    )
+                    score = float(edge_row[0]) * 5.0
+                cid = check_id(vod, hit.sec)
+                if cid in labeled or cid in sent or cid in seen:
+                    continue
+                seen.add(cid)
+                if _send_one(
+                    token=token,
+                    chat_id=chat_id,
+                    vod=vod,
+                    hit=hit,
+                    cid=cid,
+                    sent_n=sent_n,
+                    max_send=max_send,
+                    target=target,
+                    score=score,
+                ):
+                    sent_n += 1
+                    sent = load_sent()
+                    time.sleep(delay)
 
     print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False), flush=True)
     return 0
