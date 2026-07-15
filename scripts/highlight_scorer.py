@@ -1960,10 +1960,13 @@ def discover_highlight_candidates(
                 except ValueError:
                     pass
         run_kill_discover = os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") == "1"
-        # Seeds already came from PANNs gun hits — skip slow OCR discover (often hits=0).
+        dense_kill = os.environ.get("PUBG_VOD_KILL_DENSE_SEC", "0") == "1"
+        # Seeds already came from PANNs gun hits — skip slow peak-OCR discover.
+        # Dense ~1Hz path is intentional (MLBB-style) and must still run.
         if (
             run_kill_discover
             and seed_peaks
+            and not dense_kill
             and os.environ.get("PUBG_KILL_DISCOVER_SKIP_IF_SEEDS", "1") == "1"
         ):
             log.info(

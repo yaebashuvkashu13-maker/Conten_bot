@@ -43,6 +43,7 @@ def test_zero_pool_cooldown_skips_rescan(monkeypatch) -> None:
 
 def test_kill_discover_skipped_when_seeds(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PUBG_VOD_KILL_DISCOVER", "1")
+    monkeypatch.setenv("PUBG_VOD_KILL_DENSE_SEC", "0")
     monkeypatch.setenv("PUBG_KILL_DISCOVER_SKIP_IF_SEEDS", "1")
     monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
     monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "240")
@@ -72,6 +73,41 @@ def test_kill_discover_skipped_when_seeds(monkeypatch, tmp_path: Path) -> None:
                         with patch.object(hs, "_accept_highlight_candidate", return_value=True):
                             out = hs.discover_highlight_candidates(vod, "pubg")
     discover.assert_not_called()
+    assert out
+
+
+def test_kill_discover_runs_when_dense_even_with_seeds(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PUBG_VOD_KILL_DISCOVER", "1")
+    monkeypatch.setenv("PUBG_VOD_KILL_DENSE_SEC", "1")
+    monkeypatch.setenv("PUBG_KILL_DISCOVER_SKIP_IF_SEEDS", "1")
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "240")
+    monkeypatch.setenv("SHOOTER_VOD_SCORE_MAX", "2")
+    monkeypatch.setenv("SHOOTER_VOD_SCORE_EARLY_STOP", "0")
+    monkeypatch.setenv("HIGHLIGHT_PARALLEL_WORKERS", "1")
+    vod = tmp_path / "yt_dense_seed.mp4"
+    vod.write_bytes(b"")
+
+    metrics = MagicMock()
+    metrics.rule_pass = True
+    metrics.visual_pass = True
+    metrics.pass_reason = "combat_ok"
+    metrics.viral_score = 0.2
+    metrics.combined_score = 0.2
+    metrics.to_dict.return_value = {"viral_score": 0.2}
+
+    with patch.object(hs, "require_inference_ready", return_value=(True, "ok")):
+        with patch.object(hs, "stage1_candidates", return_value=[240.0, 300.0]):
+            with patch.object(hs, "stage1_panns_prefilter", side_effect=lambda *_a, **_k: list(_a[1])):
+                with patch("pubg_kill_banner.discover_vod_kill_moments", return_value=[]) as discover:
+                    with patch.object(
+                        hs,
+                        "_evaluate_highlight_start",
+                        return_value=(240.0, metrics),
+                    ):
+                        with patch.object(hs, "_accept_highlight_candidate", return_value=True):
+                            out = hs.discover_highlight_candidates(vod, "pubg")
+    discover.assert_called_once()
     assert out
 
 

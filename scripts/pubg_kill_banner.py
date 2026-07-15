@@ -50,6 +50,11 @@ def _min_tier() -> int:
     return {"single": 1, "double": 2}.get(raw, 1)
 
 
+def dense_scan_enabled() -> bool:
+    """MLBB-style ~1 frame/sec dense killfeed discover."""
+    return os.environ.get("PUBG_VOD_KILL_DENSE_SEC", "0") == "1"
+
+
 def classify_kill_text(text: str) -> KillMomentHit | None:
     blob = " ".join(str(text or "").split())
     if not blob:
@@ -81,6 +86,19 @@ def _ocr_zones(frame) -> str:
     return " ".join(parts)
 
 
+def _classify_frame(sec: float, frame) -> KillMomentHit | None:
+    classified = classify_kill_text(_ocr_zones(frame))
+    if classified is None:
+        return None
+    return KillMomentHit(
+        sec=round(sec, 2),
+        tier=classified.tier,
+        label=classified.label,
+        text=classified.text,
+        source="ocr",
+    )
+
+
 def scan_window(
     video_path: Path,
     start_sec: float,
@@ -104,17 +122,9 @@ def scan_window(
         frame = _read_frame_at(video_path, ts)
         if frame is None:
             continue
-        classified = classify_kill_text(_ocr_zones(frame))
-        if classified:
-            hits.append(
-                KillMomentHit(
-                    sec=round(ts, 2),
-                    tier=classified.tier,
-                    label=classified.label,
-                    text=classified.text,
-                    source="ocr",
-                )
-            )
+        hit = _classify_frame(ts, frame)
+        if hit:
+            hits.append(hit)
     return hits
 
 
@@ -134,13 +144,28 @@ def find_kill_near_peak(video_path: Path, peak_sec: float, *, quick: bool = True
     return best
 
 
+def _dense_scan_bounds(duration: float) -> tuple[float, float]:
+    """Start/end for dense 1Hz sweep — capped so long VODs do not hang."""
+    t0 = float(os.environ.get("PUBG_KILL_DENSE_START_SEC", "30"))
+    if duration <= 240:
+        t0 = min(t0, 15.0)
+    elif duration <= 480:
+        t0 = min(t0, 20.0)
+    end = max(t0 + 8.0, duration - 2.0)
+    cap = float(os.environ.get("PUBG_KILL_DENSE_MAX_SPAN_SEC", "480"))
+    return t0, min(end, t0 + max(60.0, cap))
+
+
 def discover_vod_kill_moments(
     vod: Path,
     *,
     min_tier: int | None = None,
     hint_peaks: list[float] | None = None,
 ) -> list[KillMomentHit]:
-    """Sparse OCR around motion peaks — same strategy as MLBB banner discover."""
+    """
+    Peak-local OCR, plus optional MLBB-style dense ~1 frame/sec timeline scan
+    (PUBG_VOD_KILL_DENSE_SEC=1). Dense path is chunked and wall-clock capped.
+    """
     if os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") != "1":
         return []
     from mlbb_fight_segment import _analysis_for
@@ -150,8 +175,26 @@ def discover_vod_kill_moments(
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    max_probes = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_MAX_PROBES", "6")))
-    max_sec = max(15.0, float(os.environ.get("PUBG_KILL_DISCOVER_MAX_SEC", "35")))
+    dense = dense_scan_enabled()
+    if dense:
+        step = min(1.0, float(os.environ.get("PUBG_KILL_DISCOVER_STEP", "1.0")))
+        t0, t_end = _dense_scan_bounds(duration)
+        scan_span = max(60.0, t_end - t0)
+        per_sec = int(scan_span / max(step, 1.0)) + 16
+        max_probes = max(
+            int(os.environ.get("PUBG_KILL_DISCOVER_MAX_PROBES", "120")),
+            min(per_sec, int(os.environ.get("PUBG_KILL_DENSE_PROBE_CAP", "480"))),
+        )
+        max_sec = max(
+            60.0,
+            float(os.environ.get("PUBG_KILL_DISCOVER_MAX_SEC", "180")),
+        )
+    else:
+        step = float(os.environ.get("PUBG_KILL_DISCOVER_STEP", "3.0"))
+        t0, t_end = 0.0, duration
+        max_probes = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_MAX_PROBES", "6")))
+        max_sec = max(15.0, float(os.environ.get("PUBG_KILL_DISCOVER_MAX_SEC", "35")))
+
     deadline = time.monotonic() + max_sec
     hits: list[KillMomentHit] = []
     probes = 0
@@ -165,7 +208,10 @@ def discover_vod_kill_moments(
         else:
             hits.append(hit)
 
+    # Phase 1: quick OCR around motion / gun peaks.
     peak_limit = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_PEAK_HINTS", "4")))
+    if dense:
+        peak_limit = max(peak_limit, int(os.environ.get("PUBG_KILL_DENSE_PEAK_HINTS", "8")))
     for peak in sorted(set(hint_peaks or []))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
@@ -174,6 +220,80 @@ def discover_vod_kill_moments(
         if hit:
             _merge(hit)
 
+    # Phase 2: dense ~1 Hz chunked ffmpeg decode + OCR (same idea as MLBB banner dense).
+    if dense and probes < max_probes and time.monotonic() < deadline:
+        from mlbb_kill_banner import _ffmpeg_sample_frames
+
+        chunk_sec = float(os.environ.get("PUBG_KILL_DENSE_CHUNK_SEC", "60"))
+        stop_on_hit = max(1, int(os.environ.get("PUBG_KILL_DENSE_STOP_ON_HITS", "3")))
+        cursor = t0
+        frame_i = 0
+        log.info(
+            "pubg kill discover %s: dense_1hz start=%.0fs end=%.0fs span=%.0fs "
+            "max_probes=%s max_sec=%.0f",
+            vod.name,
+            t0,
+            t_end,
+            t_end - t0,
+            max_probes,
+            max_sec,
+        )
+        while cursor < t_end - 0.25:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            if len(hits) >= stop_on_hit:
+                log.info(
+                    "pubg kill discover %s: dense stop early — hits=%s",
+                    vod.name,
+                    len(hits),
+                )
+                break
+            chunk_end = min(t_end, cursor + chunk_sec)
+            span = max(0.5, chunk_end - cursor)
+            sample_count = max(1, min(120, int(span / max(step, 0.25)) + 1))
+            batch = _ffmpeg_sample_frames(vod, cursor, chunk_end, sample_count)
+            if not batch:
+                cursor = chunk_end
+                continue
+            for t, frame in batch:
+                if probes >= max_probes or time.monotonic() >= deadline:
+                    break
+                if len(hits) >= stop_on_hit:
+                    break
+                probes += 1
+                hit = _classify_frame(float(t), frame)
+                if hit is not None:
+                    _merge(hit)
+                if frame_i % 60 == 0 or frame_i < 3:
+                    log.info(
+                        "pubg kill discover %s: dense t=%.0fs probes=%s/%s hits=%s",
+                        vod.name,
+                        t,
+                        probes,
+                        max_probes,
+                        len(hits),
+                    )
+                frame_i += 1
+                try:
+                    from vod_pipeline_heartbeat import heartbeat
+
+                    heartbeat(
+                        "pubg_kill_dense_scan",
+                        vod_id=vod.stem,
+                        progress=(t - t0) / max(1.0, t_end - t0),
+                        candidates_out=len(hits),
+                    )
+                except Exception:
+                    pass
+            cursor = chunk_end
+
     hits.sort(key=lambda h: h.sec)
-    log.info("pubg kill discover %s: probes=%s hits=%s tier>=%s", vod.name, probes, len(hits), need)
+    log.info(
+        "pubg kill discover %s: probes=%s hits=%s tier>=%s dense=%s",
+        vod.name,
+        probes,
+        len(hits),
+        need,
+        int(dense),
+    )
     return hits
