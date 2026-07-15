@@ -990,20 +990,26 @@ def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> 
     }
 
 
+def _pann_gun_min_env() -> float:
+    """Read live so adaptive soften L1–L4 can lower the bar mid-run."""
+    return float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
+
+
 def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
     """Owner-label separation — stream RU Metro has low absolute PANNs gun scores."""
+    pann_floor = _pann_gun_min_env()
     if os.environ.get("HIGHLIGHT_PANN_FIXED", "0") == "1":
-        return PANN_GUN_MIN
+        return pann_floor
     starts = _owner_anchor_starts(video_path, profile)
     labels_path = _owner_labels_path(normalize_profile(profile))
     if not starts or labels_path is None:
-        return PANN_GUN_MIN
+        return pann_floor
     try:
         data = json.loads(labels_path.read_text(encoding="utf-8"))
         vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
         rows = data.get("videos", {}).get(vid, [])
     except (json.JSONDecodeError, OSError):
-        return PANN_GUN_MIN
+        return pann_floor
 
     good_scores: list[float] = []
     bad_scores: list[float] = []
@@ -1019,12 +1025,12 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
             bad_scores.append(s)
 
     if not good_scores:
-        return PANN_GUN_MIN
+        return pann_floor
     good_p90 = float(np.percentile(good_scores, 90))
     bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
     # Separate good from bad on this VOD; never drop below inference floor (RU streams).
     dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, PANN_GUN_INFERENCE_FLOOR)
-    return max(PANN_GUN_INFERENCE_FLOOR, min(dynamic, PANN_GUN_MIN))
+    return max(PANN_GUN_INFERENCE_FLOOR, min(dynamic, pann_floor))
 
 
 def audio_passes_shooter(
@@ -1033,7 +1039,7 @@ def audio_passes_shooter(
     gun_min: float | None = None,
 ) -> tuple[bool, str]:
     gun_max = panns["panns_gun_max"]
-    threshold = PANN_GUN_MIN if gun_min is None else gun_min
+    threshold = _pann_gun_min_env() if gun_min is None else gun_min
     speech = max(panns["panns_speech"], 0.01)
     gun_ratio = gun_max / speech
     if gun_max < threshold:
@@ -1570,27 +1576,37 @@ def stage1_panns_prefilter(
     if profile not in SHOOTER_PROFILES:
         cap = max(0, max_pann - len(pinned_list))
         return sorted(set(pinned_list + rest[:cap]))
-    starts = rest[:max_pann]
+
+    # Always keep pinned seeds/kill anchors; only probe the rest up to the cap.
+    probe_budget = max(0, max_pann - len(pinned_list))
+    probe_starts = rest[:probe_budget]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
-    def _probe(start: float) -> float | None:
+    def _probe(start: float) -> tuple[float, float] | None:
         panns = score_panns_audio(video_path, start, WINDOW_SEC)
-        return start if panns["panns_gun_max"] >= pre_min else None
+        gmax = float(panns.get("panns_gun_max", 0))
+        if gmax >= pre_min:
+            return start, gmax
+        return None
 
-    kept: list[float] = []
-    if workers > 1 and len(starts) > 1:
+    scored: list[tuple[float, float]] = []
+    # Pinned seeds already survived fast-probe — keep even if slightly under pre_min.
+    for start in pinned_list:
+        panns = score_panns_audio(video_path, start, WINDOW_SEC)
+        scored.append((start, float(panns.get("panns_gun_max", 0))))
+    if workers > 1 and len(probe_starts) > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for hit in pool.map(_probe, starts):
+            for hit in pool.map(_probe, probe_starts):
                 if hit is not None:
-                    kept.append(hit)
-        kept.sort()
+                    scored.append(hit)
     else:
-        for start in starts:
+        for start in probe_starts:
             hit = _probe(start)
             if hit is not None:
-                kept.append(hit)
-    if not kept and profile in OWNER_LABEL_PROFILES and _owner_anchor_starts(video_path, profile):
+                scored.append(hit)
+
+    if not scored and profile in OWNER_LABEL_PROFILES and _owner_anchor_starts(video_path, profile):
         kept = _owner_vicinity_gun_starts(video_path, profile)
         if kept:
             log.info(
@@ -1598,8 +1614,25 @@ def stage1_panns_prefilter(
                 video_path.name,
                 len(kept),
             )
-    if not kept:
-        log.warning("highlight panns prefilter %s: 0/%s passed min=%.3f", video_path.name, len(starts), pre_min)
+            return kept
+    if not scored:
+        log.warning(
+            "highlight panns prefilter %s: 0/%s passed min=%.3f",
+            video_path.name,
+            len(probe_starts) + len(pinned_list),
+            pre_min,
+        )
+        return []
+    # Strongest gun first — score_cap must not waste slots on quiet early windows.
+    scored.sort(key=lambda row: row[1], reverse=True)
+    kept = [start for start, _gun in scored]
+    log.info(
+        "highlight panns prefilter %s: %s windows (pinned=%s top=%.3f)",
+        video_path.name,
+        len(kept),
+        len(pinned_list),
+        scored[0][1],
+    )
     return kept
 
 
@@ -1861,6 +1894,17 @@ def discover_highlight_candidates(
     elif profile == "pubg":
         banner_pin = set()
         banner_by_anchor = {}
+        # Fast-probe seeds must stay pinned through PANNs prefilter + score_cap.
+        seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+        if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
+            for part in seed_raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    banner_pin.add(round(float(part), 1))
+                except ValueError:
+                    pass
         if os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") == "1":
             from pubg_kill_banner import discover_vod_kill_moments
 
@@ -1875,11 +1919,10 @@ def discover_highlight_candidates(
                     os.environ.get("PUBG_KILL_MIN_TIER", "single"),
                 )
                 for hit in moments:
-                    start_set.add(max(0.0, hit.sec - lead))
-                    banner_by_anchor[max(0.0, hit.sec - lead)] = hit
-                banner_pin = {
-                    max(0.0, hit.sec - lead) for hit in moments
-                }
+                    anchor = max(0.0, hit.sec - lead)
+                    start_set.add(anchor)
+                    banner_by_anchor[anchor] = hit
+                    banner_pin.add(round(anchor, 1))
             starts = sorted(start_set)
     else:
         banner_pin = set()
