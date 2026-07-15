@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Smart owner teach: send ONLY frames with OCR-confirmed kill banners.
+Smart owner teach: send frames that look like kill banners for owner labeling.
 
-Fast path (default):
-1. Motion peaks → find_banner_near_peak(quick=True) [already OCR-gated]
-2. Full-res shallow OCR confirm (deep only if shallow misses but color hints)
-3. Stream Telegram panels immediately (no waiting for full inbox scan)
-Never sends color-only / unverified HUD frames.
+Order (fast → slow):
+1. EDGE PASS — structural match to owner /banner screenshots (70+ crops)
+2. OCR seeds around already-labeled positives (cheap direct OCR)
+3. Optional OCR peak scan (slow; capped)
+
+Never sends color-only / unverified gold-HUD spam.
 """
 
 from __future__ import annotations
@@ -33,9 +34,9 @@ from mlbb_banner_calibration_store import (
 from mlbb_kill_banner import (
     KillBannerHit,
     _announce_color_score,
+    _ffmpeg_sample_frames,
     _min_tier,
     classify_banner_text,
-    find_banner_near_peak,
 )
 from mlbb_telegram_video import send_photo_file
 from youtube_download import load_env
@@ -50,7 +51,6 @@ def _read_frame(vod: Path, sec: float):
 
 
 def _ocr_confirm(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | None:
-    """Prefer shallow OCR; deepen only when color suggests a banner flash."""
     from mlbb_kill_banner import _ocr_banner_zones
 
     frame = _read_frame(vod, sec)
@@ -74,45 +74,9 @@ def _ocr_confirm(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | Non
     )
 
 
-def _peak_hints(vod: Path, *, limit: int) -> list[float]:
-    peaks: list[float] = []
-    try:
-        from mlbb_fight_segment import _analysis_for
-        import numpy as np
-
-        analysis = _analysis_for(vod)
-        motion = np.asarray(analysis.get("center_motion") or [], dtype=np.float32)
-        audio = np.asarray(analysis.get("audio") or [], dtype=np.float32)
-        win = float(analysis.get("window_seconds") or 2.0)
-        if motion.size == 0:
-            return peaks
-        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
-        floor = float(os.environ.get("MLBB_SMART_TEACH_PEAK_MIN", "0.10"))
-        scored: list[tuple[float, float]] = []
-        for i in range(2, len(combined) - 2):
-            v = float(combined[i])
-            if v < floor:
-                continue
-            if v >= float(combined[i - 1]) and v >= float(combined[i + 1]):
-                scored.append((v, i * win))
-        scored.sort(reverse=True)
-        return [sec for _, sec in scored[:limit]]
-    except Exception:
-        pass
-    t0 = float(os.environ.get("MLBB_SMART_TEACH_T0", "90"))
-    t1 = float(os.environ.get("MLBB_SMART_TEACH_T1", "1200"))
-    step = float(os.environ.get("MLBB_SMART_TEACH_FALLBACK_STEP", "120"))
-    t = t0
-    while t < t1 and len(peaks) < limit:
-        peaks.append(t)
-        t += step
-    return peaks
-
-
-def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path, float]]:
-    """Revisit a few VODs that already produced owner-positive labels."""
+def _seeds_from_labels(inbox: Path) -> list[tuple[Path, float]]:
     seeds: list[tuple[Path, float]] = []
-    max_seeds = int(os.environ.get("MLBB_SMART_TEACH_SEED_MAX", "24"))
+    max_seeds = int(os.environ.get("MLBB_SMART_TEACH_SEED_MAX", "12"))
     try:
         from mlbb_banner_calibration_store import load_labels
 
@@ -123,7 +87,6 @@ def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path
             in {"own_kill_good", "double_triple", "savage_tier", "not_enemy_kill"}
             and not str(row.get("check_id") or "").startswith("ownerphoto")
         ]
-        # Prefer recent / higher-tier labels
         rows = list(reversed(rows))[: max_seeds // 2]
         for row in rows:
             vod = Path(str(row.get("vod") or ""))
@@ -136,7 +99,7 @@ def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path
             if not vod.exists():
                 continue
             sec = float(row.get("sec") or 0)
-            for delta in (-4.0, 4.0, 10.0):
+            for delta in (-4.0, 6.0):
                 seeds.append((vod, max(1.0, sec + delta)))
                 if len(seeds) >= max_seeds:
                     return seeds
@@ -164,16 +127,16 @@ def _send_one(
         return False
     st = stats()
     caption = (
-        f"✅ OCR банер {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
+        f"✅ Кандидат {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
         f"{hit.label.upper()} t{hit.tier} score={score:.1f}\n"
         f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s\n"
         f"#{cid}\n"
-        f"источник: {hit.source} | {hit.text[:60]}\n"
+        f"источник: {hit.source} | {(hit.text or '')[:60]}\n"
         f"Жми ✅/⚡/🔥 если kill-банер виден — или ❌ Нет банера"
     )
     if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
         mark_sent([cid])
-        print(f"sent {cid} {hit.label} t{hit.tier}", flush=True)
+        print(f"sent {cid} {hit.label} t{hit.tier} src={hit.source}", flush=True)
         return True
     return False
 
@@ -192,134 +155,75 @@ def main() -> int:
     inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
     labeled = labeled_ids()
     sent = load_sent()
-    seen: set[str] = set()
+    seen: set[str] = set(labeled) | set(sent)
     sent_n = 0
     delay = float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.25"))
-    vod_budget = float(os.environ.get("MLBB_SMART_TEACH_VOD_BUDGET_SEC", "45"))
-    global_deadline = time.time() + float(os.environ.get("MLBB_SMART_TEACH_MAX_SEC", "600"))
+    global_deadline = time.time() + float(os.environ.get("MLBB_SMART_TEACH_MAX_SEC", "480"))
+    vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
 
     print(
         json.dumps(
-            {
-                "smart_teach_start": True,
-                "max_send": max_send,
-                "min_tier": min_tier,
-                "labeled": len(labeled),
-            },
+            {"smart_teach_start": True, "max_send": max_send, "min_tier": min_tier, "labeled": len(labeled)},
             ensure_ascii=False,
         ),
         flush=True,
     )
 
-    def _try_hit(vod: Path, peak: float) -> KillBannerHit | None:
-        hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit is None or not str(hit.source).startswith("ocr") or int(hit.tier) < min_tier:
-            return None
-        return _ocr_confirm(vod, hit.sec, min_tier=min_tier)
+    # ── Pass 1: EDGE (uses owner /banner screenshots) ─────────────────────
+    if os.environ.get("MLBB_SMART_TEACH_EDGE_PASS", "1") == "1":
+        from mlbb_banner_ref_match import (
+            clear_banner_ref_cache,
+            match_positive_owner_reference_strict,
+            patch_edge_similarity,
+            extract_banner_zone_patch,
+            _load_positive_owner_ref_rows,
+            _ref_patch_cached,
+        )
 
-    # Pass A: seeds around owner-positive labels (highest ROI)
-    seeds = _seeds_from_labels(inbox, labeled, sent)
-    print(f"seed_probes={len(seeds)}", flush=True)
-    for si, (vod, peak) in enumerate(seeds, start=1):
-        if sent_n >= max_send or time.time() > global_deadline:
-            break
-        if si == 1 or si % 5 == 0:
-            print(f"seed {si}/{len(seeds)} {vod_youtube_id(vod)}@{peak:.0f}", flush=True)
-        # Direct OCR at seed second — avoid nested find_banner cost
-        hit = _ocr_confirm(vod, peak, min_tier=min_tier)
-        if hit is None:
-            continue
-        cid = check_id(vod, hit.sec)
-        if cid in labeled or cid in sent or cid in seen:
-            continue
-        seen.add(cid)
-        score = float(hit.tier) * 3.0 + 2.0  # seed bonus
-        if _send_one(
-            token=token,
-            chat_id=chat_id,
-            vod=vod,
-            hit=hit,
-            cid=cid,
-            sent_n=sent_n,
-            max_send=max_send,
-            target=target,
-            score=score,
-        ):
-            sent_n += 1
-            sent = load_sent()
-            time.sleep(delay)
+        clear_banner_ref_cache()
+        edge_vods = int(os.environ.get("MLBB_SMART_TEACH_EDGE_VODS", "10"))
+        edge_samples = int(os.environ.get("MLBB_SMART_TEACH_EDGE_SAMPLES", "18"))
+        edge_min = float(os.environ.get("MLBB_SMART_TEACH_EDGE_MIN", "0.34"))
+        # Preload a handful of owner refs for per-frame max edge (faster than full strict for ranking)
+        ref_rows = _load_positive_owner_ref_rows()[:40]
+        print(f"edge_pass vods={edge_vods} samples={edge_samples} min={edge_min} refs={len(ref_rows)}", flush=True)
 
-    # Pass B: newest local VODs — motion peaks + quick OCR finder
-    vod_limit = int(os.environ.get("MLBB_SMART_TEACH_VODS", "18"))
-    peaks_per = int(os.environ.get("MLBB_SMART_TEACH_PEAKS", "8"))
-    vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for i, vod in enumerate(vods[:vod_limit]):
-        if sent_n >= max_send or time.time() > global_deadline:
-            break
-        t0 = time.time()
-        print(f"smart_scan {vod_youtube_id(vod)} ({i+1}/{vod_limit}) sent={sent_n}", flush=True)
-        for peak in _peak_hints(vod, limit=peaks_per):
-            if sent_n >= max_send or time.time() > global_deadline:
-                break
-            if time.time() - t0 > vod_budget:
-                print(f"  budget_skip {vod_youtube_id(vod)}", flush=True)
-                break
-            hit = _try_hit(vod, peak)
-            if hit is None:
-                continue
-            cid = check_id(vod, hit.sec)
-            if cid in labeled or cid in sent or cid in seen:
-                continue
-            seen.add(cid)
-            score = float(hit.tier) * 3.0
-            if str(hit.label).lower() in ("savage", "legendary", "maniac"):
-                score += 3.0
-            if _send_one(
-                token=token,
-                chat_id=chat_id,
-                vod=vod,
-                hit=hit,
-                cid=cid,
-                sent_n=sent_n,
-                max_send=max_send,
-                target=target,
-                score=score,
-            ):
-                sent_n += 1
-                sent = load_sent()
-                time.sleep(delay)
-
-    # Pass C: owner-edge candidates (uses the 70+ UI/kill screenshots productively).
-    # OCR often fails on ornate RU banners; structural match surfaces real HUD banners
-    # for the owner to confirm — still never color-only spam.
-    if sent_n < max_send and os.environ.get("MLBB_SMART_TEACH_EDGE_PASS", "1") == "1":
-        from mlbb_banner_ref_match import match_positive_owner_reference_strict
-        from mlbb_kill_banner import _ffmpeg_sample_frames
-
-        edge_vods = int(os.environ.get("MLBB_SMART_TEACH_EDGE_VODS", "8"))
-        edge_samples = int(os.environ.get("MLBB_SMART_TEACH_EDGE_SAMPLES", "16"))
-        edge_min = float(os.environ.get("MLBB_SMART_TEACH_EDGE_MIN", "0.40"))
-        print(f"edge_pass vods={edge_vods} min={edge_min}", flush=True)
         for i, vod in enumerate(vods[:edge_vods]):
             if sent_n >= max_send or time.time() > global_deadline:
                 break
             print(f"edge_scan {vod_youtube_id(vod)} ({i+1}/{edge_vods}) sent={sent_n}", flush=True)
             frames = _ffmpeg_sample_frames(
                 vod,
-                float(os.environ.get("MLBB_SMART_TEACH_T0", "90")),
-                float(os.environ.get("MLBB_SMART_TEACH_T1", "1200")),
+                float(os.environ.get("MLBB_SMART_TEACH_T0", "60")),
+                float(os.environ.get("MLBB_SMART_TEACH_T1", "1400")),
                 edge_samples,
             )
+            scored: list[tuple[float, float, object]] = []
             for sec, low in frames:
+                if _announce_color_score(low) < float(os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.04")):
+                    continue
+                patch = extract_banner_zone_patch(low)
+                if patch is None:
+                    continue
+                best_edge = 0.0
+                for path, _reason, _tag in ref_rows:
+                    ref = _ref_patch_cached(path)
+                    if ref is None:
+                        continue
+                    best_edge = max(best_edge, patch_edge_similarity(patch, ref))
+                if best_edge >= edge_min * 0.85:  # low-res prefilter slightly softer
+                    scored.append((best_edge, float(sec), low))
+            scored.sort(reverse=True)
+            for best_edge, sec, _low in scored[:6]:
                 if sent_n >= max_send or time.time() > global_deadline:
                     break
-                # Cheap gate on low-res, confirm on full-res
-                if _announce_color_score(low) < float(os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.05")):
+                cid = check_id(vod, sec)
+                if cid in seen:
                     continue
                 frame = _read_frame(vod, sec)
                 if frame is None:
                     continue
-                # Prefer OCR if available
+                # Full-res confirm
                 ocr_hit = _ocr_confirm(vod, sec, min_tier=min_tier)
                 edge_row = match_positive_owner_reference_strict(frame)
                 if ocr_hit is None and (edge_row is None or float(edge_row[0]) < edge_min):
@@ -328,7 +232,6 @@ def main() -> int:
                     hit = ocr_hit
                     score = float(hit.tier) * 3.0 + (float(edge_row[0]) * 4.0 if edge_row else 0.0)
                 else:
-                    # Edge-only candidate — owner must confirm; still a real banner lookalike
                     hit = KillBannerHit(
                         sec=round(float(sec), 2),
                         tier=3,
@@ -337,9 +240,6 @@ def main() -> int:
                         source="owner_edge",
                     )
                     score = float(edge_row[0]) * 5.0
-                cid = check_id(vod, hit.sec)
-                if cid in labeled or cid in sent or cid in seen:
-                    continue
                 seen.add(cid)
                 if _send_one(
                     token=token,
@@ -353,8 +253,37 @@ def main() -> int:
                     score=score,
                 ):
                     sent_n += 1
-                    sent = load_sent()
                     time.sleep(delay)
+
+    # ── Pass 2: OCR seeds (optional, short) ───────────────────────────────
+    if sent_n < max_send and os.environ.get("MLBB_SMART_TEACH_SEED_PASS", "1") == "1":
+        seeds = _seeds_from_labels(inbox)
+        print(f"seed_probes={len(seeds)}", flush=True)
+        for si, (vod, peak) in enumerate(seeds, start=1):
+            if sent_n >= max_send or time.time() > global_deadline:
+                break
+            if si == 1 or si % 5 == 0:
+                print(f"seed {si}/{len(seeds)} {vod_youtube_id(vod)}@{peak:.0f}", flush=True)
+            hit = _ocr_confirm(vod, peak, min_tier=min_tier)
+            if hit is None:
+                continue
+            cid = check_id(vod, hit.sec)
+            if cid in seen:
+                continue
+            seen.add(cid)
+            if _send_one(
+                token=token,
+                chat_id=chat_id,
+                vod=vod,
+                hit=hit,
+                cid=cid,
+                sent_n=sent_n,
+                max_send=max_send,
+                target=target,
+                score=float(hit.tier) * 3.0 + 2.0,
+            ):
+                sent_n += 1
+                time.sleep(delay)
 
     print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False), flush=True)
     return 0
