@@ -121,27 +121,62 @@ def test_reject_enemy_triple() -> None:
 
 def test_bounds_from_fight_sustain() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    os.environ["MLBB_BANNER_MAX_REL_POS"] = "0.78"
     start, end, dur = bounds_from_banner(
         100.0,
         file_dur=200.0,
         fight_start=88.0,
         fight_end=118.0,
+        banner_tier=3,
     )
-    assert start == 84.0
-    assert end == 116.0
-    assert dur == 32.0
+    # Double lead 14s → start at/before 86; short post after banner.
+    assert start <= 86.0
+    assert end <= 105.0
+    assert start < 100.0 <= end
+    rel = (100.0 - start) / dur
+    assert rel >= 0.55
 
 
 def test_bounds_fallback_without_fight() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
-    start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
-    assert 8.0 <= dur <= 28.0
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    start, end, dur = bounds_from_banner(50.0, file_dur=120.0, banner_tier=2)
+    assert start == 36.0  # 50 - 14
+    assert end == 53.0  # 50 + 3
+    assert dur == 17.0
+
+
+def test_banner_not_left_at_clip_start() -> None:
+    """Regression: aVPvD/Rbpg clips opened ~1s before banner with 30s idle tail."""
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    # Old broken window: start≈banner, fight_end far after → 32s idle tail.
+    start, end, dur = bounds_from_banner(
+        206.5,
+        file_dur=600.0,
+        fight_start=205.0,
+        fight_end=237.0,
+        banner_tier=3,
+    )
+    assert start <= 206.5 - 12.0
+    assert end <= 206.5 + 5.0
+    rel = (206.5 - start) / dur
+    assert rel >= 0.55
 
 
 def test_savage_banner_lead_starts_earlier() -> None:
@@ -201,15 +236,20 @@ def test_discover_banners_handles_numpy_motion() -> None:
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    os.environ["MLBB_BANNER_MAX_REL_POS"] = "0.78"
     # Banner at 27s in a 28s window ending at 28 — was tail-heavy.
     start, end, dur = bounds_from_banner(
         27.0,
         file_dur=120.0,
         fight_start=0.0,
         fight_end=28.0,
+        banner_tier=2,
     )
     rel = (27.0 - start) / dur
-    assert rel <= 0.58
+    assert rel >= 0.55
+    assert end <= 27.0 + 5.0
 
 
 def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:

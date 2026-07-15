@@ -34,13 +34,21 @@ def _lead_sec() -> float:
 
 
 def banner_lead_sec(banner_tier: int | None = None) -> float:
-    """Pre-roll before kill banner — savage needs more setup (owner: +10s vs default)."""
+    """Pre-roll before kill banner — Double+ needs fight context, not banner-first."""
     base = _lead_sec()
     tier = int(banner_tier or 0)
     if tier >= 5:
         return float(os.environ.get("MLBB_SAVAGE_BANNER_LEAD_SEC", str(base + 10.0)))
     if tier >= 4:
         return float(os.environ.get("MLBB_MANIAC_BANNER_LEAD_SEC", str(base + 6.0)))
+    if tier >= 2:
+        # Owner: last clips opened on banner — need ~12–14s of engage before Double/Triple.
+        return float(
+            os.environ.get(
+                "MLBB_DOUBLE_BANNER_LEAD_SEC",
+                os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", str(max(base, 14.0))),
+            )
+        )
     return base
 
 

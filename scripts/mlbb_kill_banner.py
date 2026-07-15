@@ -1262,7 +1262,11 @@ def bounds_from_banner(
     fight_end: float | None = None,
     banner_tier: int | None = None,
 ) -> tuple[float, float, float]:
-    """Clip bounds: fight sustain window anchored on banner, not fixed lead/post."""
+    """
+    Clip bounds anchored on the kill banner.
+
+    Owner feedback: start early enough to see the fight, cut idle after the banner.
+    """
     from mlbb_fight_segment import (
         _fight_min_sec,
         _fight_max_sec,
@@ -1274,47 +1278,74 @@ def bounds_from_banner(
     max_d = _fight_max_sec()
     hard_max = _fight_hard_max_sec()
     lead = banner_lead_sec(banner_tier)
+    post = float(os.environ.get("MLBB_BANNER_POST_SEC", os.environ.get("MLBB_FIGHT_POST_SEC", "3")))
 
-    post = float(os.environ.get("MLBB_FIGHT_POST_SEC", os.environ.get("MLBB_BANNER_POST_SEC", "4")))
-    if fight_start is not None and fight_end is not None and fight_end > fight_start:
-        start = max(0.0, float(fight_start) - lead)
-        end = min(float(file_dur), float(fight_end) + post)
-    else:
-        start = max(0.0, float(banner_sec) - lead)
-        post_cap = float(os.environ.get("MLBB_BANNER_POST_SEC", str(post)))
-        tail = min(post_cap, max(post, min_d * 0.45, (max_d - lead) * 0.32))
-        end = min(float(file_dur), float(banner_sec) + tail)
+    # Core: fight before banner + short outro after banner text.
+    start = max(0.0, float(banner_sec) - lead)
+    end = min(float(file_dur), float(banner_sec) + post)
+
+    # Optionally include earlier engage, but never a long idle tail past the banner.
+    max_pre = float(os.environ.get("MLBB_BANNER_MAX_PRE_SEC", str(max(lead, 18.0))))
+    if fight_start is not None and float(fight_start) < float(banner_sec):
+        earliest = max(0.0, float(fight_start) - 2.0)
+        # Go earlier for engage, but not more than max_pre before the banner.
+        start = max(float(banner_sec) - max_pre, min(start, earliest))
+        start = max(0.0, start)
+    # fight_end after banner must not revive a boring 20–30s tail
+    if fight_end is not None and float(fight_end) > float(banner_sec):
+        end = min(
+            float(file_dur),
+            max(float(banner_sec) + post, min(float(fight_end), float(banner_sec) + post + 2.0)),
+        )
 
     if float(banner_sec) < start:
         start = max(0.0, float(banner_sec) - lead)
     if float(banner_sec) > end:
-        end = min(float(file_dur), float(banner_sec) + max(2.0, min_d * 0.4))
+        end = min(float(file_dur), float(banner_sec) + max(2.0, post))
 
     from mlbb_fight_segment import ideal_clip_min_sec
 
     dur = end - start
-    need = ideal_clip_min_sec()
+    need = min(ideal_clip_min_sec(), hard_max)
+    # Prefer growing the LEAD (earlier start), not the boring post-banner tail.
     if dur < need:
-        end = min(file_dur, start + need)
+        missing = need - dur
+        start = max(0.0, start - missing)
         dur = end - start
+        if dur < need:
+            end = min(float(file_dur), start + need)
+            dur = end - start
     if dur > hard_max:
-        end = start + hard_max
-        dur = hard_max
+        # Keep banner toward the end of the window.
+        end = min(float(file_dur), float(banner_sec) + post)
+        start = max(0.0, end - hard_max)
+        if float(banner_sec) < start:
+            start = max(0.0, float(banner_sec) - lead)
+            end = min(float(file_dur), start + hard_max)
+        dur = end - start
     elif dur > max_d:
-        end = start + max_d
-        dur = max_d
+        end = min(float(file_dur), float(banner_sec) + post)
+        start = max(0.0, end - max_d)
+        if float(banner_sec) < start:
+            start = max(0.0, float(banner_sec) - lead)
+            end = min(float(file_dur), start + max_d)
+        dur = end - start
 
-    # Montage: banner should not sit in the last ~40% (post-fight death / idle tail).
-    banner_rel_max = float(os.environ.get("MLBB_BANNER_MAX_REL_POS", "0.58"))
+    # Banner too early in the clip ⇒ idle tail. Shift so fight leads, banner closes.
+    banner_rel_min = float(os.environ.get("MLBB_BANNER_MIN_REL_POS", "0.55"))
+    banner_rel_max = float(os.environ.get("MLBB_BANNER_MAX_REL_POS", "0.78"))
     banner_rel = (float(banner_sec) - start) / max(dur, 1e-6)
-    if dur >= 10.0 and banner_rel > banner_rel_max:
-        post = min(float(os.environ.get("MLBB_BANNER_POST_SEC", "5")), lead * 0.85)
-        pre = max(min_d - post, min_d * 0.55)
+    if dur >= 8.0 and (banner_rel < banner_rel_min or banner_rel > banner_rel_max):
+        target_rel = min(banner_rel_max, max(banner_rel_min, 0.62))
+        pre = max(lead, min(hard_max - post, dur * target_rel, max_pre))
         start = max(0.0, float(banner_sec) - pre)
         end = min(float(file_dur), float(banner_sec) + post)
         dur = end - start
         if dur < min_d:
-            end = min(file_dur, start + min_d)
+            start = max(0.0, end - min_d)
+            dur = end - start
+        if dur > hard_max:
+            start = max(0.0, end - hard_max)
             dur = end - start
 
     return round(start, 2), round(end, 2), round(dur, 2)
