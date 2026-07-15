@@ -397,9 +397,30 @@ export NUMEXPR_NUM_THREADS=1
 export LOGO_FILE=/nonexistent/mlbb_calibration_no_logo.png
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 IDLE_SEC="${MLBB_VOD_IDLE_SEC:-25}"
+FAILS=0
 while true; do
-  python3 -u /usr/local/bin/daily_cycle_runner.py \
-    >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 || true
+  RUNNER=/usr/local/bin/daily_cycle_runner.py
+  if [[ ! -f "$RUNNER" ]]; then
+    echo "[$(date -Is)] missing $RUNNER — wait for install" >>/root/data/mlbb/mlbb_vod_segment_feed.log
+    FAILS=$((FAILS + 1))
+    if [[ "$FAILS" -ge 10 ]]; then
+      echo "[$(date -Is)] repeated missing runner — exit so health watchdog can respawn" >>/root/data/mlbb/mlbb_vod_segment_feed.log
+      exit 1
+    fi
+    sleep "$IDLE_SEC"
+    continue
+  fi
+  if python3 -u "$RUNNER" >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1; then
+    FAILS=0
+  else
+    rc=$?
+    FAILS=$((FAILS + 1))
+    echo "[$(date -Is)] daily_cycle_runner exit=$rc fails=$FAILS" >>/root/data/mlbb/mlbb_vod_segment_feed.log
+    if [[ "$FAILS" -ge 20 ]]; then
+      echo "[$(date -Is)] crash loop — exit so health watchdog can respawn" >>/root/data/mlbb/mlbb_vod_segment_feed.log
+      exit 1
+    fi
+  fi
   sleep "$IDLE_SEC"
 done
 EOF

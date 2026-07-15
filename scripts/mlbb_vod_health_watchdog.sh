@@ -13,6 +13,45 @@ env_val() {
   grep "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
 }
 
+kill_feed_tree() {
+  # Kill supervisor + children. Prefer process kill over rm of flock inodes —
+  # kernel releases flock when PID dies; unlinking while FD held creates dual feeds.
+  pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+  pkill -9 -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
+  pkill -9 -f 'daily_cycle_runner.py' 2>/dev/null || true
+  pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+  sleep 2
+  # Only remove locks when no feed process remains.
+  if ! pgrep -f 'mlbb_vod_segment_feed\.py|shooter_vod_segment_feed\.py|daily_cycle_runner\.py' >/dev/null 2>&1; then
+    rm -f /tmp/mlbb_vod_segment_feed.lock \
+      /tmp/pubg_vod_segment_feed.lock \
+      /tmp/standoff_vod_segment_feed.lock \
+      /tmp/genshin_vod_segment_feed.lock \
+      /tmp/wot_vod_segment_feed.lock \
+      /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
+  fi
+}
+
+clean_stale_game_locks() {
+  local game lock
+  for game in mlbb pubg standoff genshin wot; do
+    lock="/tmp/${game}_vod_segment_feed.lock"
+    [[ -e "$lock" ]] || continue
+    case "$game" in
+      mlbb)
+        pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1 && continue
+        ;;
+      *)
+        pgrep -f "shooter_vod_segment_feed\.py ${game}" >/dev/null 2>&1 \
+          || pgrep -f "shooter_vod_segment_feed\.py.*${game}" >/dev/null 2>&1 && continue
+        # Any shooter process might still hold the lock via VOD_SEGMENT_GAME.
+        pgrep -f 'shooter_vod_segment_feed\.py' >/dev/null 2>&1 && continue
+        ;;
+    esac
+    rm -f "$lock" && log "removed stale lock $lock"
+  done
+}
+
 [[ -f "$ENV_FILE" ]] || exit 0
 if [[ -f /root/data/mlbb/OWNER_BATCH_RUNNING ]]; then
   log "owner batch lock — skip health watchdog"
@@ -45,21 +84,21 @@ if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
 fi
 
+clean_stale_game_locks
+
 if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   && ! pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
   && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1 \
   && ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   log "restart vod supervisor"
-  pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  sleep 1
-  rm -f /tmp/mlbb_vod_segment_feed.lock
+  kill_feed_tree
   nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
 fi
 
 # Disk emergency — inbox cleanup when root is nearly full (common silence cause).
 DISK_PCT="$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')"
-if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
-  log "disk critical ${DISK_PCT}% — run vps_disk_cleanup"
+if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 90 ]]; then
+  log "disk high ${DISK_PCT}% — run vps_disk_cleanup"
   REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   if [[ -x "$REPO/scripts/vps_disk_cleanup.sh" ]]; then
     bash "$REPO/scripts/vps_disk_cleanup.sh" >>"$LOG" 2>&1 || true
@@ -68,7 +107,6 @@ fi
 
 # Daily cycle: when MLBB is active, shooter feeds must not block the pipeline.
 if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]]; then
-  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   ACTIVE_GAME="$(python3 - <<'PY' 2>/dev/null || true
 import sys
 sys.path.insert(0, "/root/content_bot_ml/scripts")
@@ -84,13 +122,16 @@ PY
     log "active_game=mlbb but shooter feed running — kill to unblock MLBB"
     pkill -9 -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
     sleep 2
-    rm -f /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
+    rm -f /tmp/pubg_vod_segment_feed.lock \
+      /tmp/standoff_vod_segment_feed.lock \
+      /tmp/genshin_vod_segment_feed.lock \
+      /tmp/wot_vod_segment_feed.lock \
+      /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
   fi
 fi
 
 # Daily cycle: MLBB feed must not run when another game is active (quota done).
 if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]] && pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
-  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   WRONG_GAME="$(python3 - <<'PY' 2>/dev/null || true
 import sys
 sys.path.insert(0, "/root/content_bot_ml/scripts")
@@ -107,7 +148,9 @@ PY
     log "mlbb feed running but active_game=$WRONG_GAME — kill to unblock cycle"
     pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
     sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock
+    if ! pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
+      rm -f /tmp/mlbb_vod_segment_feed.lock
+    fi
   fi
 fi
 
@@ -160,7 +203,9 @@ PY
     log "$CB_OUT — kill feed for clean restart"
     pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
     sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock
+    if ! pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
+      rm -f /tmp/mlbb_vod_segment_feed.lock
+    fi
   fi
 fi
 
@@ -172,21 +217,19 @@ if [[ -f "$FEED_LOG" ]]; then
     log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
   fi
   LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
-  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
+  # Long OCR / dense scans can be quiet on the log but keep heartbeat — require both stale.
+  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-2400}"
   HEARTBEAT=/root/data/mlbb/vod_pipeline_heartbeat.json
   HEARTBEAT_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0) ))
   HEARTBEAT_FRESH_SEC="$(env_val VOD_HEARTBEAT_FRESH_SEC)"
-  HEARTBEAT_FRESH_SEC="${HEARTBEAT_FRESH_SEC:-600}"
+  HEARTBEAT_FRESH_SEC="${HEARTBEAT_FRESH_SEC:-900}"
   if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
     [[ "$HEARTBEAT_AGE_SEC" -gt "$HEARTBEAT_FRESH_SEC" ]] && \
     { pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
       || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
       || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; }; then
-    log "feed stuck log_age=${LOG_AGE_SEC}s — kill and restart"
-    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
-    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-    sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock
+    log "feed stuck log_age=${LOG_AGE_SEC}s hb_age=${HEARTBEAT_AGE_SEC}s — kill full tree and restart"
+    kill_feed_tree
     nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
   fi
 fi

@@ -263,18 +263,18 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
-            # PUBG/Standoff: require known duration — unknown → shorts/junk bleed through.
-            if game in ("pubg", "standoff") and dur <= 0:
+            # Unknown duration → shorts/junk / multi-hour streams bleed through overnight.
+            if dur <= 0:
                 continue
             shooter_min = float(
                 os.environ.get(
                     "SHOOTER_VOD_MIN_SEC",
-                    os.environ.get("MLBB_VOD_MIN_SEC", "480" if game == "pubg" else "180"),
+                    os.environ.get("MLBB_VOD_MIN_SEC", "480" if game in ("pubg", "standoff") else "180"),
                 )
             )
             if game in ("pubg", "standoff") and dur < shooter_min:
                 continue
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if not _vod_length_ok(Path("x.mp4"), dur):
                 continue
             out.append(
                 {
@@ -834,8 +834,18 @@ def _scan_vod_with_adaptive(
     return sent
 
 
+def _hb(game: str, stage: str, *, vod_id: str = "", force: bool = False) -> None:
+    try:
+        from vod_pipeline_heartbeat import heartbeat
+
+        heartbeat(stage, game=game, vod_id=vod_id, force=force)
+    except Exception:
+        pass
+
+
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
+    _hb(game, "feed_start", force=True)
     ok_cycle, reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("skip feed game=%s reason=%s", game, reason)
@@ -875,6 +885,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     entry["exhausted"] = True
                 _save_state(game, state)
                 continue
+        _hb(game, "scan_vod", vod_id=vod_youtube_id(mp4), force=True)
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         state["vods"] = registry
         if n == 0:
@@ -903,9 +914,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     if pause_until > time.time():
         remain = int(pause_until - time.time())
         log.info("discovery pause game=%s remain=%ss", game, remain)
+        _hb(game, "discovery_pause", force=True)
         print(f"pipeline done sent=0 vods=0 game={game} discovery_pause={remain}")
         return 0
 
+    _hb(game, "discovery", force=True)
     candidates = _discover_candidates(game, env, used)
     if not candidates:
         # Quiet "not found" spam — notify at most once per pause window.
@@ -935,6 +948,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             pick.get("duration"),
             str(pick.get("title") or "")[:80],
         )
+    _hb(game, "download", vod_id=str(pick.get("id") or ""), force=True)
     vod = _download_vod(game, pick, env)
     if not vod:
         _note_discovery_fail(game, state, reason="download_failed")

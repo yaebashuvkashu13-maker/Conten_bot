@@ -57,13 +57,21 @@ def main() -> int:
 
     if game is None:
         log.info("all daily quotas done — idle")
-        if token and chat_id:
+        from daily_game_cycle import mark_notified, was_notified
+
+        day = status_summary()["day"]
+        idle_key = f"quotas_done_{day}"
+        if token and chat_id and not was_notified(idle_key):
             from mlbb_vod_segment_feed import send_message
 
-            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.")
+            send_message(
+                token,
+                chat_id,
+                "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.",
+            )
+            mark_notified(idle_key)
         return 0
 
-    notify_key = f"active_{game}_{status_summary()['day']}"
     from daily_game_cycle import load_state, save_state
 
     state = load_state()
