@@ -189,7 +189,7 @@ def main() -> int:
                 mark_sent([cid])
                 sent_n += 1
                 n += 1
-                print(f"sent {cid}")
+                print(f"sent {cid}", flush=True)
             time.sleep(delay)
         return n
 
@@ -201,24 +201,47 @@ def main() -> int:
     _send_batch([r for r in seg_rows if r[2] in seen][:max_send])
 
     if sent_n < max_send and int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25")) > 0:
-        known = set(labeled.keys()) | load_sent()
-        scan_rows = _collect_scan_hits(
-            inbox,
-            {k: labeled[k] for k in known if k in labeled},
-            load_sent(),
-            vod_limit=scan_vods,
-            samples_per_vod=samples,
-            limit=min(int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25")), max_send - sent_n),
+        # Stream: send each hit immediately so owner sees panels while scan continues.
+        color_min = float(os.environ.get("MLBB_BANNER_FLOOD_COLOR_MIN", "0.22"))
+        t0 = float(os.environ.get("MLBB_BANNER_FLOOD_T0", "60"))
+        t1 = float(os.environ.get("MLBB_BANNER_FLOOD_T1", "1500"))
+        teach = os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1"
+        skip_used_vods = (not teach) and os.environ.get("MLBB_BANNER_FLOOD_SKIP_USED_VODS", "1") == "1"
+        used_vids = (
+            {cid.rsplit("_", 1)[0].lower() for cid in list(labeled) + list(sent)} if skip_used_vods else set()
         )
-        fresh: list[tuple[Path, KillBannerHit, str]] = []
-        for item in scan_rows:
-            if item[2] in seen or item[2] in labeled or item[2] in sent:
+        vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        scanned_vods = 0
+        live_sent = load_sent()
+        for vod in vods:
+            if sent_n >= max_send:
+                break
+            vid = vod_youtube_id(vod).lower()
+            if skip_used_vods and vid in used_vids:
                 continue
-            seen.add(item[2])
-            fresh.append(item)
-        _send_batch(fresh)
+            print(f"scan_vod {vid} scanned={scanned_vods} sent={sent_n}", flush=True)
+            frames = _ffmpeg_sample_frames(vod, t0, t1, samples)
+            batch: list[tuple[Path, KillBannerHit, str]] = []
+            for sec, frame in frames:
+                hit = _classify_frame(sec, frame)
+                if hit is None:
+                    color = _announce_color_score(frame)
+                    if color < color_min:
+                        continue
+                    hit = _color_hit(sec, frame, color)
+                cid = check_id(vod, hit.sec)
+                if cid in labeled or cid in live_sent or cid in seen:
+                    continue
+                seen.add(cid)
+                batch.append((vod, hit, cid))
+            if batch:
+                _send_batch(batch)
+                live_sent = load_sent()
+            scanned_vods += 1
+            if scanned_vods >= scan_vods:
+                break
 
-    print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False))
+    print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False), flush=True)
     return 0
 
 
