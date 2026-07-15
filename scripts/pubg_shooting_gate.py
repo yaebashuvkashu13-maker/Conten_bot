@@ -33,7 +33,11 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "panns_trust"})
+
+
+def _owner_reason_base(reason: str) -> str:
+    return reason.split("=", 1)[0].split(":", 1)[0]
 
 
 def _min_gunfire() -> float:
@@ -127,7 +131,11 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # Owner may return "panns_trust=0.784" — match by base reason, not exact string.
+    heuristic_audio = ok_owner and (
+        owner_reason in ALLOWED_OWNER_REASONS
+        or _owner_reason_base(owner_reason) in ALLOWED_OWNER_REASONS
+    )
 
     if owner_reason == "sniper_hold":
         if motion < 0.030:
