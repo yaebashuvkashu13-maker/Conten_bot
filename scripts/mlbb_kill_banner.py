@@ -54,21 +54,22 @@ _ENEMY_STREAK_RE = re.compile(
 )
 
 _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
-    (re.compile(r"savage|саваж|saa?x?e|sav.?g", re.I), 5, "savage"),
-    (re.compile(r"legendary|легендар|legenda", re.I), 5, "legendary"),
-    (re.compile(r"maniac|маньяк|man1ac|mani.?ac", re.I), 4, "maniac"),
+    (re.compile(r"savage|саваж", re.I), 5, "savage"),
+    (re.compile(r"legendary|легендарн", re.I), 5, "legendary"),
+    (re.compile(r"maniac|маньяк", re.I), 4, "maniac"),
     (re.compile(r"ruthless|беспощад|безжалост", re.I), 4, "ruthless"),
-    (re.compile(r"triple\s*kill|тройн.{0,12}убий|tripl|tr1ple", re.I), 3, "triple"),
+    (re.compile(r"triple\s*kill|тройн[а-я]{0,8}\s*убий|triples?", re.I), 3, "triple"),
     (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
     (
         re.compile(
-            r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill|doub.?e|doubl",
+            r"double\s*kill|двойн[а-я]{0,8}\s*убий|ou?ble\s*kill|d0uble|2\s*x\s*kill",
             re.I,
         ),
         2,
         "double",
     ),
-    (re.compile(r"\bkill\b|убийств|ki11|k1ll", re.I), 1, "single"),
+    # Single kill — intentionally strict (avoid OCR garbage matching "kill" alone in HUD).
+    (re.compile(r"you\s+got\s+a\s+kill|killing\s+spree|убийств", re.I), 1, "single"),
 ]
 
 
@@ -399,17 +400,29 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
-    def _neg_block() -> bool:
+    def _strong_neg_block(ocr_tier: int) -> bool:
+        """
+        HSV/edge negatives must NOT veto OCR-named Double+ unless the
+        no_banner crop is an near-exact structural match.
+        """
         try:
             from mlbb_banner_ref_match import match_negative_banner_reference
 
-            return match_negative_banner_reference(frame) is not None
+            neg = match_negative_banner_reference(frame)
+            if neg is None:
+                return False
+            score, reason, _path = neg
+            if str(reason) == "no_banner" and int(ocr_tier) >= 2:
+                min_sim = float(os.environ.get("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90"))
+                return float(score) >= min_sim
+            # enemy_kill / not_kill / not_gameplay — trust negative bank
+            return True
         except Exception:
             return False
 
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
-        if _neg_block():
+        if _strong_neg_block(classified.tier):
             return None
         return KillBannerHit(
             sec=round(sec, 2),
@@ -426,6 +439,8 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
         if classify_banner_text(deep_text) is not None:
             classified = classify_banner_text(deep_text)
             assert classified is not None
+            if _strong_neg_block(classified.tier):
+                return None
             return KillBannerHit(
                 sec=round(sec, 2),
                 tier=classified.tier,
@@ -456,6 +471,8 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
             if classify_banner_text(deep_text) is not None:
                 classified = classify_banner_text(deep_text)
                 assert classified is not None
+                if _strong_neg_block(classified.tier):
+                    return None
                 return KillBannerHit(
                     sec=round(sec, 2),
                     tier=classified.tier,

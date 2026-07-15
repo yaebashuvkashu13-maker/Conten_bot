@@ -133,6 +133,26 @@ def _collect_scan_hits(
     return rows
 
 
+def _upgrade_hit_fullres(vod: Path, hit: KillBannerHit) -> KillBannerHit | None:
+    """Color/low-res hits must become OCR hits on a full-resolution frame."""
+    from mlbb_kill_banner import _ocr_banner_zones, classify_banner_text, _min_tier
+
+    frame = _read_frame(vod, hit.sec)
+    if frame is None:
+        return None
+    text = _ocr_banner_zones(frame, deep=True)
+    cls = classify_banner_text(text)
+    if cls is None or int(cls.tier) < max(2, _min_tier()):
+        return None
+    return KillBannerHit(
+        sec=round(float(hit.sec), 2),
+        tier=int(cls.tier),
+        label=str(cls.label),
+        text=str(cls.text or "")[:120],
+        source="ocr",
+    )
+
+
 def main() -> int:
     env = {**os.environ, **load_env(ENV_PATH)}
     token = env.get("TG_BOT_TOKEN", "")
@@ -140,6 +160,14 @@ def main() -> int:
     if not token or not chat_id:
         print("missing telegram creds")
         return 1
+
+    # Prefer smart OCR teach when available unless explicitly disabled.
+    if os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1" and os.environ.get(
+        "MLBB_BANNER_USE_SMART_TEACH", "1"
+    ) == "1":
+        from mlbb_banner_smart_teach import main as smart_main
+
+        return int(smart_main())
 
     max_send = int(os.environ.get("MLBB_BANNER_FLOOD_MAX", "40"))
     target = calibration_target()
@@ -157,6 +185,7 @@ def main() -> int:
     scan_vods = int(os.environ.get("MLBB_BANNER_FLOOD_VODS", "20"))
     samples = int(os.environ.get("MLBB_BANNER_FLOOD_SAMPLES", "10"))
     delay = float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.35"))
+    require_ocr = os.environ.get("MLBB_BANNER_FLOOD_REQUIRE_OCR", "1") == "1"
 
     sent_n = 0
     seen: set[str] = set()
@@ -164,29 +193,44 @@ def main() -> int:
     def _send_batch(batch: list[tuple[Path, KillBannerHit, str]]) -> int:
         nonlocal sent_n
         n = 0
-        teach = os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1"
         for i, (vod, hit, cid) in enumerate(batch, start=sent_n + 1):
             if sent_n >= max_send:
                 break
-            frame = _read_frame(vod, hit.sec)
-            if not teach:
-                ok, why = verified_before_send(vod, hit, frame)
-                if not ok:
-                    print(f"skip_send {cid}: {why}")
+            live_hit = hit
+            if require_ocr or live_hit.source in ("color", "segment", "announce"):
+                upgraded = _upgrade_hit_fullres(vod, live_hit)
+                if upgraded is None:
+                    print(f"skip_send {cid}: no_fullres_ocr", flush=True)
+                    continue
+                live_hit = upgraded
+                cid = check_id(vod, live_hit.sec)
+                if cid in labeled or cid in load_sent() or cid in seen:
+                    continue
+            frame = _read_frame(vod, live_hit.sec)
+            ok, why = verified_before_send(vod, live_hit, frame)
+            if not ok:
+                # OCR Double+ may still be blocked by weak no_banner hist — allow when OCR tier>=2
+                if not (
+                    live_hit.source.startswith("ocr")
+                    and int(live_hit.tier) >= 2
+                    and "no_banner" in why
+                ):
+                    print(f"skip_send {cid}: {why}", flush=True)
                     continue
             try:
-                shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
+                shot, meta = render_check_screenshot(vod, live_hit.sec, hit=live_hit)
             except Exception as exc:
                 print(f"capture_fail {cid}: {exc}")
                 continue
             st = stats()
             caption = (
                 f"🎯 Банер {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
-                f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s | {hit.label} t{hit.tier}\n"
+                f"{meta.get('vod_id', '')} @ {live_hit.sec:.1f}s | {live_hit.label} t{live_hit.tier}\n"
                 f"#{cid}"
             )
             if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
                 mark_sent([cid])
+                seen.add(cid)
                 sent_n += 1
                 n += 1
                 print(f"sent {cid}", flush=True)
@@ -200,9 +244,9 @@ def main() -> int:
         seen.add(item[2])
     _send_batch([r for r in seg_rows if r[2] in seen][:max_send])
 
-    if sent_n < max_send and int(os.environ.get("MLBB_BANNER_FLOOD_SCAN_LIMIT", "25")) > 0:
-        # Stream: send each hit immediately so owner sees panels while scan continues.
-        color_min = float(os.environ.get("MLBB_BANNER_FLOOD_COLOR_MIN", "0.22"))
+    if sent_n < max_send and scan_limit > 0:
+        # Stream: send each OCR hit immediately so owner sees panels while scan continues.
+        color_min = float(os.environ.get("MLBB_BANNER_FLOOD_COLOR_MIN", "0.35"))
         t0 = float(os.environ.get("MLBB_BANNER_FLOOD_T0", "60"))
         t1 = float(os.environ.get("MLBB_BANNER_FLOOD_T1", "1500"))
         teach = os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1"
@@ -225,10 +269,27 @@ def main() -> int:
             for sec, frame in frames:
                 hit = _classify_frame(sec, frame)
                 if hit is None:
+                    # Color is only a HINT to spend full-res OCR — never a send source.
                     color = _announce_color_score(frame)
                     if color < color_min:
                         continue
-                    hit = _color_hit(sec, frame, color)
+                    # Probe full-res immediately
+                    probe = KillBannerHit(
+                        sec=round(sec, 2),
+                        tier=2,
+                        label="color_probe",
+                        text=f"color={color:.3f}",
+                        source="color",
+                    )
+                    upgraded = _upgrade_hit_fullres(vod, probe)
+                    if upgraded is None:
+                        continue
+                    hit = upgraded
+                elif hit.source == "color":
+                    upgraded = _upgrade_hit_fullres(vod, hit)
+                    if upgraded is None:
+                        continue
+                    hit = upgraded
                 cid = check_id(vod, hit.sec)
                 if cid in labeled or cid in live_sent or cid in seen:
                     continue

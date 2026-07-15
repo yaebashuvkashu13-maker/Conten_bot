@@ -109,10 +109,9 @@ def _prep_ref_patch(img) -> object | None:
     return cv2.resize(img, (160, 48))
 
 
-def patch_similarity(patch_a, patch_b) -> float:
-    """Hue-robust histogram correlation, same idea as POV portrait match."""
+def patch_hist_similarity(patch_a, patch_b) -> float:
+    """Hue-robust histogram correlation (weak alone — gold HUD is everywhere)."""
     import cv2
-    import numpy as np
 
     if patch_a is None or patch_b is None:
         return 0.0
@@ -126,6 +125,60 @@ def patch_similarity(patch_a, patch_b) -> float:
         return float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
     except Exception:
         return 0.0
+
+
+def patch_edge_similarity(patch_a, patch_b) -> float:
+    """
+    Structural similarity of kill-banner silhouettes.
+    HSV alone matches empty gold HUD; edges/NCC catch ornate banner shapes.
+    """
+    import cv2
+    import numpy as np
+
+    if patch_a is None or patch_b is None:
+        return 0.0
+    try:
+        a = cv2.resize(patch_a, (160, 48))
+        b = cv2.resize(patch_b, (160, 48))
+        ga = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
+        gb = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY)
+        ea = cv2.Canny(ga, 60, 160)
+        eb = cv2.Canny(gb, 60, 160)
+        # Normalized cross-correlation on edge maps
+        ea_f = ea.astype(np.float32)
+        eb_f = eb.astype(np.float32)
+        ea_f -= float(ea_f.mean())
+        eb_f -= float(eb_f.mean())
+        denom = float(np.linalg.norm(ea_f) * np.linalg.norm(eb_f))
+        if denom < 1e-6:
+            return 0.0
+        ncc = float(np.sum(ea_f * eb_f) / denom)
+        # Also compare gradient magnitude histograms (orientation-light)
+        ga_f = cv2.Sobel(ga, cv2.CV_32F, 1, 0, ksize=3)
+        gb_f = cv2.Sobel(gb, cv2.CV_32F, 1, 0, ksize=3)
+        ha = cv2.calcHist([np.abs(ga_f)], [0], None, [32], [0, 512])
+        hb = cv2.calcHist([np.abs(gb_f)], [0], None, [32], [0, 512])
+        cv2.normalize(ha, ha)
+        cv2.normalize(hb, hb)
+        hist = float(cv2.compareHist(ha, hb, cv2.HISTCMP_CORREL))
+        return max(0.0, 0.65 * max(0.0, ncc) + 0.35 * max(0.0, hist))
+    except Exception:
+        return 0.0
+
+
+def patch_similarity(patch_a, patch_b) -> float:
+    """
+    Combined similarity: structural edges dominate, HSV is a weak prior.
+    Empty gold UI used to score 0.5+ on HSV alone — that is no longer enough.
+    """
+    hist = patch_hist_similarity(patch_a, patch_b)
+    edge = patch_edge_similarity(patch_a, patch_b)
+    # Edges carry kill-banner ornament; hist alone is capped.
+    return float(0.70 * edge + 0.30 * max(0.0, min(1.0, hist)))
+
+
+def _edge_min_for_match() -> float:
+    return float(os.environ.get("MLBB_BANNER_EDGE_MIN_SIM", "0.28"))
 
 
 @lru_cache(maxsize=1)
@@ -193,50 +246,80 @@ def clear_banner_ref_cache() -> None:
     _load_positive_owner_ref_rows.cache_clear()
 
 
-def match_positive_owner_reference(frame) -> tuple[float, str, str] | None:
-    """Return (score, reason, path) if frame matches owner-labeled good banner crop."""
-    if not _pos_ref_match_enabled():
-        return None
+def _best_owner_match(
+    frame,
+    rows: tuple[tuple[str, str, str], ...],
+    *,
+    min_combined: float,
+    require_edge: bool,
+) -> tuple[float, str, str] | None:
     patch = extract_banner_zone_patch(frame)
     if patch is None:
         return None
-    rows = _load_positive_owner_ref_rows()
     if not rows:
         return None
     best: tuple[float, str, str] | None = None
+    edge_floor = _edge_min_for_match()
     for path, reason, _tag in rows:
         ref = _ref_patch_cached(path)
         if ref is None:
             continue
+        edge = patch_edge_similarity(patch, ref)
+        if require_edge and edge < edge_floor:
+            continue
         score = patch_similarity(patch, ref)
         if best is None or score > best[0]:
             best = (score, reason, path)
-    if best is None or best[0] < _pos_ref_min_sim():
+    if best is None or best[0] < min_combined:
         return None
     return best
+
+
+def match_positive_owner_reference(frame) -> tuple[float, str, str] | None:
+    """Return (score, reason, path) if frame matches owner-labeled good banner crop."""
+    if not _pos_ref_match_enabled():
+        return None
+    return _best_owner_match(
+        frame,
+        _load_positive_owner_ref_rows(),
+        min_combined=_pos_ref_min_sim(),
+        require_edge=os.environ.get("MLBB_BANNER_POS_REQUIRE_EDGE", "1") == "1",
+    )
+
+
+def match_positive_owner_reference_strict(frame) -> tuple[float, str, str] | None:
+    """Higher bar for teach/presend — needs clear structural banner match."""
+    if not _pos_ref_match_enabled():
+        return None
+    min_sim = max(_pos_ref_min_sim(), float(os.environ.get("MLBB_BANNER_POS_STRICT_MIN_SIM", "0.42")))
+    old_edge = os.environ.get("MLBB_BANNER_EDGE_MIN_SIM")
+    os.environ["MLBB_BANNER_EDGE_MIN_SIM"] = os.environ.get("MLBB_BANNER_POS_STRICT_EDGE_MIN", "0.34")
+    try:
+        return _best_owner_match(
+            frame,
+            _load_positive_owner_ref_rows(),
+            min_combined=min_sim,
+            require_edge=True,
+        )
+    finally:
+        if old_edge is None:
+            os.environ.pop("MLBB_BANNER_EDGE_MIN_SIM", None)
+        else:
+            os.environ["MLBB_BANNER_EDGE_MIN_SIM"] = old_edge
 
 
 def match_negative_banner_reference(frame) -> tuple[float, str, str] | None:
     """Return (score, reason, path) if frame matches owner-labeled negative crop."""
     if not _neg_ref_match_enabled():
         return None
-    patch = extract_banner_zone_patch(frame)
-    if patch is None:
-        return None
-    rows = _load_negative_ref_rows()
-    if not rows:
-        return None
-    best: tuple[float, str, str] | None = None
-    for path, reason, _tag in rows:
-        ref = _ref_patch_cached(path)
-        if ref is None:
-            continue
-        score = patch_similarity(patch, ref)
-        if best is None or score > best[0]:
-            best = (score, reason, path)
-    if best is None or best[0] < _neg_ref_min_sim():
-        return None
-    return best
+    # Negatives must also clear an edge floor so generic HUD doesn't veto OCR kills.
+    require_edge = os.environ.get("MLBB_BANNER_NEG_REQUIRE_EDGE", "1") == "1"
+    return _best_owner_match(
+        frame,
+        _load_negative_ref_rows(),
+        min_combined=_neg_ref_min_sim(),
+        require_edge=require_edge,
+    )
 
 
 @lru_cache(maxsize=256)

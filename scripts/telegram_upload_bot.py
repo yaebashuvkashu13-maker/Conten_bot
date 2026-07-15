@@ -1156,15 +1156,19 @@ def handle_callback_query(query: dict) -> None:
                 },
                 timeout=15,
             )
-            api_call(
-                'editMessageReplyMarkup',
-                {
-                    'chat_id': chat_id,
-                    'message_id': message_id,
-                    'reply_markup': bcal_markup(reason),
-                },
-                timeout=15,
-            )
+            try:
+                api_call(
+                    'editMessageReplyMarkup',
+                    {
+                        'chat_id': chat_id,
+                        'message_id': message_id,
+                        'reply_markup': bcal_markup(reason),
+                    },
+                    timeout=15,
+                )
+            except Exception as edit_exc:
+                # Telegram 400 when markup already removed / message too old — label is saved.
+                logging.warning('mlbb_bcal markup edit skipped: %s', edit_exc)
         except Exception as exc:
             logging.exception('mlbb_bcal callback failed data=%s', data)
             api_call(
@@ -3197,18 +3201,18 @@ def handle_message(message: dict):
         if not is_owner(chat_id):
             send_message(chat_id, 'Только для владельца.')
             return
-        limit = 25
+        limit = 15
         parts = text.split()
         if len(parts) > 1 and parts[1].isdigit():
-            limit = max(5, min(60, int(parts[1])))
+            limit = max(5, min(40, int(parts[1])))
         send_message(
             chat_id,
-            f'Запускаю поток ~{limit} панелей из УЖЕ скачанных VOD (без новых закачек).\n'
-            'На каждой жми кнопку:\n'
-            '• Double/Triple/Savage — если kill-баннер свой\n'
-            '• ❌ Нет банера — только пустой HUD\n'
-            '• 👿 Kill противника / 🦸 не тот герой — если видно\n'
-            'Ещё панели: снова /teach или /teach 40',
+            f'Запускаю умный teach ~{limit} панелей: только OCR-подтверждённые kill-банеры '
+            f'из уже скачанных VOD (без цветного мусора).\n'
+            'На каждой жми:\n'
+            '• ✅ Свой kill / ⚡ Double-Triple / 🔥 Savage — если банер верный\n'
+            '• ❌ Нет банера — только если OCR ошибся\n'
+            'Ещё: /teach 20',
         )
 
         def _teach_worker(n: int = limit) -> None:
@@ -3224,22 +3228,23 @@ def handle_message(message: dict):
                 'PYTHONPATH': '/usr/local/bin:/root/content_bot_ml/scripts',
                 'MLBB_VOD_AUTO_DOWNLOAD': '0',
                 'MLBB_BANNER_TEACH_FLOOD': '1',
-                'MLBB_BANNER_SEND_STRICT': '0',
-                'MLBB_BANNER_NEG_REF_MATCH': '0',
-                'MLBB_BANNER_POS_POV_MATCH': '0',
+                'MLBB_BANNER_USE_SMART_TEACH': '1',
+                'MLBB_BANNER_FLOOD_REQUIRE_OCR': '1',
+                'MLBB_BANNER_SEND_STRICT': '1',
+                'MLBB_BANNER_NEG_REF_MATCH': '1',
+                'MLBB_BANNER_POS_REQUIRE_EDGE': '1',
+                'MLBB_BANNER_NEG_REQUIRE_EDGE': '1',
                 'MLBB_BANNER_CALIB_TARGET': '500',
-                'MLBB_BANNER_FLOOD_EXTRA': '80',
                 'MLBB_BANNER_FLOOD_MAX': str(n),
-                'MLBB_BANNER_FLOOD_SEGMENT_LIMIT': str(max(n, 40)),
-                'MLBB_BANNER_FLOOD_SCAN_LIMIT': str(max(n, 40)),
-                'MLBB_BANNER_FLOOD_VODS': '60',
-                'MLBB_BANNER_FLOOD_SAMPLES': '14',
-                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.2',
+                'MLBB_SMART_TEACH_MAX': str(n),
+                'MLBB_SMART_TEACH_VODS': '30',
+                'MLBB_SMART_TEACH_PEAKS': '16',
+                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.25',
             }
             script = Path('/usr/local/bin/mlbb_banner_local_fast_teach.sh')
-            flood_py = Path('/usr/local/bin/mlbb_banner_calibration_flood.py')
-            if not flood_py.exists():
-                flood_py = Path('/root/content_bot_ml/scripts/mlbb_banner_calibration_flood.py')
+            smart_py = Path('/usr/local/bin/mlbb_banner_smart_teach.py')
+            if not smart_py.exists():
+                smart_py = Path('/root/content_bot_ml/scripts/mlbb_banner_smart_teach.py')
             try:
                 if script.exists():
                     env['MLBB_BANNER_FLOOD_MAX'] = str(n)
@@ -3248,15 +3253,15 @@ def handle_message(message: dict):
                         env=env,
                         capture_output=True,
                         text=True,
-                        timeout=1800,
+                        timeout=2400,
                     )
                 else:
                     proc = subprocess.run(
-                        ['python3', str(flood_py)],
+                        ['python3', str(smart_py)],
                         env=env,
                         capture_output=True,
                         text=True,
-                        timeout=1800,
+                        timeout=2400,
                     )
                 tail = (proc.stdout or proc.stderr or '')[-500:]
                 send_message(chat_id, f'/teach готово.\n{tail or f"exit={proc.returncode}"}')

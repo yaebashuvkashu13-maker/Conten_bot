@@ -33,6 +33,19 @@ def test_classify_savage_and_triple() -> None:
     assert m.tier == 4
 
 
+def test_classify_rejects_ocr_garbage() -> None:
+    assert classify_banner_text("ieee dok see mee horny") is None
+    assert classify_banner_text("saa e sav g random") is None
+    assert classify_banner_text("doubl alone without kill word") is None
+
+
+def test_classify_russian_legendary() -> None:
+    hit = classify_banner_text("Легендарный")
+    assert hit is not None
+    assert hit.tier == 5
+    assert hit.label == "legendary"
+
+
 def test_reject_single_kill_only() -> None:
     single = classify_banner_text("You got a Kill")
     assert single is not None
