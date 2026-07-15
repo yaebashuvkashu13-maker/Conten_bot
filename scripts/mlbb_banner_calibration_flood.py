@@ -101,11 +101,17 @@ def _collect_scan_hits(
     color_min = float(os.environ.get("MLBB_BANNER_FLOOD_COLOR_MIN", "0.22"))
     t0 = float(os.environ.get("MLBB_BANNER_FLOOD_T0", "60"))
     t1 = float(os.environ.get("MLBB_BANNER_FLOOD_T1", "1500"))
-    used_vids = {cid.rsplit("_", 1)[0].lower() for cid in list(labeled) + list(sent)}
+    # Default: skip VODs that already produced labels/sends (old slow path).
+    # Teach mode revisits those VODs — only skip exact check_ids already seen.
+    teach = os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1"
+    skip_used_vods = (not teach) and os.environ.get("MLBB_BANNER_FLOOD_SKIP_USED_VODS", "1") == "1"
+    used_vids = {cid.rsplit("_", 1)[0].lower() for cid in list(labeled) + list(sent)} if skip_used_vods else set()
     vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     rows: list[tuple[Path, KillBannerHit, str]] = []
+    scanned_vods = 0
     for vod in vods:
-        if vod_youtube_id(vod).lower() in used_vids:
+        vid = vod_youtube_id(vod).lower()
+        if skip_used_vods and vid in used_vids:
             continue
         frames = _ffmpeg_sample_frames(vod, t0, t1, samples_per_vod)
         for sec, frame in frames:
@@ -121,8 +127,8 @@ def _collect_scan_hits(
             rows.append((vod, hit, cid))
             if len(rows) >= limit:
                 return rows
-        used_vids.add(vod_youtube_id(vod).lower())
-        if len(used_vids) >= vod_limit:
+        scanned_vods += 1
+        if scanned_vods >= vod_limit:
             break
     return rows
 
