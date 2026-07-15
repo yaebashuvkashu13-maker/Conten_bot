@@ -762,6 +762,54 @@ def segment_minimap_presence_rate(
     )
 
 
+def segment_looks_like_rank_promo(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> bool:
+    """
+    Rank-up / results / hero-in-menu at VOD tail — OCR often misreads SAVAGE on promo UI.
+    """
+    from mlbb_fight_segment import _vod_duration, clip_in_vod_tail
+
+    if clip_in_vod_tail(video_path, start_sec, duration_sec):
+        return True
+
+    vod_dur = _vod_duration(video_path)
+    rank_tail = float(os.environ.get("MLBB_VOD_RANK_SCREEN_SEC", "90"))
+    if vod_dur > 0 and start_sec >= vod_dur - rank_tail:
+        return True
+
+    from visual_action_check import _frame_menu_overlay, _laplacian_edge_score, _read_frame_at
+
+    menus: list[float] = []
+    edges: list[float] = []
+    end_sec = start_sec + max(duration_sec, 0.5)
+    for off in (0.0, 1.2, 2.8, min(4.5, max(0.5, duration_sec * 0.55))):
+        t = min(end_sec - 0.05, start_sec + off)
+        frame = _read_frame_at(video_path, t)
+        if frame is None:
+            continue
+        check = frame
+        if crop_box is not None:
+            x, y, w, h = crop_box
+            check = frame[y : y + h, x : x + w]
+        menus.append(_frame_menu_overlay(check))
+        edges.append(_laplacian_edge_score(check, 0.22, 0.72, 0.12, 0.88))
+
+    if len(menus) >= 2 and menus[0] < 0.20 and max(menus) > 0.30:
+        return True
+    if len(edges) >= 2 and edges[0] < 0.040 and max(menus) > 0.26:
+        return True
+    if segment_looks_like_hero_showcase(
+        video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=4
+    ):
+        return True
+    return False
+
+
 def segment_looks_like_draft_or_queue(
     video_path: Path,
     start_sec: float,

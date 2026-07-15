@@ -24,7 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MLBB LEARNING_FIRST gate eval")
     parser.add_argument("--require-pass", action="store_true", help="exit 1 if gate not passed")
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--holdout-min", type=float, default=0.45)
+    parser.add_argument("--holdout-min", type=float, default=0.85)
     parser.add_argument("--dry-min-rejected", type=int, default=7)
     args = parser.parse_args()
 
@@ -32,8 +32,10 @@ def main() -> int:
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
 
-    report = eval_transition_gate()
-    report["holdout"]["min_precision"] = args.holdout_min
+    report = eval_transition_gate(
+        holdout_min_precision=args.holdout_min,
+        dry_min_rejected=args.dry_min_rejected,
+    )
 
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))

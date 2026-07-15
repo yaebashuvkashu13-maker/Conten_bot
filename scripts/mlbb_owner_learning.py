@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import hashlib
 from pathlib import Path
 
 from highlight_scorer import WINDOW_SEC, normalize_profile
@@ -50,8 +51,15 @@ def _read_json(path: Path, default: dict | list) -> dict | list:
 
 
 def _write_json(path: Path, payload: dict | list) -> None:
+    if isinstance(payload, dict):
+        from vod_state_io import save_json_state
+
+        save_json_state(path, payload)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp = path.with_suffix(f"{path.suffix}.tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def load_owner_labels_json() -> dict:
@@ -177,32 +185,58 @@ def _resolve_vod(video_id: str) -> Path | None:
     return None
 
 
-def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]:
-    """
-    Deduped training samples for mobile_legends from exemplars, Shorts, VOD segments,
-    and time anchors — without triple-counting the same owner vote.
-    """
+def load_unified_training_rows(profile: str) -> list[dict]:
+    """Deduped clip-ranker rows with source and VOD grouping metadata."""
     profile = normalize_profile(profile)
     if profile != "mobile_legends":
         return []
 
     seen: set[tuple] = set()
-    out: list[tuple[Path, float, int]] = []
+    out: list[dict] = []
 
-    def add(path: Path, start: float, label: int, key: tuple) -> None:
+    def add(
+        path: Path,
+        start: float,
+        label: int,
+        key: tuple,
+        *,
+        source: str,
+        group: str,
+        reason: str = "",
+        weight: float = 1.0,
+    ) -> None:
         if key in seen or not path.exists():
             return
         seen.add(key)
-        out.append((path, start, label))
+        out.append(
+            {
+                "path": path,
+                "start": float(start),
+                "label": int(label),
+                "source": source,
+                "group": group or path.stem,
+                "reason": reason,
+                "weight": float(weight),
+            }
+        )
 
-    exemplar_cap = int(os.environ.get("MLBB_TRAIN_MAX_EXEMPLARS", "200"))
+    exemplar_cap = int(os.environ.get("MLBB_TRAIN_MAX_EXEMPLARS", "500"))
     exemplar_dir = _exemplar_root() / "mobile_legends"
     for label_name, cls in (("good", 1), ("bad", 0)):
         folder = exemplar_dir / label_name
         if not folder.exists():
             continue
         for clip in sorted(folder.glob("*.mp4"))[:exemplar_cap]:
-            add(clip, 0.5, cls, ("exemplar", clip.name))
+            stem = clip.stem
+            group = stem.rsplit("_", 1)[0] if stem.startswith("vod_") else stem
+            add(
+                clip,
+                0.5,
+                cls,
+                ("exemplar", clip.name),
+                source="exemplar",
+                group=group,
+            )
 
     cal_data = _read_json(_shorts_labels_path(), {"good": [], "bad": []})
     if isinstance(cal_data, dict):
@@ -215,7 +249,15 @@ def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]
                 if vid and ("exemplar", f"cal_{vid}.mp4") in seen:
                     continue
                 if path.exists():
-                    add(path, 0.15, cls, ("shorts", vid or path.name))
+                    add(
+                        path,
+                        0.15,
+                        cls,
+                        ("shorts", vid or path.name),
+                        source="youtube_shorts",
+                        group=vid or path.stem,
+                        reason=str(row.get("reason") or ""),
+                    )
 
     vseg_data = _read_json(_vseg_labels_path(), {"good": [], "bad": []})
     if isinstance(vseg_data, dict):
@@ -226,7 +268,17 @@ def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]
                 if sid and ("exemplar", f"vod_{sid}.mp4") in seen:
                     continue
                 if path.exists():
-                    add(path, 0.5, cls, ("vseg", sid or path.name))
+                    vid = sid.rsplit("_", 1)[0] if "_" in sid else path.stem
+                    add(
+                        path,
+                        0.5,
+                        cls,
+                        ("vseg", sid or path.name),
+                        source="vod_segment",
+                        group=vid,
+                        reason=str(row.get("reason") or ""),
+                        weight=2.0,
+                    )
 
     owner = load_owner_labels_json()
     videos = owner.get("videos", {})
@@ -240,14 +292,83 @@ def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]
             for row in rows:
                 if row.get("source") == SHORTS_SCOPE:
                     continue
+                if row.get("scope") == "banner" or str(row.get("source") or "").startswith(
+                    "banner_calibration"
+                ):
+                    continue
                 if "time_sec" not in row:
                     continue
                 label = 1 if row.get("label") == "good" else 0
                 t = float(row["time_sec"])
                 start = max(0.0, t - WINDOW_SEC * 0.5)
-                add(vod, start, label, ("anchor", vid, round(t, 1), label))
+                add(
+                    vod,
+                    start,
+                    label,
+                    ("anchor", vid, round(t, 1), label),
+                    source=str(row.get("source") or "owner_anchor"),
+                    group=str(vid),
+                    reason=str(row.get("note") or ""),
+                    weight=2.0,
+                )
 
     return out
+
+
+def load_unified_training_samples(profile: str) -> list[tuple[Path, float, int]]:
+    """Backward-compatible tuple view of the unified clip-ranker dataset."""
+    return [
+        (row["path"], float(row["start"]), int(row["label"]))
+        for row in load_unified_training_rows(profile)
+    ]
+
+
+def build_training_manifest(profile: str = "mobile_legends", *, write: bool = True) -> dict:
+    """Inventory all owner data while keeping banner and clip tasks separate."""
+    rows = load_unified_training_rows(profile)
+    source_counts: dict[str, int] = {}
+    label_counts = {"good": 0, "bad": 0}
+    groups: set[str] = set()
+    for row in rows:
+        source = str(row.get("source") or "unknown")
+        source_counts[source] = source_counts.get(source, 0) + 1
+        label_counts["good" if int(row["label"]) == 1 else "bad"] += 1
+        groups.add(str(row.get("group") or ""))
+
+    banner_path = DATA_MLBB / "banner_calibration_labels.json"
+    banner = _read_json(banner_path, {"labels": []})
+    banner_rows = banner.get("labels", []) if isinstance(banner, dict) else []
+    payload = {
+        "schema_version": 1,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "profile": normalize_profile(profile),
+        "clip_ranker": {
+            "samples": len(rows),
+            "labels": label_counts,
+            "groups": len(groups),
+            "sources": source_counts,
+            "banner_scope_excluded": True,
+        },
+        "banner_event": {
+            "samples": len(banner_rows),
+            "by_reason": {},
+        },
+    }
+    for row in banner_rows:
+        reason = str(row.get("reason") or "unknown")
+        by_reason = payload["banner_event"]["by_reason"]
+        by_reason[reason] = int(by_reason.get(reason) or 0) + 1
+    digest_source = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    payload["dataset_version"] = hashlib.sha256(digest_source.encode()).hexdigest()[:16]
+    if write:
+        path = Path(
+            os.environ.get(
+                "MLBB_TRAINING_MANIFEST",
+                str(DATA_MLBB / "training_manifest.json"),
+            )
+        )
+        _write_json(path, payload)
+    return payload
 
 
 def owner_kill_anchor_secs(video_id: str, *, radius: float = 0.0) -> list[float]:

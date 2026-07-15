@@ -73,6 +73,8 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
+    if os.environ.get("EXTENDED_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0
