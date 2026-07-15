@@ -110,15 +110,22 @@ def _peak_hints(vod: Path, *, limit: int) -> list[float]:
 
 
 def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path, float]]:
-    """Revisit VODs that already produced owner-positive labels — denser there."""
+    """Revisit a few VODs that already produced owner-positive labels."""
     seeds: list[tuple[Path, float]] = []
+    max_seeds = int(os.environ.get("MLBB_SMART_TEACH_SEED_MAX", "24"))
     try:
         from mlbb_banner_calibration_store import load_labels
 
-        for row in load_labels().get("labels", []):
-            reason = str(row.get("reason") or "")
-            if reason not in {"own_kill_good", "double_triple", "savage_tier", "not_enemy_kill"}:
-                continue
+        rows = [
+            row
+            for row in load_labels().get("labels", [])
+            if str(row.get("reason") or "")
+            in {"own_kill_good", "double_triple", "savage_tier", "not_enemy_kill"}
+            and not str(row.get("check_id") or "").startswith("ownerphoto")
+        ]
+        # Prefer recent / higher-tier labels
+        rows = list(reversed(rows))[: max_seeds // 2]
+        for row in rows:
             vod = Path(str(row.get("vod") or ""))
             if not vod.exists():
                 vid = str(row.get("check_id") or "").rsplit("_", 1)[0]
@@ -129,11 +136,12 @@ def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path
             if not vod.exists():
                 continue
             sec = float(row.get("sec") or 0)
-            # Probe neighbors for new banners around known good moments
-            for delta in (-8.0, -3.0, 3.0, 8.0, 14.0):
+            for delta in (-4.0, 4.0, 10.0):
                 seeds.append((vod, max(1.0, sec + delta)))
-    except Exception:
-        pass
+                if len(seeds) >= max_seeds:
+                    return seeds
+    except Exception as exc:
+        print(f"seed_load_fail: {exc}", flush=True)
     return seeds
 
 
@@ -189,6 +197,19 @@ def main() -> int:
     vod_budget = float(os.environ.get("MLBB_SMART_TEACH_VOD_BUDGET_SEC", "45"))
     global_deadline = time.time() + float(os.environ.get("MLBB_SMART_TEACH_MAX_SEC", "600"))
 
+    print(
+        json.dumps(
+            {
+                "smart_teach_start": True,
+                "max_send": max_send,
+                "min_tier": min_tier,
+                "labeled": len(labeled),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+
     def _try_hit(vod: Path, peak: float) -> KillBannerHit | None:
         hit = find_banner_near_peak(vod, peak, quick=True)
         if hit is None or not str(hit.source).startswith("ocr") or int(hit.tier) < min_tier:
@@ -196,10 +217,15 @@ def main() -> int:
         return _ocr_confirm(vod, hit.sec, min_tier=min_tier)
 
     # Pass A: seeds around owner-positive labels (highest ROI)
-    for vod, peak in _seeds_from_labels(inbox, labeled, sent):
+    seeds = _seeds_from_labels(inbox, labeled, sent)
+    print(f"seed_probes={len(seeds)}", flush=True)
+    for si, (vod, peak) in enumerate(seeds, start=1):
         if sent_n >= max_send or time.time() > global_deadline:
             break
-        hit = _try_hit(vod, peak)
+        if si == 1 or si % 5 == 0:
+            print(f"seed {si}/{len(seeds)} {vod_youtube_id(vod)}@{peak:.0f}", flush=True)
+        # Direct OCR at seed second — avoid nested find_banner cost
+        hit = _ocr_confirm(vod, peak, min_tier=min_tier)
         if hit is None:
             continue
         cid = check_id(vod, hit.sec)
