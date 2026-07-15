@@ -2,12 +2,11 @@
 """
 Smart owner teach: send ONLY frames with OCR-confirmed kill banners.
 
-Unlike flood (color + sparse 480p samples), this:
-1. Takes motion/audio peaks from local VODs
-2. Re-reads FULL-RES frames near each peak
-3. Runs deep OCR; keeps Double+ (or configured min tier)
-4. Optionally requires owner-positive edge match when OCR is weak
-5. Never sends color-only or unverified screenshots
+Fast path (default):
+1. Motion peaks → find_banner_near_peak(quick=True) [already OCR-gated]
+2. Full-res shallow OCR confirm (deep only if shallow misses but color hints)
+3. Stream Telegram panels immediately (no waiting for full inbox scan)
+Never sends color-only / unverified HUD frames.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from mlbb_banner_calibration_store import (
 )
 from mlbb_kill_banner import (
     KillBannerHit,
-    _ffmpeg_sample_frames,
+    _announce_color_score,
     _min_tier,
     classify_banner_text,
     find_banner_near_peak,
@@ -50,14 +49,20 @@ def _read_frame(vod: Path, sec: float):
     return _read_frame_at(vod, sec)
 
 
-def _ocr_hit_fullres(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | None:
+def _ocr_confirm(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | None:
+    """Prefer shallow OCR; deepen only when color suggests a banner flash."""
     from mlbb_kill_banner import _ocr_banner_zones
 
     frame = _read_frame(vod, sec)
     if frame is None:
         return None
-    text = _ocr_banner_zones(frame, deep=True)
+    text = _ocr_banner_zones(frame, deep=False)
     hit = classify_banner_text(text)
+    if hit is None and _announce_color_score(frame) >= float(
+        os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.06")
+    ):
+        text = _ocr_banner_zones(frame, deep=True)
+        hit = classify_banner_text(text)
     if hit is None or int(hit.tier) < min_tier:
         return None
     return KillBannerHit(
@@ -69,21 +74,7 @@ def _ocr_hit_fullres(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit |
     )
 
 
-def _owner_edge_ok(frame) -> tuple[bool, float]:
-    """Structural owner-positive proof — stronger than HSV alone."""
-    try:
-        from mlbb_banner_ref_match import match_positive_owner_reference_strict
-
-        row = match_positive_owner_reference_strict(frame)
-        if row is None:
-            return False, 0.0
-        return True, float(row[0])
-    except Exception:
-        return False, 0.0
-
-
 def _peak_hints(vod: Path, *, limit: int) -> list[float]:
-    """Motion/audio peak seconds across the VOD (cheap probe)."""
     peaks: list[float] = []
     try:
         from mlbb_fight_segment import _analysis_for
@@ -95,25 +86,22 @@ def _peak_hints(vod: Path, *, limit: int) -> list[float]:
         win = float(analysis.get("window_seconds") or 2.0)
         if motion.size == 0:
             return peaks
-        combined = motion
-        if audio.size == motion.size:
-            combined = motion * 0.55 + audio * 0.45
-        # local maxima
+        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+        floor = float(os.environ.get("MLBB_SMART_TEACH_PEAK_MIN", "0.10"))
+        scored: list[tuple[float, float]] = []
         for i in range(2, len(combined) - 2):
             v = float(combined[i])
-            if v < float(os.environ.get("MLBB_SMART_TEACH_PEAK_MIN", "0.08")):
+            if v < floor:
                 continue
             if v >= float(combined[i - 1]) and v >= float(combined[i + 1]):
-                if v >= float(combined[i - 2]) and v >= float(combined[i + 2]):
-                    peaks.append(i * win)
-        peaks.sort(key=lambda s: -float(combined[min(len(combined) - 1, int(s / max(win, 0.1)))]))
-        return peaks[:limit]
+                scored.append((v, i * win))
+        scored.sort(reverse=True)
+        return [sec for _, sec in scored[:limit]]
     except Exception:
         pass
-    # Fallback: uniform grid
-    t0 = float(os.environ.get("MLBB_SMART_TEACH_T0", "60"))
-    t1 = float(os.environ.get("MLBB_SMART_TEACH_T1", "1400"))
-    step = float(os.environ.get("MLBB_SMART_TEACH_FALLBACK_STEP", "90"))
+    t0 = float(os.environ.get("MLBB_SMART_TEACH_T0", "90"))
+    t1 = float(os.environ.get("MLBB_SMART_TEACH_T1", "1200"))
+    step = float(os.environ.get("MLBB_SMART_TEACH_FALLBACK_STEP", "120"))
     t = t0
     while t < t1 and len(peaks) < limit:
         peaks.append(t)
@@ -121,88 +109,64 @@ def _peak_hints(vod: Path, *, limit: int) -> list[float]:
     return peaks
 
 
-def _probe_near_peak(vod: Path, peak: float, *, min_tier: int) -> KillBannerHit | None:
-    """Try quick banner finder, then a short full-res OCR probe around the peak."""
-    hit = find_banner_near_peak(vod, peak, quick=True)
-    if hit is not None and hit.source.startswith("ocr") and int(hit.tier) >= min_tier:
-        # Re-confirm on full-res (find may have used low-res samples)
-        confirmed = _ocr_hit_fullres(vod, hit.sec, min_tier=min_tier)
-        if confirmed is not None:
-            return confirmed
-    before = float(os.environ.get("MLBB_SMART_TEACH_BEFORE", "6"))
-    after = float(os.environ.get("MLBB_SMART_TEACH_AFTER", "10"))
-    step = float(os.environ.get("MLBB_SMART_TEACH_STEP", "0.75"))
-    t0 = max(0.0, peak - before)
-    t1 = peak + after
-    # Dense but limited full-res OCR samples
-    n = max(3, int((t1 - t0) / max(step, 0.35)) + 1)
-    n = min(n, int(os.environ.get("MLBB_SMART_TEACH_MAX_PROBES", "12")))
-    # Use mid-res ffmpeg first as cheap gate, then full-res confirm
-    frames = _ffmpeg_sample_frames(vod, t0, t1, n)
-    for sec, low in frames:
-        color_ok = True
-        try:
-            from mlbb_kill_banner import _announce_color_score
+def _seeds_from_labels(inbox: Path, labeled: dict, sent: set) -> list[tuple[Path, float]]:
+    """Revisit VODs that already produced owner-positive labels — denser there."""
+    seeds: list[tuple[Path, float]] = []
+    try:
+        from mlbb_banner_calibration_store import load_labels
 
-            # Soft gate only — do not invent color hits.
-            if _announce_color_score(low) < float(os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.04")):
-                # Still try a few peaks even without gold flash
-                if abs(sec - peak) > 1.5:
-                    color_ok = False
-        except Exception:
-            pass
-        if not color_ok:
-            continue
-        confirmed = _ocr_hit_fullres(vod, sec, min_tier=min_tier)
-        if confirmed is not None:
-            return confirmed
-    return None
-
-
-def collect_ocr_candidates(*, limit: int) -> list[tuple[Path, KillBannerHit, str, float]]:
-    inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
-    labeled = labeled_ids()
-    sent = load_sent()
-    min_tier = max(_min_tier(), int(os.environ.get("MLBB_SMART_TEACH_MIN_TIER", str(_min_tier()))))
-    vod_limit = int(os.environ.get("MLBB_SMART_TEACH_VODS", "25"))
-    peaks_per = int(os.environ.get("MLBB_SMART_TEACH_PEAKS", "14"))
-
-    vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
-    out: list[tuple[Path, KillBannerHit, str, float]] = []
-    seen: set[str] = set()
-    scanned = 0
-    for vod in vods:
-        if len(out) >= limit:
-            break
-        scanned += 1
-        if scanned > vod_limit:
-            break
-        print(f"smart_scan {vod_youtube_id(vod)} peaks…", flush=True)
-        for peak in _peak_hints(vod, limit=peaks_per):
-            if len(out) >= limit:
-                break
-            hit = _probe_near_peak(vod, peak, min_tier=min_tier)
-            if hit is None:
+        for row in load_labels().get("labels", []):
+            reason = str(row.get("reason") or "")
+            if reason not in {"own_kill_good", "double_triple", "savage_tier", "not_enemy_kill"}:
                 continue
-            cid = check_id(vod, hit.sec)
-            if cid in labeled or cid in sent or cid in seen:
+            vod = Path(str(row.get("vod") or ""))
+            if not vod.exists():
+                vid = str(row.get("check_id") or "").rsplit("_", 1)[0]
+                for path in inbox.glob("yt_*.mp4"):
+                    if vod_youtube_id(path).lower() == vid[:11].lower():
+                        vod = path
+                        break
+            if not vod.exists():
                 continue
-            frame = _read_frame(vod, hit.sec)
-            if frame is None:
-                continue
-            # Require verification: OCR already present; optional edge boost
-            edge_ok, edge_score = _owner_edge_ok(frame)
-            score = float(hit.tier) * 3.0 + (edge_score * 4.0 if edge_ok else 0.0)
-            if str(hit.label).lower() in ("savage", "legendary", "maniac"):
-                score += 3.0
-            seen.add(cid)
-            out.append((vod, hit, cid, score))
-            print(
-                f"  candidate {cid} {hit.label} t{hit.tier} edge={edge_score:.2f}",
-                flush=True,
-            )
-    out.sort(key=lambda x: -x[3])
-    return out[:limit]
+            sec = float(row.get("sec") or 0)
+            # Probe neighbors for new banners around known good moments
+            for delta in (-8.0, -3.0, 3.0, 8.0, 14.0):
+                seeds.append((vod, max(1.0, sec + delta)))
+    except Exception:
+        pass
+    return seeds
+
+
+def _send_one(
+    *,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    hit: KillBannerHit,
+    cid: str,
+    sent_n: int,
+    max_send: int,
+    target: int,
+    score: float,
+) -> bool:
+    try:
+        shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
+    except Exception as exc:
+        print(f"capture_fail {cid}: {exc}", flush=True)
+        return False
+    st = stats()
+    caption = (
+        f"✅ OCR банер {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
+        f"{hit.label.upper()} t{hit.tier} score={score:.1f}\n"
+        f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s\n"
+        f"#{cid}\n"
+        f"Жми ✅ Свой kill / ⚡ Double-Triple / 🔥 Savage — или ❌ если ошибка OCR"
+    )
+    if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
+        mark_sent([cid])
+        print(f"sent {cid} {hit.label} t{hit.tier}", flush=True)
+        return True
+    return False
 
 
 def main() -> int:
@@ -213,56 +177,90 @@ def main() -> int:
         print("missing telegram creds")
         return 1
 
-    max_send = int(os.environ.get("MLBB_BANNER_FLOOD_MAX", os.environ.get("MLBB_SMART_TEACH_MAX", "20")))
+    max_send = int(os.environ.get("MLBB_BANNER_FLOOD_MAX", os.environ.get("MLBB_SMART_TEACH_MAX", "12")))
     target = calibration_target()
-    candidates = collect_ocr_candidates(limit=max_send * 2)
-    print(json.dumps({"candidates": len(candidates)}, ensure_ascii=False), flush=True)
-
+    min_tier = max(_min_tier(), int(os.environ.get("MLBB_SMART_TEACH_MIN_TIER", str(_min_tier()))))
+    inbox = Path(os.environ.get("MLBB_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox"))
+    labeled = labeled_ids()
+    sent = load_sent()
+    seen: set[str] = set()
     sent_n = 0
-    delay = float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.35"))
-    for i, (vod, hit, cid, score) in enumerate(candidates, start=1):
-        if sent_n >= max_send:
-            break
-        frame = _read_frame(vod, hit.sec)
-        # Final OCR re-check (no color / hist shortcuts)
-        confirmed = _ocr_hit_fullres(vod, hit.sec, min_tier=max(2, _min_tier()))
-        if confirmed is None:
-            print(f"skip_send {cid}: no_fullres_ocr", flush=True)
-            continue
-        hit = confirmed
-        try:
-            from mlbb_banner_calibration_positive_feed import verified_before_send
+    delay = float(os.environ.get("MLBB_BANNER_FLOOD_DELAY_SEC", "0.25"))
+    vod_budget = float(os.environ.get("MLBB_SMART_TEACH_VOD_BUDGET_SEC", "45"))
+    global_deadline = time.time() + float(os.environ.get("MLBB_SMART_TEACH_MAX_SEC", "600"))
 
-            ok, why = verified_before_send(vod, hit, frame)
-            # For teach: allow OCR through even if weak no_banner hist matches
-            if not ok and "no_banner" not in why and why not in ("candidate_filter",):
-                # still skip hard rejects
-                if why.startswith("owner_neg:") and "no_banner" not in why:
-                    print(f"skip_send {cid}: {why}", flush=True)
-                    continue
-            if not ok and os.environ.get("MLBB_SMART_TEACH_STRICT_VERIFY", "0") == "1":
-                print(f"skip_send {cid}: {why}", flush=True)
-                continue
-        except Exception:
-            pass
-        try:
-            shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
-        except Exception as exc:
-            print(f"capture_fail {cid}: {exc}", flush=True)
+    def _try_hit(vod: Path, peak: float) -> KillBannerHit | None:
+        hit = find_banner_near_peak(vod, peak, quick=True)
+        if hit is None or not str(hit.source).startswith("ocr") or int(hit.tier) < min_tier:
+            return None
+        return _ocr_confirm(vod, hit.sec, min_tier=min_tier)
+
+    # Pass A: seeds around owner-positive labels (highest ROI)
+    for vod, peak in _seeds_from_labels(inbox, labeled, sent):
+        if sent_n >= max_send or time.time() > global_deadline:
+            break
+        hit = _try_hit(vod, peak)
+        if hit is None:
             continue
-        st = stats()
-        caption = (
-            f"✅ OCR банер {sent_n + 1}/{max_send} | {st['labeled']}/{target}\n"
-            f"{hit.label.upper()} t{hit.tier} score={score:.1f}\n"
-            f"{meta.get('vod_id', '')} @ {hit.sec:.1f}s\n"
-            f"#{cid}\n"
-            f"Жми ✅ Свой kill / ⚡ Double-Triple / 🔥 Savage — или ❌ если ошибка OCR"
-        )
-        if send_photo_file(token, chat_id, shot, caption, reply_markup=inline_keyboard_markup(cid)):
-            mark_sent([cid])
+        cid = check_id(vod, hit.sec)
+        if cid in labeled or cid in sent or cid in seen:
+            continue
+        seen.add(cid)
+        score = float(hit.tier) * 3.0 + 2.0  # seed bonus
+        if _send_one(
+            token=token,
+            chat_id=chat_id,
+            vod=vod,
+            hit=hit,
+            cid=cid,
+            sent_n=sent_n,
+            max_send=max_send,
+            target=target,
+            score=score,
+        ):
             sent_n += 1
-            print(f"sent {cid}", flush=True)
-        time.sleep(delay)
+            sent = load_sent()
+            time.sleep(delay)
+
+    # Pass B: newest local VODs — motion peaks + quick OCR finder
+    vod_limit = int(os.environ.get("MLBB_SMART_TEACH_VODS", "18"))
+    peaks_per = int(os.environ.get("MLBB_SMART_TEACH_PEAKS", "8"))
+    vods = sorted(inbox.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for i, vod in enumerate(vods[:vod_limit]):
+        if sent_n >= max_send or time.time() > global_deadline:
+            break
+        t0 = time.time()
+        print(f"smart_scan {vod_youtube_id(vod)} ({i+1}/{vod_limit}) sent={sent_n}", flush=True)
+        for peak in _peak_hints(vod, limit=peaks_per):
+            if sent_n >= max_send or time.time() > global_deadline:
+                break
+            if time.time() - t0 > vod_budget:
+                print(f"  budget_skip {vod_youtube_id(vod)}", flush=True)
+                break
+            hit = _try_hit(vod, peak)
+            if hit is None:
+                continue
+            cid = check_id(vod, hit.sec)
+            if cid in labeled or cid in sent or cid in seen:
+                continue
+            seen.add(cid)
+            score = float(hit.tier) * 3.0
+            if str(hit.label).lower() in ("savage", "legendary", "maniac"):
+                score += 3.0
+            if _send_one(
+                token=token,
+                chat_id=chat_id,
+                vod=vod,
+                hit=hit,
+                cid=cid,
+                sent_n=sent_n,
+                max_send=max_send,
+                target=target,
+                score=score,
+            ):
+                sent_n += 1
+                sent = load_sent()
+                time.sleep(delay)
 
     print(json.dumps({"sent": sent_n, "stats": stats()}, ensure_ascii=False), flush=True)
     return 0
