@@ -3021,6 +3021,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'banner', 'description': 'Обучение kill-баннера (владелец)'},
         {'command': 'banner_status', 'description': 'Сколько баннер-скринов в банке'},
         {'command': 'banner_done', 'description': 'Закончить приём баннер-скринов'},
+        {'command': 'teach', 'description': 'Поток панелей баннера на разметку'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
         {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
         {'command': 'mlbb_vod', 'description': 'MLBB VOD — все куски отдельно (владелец)'},
@@ -3191,6 +3192,66 @@ def handle_message(message: dict):
             f'• negative crops: {neg_n}\n'
             f'Режим /banner сейчас: {"вкл" if is_banner_mode(chat_id) else "выкл"}',
         )
+        return
+    if cmd in ('/teach', '/banner_flood', '/учить', '/разметка'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        limit = 25
+        parts = text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            limit = max(5, min(60, int(parts[1])))
+        send_message(
+            chat_id,
+            f'Запускаю поток ~{limit} панелей баннера на разметку.\n'
+            'На каждой жми кнопку:\n'
+            '• Double/Triple/Savage — если kill-баннер свой\n'
+            '• ❌ Нет банера — только пустой HUD\n'
+            '• 👿 Kill противника / 🦸 не тот герой — если видно\n'
+            'Параллельно: на готовых роликах 👍/👎.\n'
+            'Ещё панels: снова /teach',
+        )
+
+        def _teach_worker(n: int = limit) -> None:
+            import subprocess
+
+            env = {
+                **os.environ,
+                'CONTENT_BOT_REPO': os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml'),
+                'MLBB_BANNER_REF_ROOT': os.environ.get(
+                    'MLBB_BANNER_REF_ROOT',
+                    '/root/content_bot_ml/data/mlbb_kill_banners',
+                ),
+                'PYTHONPATH': '/usr/local/bin:/root/content_bot_ml/scripts',
+                'MLBB_BANNER_TEACH_FLOOD': '1',
+                'MLBB_BANNER_SEND_STRICT': '0',
+                'MLBB_BANNER_NEG_REF_MATCH': '0',
+                'MLBB_BANNER_POS_POV_MATCH': '0',
+                'MLBB_BANNER_FLOOD_MAX': str(n),
+                'MLBB_BANNER_FLOOD_SEGMENT_LIMIT': str(max(n, 25)),
+                'MLBB_BANNER_FLOOD_SCAN_LIMIT': str(max(n, 20)),
+                'MLBB_BANNER_FLOOD_VODS': '30',
+                'MLBB_BANNER_FLOOD_SAMPLES': '12',
+                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.25',
+            }
+            script = Path('/usr/local/bin/mlbb_banner_calibration_flood.py')
+            if not script.exists():
+                script = Path('/root/content_bot_ml/scripts/mlbb_banner_calibration_flood.py')
+            try:
+                proc = subprocess.run(
+                    ['python3', str(script)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,
+                )
+                tail = (proc.stdout or proc.stderr or '')[-500:]
+                send_message(chat_id, f'/teach готово.\n{tail or f"exit={proc.returncode}"}')
+            except Exception as exc:
+                logging.exception('teach flood failed')
+                send_message(chat_id, f'/teach ошибка: {exc}')
+
+        threading.Thread(target=_teach_worker, daemon=True).start()
         return
     if cmd in ('/banner_done', '/banner_stop', '/баннер_стоп'):
         if not is_owner(chat_id):

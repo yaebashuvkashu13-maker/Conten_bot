@@ -158,14 +158,16 @@ def main() -> int:
     def _send_batch(batch: list[tuple[Path, KillBannerHit, str]]) -> int:
         nonlocal sent_n
         n = 0
+        teach = os.environ.get("MLBB_BANNER_TEACH_FLOOD", "0") == "1"
         for i, (vod, hit, cid) in enumerate(batch, start=sent_n + 1):
             if sent_n >= max_send:
                 break
             frame = _read_frame(vod, hit.sec)
-            ok, why = verified_before_send(vod, hit, frame)
-            if not ok:
-                print(f"skip_send {cid}: {why}")
-                continue
+            if not teach:
+                ok, why = verified_before_send(vod, hit, frame)
+                if not ok:
+                    print(f"skip_send {cid}: {why}")
+                    continue
             try:
                 shot, meta = render_check_screenshot(vod, hit.sec, hit=hit)
             except Exception as exc:
