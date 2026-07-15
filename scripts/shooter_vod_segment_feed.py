@@ -424,6 +424,22 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         else:
             log.info("quality skip — %s", presend_reason)
             row["quality_probability"] = 1.0
+        clip = dict(row.get("clip") or {})
+        # Cached shooter peaks lack input_duration — without it render calls
+        # MLBB _normalize_clip (banner OCR) and can hang for minutes.
+        if clip.get("input_duration") is None:
+            start = float(clip.get("start") or row.get("start") or 0)
+            dur = float(
+                os.environ.get(
+                    "PUBG_FIGHT_TARGET_SEC",
+                    os.environ.get("SHOOTER_VOD_CLIP_SEC", "18"),
+                )
+            )
+            clip["start"] = start
+            clip["peak_start"] = float(row.get("peak_start") or start)
+            clip["input_duration"] = dur
+            clip["end"] = start + dur
+            row["clip"] = clip
         if not render_single_segment(vod, row["clip"], out):
             log.warning("render failed sid=%s peak=%s", sid, row.get("peak_start"))
             continue
