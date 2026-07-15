@@ -512,11 +512,12 @@ def _scan_vod(
     peak_tries = 0
     gate = _adaptive_gate(game)
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
-    min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
+    min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.02"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
 
     while peak_tries < max_tries:
         rows: list[dict] = []
+        skipped_score = 0
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
@@ -524,8 +525,19 @@ def _scan_vod(
             if _peak_too_close(peak, used_peaks, seg_gap):
                 continue
             hm = clip.get("highlight_metrics") or {}
-            clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
-            if owner_exemplars and clip_score < min_clip:
+            clip_score = float(
+                hm.get("clip_score")
+                or clip.get("clip_score")
+                or clip.get("score")
+                or 0.0
+            )
+            panns_gun = float(hm.get("panns_gun_max") or clip.get("panns_gun_max") or 0.0)
+            # Soft bypass: strong gun window must not die on tiny clip-score margin.
+            score_floor = min_clip
+            if panns_gun >= float(os.environ.get("SHOOTER_VOD_CLIP_BYPASS_GUN", "0.45")):
+                score_floor = min(score_floor, 0.01)
+            if owner_exemplars and clip_score < score_floor:
+                skipped_score += 1
                 continue
             start = max(0.0, peak - lead)
             sid = segment_id(vid, start)
@@ -536,7 +548,7 @@ def _scan_vod(
                     "segment_id": sid,
                     "start": start,
                     "peak_start": peak,
-                    "score": float(clip.get("score", 0)),
+                    "score": float(clip.get("score", clip_score)),
                     "hook_score": float(hm.get("hook_score") or 0),
                     "clip_score": clip_score,
                     "highlight_metrics": hm,
@@ -553,14 +565,20 @@ def _scan_vod(
                 lead_sec=lead,
             )
             log.warning(
-                "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s blocked=%s",
+                "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s "
+                "blocked=%s skipped_score=%s",
                 vod.name,
                 len(pool),
                 used_peaks,
                 seg_gap,
                 soften_level,
                 blocked,
+                skipped_score,
             )
+            # Bad cache (scores=0) — force full rediscover next cycle.
+            if skipped_score and entry is not None and not blocked:
+                entry.pop("last_pool_peaks", None)
+                entry.pop("last_pool_at", None)
             if entry is not None:
                 record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0

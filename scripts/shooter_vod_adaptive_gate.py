@@ -34,6 +34,7 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.014",
     "VIRAL_SEGMENT_HOOK_MIN": "0.06",
     "VIRAL_COMBAT_HOOK_MIN": "0.03",
+    "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
 }
 
 # Level 2: allow Metro highlight HUD, one good frame enough, POV gate off.
