@@ -62,9 +62,10 @@ if [[ "$(env_val MLBB_VOD_ONLY)" != "1" || "$(env_val MLBB_VOD_DISABLED)" == "1"
 fi
 
 # Zombies that have repeatedly killed the box.
-FORBIDDEN_PATTERNS="mlbb_continuous_worker mlbb_calibration_feed mlbb_youtube_shorts_ingest mlbb_hero_shorts_montage"
-if [[ "$(env_val MLBB_LEARN_APPLY_TRAIN)" != "1" ]]; then
-  FORBIDDEN_PATTERNS="highlight_train.py $FORBIDDEN_PATTERNS"
+# Match .py / explicit script names — NOT *watchdog.sh which also contains these stems.
+FORBIDDEN_PATTERNS="highlight_train.py mlbb_continuous_worker.py mlbb_calibration_feed.py mlbb_youtube_shorts_ingest.py mlbb_hero_shorts_montage.py"
+if [[ "$(env_val MLBB_LEARN_APPLY_TRAIN)" == "1" ]]; then
+  FORBIDDEN_PATTERNS="mlbb_continuous_worker.py mlbb_calibration_feed.py mlbb_youtube_shorts_ingest.py mlbb_hero_shorts_montage.py"
 fi
 for pat in $FORBIDDEN_PATTERNS; do
   if pgrep -f "$pat" >/dev/null 2>&1; then
@@ -74,10 +75,10 @@ for pat in $FORBIDDEN_PATTERNS; do
 done
 
 # Stuck owner sync one-liners from manual debugging.
-pgrep -af 'sync_owner_learning' 2>/dev/null | grep -v mlbb_vod_segment_feed | while read -r line; do
+while read -r line; do
   pid=$(echo "$line" | awk '{print $1}')
   [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null && log "kill stuck sync pid=$pid"
-done
+done < <(pgrep -af 'sync_owner_learning' 2>/dev/null | grep -v mlbb_vod_segment_feed || true)
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   log "restart telegram_upload_bot"
@@ -212,15 +213,19 @@ fi
 # Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
 FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
 if [[ -f "$FEED_LOG" ]]; then
-  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || echo 0)"
+  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || true)"
+  CRASH_N="${CRASH_N:-0}"
   if [[ "$CRASH_N" -gt 3 ]]; then
     log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
   fi
-  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
+  LOG_MTIME="$(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0)"
+  NOW_SEC="$(date +%s)"
+  LOG_AGE_SEC=$(( NOW_SEC - LOG_MTIME ))
   # Long OCR / dense scans can be quiet on the log but keep heartbeat — require both stale.
   STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-2400}"
   HEARTBEAT=/root/data/mlbb/vod_pipeline_heartbeat.json
-  HEARTBEAT_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0) ))
+  HB_MTIME="$(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0)"
+  HEARTBEAT_AGE_SEC=$(( NOW_SEC - HB_MTIME ))
   HEARTBEAT_FRESH_SEC="$(env_val VOD_HEARTBEAT_FRESH_SEC)"
   HEARTBEAT_FRESH_SEC="${HEARTBEAT_FRESH_SEC:-900}"
   if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
