@@ -56,13 +56,9 @@ def _ocr_confirm(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | Non
     frame = _read_frame(vod, sec)
     if frame is None:
         return None
-    text = _ocr_banner_zones(frame, deep=False)
+    # Always deep — upscaled banner-zone OCR is what actually reads Double Kill
+    text = _ocr_banner_zones(frame, deep=True)
     hit = classify_banner_text(text)
-    if hit is None and _announce_color_score(frame) >= float(
-        os.environ.get("MLBB_SMART_TEACH_COLOR_HINT", "0.06")
-    ):
-        text = _ocr_banner_zones(frame, deep=True)
-        hit = classify_banner_text(text)
     if hit is None or int(hit.tier) < min_tier:
         return None
     return KillBannerHit(
@@ -226,20 +222,12 @@ def main() -> int:
                 # Full-res confirm
                 ocr_hit = _ocr_confirm(vod, sec, min_tier=min_tier)
                 edge_row = match_positive_owner_reference_strict(frame)
-                if ocr_hit is None and (edge_row is None or float(edge_row[0]) < edge_min):
+                # Never send edge-only — UI FX false-positives (combat flash / chat).
+                # Edge boosts ranking of OCR hits; OCR text is mandatory to send.
+                if ocr_hit is None:
                     continue
-                if ocr_hit is not None:
-                    hit = ocr_hit
-                    score = float(hit.tier) * 3.0 + (float(edge_row[0]) * 4.0 if edge_row else 0.0)
-                else:
-                    hit = KillBannerHit(
-                        sec=round(float(sec), 2),
-                        tier=3,
-                        label=str(edge_row[1]),
-                        text=f"edge={float(edge_row[0]):.3f}",
-                        source="owner_edge",
-                    )
-                    score = float(edge_row[0]) * 5.0
+                hit = ocr_hit
+                score = float(hit.tier) * 3.0 + (float(edge_row[0]) * 4.0 if edge_row else 0.0)
                 seen.add(cid)
                 if _send_one(
                     token=token,

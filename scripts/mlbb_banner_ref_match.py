@@ -234,8 +234,13 @@ def _load_positive_owner_ref_rows() -> tuple[tuple[str, str, str], ...]:
     root = banner_ref_root() / "owner_cal" / "positive"
     if not root.exists():
         return tuple()
+    # UI-menu /banner screenshots (ownerphoto_*) are bad live matchers — they match
+    # combat FX / chat. Prefer in-game crops from button labeling + vod_crops.
+    allow_ui = os.environ.get("MLBB_BANNER_POS_ALLOW_UI_TEMPLATES", "0") == "1"
     for path in sorted(root.rglob("*.png")):
         reason = path.parent.name if path.parent != root else "unknown"
+        if (not allow_ui) and path.name.startswith("ownerphoto_"):
+            continue
         rows.append((str(path), reason, reason))
     return tuple(rows)
 

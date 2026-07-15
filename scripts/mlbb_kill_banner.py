@@ -269,8 +269,25 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     ]
     if deep:
         zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
+        # Upscaled center banner crop — helps ornate RU / gold lettering
+        y0, y1 = int(h * 0.05), int(h * 0.30)
+        x0, x1 = int(w * 0.20), int(w * 0.80)
+        crop = small[y0:y1, x0:x1]
+        if crop.size:
+            zones.insert(
+                0,
+                cv2.resize(
+                    crop,
+                    (max(320, crop.shape[1] * 2), max(96, crop.shape[0] * 2)),
+                    interpolation=cv2.INTER_CUBIC,
+                ),
+            )
     texts: list[str] = []
     psms = (7, 8, 6, 13) if deep else (7, 8)
+    whitelist = (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя "
+    )
     for zone in zones:
         if zone.size == 0:
             continue
@@ -279,12 +296,16 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         if deep:
             variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
             variants.append(cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5))
+            variants.append(gray)
         for variant in variants:
             for psm in psms:
                 try:
                     text = pytesseract.image_to_string(
                         variant,
-                        config=f"--psm {psm} -l eng+rus",
+                        config=(
+                            f"--psm {psm} -l eng+rus "
+                            f"-c tessedit_char_whitelist={whitelist}"
+                        ),
                     )
                 except Exception:
                     continue
