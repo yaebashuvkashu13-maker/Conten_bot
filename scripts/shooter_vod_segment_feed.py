@@ -319,6 +319,34 @@ def _validate_shooter_presend(
             or clip.get("output_duration")
             or 15
         )
+    hm = row.get("highlight_metrics") or {}
+    panns_gun = float(hm.get("panns_gun_max") or row.get("panns_gun_max") or 0.0)
+    trust_min = float(os.environ.get("PUBG_PRESEND_TRUST_GUN", "0.45"))
+    # Soft L2+/manual: skip slow OCR re-check when highlight already proved combat.
+    if (
+        game in ("pubg", "standoff")
+        and os.environ.get("PUBG_PRESEND_TRUST_HIGHLIGHT", "0") == "1"
+        and (
+            (
+                panns_gun >= trust_min
+                and (hm.get("rule_pass") or str(hm.get("pass_reason") or "").startswith("combat_ok"))
+            )
+            or (
+                # Cached pool peaks often lack panns — allow soft trust on clip score.
+                panns_gun <= 0
+                and float(row.get("score") or row.get("clip_score") or hm.get("clip_score") or 0)
+                >= float(os.environ.get("PUBG_PRESEND_TRUST_SCORE", "0.02"))
+            )
+        )
+    ):
+        log.info(
+            "presend trust highlight peak=%.1f gun=%.3f score=%.3f reason=%s",
+            start,
+            panns_gun,
+            float(row.get("score") or row.get("clip_score") or 0),
+            hm.get("pass_reason") or "rule_pass",
+        )
+        return True, f"presend_trust_highlight=gun{panns_gun:.3f}", dict(hm)
     if game == "pubg":
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
@@ -575,11 +603,12 @@ def _scan_vod(
                 blocked,
                 skipped_score,
             )
-            # Bad cache (scores=0) — force full rediscover next cycle.
+            # Bad cache (scores≈0) — do not re-save empty-score pool.
             if skipped_score and entry is not None and not blocked:
                 entry.pop("last_pool_peaks", None)
                 entry.pop("last_pool_at", None)
-            if entry is not None:
+                record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            elif entry is not None:
                 record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)

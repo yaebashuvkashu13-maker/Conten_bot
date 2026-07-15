@@ -173,6 +173,8 @@ def normalize_pool_peak_rows(raw: list[Any]) -> list[dict[str, Any]]:
                     "peak_sec": round(float(item.get("peak_sec", item.get("start", 0))), 1),
                     "score": round(float(item.get("score", 0)), 4),
                     "blocked_reason": str(item.get("blocked_reason") or ""),
+                    "panns_gun_max": round(float(item.get("panns_gun_max") or 0), 3),
+                    "pass_reason": str(item.get("pass_reason") or "")[:80],
                 }
             )
         else:
@@ -181,6 +183,8 @@ def normalize_pool_peak_rows(raw: list[Any]) -> list[dict[str, Any]]:
                     "peak_sec": round(float(item), 1),
                     "score": 0.0,
                     "blocked_reason": "",
+                    "panns_gun_max": 0.0,
+                    "pass_reason": "",
                 }
             )
     return rows
@@ -199,16 +203,23 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         peak = float(row["peak_sec"])
         score = float(row.get("score") or 0)
+        panns = float(row.get("panns_gun_max") or 0)
+        reason = str(row.get("pass_reason") or "")
+        rule_pass = bool(panns >= 0.35 or reason.startswith("combat_ok"))
         pool.append(
             {
                 "start": peak,
                 "peak_start": peak,
                 "score": score,
                 "clip_score": score,
+                "panns_gun_max": panns,
                 "highlight_metrics": {
-                    "rule_pass": False,
-                    "pass_reason": "cached_pool_needs_revalidation",
+                    "rule_pass": rule_pass,
+                    "visual_pass": True,
+                    "pass_reason": reason or ("combat_ok_cached" if rule_pass else "cached_pool"),
                     "clip_score": score,
+                    "panns_gun_max": panns,
+                    "hook_score": float(row.get("hook_score") or 0),
                 },
             }
         )
@@ -236,6 +247,13 @@ def record_vod_scan(
                     "peak_sec": peak,
                     "score": round(float(clip.get("score") or 0), 4),
                     "blocked_reason": str(clip.get("blocked_reason") or ""),
+                    "panns_gun_max": round(
+                        float((clip.get("highlight_metrics") or {}).get("panns_gun_max") or 0),
+                        3,
+                    ),
+                    "pass_reason": str(
+                        (clip.get("highlight_metrics") or {}).get("pass_reason") or ""
+                    )[:80],
                 }
             )
         entry["last_pool_peaks"] = detail
