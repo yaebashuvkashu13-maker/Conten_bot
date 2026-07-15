@@ -32,7 +32,20 @@ def test_pubg_rejects_junk_titles() -> None:
 
 def test_standoff_title_ok() -> None:
     assert title_ok("standoff", "Standoff 2 ranked clutch gameplay")
+    assert title_ok("standoff", "стендофф 2 ранкед полный матч геймплей")
     assert not title_ok("standoff", "PUBG Metro Royale stream")
+    assert not title_ok("standoff", "10 TIPS to better RUSH in sandstone (Standoff 2 tips for begginers)")
+    assert not title_ok("standoff", "STANDOFF 2 - How to get your OWN SENSITIVITY?!")
+    assert not title_ok("standoff", "🔥 INSANE Clutch in Standoff 2! 😱 1v5 Comeback!")
+
+
+def test_standoff_env_queries_override(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "STANDOFF_VOD_SEARCH_QUERIES",
+        "стендофф 2 ранкед полный матч,Standoff 2 ranked full match",
+    )
+    cyc = vod_discovery_search_cycle(0, "standoff", dict(**{k: v for k, v in __import__("os").environ.items()}))
+    assert "стендофф 2 ранкед полный матч" in cyc["queries"]
 
 
 def test_discovery_rotates_queries() -> None:

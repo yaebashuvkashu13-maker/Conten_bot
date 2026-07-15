@@ -229,6 +229,10 @@ PY
 sed -i '/^MLBB_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
 printf 'MLBB_VOD_SEARCH_QUERIES="%s"\n' "$VOD_SEARCH_CSV" >>"$ENV_FILE"
 
+STANDOFF_SEARCH_CSV="Standoff 2 ranked gameplay full match,Standoff 2 competitive gameplay replay,Standoff 2 clutch ranked match,Standoff 2 5v5 ranked gameplay,стендофф 2 ранкед полный матч геймплей,стендоф 2 соревновательный матч полный,standoff 2 ранкед катка полный матч,стендофф 2 ранг геймплей без монтажа,Standoff 2 ranked full game no montage,стендофф 2 5на5 ранкед катка,Standoff 2 ace ranked gameplay,Standoff 2 teamfight ranked replay,стендофф 2 эйс ранкед геймплей,стендофф 2 клатч ранкед полный,стендоф 2 тимфайт ранкед катка,Standoff 2 dust sandstone ranked full match,стендофф 2 сандстоун ранкед матч,standoff 2 competitive match russian"
+sed -i '/^STANDOFF_VOD_SEARCH_QUERIES=/d' "$ENV_FILE"
+printf 'STANDOFF_VOD_SEARCH_QUERIES="%s"\n' "$STANDOFF_SEARCH_CSV" >>"$ENV_FILE"
+
 install -m 755 \
   "$REPO/scripts/daily_game_cycle.py" \
   "$REPO/scripts/daily_cycle_runner.py" \
