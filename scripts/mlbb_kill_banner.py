@@ -1293,10 +1293,7 @@ def bounds_from_banner(
         start = max(0.0, start)
     # fight_end after banner must not revive a boring 20–30s tail
     if fight_end is not None and float(fight_end) > float(banner_sec):
-        end = min(
-            float(file_dur),
-            max(float(banner_sec) + post, min(float(fight_end), float(banner_sec) + post + 2.0)),
-        )
+        end = min(float(file_dur), float(banner_sec) + post)
 
     if float(banner_sec) < start:
         start = max(0.0, float(banner_sec) - lead)
