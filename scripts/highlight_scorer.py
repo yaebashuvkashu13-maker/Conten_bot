@@ -221,6 +221,12 @@ def _owner_bad_blocks_scan(row: dict, profile: str) -> bool:
     source = str(row.get("source") or "")
     if source == "vod_segment_backfill":
         return os.environ.get("MLBB_BLOCK_BACKFILL_BAD", "0") == "1"
+    if source in {"banner_calibration", "banner_calibration_apply"}:
+        # Teach panels: "no_banner"/"wrong_hero" are frame crops, not whole-fight vetoes.
+        # With BAD_PAD=90 they wipe Double/Triple peaks a minute away.
+        note = str(row.get("note") or row.get("reason") or "").strip().lower()
+        if note in {"no_banner", "not_kill", "wrong_hero", "not_gameplay", "enemy_kill", ""}:
+            return os.environ.get("MLBB_BLOCK_BANNER_CALIB_BAD", "0") == "1"
     if source == "vod_segment_labels":
         if row.get("by_chat"):
             return True
