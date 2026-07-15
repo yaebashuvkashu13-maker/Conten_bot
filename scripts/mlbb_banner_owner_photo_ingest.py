@@ -113,6 +113,7 @@ def ingest_owner_banner_photo(
     dest_dir = banner_ref_root() / "owner_cal" / bucket / resolved
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{cid}.png"
+    duplicate = dest.exists()
     cv2.imwrite(str(dest), patch)
 
     archive = inbox_dir() / f"{cid}_{resolved}{path.suffix.lower() or '.jpg'}"
@@ -132,20 +133,24 @@ def ingest_owner_banner_photo(
         except (json.JSONDecodeError, OSError):
             payload = {"labels": []}
     labels = payload.setdefault("labels", [])
-    labels.append(
-        {
-            "check_id": cid,
-            "reason": resolved,
-            "source": "owner_photo",
-            "crop_path": str(dest),
-            "screenshot": str(archive),
-            "caption": (caption or "")[:120],
-            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
+    already_labeled = any(
+        str(r.get("check_id")) == cid and str(r.get("source")) == "owner_photo" for r in labels
     )
-    payload["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    labels_path.parent.mkdir(parents=True, exist_ok=True)
-    labels_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not already_labeled:
+        labels.append(
+            {
+                "check_id": cid,
+                "reason": resolved,
+                "source": "owner_photo",
+                "crop_path": str(dest),
+                "screenshot": str(archive),
+                "caption": (caption or "")[:120],
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        payload["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        labels_path.parent.mkdir(parents=True, exist_ok=True)
+        labels_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     try:
         write_manifest()
@@ -167,6 +172,7 @@ def ingest_owner_banner_photo(
         "reason": resolved,
         "crop": str(dest),
         "check_id": cid,
+        "duplicate": bool(duplicate or already_labeled),
         "positive_crops": pos_n,
         "negative_crops": neg_n,
     }

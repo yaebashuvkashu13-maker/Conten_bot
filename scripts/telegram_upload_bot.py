@@ -1703,8 +1703,16 @@ def process_banner_train_photo(chat_id: str, message: dict) -> None:
         return
     state = _bot_state()
     n_key = f'banner_ingest_n_{chat_id}'
+    new_key = f'banner_ingest_new_{chat_id}'
+    dup_key = f'banner_ingest_dup_{chat_id}'
     n = int(state.get(n_key, 0)) + 1
     state[n_key] = n
+    if result.get('duplicate'):
+        state[dup_key] = int(state.get(dup_key, 0)) + 1
+        mark = '↩️ уже был'
+    else:
+        state[new_key] = int(state.get(new_key, 0)) + 1
+        mark = '🆕 новый'
     save_state(state)
     # Album spam: confirm every 5th photo (and first).
     media_group = message.get('media_group_id')
@@ -1712,10 +1720,10 @@ def process_banner_train_photo(chat_id: str, message: dict) -> None:
         return
     send_message(
         chat_id,
-        f'✅ Баннер в банк: {result["reason"]} (#{n})\n'
-        f'positive={result["positive_crops"]} negative={result["negative_crops"]}\n'
-        f'Ещё фото или /banner_done\n'
-        f'Подпись: double / savage / maniac / ui / no_banner (пусто = ui)',
+        f'{mark}: {result["reason"]} (#{n})\n'
+        f'банк +{result["positive_crops"]} / −{result["negative_crops"]}\n'
+        f'сессия: новых={state.get(new_key, 0)} дублей={state.get(dup_key, 0)}\n'
+        f'Ещё фото или /banner_done',
     )
 
 
@@ -3011,6 +3019,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'banner', 'description': 'Обучение kill-баннера (владелец)'},
+        {'command': 'banner_status', 'description': 'Сколько баннер-скринов в банке'},
         {'command': 'banner_done', 'description': 'Закончить приём баннер-скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
         {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
@@ -3134,16 +3143,53 @@ def handle_message(message: dict):
             send_message(chat_id, 'Команда /banner только для владельца.')
             return
         set_banner_mode(chat_id, True)
+        state = _bot_state()
+        for k in (f'banner_ingest_n_{chat_id}', f'banner_ingest_new_{chat_id}', f'banner_ingest_dup_{chat_id}'):
+            state.pop(k, None)
+        save_state(state)
         pos_n, neg_n = count_banner_owner_crops()
+        owner_n = len(
+            list(
+                (
+                    Path(
+                        os.environ.get(
+                            'MLBB_BANNER_REF_ROOT',
+                            str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+                        )
+                    )
+                    / 'owner_cal'
+                ).rglob('ownerphoto_*.png')
+            )
+        )
         send_message(
             chat_id,
             'Режим обучения баннера включён на 2 часа.\n'
-            'Пришли скрины kill-баннера (можно просто интерфейс/галерею баннера).\n'
-            'Без подписи = эталон вида баннера (own_kill_good).\n'
-            'Если на скрине текст: double | savage | maniac | legendary\n'
-            'Пустой HUD без баннера: no_banner\n'
-            'Завершить: /banner_done\n'
-            f'Сейчас в банке: +{pos_n} / −{neg_n} crops.',
+            f'Уже в банке твоих скринов: {owner_n} (всего crops +{pos_n}/−{neg_n}).\n'
+            'Можно кинуть все 70 снова — дубликаты пометит «уже был», новые добавит.\n'
+            'Без подписи = эталон вида баннера.\n'
+            'Статус без загрузки: /banner_status\n'
+            'Завершить: /banner_done',
+        )
+        return
+    if cmd in ('/banner_status', '/banner_stat', '/баннер_статус'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        pos_n, neg_n = count_banner_owner_crops()
+        root = Path(
+            os.environ.get(
+                'MLBB_BANNER_REF_ROOT',
+                str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+            )
+        )
+        owner_n = len(list((root / 'owner_cal').rglob('ownerphoto_*.png'))) if (root / 'owner_cal').exists() else 0
+        send_message(
+            chat_id,
+            f'Баннер-банк:\n'
+            f'• твоих скринов (ownerphoto): {owner_n}\n'
+            f'• всего positive crops: {pos_n}\n'
+            f'• negative crops: {neg_n}\n'
+            f'Режим /banner сейчас: {"вкл" if is_banner_mode(chat_id) else "выкл"}',
         )
         return
     if cmd in ('/banner_done', '/banner_stop', '/баннер_стоп'):
@@ -3152,11 +3198,18 @@ def handle_message(message: dict):
             return
         was = is_banner_mode(chat_id)
         set_banner_mode(chat_id, False)
+        state = _bot_state()
+        n = int(state.pop(f'banner_ingest_n_{chat_id}', 0) or 0)
+        new_n = int(state.pop(f'banner_ingest_new_{chat_id}', 0) or 0)
+        dup_n = int(state.pop(f'banner_ingest_dup_{chat_id}', 0) or 0)
+        save_state(state)
         pos_n, neg_n = count_banner_owner_crops()
         send_message(
             chat_id,
-            f'Режим /banner выключен. Банк: +{pos_n} / −{neg_n}.\n'
-            + ('Скрины приняты в обучение.' if was else ''),
+            f'Режим /banner выключен.\n'
+            f'За сессию: обработано {n} (новых {new_n}, дублей {dup_n}).\n'
+            f'Банк: +{pos_n} / −{neg_n}.\n'
+            + ('Ок.' if was or n else ''),
         )
         return
     if cmd in ('/ad', '/реклама', '/ads'):
