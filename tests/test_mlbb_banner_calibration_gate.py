@@ -32,7 +32,40 @@ def test_gate_rejects_negative_match(tmp_path: Path, monkeypatch) -> None:
         "mlbb_banner_ref_match.match_negative_banner_reference",
         return_value=(0.55, "no_banner", "/fake.png"),
     ), patch("mlbb_banner_ref_match.match_positive_owner_reference", return_value=None):
-        decision, reason = check_banner_frame(frame, tier=3)
+        # No OCR tier — soft no_banner still rejects.
+        decision, reason = check_banner_frame(frame, tier=0)
+    assert decision == "reject"
+    assert "no_banner" in reason
+
+
+def test_ocr_tier_softens_weak_no_banner(tmp_path: Path, monkeypatch) -> None:
+    prof = tmp_path / "banner_calibration_profile.json"
+    prof.write_text(json.dumps({"labeled": 75, "by_reason": {"no_banner": 75}}))
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90")
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    with patch(
+        "mlbb_banner_ref_match.match_negative_banner_reference",
+        return_value=(0.78, "no_banner", "/fake.png"),
+    ), patch("mlbb_banner_ref_match.match_positive_owner_reference", return_value=None):
+        decision, reason = check_banner_frame(frame, tier=5)
+    assert decision == "neutral"
+    assert "weak_no_banner" in reason
+
+
+def test_strong_no_banner_still_rejects_ocr(tmp_path: Path, monkeypatch) -> None:
+    prof = tmp_path / "banner_calibration_profile.json"
+    prof.write_text(json.dumps({"labeled": 75, "by_reason": {"no_banner": 75}}))
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90")
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    with patch(
+        "mlbb_banner_ref_match.match_negative_banner_reference",
+        return_value=(0.95, "no_banner", "/fake.png"),
+    ), patch("mlbb_banner_ref_match.match_positive_owner_reference", return_value=None):
+        decision, reason = check_banner_frame(frame, tier=5)
     assert decision == "reject"
     assert "no_banner" in reason
 
@@ -103,6 +136,7 @@ def test_strict_send_rejects_neutral_without_visual_proof(tmp_path: Path, monkey
     monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
     monkeypatch.setenv("MLBB_BANNER_SEND_STRICT", "1")
+    monkeypatch.setenv("MLBB_BANNER_OCR_TRUST_ON_NEUTRAL", "0")
 
     from mlbb_banner_calibration_gate import check_banner_frame_passes
 
@@ -117,9 +151,36 @@ def test_strict_send_rejects_neutral_without_visual_proof(tmp_path: Path, monkey
         "mlbb_banner_ref_match.match_banner_reference",
         return_value=None,
     ):
-        ok, reason = check_banner_frame_passes(frame, tier=2)
+        ok, reason = check_banner_frame_passes(frame, tier=0)
     assert not ok
     assert "no_banner_visual_proof" in reason
+
+
+def test_ocr_trust_allows_neutral_high_tier(tmp_path: Path, monkeypatch) -> None:
+    prof = tmp_path / "banner_calibration_profile.json"
+    prof.write_text(json.dumps({"labeled": 75, "by_reason": {"no_banner": 75}}))
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_OWNER_GATE", "1")
+    monkeypatch.setenv("MLBB_BANNER_SEND_STRICT", "1")
+    monkeypatch.setenv("MLBB_BANNER_OCR_TRUST_ON_NEUTRAL", "1")
+    monkeypatch.setenv("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90")
+
+    from mlbb_banner_calibration_gate import check_banner_frame_passes
+
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    with patch(
+        "mlbb_banner_ref_match.match_negative_banner_reference",
+        return_value=(0.75, "no_banner", "/fake.png"),
+    ), patch(
+        "mlbb_banner_ref_match.match_positive_owner_reference",
+        return_value=None,
+    ), patch(
+        "mlbb_banner_ref_match.match_banner_reference",
+        return_value=None,
+    ):
+        ok, reason = check_banner_frame_passes(frame, tier=5)
+    assert ok
+    assert "ocr_trust" in reason or "weak_no_banner" in reason or reason.startswith("ocr_")
 
 
 def test_write_profile_from_stats(tmp_path: Path, monkeypatch) -> None:

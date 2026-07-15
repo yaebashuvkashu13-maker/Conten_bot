@@ -115,20 +115,24 @@ def test_verified_high_tier_banner_gets_narrow_hook_relief(
     monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
     monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
     monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.05")
-    monkeypatch.setenv("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.80")
+    monkeypatch.setenv("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.55")
     clear_patterns_cache()
-    verified = {
-        "hook_score": 0.048,
+    savage = {
+        "hook_score": 0.030,
         "fight_dur": 32,
         "kill_banner": "savage",
         "kill_banner_tier": 5,
-        "kill_banner_source": "ocr_verified",
+        "kill_banner_source": "ocr",
     }
-    assert feedback_reject_row(verified)[0] is False
-    unverified = {**verified, "kill_banner_source": "ocr"}
-    rejected, reason = feedback_reject_row(unverified)
+    assert feedback_reject_row(savage)[0] is False
+    dead = {**savage, "hook_score": 0.010}
+    rejected, reason = feedback_reject_row(dead)
     assert rejected is True
     assert "banner_low_hook" in reason
+    no_tier = {"hook_score": 0.030, "fight_dur": 32, "kill_banner": "double", "kill_banner_tier": 0}
+    rejected2, reason2 = feedback_reject_row(no_tier)
+    assert rejected2 is True
+    assert "banner_low_hook" in reason2
 
 
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:

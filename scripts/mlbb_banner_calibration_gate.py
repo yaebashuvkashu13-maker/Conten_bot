@@ -46,6 +46,11 @@ def send_strict_enabled() -> bool:
     return os.environ.get("MLBB_BANNER_SEND_STRICT", "1") == "1"
 
 
+def _ocr_no_banner_min_sim() -> float:
+    """OCR already sees kill text — histogram no_banner crops often match empty HUD around it."""
+    return float(os.environ.get("MLBB_BANNER_OCR_NO_BANNER_MIN_SIM", "0.90"))
+
+
 def _banner_visual_proof(frame, *, tier: int = 0) -> tuple[bool, str]:
     """Positive owner crop or wiki/ref bank match — proves kill-banner HUD visible."""
     try:
@@ -59,10 +64,11 @@ def _banner_visual_proof(frame, *, tier: int = 0) -> tuple[bool, str]:
         score, reason, _path = pos
         return True, f"owner_pos:{reason}:{score:.3f}"
 
-    ref = match_banner_reference(frame)
+    # Ignore no_banner short-circuit: OCR already named a banner; we need wiki/ref proof.
+    ref = match_banner_reference(frame, ignore_negative=True)
     if ref is not None:
         score, name, source, ref_tier = ref
-        need = max(int(tier), _min_tier())
+        need = min(int(tier) if tier else _min_tier(), _min_tier())
         if ref_tier >= need:
             return True, f"ref_match:{name}@{source}:{score:.3f}"
     return False, "no_banner_visual_proof"
@@ -96,6 +102,10 @@ def check_banner_frame(frame, *, tier: int = 0) -> tuple[str, str]:
         pos is None or float(neg[0]) >= float(pos[0]) + margin
     ):
         score, reason, _path = neg
+        # no_banner crops match generic HUD; when OCR already found tier>=2, require near-exact match
+        if str(reason) == "no_banner" and int(tier or 0) >= 2:
+            if float(score) < _ocr_no_banner_min_sim():
+                return "neutral", f"weak_no_banner:{score:.3f}<{_ocr_no_banner_min_sim():.2f}"
         return "reject", f"owner_neg:{reason}:{score:.3f}"
     if pos is not None and neg is not None:
         return (
@@ -112,12 +122,24 @@ def check_banner_frame(frame, *, tier: int = 0) -> tuple[str, str]:
 def check_banner_frame_passes(frame, *, tier: int = 0) -> tuple[bool, str]:
     decision, reason = check_banner_frame(frame, tier=tier)
     if decision == "reject":
+        # Soft recovery: OCR-named banner rejected only by soft no_banner → try wiki/pos proof
+        if (
+            int(tier or 0) >= 2
+            and str(reason).startswith("owner_neg:no_banner:")
+            and send_strict_enabled()
+        ):
+            ok, proof = _banner_visual_proof(frame, tier=tier)
+            if ok:
+                return True, proof
         return False, reason
     if decision == "pass":
         return True, reason or "owner_gate_ok"
     if send_strict_enabled():
         ok, proof = _banner_visual_proof(frame, tier=tier)
         if not ok:
+            # OCR + weak/no_banner → allow OCR trust when wiki bank has no match but OCR tier is high
+            if int(tier or 0) >= 2 and os.environ.get("MLBB_BANNER_OCR_TRUST_ON_NEUTRAL", "1") == "1":
+                return True, f"ocr_trust_tier={tier}:{reason or 'neutral'}"
             return False, proof
         return True, proof
     return True, reason or "owner_gate_ok"

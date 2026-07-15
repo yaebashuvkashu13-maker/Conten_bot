@@ -264,15 +264,20 @@ def _row_allowed_for_generic_match(source: str) -> bool:
     return False
 
 
-def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
+def match_banner_reference(
+    frame,
+    *,
+    ignore_negative: bool = False,
+) -> tuple[float, str, str, int] | None:
     """
     Return (score, ref_name, source, tier) for best reference match, or None.
     """
     if not _ref_match_enabled():
         return None
-    neg = match_negative_banner_reference(frame)
-    if neg is not None:
-        return None
+    if not ignore_negative:
+        neg = match_negative_banner_reference(frame)
+        if neg is not None:
+            return None
     patch = extract_banner_zone_patch(frame)
     if patch is None:
         return None

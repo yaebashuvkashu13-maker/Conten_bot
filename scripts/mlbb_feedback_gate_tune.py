@@ -92,17 +92,15 @@ def _banner_clip(row: dict) -> bool:
 def banner_min_hook(row: dict | None = None) -> float:
     base = float(os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05"))
     row = row or {}
-    source = str(row.get("kill_banner_source") or "")
-    if not source.endswith("_verified"):
-        return base
     try:
         tier = int(row.get("kill_banner_tier") or 0)
     except (TypeError, ValueError):
         tier = 0
+    # Any OCR/visual kill-banner tier — soften hook; empty-HUD junk usually has no tier.
     if tier >= 4:
-        return base * float(os.environ.get("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.80"))
-    if tier >= 3:
-        return base * float(os.environ.get("MLBB_BANNER_TRIPLE_HOOK_MULT", "0.90"))
+        return base * float(os.environ.get("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.55"))
+    if tier >= 2:
+        return base * float(os.environ.get("MLBB_BANNER_DOUBLE_HOOK_MULT", "0.70"))
     return base
 
 
@@ -125,6 +123,13 @@ def feedback_reject_row(row: dict) -> tuple[bool, str]:
             return True, f"banner_low_hook:{hook:.3f}<{min_hook:.3f}"
         if min_fight > 0 and fight_dur > 0 and fight_dur < min_fight:
             return True, f"banner_short_fight:{fight_dur:.1f}<{min_fight:.1f}"
+        # Double+ banners already cleared banner floors — skip secondary mined hook reject.
+        try:
+            tier_i = int(row.get("kill_banner_tier") or 0)
+        except (TypeError, ValueError):
+            tier_i = 0
+        if tier_i >= 2:
+            return False, ""
         hook_mult = float(os.environ.get("MLBB_FEEDBACK_BANNER_HOOK_MULT", "0.55"))
         fight_mult = float(os.environ.get("MLBB_FEEDBACK_BANNER_FIGHT_MULT", "0.55"))
     else:
