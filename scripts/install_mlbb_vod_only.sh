@@ -250,6 +250,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_positive_fast.py" \
   "$REPO/scripts/mlbb_banner_calibration_scan_send.py" \
   "$REPO/scripts/mlbb_banner_calibration_quick_send.py" \
+  "$REPO/scripts/mlbb_banner_owner_photo_ingest.py" \
   "$REPO/scripts/mlbb_banner_positive_scan.sh" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
   "$REPO/scripts/mlbb_feedback_gate_tune.py" \
@@ -402,12 +403,16 @@ crontab -l 2>/dev/null | grep -v "$MARK" \
   | grep -v 'mlbb_youtube_shorts_ingest.sh' \
   | grep -v 'mlbb-vod-segment-cron' \
   | grep -v 'mlbb_vod_segment_feed.sh' \
+  | grep -v 'mlbb_banner_positive_scan' \
+  | grep -v 'banner-pos-scan' \
   >"$TMP" || true
 echo "*/3 * * * * $BIN/mlbb_continuous_worker_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_watchdog.log 2>&1 $MARK watchdog" >>"$TMP"
 echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_vod_health.log 2>&1 $MARK health" >>"$TMP"
 echo "25 3 * * * /usr/local/bin/mlbb_learn_apply.sh >>/root/data/mlbb/logs/mlbb_learn_apply.log 2>&1 $MARK daily-learn" >>"$TMP"
 echo "40 3 * * * /usr/local/bin/vod_learn_apply.sh all >>/root/data/mlbb/logs/vod_learn_apply.log 2>&1 $MARK daily-all-game-learn" >>"$TMP"
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
+# High-volume OCR Double+ screenshots for owner labeling (not full VOD video cycles).
+echo "*/20 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh $MARK banner-pos-scan" >>"$TMP"
 crontab "$TMP"
 rm -f "$TMP"
 

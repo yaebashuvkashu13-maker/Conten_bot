@@ -49,6 +49,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
+BANNER_MODE_TIMEOUT_SEC = 7200
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
 BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
@@ -1563,6 +1564,7 @@ def load_state() -> dict:
             'ad_mode_until': {},
             'reject_mode_until': {},
             'wm_mode_until': {},
+            'banner_mode_until': {},
             'standoff_exemplar_mode_until': {},
             'vk_mlbb_upload_mode_until': {},
         }
@@ -1574,12 +1576,14 @@ def load_state() -> dict:
             'ad_mode_until': {},
             'reject_mode_until': {},
             'wm_mode_until': {},
+            'banner_mode_until': {},
             'standoff_exemplar_mode_until': {},
             'vk_mlbb_upload_mode_until': {},
         }
     state.setdefault('ad_mode_until', {})
     state.setdefault('reject_mode_until', {})
     state.setdefault('wm_mode_until', {})
+    state.setdefault('banner_mode_until', {})
     state.setdefault('standoff_exemplar_mode_until', {})
     state.setdefault('vk_mlbb_upload_mode_until', {})
     return state
@@ -1632,6 +1636,78 @@ def set_reject_mode(chat_id: str, enabled: bool):
     else:
         state['reject_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_banner_mode(chat_id: str) -> bool:
+    until = _bot_state().get('banner_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['banner_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_banner_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('banner_mode_until', {})
+    if enabled:
+        state['banner_mode_until'][chat_id] = time.time() + BANNER_MODE_TIMEOUT_SEC
+    else:
+        state['banner_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def count_banner_owner_crops() -> tuple[int, int]:
+    root = Path(
+        os.environ.get(
+            'MLBB_BANNER_REF_ROOT',
+            str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+        )
+    )
+    pos = len(list((root / 'owner_cal' / 'positive').rglob('*.png'))) if (root / 'owner_cal' / 'positive').exists() else 0
+    neg = len(list((root / 'owner_cal' / 'negative').rglob('*.png'))) if (root / 'owner_cal' / 'negative').exists() else 0
+    return pos, neg
+
+
+def process_banner_train_photo(chat_id: str, message: dict) -> None:
+    """Owner screenshot → crop kill-banner zone into owner_cal reference bank."""
+    photo = extract_photo(message)
+    if not photo:
+        send_message(chat_id, 'Не вижу фото.')
+        return
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    inbox = Path(os.environ.get('MLBB_DATA_ROOT', '/root/data/mlbb')) / 'banner_owner_photos'
+    inbox.mkdir(parents=True, exist_ok=True)
+    dest = inbox / f'tg_{chat_id}_{stamp}_{photo["file_unique_id"]}{photo["ext"]}'
+    file_url = get_file_url(photo['file_id'])
+    try:
+        import urllib.request
+
+        urllib.request.urlretrieve(file_url, dest)
+    except Exception as exc:
+        send_message(chat_id, f'Не скачал фото: {exc}')
+        return
+    caption = safe_label(message.get('caption'))
+    try:
+        from mlbb_banner_owner_photo_ingest import ingest_owner_banner_photo
+
+        result = ingest_owner_banner_photo(dest, caption=caption)
+    except Exception as exc:
+        logging.exception('banner photo ingest failed')
+        send_message(chat_id, f'Ошибка разбора баннера: {exc}')
+        return
+    if not result.get('ok'):
+        send_message(chat_id, f'Не принял скрин: {result.get("error")}')
+        return
+    send_message(
+        chat_id,
+        f'✅ Баннер в банк: {result["reason"]}\n'
+        f'positive={result["positive_crops"]} negative={result["negative_crops"]}\n'
+        f'Ещё фото или /banner_done\n'
+        f'Подпись к фото: double / savage / maniac / no_banner',
+    )
 
 
 def is_wm_mode(chat_id: str) -> bool:
@@ -2990,8 +3066,38 @@ def handle_message(message: dict):
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
                 'YouTube / Shorts: пришли ссылку одной строкой (или /yt <url>) → /make.\n'
                 'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
-                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
+                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.\n'
+                'Баннер Double+: /banner → скрины с подписью → /banner_done.',
             )
+        return
+    if cmd in ('/banner', '/баннер', '/banner_train'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /banner только для владельца.')
+            return
+        set_banner_mode(chat_id, True)
+        pos_n, neg_n = count_banner_owner_crops()
+        send_message(
+            chat_id,
+            'Режим обучения баннера включён на 2 часа.\n'
+            'Пришли скрины из игры с kill-баннером (Double / Triple / Savage / Maniac).\n'
+            'В подписи к фото напиши: double | savage | maniac | no_banner\n'
+            'Без подписи = double (positive).\n'
+            'Завершить: /banner_done\n'
+            f'Сейчас в банке: +{pos_n} / −{neg_n} crops.',
+        )
+        return
+    if cmd in ('/banner_done', '/banner_stop', '/баннер_стоп'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /banner_done только для владельца.')
+            return
+        was = is_banner_mode(chat_id)
+        set_banner_mode(chat_id, False)
+        pos_n, neg_n = count_banner_owner_crops()
+        send_message(
+            chat_id,
+            f'Режим /banner выключен. Банк: +{pos_n} / −{neg_n}.\n'
+            + ('Скрины приняты в обучение.' if was else ''),
+        )
         return
     if cmd in ('/ad', '/реклама', '/ads'):
         if not is_owner(chat_id):
@@ -3474,6 +3580,9 @@ def handle_message(message: dict):
     photo = extract_photo(message)
     if photo:
         cap_cmd = command_token(safe_label(message.get('caption')))
+        if is_banner_mode(chat_id):
+            process_banner_train_photo(chat_id, message)
+            return
         if is_wm_mode(chat_id) or (
             is_owner(chat_id) and cap_cmd in ('/wm_test', '/test_wm', '/wm')
         ):
@@ -3505,8 +3614,7 @@ def handle_message(message: dict):
         if not limited:
             send_message(
                 chat_id,
-                'Чтобы отправить скрины рекламы для обучения бота, сначала напиши /ad (или /реклама), '
-                'потом пришли фото. Завершить — /ad_done.',
+                'Скрины: /banner (kill-баннер) · /ad (реклама) · /bad (плохие кадры) · /wm (водяной знак).',
             )
         return
 
