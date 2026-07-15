@@ -251,6 +251,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_scan_send.py" \
   "$REPO/scripts/mlbb_banner_calibration_quick_send.py" \
   "$REPO/scripts/mlbb_banner_calibration_flood.py" \
+  "$REPO/scripts/mlbb_banner_local_fast_teach.sh" \
   "$REPO/scripts/mlbb_banner_owner_photo_ingest.py" \
   "$REPO/scripts/mlbb_banner_positive_scan.sh" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
@@ -412,6 +413,7 @@ echo "*/5 * * * * $BIN/mlbb_vod_health_watchdog.sh >>/root/data/mlbb/logs/mlbb_v
 echo "25 3 * * * /usr/local/bin/mlbb_learn_apply.sh >>/root/data/mlbb/logs/mlbb_learn_apply.log 2>&1 $MARK daily-learn" >>"$TMP"
 echo "40 3 * * * /usr/local/bin/vod_learn_apply.sh all >>/root/data/mlbb/logs/vod_learn_apply.log 2>&1 $MARK daily-all-game-learn" >>"$TMP"
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
+install -m 755 "$REPO/scripts/mlbb_banner_local_fast_teach.sh" /usr/local/bin/mlbb_banner_local_fast_teach.sh 2>/dev/null || true
 # High-volume OCR Double+ screenshots for owner labeling (not full VOD video cycles).
 echo "*/20 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh $MARK banner-pos-scan" >>"$TMP"
 crontab "$TMP"

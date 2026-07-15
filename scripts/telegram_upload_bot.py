@@ -3203,13 +3203,12 @@ def handle_message(message: dict):
             limit = max(5, min(60, int(parts[1])))
         send_message(
             chat_id,
-            f'Запускаю поток ~{limit} панелей баннера на разметку.\n'
+            f'Запускаю поток ~{limit} панелей из УЖЕ скачанных VOD (без новых закачек).\n'
             'На каждой жми кнопку:\n'
             '• Double/Triple/Savage — если kill-баннер свой\n'
             '• ❌ Нет банера — только пустой HUD\n'
             '• 👿 Kill противника / 🦸 не тот герой — если видно\n'
-            'Параллельно: на готовых роликах 👍/👎.\n'
-            'Ещё панels: снова /teach',
+            'Ещё панели: снова /teach или /teach 40',
         )
 
         def _teach_worker(n: int = limit) -> None:
@@ -3223,28 +3222,42 @@ def handle_message(message: dict):
                     '/root/content_bot_ml/data/mlbb_kill_banners',
                 ),
                 'PYTHONPATH': '/usr/local/bin:/root/content_bot_ml/scripts',
+                'MLBB_VOD_AUTO_DOWNLOAD': '0',
                 'MLBB_BANNER_TEACH_FLOOD': '1',
                 'MLBB_BANNER_SEND_STRICT': '0',
                 'MLBB_BANNER_NEG_REF_MATCH': '0',
                 'MLBB_BANNER_POS_POV_MATCH': '0',
+                'MLBB_BANNER_CALIB_TARGET': '500',
+                'MLBB_BANNER_FLOOD_EXTRA': '80',
                 'MLBB_BANNER_FLOOD_MAX': str(n),
-                'MLBB_BANNER_FLOOD_SEGMENT_LIMIT': str(max(n, 25)),
-                'MLBB_BANNER_FLOOD_SCAN_LIMIT': str(max(n, 20)),
-                'MLBB_BANNER_FLOOD_VODS': '30',
-                'MLBB_BANNER_FLOOD_SAMPLES': '12',
-                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.25',
+                'MLBB_BANNER_FLOOD_SEGMENT_LIMIT': str(max(n, 40)),
+                'MLBB_BANNER_FLOOD_SCAN_LIMIT': str(max(n, 40)),
+                'MLBB_BANNER_FLOOD_VODS': '60',
+                'MLBB_BANNER_FLOOD_SAMPLES': '14',
+                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.2',
             }
-            script = Path('/usr/local/bin/mlbb_banner_calibration_flood.py')
-            if not script.exists():
-                script = Path('/root/content_bot_ml/scripts/mlbb_banner_calibration_flood.py')
+            script = Path('/usr/local/bin/mlbb_banner_local_fast_teach.sh')
+            flood_py = Path('/usr/local/bin/mlbb_banner_calibration_flood.py')
+            if not flood_py.exists():
+                flood_py = Path('/root/content_bot_ml/scripts/mlbb_banner_calibration_flood.py')
             try:
-                proc = subprocess.run(
-                    ['python3', str(script)],
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=1800,
-                )
+                if script.exists():
+                    env['MLBB_BANNER_FLOOD_MAX'] = str(n)
+                    proc = subprocess.run(
+                        ['bash', str(script)],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                    )
+                else:
+                    proc = subprocess.run(
+                        ['python3', str(flood_py)],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                    )
                 tail = (proc.stdout or proc.stderr or '')[-500:]
                 send_message(chat_id, f'/teach готово.\n{tail or f"exit={proc.returncode}"}')
             except Exception as exc:
