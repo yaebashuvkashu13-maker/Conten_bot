@@ -49,6 +49,7 @@ from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shoote
 from vod_scan_state import (
     max_peak_tries,
     minimal_pool_from_entry,
+    note_zero_send_session,
     peak_values_from_entry,
     peaks_from_pool,
     pool_cache_valid,
@@ -454,7 +455,14 @@ def _scan_vod(
         pool = minimal_pool_from_entry(entry)
         log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
     else:
-        pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+        from highlight_scorer import clear_panns_score_cache
+
+        clear_panns_score_cache()
+        os.environ["HIGHLIGHT_BUILD_POOL"] = "1"
+        try:
+            pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+        finally:
+            os.environ.pop("HIGHLIGHT_BUILD_POOL", None)
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
@@ -688,6 +696,18 @@ def _scan_vod_with_adaptive(
 
     new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
+    entry = _vod_registry_entry(state, vod) or entry
+    if entry is not None:
+        if sent == 0:
+            sessions = note_zero_send_session(entry)
+            log.info("zero_send_sessions=%s vod=%s", sessions, vod.name)
+            if not entry.get("last_pool_peaks"):
+                entry.setdefault("reject_reason", "no_combat_peaks")
+            elif not entry.get("reject_reason"):
+                entry["reject_reason"] = "presend_rejected_all_peaks"
+        else:
+            entry["zero_send_sessions"] = 0
+            entry.pop("reject_reason", None)
     _save_state(game, state)
 
     if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":

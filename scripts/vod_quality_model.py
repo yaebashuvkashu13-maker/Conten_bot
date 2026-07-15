@@ -204,10 +204,41 @@ def quality_gate(game: str, row: dict) -> tuple[bool, str, float]:
     game = game.strip().lower()
     if os.environ.get(f"VOD_{game.upper()}_QUALITY_MODEL", "1") != "1":
         return True, "quality_model_disabled", 0.0
+
+    def _combat_bypass() -> tuple[bool, str, float] | None:
+        """Mirror MLBB banner bypass — strong combat signal should not stall on model."""
+        metrics = row.get("presend_metrics") or row.get("highlight_metrics") or {}
+
+        def value(name: str, default: float = 0.0) -> float:
+            raw = row.get(name)
+            if raw in (None, ""):
+                raw = metrics.get(name, default)
+            try:
+                return float(raw or default)
+            except (TypeError, ValueError):
+                return default
+
+        gun = max(
+            value("panns_gun_max"),
+            value("panns_gunshot"),
+            value("panns_machine_gun"),
+        )
+        killfeed = max(value("killfeed_density"), value("killfeed_bonus"))
+        bypass_gun = float(os.environ.get("VOD_QUALITY_COMBAT_BYPASS_GUN", "0.35"))
+        bypass_feed = float(os.environ.get("VOD_QUALITY_COMBAT_BYPASS_KILLFEED", "0.25"))
+        if gun >= bypass_gun or killfeed >= bypass_feed:
+            return True, f"quality_model_combat_bypass gun={gun:.3f} feed={killfeed:.3f}", gun
+        if row.get("kill_banner") or int(row.get("kill_banner_tier") or 0) >= 1:
+            return True, "quality_model_kill_banner_bypass", gun
+        return None
+
     model, metadata = _load_model(game)
     if model is None:
         raw_required = os.environ.get(f"VOD_{game.upper()}_QUALITY_MODEL_REQUIRED")
         required = training_ready(game) if raw_required is None else raw_required == "1"
+        bypass = _combat_bypass()
+        if bypass is not None:
+            return bypass
         return (not required), "quality_model_missing", 0.0
     probability = float(model.predict_proba(np.asarray([quality_features(row)]))[:, 1][0])
     threshold = float(
@@ -217,6 +248,10 @@ def quality_gate(game: str, row: dict) -> tuple[bool, str, float]:
         )
     )
     if probability < threshold:
+        bypass = _combat_bypass()
+        if bypass is not None and probability >= threshold * 0.55:
+            ok, reason, score = bypass
+            return ok, f"{reason};low={probability:.3f}", score
         return False, f"quality_model_low={probability:.3f}<{threshold:.3f}", probability
     return True, f"quality_model_pass={probability:.3f}>={threshold:.3f}", probability
 
