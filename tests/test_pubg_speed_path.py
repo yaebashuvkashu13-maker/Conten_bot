@@ -73,3 +73,23 @@ def test_kill_discover_skipped_when_seeds(monkeypatch, tmp_path: Path) -> None:
                             out = hs.discover_highlight_candidates(vod, "pubg")
     discover.assert_not_called()
     assert out
+
+
+def test_seed_fast_stage1_skips_analyze(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "240,480")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_MIN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
+    vod = tmp_path / "yt_seed.mp4"
+    vod.write_bytes(b"")
+    with patch.object(hs, "_heatmap_stage0_starts", return_value=[]):
+        with patch.object(hs, "owner_anchors_enabled", return_value=False):
+            with patch.object(hs, "_owner_anchor_starts", return_value=[]):
+                with patch.object(hs, "_owner_anchor_stage1_starts", return_value=[]):
+                    with patch.object(hs, "_filter_bad_label_starts", side_effect=lambda *_a, **_k: list(_a[2])):
+                        with patch("vod_analysis_cache.analyze_video_cached") as analyze:
+                            starts = hs.stage1_candidates(vod, "pubg")
+    analyze.assert_not_called()
+    assert 240.0 in starts
+    assert len(starts) > 2

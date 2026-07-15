@@ -1453,6 +1453,35 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         except Exception as exc:
             log.warning("intelliclip stage1 failed: %s", exc)
 
+    # Fast path: enough gun seeds already → skip cold analyze_video (can take minutes
+    # on long Metro VODs) and only expand neighborhood around seeds.
+    min_seeds_fast = max(1, int(os.environ.get("SHOOTER_VOD_SEED_FAST_MIN", "2")))
+    if (
+        profile in SHOOTER_PROFILES
+        and len(seed_starts) >= min_seeds_fast
+        and os.environ.get("SHOOTER_VOD_SEED_FAST_STAGE1", "1") == "1"
+    ):
+        for seed in list(seed_starts):
+            for off in (-90, -60, -30, 0, 30, 60, 90):
+                s = round(seed + off, 1)
+                if s >= 60:
+                    starts.add(s)
+        ranked = sorted(starts)
+        ranked = _filter_bad_label_starts(video_path, profile, ranked)
+        seed_set = set(seed_starts)
+        head = [s for s in ranked if s in seed_set]
+        for s in seed_starts:
+            if s not in head:
+                head.append(s)
+        tail = [s for s in ranked if s not in seed_set]
+        out = (head + tail)[:max_stage1]
+        log.info(
+            "highlight seed-fast stage1 %s: %s windows (skipped analyze_video)",
+            video_path.name,
+            len(out),
+        )
+        return out
+
     from vod_analysis_cache import analyze_video_cached
 
     analysis = analyze_video_cached(video_path)
