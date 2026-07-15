@@ -12,7 +12,7 @@ import logging
 import math
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
@@ -1533,13 +1533,31 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
 
 
 def _parallel_workers() -> int:
-    """CPU workers for parallel PANNs/CLIP window scoring (one thread per core)."""
+    """CPU workers for parallel PANNs/CLIP window scoring.
+
+    Hard-cap at 6 even if env is higher — prevents ffmpeg/seek thrashing hangs
+    on the 8-core VPS while still using most cores.
+    """
+    cpus = os.cpu_count() or 4
+    hard_cap = min(6, max(2, cpus - 1))
     raw = (os.environ.get("HIGHLIGHT_PARALLEL_WORKERS") or "").strip()
     if raw:
+        return max(1, min(hard_cap, int(raw)))
+    # ~75% of cores — leave headroom for ffmpeg/OS.
+    return max(2, min(hard_cap, int(cpus * 0.75)))
+
+
+def _shooter_score_early_stop(profile: str) -> int:
+    """Stop scoring after N PASS windows — pending already ranked by gun strength."""
+    if normalize_profile(profile) not in SHOOTER_PROFILES:
+        return 0
+    raw = (os.environ.get("SHOOTER_VOD_SCORE_EARLY_STOP") or "").strip()
+    if raw == "0":
+        return 0
+    if raw:
         return max(1, int(raw))
-    cpus = os.cpu_count() or 4
-    # ~75% of cores — leave headroom for ffmpeg/OS on 8-core VPS.
-    return max(2, min(6, cpus - 2, int(cpus * 0.75)))
+    # Default: 2 strong combat PASSes are enough to pick a send without scoring all 8.
+    return 2
 
 
 def _pann_probe_limit(profile: str) -> int:
@@ -1579,6 +1597,10 @@ def stage1_panns_prefilter(
 
     # Always keep pinned seeds/kill anchors; only probe the rest up to the cap.
     probe_budget = max(0, max_pann - len(pinned_list))
+    if pinned_list and os.environ.get("SHOOTER_VOD_PINNED_LIGHT_PROBE", "1") == "1":
+        # With fast-probe seeds, don't re-score 16–24 quiet neighbors.
+        light = max(4, int(os.environ.get("SHOOTER_VOD_MAX_PANN_PROBE_WITH_SEEDS", "8")))
+        probe_budget = min(probe_budget, light)
     probe_starts = rest[:probe_budget]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
@@ -1896,16 +1918,32 @@ def discover_highlight_candidates(
         banner_by_anchor = {}
         # Fast-probe seeds must stay pinned through PANNs prefilter + score_cap.
         seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+        seed_peaks: list[float] = []
         if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
             for part in seed_raw.split(","):
                 part = part.strip()
                 if not part:
                     continue
                 try:
-                    banner_pin.add(round(float(part), 1))
+                    peak = round(float(part), 1)
+                    banner_pin.add(peak)
+                    seed_peaks.append(peak)
                 except ValueError:
                     pass
-        if os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") == "1":
+        run_kill_discover = os.environ.get("PUBG_VOD_KILL_DISCOVER", "1") == "1"
+        # Seeds already came from PANNs gun hits — skip slow OCR discover (often hits=0).
+        if (
+            run_kill_discover
+            and seed_peaks
+            and os.environ.get("PUBG_KILL_DISCOVER_SKIP_IF_SEEDS", "1") == "1"
+        ):
+            log.info(
+                "highlight pubg kill discover skipped %s: %s fast-probe seeds",
+                video_path.name,
+                len(seed_peaks),
+            )
+            run_kill_discover = False
+        if run_kill_discover:
             from pubg_kill_banner import discover_vod_kill_moments
 
             start_set = set(starts)
@@ -1937,7 +1975,7 @@ def discover_highlight_candidates(
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
     if profile in SHOOTER_PROFILES:
-        score_cap = max(1, int(os.environ.get("SHOOTER_VOD_SCORE_MAX", "8")))
+        score_cap = max(1, int(os.environ.get("SHOOTER_VOD_SCORE_MAX", "5")))
         if len(pending) > score_cap:
             log.info(
                 "highlight score cap %s: %s -> %s windows",
@@ -1947,8 +1985,15 @@ def discover_highlight_candidates(
             )
             pending = pending[:score_cap]
     workers = _parallel_workers()
+    early_stop = _shooter_score_early_stop(profile)
     if workers > 1 and len(pending) > 1:
-        log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
+        log.info(
+            "highlight parallel score %s: %s windows x%d workers early_stop=%s",
+            video_path.name,
+            len(pending),
+            workers,
+            early_stop or "off",
+        )
 
     verified: list[dict] = []
 
@@ -2002,35 +2047,68 @@ def discover_highlight_candidates(
 
     if workers > 1 and len(pending) > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_evaluate_highlight_start, video_path, start, profile): start
-                for start in pending
-            }
-            for done_index, fut in enumerate(as_completed(futures), start=1):
-                _hb(
-                    "highlight_scoring",
-                    progress=done_index / max(len(futures), 1),
-                    candidates=len(verified),
-                )
-                if len(verified) >= limit:
+            pending_iter = iter(pending)
+            in_flight: dict = {}
+
+            def _submit_more() -> None:
+                while len(in_flight) < workers:
+                    try:
+                        start = next(pending_iter)
+                    except StopIteration:
+                        return
+                    in_flight[pool.submit(_evaluate_highlight_start, video_path, start, profile)] = start
+
+            _submit_more()
+            done_index = 0
+            stop = False
+            while in_flight and not stop:
+                finished, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    start_hint = in_flight.pop(fut, None)
+                    done_index += 1
+                    _hb(
+                        "highlight_scoring",
+                        progress=done_index / max(len(pending), 1),
+                        candidates=len(verified),
+                    )
+                    try:
+                        row = fut.result()
+                    except Exception as exc:
+                        log.warning("highlight parallel score failed start=%s: %s", start_hint, exc)
+                        continue
+                    if row is None:
+                        continue
+                    start, metrics = row
+                    _consume(start, metrics)
+                    if len(verified) >= limit:
+                        stop = True
+                        break
+                    if early_stop and len(verified) >= early_stop:
+                        log.info(
+                            "highlight early-stop %s: %s PASS (cap=%s) — skip remaining windows",
+                            video_path.name,
+                            len(verified),
+                            early_stop,
+                        )
+                        stop = True
+                        break
+                    if (
+                        verified
+                        and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
+                        and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                    ):
+                        log.info(
+                            "vod send_one: stop after first highlight pass start=%.1f",
+                            verified[-1]["start"],
+                        )
+                        stop = True
+                        break
+                if stop:
+                    for fut in list(in_flight):
+                        fut.cancel()
+                    in_flight.clear()
                     break
-                try:
-                    row = fut.result()
-                except Exception as exc:
-                    log.warning("highlight parallel score failed start=%s: %s", futures[fut], exc)
-                    continue
-                if row is None:
-                    continue
-                start, metrics = row
-                if _consume(start, metrics) and len(verified) >= limit:
-                    break
-                if (
-                    verified
-                    and os.environ.get("MLBB_VOD_HIGHLIGHT_SEND_ONE", "0") == "1"
-                    and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                ):
-                    log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
-                    break
+                _submit_more()
     else:
         for done_index, start in enumerate(pending, start=1):
             _hb(
@@ -2039,6 +2117,14 @@ def discover_highlight_candidates(
                 candidates=len(verified),
             )
             if len(verified) >= limit:
+                break
+            if early_stop and len(verified) >= early_stop:
+                log.info(
+                    "highlight early-stop %s: %s PASS (cap=%s) — skip remaining windows",
+                    video_path.name,
+                    len(verified),
+                    early_stop,
+                )
                 break
             row = _evaluate_highlight_start(video_path, start, profile)
             if row is None:
@@ -2054,6 +2140,14 @@ def discover_highlight_candidates(
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",
                     verified[-1]["start"],
+                )
+                break
+            if early_stop and len(verified) >= early_stop:
+                log.info(
+                    "highlight early-stop %s: %s PASS (cap=%s) — skip remaining windows",
+                    video_path.name,
+                    len(verified),
+                    early_stop,
                 )
                 break
 

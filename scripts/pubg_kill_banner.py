@@ -150,8 +150,8 @@ def discover_vod_kill_moments(
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    max_probes = max(4, int(os.environ.get("PUBG_KILL_DISCOVER_MAX_PROBES", "16")))
-    max_sec = max(20.0, float(os.environ.get("PUBG_KILL_DISCOVER_MAX_SEC", "90")))
+    max_probes = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_MAX_PROBES", "6")))
+    max_sec = max(15.0, float(os.environ.get("PUBG_KILL_DISCOVER_MAX_SEC", "35")))
     deadline = time.monotonic() + max_sec
     hits: list[KillMomentHit] = []
     probes = 0
@@ -165,7 +165,7 @@ def discover_vod_kill_moments(
         else:
             hits.append(hit)
 
-    peak_limit = max(4, int(os.environ.get("PUBG_KILL_DISCOVER_PEAK_HINTS", "8")))
+    peak_limit = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_PEAK_HINTS", "4")))
     for peak in sorted(set(hint_peaks or []))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break

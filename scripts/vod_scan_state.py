@@ -103,8 +103,31 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    cooldown = scan_cooldown_sec(game)
+    if age >= cooldown:
+        return False
+    if entry.get("last_scan_blocked"):
         return True
+    # Empty / barren combat pool — do not re-burn 10–15 min on the same VOD every cycle.
+    # Soften can still reopen after cooldown; during soft L upgrades owner can force reopen
+    # by clearing exhausted / last_scan_at.
+    peaks = entry.get("last_pool_peaks")
+    reason = str(entry.get("reject_reason") or "")
+    zero_pool = peaks is not None and len(peaks) == 0
+    barren = reason.startswith(
+        ("no_combat", "fast_panns_0", "fast_probe", "presend_rejected", "scan_timeout", "score_timeout")
+    )
+    if zero_pool or barren:
+        g = (game or "").strip().lower()
+        if g in ("pubg", "standoff", "genshin", "wot"):
+            zero_cd = max(
+                300,
+                int(os.environ.get("SHOOTER_VOD_ZERO_POOL_COOLDOWN_SEC", "1800")),
+            )
+        else:
+            zero_cd = max(300, int(os.environ.get("MLBB_VOD_ZERO_POOL_COOLDOWN_SEC", "1800")))
+        if age < min(cooldown, zero_cd):
+            return True
     return False
 
 
