@@ -203,6 +203,14 @@ def quality_gate(row: dict) -> tuple[bool, str, float]:
     model, _metadata = _load_model()
     if model is None:
         required = os.environ.get("MLBB_VOD_QUALITY_MODEL_REQUIRED", "1") == "1"
+        # OCR Double+ already cleared banner gates — don't stall the whole feed
+        # when the quality classifier hasn't been promoted yet.
+        try:
+            tier = int(row.get("kill_banner_tier") or 0)
+        except (TypeError, ValueError):
+            tier = 0
+        if tier >= 2 and row.get("kill_banner"):
+            return True, "quality_model_missing_banner_bypass", 0.0
         return (not required), "quality_model_missing", 0.0
     probability, threshold = quality_probability(row)
     if probability < threshold:
