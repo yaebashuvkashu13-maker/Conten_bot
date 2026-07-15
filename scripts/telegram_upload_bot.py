@@ -2988,6 +2988,8 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
+        {'command': 'banner', 'description': 'Обучение kill-баннера (владелец)'},
+        {'command': 'banner_done', 'description': 'Закончить приём баннер-скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
         {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
         {'command': 'mlbb_vod', 'description': 'MLBB VOD — все куски отдельно (владелец)'},
