@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Daily multi-game VOD cycle: MLBB → PUBG → Standoff, reset at Moscow midnight."""
+"""Daily multi-game VOD cycle: MLBB → PUBG → Standoff → Genshin → WoT.
+
+Quotas reset at Moscow (Europe/Moscow) midnight.
+"""
 
 from __future__ import annotations
 
@@ -38,20 +41,17 @@ def enabled() -> bool:
 
 def quota_for(game: str) -> int:
     game = game.strip().lower()
-    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
-    candidates: list[int] = []
+    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 2, "wot": 2}
+    # Prefer DAILY_MLBB_QUOTA over legacy DAILY_GAME_MLBB_QUOTA when both exist.
     for key in (f"DAILY_{game.upper()}_QUOTA", f"DAILY_GAME_{game.upper()}_QUOTA"):
         raw = os.environ.get(key)
         if raw is None:
             continue
         try:
-            candidates.append(max(0, int(raw)))
+            return max(0, int(raw))
         except ValueError:
             continue
-    if candidates:
-        # When both DAILY_MLBB_QUOTA and DAILY_GAME_MLBB_QUOTA are set, use the higher.
-        return max(candidates)
-    return defaults.get(game, 10)
+    return defaults.get(game, 5)
 
 
 def load_state() -> dict:
