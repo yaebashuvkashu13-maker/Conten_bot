@@ -37,18 +37,16 @@ clean_stale_game_locks() {
   for game in mlbb pubg standoff genshin wot; do
     lock="/tmp/${game}_vod_segment_feed.lock"
     [[ -e "$lock" ]] || continue
-    case "$game" in
-      mlbb)
-        pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1 && continue
-        ;;
-      *)
-        pgrep -f "shooter_vod_segment_feed\.py ${game}" >/dev/null 2>&1 \
-          || pgrep -f "shooter_vod_segment_feed\.py.*${game}" >/dev/null 2>&1 && continue
-        # Any shooter process might still hold the lock via VOD_SEGMENT_GAME.
-        pgrep -f 'shooter_vod_segment_feed\.py' >/dev/null 2>&1 && continue
-        ;;
-    esac
-    rm -f "$lock" && log "removed stale lock $lock"
+    if [[ "$game" == "mlbb" ]]; then
+      if pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
+        continue
+      fi
+    else
+      if pgrep -f 'shooter_vod_segment_feed\.py' >/dev/null 2>&1; then
+        continue
+      fi
+    fi
+    rm -f "$lock" && log "removed stale lock $lock" || true
   done
 }
 
