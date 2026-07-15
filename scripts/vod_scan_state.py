@@ -35,8 +35,27 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
     return strict_peak_tries(game)
 
 
+def zero_yield_session_max() -> int:
+    return max(2, int(os.environ.get("MLBB_VOD_ZERO_YIELD_MAX", "3")))
+
+
+def note_zero_send_session(entry: dict[str, Any]) -> int:
+    """Increment per-VOD zero-send counter; return new value."""
+    n = int(entry.get("zero_send_sessions") or 0) + 1
+    entry["zero_send_sessions"] = n
+    return n
+
+
+def invalidate_pool_cache(entry: dict[str, Any]) -> None:
+    entry.pop("last_pool_peaks", None)
+    entry.pop("last_pool_at", None)
+    entry.pop("last_pool", None)
+
+
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted when no peaks left or repeated zero-yield on same VOD."""
+    if int(entry.get("zero_send_sessions") or 0) >= zero_yield_session_max():
+        return True
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
@@ -156,12 +175,18 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
         if row.get("blocked_reason"):
             continue
         peak = float(row["peak_sec"])
+        score = float(row.get("score") or 0)
         pool.append(
             {
                 "start": peak,
                 "peak_start": peak,
-                "score": float(row.get("score") or 0),
-                "highlight_metrics": {"rule_pass": True, "pass_reason": "cached_pool"},
+                "score": score,
+                "clip_score": score,
+                "highlight_metrics": {
+                    "rule_pass": False,
+                    "pass_reason": "cached_pool_needs_revalidation",
+                    "clip_score": score,
+                },
             }
         )
     return pool

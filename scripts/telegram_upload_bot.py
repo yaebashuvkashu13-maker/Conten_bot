@@ -49,6 +49,7 @@ POLL_TIMEOUT = 25
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
+BANNER_MODE_TIMEOUT_SEC = 7200
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
 BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
@@ -483,6 +484,24 @@ def _schedule_mlbb_retrain() -> None:
         logging.exception('mlbb retrain schedule failed')
 
 
+def _schedule_vod_retrain(game: str) -> None:
+    """Retrain one non-MLBB quality ranker without blocking Telegram."""
+    script = Path('/usr/local/bin/vod_learn_apply.sh')
+    if not script.exists():
+        script = Path(__file__).resolve().parent / 'vod_learn_apply.sh'
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ['bash', str(script), game.strip().lower()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        logging.exception('%s VOD retrain schedule failed', game)
+
+
 def _mlbb_apply_vseg_label(
     chat_id: str | int,
     segment_id: str,
@@ -552,6 +571,7 @@ def _shooter_apply_vseg_label(
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'
+    _schedule_vod_retrain(game)
     from daily_game_cycle import profile_for_game
     from vod_owner_learning import exemplar_counts
 
@@ -1096,6 +1116,64 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data.startswith('mlbb_bcal:'):
+        try:
+            _, item_id, short = data.split(':', 2)
+        except ValueError:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            return
+        from mlbb_banner_calibration_reasons import (
+            labeled_keyboard_markup as bcal_markup,
+            reason_from_short,
+            reason_label,
+        )
+        from mlbb_banner_calibration_store import apply_owner_label, stats as bcal_stats
+
+        reason = reason_from_short(short.strip())
+        if not reason:
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Неизвестная кнопка', 'show_alert': True},
+                timeout=15,
+            )
+            return
+        try:
+            ok, reply = apply_owner_label(item_id.strip(), reason, by_chat=str(chat_id))
+            if not ok:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': reply[:180], 'show_alert': True},
+                    timeout=15,
+                )
+                return
+            _schedule_mlbb_retrain()
+            st = bcal_stats()
+            api_call(
+                'answerCallbackQuery',
+                {
+                    'callback_query_id': query_id,
+                    'text': f'{reason_label(reason)} ({st["labeled"]}/{st["target"]})',
+                },
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': bcal_markup(reason),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('mlbb_bcal callback failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
@@ -1106,7 +1184,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -1486,6 +1564,7 @@ def load_state() -> dict:
             'ad_mode_until': {},
             'reject_mode_until': {},
             'wm_mode_until': {},
+            'banner_mode_until': {},
             'standoff_exemplar_mode_until': {},
             'vk_mlbb_upload_mode_until': {},
         }
@@ -1497,12 +1576,14 @@ def load_state() -> dict:
             'ad_mode_until': {},
             'reject_mode_until': {},
             'wm_mode_until': {},
+            'banner_mode_until': {},
             'standoff_exemplar_mode_until': {},
             'vk_mlbb_upload_mode_until': {},
         }
     state.setdefault('ad_mode_until', {})
     state.setdefault('reject_mode_until', {})
     state.setdefault('wm_mode_until', {})
+    state.setdefault('banner_mode_until', {})
     state.setdefault('standoff_exemplar_mode_until', {})
     state.setdefault('vk_mlbb_upload_mode_until', {})
     return state
@@ -1555,6 +1636,95 @@ def set_reject_mode(chat_id: str, enabled: bool):
     else:
         state['reject_mode_until'].pop(chat_id, None)
     save_state(state)
+
+
+def is_banner_mode(chat_id: str) -> bool:
+    until = _bot_state().get('banner_mode_until', {}).get(chat_id)
+    if not until:
+        return False
+    if time.time() > float(until):
+        _bot_state()['banner_mode_until'].pop(chat_id, None)
+        save_state(_bot_state())
+        return False
+    return True
+
+
+def set_banner_mode(chat_id: str, enabled: bool):
+    state = _bot_state()
+    state.setdefault('banner_mode_until', {})
+    if enabled:
+        state['banner_mode_until'][chat_id] = time.time() + BANNER_MODE_TIMEOUT_SEC
+    else:
+        state['banner_mode_until'].pop(chat_id, None)
+    save_state(state)
+
+
+def count_banner_owner_crops() -> tuple[int, int]:
+    root = Path(
+        os.environ.get(
+            'MLBB_BANNER_REF_ROOT',
+            str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+        )
+    )
+    pos = len(list((root / 'owner_cal' / 'positive').rglob('*.png'))) if (root / 'owner_cal' / 'positive').exists() else 0
+    neg = len(list((root / 'owner_cal' / 'negative').rglob('*.png'))) if (root / 'owner_cal' / 'negative').exists() else 0
+    return pos, neg
+
+
+def process_banner_train_photo(chat_id: str, message: dict) -> None:
+    """Owner screenshot → crop kill-banner zone into owner_cal reference bank."""
+    photo = extract_photo(message)
+    if not photo:
+        send_message(chat_id, 'Не вижу фото.')
+        return
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    inbox = Path(os.environ.get('MLBB_DATA_ROOT', '/root/data/mlbb')) / 'banner_owner_photos'
+    inbox.mkdir(parents=True, exist_ok=True)
+    dest = inbox / f'tg_{chat_id}_{stamp}_{photo["file_unique_id"]}{photo["ext"]}'
+    file_url = get_file_url(photo['file_id'])
+    try:
+        import urllib.request
+
+        urllib.request.urlretrieve(file_url, dest)
+    except Exception as exc:
+        send_message(chat_id, f'Не скачал фото: {exc}')
+        return
+    caption = safe_label(message.get('caption'))
+    try:
+        from mlbb_banner_owner_photo_ingest import ingest_owner_banner_photo
+
+        result = ingest_owner_banner_photo(dest, caption=caption)
+    except Exception as exc:
+        logging.exception('banner photo ingest failed')
+        send_message(chat_id, f'Ошибка разбора баннера: {exc}')
+        return
+    if not result.get('ok'):
+        send_message(chat_id, f'Не принял скрин: {result.get("error")}')
+        return
+    state = _bot_state()
+    n_key = f'banner_ingest_n_{chat_id}'
+    new_key = f'banner_ingest_new_{chat_id}'
+    dup_key = f'banner_ingest_dup_{chat_id}'
+    n = int(state.get(n_key, 0)) + 1
+    state[n_key] = n
+    if result.get('duplicate'):
+        state[dup_key] = int(state.get(dup_key, 0)) + 1
+        mark = '↩️ уже был'
+    else:
+        state[new_key] = int(state.get(new_key, 0)) + 1
+        mark = '🆕 новый'
+    save_state(state)
+    # Album spam: confirm every 5th photo (and first).
+    media_group = message.get('media_group_id')
+    if media_group and n > 1 and n % 5 != 0:
+        return
+    send_message(
+        chat_id,
+        f'{mark}: {result["reason"]} (#{n})\n'
+        f'банк +{result["positive_crops"]} / −{result["negative_crops"]}\n'
+        f'сессия: новых={state.get(new_key, 0)} дублей={state.get(dup_key, 0)}\n'
+        f'Ещё фото или /banner_done',
+    )
 
 
 def is_wm_mode(chat_id: str) -> bool:
@@ -2265,12 +2435,25 @@ def try_youtube_ingest(chat_id: str, message: dict) -> bool:
     """Handle YouTube URLs in text/caption/entities. Returns True if handled."""
     import sys
 
-    sys.path.insert(0, '/usr/local/bin')
-    from youtube_download import is_youtube_live_url, is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
-
     yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
     if not yt_urls:
         return False
+
+    sys.path.insert(0, '/usr/local/bin')
+    try:
+        from youtube_download import (  # noqa: WPS433
+            is_youtube_live_url,
+            is_youtube_shorts_url,
+            normalize_youtube_url,
+        )
+    except ImportError:
+        # Older youtube_download.py on VPS without is_youtube_live_url
+        from youtube_download import is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
+
+        def is_youtube_live_url(url: str) -> bool:  # type: ignore[no-redef]
+            u = (url or '').lower()
+            return '/live/' in u or 'live_stream' in u
+
     items: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw in yt_urls:
@@ -2793,6 +2976,8 @@ def _approve_preview_worker(chat_id: str, preview_id: str) -> None:
         if not pkg:
             send_message(chat_id, f'REFUSED: preview, reason=unknown_id, visual_passed=0/0')
             return
+        if str(pkg.get("profile") or "").lower() in ("mlbb", "mobile_legends"):
+            _schedule_mlbb_retrain()
         env_map = dict(os.environ)
         if ENV_FILE.exists():
             for line in ENV_FILE.read_text().splitlines():
@@ -2833,6 +3018,10 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
+        {'command': 'banner', 'description': 'Обучение kill-баннера (владелец)'},
+        {'command': 'banner_status', 'description': 'Сколько баннер-скринов в банке'},
+        {'command': 'banner_done', 'description': 'Закончить приём баннер-скринов'},
+        {'command': 'teach', 'description': 'Поток панелей баннера на разметку'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
         {'command': 'mlbb_samples', 'description': 'MLBB Shorts на оценку (владелец)'},
         {'command': 'mlbb_vod', 'description': 'MLBB VOD — все куски отдельно (владелец)'},
@@ -2885,6 +3074,41 @@ def handle_message(message: dict):
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
+    # Photo training modes first — never let YouTube import crash drop screenshots.
+    photo_early = extract_photo(message)
+    if photo_early:
+        if is_banner_mode(chat_id):
+            process_banner_train_photo(chat_id, message)
+            return
+        if is_wm_mode(chat_id) or (
+            is_owner(chat_id) and command_token(caption) in ('/wm_test', '/test_wm', '/wm')
+        ):
+            process_wm_photo(chat_id, message)
+            return
+        if is_ad_mode(chat_id):
+            saved = save_ad_photo(chat_id, message)
+            if saved:
+                run_ad_index()
+                send_message(
+                    chat_id,
+                    f'Сохранил пример рекламы ({saved.name}). Всего: {count_ad_examples()}. '
+                    'Ещё фото или /ad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+        if is_reject_mode(chat_id):
+            saved = save_reject_photo(chat_id, message)
+            if saved:
+                send_message(
+                    chat_id,
+                    f'Сохранил плохой пример ({saved.name}). Всего: {count_reject_examples()}. '
+                    'Ещё фото или /bad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
     if not (text.startswith('/') or caption.startswith('/')):
         if try_youtube_ingest(chat_id, message):
@@ -2911,8 +3135,156 @@ def handle_message(message: dict):
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
                 'YouTube / Shorts: пришли ссылку одной строкой (или /yt <url>) → /make.\n'
                 'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
-                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
+                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.\n'
+                'Баннер Double+: /banner → скрины с подписью → /banner_done.',
             )
+        return
+    if cmd in ('/banner', '/баннер', '/banner_train'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /banner только для владельца.')
+            return
+        set_banner_mode(chat_id, True)
+        state = _bot_state()
+        for k in (f'banner_ingest_n_{chat_id}', f'banner_ingest_new_{chat_id}', f'banner_ingest_dup_{chat_id}'):
+            state.pop(k, None)
+        save_state(state)
+        pos_n, neg_n = count_banner_owner_crops()
+        owner_n = len(
+            list(
+                (
+                    Path(
+                        os.environ.get(
+                            'MLBB_BANNER_REF_ROOT',
+                            str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+                        )
+                    )
+                    / 'owner_cal'
+                ).rglob('ownerphoto_*.png')
+            )
+        )
+        send_message(
+            chat_id,
+            'Режим обучения баннера включён на 2 часа.\n'
+            f'Уже в банке твоих скринов: {owner_n} (всего crops +{pos_n}/−{neg_n}).\n'
+            'Можно кинуть все 70 снова — дубликаты пометит «уже был», новые добавит.\n'
+            'Без подписи = эталон вида баннера.\n'
+            'Статус без загрузки: /banner_status\n'
+            'Завершить: /banner_done',
+        )
+        return
+    if cmd in ('/banner_status', '/banner_stat', '/баннер_статус'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        pos_n, neg_n = count_banner_owner_crops()
+        root = Path(
+            os.environ.get(
+                'MLBB_BANNER_REF_ROOT',
+                str(Path(os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml')) / 'data' / 'mlbb_kill_banners'),
+            )
+        )
+        owner_n = len(list((root / 'owner_cal').rglob('ownerphoto_*.png'))) if (root / 'owner_cal').exists() else 0
+        send_message(
+            chat_id,
+            f'Баннер-банк:\n'
+            f'• твоих скринов (ownerphoto): {owner_n}\n'
+            f'• всего positive crops: {pos_n}\n'
+            f'• negative crops: {neg_n}\n'
+            f'Режим /banner сейчас: {"вкл" if is_banner_mode(chat_id) else "выкл"}',
+        )
+        return
+    if cmd in ('/teach', '/banner_flood', '/учить', '/разметка'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        limit = 25
+        parts = text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            limit = max(5, min(60, int(parts[1])))
+        send_message(
+            chat_id,
+            f'Запускаю поток ~{limit} панелей из УЖЕ скачанных VOD (без новых закачек).\n'
+            'На каждой жми кнопку:\n'
+            '• Double/Triple/Savage — если kill-баннер свой\n'
+            '• ❌ Нет банера — только пустой HUD\n'
+            '• 👿 Kill противника / 🦸 не тот герой — если видно\n'
+            'Ещё панели: снова /teach или /teach 40',
+        )
+
+        def _teach_worker(n: int = limit) -> None:
+            import subprocess
+
+            env = {
+                **os.environ,
+                'CONTENT_BOT_REPO': os.environ.get('CONTENT_BOT_REPO', '/root/content_bot_ml'),
+                'MLBB_BANNER_REF_ROOT': os.environ.get(
+                    'MLBB_BANNER_REF_ROOT',
+                    '/root/content_bot_ml/data/mlbb_kill_banners',
+                ),
+                'PYTHONPATH': '/usr/local/bin:/root/content_bot_ml/scripts',
+                'MLBB_VOD_AUTO_DOWNLOAD': '0',
+                'MLBB_BANNER_TEACH_FLOOD': '1',
+                'MLBB_BANNER_SEND_STRICT': '0',
+                'MLBB_BANNER_NEG_REF_MATCH': '0',
+                'MLBB_BANNER_POS_POV_MATCH': '0',
+                'MLBB_BANNER_CALIB_TARGET': '500',
+                'MLBB_BANNER_FLOOD_EXTRA': '80',
+                'MLBB_BANNER_FLOOD_MAX': str(n),
+                'MLBB_BANNER_FLOOD_SEGMENT_LIMIT': str(max(n, 40)),
+                'MLBB_BANNER_FLOOD_SCAN_LIMIT': str(max(n, 40)),
+                'MLBB_BANNER_FLOOD_VODS': '60',
+                'MLBB_BANNER_FLOOD_SAMPLES': '14',
+                'MLBB_BANNER_FLOOD_DELAY_SEC': '0.2',
+            }
+            script = Path('/usr/local/bin/mlbb_banner_local_fast_teach.sh')
+            flood_py = Path('/usr/local/bin/mlbb_banner_calibration_flood.py')
+            if not flood_py.exists():
+                flood_py = Path('/root/content_bot_ml/scripts/mlbb_banner_calibration_flood.py')
+            try:
+                if script.exists():
+                    env['MLBB_BANNER_FLOOD_MAX'] = str(n)
+                    proc = subprocess.run(
+                        ['bash', str(script)],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                    )
+                else:
+                    proc = subprocess.run(
+                        ['python3', str(flood_py)],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                    )
+                tail = (proc.stdout or proc.stderr or '')[-500:]
+                send_message(chat_id, f'/teach готово.\n{tail or f"exit={proc.returncode}"}')
+            except Exception as exc:
+                logging.exception('teach flood failed')
+                send_message(chat_id, f'/teach ошибка: {exc}')
+
+        threading.Thread(target=_teach_worker, daemon=True).start()
+        return
+    if cmd in ('/banner_done', '/banner_stop', '/баннер_стоп'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Команда /banner_done только для владельца.')
+            return
+        was = is_banner_mode(chat_id)
+        set_banner_mode(chat_id, False)
+        state = _bot_state()
+        n = int(state.pop(f'banner_ingest_n_{chat_id}', 0) or 0)
+        new_n = int(state.pop(f'banner_ingest_new_{chat_id}', 0) or 0)
+        dup_n = int(state.pop(f'banner_ingest_dup_{chat_id}', 0) or 0)
+        save_state(state)
+        pos_n, neg_n = count_banner_owner_crops()
+        send_message(
+            chat_id,
+            f'Режим /banner выключен.\n'
+            f'За сессию: обработано {n} (новых {new_n}, дублей {dup_n}).\n'
+            f'Банк: +{pos_n} / −{neg_n}.\n'
+            + ('Ок.' if was or n else ''),
+        )
         return
     if cmd in ('/ad', '/реклама', '/ads'):
         if not is_owner(chat_id):
@@ -3353,6 +3725,7 @@ def handle_message(message: dict):
             from segment_preview import reject_preview
 
             reject_preview(preview_id, by_chat=str(chat_id), reason='owner_rejected')
+            _schedule_mlbb_retrain()
             send_message(chat_id, f'REFUSED: preview_id={preview_id}, reason=owner_rejected')
         except Exception as exc:
             send_message(chat_id, f'REFUSED: preview, reason={exc}')
@@ -3394,6 +3767,9 @@ def handle_message(message: dict):
     photo = extract_photo(message)
     if photo:
         cap_cmd = command_token(safe_label(message.get('caption')))
+        if is_banner_mode(chat_id):
+            process_banner_train_photo(chat_id, message)
+            return
         if is_wm_mode(chat_id) or (
             is_owner(chat_id) and cap_cmd in ('/wm_test', '/test_wm', '/wm')
         ):
@@ -3425,8 +3801,7 @@ def handle_message(message: dict):
         if not limited:
             send_message(
                 chat_id,
-                'Чтобы отправить скрины рекламы для обучения бота, сначала напиши /ad (или /реклама), '
-                'потом пришли фото. Завершить — /ad_done.',
+                'Скрины: /banner (kill-баннер) · /ad (реклама) · /bad (плохие кадры) · /wm (водяной знак).',
             )
         return
 
@@ -3602,15 +3977,24 @@ def main():
                 timeout=POLL_TIMEOUT + 10,
             )
             for update in updates:
-                state['last_update_id'] = update['update_id']
-                save_state(state)
-                callback = update.get('callback_query')
-                if callback:
-                    handle_callback_query(callback)
-                    continue
-                message = update.get('message')
-                if message:
-                    handle_message(message)
+                try:
+                    callback = update.get('callback_query')
+                    if callback:
+                        handle_callback_query(callback)
+                    else:
+                        message = update.get('message')
+                        if message:
+                            handle_message(message)
+                    # Ack only after successful handling so photos are not lost on crash.
+                    state['last_update_id'] = update['update_id']
+                    save_state(state)
+                except Exception:
+                    logging.exception('poll loop error on update=%s', update.get('update_id'))
+                    time.sleep(2)
+                    # Still ack permanent failures after log to avoid infinite retry storms.
+                    state['last_update_id'] = update['update_id']
+                    save_state(state)
+                    time.sleep(3)
         except Exception:
             logging.exception('poll loop error')
             time.sleep(5)

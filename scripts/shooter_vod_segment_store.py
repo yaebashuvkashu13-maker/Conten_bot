@@ -109,8 +109,9 @@ def mark_feed_sent(game: str, segment_ids: list[str]) -> None:
     p = _paths(game)["feed_sent"]
     sent = load_feed_sent(game)
     sent.update(segment_ids)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"sent": sorted(sent)}, indent=2), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(p, {"sent": sorted(sent)})
 
 
 def upsert_segment(game: str, row: dict) -> None:
@@ -120,14 +121,16 @@ def upsert_segment(game: str, row: dict) -> None:
     sid = str(row.get("segment_id", ""))
     segments[:] = [s for s in segments if str(s.get("segment_id")) != sid]
     segments.append(row)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(p, data)
 
 
 def save_labels(game: str, data: dict) -> None:
     p = _paths(game)["labels"]
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    from vod_state_io import save_json_state
+
+    save_json_state(p, data)
 
 
 def find_segment(game: str, segment_id_str: str) -> dict | None:
@@ -171,6 +174,24 @@ def apply_owner_label(
         "source": "vod_segment",
         "game": game.strip().lower(),
     }
+    for key in (
+        "duration",
+        "hook_score",
+        "clip_score",
+        "fight_dur",
+        "panns_gunshot",
+        "panns_machine_gun",
+        "panns_explosion",
+        "center_motion",
+        "boss_bar",
+        "hit_flash",
+        "hit_flash_count",
+        "visual_pass",
+        "presend_metrics",
+        "highlight_metrics",
+    ):
+        if row.get(key) not in (None, ""):
+            entry[key] = row.get(key)
     feedback = {**entry, "owner_label": "yes" if is_good else "no"}
 
     labels["feedback"] = [f for f in labels.get("feedback", []) if f.get("segment_id") != segment_id_str]
@@ -217,6 +238,19 @@ def apply_owner_label(
         note=reason,
         source="vod_segment",
     )
+    try:
+        from vod_owner_feedback import record_owner_feedback
+
+        record_owner_feedback(
+            game,
+            video_id=vid,
+            time_sec=peak_time_sec({**row, "peak_start": peak}, segment_id_str),
+            label=label_name,
+            reason=reason,
+            item_id=segment_id_str,
+        )
+    except Exception:
+        pass
     clear_learning_cache()
     return True, label_name
 

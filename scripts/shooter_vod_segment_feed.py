@@ -264,12 +264,23 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
         return None
 
 
-def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
+def _validate_shooter_presend(
+    game: str,
+    vod: Path,
+    row: dict,
+    rendered: Path | None = None,
+) -> tuple[bool, str, dict]:
     profile = _profile(game)
     start = float(row.get("peak_start", row.get("start", 0)))
-    dur = _ffprobe_duration(rendered)
+    dur = _ffprobe_duration(rendered) if rendered is not None and rendered.exists() else 0.0
     if dur <= 0:
-        dur = float(row.get("duration", 15))
+        clip = row.get("clip") or {}
+        dur = float(
+            row.get("duration")
+            or clip.get("input_duration")
+            or clip.get("output_duration")
+            or 15
+        )
     if game == "pubg":
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
@@ -314,11 +325,35 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     for row in to_send[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
-        if not render_single_segment(vod, row["clip"], out):
-            continue
-        presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
+        presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row)
         if not presend_ok:
             log.warning("presend REJECT %s: %s", sid, presend_reason)
+            continue
+        row["presend_metrics"] = presend_report
+        for key in (
+            "panns_gunshot",
+            "panns_machine_gun",
+            "panns_explosion",
+            "center_motion",
+            "boss_bar",
+            "hit_flash",
+            "hit_flash_count",
+            "visual_pass",
+        ):
+            if presend_report.get(key) not in (None, ""):
+                row[key] = presend_report.get(key)
+        try:
+            from vod_quality_model import quality_gate
+
+            quality_ok, quality_reason, quality_prob = quality_gate(game, row)
+            row["quality_probability"] = quality_prob
+            if not quality_ok:
+                log.warning("quality REJECT %s game=%s reason=%s", sid, game, quality_reason)
+                continue
+        except Exception as exc:
+            log.warning("quality REJECT %s game=%s error=%s", sid, game, exc)
+            continue
+        if not render_single_segment(vod, row["clip"], out):
             continue
         peak = int(row.get("peak_start", row["start"]))
         caption = (
@@ -342,21 +377,21 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             reply_markup=keyboard(game, sid),
             cycle_game=game,
         ):
-            upsert_segment(
-                game,
-                {
-                    "segment_id": sid,
-                    "path": str(out),
-                    "vod": str(vod),
-                    "vod_id": vod_youtube_id(vod),
-                    "start": row["start"],
-                    "duration": _ffprobe_duration(out),
-                    "peak_start": peak,
-                    "score": row.get("score", 0),
-                    "sig": sig,
-                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                },
-            )
+            stored = {
+                **row,
+                "segment_id": sid,
+                "path": str(out),
+                "vod": str(vod),
+                "vod_id": vod_youtube_id(vod),
+                "start": row["start"],
+                "duration": _ffprobe_duration(out),
+                "peak_start": peak,
+                "score": row.get("score", 0),
+                "sig": sig,
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            stored.pop("clip", None)
+            upsert_segment(game, stored)
             mark_feed_sent(game, [sid])
             sent += 1
     st = stats(game)
@@ -457,6 +492,9 @@ def _scan_vod(
                     "start": start,
                     "peak_start": peak,
                     "score": float(clip.get("score", 0)),
+                    "hook_score": float(hm.get("hook_score") or 0),
+                    "clip_score": clip_score,
+                    "highlight_metrics": hm,
                     "clip": {**clip, "start": start, "peak_start": peak},
                 }
             )

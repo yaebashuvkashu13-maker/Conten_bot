@@ -67,6 +67,14 @@ def is_youtube_shorts_url(url: str) -> bool:
     return "/shorts/" in urlparse(url).path.lower()
 
 
+def is_youtube_live_url(url: str) -> bool:
+    """True for /live/ paths or live streaming watch URLs (heuristic)."""
+    raw = (url or "").lower()
+    if "/live/" in raw:
+        return True
+    return "live_stream" in raw or "feature=live" in raw
+
+
 def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
     if is_youtube_shorts_url(url):
         return env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b")
