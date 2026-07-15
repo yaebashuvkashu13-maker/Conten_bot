@@ -848,11 +848,11 @@ def discover_vod_kill_banners(
                 continue
             owner_secs.append(sec)
         owner_secs = sorted(set(round(s, 1) for s in owner_secs))[:12]
+        # Exact labeled seconds first — deep OCR is slow; neighborhood can burn the budget.
         for sec in owner_secs:
             if probes >= max_probes or time.monotonic() >= deadline:
                 break
-            # Dense neighborhood — banners are brief; neighbors are often multi-kills.
-            for delta in (-1.5, -0.5, 0.0, 0.5, 1.5, 2.5):
+            for delta in (0.0, 0.5, -0.5, 1.0, -1.0, 1.5):
                 if probes >= max_probes or time.monotonic() >= deadline:
                     break
                 t = max(1.0, sec + delta)
@@ -860,16 +860,30 @@ def discover_vod_kill_banners(
                 if frame is None:
                     continue
                 probes += 1
-                hit = _classify_frame(t, frame, deep=True)
+                # Exact/near labeled peaks deserve deep OCR; wider offsets stay shallow.
+                deep = abs(delta) <= 0.5
+                hit = _classify_frame(t, frame, deep=deep)
                 if hit is not None:
                     _merge_hit(hit)
+                    if hit.tier >= need:
+                        break  # one solid hit near this label is enough
         if owner_secs:
             log.info(
-                "banner discover %s: owner_label_seeds=%s merged_hits=%s",
+                "banner discover %s: owner_label_seeds=%s probes=%s merged_hits=%s",
                 vod.name,
                 owner_secs[:6],
+                probes,
                 len(hits),
             )
+        # Keep leftover wall time for sparse timestep if seeds already found banners.
+        if hits and os.environ.get("MLBB_OWNER_SEED_STOP_ON_HIT", "1") == "1":
+            log.info(
+                "banner discover %s: stop after owner seeds hits=%s",
+                vod.name,
+                len(hits),
+            )
+            _cache_discovery_hits(cache_key, hits)
+            return hits
     except Exception as exc:
         log.debug("owner label seeds skipped: %s", exc)
 
