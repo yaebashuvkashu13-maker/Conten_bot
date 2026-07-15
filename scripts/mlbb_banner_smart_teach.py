@@ -3,11 +3,11 @@
 Smart owner teach: send frames that look like kill banners for owner labeling.
 
 Order (fast → slow):
-1. EDGE PASS — structural match to owner /banner screenshots (70+ crops)
-2. OCR seeds around already-labeled positives (cheap direct OCR)
+1. EDGE PASS — structural match to in-game owner crops (not UI-menu templates)
+2. DENSE OCR seeds around already-labeled positives (±3s @ 0.5s)
 3. Optional OCR peak scan (slow; capped)
 
-Never sends color-only / unverified gold-HUD spam.
+Never sends color-only / unverified gold-HUD spam. OCR text is mandatory to send.
 """
 
 from __future__ import annotations
@@ -70,35 +70,71 @@ def _ocr_confirm(vod: Path, sec: float, *, min_tier: int) -> KillBannerHit | Non
     )
 
 
+def _resolve_label_vod(row: dict, inbox: Path) -> Path | None:
+    vod = Path(str(row.get("vod") or ""))
+    if vod.exists():
+        return vod
+    vid = str(row.get("check_id") or "").rsplit("_", 1)[0]
+    if not vid:
+        return None
+    for path in inbox.glob("yt_*.mp4"):
+        if vod_youtube_id(path).lower() == vid[:11].lower():
+            return path
+    return None
+
+
 def _seeds_from_labels(inbox: Path) -> list[tuple[Path, float]]:
+    """
+    Dense probes around owner-labeled in-game positives.
+
+    Kill banners last ~1–2s — sparse ±4/+6 often misses the next streak in a fight.
+    Prefer double_triple / savage crops; scan ±3s @ 0.5s.
+    """
     seeds: list[tuple[Path, float]] = []
-    max_seeds = int(os.environ.get("MLBB_SMART_TEACH_SEED_MAX", "12"))
+    max_seeds = int(os.environ.get("MLBB_SMART_TEACH_SEED_MAX", "48"))
+    radius = float(os.environ.get("MLBB_SMART_TEACH_SEED_RADIUS", "3.0"))
+    step = float(os.environ.get("MLBB_SMART_TEACH_SEED_STEP", "0.5"))
+    prefer = ("savage_tier", "double_triple", "own_kill_good", "not_enemy_kill")
     try:
         from mlbb_banner_calibration_store import load_labels
 
         rows = [
             row
             for row in load_labels().get("labels", [])
-            if str(row.get("reason") or "")
-            in {"own_kill_good", "double_triple", "savage_tier", "not_enemy_kill"}
+            if str(row.get("reason") or "") in set(prefer)
             and not str(row.get("check_id") or "").startswith("ownerphoto")
+            and float(row.get("sec") or 0) > 0
         ]
-        rows = list(reversed(rows))[: max_seeds // 2]
+        rows.sort(
+            key=lambda r: (
+                prefer.index(str(r.get("reason") or "own_kill_good"))
+                if str(r.get("reason") or "") in prefer
+                else 99,
+                -float(r.get("sec") or 0),
+            )
+        )
+        seen_probe: set[tuple[str, int]] = set()
         for row in rows:
-            vod = Path(str(row.get("vod") or ""))
-            if not vod.exists():
-                vid = str(row.get("check_id") or "").rsplit("_", 1)[0]
-                for path in inbox.glob("yt_*.mp4"):
-                    if vod_youtube_id(path).lower() == vid[:11].lower():
-                        vod = path
-                        break
-            if not vod.exists():
+            vod = _resolve_label_vod(row, inbox)
+            if vod is None:
                 continue
             sec = float(row.get("sec") or 0)
-            for delta in (-4.0, 6.0):
-                seeds.append((vod, max(1.0, sec + delta)))
+            vid = vod_youtube_id(vod)
+            # Offset grid skips exact labeled sec (already taught) but covers neighbors.
+            t = sec - radius
+            while t <= sec + radius + 1e-6:
+                if abs(t - sec) < step * 0.4:
+                    t += step
+                    continue
+                key = (vid, int(round(t * 2)))
+                if key in seen_probe:
+                    t += step
+                    continue
+                seen_probe.add(key)
+                seeds.append((vod, max(1.0, t)))
                 if len(seeds) >= max_seeds:
                     return seeds
+                t += step
     except Exception as exc:
         print(f"seed_load_fail: {exc}", flush=True)
     return seeds
@@ -243,10 +279,10 @@ def main() -> int:
                     sent_n += 1
                     time.sleep(delay)
 
-    # ── Pass 2: OCR seeds (optional, short) ───────────────────────────────
+    # ── Pass 2: DENSE OCR around labeled positives ────────────────────────
     if sent_n < max_send and os.environ.get("MLBB_SMART_TEACH_SEED_PASS", "1") == "1":
         seeds = _seeds_from_labels(inbox)
-        print(f"seed_probes={len(seeds)}", flush=True)
+        print(f"dense_seed_probes={len(seeds)}", flush=True)
         for si, (vod, peak) in enumerate(seeds, start=1):
             if sent_n >= max_send or time.time() > global_deadline:
                 break

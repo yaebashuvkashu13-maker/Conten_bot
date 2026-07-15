@@ -234,14 +234,21 @@ def _load_positive_owner_ref_rows() -> tuple[tuple[str, str, str], ...]:
     root = banner_ref_root() / "owner_cal" / "positive"
     if not root.exists():
         return tuple()
-    # UI-menu /banner screenshots (ownerphoto_*) are bad live matchers — they match
-    # combat FX / chat. Prefer in-game crops from button labeling + vod_crops.
+    # UI-menu /banner screenshots (ownerphoto_* or ui_template/) are bad live matchers —
+    # they match combat FX / chat. Prefer in-game crops from button labeling + vod_crops.
     allow_ui = os.environ.get("MLBB_BANNER_POS_ALLOW_UI_TEMPLATES", "0") == "1"
     for path in sorted(root.rglob("*.png")):
         reason = path.parent.name if path.parent != root else "unknown"
+        if reason == "ui_template" and not allow_ui:
+            continue
         if (not allow_ui) and path.name.startswith("ownerphoto_"):
             continue
+        # Prefer Double/Triple/Savage crops ahead of generic "own_kill_good"
         rows.append((str(path), reason, reason))
+    prefer = ("savage_tier", "double_triple", "own_kill_good", "not_enemy_kill")
+    rows.sort(
+        key=lambda r: prefer.index(r[1]) if r[1] in prefer else 50
+    )
     return tuple(rows)
 
 

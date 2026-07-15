@@ -115,10 +115,11 @@ def test_verified_high_tier_banner_gets_narrow_hook_relief(
     monkeypatch.setenv("MLBB_FEEDBACK_PATTERNS_PATH", str(path))
     monkeypatch.setenv("MLBB_FEEDBACK_GATE", "1")
     monkeypatch.setenv("MLBB_BANNER_MIN_HOOK", "0.05")
-    monkeypatch.setenv("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.55")
+    monkeypatch.setenv("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.45")
+    monkeypatch.setenv("MLBB_BANNER_OCR_HOOK_FLOOR", "0.015")
     clear_patterns_cache()
     savage = {
-        "hook_score": 0.030,
+        "hook_score": 0.024,
         "fight_dur": 32,
         "kill_banner": "savage",
         "kill_banner_tier": 5,
@@ -133,6 +134,22 @@ def test_verified_high_tier_banner_gets_narrow_hook_relief(
     rejected2, reason2 = feedback_reject_row(no_tier)
     assert rejected2 is True
     assert "banner_low_hook" in reason2
+    # Non-OCR double still uses softer tier mult, not OCR floor.
+    double = {
+        "hook_score": 0.020,
+        "fight_dur": 32,
+        "kill_banner": "double",
+        "kill_banner_tier": 2,
+        "kill_banner_source": "ref",
+    }
+    monkeypatch.setenv("MLBB_BANNER_DOUBLE_HOOK_MULT", "0.50")
+    clear_patterns_cache()
+    # 0.05 * 0.50 = 0.025 → 0.020 rejects
+    rejected3, reason3 = feedback_reject_row(double)
+    assert rejected3 is True
+    assert "banner_low_hook" in reason3
+    double_ok = {**double, "hook_score": 0.026}
+    assert feedback_reject_row(double_ok)[0] is False
 
 
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:

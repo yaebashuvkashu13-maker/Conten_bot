@@ -144,7 +144,10 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   MLBB_BANNER_NEG_EXCLUDE_REASONS=wrong_hero \
   MLBB_FEEDBACK_GATE=1 MLBB_FEEDBACK_GATE_DISCOVERY=0 MLBB_VOD_ZERO_RECOVERY_SOFTEN=5 \
   MLBB_BANNER_ANCHOR_HOOK_MIN=0.04 MLBB_BANNER_MIN_HOOK=0.05 \
-  MLBB_BANNER_HIGH_TIER_HOOK_MULT=0.80 MLBB_BANNER_TRIPLE_HOOK_MULT=0.90 \
+  MLBB_BANNER_HIGH_TIER_HOOK_MULT=0.45 MLBB_BANNER_TRIPLE_HOOK_MULT=0.55 \
+  MLBB_BANNER_DOUBLE_HOOK_MULT=0.50 MLBB_BANNER_OCR_HOOK_FLOOR=0.015 \
+  MLBB_KILL_BANNER_FORCE_OCR_EVERY=4 \
+  MLBB_BANNER_POS_ALLOW_UI_TEMPLATES=0 \
   MLBB_VOD_STRICT_PEAK_TRIES=16 \
   MLBB_VOD_FAST_PROBE=1 MLBB_VOD_SEED_FROM_FAST_PROBE=1 \
   MLBB_VOD_ZERO_STREAK_SOFTEN=4 MLBB_VOD_ADAPTIVE_NOTIFY=1 MLBB_VOD_EXHAUST_NOTIFY=0 \
@@ -253,6 +256,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_calibration_flood.py" \
   "$REPO/scripts/mlbb_banner_smart_teach.py" \
   "$REPO/scripts/mlbb_banner_local_fast_teach.sh" \
+  "$REPO/scripts/mlbb_banner_ui_template_migrate.py" \
   "$REPO/scripts/mlbb_banner_owner_photo_ingest.py" \
   "$REPO/scripts/mlbb_banner_positive_scan.sh" \
   "$REPO/scripts/mlbb_feedback_pattern_miner.py" \
@@ -416,6 +420,9 @@ echo "40 3 * * * /usr/local/bin/vod_learn_apply.sh all >>/root/data/mlbb/logs/vo
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
 install -m 755 "$REPO/scripts/mlbb_banner_local_fast_teach.sh" /usr/local/bin/mlbb_banner_local_fast_teach.sh 2>/dev/null || true
 install -m 755 "$REPO/scripts/mlbb_banner_smart_teach.py" /usr/local/bin/mlbb_banner_smart_teach.py 2>/dev/null || true
+install -m 755 "$REPO/scripts/mlbb_banner_ui_template_migrate.py" /usr/local/bin/mlbb_banner_ui_template_migrate.py 2>/dev/null || true
+# Move ownerphoto_* UI-menu crops out of live positive bank (once per deploy).
+python3 "$REPO/scripts/mlbb_banner_ui_template_migrate.py" 2>/dev/null || true
 install -m 755 "$REPO/scripts/mlbb_banner_positive_scan.sh" /usr/local/bin/mlbb_banner_positive_scan.sh 2>/dev/null || true
 # High-volume OCR Double+ screenshots for owner labeling (not full VOD video cycles).
 echo "*/20 * * * * /usr/local/bin/mlbb_banner_positive_scan.sh $MARK banner-pos-scan" >>"$TMP"

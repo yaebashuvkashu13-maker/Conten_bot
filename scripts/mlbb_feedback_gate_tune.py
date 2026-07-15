@@ -96,11 +96,18 @@ def banner_min_hook(row: dict | None = None) -> float:
         tier = int(row.get("kill_banner_tier") or 0)
     except (TypeError, ValueError):
         tier = 0
-    # Any OCR/visual kill-banner tier — soften hook; empty-HUD junk usually has no tier.
+    source = str(row.get("kill_banner_source") or "")
+    ocr_verified = source.startswith("ocr") or source.endswith("_verified")
+    # OCR Double+ already proves a kill banner is in the cut — only drop near-silence.
+    if ocr_verified and tier >= 2:
+        return float(os.environ.get("MLBB_BANNER_OCR_HOOK_FLOOR", "0.015"))
+    # Soften hook for banner clips; empty-HUD junk usually has no tier.
     if tier >= 4:
-        return base * float(os.environ.get("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.55"))
+        return base * float(os.environ.get("MLBB_BANNER_HIGH_TIER_HOOK_MULT", "0.45"))
+    if tier >= 3:
+        return base * float(os.environ.get("MLBB_BANNER_TRIPLE_HOOK_MULT", "0.55"))
     if tier >= 2:
-        return base * float(os.environ.get("MLBB_BANNER_DOUBLE_HOOK_MULT", "0.70"))
+        return base * float(os.environ.get("MLBB_BANNER_DOUBLE_HOOK_MULT", "0.50"))
     return base
 
 

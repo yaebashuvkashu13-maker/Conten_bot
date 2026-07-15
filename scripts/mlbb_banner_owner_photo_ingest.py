@@ -16,8 +16,8 @@ REASON_FROM_CAPTION: list[tuple[str, str]] = [
     (r"maniac|маньяк|triple|triple.?kill|трой", "double_triple"),
     (r"double|дабл|double.?kill", "double_triple"),
     (r"own.?kill|свой.?kill|свой.?килл|ok\b", "own_kill_good"),
-    # Interface / gallery banner frames without kill text → visual positive anchors
-    (r"ui|interface|интерф|галер|hud|шаблон|баннер|banner", "own_kill_good"),
+    # Interface / gallery / Effects-menu templates — NOT live matchers
+    (r"ui|interface|интерф|галер|hud|шаблон|баннер|banner|эффект|effect", "ui_template"),
     (r"no.?banner|нет.?бан|пуст", "no_banner"),
     (r"not.?kill|не.?килл", "not_kill"),
     (r"enemy|чужой|противник", "enemy_kill"),
@@ -61,8 +61,8 @@ def reason_from_caption(caption: str) -> str | None:
 
 
 def default_positive_reason() -> str:
-    # UI template shots without Double text still learn banner look — not no_banner.
-    return os.environ.get("MLBB_BANNER_OWNER_PHOTO_DEFAULT_REASON", "own_kill_good")
+    # /banner screenshots are usually Effects-menu / gallery templates — keep out of live pos bank.
+    return os.environ.get("MLBB_BANNER_OWNER_PHOTO_DEFAULT_REASON", "ui_template")
 
 
 def _photo_id(path: Path) -> str:
@@ -91,7 +91,12 @@ def ingest_owner_banner_photo(
         return {"ok": False, "error": "file_missing"}
 
     resolved = reason or reason_from_caption(caption) or default_positive_reason()
-    if resolved not in POSITIVE_REASONS and resolved not in NEGATIVE_REASONS:
+    allow_ui = resolved == "ui_template"
+    if (
+        resolved not in POSITIVE_REASONS
+        and resolved not in NEGATIVE_REASONS
+        and not allow_ui
+    ):
         return {"ok": False, "error": f"bad_reason:{resolved}"}
 
     frame = cv2.imread(str(path))
@@ -109,8 +114,16 @@ def ingest_owner_banner_photo(
             return {"ok": False, "error": "empty_crop"}
 
     cid = _photo_id(path)
-    bucket = "positive" if resolved in POSITIVE_REASONS else "negative"
-    dest_dir = banner_ref_root() / "owner_cal" / bucket / resolved
+    if allow_ui:
+        # Separate from live positive matchers — kept for future template training only.
+        dest_dir = banner_ref_root() / "owner_cal" / "ui_template"
+        bucket = "ui_template"
+    elif resolved in POSITIVE_REASONS:
+        dest_dir = banner_ref_root() / "owner_cal" / "positive" / resolved
+        bucket = "positive"
+    else:
+        dest_dir = banner_ref_root() / "owner_cal" / "negative" / resolved
+        bucket = "negative"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{cid}.png"
     duplicate = dest.exists()
@@ -167,12 +180,15 @@ def ingest_owner_banner_photo(
 
     pos_n = len(list((banner_ref_root() / "owner_cal" / "positive").rglob("*.png")))
     neg_n = len(list((banner_ref_root() / "owner_cal" / "negative").rglob("*.png")))
+    ui_n = len(list((banner_ref_root() / "owner_cal" / "ui_template").rglob("*.png")))
     return {
         "ok": True,
         "reason": resolved,
         "crop": str(dest),
         "check_id": cid,
+        "bucket": bucket,
         "duplicate": bool(duplicate or already_labeled),
         "positive_crops": pos_n,
         "negative_crops": neg_n,
+        "ui_template_crops": ui_n,
     }

@@ -821,6 +821,58 @@ def discover_vod_kill_banners(
     except Exception as exc:
         log.debug("audit hints skipped: %s", exc)
 
+    # Phase 0b: owner-labeled in-game banner seconds (dense OCR around known fights).
+    try:
+        from mlbb_banner_calibration_store import load_labels
+        from mlbb_vod_segment_store import vod_youtube_id
+
+        vid = vod_youtube_id(vod).lower()
+        owner_secs: list[float] = []
+        for row in load_labels().get("labels", []):
+            if str(row.get("reason") or "") not in {
+                "own_kill_good",
+                "double_triple",
+                "savage_tier",
+                "not_enemy_kill",
+            }:
+                continue
+            cid = str(row.get("check_id") or "")
+            if cid.startswith("ownerphoto"):
+                continue
+            sec = float(row.get("sec") or 0)
+            if sec <= 0:
+                continue
+            row_vid = cid.rsplit("_", 1)[0][:11].lower()
+            path_vid = str(row.get("vod") or "")
+            if row_vid != vid and vid not in path_vid.lower():
+                continue
+            owner_secs.append(sec)
+        owner_secs = sorted(set(round(s, 1) for s in owner_secs))[:12]
+        for sec in owner_secs:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            # Dense neighborhood — banners are brief; neighbors are often multi-kills.
+            for delta in (-1.5, -0.5, 0.0, 0.5, 1.5, 2.5):
+                if probes >= max_probes or time.monotonic() >= deadline:
+                    break
+                t = max(1.0, sec + delta)
+                frame = _read_frame(vod, t)
+                if frame is None:
+                    continue
+                probes += 1
+                hit = _classify_frame(t, frame, deep=True)
+                if hit is not None:
+                    _merge_hit(hit)
+        if owner_secs:
+            log.info(
+                "banner discover %s: owner_label_seeds=%s merged_hits=%s",
+                vod.name,
+                owner_secs[:6],
+                len(hits),
+            )
+    except Exception as exc:
+        log.debug("owner label seeds skipped: %s", exc)
+
     def _probe_at(t: float, *, deep: bool, quick: bool = False) -> bool:
         nonlocal probes
         if probes >= max_probes or time.monotonic() >= deadline:
@@ -843,10 +895,10 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         return probes < max_probes and time.monotonic() < deadline
 
-    def _timestep_color_probe(t: float, cap=None, frame=None) -> None:
+    def _timestep_color_probe(t: float, cap=None, frame=None, *, force_ocr: bool = False) -> None:
         """
         Cheap timestep scan: read ONE frame at t, use color prefilter,
-        then run OCR near t only when color is promising.
+        then run OCR near t only when color is promising (or force_ocr).
         """
         nonlocal probes
         if probes >= max_probes or time.monotonic() >= deadline:
@@ -865,14 +917,14 @@ def discover_vod_kill_banners(
         color_floor = _color_min_score() * (
             0.85 if dense else 0.75
         )
-        if color < color_floor:
+        if (not force_ocr) and color < color_floor:
             return
         # Single-frame OCR only — never scan_window() here; dense 2s timestep must stay cheap.
-        from gameplay_gate import _read_frame_at
-
         win_thr = float(os.environ.get("MLBB_KILL_BANNER_COLOR_OCR_WINDOW_MIN", "0.12"))
         if frame is not None and dense:
             # Dense batch already samples ~1 Hz — avoid slow per-offset seeks.
+            offsets = (0.0,)
+        elif force_ocr and color < color_floor:
             offsets = (0.0,)
         elif color >= win_thr:
             offsets = (-0.35, 0.0, 0.35, 0.7)
@@ -893,7 +945,9 @@ def discover_vod_kill_banners(
                 fr = _read_frame(vod, float(t) + off)
             if fr is None:
                 continue
-            hit = _classify_frame(float(t) + off, fr, deep=False)
+            # Forced sparse probes use deep OCR — cheap color path often misses white text.
+            # Dense 1Hz stays shallow; otherwise a VOD never finishes scanning.
+            hit = _classify_frame(float(t) + off, fr, deep=bool(force_ocr))
             if hit is not None:
                 _merge_hit(hit)
                 return
@@ -1017,11 +1071,13 @@ def discover_vod_kill_banners(
                 # Spread sampling across the whole VOD under tight time budget.
                 sample_cap = int(os.environ.get("MLBB_KILL_BANNER_TIMESTEP_SAMPLES", "160"))
                 k = max(12, min(sample_cap, max_probes - probes, int(span / max(step, 1.0)) + 1))
+                # Force OCR on a fraction of samples — color prefilter alone yields probes≈2.
+                force_every = max(2, int(os.environ.get("MLBB_KILL_BANNER_FORCE_OCR_EVERY", "4")))
                 for i in range(k):
                     if probes >= max_probes or time.monotonic() >= deadline:
                         break
                     t = t0 + (i * span / max(k - 1, 1))
-                    _timestep_color_probe(t, cap=cap)
+                    _timestep_color_probe(t, cap=cap, force_ocr=(i % force_every == 0))
                     try:
                         from vod_pipeline_heartbeat import heartbeat
 
