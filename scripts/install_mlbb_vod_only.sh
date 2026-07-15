@@ -237,6 +237,9 @@ install -m 755 \
   "$REPO/scripts/vod_analysis_cache.py" \
   "$REPO/scripts/mlbb_teamfight_detector.py" \
   "$REPO/scripts/pubg_killfeed_ocr.py" \
+  "$REPO/scripts/pubg_kill_banner.py" \
+  "$REPO/scripts/pubg_combat_gate.py" \
+  "$REPO/scripts/pubg_shooting_gate.py" \
   "$REPO/scripts/genshin_boss_segment.py" \
   "$REPO/scripts/wot_brawl_segment.py" \
   "$REPO/scripts/vod_scan_state.py" \

@@ -57,6 +57,7 @@ def test_dense_discover_uses_1hz_batches(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PUBG_KILL_DISCOVER_MAX_SEC", "30")
     monkeypatch.setenv("PUBG_KILL_DENSE_STOP_ON_HITS", "2")
     monkeypatch.setenv("PUBG_KILL_DENSE_MAX_SPAN_SEC", "120")
+    monkeypatch.setenv("PUBG_KILL_DENSE_PEAK_HINTS", "0")
     monkeypatch.setenv("PUBG_KILL_DISCOVER_PEAK_HINTS", "0")
     vod = tmp_path / "yt_dense.mp4"
     vod.write_bytes(b"")
@@ -64,7 +65,7 @@ def test_dense_discover_uses_1hz_batches(monkeypatch, tmp_path: Path) -> None:
     fake_frame = object()
     batch = [(31.0, fake_frame), (32.0, fake_frame), (33.0, fake_frame)]
 
-    def _fake_classify(sec: float, _frame) -> KillMomentHit | None:
+    def _fake_classify(sec: float, _frame, *, dense: bool = False) -> KillMomentHit | None:
         if sec >= 32.0:
             return KillMomentHit(sec=sec, tier=1, label="eliminated", text="eliminated")
         return None
@@ -72,8 +73,7 @@ def test_dense_discover_uses_1hz_batches(monkeypatch, tmp_path: Path) -> None:
     with patch("mlbb_fight_segment._analysis_for", return_value={"duration": 400.0}):
         with patch("mlbb_kill_banner._ffmpeg_sample_frames", return_value=batch) as sample:
             with patch("pubg_kill_banner._classify_frame", side_effect=_fake_classify):
-                with patch("pubg_kill_banner.find_kill_near_peak", return_value=None):
-                    hits = discover_vod_kill_moments(vod, hint_peaks=[])
+                hits = discover_vod_kill_moments(vod, hint_peaks=[100.0])
 
     assert sample.called
     assert len(hits) >= 1

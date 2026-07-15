@@ -74,20 +74,24 @@ def classify_kill_text(text: str) -> KillMomentHit | None:
     return KillMomentHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:160])
 
 
-def _ocr_zones(frame) -> str:
+def _ocr_zones(frame, *, dense: bool = False) -> str:
     from pubg_combat_gate import _ocr_zone_text
 
-    zones = (
-        (0.02, 0.22, 0.62, 0.98),  # killfeed top-right
-        (0.28, 0.62, 0.18, 0.82),  # center announce
-        (0.02, 0.18, 0.18, 0.82),  # top banner
-    )
+    # Dense 1Hz: killfeed-only OCR (MLBB dense stays shallow for the same reason).
+    if dense:
+        zones = ((0.02, 0.22, 0.62, 0.98),)
+    else:
+        zones = (
+            (0.02, 0.22, 0.62, 0.98),  # killfeed top-right
+            (0.28, 0.62, 0.18, 0.82),  # center announce
+            (0.02, 0.18, 0.18, 0.82),  # top banner
+        )
     parts = [_ocr_zone_text(frame, y0=a, y1=b, x0=c, x1=d) for a, b, c, d in zones]
     return " ".join(parts)
 
 
-def _classify_frame(sec: float, frame) -> KillMomentHit | None:
-    classified = classify_kill_text(_ocr_zones(frame))
+def _classify_frame(sec: float, frame, *, dense: bool = False) -> KillMomentHit | None:
+    classified = classify_kill_text(_ocr_zones(frame, dense=dense))
     if classified is None:
         return None
     return KillMomentHit(
@@ -198,6 +202,14 @@ def discover_vod_kill_moments(
     deadline = time.monotonic() + max_sec
     hits: list[KillMomentHit] = []
     probes = 0
+    log.info(
+        "pubg kill discover %s: start dense=%s duration=%.0fs max_probes=%s max_sec=%.0f",
+        vod.name,
+        int(dense),
+        duration,
+        max_probes,
+        max_sec,
+    )
 
     def _merge(hit: KillMomentHit) -> None:
         if hit.tier < need:
@@ -208,15 +220,22 @@ def discover_vod_kill_moments(
         else:
             hits.append(hit)
 
-    # Phase 1: quick OCR around motion / gun peaks.
+    # Phase 1: peak hints — in dense mode keep this cheap (1 frame/peak);
+    # the 1Hz timeline pass below is the real recall path (MLBB-style).
     peak_limit = max(2, int(os.environ.get("PUBG_KILL_DISCOVER_PEAK_HINTS", "4")))
     if dense:
-        peak_limit = max(peak_limit, int(os.environ.get("PUBG_KILL_DENSE_PEAK_HINTS", "8")))
+        peak_limit = max(0, int(os.environ.get("PUBG_KILL_DENSE_PEAK_HINTS", "4")))
     for peak in sorted(set(hint_peaks or []))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         probes += 1
-        hit = find_kill_near_peak(vod, peak, quick=True)
+        if dense:
+            from gameplay_gate import _read_frame_at
+
+            frame = _read_frame_at(vod, float(peak))
+            hit = _classify_frame(float(peak), frame) if frame is not None else None
+        else:
+            hit = find_kill_near_peak(vod, peak, quick=True)
         if hit:
             _merge(hit)
 
@@ -261,7 +280,7 @@ def discover_vod_kill_moments(
                 if len(hits) >= stop_on_hit:
                     break
                 probes += 1
-                hit = _classify_frame(float(t), frame)
+                hit = _classify_frame(float(t), frame, dense=True)
                 if hit is not None:
                     _merge(hit)
                 if frame_i % 60 == 0 or frame_i < 3:
