@@ -425,6 +425,8 @@ elif pgrep -f telegram_upload_bot.py >/dev/null 2>&1; then
   pkill -f telegram_upload_bot.py 2>/dev/null || true
   sleep 1
   nohup env PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO:-/root/content_bot_ml}/scripts" \
+    CONTENT_BOT_REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}" \
+    MLBB_BANNER_REF_ROOT="${MLBB_BANNER_REF_ROOT:-/root/content_bot_ml/data/mlbb_kill_banners}" \
     python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
 fi
 

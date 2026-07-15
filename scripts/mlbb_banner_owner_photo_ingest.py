@@ -29,16 +29,18 @@ def _repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
     if env:
         return Path(env)
-    return Path(__file__).resolve().parent.parent
+    # Installed copy lives in /usr/local/bin — do not treat /usr/local as the repo.
+    here = Path(__file__).resolve()
+    if here.parent.name == "bin" and (Path("/root/content_bot_ml") / "scripts").is_dir():
+        return Path("/root/content_bot_ml")
+    return here.parent.parent
 
 
 def banner_ref_root() -> Path:
-    return Path(
-        os.environ.get(
-            "MLBB_BANNER_REF_ROOT",
-            str(_repo_root() / "data" / "mlbb_kill_banners"),
-        )
-    )
+    env = os.environ.get("MLBB_BANNER_REF_ROOT", "").strip()
+    if env:
+        return Path(env)
+    return _repo_root() / "data" / "mlbb_kill_banners"
 
 
 def inbox_dir() -> Path:
