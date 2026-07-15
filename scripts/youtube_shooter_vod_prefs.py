@@ -19,7 +19,11 @@ PUBG_TITLE_RE = re.compile(
 )
 METRO_VAGUE_TITLE_RE = re.compile(
     r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
-    r"обзор|гайд|guide|story|история|сюжет",
+    r"обзор|гайд|guide|story|история|сюжет|"
+    r"shop|магазин|black\s*market|чёрн\w*\s*рын|скам|scam|обмен|"
+    r"going to remove|уберут\s+метро|release\s*date|дата\s*выхода|"
+    r"honor\s*rewards|награды|rewards?|problem|проблема|"
+    r"flying\s+enemy|ammo\s*level|what+|\?\?+|is\s+pubg\s+going",
     re.I,
 )
 CLASSIC_MODE_TITLE_RE = re.compile(
@@ -34,21 +38,27 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
     r"guide|обзор|trick|совет|"
-    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден",
+    r"\bstream\b|стрим|🔴|\bLIVE\b|boss\s*drop|что\s+падает|сопровожден",
+    re.I,
+)
+COMBAT_TITLE_RE = re.compile(
+    r"full\s*match|полный\s*матч|gameplay|геймплей|ranked|ранкед|"
+    r"fight|перестрелка|clutch|сквад|squad|vs\s*squad|против\s*сква|"
+    r"соло|solo|рейд|raid|файт|tpp|эвакуац",
     re.I,
 )
 
 PUBG_CORE_QUERIES = (
-    "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile Metro Royale full match",
-    "PUBG Mobile Metro Royale squad fight ranked",
-    "PUBG Mobile Metro Royale TPP ranked replay",
-    "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл стрим",
-    "PUBG Mobile Metro Royale стрим полный",
-    "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг стрим русский",
+    "PUBG Mobile Metro Royale full match gameplay",
+    "PUBG Mobile Metro Royale ranked squad fight",
+    "PUBG Mobile Metro Royale TPP ranked full match",
+    "метро рояль пабг мобайл полный матч геймплей",
+    "метро рояль пабг мобайл ранкед перестрелка",
+    "метро рояль пабг мобайл стрим полный матч",
+    "пабг мобайл метро рояль геймплей файт",
+    "метро рояль пабг соло против сквада",
+    "PUBG Mobile Metro Royale solo vs squad ranked",
+    "метро рояль пабг стрим русский геймплей",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -59,11 +69,11 @@ STANDOFF_CORE_QUERIES = (
 )
 
 PUBG_ANGLE_QUERIES = (
-    "PUBG Mobile Metro Royale sniper fight",
+    "PUBG Mobile Metro Royale sniper fight ranked",
     "PUBG Mobile Metro Royale close range fight",
     "PUBG Mobile Metro Royale final circle ranked",
-    "метро рояль пабг файт перестрелка",
-    "метро рояль пабг снайпер",
+    "метро рояль пабг файт перестрелка ранкед",
+    "метро рояль пабг снайпер геймплей",
 )
 
 STANDOFF_ANGLE_QUERIES = (
@@ -77,6 +87,10 @@ def _queries_for(game: str) -> tuple[str, ...]:
     if g == "standoff":
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
     return PUBG_CORE_QUERIES + PUBG_ANGLE_QUERIES
+
+
+def _pref_min_sec() -> float:
+    return float(os.environ.get("SHOOTER_VOD_PREF_MIN_SEC", "600"))
 
 
 def title_ok(game: str, title: str) -> bool:
@@ -100,7 +114,7 @@ def title_ok(game: str, title: str) -> bool:
 
 
 def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
-    """Prefer Metro + Russian titles for PUBG discovery."""
+    """Prefer Metro + Russian + mid-length combat VODs for PUBG discovery."""
     if not candidates:
         return candidates
     g = game.strip().lower()
@@ -108,8 +122,26 @@ def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
         return candidates
     from youtube_game_prefs import rank_candidate
 
-    spec = {"require_metro_royale": True, "prefer_russian": True}
-    return sorted(candidates, key=lambda row: -rank_candidate(row, spec))
+    spec = {
+        "require_metro_royale": True,
+        "prefer_russian": True,
+        "ideal_duration_sec": float(os.environ.get("SHOOTER_VOD_IDEAL_SEC", "900")),
+    }
+    pref = _pref_min_sec()
+
+    def _score(row: dict) -> float:
+        base = rank_candidate(row, spec)
+        dur = float(row.get("duration") or 0)
+        title = str(row.get("title") or "")
+        if dur >= pref:
+            base += 3.0
+        elif dur > 0 and dur < pref * 0.6:
+            base -= 4.0
+        if COMBAT_TITLE_RE.search(title):
+            base += 2.5
+        return base
+
+    return sorted(candidates, key=lambda row: -_score(row))
 
 
 def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
@@ -120,16 +152,23 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
         from pubg_metro_royale_gate import title_metro_hint
         from youtube_game_prefs import russian_score
 
-        for cand in ranked[:12]:
+        pref = _pref_min_sec()
+        long_enough = [c for c in ranked if float(c.get("duration") or 0) >= pref]
+        combat_long = [
+            c for c in long_enough if COMBAT_TITLE_RE.search(str(c.get("title") or ""))
+        ]
+        pool = combat_long or long_enough or ranked
+        for cand in pool[:12]:
             title = str(cand.get("title") or "")
             if title_metro_hint(title) and russian_score(cand) >= 0.06:
                 return cand
-        for cand in ranked[:12]:
+        for cand in pool[:12]:
             if title_metro_hint(str(cand.get("title") or "")):
                 return cand
-        for cand in ranked[:8]:
+        for cand in pool[:8]:
             if russian_score(cand) >= 0.12:
                 return cand
+        return pool[0]
     return ranked[0]
 
 

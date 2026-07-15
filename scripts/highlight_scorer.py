@@ -1751,13 +1751,14 @@ def _accept_highlight_candidate(
                 hook_min,
                 float(os.environ.get("MLBB_BANNER_ANCHOR_HOOK_MIN", "0.04")),
             )
-    elif (
-        metrics.hook_score < hook_min
-        and profile in SHOOTER_PROFILES
-        and metrics.panns_gun_max >= 0.35
-        and metrics.visual_pass
-    ):
-        hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+    elif profile in SHOOTER_PROFILES and metrics.rule_pass and metrics.visual_pass:
+        # Shooter combat windows often score low hook — trust gun audio.
+        hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.04"))
+        if metrics.panns_gun_max >= float(os.environ.get("VIRAL_COMBAT_GUN_HOOK_TRUST", "0.45")):
+            hook_min = min(
+                hook_min,
+                float(os.environ.get("VIRAL_COMBAT_GUN_HOOK_FLOOR", "0.015")),
+            )
     if metrics.hook_score < hook_min:
         clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12"))
         if profile == "mobile_legends" and metrics.clip_score >= clip_bypass:

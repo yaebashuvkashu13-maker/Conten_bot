@@ -196,6 +196,32 @@ def _pubg_metro_vod_ok(
     return False, reason
 
 
+def _note_discovery_fail(game: str, state: dict, *, reason: str) -> None:
+    """Pause discovery after repeated junk/zero downloads — stop Telegram spam."""
+    streak = int(state.get("discovery_fail_streak") or 0) + 1
+    state["discovery_fail_streak"] = streak
+    state["discovery_last_fail_reason"] = reason[:120]
+    need = max(2, int(os.environ.get("SHOOTER_VOD_DISCOVERY_PAUSE_AFTER", "3")))
+    pause_sec = max(60.0, float(os.environ.get("SHOOTER_VOD_DISCOVERY_PAUSE_SEC", "900")))
+    if streak >= need:
+        state["discovery_pause_until"] = time.time() + pause_sec
+        state["discovery_fail_streak"] = 0
+        log.warning(
+            "discovery pause game=%s after %s fails reason=%s pause=%.0fs",
+            game,
+            need,
+            reason,
+            pause_sec,
+        )
+    _save_state(game, state)
+
+
+def _note_discovery_ok(game: str, state: dict) -> None:
+    state["discovery_fail_streak"] = 0
+    state.pop("discovery_pause_until", None)
+    _save_state(game, state)
+
+
 def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list[dict]:
     from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
@@ -237,6 +263,17 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
+            # PUBG/Standoff: require known duration — unknown → shorts/junk bleed through.
+            if game in ("pubg", "standoff") and dur <= 0:
+                continue
+            shooter_min = float(
+                os.environ.get(
+                    "SHOOTER_VOD_MIN_SEC",
+                    os.environ.get("MLBB_VOD_MIN_SEC", "480" if game == "pubg" else "180"),
+                )
+            )
+            if game in ("pubg", "standoff") and dur < shooter_min:
+                continue
             if dur and not _vod_length_ok(Path("x.mp4"), dur):
                 continue
             out.append(
@@ -793,9 +830,22 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
         return 0
 
+    pause_until = float(state.get("discovery_pause_until") or 0)
+    if pause_until > time.time():
+        remain = int(pause_until - time.time())
+        log.info("discovery pause game=%s remain=%ss", game, remain)
+        print(f"pipeline done sent=0 vods=0 game={game} discovery_pause={remain}")
+        return 0
+
     candidates = _discover_candidates(game, env, used)
     if not candidates:
-        send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+        # Quiet "not found" spam — notify at most once per pause window.
+        last_nf = float(state.get("last_not_found_notify_at") or 0)
+        nf_gap = float(os.environ.get("SHOOTER_VOD_NOT_FOUND_NOTIFY_SEC", "900"))
+        if time.time() - last_nf >= nf_gap:
+            send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+            state["last_not_found_notify_at"] = time.time()
+            _save_state(game, state)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
@@ -806,9 +856,19 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         pick = pick_discovery_candidate(game, candidates)
     if pick is None:
         pick = candidates[0]
-    send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+    if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
+        send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+    else:
+        log.info(
+            "download start game=%s id=%s dur=%s title=%s",
+            game,
+            pick.get("id"),
+            pick.get("duration"),
+            str(pick.get("title") or "")[:80],
+        )
     vod = _download_vod(game, pick, env)
     if not vod:
+        _note_discovery_fail(game, state, reason="download_failed")
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
@@ -840,7 +900,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             used.add(pick["id"])
             state["vods"] = registry
             state["used_youtube_ids"] = sorted(used)
-            _save_state(game, state)
+            _note_discovery_fail(game, state, reason=f"metro_reject:{metro_reason}")
             print(f"pipeline done sent=0 vods=1 game={game} metro_reject=1")
             return 0
 
@@ -858,6 +918,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     _save_state(game, state)
 
     n = _scan_vod_with_adaptive(game, token, chat_id, vod, env, state)
+    if n > 0:
+        _note_discovery_ok(game, state)
+    else:
+        entry = _vod_registry_entry(state, vod)
+        reason = str((entry or {}).get("reject_reason") or "zero_send")
+        _note_discovery_fail(game, state, reason=reason)
     print(f"pipeline done sent={n} vods=1 game={game}")
     return 0
 
