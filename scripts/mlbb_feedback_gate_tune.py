@@ -97,9 +97,10 @@ def banner_min_hook(row: dict | None = None) -> float:
     except (TypeError, ValueError):
         tier = 0
     source = str(row.get("kill_banner_source") or "")
-    ocr_verified = source.startswith("ocr") or source.endswith("_verified")
-    # OCR Double+ already proves a kill banner is in the cut — only drop near-silence.
-    if ocr_verified and tier >= 2:
+    ocr_verified = source.startswith("ocr") or source.endswith("_verified") or source.startswith("ref")
+    # Named Double+ already proves a kill banner is in the cut — only drop near-silence.
+    # Discovery sometimes leaves source blank while still setting kill_banner + tier.
+    if tier >= 2 and (ocr_verified or (row.get("kill_banner") and not source)):
         return float(os.environ.get("MLBB_BANNER_OCR_HOOK_FLOOR", "0.015"))
     # Soften hook for banner clips; empty-HUD junk usually has no tier.
     if tier >= 4:

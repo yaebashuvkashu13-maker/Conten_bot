@@ -134,22 +134,31 @@ def test_verified_high_tier_banner_gets_narrow_hook_relief(
     rejected2, reason2 = feedback_reject_row(no_tier)
     assert rejected2 is True
     assert "banner_low_hook" in reason2
-    # Non-OCR double still uses softer tier mult, not OCR floor.
-    double = {
+    # Color-only announce (no OCR/ref source) still uses softer tier mult, not OCR floor.
+    color_only = {
         "hook_score": 0.020,
         "fight_dur": 32,
-        "kill_banner": "double",
+        "kill_banner": "announce",
         "kill_banner_tier": 2,
-        "kill_banner_source": "ref",
+        "kill_banner_source": "color",
     }
     monkeypatch.setenv("MLBB_BANNER_DOUBLE_HOOK_MULT", "0.50")
     clear_patterns_cache()
     # 0.05 * 0.50 = 0.025 → 0.020 rejects
-    rejected3, reason3 = feedback_reject_row(double)
+    rejected3, reason3 = feedback_reject_row(color_only)
     assert rejected3 is True
     assert "banner_low_hook" in reason3
-    double_ok = {**double, "hook_score": 0.026}
-    assert feedback_reject_row(double_ok)[0] is False
+    color_ok = {**color_only, "hook_score": 0.026}
+    assert feedback_reject_row(color_ok)[0] is False
+    # Empty source + named banner uses OCR floor (matches live discovery rows).
+    empty_src = {
+        "hook_score": 0.024,
+        "fight_dur": 40,
+        "kill_banner": "double",
+        "kill_banner_tier": 2,
+        "kill_banner_source": "",
+    }
+    assert feedback_reject_row(empty_src)[0] is False
 
 
 def test_feedback_reject_and_rank(tmp_path: Path, monkeypatch) -> None:
