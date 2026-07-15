@@ -1701,12 +1701,21 @@ def process_banner_train_photo(chat_id: str, message: dict) -> None:
     if not result.get('ok'):
         send_message(chat_id, f'Не принял скрин: {result.get("error")}')
         return
+    state = _bot_state()
+    n_key = f'banner_ingest_n_{chat_id}'
+    n = int(state.get(n_key, 0)) + 1
+    state[n_key] = n
+    save_state(state)
+    # Album spam: confirm every 5th photo (and first).
+    media_group = message.get('media_group_id')
+    if media_group and n > 1 and n % 5 != 0:
+        return
     send_message(
         chat_id,
-        f'✅ Баннер в банк: {result["reason"]}\n'
+        f'✅ Баннер в банк: {result["reason"]} (#{n})\n'
         f'positive={result["positive_crops"]} negative={result["negative_crops"]}\n'
         f'Ещё фото или /banner_done\n'
-        f'Подпись к фото: double / savage / maniac / no_banner',
+        f'Подпись: double / savage / maniac / ui / no_banner (пусто = ui)',
     )
 
 
@@ -2418,12 +2427,25 @@ def try_youtube_ingest(chat_id: str, message: dict) -> bool:
     """Handle YouTube URLs in text/caption/entities. Returns True if handled."""
     import sys
 
-    sys.path.insert(0, '/usr/local/bin')
-    from youtube_download import is_youtube_live_url, is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
-
     yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
     if not yt_urls:
         return False
+
+    sys.path.insert(0, '/usr/local/bin')
+    try:
+        from youtube_download import (  # noqa: WPS433
+            is_youtube_live_url,
+            is_youtube_shorts_url,
+            normalize_youtube_url,
+        )
+    except ImportError:
+        # Older youtube_download.py on VPS without is_youtube_live_url
+        from youtube_download import is_youtube_shorts_url, normalize_youtube_url  # noqa: WPS433
+
+        def is_youtube_live_url(url: str) -> bool:  # type: ignore[no-redef]
+            u = (url or '').lower()
+            return '/live/' in u or 'live_stream' in u
+
     items: list[dict[str, str]] = []
     seen: set[str] = set()
     for raw in yt_urls:
@@ -3042,6 +3064,41 @@ def handle_message(message: dict):
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
+    # Photo training modes first — never let YouTube import crash drop screenshots.
+    photo_early = extract_photo(message)
+    if photo_early:
+        if is_banner_mode(chat_id):
+            process_banner_train_photo(chat_id, message)
+            return
+        if is_wm_mode(chat_id) or (
+            is_owner(chat_id) and command_token(caption) in ('/wm_test', '/test_wm', '/wm')
+        ):
+            process_wm_photo(chat_id, message)
+            return
+        if is_ad_mode(chat_id):
+            saved = save_ad_photo(chat_id, message)
+            if saved:
+                run_ad_index()
+                send_message(
+                    chat_id,
+                    f'Сохранил пример рекламы ({saved.name}). Всего: {count_ad_examples()}. '
+                    'Ещё фото или /ad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+        if is_reject_mode(chat_id):
+            saved = save_reject_photo(chat_id, message)
+            if saved:
+                send_message(
+                    chat_id,
+                    f'Сохранил плохой пример ({saved.name}). Всего: {count_reject_examples()}. '
+                    'Ещё фото или /bad_done',
+                )
+            else:
+                send_message(chat_id, 'Не удалось сохранить фото.')
+            return
+
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
     if not (text.startswith('/') or caption.startswith('/')):
         if try_youtube_ingest(chat_id, message):
@@ -3081,9 +3138,10 @@ def handle_message(message: dict):
         send_message(
             chat_id,
             'Режим обучения баннера включён на 2 часа.\n'
-            'Пришли скрины из игры с kill-баннером (Double / Triple / Savage / Maniac).\n'
-            'В подписи к фото напиши: double | savage | maniac | no_banner\n'
-            'Без подписи = double (positive).\n'
+            'Пришли скрины kill-баннера (можно просто интерфейс/галерею баннера).\n'
+            'Без подписи = эталон вида баннера (own_kill_good).\n'
+            'Если на скрине текст: double | savage | maniac | legendary\n'
+            'Пустой HUD без баннера: no_banner\n'
             'Завершить: /banner_done\n'
             f'Сейчас в банке: +{pos_n} / −{neg_n} crops.',
         )
@@ -3792,15 +3850,24 @@ def main():
                 timeout=POLL_TIMEOUT + 10,
             )
             for update in updates:
-                state['last_update_id'] = update['update_id']
-                save_state(state)
-                callback = update.get('callback_query')
-                if callback:
-                    handle_callback_query(callback)
-                    continue
-                message = update.get('message')
-                if message:
-                    handle_message(message)
+                try:
+                    callback = update.get('callback_query')
+                    if callback:
+                        handle_callback_query(callback)
+                    else:
+                        message = update.get('message')
+                        if message:
+                            handle_message(message)
+                    # Ack only after successful handling so photos are not lost on crash.
+                    state['last_update_id'] = update['update_id']
+                    save_state(state)
+                except Exception:
+                    logging.exception('poll loop error on update=%s', update.get('update_id'))
+                    time.sleep(2)
+                    # Still ack permanent failures after log to avoid infinite retry storms.
+                    state['last_update_id'] = update['update_id']
+                    save_state(state)
+                    time.sleep(3)
         except Exception:
             logging.exception('poll loop error')
             time.sleep(5)

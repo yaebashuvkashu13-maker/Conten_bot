@@ -16,6 +16,8 @@ REASON_FROM_CAPTION: list[tuple[str, str]] = [
     (r"maniac|маньяк|triple|triple.?kill|трой", "double_triple"),
     (r"double|дабл|double.?kill", "double_triple"),
     (r"own.?kill|свой.?kill|свой.?килл|ok\b", "own_kill_good"),
+    # Interface / gallery banner frames without kill text → visual positive anchors
+    (r"ui|interface|интерф|галер|hud|шаблон|баннер|banner", "own_kill_good"),
     (r"no.?banner|нет.?бан|пуст", "no_banner"),
     (r"not.?kill|не.?килл", "not_kill"),
     (r"enemy|чужой|противник", "enemy_kill"),
@@ -57,7 +59,8 @@ def reason_from_caption(caption: str) -> str | None:
 
 
 def default_positive_reason() -> str:
-    return os.environ.get("MLBB_BANNER_OWNER_PHOTO_DEFAULT_REASON", "double_triple")
+    # UI template shots without Double text still learn banner look — not no_banner.
+    return os.environ.get("MLBB_BANNER_OWNER_PHOTO_DEFAULT_REASON", "own_kill_good")
 
 
 def _photo_id(path: Path) -> str:
