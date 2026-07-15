@@ -408,18 +408,24 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         ):
             if presend_report.get(key) not in (None, ""):
                 row[key] = presend_report.get(key)
-        try:
-            from vod_quality_model import quality_gate
+        skip_quality = str(presend_reason).startswith("presend_trust_highlight")
+        if not skip_quality:
+            try:
+                from vod_quality_model import quality_gate
 
-            quality_ok, quality_reason, quality_prob = quality_gate(game, row)
-            row["quality_probability"] = quality_prob
-            if not quality_ok:
-                log.warning("quality REJECT %s game=%s reason=%s", sid, game, quality_reason)
+                quality_ok, quality_reason, quality_prob = quality_gate(game, row)
+                row["quality_probability"] = quality_prob
+                if not quality_ok:
+                    log.warning("quality REJECT %s game=%s reason=%s", sid, game, quality_reason)
+                    continue
+            except Exception as exc:
+                log.warning("quality REJECT %s game=%s error=%s", sid, game, exc)
                 continue
-        except Exception as exc:
-            log.warning("quality REJECT %s game=%s error=%s", sid, game, exc)
-            continue
+        else:
+            log.info("quality skip — %s", presend_reason)
+            row["quality_probability"] = 1.0
         if not render_single_segment(vod, row["clip"], out):
+            log.warning("render failed sid=%s peak=%s", sid, row.get("peak_start"))
             continue
         peak = int(row.get("peak_start", row["start"]))
         caption = (
