@@ -86,7 +86,19 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3).
+
+    Silence / persisted unlock flag forces L2 even when DISABLE_SOFTEN=1 —
+    overnight quality mode must not recreate multi-hour zero-send loops.
+    Streak alone still respects DISABLE_SOFTEN (relax_overrides handles that).
+    """
+    try:
+        from mlbb_vod_throughput_mode import silence_locked
+
+        if silence_locked():
+            return 2
+    except Exception:
+        pass
     need = streak_threshold()
     disable = os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1"
     if disable:
@@ -166,7 +178,8 @@ def soften_summary(level: int) -> str:
     ov = overrides_for_level(level)
     min_clip = ov.get("MLBB_VOD_MIN_CLIP_SCORE", "?")
     motion = ov.get("MLBB_PRESEND_MIN_MOTION", "?")
-    return f"soft L{level} clip>={min_clip} motion>={motion} banner=required"
+    banner = "optional" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "required"
+    return f"soft L{level} clip>={min_clip} motion>={motion} banner={banner}"
 
 
 def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
@@ -188,6 +201,18 @@ def adaptive_env(streak: int) -> Iterator[int]:
     """Apply soften overrides for this VOD scan; yields active soften level."""
     level = soften_level(streak)
     overrides = overrides_for_level(level)
+    # Silence unlock must win even when streak soften is disabled mid-restore.
+    # Do NOT sticky-set THROUGHPUT_MODE on ordinary streak soften — that made
+    # every L1 VOD permanently unlock and never restore quality gates.
+    try:
+        from mlbb_vod_throughput_mode import THROUGHPUT_OVERRIDES, silence_locked, apply_throughput_mode
+
+        if silence_locked():
+            apply_throughput_mode(reason="adaptive_env_silence")
+            overrides = {**THROUGHPUT_OVERRIDES, **overrides}
+            level = max(level, 2)
+    except Exception:
+        pass
     if not overrides:
         yield 0
         return
@@ -198,22 +223,34 @@ def adaptive_env(streak: int) -> Iterator[int]:
         os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = str(level)
         yield level
     finally:
-        for key, prev in saved.items():
-            if prev is None:
-                os.environ.pop(key, None)
+        # Keep unlock only while silence/flag still demand it — not because we
+        # temporarily set MLBB_VOD_THROUGHPUT_MODE inside this context.
+        keep = False
+        try:
+            from mlbb_vod_throughput_mode import silence_locked, apply_throughput_mode
+
+            keep = silence_locked()
+            if keep:
+                apply_throughput_mode(reason="adaptive_env_hold")
+        except Exception:
+            keep = False
+        if not keep:
+            for key, prev in saved.items():
+                if prev is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = prev
+            if saved_level is None:
+                os.environ.pop("MLBB_VOD_ADAPTIVE_LEVEL", None)
             else:
-                os.environ[key] = prev
-        if saved_level is None:
-            os.environ.pop("MLBB_VOD_ADAPTIVE_LEVEL", None)
-        else:
-            os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = saved_level
+                os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = saved_level
 
 
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"POV героя остаётся обязательным; title multi-kill floor снят, "
-        f"смягчаются score/motion."
+        f"Title multi-kill / POV / discover OCR сняты — motion-клипы разрешены, "
+        f"чтобы не было тишины на часы."
     )
 
 

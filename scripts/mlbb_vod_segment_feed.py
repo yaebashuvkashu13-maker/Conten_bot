@@ -88,45 +88,12 @@ def _last_send_age_sec() -> float:
 
 
 def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) -> dict[str, str]:
-    """Return env overrides for throughput when we have many zero-yield VODs.
+    """Return env overrides for throughput when silence / zero streaks demand it."""
+    from mlbb_vod_throughput_mode import apply_throughput_mode, should_engage
 
-    Uses persisted adaptive streak + silence since last Telegram send, not just
-    the in-memory streak of the current pipeline process.
-    """
-    relax_after = int(os.environ.get("MLBB_RELAX_AFTER_ZERO_VODS", "3"))
-    silence_sec = float(os.environ.get("MLBB_THROUGHPUT_SILENCE_SEC", "1800"))
-    silent = _last_send_age_sec() >= silence_sec
-    if zero_send_streak < relax_after and adaptive_streak < relax_after and not silent:
-        return {}
-    return {
-        "MLBB_VOD_QUALITY_MODE": os.environ.get("MLBB_VOD_QUALITY_MODE_RELAX", "0"),
-        "MLBB_VOD_MIN_CLIP_SCORE": os.environ.get("MLBB_VOD_MIN_CLIP_SCORE_RELAX", "0.02"),
-        "MLBB_BANNER_MIN_HOOK": os.environ.get("MLBB_BANNER_MIN_HOOK_RELAX", "0.03"),
-        "MLBB_FEEDBACK_GATE": os.environ.get("MLBB_FEEDBACK_GATE_RELAX", "0"),
-        "MLBB_VOD_DISABLE_SOFTEN": "0",
-        # After long silence, do not keep a stale multi-kill title gate.
-        "MLBB_VOD_TITLE_MIN_TIER": "0",
-        "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
-        # Install default is double; silence unlock must accept single-kill banners.
-        "MLBB_KILL_BANNER_MIN_TIER": "single",
-        "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
-        "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
-        "MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET": "1",
-        "MLBB_KILL_BANNER_OCR_FAST": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "96",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
-        "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
-        "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
-        "MLBB_KILL_BANNER_REQUIRED": "0",
-        "MLBB_VOD_MOTION_ANCHOR_OK": "1",
-        "MLBB_VOD_BANNER_PRESEND": "0",
-        "MLBB_VOD_BANNER_DISCOVER": "0",
-        "MLBB_VOD_BANNER_PREFILTER": "0",
-        "MLBB_BANNER_POV_MATCH": "0",
-        "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
-        "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
-    }
+    if should_engage(adaptive_streak=adaptive_streak, zero_send_streak=zero_send_streak):
+        return apply_throughput_mode(reason="relax_overrides")
+    return {}
 
 LONG_VOD_TITLE_RE = re.compile(
     r"\b\d+\s*h(?:our|rs?)?\b|\buncut\b|full\s+stream|live\s+stream|"
@@ -323,6 +290,37 @@ def _save_state(state: dict) -> None:
     save_json_state(STATE_PATH, state)
 
 
+_YTDLP_FRAGMENT_RE = re.compile(r"\.f\d+\.", re.I)
+
+
+def _is_usable_inbox_vod(path: Path) -> bool:
+    """Reject yt-dlp format fragments (yt_xxx.f299.mp4) that are not merged VODs."""
+    name = path.name
+    if not name.startswith("yt_") or not name.endswith(".mp4"):
+        return False
+    if _YTDLP_FRAGMENT_RE.search(name):
+        return False
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _preferred_inbox_vod(vid: str) -> Path | None:
+    """Prefer merged yt_<id>.mp4 over any yt_<id>*.mp4 fragments."""
+    expected = INBOX / f"yt_{vid}.mp4"
+    if _is_usable_inbox_vod(expected):
+        return expected
+    matches = [
+        p
+        for p in INBOX.glob(f"yt_{vid}*.mp4")
+        if _is_usable_inbox_vod(p)
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
 def _registry_entry(
     path: Path,
     *,
@@ -344,12 +342,34 @@ def _registry_entry(
 
 
 def _repair_registry_ids(registry: list[dict]) -> bool:
-    """Fix legacy truncated ids (yt_tp0aAJ22) so exhausted/skip logic works."""
+    """Fix legacy truncated ids and yt-dlp fragment paths (yt_xxx.f299.mp4)."""
     changed = False
     for row in registry:
         path = Path(str(row.get("path", "")))
+        vid = str(row.get("id") or "")
+        if path.name and _YTDLP_FRAGMENT_RE.search(path.name):
+            fixed = _preferred_inbox_vod(vid or vod_youtube_id(path))
+            if fixed is not None:
+                row["path"] = str(fixed)
+                path = fixed
+                changed = True
+            else:
+                # Unusable fragment with no merged file — drop from active queue.
+                if not row.get("exhausted"):
+                    row["exhausted"] = True
+                    row["reject_reason"] = "ytdlp_fragment_path"
+                    changed = True
+                continue
         if not path.exists():
-            continue
+            # Registry pointed at a missing merge — try inbox recovery.
+            if vid:
+                fixed = _preferred_inbox_vod(vid)
+                if fixed is not None:
+                    row["path"] = str(fixed)
+                    path = fixed
+                    changed = True
+            if not path.exists():
+                continue
         correct = vod_youtube_id(path)
         if row.get("id") != correct:
             row["id"] = correct
@@ -361,7 +381,7 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
     state = _load_state()
     registry: list[dict] = list(state.get("vods", []))
     if _repair_registry_ids(registry):
-        log.info("repaired registry youtube ids")
+        log.info("repaired registry youtube ids / fragment paths")
     known = {r.get("id") for r in registry}
     known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))
@@ -369,6 +389,8 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
     # Bootstrap owner MLBB VOD + any we downloaded before.
     if INBOX.exists():
         for p in sorted(INBOX.glob("yt_*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
+            if not _is_usable_inbox_vod(p):
+                continue
             vid = vod_youtube_id(p)
             if str(p) in known_paths or vid in known:
                 continue
@@ -723,14 +745,19 @@ def _download_vod_ytdlp_throttled(url: str, env: dict[str, str], *, video_id: st
         timeout=int(vod_env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
         env=subprocess_env_no_proxy(vod_env),
     )
-    if expected.exists() and expected.stat().st_size > 0:
-        return expected
-    matches = [p for p in INBOX.glob(f"yt_{vid}*.mp4") if p.stat().st_size > 0]
-    if matches:
-        return max(matches, key=lambda p: p.stat().st_mtime)
-    files = [p for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 0]
-    if not files:
-        raise RuntimeError(f"yt-dlp produced no mp4 for {url} (id={vid})")
+    preferred = _preferred_inbox_vod(vid)
+    if preferred is not None:
+        return preferred
+    # Surface fragment leftovers so we do not register .f299.mp4 as a VOD.
+    fragments = [
+        p.name
+        for p in INBOX.glob(f"yt_{vid}*.mp4")
+        if p.stat().st_size > 0 and _YTDLP_FRAGMENT_RE.search(p.name)
+    ]
+    if fragments:
+        raise RuntimeError(
+            f"yt-dlp left only format fragments for {url} (id={vid}): {fragments[:3]}"
+        )
     raise RuntimeError(f"yt-dlp did not create expected file {expected} for {url}")
 
 
@@ -2058,8 +2085,14 @@ def _collect_scan_segments(
         from mlbb_fight_segment import clip_active_gameplay_ok
 
         title_need = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
-        # If the title promises a multi-kill moment, do not downgrade to a generic 1-kill fight.
-        if title_need >= 2 and tier_i < title_need:
+        # Only enforce title multi-kill floor in strict quality mode — never while
+        # silence unlock / soften allows motion clips.
+        if (
+            title_need >= 2
+            and tier_i < title_need
+            and os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+            and os.environ.get("MLBB_VOD_THROUGHPUT_MODE", "0") != "1"
+        ):
             log.info(
                 "skip peak=%.1f title_multi_kill_mismatch tier=%s need=%s",
                 peak,
@@ -2397,9 +2430,16 @@ def _process_vod_segments(
         title_blob = vod_title_blob(vod, entry)
         os.environ["MLBB_VOD_SCAN_TITLE"] = str((entry or {}).get("title") or "")
         title_tier = title_min_banner_tier(title_blob)
-        # Always reset per VOD — leaked TITLE_MIN_TIER from a prior Double/Savage
-        # title was forcing need_tier=2 on unrelated VODs and burning hours of OCR.
-        if title_tier > 0:
+        # Throughput/silence mode: title may bias scan density but must NEVER
+        # re-arm a multi-kill floor that blocks motion sends overnight.
+        throughput = False
+        try:
+            from mlbb_vod_throughput_mode import ensure_throughput_env, is_active
+
+            throughput = ensure_throughput_env() or is_active()
+        except Exception:
+            throughput = os.environ.get("MLBB_VOD_THROUGHPUT_MODE", "0") == "1"
+        if title_tier > 0 and not throughput and os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
             os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
             log.info(
                 "title_gate vod=%s tier_need=%s blob=%s",
@@ -2409,6 +2449,12 @@ def _process_vod_segments(
             )
         else:
             os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
+            if title_tier > 0 and throughput:
+                log.info(
+                    "title_gate suppressed vod=%s title_tier=%s (throughput mode)",
+                    vod.name,
+                    title_tier,
+                )
         dense_scan = _configure_banner_scan_policy(
             title_tier,
             priority_rescan=bool(entry and entry.get("title_rescan_priority")),
@@ -2422,6 +2468,14 @@ def _process_vod_segments(
             )
     except Exception as exc:
         log.warning("title_gate skipped: %s", exc)
+    # Re-assert unlock after title gate — title must never leave strict floors armed
+    # while silence/flag still demand throughput.
+    try:
+        from mlbb_vod_throughput_mode import ensure_throughput_env
+
+        ensure_throughput_env()
+    except Exception:
+        pass
     state_pre = _load_state()
     streak_in = streak_from_state(state_pre)
     prev_level = int(state_pre.get("last_adaptive_level") or 0)
@@ -2446,8 +2500,11 @@ def _process_vod_segments(
             log.warning("feedback_gate skipped: %s", exc)
 
     # Quality mode: target owner 👎 share <= 20% by sending only high-confidence clips.
-    # This can reduce volume but should improve precision quickly.
-    quality_mode = os.environ.get("MLBB_VOD_QUALITY_MODE", "1") == "1"
+    # Never tighten during silence unlock — that recreates overnight zero-send loops.
+    quality_mode = (
+        os.environ.get("MLBB_VOD_QUALITY_MODE", "1") == "1"
+        and os.environ.get("MLBB_VOD_THROUGHPUT_MODE", "0") != "1"
+    )
     if quality_mode:
         try:
             from mlbb_vod_segment_store import stats as vod_stats
@@ -2758,6 +2815,12 @@ def _process_vod_segments(
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
+        try:
+            from mlbb_vod_throughput_mode import mark_send_success
+
+            mark_send_success()
+        except Exception:
+            pass
         if entry is not None:
             entry["zero_send_sessions"] = 0
             entry.pop("title_rescan_priority", None)
@@ -2962,15 +3025,20 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
 
     # After repeated zero-yield VODs / long silence, automatically unlock throughput.
     from mlbb_vod_adaptive_gate import streak_from_state
+    from mlbb_vod_throughput_mode import THROUGHPUT_OVERRIDES, mark_send_success, should_engage
 
     zero_send_streak = 0
     adaptive_streak = streak_from_state(state_cb)
     relaxed = False
-    orig_quality_mode = os.environ.get("MLBB_VOD_QUALITY_MODE", "1")
-    orig_min_clip = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.06")
-    orig_banner_min_hook = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05")
-    orig_feedback = os.environ.get("MLBB_FEEDBACK_GATE", "1")
-    orig_disable_soften = os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0")
+    saved_pre_unlock = {k: os.environ.get(k) for k in THROUGHPUT_OVERRIDES}
+
+    def _restore_pre_unlock() -> None:
+        for key, prev in saved_pre_unlock.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        mark_send_success()
 
     while time.time() < deadline and vods_done < max_vods:
         ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
@@ -2980,26 +3048,25 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
 
         # Apply quality relaxation before trying the next VOD.
         adaptive_streak = max(adaptive_streak, streak_from_state(_load_state()))
+        os.environ["MLBB_VOD_ADAPTIVE_STREAK_HINT"] = str(adaptive_streak)
         relax_overrides = _mlbb_relax_overrides(
             zero_send_streak, adaptive_streak=adaptive_streak
         )
         if relax_overrides:
             if not relaxed:
+                age = _last_send_age_sec()
                 log.warning(
                     "throughput unlock after zeros=%s adaptive=%s silence=%.0fs",
                     zero_send_streak,
                     adaptive_streak,
-                    _last_send_age_sec(),
+                    age if age < 10**8 else -1,
                 )
                 relaxed = True
             os.environ.update(relax_overrides)
-        elif relaxed:
-            # Restore original defaults once we have a successful send.
-            os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
-            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
-            os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
-            os.environ["MLBB_FEEDBACK_GATE"] = orig_feedback
-            os.environ["MLBB_VOD_DISABLE_SOFTEN"] = orig_disable_soften
+        elif relaxed and not should_engage(
+            adaptive_streak=adaptive_streak, zero_send_streak=zero_send_streak
+        ):
+            _restore_pre_unlock()
             relaxed = False
 
         vod, entry = _resolve_next_vod(
@@ -3032,11 +3099,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             zero_send_streak = 0
             adaptive_streak = 0
             if relaxed:
-                os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
-                os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
-                os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
-                os.environ["MLBB_FEEDBACK_GATE"] = orig_feedback
-                os.environ["MLBB_VOD_DISABLE_SOFTEN"] = orig_disable_soften
+                _restore_pre_unlock()
                 relaxed = False
         else:
             zero_send_streak += 1

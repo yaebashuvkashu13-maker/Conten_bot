@@ -195,6 +195,8 @@ PY
 fi
 
 # No-send / OCR-grind watchdog: heartbeat can stay fresh while zero clips go out.
+# Absolute send-age kill wins even when OCR progress moves — that was the overnight
+# silence pattern (alive heartbeat, zero Telegram).
 if feed_processes_running; then
   set -a
   # shellcheck disable=SC1090
@@ -206,8 +208,11 @@ from pathlib import Path
 
 sys.path.insert(0, "/root/content_bot_ml/scripts")
 now = time.time()
-no_send_sec = int(os.environ.get("MLBB_VOD_NO_SEND_KILL_SEC", "3600"))
-stall_sec = int(os.environ.get("MLBB_VOD_OCR_STALL_KILL_SEC", "2700"))
+no_send_sec = int(os.environ.get("MLBB_VOD_NO_SEND_KILL_SEC", "1800"))
+stall_sec = int(os.environ.get("MLBB_VOD_OCR_STALL_KILL_SEC", "1200"))
+throughput_sec = int(os.environ.get("MLBB_THROUGHPUT_SILENCE_SEC", "1800"))
+# Absolute silence kill — never let OCR "liveness" shield multi-hour zero-send.
+send_age_kill_sec = min(no_send_sec, throughput_sec)
 hb_path = Path("/root/data/mlbb/vod_pipeline_heartbeat.json")
 watch_path = Path("/root/data/mlbb/vod_health_hb_watch.json")
 sent_path = Path("/root/data/mlbb/vod_segment_feed_sent.json")
@@ -223,7 +228,7 @@ def last_sent_age() -> float:
         except Exception:
             pass
     if not log_path.exists():
-        return no_send_sec + 1
+        return float(send_age_kill_sec) + 1
     last_ts = 0.0
     ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
     sent_re = re.compile(r"sent=(\d+) vod=")
@@ -238,7 +243,28 @@ def last_sent_age() -> float:
         sm = sent_re.search(line)
         if sm and int(sm.group(1)) > 0:
             last_ts = max(last_ts, line_ts)
-    return now - last_ts if last_ts else no_send_sec + 1
+    return now - last_ts if last_ts else float(send_age_kill_sec) + 1
+
+def arm_throughput(reason: str, send_age: float) -> None:
+    try:
+        from mlbb_vod_throughput_mode import apply_throughput_mode
+
+        apply_throughput_mode(reason=reason)
+    except Exception:
+        # Persist a minimal flag even if import fails after a bad deploy.
+        flag = Path("/root/data/mlbb/vod_throughput_unlock.json")
+        flag.write_text(
+            json.dumps(
+                {
+                    "active": True,
+                    "reason": reason,
+                    "send_age_sec": float(send_age),
+                    "set_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
 send_age = last_sent_age()
 hb = {}
@@ -250,7 +276,6 @@ if hb_path.exists():
 stage = str(hb.get("stage") or "")
 vod_id = str(hb.get("vod_id") or "")
 progress = float(hb.get("progress") or 0.0)
-hb_ts = float(hb.get("timestamp") or 0.0)
 ocr_stage = any(k in stage for k in ("banner", "highlight", "candidate_scan", "fast_probe"))
 
 watch = {}
@@ -272,20 +297,21 @@ else:
     watch = {"vod_id": vod_id, "stage": stage, "progress": progress, "since_ts": now}
 watch_path.write_text(json.dumps(watch), encoding="utf-8")
 
-# no_send_kill should only trigger when there is no active VOD progress signal.
-# If heartbeat is moving across stages/progress, allow long scans to continue.
-if send_age >= no_send_sec and (not stage or not vod_id):
-    print(f"no_send_kill age_sec={int(send_age)} stage={stage} vod={vod_id}")
-    raise SystemExit(0)
-if send_age >= no_send_sec and stage and vod_id and stall_age >= max(1800, no_send_sec * 0.5):
-    print(f"no_send_stall_kill age_sec={int(send_age)} stall_sec={int(stall_age)} stage={stage} vod={vod_id}")
+# Absolute: send silence kills even if heartbeat/OCR progress is moving.
+if send_age >= send_age_kill_sec:
+    arm_throughput("watchdog_send_age", send_age)
+    print(
+        f"send_age_kill age_sec={int(send_age)} limit={send_age_kill_sec} "
+        f"stage={stage} vod={vod_id} stall_sec={int(stall_age)}"
+    )
     raise SystemExit(0)
 if ocr_stage and stall_age >= stall_sec and send_age >= min(stall_sec, no_send_sec):
+    arm_throughput("watchdog_ocr_stall", send_age)
     print(f"ocr_stall_kill stall_sec={int(stall_age)} send_age={int(send_age)} stage={stage} vod={vod_id}")
 PY
 )"
   if [[ -n "$NO_SEND_OUT" ]]; then
-    log "$NO_SEND_OUT — kill full tree and restart"
+    log "$NO_SEND_OUT — kill full tree, arm throughput, restart"
     kill_feed_tree
     nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
   fi
@@ -318,8 +344,8 @@ if [[ -f "$FEED_LOG" ]]; then
   fi
 fi
 
-# Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
-SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
+# Silence alert — notify if no clip sent in N hours (default 2h; was 12h and too late).
+SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-7200}"
 if [[ "$SILENCE_SEC" -gt 0 ]]; then
   set -a
   # shellcheck disable=SC1090

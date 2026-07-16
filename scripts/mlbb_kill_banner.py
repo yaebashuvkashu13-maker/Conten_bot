@@ -800,6 +800,19 @@ def discover_vod_kill_banners(
             min(200, int(scan_span / max(step, 1.0)) + 8),
         )
         max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
+    # Hard ceiling under silence unlock — tesseract ~45–55s/frame must not burn hours.
+    if (
+        os.environ.get("MLBB_VOD_THROUGHPUT_MODE", "0") == "1"
+        or os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") != "1"
+    ):
+        max_probes = min(
+            max_probes,
+            max(2, int(os.environ.get("MLBB_KILL_BANNER_THROUGHPUT_MAX_PROBES", "6"))),
+        )
+        max_sec = min(
+            max_sec,
+            max(15.0, float(os.environ.get("MLBB_KILL_BANNER_THROUGHPUT_MAX_SEC", "60"))),
+        )
     tail_reserve = min(4, max(2, max_probes // 6))
     core_probe_cap = max(4, max_probes - tail_reserve)
     deadline = time.monotonic() + max_sec
