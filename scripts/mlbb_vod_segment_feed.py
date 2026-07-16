@@ -1997,6 +1997,15 @@ def _collect_scan_segments(
         from mlbb_fight_segment import clip_active_gameplay_ok
 
         title_need = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+        # If the title promises a multi-kill moment, do not downgrade to a generic 1-kill fight.
+        if title_need >= 2 and tier_i < title_need:
+            log.info(
+                "skip peak=%.1f title_multi_kill_mismatch tier=%s need=%s",
+                peak,
+                tier_i,
+                title_need,
+            )
+            continue
         if tier_i >= 5 and title_need >= 5:
             active_ok, active_reason = True, "savage_title_trust"
         else:
