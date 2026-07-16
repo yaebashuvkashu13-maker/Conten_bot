@@ -43,12 +43,12 @@ def heartbeat(
         payload["candidates_in"] = int(candidates_in)
     if candidates_out is not None:
         payload["candidates_out"] = int(candidates_out)
-    if game == "mlbb":
-        try:
-            from mlbb_vod_throughput_mode import heartbeat_extra
+    # Always attach silence clock — highlight_scorer may pass game=mobile_legends.
+    try:
+        from mlbb_vod_throughput_mode import heartbeat_extra
 
-            payload.update(heartbeat_extra())
-        except Exception:
-            pass
+        payload.update(heartbeat_extra())
+    except Exception:
+        pass
     save_json_state(path, payload)
     _LAST_WRITE = now
