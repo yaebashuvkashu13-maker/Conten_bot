@@ -45,6 +45,9 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_REQUIRED": "0",
     "MLBB_VOD_MOTION_ANCHOR_OK": "1",
     "MLBB_VOD_BANNER_PRESEND": "0",
+    # Tesseract is ~45–55s/frame on this host — skip discover OCR under soften.
+    "MLBB_VOD_BANNER_DISCOVER": "0",
+    "MLBB_VOD_BANNER_PREFILTER": "0",
     # Keep soften engaged — default circuit wipe re-armed strict double tier.
     "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
     "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
