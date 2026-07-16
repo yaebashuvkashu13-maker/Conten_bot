@@ -33,7 +33,9 @@ SOFTEN_L1: dict[str, str] = {
     # Discover harder, abandon faster when empty.
     "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
     "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "48",
-    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "240",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "300",
+    # Peak-hint OCR burns the whole deadline (minutes/probe) before timestep runs.
+    "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
     "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
 }

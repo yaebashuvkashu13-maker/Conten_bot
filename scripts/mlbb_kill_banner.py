@@ -996,15 +996,20 @@ def discover_vod_kill_banners(
                 return
 
     # Phase 1: quick OCR around motion peaks spread across the whole VOD.
-    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
-    peak_probe_cap = max(4, min(peak_limit, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES", "8"))))
-    for peak in _stratified_peak_hints(hint_peaks or [], peak_limit):
-        if probes >= peak_probe_cap or probes >= core_probe_cap or time.monotonic() >= deadline:
-            break
-        probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit:
-            _merge_hit(hit)
+    # Soften sets PEAK_HINTS=0 — find_banner_near_peak can burn minutes/probe and
+    # exhaust the discover deadline before the timestep sweep runs.
+    peak_limit = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
+    if peak_limit > 0:
+        peak_probe_cap = max(
+            4, min(peak_limit, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_MAX_PROBES", "8")))
+        )
+        for peak in _stratified_peak_hints(hint_peaks or [], peak_limit):
+            if probes >= peak_probe_cap or probes >= core_probe_cap or time.monotonic() >= deadline:
+                break
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=True)
+            if hit:
+                _merge_hit(hit)
 
     # Phase 1b: optional tail pass (usually disabled — VOD tails are often rank/menu).
     if os.environ.get("MLBB_KILL_BANNER_TAIL_PASS", "0") == "1":
