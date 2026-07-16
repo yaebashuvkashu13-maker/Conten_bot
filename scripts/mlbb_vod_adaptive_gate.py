@@ -32,12 +32,15 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_MIN_TIER": "single",
     # Discover harder, abandon faster when empty.
     "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
-    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "48",
-    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "300",
+    "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "64",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "360",
     # Peak-hint OCR burns the whole deadline (minutes/probe) before timestep runs.
     "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
     "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+    # Keep soften engaged — default circuit at 12 was resetting to strict double.
+    "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
 }
 
 # Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.

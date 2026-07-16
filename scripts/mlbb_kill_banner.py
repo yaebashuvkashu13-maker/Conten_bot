@@ -988,9 +988,14 @@ def discover_vod_kill_banners(
                 fr = _read_frame(vod, float(t) + off)
             if fr is None:
                 continue
-            # Forced sparse probes use deep OCR — cheap color path often misses white text.
-            # Dense 1Hz stays shallow; otherwise a VOD never finishes scanning.
-            hit = _classify_frame(float(t) + off, fr, deep=bool(force_ocr))
+            # Forced sparse probes: deep OCR is optional — under soften deep=force
+            # burns the deadline (~60s/probe) and leaves hits=0 after 5 samples.
+            deep_force = os.environ.get("MLBB_KILL_BANNER_FORCE_OCR_DEEP", "1") == "1"
+            hit = _classify_frame(
+                float(t) + off,
+                fr,
+                deep=bool(force_ocr and deep_force),
+            )
             if hit is not None:
                 _merge_hit(hit)
                 return
