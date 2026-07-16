@@ -1826,6 +1826,8 @@ def discover_highlight_candidates(
                 title_tier = title_min_banner_tier(title_blob)
                 if title_tier > 0:
                     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
+                else:
+                    os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
                 banners = discover_vod_kill_banners(
                     video_path,
                     hint_peaks=starts,

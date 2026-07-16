@@ -104,6 +104,9 @@ def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) ->
         "MLBB_BANNER_MIN_HOOK": os.environ.get("MLBB_BANNER_MIN_HOOK_RELAX", "0.03"),
         "MLBB_FEEDBACK_GATE": os.environ.get("MLBB_FEEDBACK_GATE_RELAX", "0"),
         "MLBB_VOD_DISABLE_SOFTEN": "0",
+        # After long silence, do not keep a stale multi-kill title gate.
+        "MLBB_VOD_TITLE_MIN_TIER": "0",
+        "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
     }
 
 LONG_VOD_TITLE_RE = re.compile(
@@ -2371,6 +2374,8 @@ def _process_vod_segments(
         title_blob = vod_title_blob(vod, entry)
         os.environ["MLBB_VOD_SCAN_TITLE"] = str((entry or {}).get("title") or "")
         title_tier = title_min_banner_tier(title_blob)
+        # Always reset per VOD — leaked TITLE_MIN_TIER from a prior Double/Savage
+        # title was forcing need_tier=2 on unrelated VODs and burning hours of OCR.
         if title_tier > 0:
             os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
             log.info(
@@ -2379,6 +2384,8 @@ def _process_vod_segments(
                 title_tier,
                 title_blob[:80],
             )
+        else:
+            os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
         dense_scan = _configure_banner_scan_policy(
             title_tier,
             priority_rescan=bool(entry and entry.get("title_rescan_priority")),

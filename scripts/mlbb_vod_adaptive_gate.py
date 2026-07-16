@@ -26,9 +26,11 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_QUALITY_MODE": "0",
     "MLBB_FEEDBACK_GATE": "0",
     "MLBB_BANNER_MIN_HOOK": "0.03",
+    # Do not inherit a prior VOD's Double/Savage title floor while soft.
+    "MLBB_VOD_TITLE_MIN_TIER": "0",
 }
 
-# Level 2: more peak tries + relaxed presend motion — still require verified double+ banner.
+# Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
@@ -40,6 +42,7 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
     "MLBB_BANNER_POV_MIN_SIM": "0.22",
     "MLBB_BANNER_MIN_HOOK": "0.025",
+    "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
 }
 
 
@@ -173,7 +176,8 @@ def adaptive_env(streak: int) -> Iterator[int]:
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"Double Kill + POV героя остаются обязательными; смягчаются только score/motion."
+        f"POV героя остаётся обязательным; title multi-kill floor снят, "
+        f"смягчаются score/motion."
     )
 
 
