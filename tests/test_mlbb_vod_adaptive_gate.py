@@ -53,7 +53,9 @@ def test_soft_overrides_keep_banner_strict():
     assert "MLBB_KILL_BANNER_REQUIRED" not in ov
     assert "MLBB_VOD_BANNER_PRESEND" not in ov
     assert "MLBB_VOD_MOTION_ANCHOR_OK" not in ov
-    assert ov["MLBB_VOD_MIN_CLIP_SCORE"] == "0.06"
+    assert ov["MLBB_VOD_MIN_CLIP_SCORE"] == "0.04"
+    assert ov["MLBB_VOD_QUALITY_MODE"] == "0"
+    assert ov["MLBB_FEEDBACK_GATE"] == "0"
 
 
 def test_l1_only_lowers_score_and_motion():
@@ -95,7 +97,7 @@ def test_adaptive_env_restores():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     with adaptive_env(3) as level:
         assert level == 1
-        assert os.environ["MLBB_VOD_MIN_CLIP_SCORE"] == "0.06"
+        assert os.environ["MLBB_VOD_MIN_CLIP_SCORE"] == "0.04"
     assert os.environ["MLBB_VOD_MIN_CLIP_SCORE"] == "0.08"
 
 

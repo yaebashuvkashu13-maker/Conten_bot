@@ -17,11 +17,15 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
     "MLBB_PRESEND_MIN_MOTION": "0.014",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.04",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
     "MLBB_BANNER_POV_MIN_SIM": "0.28",
     "VISUAL_MLBB_MENU_OVERLAY_MAX": "0.85",
     "VISUAL_MLBB_MIN_FRAMES_PASS": "2",
+    # Throughput unlock: quality_mode + mined feedback were stalling overnight.
+    "MLBB_VOD_QUALITY_MODE": "0",
+    "MLBB_FEEDBACK_GATE": "0",
+    "MLBB_BANNER_MIN_HOOK": "0.03",
 }
 
 # Level 2: more peak tries + relaxed presend motion — still require verified double+ banner.
@@ -29,12 +33,13 @@ SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.03",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
     "MLBB_BANNER_POV_MIN_SIM": "0.22",
+    "MLBB_BANNER_MIN_HOOK": "0.025",
 }
 
 

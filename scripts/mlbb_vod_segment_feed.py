@@ -73,15 +73,37 @@ FEED_LOCK_PATH = Path("/tmp/mlbb_vod_segment_feed.lock")
 log = logging.getLogger("mlbb_vod_feed")
 
 
-def _mlbb_relax_overrides(zero_send_streak: int) -> dict[str, str]:
-    """Return env overrides for throughput when we have many zero-yield VODs."""
+def _last_send_age_sec() -> float:
+    try:
+        sent_path = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")) / "vod_segment_feed_sent.json"
+        if not sent_path.exists():
+            return 10**9
+        data = json.loads(sent_path.read_text(encoding="utf-8"))
+        ts = str(data.get("updated_at") or "")
+        if not ts:
+            return 10**9
+        return max(0.0, time.time() - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S")))
+    except Exception:
+        return 10**9
+
+
+def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) -> dict[str, str]:
+    """Return env overrides for throughput when we have many zero-yield VODs.
+
+    Uses persisted adaptive streak + silence since last Telegram send, not just
+    the in-memory streak of the current pipeline process.
+    """
     relax_after = int(os.environ.get("MLBB_RELAX_AFTER_ZERO_VODS", "3"))
-    if zero_send_streak < relax_after:
+    silence_sec = float(os.environ.get("MLBB_THROUGHPUT_SILENCE_SEC", "1800"))
+    silent = _last_send_age_sec() >= silence_sec
+    if zero_send_streak < relax_after and adaptive_streak < relax_after and not silent:
         return {}
     return {
         "MLBB_VOD_QUALITY_MODE": os.environ.get("MLBB_VOD_QUALITY_MODE_RELAX", "0"),
         "MLBB_VOD_MIN_CLIP_SCORE": os.environ.get("MLBB_VOD_MIN_CLIP_SCORE_RELAX", "0.02"),
-        "MLBB_BANNER_MIN_HOOK": os.environ.get("MLBB_BANNER_MIN_HOOK_RELAX", "0.04"),
+        "MLBB_BANNER_MIN_HOOK": os.environ.get("MLBB_BANNER_MIN_HOOK_RELAX", "0.03"),
+        "MLBB_FEEDBACK_GATE": os.environ.get("MLBB_FEEDBACK_GATE_RELAX", "0"),
+        "MLBB_VOD_DISABLE_SOFTEN": "0",
     }
 
 LONG_VOD_TITLE_RE = re.compile(
@@ -763,7 +785,8 @@ class VodPipelineDownloader:
         err = ""
         try:
             state = _load_state()
-            if state.get("pending_download", {}).get("status") == "downloading":
+            pending = state.get("pending_download") or {}
+            if pending.get("status") == "downloading":
                 log.info("another download already marked in state — skip bg")
             else:
                 state["pending_download"] = {
@@ -2907,13 +2930,17 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     vods_done = 0
     notified_download = False
 
-    # After repeated zero-yield VODs, automatically relax quality thresholds to
-    # avoid overnight "OCR grind" producing only 1 clip.
+    # After repeated zero-yield VODs / long silence, automatically unlock throughput.
+    from mlbb_vod_adaptive_gate import streak_from_state
+
     zero_send_streak = 0
+    adaptive_streak = streak_from_state(state_cb)
     relaxed = False
     orig_quality_mode = os.environ.get("MLBB_VOD_QUALITY_MODE", "1")
     orig_min_clip = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.06")
     orig_banner_min_hook = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05")
+    orig_feedback = os.environ.get("MLBB_FEEDBACK_GATE", "1")
+    orig_disable_soften = os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0")
 
     while time.time() < deadline and vods_done < max_vods:
         ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
@@ -2922,12 +2949,17 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             break
 
         # Apply quality relaxation before trying the next VOD.
-        relax_overrides = _mlbb_relax_overrides(zero_send_streak)
+        adaptive_streak = max(adaptive_streak, streak_from_state(_load_state()))
+        relax_overrides = _mlbb_relax_overrides(
+            zero_send_streak, adaptive_streak=adaptive_streak
+        )
         if relax_overrides:
             if not relaxed:
                 log.warning(
-                    "relax MLBB gates after %s consecutive zero-send VODs",
+                    "throughput unlock after zeros=%s adaptive=%s silence=%.0fs",
                     zero_send_streak,
+                    adaptive_streak,
+                    _last_send_age_sec(),
                 )
                 relaxed = True
             os.environ.update(relax_overrides)
@@ -2936,6 +2968,8 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
             os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
             os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
+            os.environ["MLBB_FEEDBACK_GATE"] = orig_feedback
+            os.environ["MLBB_VOD_DISABLE_SOFTEN"] = orig_disable_soften
             relaxed = False
 
         vod, entry = _resolve_next_vod(
@@ -2966,13 +3000,17 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         total_sent += n
         if n > 0:
             zero_send_streak = 0
+            adaptive_streak = 0
             if relaxed:
                 os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
                 os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
                 os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
+                os.environ["MLBB_FEEDBACK_GATE"] = orig_feedback
+                os.environ["MLBB_VOD_DISABLE_SOFTEN"] = orig_disable_soften
                 relaxed = False
         else:
             zero_send_streak += 1
+            adaptive_streak += 1
         vods_done += 1
         registry[:] = _ensure_registry(env)
 
