@@ -117,13 +117,24 @@ def write_flag(*, reason: str, send_age: float | None = None) -> None:
     path = flag_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     age = send_age if send_age is not None else last_send_age_sec()
+    prev: dict = {}
+    if path.exists():
+        try:
+            prev = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
     payload = {
         "active": True,
         "reason": reason,
         "send_age_sec": float(age if age is not None else -1.0),
-        "set_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "set_at": str(prev.get("set_at") or time.strftime("%Y-%m-%d %H:%M:%S")),
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "pid": os.getpid(),
+        # Preserve progress toward CLEAR_AFTER_SENDS across re-arms.
+        "sends_since_unlock": int(prev.get("sends_since_unlock") or 0),
     }
+    if prev.get("last_send_at"):
+        payload["last_send_at"] = prev["last_send_at"]
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
