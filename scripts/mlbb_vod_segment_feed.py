@@ -107,6 +107,8 @@ def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) ->
         # After long silence, do not keep a stale multi-kill title gate.
         "MLBB_VOD_TITLE_MIN_TIER": "0",
         "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
+        # Install default is double; silence unlock must accept single-kill banners.
+        "MLBB_KILL_BANNER_MIN_TIER": "single",
     }
 
 LONG_VOD_TITLE_RE = re.compile(

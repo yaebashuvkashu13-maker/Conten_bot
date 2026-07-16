@@ -28,6 +28,8 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_BANNER_MIN_HOOK": "0.03",
     # Do not inherit a prior VOD's Double/Savage title floor while soft.
     "MLBB_VOD_TITLE_MIN_TIER": "0",
+    # Default install is double — after zero streaks accept verified single kills.
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
 }
 
 # Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.
@@ -43,6 +45,7 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_BANNER_POV_MIN_SIM": "0.22",
     "MLBB_BANNER_MIN_HOOK": "0.025",
     "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
 }
 
 
