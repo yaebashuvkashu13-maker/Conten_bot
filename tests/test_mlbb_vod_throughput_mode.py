@@ -40,11 +40,16 @@ def test_silence_locked_from_sent_json(data_root):
     assert tm.should_engage() is True
 
 
-def test_apply_and_mark_send_success(data_root):
+def test_apply_and_mark_send_success(data_root, monkeypatch):
+    monkeypatch.setenv("MLBB_THROUGHPUT_CLEAR_AFTER_SENDS", "2")
     ov = tm.apply_throughput_mode(reason="test")
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
     assert os.environ["MLBB_VOD_THROUGHPUT_MODE"] == "1"
     assert tm.flag_active() is True
+    tm.mark_send_success()
+    # First send keeps unlock armed so the next VOD cannot flip back to strict.
+    assert tm.flag_active() is True
+    assert os.environ["MLBB_VOD_THROUGHPUT_MODE"] == "1"
     tm.mark_send_success()
     assert tm.flag_active() is False
     assert os.environ.get("MLBB_VOD_THROUGHPUT_MODE") is None

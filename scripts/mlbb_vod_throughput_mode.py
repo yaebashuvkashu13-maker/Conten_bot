@@ -181,7 +181,26 @@ def ensure_throughput_env() -> bool:
 
 
 def mark_send_success() -> None:
-    """Clear unlock after a real send so quality gates can return."""
+    """Clear unlock only after N successful sends since arming.
+
+    Clearing on the first send re-armed POV/title floors and the next VOD
+    went silent again. Default: require 2 sends before strict returns.
+    """
+    need = max(1, int(os.environ.get("MLBB_THROUGHPUT_CLEAR_AFTER_SENDS", "2")))
+    path = flag_path()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {"active": True}
+        sends = int(data.get("sends_since_unlock") or 0) + 1
+        data["sends_since_unlock"] = sends
+        data["last_send_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        if sends < need:
+            data["active"] = True
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.environ.update(THROUGHPUT_OVERRIDES)
+            return
     clear_flag()
     os.environ.pop("MLBB_VOD_THROUGHPUT_MODE", None)
 

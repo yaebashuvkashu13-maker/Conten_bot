@@ -3025,20 +3025,14 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
 
     # After repeated zero-yield VODs / long silence, automatically unlock throughput.
     from mlbb_vod_adaptive_gate import streak_from_state
-    from mlbb_vod_throughput_mode import THROUGHPUT_OVERRIDES, mark_send_success, should_engage
+    from mlbb_vod_throughput_mode import should_engage
 
     zero_send_streak = 0
     adaptive_streak = streak_from_state(state_cb)
     relaxed = False
-    saved_pre_unlock = {k: os.environ.get(k) for k in THROUGHPUT_OVERRIDES}
-
-    def _restore_pre_unlock() -> None:
-        for key, prev in saved_pre_unlock.items():
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
-        mark_send_success()
+    # Do NOT restore strict gates mid-run after a send — that re-armed POV/title
+    # floors and recreated silence on the next VOD in the same process.
+    # Fresh process starts from env file defaults; silence/flag re-unlock if needed.
 
     while time.time() < deadline and vods_done < max_vods:
         ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
@@ -3063,11 +3057,11 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
                 )
                 relaxed = True
             os.environ.update(relax_overrides)
-        elif relaxed and not should_engage(
+        elif relaxed and should_engage(
             adaptive_streak=adaptive_streak, zero_send_streak=zero_send_streak
         ):
-            _restore_pre_unlock()
-            relaxed = False
+            # Keep overrides sticky for the rest of this process once unlocked.
+            pass
 
         vod, entry = _resolve_next_vod(
             env,
@@ -3098,9 +3092,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         if n > 0:
             zero_send_streak = 0
             adaptive_streak = 0
-            if relaxed:
-                _restore_pre_unlock()
-                relaxed = False
+            # mark_send_success runs inside _process_vod_segments; keep soft env.
         else:
             zero_send_streak += 1
             adaptive_streak += 1
