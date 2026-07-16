@@ -272,8 +272,13 @@ else:
     watch = {"vod_id": vod_id, "stage": stage, "progress": progress, "since_ts": now}
 watch_path.write_text(json.dumps(watch), encoding="utf-8")
 
-if send_age >= no_send_sec:
+# no_send_kill should only trigger when there is no active VOD progress signal.
+# If heartbeat is moving across stages/progress, allow long scans to continue.
+if send_age >= no_send_sec and (not stage or not vod_id):
     print(f"no_send_kill age_sec={int(send_age)} stage={stage} vod={vod_id}")
+    raise SystemExit(0)
+if send_age >= no_send_sec and stage and vod_id and stall_age >= max(1800, no_send_sec * 0.5):
+    print(f"no_send_stall_kill age_sec={int(send_age)} stall_sec={int(stall_age)} stage={stage} vod={vod_id}")
     raise SystemExit(0)
 if ocr_stage and stall_age >= stall_sec and send_age >= min(stall_sec, no_send_sec):
     print(f"ocr_stall_kill stall_sec={int(stall_age)} send_age={int(send_age)} stage={stage} vod={vod_id}")
