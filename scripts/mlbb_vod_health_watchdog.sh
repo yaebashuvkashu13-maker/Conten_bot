@@ -297,22 +297,15 @@ else:
     watch = {"vod_id": vod_id, "stage": stage, "progress": progress, "since_ts": now}
 watch_path.write_text(json.dumps(watch), encoding="utf-8")
 
-# Arm unlock as soon as silence exceeds the threshold — do NOT kill a healthy
-# in-progress scan (that restarted scoring forever). Kill only when stuck or
-# when silence exceeds the hard ceiling.
-hard_kill_sec = int(os.environ.get("MLBB_VOD_SEND_AGE_HARD_KILL_SEC", str(max(3600, send_age_kill_sec * 2))))
+# Arm unlock as soon as silence exceeds the threshold — never kill a healthy
+# in-progress scan/render (hard send-age kill previously aborted preview_gate
+# PASS mid-encode). Kill ONLY when heartbeat progress is actually stalled.
 if send_age >= send_age_kill_sec:
     arm_throughput("watchdog_send_age", send_age)
 if stall_age >= stall_sec and send_age >= send_age_kill_sec:
     print(
         f"send_stall_kill age_sec={int(send_age)} stall_sec={int(stall_age)} "
         f"stage={stage} vod={vod_id}"
-    )
-    raise SystemExit(0)
-if send_age >= hard_kill_sec:
-    print(
-        f"send_age_hard_kill age_sec={int(send_age)} limit={hard_kill_sec} "
-        f"stage={stage} vod={vod_id} stall_sec={int(stall_age)}"
     )
     raise SystemExit(0)
 if ocr_stage and stall_age >= stall_sec and send_age >= min(stall_sec, no_send_sec):
