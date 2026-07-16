@@ -123,6 +123,7 @@ def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) ->
         "MLBB_VOD_BANNER_PRESEND": "0",
         "MLBB_VOD_BANNER_DISCOVER": "0",
         "MLBB_VOD_BANNER_PREFILTER": "0",
+        "MLBB_BANNER_POV_MATCH": "0",
         "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
         "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
     }

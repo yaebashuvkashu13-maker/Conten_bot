@@ -48,6 +48,7 @@ SOFTEN_L1: dict[str, str] = {
     # Tesseract is ~45–55s/frame on this host — skip discover OCR under soften.
     "MLBB_VOD_BANNER_DISCOVER": "0",
     "MLBB_VOD_BANNER_PREFILTER": "0",
+    "MLBB_BANNER_POV_MATCH": "0",
     # Keep soften engaged — default circuit wipe re-armed strict double tier.
     "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
     "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
@@ -67,6 +68,8 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_BANNER_MIN_HOOK": "0.025",
     "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
     "MLBB_KILL_BANNER_MIN_TIER": "single",
+    # POV gate was blocking all motion clips (sim~0.15 < 0.22) during silence unlock.
+    "MLBB_BANNER_POV_MATCH": "0",
 }
 
 
