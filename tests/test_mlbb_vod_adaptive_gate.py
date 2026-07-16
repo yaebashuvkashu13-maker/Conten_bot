@@ -134,8 +134,18 @@ def test_streak_from_state_uses_legacy_zero_cut_streak():
     assert streak_from_state(state3) == 40
 
 
-def test_circuit_breaker_resets_stuck_streak(monkeypatch):
+def test_circuit_breaker_holds_by_default(monkeypatch):
     monkeypatch.setenv("MLBB_VOD_STREAK_CIRCUIT_MAX", "10")
+    monkeypatch.delenv("MLBB_VOD_CIRCUIT_ALLOW_RESET", raising=False)
+    state = {"zero_cut_streak": 40, "vod_outcomes": [{"id": "x", "sent": 0}] * 10, "last_adaptive_level": 2}
+    assert apply_circuit_breaker(state) is False
+    assert state["zero_cut_streak"] == 40
+    assert state.get("circuit_held_streak") == 40
+
+
+def test_circuit_breaker_resets_when_allowed(monkeypatch):
+    monkeypatch.setenv("MLBB_VOD_STREAK_CIRCUIT_MAX", "10")
+    monkeypatch.setenv("MLBB_VOD_CIRCUIT_ALLOW_RESET", "1")
     state = {"zero_cut_streak": 40, "vod_outcomes": [{"id": "x", "sent": 0}] * 10, "last_adaptive_level": 2}
     assert apply_circuit_breaker(state) is True
     assert state["zero_cut_streak"] == 0

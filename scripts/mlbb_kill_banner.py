@@ -969,6 +969,8 @@ def discover_vod_kill_banners(
             offsets = (0.0,)
         elif force_ocr and color < color_floor:
             offsets = (0.0,)
+        elif os.environ.get("MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET", "0") == "1":
+            offsets = (0.0,)
         elif color >= win_thr:
             offsets = (-0.35, 0.0, 0.35, 0.7)
         else:

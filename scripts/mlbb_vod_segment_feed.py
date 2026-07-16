@@ -111,12 +111,14 @@ def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) ->
         "MLBB_KILL_BANNER_MIN_TIER": "single",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
         "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "64",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "360",
+        "MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET": "1",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "96",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
         "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
         "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
         "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
+        "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
     }
 
 LONG_VOD_TITLE_RE = re.compile(

@@ -33,14 +33,16 @@ SOFTEN_L1: dict[str, str] = {
     # Discover harder, abandon faster when empty.
     "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
     "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
-    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "64",
-    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "360",
+    "MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET": "1",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "96",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
     # Peak-hint OCR burns the whole deadline (minutes/probe) before timestep runs.
     "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
     "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
-    # Keep soften engaged — default circuit at 12 was resetting to strict double.
+    # Keep soften engaged — default circuit wipe re-armed strict double tier.
     "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
+    "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
 }
 
 # Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.
@@ -127,9 +129,18 @@ def streak_circuit_max() -> int:
 
 
 def apply_circuit_breaker(state: dict) -> bool:
-    """Reset adaptive streak when stuck too long. Returns True if reset happened."""
+    """Optionally reset adaptive streak when stuck too long.
+
+    Default is hold (no reset): clearing the streak re-arms strict double-tier
+    gates and recreates multi-hour silence. Set MLBB_VOD_CIRCUIT_ALLOW_RESET=1
+    to restore the old wipe behavior.
+    """
     streak = streak_from_state(state)
     if streak < streak_circuit_max():
+        return False
+    if os.environ.get("MLBB_VOD_CIRCUIT_ALLOW_RESET", "0") != "1":
+        state["circuit_breaker_held_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        state["circuit_held_streak"] = streak
         return False
     state["zero_cut_streak"] = 0
     state["vod_outcomes"] = []
