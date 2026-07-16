@@ -1983,7 +1983,11 @@ def _collect_scan_segments(
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
             continue
-        if lead_clip.get("anchor") == "motion" and not lead_clip.get("kill_banner"):
+        if (
+            lead_clip.get("anchor") == "motion"
+            and not lead_clip.get("kill_banner")
+            and os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+        ):
             log.info("skip peak=%.1f motion_anchor_no_banner", peak)
             continue
         tier = lead_clip.get("kill_banner_tier")

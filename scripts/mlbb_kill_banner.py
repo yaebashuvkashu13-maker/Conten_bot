@@ -1410,6 +1410,13 @@ def resolve_fight_bounds(
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return fight_start, fight_end, fight_dur, motion_meta
 
+    # Soften/unlock: skip per-peak OCR (~45–55s/frame) and use motion bounds.
+    if (
+        os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") != "1"
+        or os.environ.get("MLBB_VOD_MOTION_ANCHOR_OK", "0") == "1"
+    ):
+        return fight_start, fight_end, fight_dur, motion_meta
+
     hit = find_banner_near_peak(vod, peak_sec, quick=True)
     if hit is None:
         hit = find_banner_near_peak(vod, peak_sec, quick=False)
