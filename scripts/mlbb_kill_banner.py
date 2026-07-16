@@ -260,6 +260,26 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     except ImportError:
         return ""
 
+    fast = (not deep) and os.environ.get("MLBB_KILL_BANNER_OCR_FAST", "0") == "1"
+    if fast:
+        # Soften/unlock path: one small crop + one PSM — full shallow was ~55s/frame.
+        target = (480, 270)
+        small = cv2.resize(frame, target)
+        h, w = small.shape[:2]
+        zone = small[int(h * 0.02) : int(h * 0.30), int(w * 0.12) : int(w * 0.88)]
+        if zone.size == 0:
+            return ""
+        gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+        binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        try:
+            text = pytesseract.image_to_string(
+                binary,
+                config="--psm 7 -l eng --oem 1",
+            )
+        except Exception:
+            return ""
+        return " ".join(text.split())
+
     target = (960, 540) if deep else (640, 360)
     small = cv2.resize(frame, target)
     h, w = small.shape[:2]

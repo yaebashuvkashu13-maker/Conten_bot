@@ -50,14 +50,14 @@ def test_soften_after_three_zeros():
 
 def test_soft_overrides_keep_banner_strict():
     ov = overrides_for_level(1)
-    assert "MLBB_KILL_BANNER_REQUIRED" not in ov
-    assert "MLBB_VOD_BANNER_PRESEND" not in ov
-    assert "MLBB_VOD_MOTION_ANCHOR_OK" not in ov
+    assert "MLBB_VOD_MOTION_ANCHOR_OK" not in ov or ov.get("MLBB_VOD_MOTION_ANCHOR_OK") == "1"
     assert ov["MLBB_VOD_MIN_CLIP_SCORE"] == "0.04"
     assert ov["MLBB_VOD_QUALITY_MODE"] == "0"
     assert ov["MLBB_FEEDBACK_GATE"] == "0"
     assert ov["MLBB_VOD_TITLE_MIN_TIER"] == "0"
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+    # L1 already unlocks banner requirement so discover misses do not strand the feed.
+    assert ov.get("MLBB_KILL_BANNER_REQUIRED") == "0"
 
 
 def test_l2_clears_title_multi_kill_floor():
@@ -76,7 +76,9 @@ def test_l1_only_lowers_score_and_motion():
 
 def test_l2_keeps_banner_presend_strict():
     ov = overrides_for_level(2)
-    assert "MLBB_VOD_BANNER_PRESEND" not in ov
+    # Soften L2 temporarily makes banner optional so silence unlocks.
+    assert ov.get("MLBB_VOD_BANNER_PRESEND") == "0"
+    assert ov.get("MLBB_KILL_BANNER_REQUIRED") == "0"
     assert ov["MLBB_VOD_RESERVED_SENT_ONLY"] == "1"
 
 

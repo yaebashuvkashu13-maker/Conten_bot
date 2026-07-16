@@ -34,12 +34,17 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
     "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
     "MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET": "1",
+    "MLBB_KILL_BANNER_OCR_FAST": "1",
     "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "96",
     "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
     # Peak-hint OCR burns the whole deadline (minutes/probe) before timestep runs.
     "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
     "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+    # After long zero streaks, allow motion clips so the feed is not silent for hours.
+    "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
+    "MLBB_VOD_BANNER_PRESEND": "0",
     # Keep soften engaged — default circuit wipe re-armed strict double tier.
     "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
     "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",

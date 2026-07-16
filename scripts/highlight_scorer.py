@@ -1882,13 +1882,23 @@ def discover_highlight_candidates(
                 or os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double").strip().lower()
                 in {"1", "single"}
             )
-            if use_discover and not banners and skip_on_miss:
+            if (
+                use_discover
+                and not banners
+                and skip_on_miss
+                and os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+            ):
                 log.warning(
                     "highlight %s: discover hits=0 — skip peak OCR grind (throughput)",
                     video_path.name,
                 )
                 _hb("highlight_banner_none", progress=1.0, candidates=0)
                 return []
+            if use_discover and not banners and skip_on_miss:
+                log.warning(
+                    "highlight %s: discover hits=0 — continue motion peaks (banner optional)",
+                    video_path.name,
+                )
             from mlbb_fight_segment import banner_lead_sec
 
             if banners:
