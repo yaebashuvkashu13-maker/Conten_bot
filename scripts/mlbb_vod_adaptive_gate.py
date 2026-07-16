@@ -30,6 +30,12 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_TITLE_MIN_TIER": "0",
     # Default install is double — after zero streaks accept verified single kills.
     "MLBB_KILL_BANNER_MIN_TIER": "single",
+    # Discover harder, abandon faster when empty.
+    "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "48",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "240",
+    "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
 }
 
 # Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.

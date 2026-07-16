@@ -109,6 +109,10 @@ def _mlbb_relax_overrides(zero_send_streak: int, *, adaptive_streak: int = 0) ->
         "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
         # Install default is double; silence unlock must accept single-kill banners.
         "MLBB_KILL_BANNER_MIN_TIER": "single",
+        "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "48",
+        "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
+        "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
     }
 
 LONG_VOD_TITLE_RE = re.compile(

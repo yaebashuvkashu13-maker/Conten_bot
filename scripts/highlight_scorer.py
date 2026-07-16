@@ -1874,6 +1874,21 @@ def discover_highlight_candidates(
                 )
                 _hb("highlight_banner_none", progress=1.0, candidates=0)
                 return []
+            # Soften/unlock: discover already swept the VOD — do not burn 10–20 min
+            # OCR-ing every motion peak when hits=0 (banner_window_ocr silence).
+            skip_on_miss = (
+                os.environ.get("MLBB_VOD_SKIP_ON_DISCOVER_MISS", "0") == "1"
+                or int(os.environ.get("MLBB_VOD_ADAPTIVE_LEVEL", "0") or 0) > 0
+                or os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double").strip().lower()
+                in {"1", "single"}
+            )
+            if use_discover and not banners and skip_on_miss:
+                log.warning(
+                    "highlight %s: discover hits=0 — skip peak OCR grind (throughput)",
+                    video_path.name,
+                )
+                _hb("highlight_banner_none", progress=1.0, candidates=0)
+                return []
             from mlbb_fight_segment import banner_lead_sec
 
             if banners:
