@@ -132,8 +132,16 @@ def run_command(
     text: bool = True,
     input_data=None,
     env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ):
     logging.debug('running command: %s', ' '.join(shlex.quote(arg) for arg in args))
+    # ffmpeg/ffprobe can hang overnight without a wall clock — default for encode-like cmds.
+    if timeout is None:
+        joined = " ".join(args[:2]).lower()
+        if "ffmpeg" in joined:
+            timeout = float(os.environ.get("SMART_EDITOR_FFMPEG_TIMEOUT_SEC", "300"))
+        elif "ffprobe" in joined:
+            timeout = float(os.environ.get("SMART_EDITOR_FFPROBE_TIMEOUT_SEC", "60"))
     return subprocess.run(
         args,
         capture_output=capture_output,
@@ -141,6 +149,7 @@ def run_command(
         text=text,
         input=input_data,
         env=env,
+        timeout=timeout,
     )
 
 

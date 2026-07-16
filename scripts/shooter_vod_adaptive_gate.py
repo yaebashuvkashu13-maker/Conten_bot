@@ -32,6 +32,9 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
     "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
     "VISUAL_PUBG_MIN_CENTER_EDGE": "0.022",
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.014",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.06",
+    "VIRAL_COMBAT_HOOK_MIN": "0.03",
+    "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
 }
 
 # Level 2: allow Metro highlight HUD, one good frame enough, POV gate off.
@@ -54,6 +57,7 @@ SHOOTER_SOFTEN_L2: dict[str, str] = {
     "PUBG_METRO_MAX_SKY_RATIO": "0.20",
     "PUBG_METRO_SEGMENT_RELAX": "1",
     "HIGHLIGHT_PANN_PREFILTER_MIN": "0.10",
+    "PUBG_PRESEND_TRUST_HIGHLIGHT": "1",
 }
 
 
@@ -108,6 +112,8 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
 
 
 def soften_level(streak: int) -> int:
+    if os.environ.get("SHOOTER_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0

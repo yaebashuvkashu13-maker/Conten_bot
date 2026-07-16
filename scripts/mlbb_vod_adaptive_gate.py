@@ -4,46 +4,72 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: productive fallback — motion peaks, banner checked at presend only.
+# Level 1: lower score/uniform thresholds only — banner + POV stay mandatory.
 SOFTEN_L1: dict[str, str] = {
-    "MLBB_VOD_BANNER_PREFILTER": "0",
-    "MLBB_VOD_BANNER_DISCOVER": "0",
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
-    "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
     "MLBB_PRESEND_MIN_MOTION": "0.014",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.04",
     "VIRAL_MLBB_HOOK_MIN": "0.04",
-    "MLBB_KILL_BANNER_QUICK_BEFORE": "12",
-    "MLBB_KILL_BANNER_QUICK_AFTER": "8",
+    "MLBB_BANNER_POV_MIN_SIM": "0.28",
+    "VISUAL_MLBB_MENU_OVERLAY_MAX": "0.85",
+    "VISUAL_MLBB_MIN_FRAMES_PASS": "2",
+    # Throughput unlock: quality_mode + mined feedback were stalling overnight.
+    "MLBB_VOD_QUALITY_MODE": "0",
+    "MLBB_FEEDBACK_GATE": "0",
+    "MLBB_BANNER_MIN_HOOK": "0.03",
+    # Do not inherit a prior VOD's Double/Savage title floor while soft.
+    "MLBB_VOD_TITLE_MIN_TIER": "0",
+    # Default install is double — after zero streaks accept verified single kills.
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
+    # Discover harder, abandon faster when empty.
+    "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "1",
+    "MLBB_KILL_BANNER_FORCE_OCR_DEEP": "0",
+    "MLBB_KILL_BANNER_FORCE_SINGLE_OFFSET": "1",
+    "MLBB_KILL_BANNER_OCR_FAST": "1",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "96",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
+    # Peak-hint OCR burns the whole deadline (minutes/probe) before timestep runs.
+    "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "0",
+    "MLBB_VOD_SKIP_ON_DISCOVER_MISS": "1",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+    # After long zero streaks, allow motion clips so the feed is not silent for hours.
+    "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
+    "MLBB_VOD_BANNER_PRESEND": "0",
+    # Tesseract is ~45–55s/frame on this host — skip discover OCR under soften.
+    "MLBB_VOD_BANNER_DISCOVER": "0",
+    "MLBB_VOD_BANNER_PREFILTER": "0",
+    "MLBB_BANNER_POV_MATCH": "0",
+    # Keep soften engaged — default circuit wipe re-armed strict double tier.
+    "MLBB_VOD_STREAK_CIRCUIT_MAX": "40",
+    "MLBB_VOD_CIRCUIT_ALLOW_RESET": "0",
 }
 
-# Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
+# Level 2: more peak tries + relaxed presend motion — any verified kill banner OK.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.03",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
-    "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
-    "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
-    "MLBB_KILL_BANNER_QUICK_AFTER": "10",
-    "MLBB_KILL_BANNER_SCAN_BEFORE": "24",
-    "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+    "MLBB_BANNER_POV_MIN_SIM": "0.22",
+    "MLBB_BANNER_MIN_HOOK": "0.025",
+    "MLBB_TITLE_SAVAGE_MIN_TIER": "0",
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
+    # POV gate was blocking all motion clips (sim~0.15 < 0.22) during silence unlock.
+    "MLBB_BANNER_POV_MATCH": "0",
 }
 
 
@@ -60,8 +86,23 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3).
+
+    Silence / persisted unlock flag forces L2 even when DISABLE_SOFTEN=1 —
+    overnight quality mode must not recreate multi-hour zero-send loops.
+    Streak alone still respects DISABLE_SOFTEN (relax_overrides handles that).
+    """
+    try:
+        from mlbb_vod_throughput_mode import silence_locked
+
+        if silence_locked():
+            return 2
+    except Exception:
+        pass
     need = streak_threshold()
+    disable = os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1"
+    if disable:
+        return 0
     if streak < need:
         return 0
     if streak >= need + 3:
@@ -105,14 +146,40 @@ def streak_from_state(state: dict) -> int:
     return max(from_hist, legacy)
 
 
+def streak_circuit_max() -> int:
+    """After this many consecutive zero-VOD runs, reset soften state (avoid infinite L2 loop)."""
+    return max(6, int(os.environ.get("MLBB_VOD_STREAK_CIRCUIT_MAX", "12")))
+
+
+def apply_circuit_breaker(state: dict) -> bool:
+    """Optionally reset adaptive streak when stuck too long.
+
+    Default is hold (no reset): clearing the streak re-arms strict double-tier
+    gates and recreates multi-hour silence. Set MLBB_VOD_CIRCUIT_ALLOW_RESET=1
+    to restore the old wipe behavior.
+    """
+    streak = streak_from_state(state)
+    if streak < streak_circuit_max():
+        return False
+    if os.environ.get("MLBB_VOD_CIRCUIT_ALLOW_RESET", "0") != "1":
+        state["circuit_breaker_held_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        state["circuit_held_streak"] = streak
+        return False
+    state["zero_cut_streak"] = 0
+    state["vod_outcomes"] = []
+    state["last_adaptive_level"] = 0
+    state["circuit_breaker_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return True
+
+
 def soften_summary(level: int) -> str:
     if level <= 0:
         return "strict"
     ov = overrides_for_level(level)
-    tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "?")
-    pre = "off" if ov.get("MLBB_VOD_BANNER_PREFILTER") == "0" else "on"
-    anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "banner_required"
-    return f"soft L{level} tier={tier} prefilter={pre} {anchor}"
+    min_clip = ov.get("MLBB_VOD_MIN_CLIP_SCORE", "?")
+    motion = ov.get("MLBB_PRESEND_MIN_MOTION", "?")
+    banner = "optional" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "required"
+    return f"soft L{level} clip>={min_clip} motion>={motion} banner={banner}"
 
 
 def should_notify_soften(streak: int, level: int, *, prev_level: int) -> bool:
@@ -134,6 +201,18 @@ def adaptive_env(streak: int) -> Iterator[int]:
     """Apply soften overrides for this VOD scan; yields active soften level."""
     level = soften_level(streak)
     overrides = overrides_for_level(level)
+    # Silence unlock must win even when streak soften is disabled mid-restore.
+    # Do NOT sticky-set THROUGHPUT_MODE on ordinary streak soften — that made
+    # every L1 VOD permanently unlock and never restore quality gates.
+    try:
+        from mlbb_vod_throughput_mode import THROUGHPUT_OVERRIDES, silence_locked, apply_throughput_mode
+
+        if silence_locked():
+            apply_throughput_mode(reason="adaptive_env_silence")
+            overrides = {**THROUGHPUT_OVERRIDES, **overrides}
+            level = max(level, 2)
+    except Exception:
+        pass
     if not overrides:
         yield 0
         return
@@ -144,21 +223,34 @@ def adaptive_env(streak: int) -> Iterator[int]:
         os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = str(level)
         yield level
     finally:
-        for key, prev in saved.items():
-            if prev is None:
-                os.environ.pop(key, None)
+        # Keep unlock only while silence/flag still demand it — not because we
+        # temporarily set MLBB_VOD_THROUGHPUT_MODE inside this context.
+        keep = False
+        try:
+            from mlbb_vod_throughput_mode import silence_locked, apply_throughput_mode
+
+            keep = silence_locked()
+            if keep:
+                apply_throughput_mode(reason="adaptive_env_hold")
+        except Exception:
+            keep = False
+        if not keep:
+            for key, prev in saved.items():
+                if prev is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = prev
+            if saved_level is None:
+                os.environ.pop("MLBB_VOD_ADAPTIVE_LEVEL", None)
             else:
-                os.environ[key] = prev
-        if saved_level is None:
-            os.environ.pop("MLBB_VOD_ADAPTIVE_LEVEL", None)
-        else:
-            os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = saved_level
+                os.environ["MLBB_VOD_ADAPTIVE_LEVEL"] = saved_level
 
 
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"Режу teamfight по motion; kill-banner — бонус, не обязателен."
+        f"Title multi-kill / POV / discover OCR сняты — motion-клипы разрешены, "
+        f"чтобы не было тишины на часы."
     )
 
 
@@ -166,4 +258,6 @@ def telegram_exhaust_notice(vod_id: str, *, level: int, streak: int) -> str:
     base = f"⚠️ {vod_id}: 0 клипов"
     if level > 0:
         return f"{base} (уже мягкий режим L{level}, серия нулей={streak})"
+    if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
+        return f"{base} — серия нулей={streak} (смягчение отключено: quality mode)"
     return f"{base} — серия нулей {streak}/{streak_threshold()} до смягчения"

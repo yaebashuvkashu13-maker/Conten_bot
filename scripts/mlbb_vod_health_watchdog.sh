@@ -13,6 +13,31 @@ env_val() {
   grep "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
 }
 
+kill_feed_tree() {
+  # Kill supervisor + children. Prefer process kill over rm of flock inodes —
+  # kernel releases flock when PID dies; unlinking while FD held creates dual feeds.
+  pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+  pkill -9 -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
+  pkill -9 -f 'daily_cycle_runner.py' 2>/dev/null || true
+  pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+  sleep 2
+  # Only remove locks when no feed process remains.
+  if ! pgrep -f 'mlbb_vod_segment_feed\.py|shooter_vod_segment_feed\.py|daily_cycle_runner\.py' >/dev/null 2>&1; then
+    rm -f /tmp/mlbb_vod_segment_feed.lock \
+      /tmp/pubg_vod_segment_feed.lock \
+      /tmp/standoff_vod_segment_feed.lock \
+      /tmp/genshin_vod_segment_feed.lock \
+      /tmp/wot_vod_segment_feed.lock \
+      /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
+  fi
+}
+
+feed_processes_running() {
+  pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
+    || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
+    || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1
+}
+
 [[ -f "$ENV_FILE" ]] || exit 0
 if [[ -f /root/data/mlbb/OWNER_BATCH_RUNNING ]]; then
   log "owner batch lock — skip health watchdog"
@@ -23,8 +48,12 @@ if [[ "$(env_val MLBB_VOD_ONLY)" != "1" || "$(env_val MLBB_VOD_DISABLED)" == "1"
 fi
 
 # Zombies that have repeatedly killed the box.
-for pat in highlight_train.py mlbb_continuous_worker mlbb_calibration_feed \
-  mlbb_youtube_shorts_ingest mlbb_hero_shorts_montage; do
+# Match .py / explicit script names — NOT *watchdog.sh which also contains these stems.
+FORBIDDEN_PATTERNS="highlight_train.py mlbb_continuous_worker.py mlbb_calibration_feed.py mlbb_youtube_shorts_ingest.py mlbb_hero_shorts_montage.py"
+if [[ "$(env_val MLBB_LEARN_APPLY_TRAIN)" == "1" ]]; then
+  FORBIDDEN_PATTERNS="mlbb_continuous_worker.py mlbb_calibration_feed.py mlbb_youtube_shorts_ingest.py mlbb_hero_shorts_montage.py"
+fi
+for pat in $FORBIDDEN_PATTERNS; do
   if pgrep -f "$pat" >/dev/null 2>&1; then
     log "kill forbidden $pat"
     pkill -9 -f "$pat" 2>/dev/null || true
@@ -32,10 +61,10 @@ for pat in highlight_train.py mlbb_continuous_worker mlbb_calibration_feed \
 done
 
 # Stuck owner sync one-liners from manual debugging.
-pgrep -af 'sync_owner_learning' 2>/dev/null | grep -v mlbb_vod_segment_feed | while read -r line; do
+while read -r line; do
   pid=$(echo "$line" | awk '{print $1}')
   [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null && log "kill stuck sync pid=$pid"
-done
+done < <(pgrep -af 'sync_owner_learning' 2>/dev/null | grep -v mlbb_vod_segment_feed || true)
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   log "restart telegram_upload_bot"
@@ -47,46 +76,279 @@ if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1 \
   && ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   log "restart vod supervisor"
-  pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  sleep 1
-  rm -f /tmp/mlbb_vod_segment_feed.lock
+  kill_feed_tree
   nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
 fi
 
 # Disk emergency — inbox cleanup when root is nearly full (common silence cause).
 DISK_PCT="$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')"
-if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
-  log "disk critical ${DISK_PCT}% — run vps_disk_cleanup"
+if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 90 ]]; then
+  log "disk high ${DISK_PCT}% — run vps_disk_cleanup"
   REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   if [[ -x "$REPO/scripts/vps_disk_cleanup.sh" ]]; then
     bash "$REPO/scripts/vps_disk_cleanup.sh" >>"$LOG" 2>&1 || true
   fi
 fi
 
-# Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
-FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
-if [[ -f "$FEED_LOG" ]]; then
-  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || echo 0)"
-  if [[ "$CRASH_N" -gt 3 ]]; then
-    log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
-  fi
-  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
-  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
-  if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
-    { pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
-      || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
-      || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; }; then
-    log "feed stuck log_age=${LOG_AGE_SEC}s — kill and restart"
-    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
-    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+# Daily cycle: when MLBB is active, shooter feeds must not block the pipeline.
+if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]]; then
+  ACTIVE_GAME="$(python3 - <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+try:
+    from daily_game_cycle import active_game, reset_if_new_day
+    reset_if_new_day()
+    print(active_game() or "")
+except Exception:
+    print("")
+PY
+)"
+  if [[ "$ACTIVE_GAME" == "mlbb" ]] && pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; then
+    log "active_game=mlbb but shooter feed running — kill to unblock MLBB"
+    pkill -9 -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
     sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock
+    rm -f /tmp/pubg_vod_segment_feed.lock \
+      /tmp/standoff_vod_segment_feed.lock \
+      /tmp/genshin_vod_segment_feed.lock \
+      /tmp/wot_vod_segment_feed.lock \
+      /tmp/shooter_vod_segment_feed.lock 2>/dev/null || true
+  fi
+fi
+
+# Daily cycle: MLBB feed must not run when another game is active (quota done).
+if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]] && pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+  WRONG_GAME="$(python3 - <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+try:
+    from daily_game_cycle import active_game, reset_if_new_day
+    reset_if_new_day()
+    active = active_game()
+    print("" if active == "mlbb" else (active or "done"))
+except Exception:
+    print("")
+PY
+)"
+  if [[ -n "$WRONG_GAME" ]]; then
+    log "mlbb feed running but active_game=$WRONG_GAME — kill to unblock cycle"
+    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+    sleep 2
+    if ! pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
+      rm -f /tmp/mlbb_vod_segment_feed.lock
+    fi
+  fi
+fi
+
+# Zero-send streak: reset state when feed scans but nothing reaches Telegram.
+if pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+  CB_OUT="$(python3 - <<'PY' 2>/dev/null || true
+import json, os, re, sys, time
+from pathlib import Path
+
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+state_path = Path("/root/data/mlbb/vod_segment_state.json")
+if not state_path.exists():
+    raise SystemExit(0)
+try:
+    from mlbb_vod_adaptive_gate import apply_circuit_breaker, streak_circuit_max, streak_from_state
+    from vod_scan_state import invalidate_pool_cache
+except Exception:
+    raise SystemExit(0)
+
+state = json.loads(state_path.read_text(encoding="utf-8"))
+streak = streak_from_state(state)
+if streak < streak_circuit_max():
+    raise SystemExit(0)
+
+log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+now = time.time()
+last_send = 0.0
+ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+if log_path.exists():
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-6000:]:
+        m = ts_re.match(line)
+        if m and "sent=1 vod=" in line:
+            try:
+                last_send = max(last_send, time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")))
+            except ValueError:
+                pass
+silence = int(os.environ.get("MLBB_VOD_CIRCUIT_SILENCE_SEC", "7200"))
+if last_send and (now - last_send) < silence:
+    raise SystemExit(0)
+
+if not apply_circuit_breaker(state):
+    raise SystemExit(0)
+for row in state.get("vods") or []:
+    invalidate_pool_cache(row)
+state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"circuit_breaker_reset streak={streak}")
+PY
+)"
+  if [[ -n "$CB_OUT" ]]; then
+    log "$CB_OUT — kill feed for clean restart"
+    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+    sleep 2
+    if ! pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
+      rm -f /tmp/mlbb_vod_segment_feed.lock
+    fi
+  fi
+fi
+
+# No-send / OCR-grind watchdog: heartbeat can stay fresh while zero clips go out.
+# Absolute send-age kill wins even when OCR progress moves — that was the overnight
+# silence pattern (alive heartbeat, zero Telegram).
+if feed_processes_running; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  NO_SEND_OUT="$(python3 - <<'PY' 2>/dev/null || true
+import json, os, re, sys, time
+from pathlib import Path
+
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+now = time.time()
+no_send_sec = int(os.environ.get("MLBB_VOD_NO_SEND_KILL_SEC", "1800"))
+stall_sec = int(os.environ.get("MLBB_VOD_OCR_STALL_KILL_SEC", "1200"))
+throughput_sec = int(os.environ.get("MLBB_THROUGHPUT_SILENCE_SEC", "1800"))
+# Absolute silence kill — never let OCR "liveness" shield multi-hour zero-send.
+send_age_kill_sec = min(no_send_sec, throughput_sec)
+hb_path = Path("/root/data/mlbb/vod_pipeline_heartbeat.json")
+watch_path = Path("/root/data/mlbb/vod_health_hb_watch.json")
+sent_path = Path("/root/data/mlbb/vod_segment_feed_sent.json")
+log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+
+def last_sent_age() -> float:
+    if sent_path.exists():
+        try:
+            data = json.loads(sent_path.read_text(encoding="utf-8"))
+            ts = data.get("updated_at", "")
+            if ts:
+                return now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            pass
+    if not log_path.exists():
+        return float(send_age_kill_sec) + 1
+    last_ts = 0.0
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    sent_re = re.compile(r"sent=(\d+) vod=")
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-12000:]:
+        tm = ts_re.match(line)
+        if not tm:
+            continue
+        try:
+            line_ts = time.mktime(time.strptime(tm.group(1), "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        sm = sent_re.search(line)
+        if sm and int(sm.group(1)) > 0:
+            last_ts = max(last_ts, line_ts)
+    return now - last_ts if last_ts else float(send_age_kill_sec) + 1
+
+def arm_throughput(reason: str, send_age: float) -> None:
+    try:
+        from mlbb_vod_throughput_mode import apply_throughput_mode
+
+        apply_throughput_mode(reason=reason)
+    except Exception:
+        # Persist a minimal flag even if import fails after a bad deploy.
+        flag = Path("/root/data/mlbb/vod_throughput_unlock.json")
+        flag.write_text(
+            json.dumps(
+                {
+                    "active": True,
+                    "reason": reason,
+                    "send_age_sec": float(send_age),
+                    "set_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+send_age = last_sent_age()
+hb = {}
+if hb_path.exists():
+    try:
+        hb = json.loads(hb_path.read_text(encoding="utf-8"))
+    except Exception:
+        hb = {}
+stage = str(hb.get("stage") or "")
+vod_id = str(hb.get("vod_id") or "")
+progress = float(hb.get("progress") or 0.0)
+ocr_stage = any(k in stage for k in ("banner", "highlight", "candidate_scan", "fast_probe"))
+
+watch = {}
+if watch_path.exists():
+    try:
+        watch = json.loads(watch_path.read_text(encoding="utf-8"))
+    except Exception:
+        watch = {}
+
+same = (
+    watch.get("vod_id") == vod_id
+    and watch.get("stage") == stage
+    and abs(float(watch.get("progress") or 0.0) - progress) < 0.02
+)
+if same and watch.get("since_ts"):
+    stall_age = now - float(watch["since_ts"])
+else:
+    stall_age = 0.0
+    watch = {"vod_id": vod_id, "stage": stage, "progress": progress, "since_ts": now}
+watch_path.write_text(json.dumps(watch), encoding="utf-8")
+
+# Arm unlock as soon as silence exceeds the threshold — never kill a healthy
+# in-progress scan/render (hard send-age kill previously aborted preview_gate
+# PASS mid-encode). Kill ONLY when heartbeat progress is actually stalled.
+if send_age >= send_age_kill_sec:
+    arm_throughput("watchdog_send_age", send_age)
+if stall_age >= stall_sec and send_age >= send_age_kill_sec:
+    print(
+        f"send_stall_kill age_sec={int(send_age)} stall_sec={int(stall_age)} "
+        f"stage={stage} vod={vod_id}"
+    )
+    raise SystemExit(0)
+if ocr_stage and stall_age >= stall_sec and send_age >= min(stall_sec, no_send_sec):
+    arm_throughput("watchdog_ocr_stall", send_age)
+    print(f"ocr_stall_kill stall_sec={int(stall_age)} send_age={int(send_age)} stage={stage} vod={vod_id}")
+PY
+)"
+  if [[ -n "$NO_SEND_OUT" ]]; then
+    log "$NO_SEND_OUT — kill full tree, arm throughput, restart"
+    kill_feed_tree
     nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
   fi
 fi
 
-# Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
-SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
+# Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
+FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+if [[ -f "$FEED_LOG" ]]; then
+  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || true)"
+  CRASH_N="${CRASH_N:-0}"
+  if [[ "$CRASH_N" -gt 3 ]]; then
+    log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
+  fi
+  LOG_MTIME="$(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0)"
+  NOW_SEC="$(date +%s)"
+  LOG_AGE_SEC=$(( NOW_SEC - LOG_MTIME ))
+  # Long OCR / dense scans can be quiet on the log but keep heartbeat — require both stale.
+  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-2400}"
+  HEARTBEAT=/root/data/mlbb/vod_pipeline_heartbeat.json
+  HB_MTIME="$(stat -c %Y "$HEARTBEAT" 2>/dev/null || echo 0)"
+  HEARTBEAT_AGE_SEC=$(( NOW_SEC - HB_MTIME ))
+  HEARTBEAT_FRESH_SEC="$(env_val VOD_HEARTBEAT_FRESH_SEC)"
+  HEARTBEAT_FRESH_SEC="${HEARTBEAT_FRESH_SEC:-900}"
+  if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
+    [[ "$HEARTBEAT_AGE_SEC" -gt "$HEARTBEAT_FRESH_SEC" ]] && \
+    feed_processes_running; then
+    log "feed stuck log_age=${LOG_AGE_SEC}s hb_age=${HEARTBEAT_AGE_SEC}s — kill full tree and restart"
+    kill_feed_tree
+    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  fi
+fi
+
+# Silence alert — notify if no clip sent in N hours (default 2h; was 12h and too late).
+SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-7200}"
 if [[ "$SILENCE_SEC" -gt 0 ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -120,12 +382,21 @@ def last_sent_age() -> float:
     log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
     if not log_path.exists():
         return silence + 1
-    last = 0.0
+    last_ts = 0.0
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    sent_re = re.compile(r"sent=(\d+) vod=")
     for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-8000:]:
-        m = re.search(r"sent=(\d+) vod=", line)
-        if m and int(m.group(1)) > 0:
-            last = now
-    return now - last if last else silence + 1
+        tm = ts_re.match(line)
+        if not tm:
+            continue
+        try:
+            line_ts = time.mktime(time.strptime(tm.group(1), "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        sm = sent_re.search(line)
+        if sm and int(sm.group(1)) > 0:
+            last_ts = max(last_ts, line_ts)
+    return now - last_ts if last_ts else silence + 1
 
 age = last_sent_age()
 if age < silence:

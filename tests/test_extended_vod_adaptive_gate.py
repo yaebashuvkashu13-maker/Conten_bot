@@ -26,6 +26,11 @@ def test_genshin_soften_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     assert soften_level(6) == 3
 
 
+def test_extended_soften_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXTENDED_VOD_DISABLE_SOFTEN", "1")
+    assert soften_level(999) == 0
+
+
 def test_genshin_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXTENDED_VOD_ZERO_STREAK_SOFTEN", "2")
     monkeypatch.delenv("SMART_GENSHIN_STRICT_MIN_BOSS_SCORE", raising=False)

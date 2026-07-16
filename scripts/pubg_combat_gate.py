@@ -416,6 +416,7 @@ def pubg_passes_combat_gate(
     crop = tuple(shoot_row["crop_box"]) if shoot_row.get("crop_box") else None
     if crop is not None:
         crop = tuple(int(v) for v in crop)
+    panns_trust_min = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
     if segment_looks_like_pubg_loot_or_walk(
         video_path,
         start_sec,
@@ -423,7 +424,9 @@ def pubg_passes_combat_gate(
         crop_box=crop,
         gunfire_density=gun_density,
     ):
-        return False, f"loot_walk=density{gun_density:.3f}", out
+        if panns_gun < panns_trust_min:
+            return False, f"loot_walk=density{gun_density:.3f}", out
+        out["loot_walk_bypassed"] = f"panns_trust={panns_gun:.3f}"
 
     if profile == "pubg":
         center_motion = float(shoot_row.get("center_motion", 0))

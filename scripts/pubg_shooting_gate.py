@@ -33,7 +33,11 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "panns_trust"})
+
+
+def _owner_reason_base(reason: str) -> str:
+    return reason.split("=", 1)[0].split(":", 1)[0]
 
 
 def _min_gunfire() -> float:
@@ -120,14 +124,18 @@ def pubg_passes_shooting_gate(
     )
     metrics["owner_reason"] = owner_reason
     metrics["panns_gun_max"] = round(float(panns_gun_max), 4)
+    panns_trust_min = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    panns_trusted = float(panns_gun_max) >= panns_trust_min
 
-    if reason_is_forbidden(owner_reason) and panns_gun_max < float(
-        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
-    ):
+    if reason_is_forbidden(owner_reason) and not panns_trusted:
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # Owner may return "panns_trust=0.784" — match by base reason, not exact string.
+    heuristic_audio = ok_owner and (
+        owner_reason in ALLOWED_OWNER_REASONS
+        or _owner_reason_base(owner_reason) in ALLOWED_OWNER_REASONS
+    )
 
     if owner_reason == "sniper_hold":
         if motion < 0.030:
@@ -153,7 +161,10 @@ def pubg_passes_shooting_gate(
         crop_box=crop,
         gunfire_density=gun,
     ):
-        return False, f"loot_walk=density{gun:.3f}", metrics
+        # Classic looting has weak gun density but strong PANNs gun means real fire —
+        # trust the event model over the loot heuristic (same idea as MLBB banner bypass).
+        if not panns_trusted:
+            return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
         video_path,
@@ -165,10 +176,10 @@ def pubg_passes_shooting_gate(
     )
     metrics["gate_reason"] = gate_reason
 
-    if reason_is_forbidden(gate_reason):
+    if reason_is_forbidden(gate_reason) and not panns_trusted:
         return False, gate_reason, metrics
 
-    if not gate_ok:
+    if not gate_ok and not panns_trusted:
         return False, gate_reason, metrics
 
     pass_reason = (
@@ -176,6 +187,8 @@ def pubg_passes_shooting_gate(
         if strict_audio
         else f"{owner_reason}=gun{gun:.3f}:burst{burst:.2f}"
     )
+    if panns_trusted and (not gate_ok or reason_is_forbidden(str(gate_reason or ""))):
+        pass_reason = f"panns_trust_bypass={float(panns_gun_max):.3f}:{pass_reason}"
     return True, pass_reason, metrics
 
 

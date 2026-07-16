@@ -22,6 +22,7 @@ def test_pubg_has_not_metro_reason():
 
 def test_mlbb_has_kill_reason():
     assert "no_kill" in dislike_reason_codes("mlbb")
+    assert "single_only" in dislike_reason_codes("mlbb")
 
 
 def test_keyboard_rows():

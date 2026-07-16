@@ -35,8 +35,27 @@ def max_peak_tries(soften_level: int, *, game: str, soft_max_fn: Callable[[], in
     return strict_peak_tries(game)
 
 
+def zero_yield_session_max() -> int:
+    return max(2, int(os.environ.get("MLBB_VOD_ZERO_YIELD_MAX", "3")))
+
+
+def note_zero_send_session(entry: dict[str, Any]) -> int:
+    """Increment per-VOD zero-send counter; return new value."""
+    n = int(entry.get("zero_send_sessions") or 0) + 1
+    entry["zero_send_sessions"] = n
+    return n
+
+
+def invalidate_pool_cache(entry: dict[str, Any]) -> None:
+    entry.pop("last_pool_peaks", None)
+    entry.pop("last_pool_at", None)
+    entry.pop("last_pool", None)
+
+
 def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
-    """Mark exhausted only when no peaks left to try — not on presend reject."""
+    """Mark exhausted when no peaks left or repeated zero-yield on same VOD."""
+    if int(entry.get("zero_send_sessions") or 0) >= zero_yield_session_max():
+        return True
     if entry.get("last_scan_blocked"):
         return True
     peaks = entry.get("last_pool_peaks")
@@ -84,8 +103,31 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    cooldown = scan_cooldown_sec(game)
+    if age >= cooldown:
+        return False
+    if entry.get("last_scan_blocked"):
         return True
+    # Empty / barren combat pool — do not re-burn 10–15 min on the same VOD every cycle.
+    # Soften can still reopen after cooldown; during soft L upgrades owner can force reopen
+    # by clearing exhausted / last_scan_at.
+    peaks = entry.get("last_pool_peaks")
+    reason = str(entry.get("reject_reason") or "")
+    zero_pool = peaks is not None and len(peaks) == 0
+    barren = reason.startswith(
+        ("no_combat", "fast_panns_0", "fast_probe", "presend_rejected", "scan_timeout", "score_timeout")
+    )
+    if zero_pool or barren:
+        g = (game or "").strip().lower()
+        if g in ("pubg", "standoff", "genshin", "wot"):
+            zero_cd = max(
+                300,
+                int(os.environ.get("SHOOTER_VOD_ZERO_POOL_COOLDOWN_SEC", "1800")),
+            )
+        else:
+            zero_cd = max(300, int(os.environ.get("MLBB_VOD_ZERO_POOL_COOLDOWN_SEC", "1800")))
+        if age < min(cooldown, zero_cd):
+            return True
     return False
 
 
@@ -131,6 +173,8 @@ def normalize_pool_peak_rows(raw: list[Any]) -> list[dict[str, Any]]:
                     "peak_sec": round(float(item.get("peak_sec", item.get("start", 0))), 1),
                     "score": round(float(item.get("score", 0)), 4),
                     "blocked_reason": str(item.get("blocked_reason") or ""),
+                    "panns_gun_max": round(float(item.get("panns_gun_max") or 0), 3),
+                    "pass_reason": str(item.get("pass_reason") or "")[:80],
                 }
             )
         else:
@@ -139,6 +183,8 @@ def normalize_pool_peak_rows(raw: list[Any]) -> list[dict[str, Any]]:
                     "peak_sec": round(float(item), 1),
                     "score": 0.0,
                     "blocked_reason": "",
+                    "panns_gun_max": 0.0,
+                    "pass_reason": "",
                 }
             )
     return rows
@@ -156,12 +202,25 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
         if row.get("blocked_reason"):
             continue
         peak = float(row["peak_sec"])
+        score = float(row.get("score") or 0)
+        panns = float(row.get("panns_gun_max") or 0)
+        reason = str(row.get("pass_reason") or "")
+        rule_pass = bool(panns >= 0.35 or reason.startswith("combat_ok"))
         pool.append(
             {
                 "start": peak,
                 "peak_start": peak,
-                "score": float(row.get("score") or 0),
-                "highlight_metrics": {"rule_pass": True, "pass_reason": "cached_pool"},
+                "score": score,
+                "clip_score": score,
+                "panns_gun_max": panns,
+                "highlight_metrics": {
+                    "rule_pass": rule_pass,
+                    "visual_pass": True,
+                    "pass_reason": reason or ("combat_ok_cached" if rule_pass else "cached_pool"),
+                    "clip_score": score,
+                    "panns_gun_max": panns,
+                    "hook_score": float(row.get("hook_score") or 0),
+                },
             }
         )
     return pool
@@ -188,6 +247,13 @@ def record_vod_scan(
                     "peak_sec": peak,
                     "score": round(float(clip.get("score") or 0), 4),
                     "blocked_reason": str(clip.get("blocked_reason") or ""),
+                    "panns_gun_max": round(
+                        float((clip.get("highlight_metrics") or {}).get("panns_gun_max") or 0),
+                        3,
+                    ),
+                    "pass_reason": str(
+                        (clip.get("highlight_metrics") or {}).get("pass_reason") or ""
+                    )[:80],
                 }
             )
         entry["last_pool_peaks"] = detail

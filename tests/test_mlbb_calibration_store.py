@@ -121,11 +121,11 @@ def test_labeled_keyboard_good_has_hq_button() -> None:
     assert any(b["callback_data"] == "mlbb_hq:abcdefghijk" for b in flat)
 
 
-def test_dislike_reason_keyboard_has_eight_buttons() -> None:
+def test_dislike_reason_keyboard_has_expected_buttons() -> None:
     markup = dislike_reason_keyboard_markup("abcdefghijk")
     buttons = [b for row in markup["inline_keyboard"] for b in row]
-    assert len(buttons) == 8
-    assert len(DISLIKE_REASONS) == 8
+    assert len(buttons) == len(DISLIKE_REASONS)
+    assert "single_only" in {code for code, _ in DISLIKE_REASONS}
     for btn in buttons:
         assert len(btn["callback_data"]) <= 64
         assert btn["callback_data"].startswith("mlbb_bad:abcdefghijk:")

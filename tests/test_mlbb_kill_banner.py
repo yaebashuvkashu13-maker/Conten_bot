@@ -8,8 +8,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_kill_banner import (  # noqa: E402
+    _DISCOVERY_CACHE,
+    _cache_discovery_hits,
+    _cached_discovery_hits,
+    _discovery_cache_key,
+    KillBannerHit,
     bounds_from_banner,
     classify_banner_text,
+    clear_banner_discovery_cache,
 )
 
 
@@ -27,6 +33,19 @@ def test_classify_savage_and_triple() -> None:
     assert m.tier == 4
 
 
+def test_classify_rejects_ocr_garbage() -> None:
+    assert classify_banner_text("ieee dok see mee horny") is None
+    assert classify_banner_text("saa e sav g random") is None
+    assert classify_banner_text("doubl alone without kill word") is None
+
+
+def test_classify_russian_legendary() -> None:
+    hit = classify_banner_text("Легендарный")
+    assert hit is not None
+    assert hit.tier == 5
+    assert hit.label == "legendary"
+
+
 def test_reject_single_kill_only() -> None:
     single = classify_banner_text("You got a Kill")
     assert single is not None
@@ -41,6 +60,35 @@ def test_classify_double_kill() -> None:
     partial = classify_banner_text("OUBLE KILL")
     assert partial is not None
     assert partial.tier == 2
+
+
+def test_discovery_cache_key_tracks_source_file(tmp_path: Path) -> None:
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"first")
+    first = _discovery_cache_key(vod, 5, True)
+    vod.write_bytes(b"second-version")
+    second = _discovery_cache_key(vod, 5, True)
+    assert first != second
+    _DISCOVERY_CACHE[first] = tuple()
+    clear_banner_discovery_cache()
+    assert not _DISCOVERY_CACHE
+
+
+def test_discovery_hits_survive_process_cache_clear(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "banner_cache.json"
+    monkeypatch.setenv("MLBB_BANNER_DISCOVERY_CACHE", str(cache))
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"video")
+    key = _discovery_cache_key(vod, 5, True)
+    _cache_discovery_hits(
+        key,
+        [KillBannerHit(sec=616.0, tier=5, label="savage", text="SAVAGE")],
+    )
+    _DISCOVERY_CACHE.clear()
+    hits = _cached_discovery_hits(key)
+    assert hits is not None
+    assert hits[0].tier == 5
+    assert hits[0].sec == 616.0
 
 
 def test_min_tier_double_accepts_double_rejects_single() -> None:
@@ -73,27 +121,73 @@ def test_reject_enemy_triple() -> None:
 
 def test_bounds_from_fight_sustain() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    os.environ["MLBB_BANNER_MAX_REL_POS"] = "0.78"
     start, end, dur = bounds_from_banner(
         100.0,
         file_dur=200.0,
         fight_start=88.0,
         fight_end=118.0,
+        banner_tier=3,
     )
-    assert start == 88.0
-    assert end == 116.0
-    assert dur == 28.0
+    # Double lead 14s → start at/before 86; short post after banner.
+    assert start <= 86.0
+    assert end <= 105.0
+    assert start < 100.0 <= end
+    rel = (100.0 - start) / dur
+    assert rel >= 0.55
 
 
 def test_bounds_fallback_without_fight() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
-    start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
-    assert 8.0 <= dur <= 28.0
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    start, end, dur = bounds_from_banner(50.0, file_dur=120.0, banner_tier=2)
+    assert start == 36.0  # 50 - 14
+    assert end == 53.0  # 50 + 3
+    assert dur == 17.0
+
+
+def test_banner_not_left_at_clip_start() -> None:
+    """Regression: aVPvD/Rbpg clips opened ~1s before banner with 30s idle tail."""
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_DOUBLE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    # Old broken window: start≈banner, fight_end far after → 32s idle tail.
+    start, end, dur = bounds_from_banner(
+        206.5,
+        file_dur=600.0,
+        fight_start=205.0,
+        fight_end=237.0,
+        banner_tier=3,
+    )
+    assert start <= 206.5 - 12.0
+    assert end <= 206.5 + 5.0
+    rel = (206.5 - start) / dur
+    assert rel >= 0.55
+
+
+def test_savage_banner_lead_starts_earlier() -> None:
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_SAVAGE_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    start, end, dur = bounds_from_banner(9.0, file_dur=120.0, banner_tier=5)
+    assert start == 0.0
+    assert dur >= 8.0
 
 
 def test_discover_banners_handles_numpy_motion() -> None:
@@ -142,15 +236,20 @@ def test_discover_banners_handles_numpy_motion() -> None:
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_BANNER_MIN_REL_POS"] = "0.55"
+    os.environ["MLBB_BANNER_MAX_REL_POS"] = "0.78"
     # Banner at 27s in a 28s window ending at 28 — was tail-heavy.
     start, end, dur = bounds_from_banner(
         27.0,
         file_dur=120.0,
         fight_start=0.0,
         fight_end=28.0,
+        banner_tier=2,
     )
     rel = (27.0 - start) / dur
-    assert rel <= 0.68
+    assert rel >= 0.55
+    assert end <= 27.0 + 5.0
 
 
 def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:

@@ -38,7 +38,10 @@ def rank_candidate(meta: dict, game: dict) -> float:
     """Sort key for pick_candidate (higher = better)."""
     score = 0.0
     dur = float(meta.get("duration") or 0)
-    score -= abs(dur - 7200.0) / 1800.0
+    # VOD discovery window is typically 4–20 min — don't prefer 2h streams.
+    ideal = float(game.get("ideal_duration_sec") or 900.0)
+    scale = max(300.0, ideal / 3.0)
+    score -= abs(dur - ideal) / scale
 
     if game.get("require_metro_royale"):
         if has_metro_royale(meta):

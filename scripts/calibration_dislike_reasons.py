@@ -11,6 +11,7 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("boring", "😴 Скучно / нет боя"),
         ("wrong_hero", "🦸 Не тот герой"),
         ("no_kill", "💀 Нет килла / баннера"),
+        ("single_only", "1️⃣ Только 1 килл"),
         ("music", "🎵 Музыка"),
         ("blurry", "🌫 Мыльное"),
         ("other", "🗑 Другое"),
