@@ -32,22 +32,10 @@ kill_feed_tree() {
   fi
 }
 
-clean_stale_game_locks() {
-  local game lock
-  for game in mlbb pubg standoff genshin wot; do
-    lock="/tmp/${game}_vod_segment_feed.lock"
-    [[ -e "$lock" ]] || continue
-    if [[ "$game" == "mlbb" ]]; then
-      if pgrep -f 'mlbb_vod_segment_feed\.py' >/dev/null 2>&1; then
-        continue
-      fi
-    else
-      if pgrep -f 'shooter_vod_segment_feed\.py' >/dev/null 2>&1; then
-        continue
-      fi
-    fi
-    rm -f "$lock" && log "removed stale lock $lock" || true
-  done
+feed_processes_running() {
+  pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
+    || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
+    || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1
 }
 
 [[ -f "$ENV_FILE" ]] || exit 0
@@ -82,8 +70,6 @@ if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   log "restart telegram_upload_bot"
   nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
 fi
-
-clean_stale_game_locks
 
 if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   && ! pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
@@ -208,6 +194,98 @@ PY
   fi
 fi
 
+# No-send / OCR-grind watchdog: heartbeat can stay fresh while zero clips go out.
+if feed_processes_running; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  NO_SEND_OUT="$(python3 - <<'PY' 2>/dev/null || true
+import json, os, re, sys, time
+from pathlib import Path
+
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+now = time.time()
+no_send_sec = int(os.environ.get("MLBB_VOD_NO_SEND_KILL_SEC", "3600"))
+stall_sec = int(os.environ.get("MLBB_VOD_OCR_STALL_KILL_SEC", "2700"))
+hb_path = Path("/root/data/mlbb/vod_pipeline_heartbeat.json")
+watch_path = Path("/root/data/mlbb/vod_health_hb_watch.json")
+sent_path = Path("/root/data/mlbb/vod_segment_feed_sent.json")
+log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+
+def last_sent_age() -> float:
+    if sent_path.exists():
+        try:
+            data = json.loads(sent_path.read_text(encoding="utf-8"))
+            ts = data.get("updated_at", "")
+            if ts:
+                return now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            pass
+    if not log_path.exists():
+        return no_send_sec + 1
+    last_ts = 0.0
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    sent_re = re.compile(r"sent=(\d+) vod=")
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-12000:]:
+        tm = ts_re.match(line)
+        if not tm:
+            continue
+        try:
+            line_ts = time.mktime(time.strptime(tm.group(1), "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        sm = sent_re.search(line)
+        if sm and int(sm.group(1)) > 0:
+            last_ts = max(last_ts, line_ts)
+    return now - last_ts if last_ts else no_send_sec + 1
+
+send_age = last_sent_age()
+hb = {}
+if hb_path.exists():
+    try:
+        hb = json.loads(hb_path.read_text(encoding="utf-8"))
+    except Exception:
+        hb = {}
+stage = str(hb.get("stage") or "")
+vod_id = str(hb.get("vod_id") or "")
+progress = float(hb.get("progress") or 0.0)
+hb_ts = float(hb.get("timestamp") or 0.0)
+ocr_stage = any(k in stage for k in ("banner", "highlight", "candidate_scan", "fast_probe"))
+
+watch = {}
+if watch_path.exists():
+    try:
+        watch = json.loads(watch_path.read_text(encoding="utf-8"))
+    except Exception:
+        watch = {}
+
+same = (
+    watch.get("vod_id") == vod_id
+    and watch.get("stage") == stage
+    and abs(float(watch.get("progress") or 0.0) - progress) < 0.02
+)
+if same and watch.get("since_ts"):
+    stall_age = now - float(watch["since_ts"])
+else:
+    stall_age = 0.0
+    watch = {"vod_id": vod_id, "stage": stage, "progress": progress, "since_ts": now}
+watch_path.write_text(json.dumps(watch), encoding="utf-8")
+
+if send_age >= no_send_sec:
+    print(f"no_send_kill age_sec={int(send_age)} stage={stage} vod={vod_id}")
+    raise SystemExit(0)
+if ocr_stage and stall_age >= stall_sec and send_age >= min(stall_sec, no_send_sec):
+    print(f"ocr_stall_kill stall_sec={int(stall_age)} send_age={int(send_age)} stage={stage} vod={vod_id}")
+PY
+)"
+  if [[ -n "$NO_SEND_OUT" ]]; then
+    log "$NO_SEND_OUT — kill full tree and restart"
+    kill_feed_tree
+    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  fi
+fi
+
 # Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
 FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
 if [[ -f "$FEED_LOG" ]]; then
@@ -228,9 +306,7 @@ if [[ -f "$FEED_LOG" ]]; then
   HEARTBEAT_FRESH_SEC="${HEARTBEAT_FRESH_SEC:-900}"
   if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
     [[ "$HEARTBEAT_AGE_SEC" -gt "$HEARTBEAT_FRESH_SEC" ]] && \
-    { pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
-      || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
-      || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; }; then
+    feed_processes_running; then
     log "feed stuck log_age=${LOG_AGE_SEC}s hb_age=${HEARTBEAT_AGE_SEC}s — kill full tree and restart"
     kill_feed_tree
     nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &

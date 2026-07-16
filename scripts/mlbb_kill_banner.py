@@ -644,19 +644,26 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
 def _dense_scan_end(vod: Path, duration: float, t0: float) -> float:
     """Cap dense sweep — savage montages rarely need full 13-min 1Hz scan."""
     end = max(t0 + 8.0, duration - 2.0)
+    tier = 0
     try:
-        from mlbb_vod_title import title_min_banner_tier, vod_title_blob
+        tier = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+    except ValueError:
+        tier = 0
+    if tier <= 0:
+        try:
+            from mlbb_vod_title import title_min_banner_tier, vod_title_blob
 
-        tier = title_min_banner_tier(vod_title_blob(vod))
-        if tier >= 5:
-            cap = float(os.environ.get("MLBB_SAVAGE_DENSE_MAX_SPAN_SEC", "360"))
-            return min(end, t0 + max(60.0, cap))
-        if tier >= 4:
-            cap = float(os.environ.get("MLBB_MANIAC_DENSE_MAX_SPAN_SEC", "480"))
-            return min(end, t0 + max(90.0, cap))
-    except Exception:
-        pass
-    return end
+            tier = title_min_banner_tier(vod_title_blob(vod))
+        except Exception:
+            tier = 0
+    if tier >= 5:
+        cap = float(os.environ.get("MLBB_SAVAGE_DENSE_MAX_SPAN_SEC", "360"))
+        return min(end, t0 + max(60.0, cap))
+    if tier >= 4:
+        cap = float(os.environ.get("MLBB_MANIAC_DENSE_MAX_SPAN_SEC", "480"))
+        return min(end, t0 + max(90.0, cap))
+    cap = float(os.environ.get("MLBB_BANNER_DENSE_MAX_SPAN_SEC", "420"))
+    return min(end, t0 + max(60.0, cap))
 
 
 def _dense_scan_enabled() -> bool:

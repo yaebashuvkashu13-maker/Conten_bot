@@ -1854,6 +1854,7 @@ def _collect_scan_segments(
     pool: list[dict] | None = None,
     skip_peaks: set[float] | None = None,
     entry: dict | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[dict], list[dict]]:
     from mlbb_vod_adaptive_gate import peak_near_skipped
     from vod_analysis_cache import cache_key_hash
@@ -1869,6 +1870,12 @@ def _collect_scan_segments(
                 time.time() - float(entry.get("last_pool_at") or entry.get("last_scan_at") or 0),
             )
         else:
+            if deadline is not None and time.time() >= deadline:
+                log.warning(
+                    "skip highlight scan — vod deadline reached vod=%s",
+                    vod.name,
+                )
+                return [], pool or []
             from mlbb_fight_segment import clear_analysis_cache
 
             clear_analysis_cache()
@@ -2507,6 +2514,7 @@ def _process_vod_segments(
                     pool=pool_cache,
                     skip_peaks=skip_peaks,
                     entry=entry,
+                    deadline=vod_deadline,
                 )
                 pool_peaks = peaks_from_pool(pool_cache) if pool_cache is not None else []
                 if not to_send:
