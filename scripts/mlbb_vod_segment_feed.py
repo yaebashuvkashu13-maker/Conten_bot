@@ -72,6 +72,18 @@ YTDLP_LOCK_PATH = Path("/tmp/mlbb_vod_ytdlp.lock")
 FEED_LOCK_PATH = Path("/tmp/mlbb_vod_segment_feed.lock")
 log = logging.getLogger("mlbb_vod_feed")
 
+
+def _mlbb_relax_overrides(zero_send_streak: int) -> dict[str, str]:
+    """Return env overrides for throughput when we have many zero-yield VODs."""
+    relax_after = int(os.environ.get("MLBB_RELAX_AFTER_ZERO_VODS", "3"))
+    if zero_send_streak < relax_after:
+        return {}
+    return {
+        "MLBB_VOD_QUALITY_MODE": os.environ.get("MLBB_VOD_QUALITY_MODE_RELAX", "0"),
+        "MLBB_VOD_MIN_CLIP_SCORE": os.environ.get("MLBB_VOD_MIN_CLIP_SCORE_RELAX", "0.02"),
+        "MLBB_BANNER_MIN_HOOK": os.environ.get("MLBB_BANNER_MIN_HOOK_RELAX", "0.04"),
+    }
+
 LONG_VOD_TITLE_RE = re.compile(
     r"\b\d+\s*h(?:our|rs?)?\b|\buncut\b|full\s+stream|live\s+stream|"
     r"час(?:ов)?\s+игр|полный\s+стрим",
@@ -2895,11 +2907,36 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     vods_done = 0
     notified_download = False
 
+    # After repeated zero-yield VODs, automatically relax quality thresholds to
+    # avoid overnight "OCR grind" producing only 1 clip.
+    zero_send_streak = 0
+    relaxed = False
+    orig_quality_mode = os.environ.get("MLBB_VOD_QUALITY_MODE", "1")
+    orig_min_clip = os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.06")
+    orig_banner_min_hook = os.environ.get("MLBB_BANNER_MIN_HOOK", "0.05")
+
     while time.time() < deadline and vods_done < max_vods:
         ok_cycle, cycle_reason = _daily_cycle_mlbb_allowed()
         if not ok_cycle:
             log.info("daily cycle yield after %s vods: %s", vods_done, cycle_reason)
             break
+
+        # Apply quality relaxation before trying the next VOD.
+        relax_overrides = _mlbb_relax_overrides(zero_send_streak)
+        if relax_overrides:
+            if not relaxed:
+                log.warning(
+                    "relax MLBB gates after %s consecutive zero-send VODs",
+                    zero_send_streak,
+                )
+                relaxed = True
+            os.environ.update(relax_overrides)
+        elif relaxed:
+            # Restore original defaults once we have a successful send.
+            os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
+            os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
+            os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
+            relaxed = False
 
         vod, entry = _resolve_next_vod(
             env,
@@ -2927,6 +2964,15 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             registry=registry,
         )
         total_sent += n
+        if n > 0:
+            zero_send_streak = 0
+            if relaxed:
+                os.environ["MLBB_VOD_QUALITY_MODE"] = orig_quality_mode
+                os.environ["MLBB_VOD_MIN_CLIP_SCORE"] = orig_min_clip
+                os.environ["MLBB_BANNER_MIN_HOOK"] = orig_banner_min_hook
+                relaxed = False
+        else:
+            zero_send_streak += 1
         vods_done += 1
         registry[:] = _ensure_registry(env)
 
