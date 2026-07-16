@@ -1299,10 +1299,10 @@ def handle_callback_query(query: dict) -> None:
         except ValueError:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
             return
-        from mlbb_calibration_store import DISLIKE_REASON_CODES
+        from calibration_dislike_reasons import dislike_reason_codes
         from mlbb_vod_segment_store import labeled_keyboard_markup as vseg_markup
 
-        if reason not in DISLIKE_REASON_CODES:
+        if reason not in dislike_reason_codes('mlbb'):
             reason = 'other'
         try:
             ok, reply = _mlbb_apply_vseg_label(

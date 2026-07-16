@@ -1113,8 +1113,9 @@ DISLIKE_REASONS: tuple[tuple[str, str], ...] = (
     ("not_gameplay", "🎬 Не геймплей"),
     ("boring", "😴 Скучно"),
     ("wrong_hero", "🦸 Не тот герой"),
+    ("no_kill", "💀 Нет килла / баннера"),
+    ("single_only", "1️⃣ Только 1 килл"),
     ("music", "🎵 Музыка"),
-    ("old", "📅 Старое"),
     ("blurry", "🌫 Мыльное"),
     ("other", "🗑 Другое"),
 )
