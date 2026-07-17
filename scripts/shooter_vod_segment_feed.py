@@ -215,29 +215,50 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
     state["discovery_cycle"] = cycle + 1
     _save_state(game, state)
 
+    limit = int(params.get("limit") or 20)
     out: list[dict] = []
+    seen: set[str] = set()
+    skipped: dict[str, int] = {}
     for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + ["--flat-playlist", "--print", "%(id)s|%(title)s|%(duration)s|%(uploader)s", url]
+        cmd = ytdlp_cmd(env) + [
+            "--flat-playlist",
+            "--playlist-end",
+            str(limit),
+            "--print",
+            "%(id)s|%(title)s|%(duration)s|%(uploader)s",
+            url,
+        ]
         cmd += ytdlp_extra_args(env)
         proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
         if proc.returncode != 0:
             log.warning("search failed %s: %s", url, (proc.stderr or "")[:200])
+            skipped["search_fail"] = skipped.get("search_fail", 0) + 1
             continue
         for line in (proc.stdout or "").splitlines():
             parts = line.split("|", 3)
             if len(parts) < 2:
+                skipped["parse"] = skipped.get("parse", 0) + 1
                 continue
             vid, title = parts[0][:11], parts[1]
-            if vid in used or len(vid) != 11:
+            if len(vid) != 11:
+                skipped["bad_id"] = skipped.get("bad_id", 0) + 1
+                continue
+            if vid in used or vid in seen:
+                skipped["used_or_dup"] = skipped.get("used_or_dup", 0) + 1
                 continue
             if not title_ok_fn(game, title):
+                skipped["title"] = skipped.get("title", 0) + 1
                 continue
+            raw_dur = parts[2].strip() if len(parts) > 2 else ""
             try:
-                dur = float(parts[2]) if len(parts) > 2 else 0.0
+                dur = float(raw_dur) if raw_dur and raw_dur.upper() not in {"NA", "NONE", "NULL"} else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            # Unknown duration (flat search) is kept; known out-of-window is dropped.
+            if dur > 0 and not _vod_length_ok(Path("x.mp4"), dur):
+                skipped["duration"] = skipped.get("duration", 0) + 1
                 continue
+            seen.add(vid)
             out.append(
                 {
                     "id": vid,
@@ -248,7 +269,32 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 }
             )
         time.sleep(float(params.get("delay", 6)))
+    if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import rank_discovery_candidates
+
+        out = rank_discovery_candidates(game, out)
+    if skipped:
+        log.info(
+            "discovery game=%s mode=%s raw_kept=%s skipped=%s",
+            game,
+            params.get("filter_mode"),
+            len(out),
+            skipped,
+        )
     return out
+
+
+def _notify_discovery_miss(game: str, token: str, chat_id: str, state: dict) -> None:
+    """Throttle repeated «не нашёл» Telegram spam (default 30 min)."""
+    gap = max(60, int(os.environ.get("VOD_DISCOVERY_MISS_NOTIFY_SEC", "1800")))
+    last = float(state.get("last_discovery_miss_notify_at") or 0)
+    now = time.time()
+    if now - last < gap:
+        log.info("discovery miss notify suppressed game=%s age=%.0fs", game, now - last)
+        return
+    send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+    state["last_discovery_miss_notify_at"] = now
+    _save_state(game, state)
 
 
 def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
@@ -690,7 +736,22 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        dur = _ffprobe_duration(mp4)
+        if dur < _vod_min_sec():
+            if entry is None:
+                entry = {
+                    "id": vod_youtube_id(mp4),
+                    "path": str(mp4),
+                    "title": "",
+                    "exhausted": True,
+                    "reject_reason": f"vod_length={dur:.0f}s",
+                }
+                registry.append(entry)
+            else:
+                entry["exhausted"] = True
+                entry.setdefault("reject_reason", f"vod_length={dur:.0f}s")
+            _save_state(game, state)
+            log.info("exhaust short inbox vod=%s dur=%.0fs", mp4.name, dur)
             continue
         if entry is None:
             entry = {
@@ -735,19 +796,33 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
         return 0
 
-    candidates = _discover_candidates(game, env, used)
-    if not candidates:
-        send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+    pick = None
+    pool_on = os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1"
+    if pool_on:
+        from vod_search_pool import pop_candidate, pool_needs_refresh, refresh_game_pool
+
+        if pool_needs_refresh(game, used):
+            refresh_game_pool(game, env, used=used, force=True)
+        pick = pop_candidate(game, used)
+        if pick and game in ("pubg", "standoff"):
+            from youtube_shooter_vod_prefs import pick_discovery_candidate
+
+            ranked = pick_discovery_candidate(game, [pick])
+            if ranked is not None:
+                pick = ranked
+    else:
+        candidates = _discover_candidates(game, env, used)
+        if candidates:
+            if game in ("pubg", "standoff"):
+                from youtube_shooter_vod_prefs import pick_discovery_candidate
+
+                pick = pick_discovery_candidate(game, candidates)
+            if pick is None:
+                pick = candidates[0]
+    if pick is None:
+        _notify_discovery_miss(game, token, chat_id, state)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
-
-    pick = None
-    if game in ("pubg", "standoff"):
-        from youtube_shooter_vod_prefs import pick_discovery_candidate
-
-        pick = pick_discovery_candidate(game, candidates)
-    if pick is None:
-        pick = candidates[0]
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:

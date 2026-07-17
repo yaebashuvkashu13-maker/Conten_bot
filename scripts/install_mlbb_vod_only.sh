@@ -177,8 +177,12 @@ install -m 755 \
   "$REPO/scripts/genshin_boss_segment.py" \
   "$REPO/scripts/wot_brawl_segment.py" \
   "$REPO/scripts/vod_scan_state.py" \
+  "$REPO/scripts/vod_search_pool.py" \
+  "$REPO/scripts/vod_game_registry.py" \
   "$REPO/scripts/pubg_metro_royale_gate.py" \
   "$REPO/scripts/youtube_shooter_vod_prefs.py" \
+  "$REPO/scripts/youtube_extended_vod_prefs.py" \
+  "$REPO/scripts/extended_vod_adaptive_gate.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_intervals.py" \

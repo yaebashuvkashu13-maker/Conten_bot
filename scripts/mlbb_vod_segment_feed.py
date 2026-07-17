@@ -578,10 +578,22 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
     used = set(state.get("used_youtube_ids", []))
     used.update(r.get("id", "") for r in registry if r.get("id"))
 
-    candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
-    if not candidates:
-        return None
-    pick = candidates[0]
+    pick = None
+    if os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1":
+        try:
+            from vod_search_pool import pop_candidate
+
+            pick = pop_candidate("mlbb", used)
+            if pick:
+                log.info("mlbb download using search pool id=%s", pick.get("id"))
+        except Exception:
+            log.exception("mlbb search pool pop failed")
+            pick = None
+    if pick is None:
+        candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
+        if not candidates:
+            return None
+        pick = candidates[0]
 
     with _ytdlp_download_lock(blocking=True) as acquired:
         if not acquired:
@@ -607,6 +619,39 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
     _save_state(state)
     log.info("downloaded vod=%s title=%s", pick["id"], str(pick.get("title", ""))[:60])
     return path
+
+
+def _pending_download_ttl_sec() -> float:
+    return max(60.0, float(os.environ.get("MLBB_VOD_PENDING_DOWNLOAD_TTL_SEC", "1800")))
+
+
+def _pending_download_stale(pending: dict | None) -> bool:
+    """True when a crashed mid-download left status=downloading past TTL."""
+    if not pending or pending.get("status") != "downloading":
+        return False
+    started_ts = pending.get("started_ts")
+    try:
+        started = float(started_ts) if started_ts is not None else 0.0
+    except (TypeError, ValueError):
+        started = 0.0
+    if started <= 0:
+        # Legacy rows only had started_at string — treat as stale so bg can resume.
+        return True
+    return (time.time() - started) >= _pending_download_ttl_sec()
+
+
+def _clear_stale_pending_download(state: dict) -> dict:
+    pending = state.get("pending_download")
+    if _pending_download_stale(pending if isinstance(pending, dict) else None):
+        log.warning(
+            "clearing stale pending_download status=%s age — allow bg discovery",
+            (pending or {}).get("status"),
+        )
+        state["pending_download"] = {
+            "status": "stale_cleared",
+            "cleared_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    return state
 
 
 class VodPipelineDownloader:
@@ -644,15 +689,28 @@ class VodPipelineDownloader:
         path: Path | None = None
         err = ""
         try:
-            state = _load_state()
-            if state.get("pending_download", {}).get("status") == "downloading":
+            state = _clear_stale_pending_download(_load_state())
+            pending = state.get("pending_download") or {}
+            if pending.get("status") == "downloading":
                 log.info("another download already marked in state — skip bg")
+                _save_state(state)
             else:
                 state["pending_download"] = {
                     "status": "downloading",
                     "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "started_ts": time.time(),
                 }
                 _save_state(state)
+                # Prefer warm search pool so bg download doesn't wait on cold yt-dlp search.
+                if os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1":
+                    try:
+                        from vod_search_pool import refresh_game_pool
+
+                        used = set(state.get("used_youtube_ids") or [])
+                        used.update(r.get("id", "") for r in registry if r.get("id"))
+                        refresh_game_pool("mlbb", self.env, used=used, force=False)
+                    except Exception:
+                        log.exception("mlbb search pool refresh before bg download failed")
                 path = _download_new_mlbb_vod(self.env, registry, throttled=True)
         except Exception as exc:
             err = str(exc)

@@ -43,10 +43,35 @@ def _load_runtime_env() -> dict[str, str]:
     return env
 
 
+def _prefetch_search_pools(env: dict[str, str], active: str | None) -> None:
+    """Warm per-game YouTube candidate pools so the active feed rarely blocks on search."""
+    if env.get("VOD_SEARCH_POOL_ENABLED", "1") != "1":
+        return
+    if env.get("VOD_SEARCH_POOL_PREFETCH", "1") != "1":
+        return
+    try:
+        from daily_game_cycle import GAME_ORDER, quota_remaining
+        from vod_search_pool import prefetch_pools
+
+        games = [g for g in GAME_ORDER if quota_remaining(g) > 0]
+        if active and active not in games:
+            games.insert(0, active)
+        if not games:
+            return
+        results = prefetch_pools(games, env, force=False)
+        summary = ", ".join(
+            f"{r.get('game')}={'+' if r.get('refreshed') else '='}{r.get('depth', '?')}" for r in results
+        )
+        log.info("search pools prefetch: %s", summary or "none")
+    except Exception:
+        log.exception("search pool prefetch failed")
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     env = _load_runtime_env()
     if not enabled():
+        _prefetch_search_pools(env, "mlbb")
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode
 
@@ -73,6 +98,9 @@ def main() -> int:
         notified = state.setdefault("notified", {})
         notified["active_game"] = game
         save_state(state)
+
+    # Prefetch candidate pools for every game still under daily quota (parallel, rate-limited).
+    _prefetch_search_pools(env, game)
 
     if game == "mlbb":
         script = SCRIPTS / "mlbb_vod_segment_feed.py"

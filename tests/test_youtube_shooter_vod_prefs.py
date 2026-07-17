@@ -31,6 +31,20 @@ def test_discovery_rotates_queries() -> None:
     assert len(a["queries"]) >= 1
 
 
+def test_discovery_rotates_filter_modes() -> None:
+    a = vod_discovery_search_cycle(0, "pubg", {"MLBB_VOD_SEARCH_FRESH": "1", "MLBB_VOD_YOUTUBE_DURATION_FILTER": "1"})
+    b = vod_discovery_search_cycle(1, "pubg", {"MLBB_VOD_SEARCH_FRESH": "1", "MLBB_VOD_YOUTUBE_DURATION_FILTER": "1"})
+    c = vod_discovery_search_cycle(2, "pubg", {"MLBB_VOD_SEARCH_FRESH": "1", "MLBB_VOD_YOUTUBE_DURATION_FILTER": "1"})
+    assert a["filter_mode"] == "fresh_month"
+    assert b["filter_mode"] == "duration_4_20"
+    assert c["filter_mode"] == "fresh_week"
+    assert a["sp"] and b["sp"] and a["sp"] != b["sp"]
+
+
+def test_pubg_recorded_stream_title_ok() -> None:
+    assert title_ok("pubg", "метро рояль пабг мобайл стрим полный матч")
+
+
 def test_pubg_ru_stream_title_ok() -> None:
     assert title_ok("pubg", "Пабг мобайл метро рояль стрим полный матч")
     assert not title_ok("pubg", "Пабг мобайл стрим обзор гайд")

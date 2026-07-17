@@ -78,6 +78,7 @@ def title_ok(game: str, title: str) -> bool:
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
+    """Rotate extended-game queries + YouTube filters (freshness / duration / week)."""
     env = env or {}
     queries = list(_queries_for(game))
     batch = int(env.get("EXTENDED_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
@@ -87,22 +88,32 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
         return {"queries": [], "batch": batch, "delay": delay, "limit": limit, "sp": ""}
     offset = (cycle * batch) % len(queries)
     picked = [queries[(offset + i) % len(queries)] for i in range(batch)]
-    sp = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
-    freshness = (
-        YOUTUBE_FRESHNESS_SP_THIS_MONTH
-        if env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
-        else ""
-    )
-    duration_sp = YOUTUBE_DURATION_SP_4_TO_20 if sp else ""
+    mode = int(cycle) % 3
+    use_duration = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
+    use_fresh = env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
+    if mode == 0 and use_fresh:
+        sp = YOUTUBE_FRESHNESS_SP_THIS_MONTH
+        filter_mode = "fresh_month"
+    elif mode == 1 and use_duration:
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+        filter_mode = "duration_4_20"
+    elif use_fresh:
+        from youtube_mlbb_vod_prefs import YOUTUBE_FRESHNESS_SP_THIS_WEEK
+
+        sp = YOUTUBE_FRESHNESS_SP_THIS_WEEK
+        filter_mode = "fresh_week"
+    elif use_duration:
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+        filter_mode = "duration_4_20"
+    else:
+        sp = ""
+        filter_mode = "ytsearch"
     search_urls = []
     for q in picked:
-        url = f"ytsearch{limit}:{quote_plus(q)}"
-        if duration_sp or freshness:
-            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}"
-            if duration_sp:
-                url += f"&sp={duration_sp}"
-            elif freshness:
-                url += f"&sp={freshness}"
+        if sp:
+            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}&sp={sp}"
+        else:
+            url = f"ytsearch{limit}:{q}"
         search_urls.append(url)
     return {
         "queries": picked,
@@ -112,4 +123,6 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
         "limit": limit,
         "cycle": cycle,
         "game": game,
+        "filter_mode": filter_mode,
+        "sp": sp,
     }
