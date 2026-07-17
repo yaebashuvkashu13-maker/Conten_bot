@@ -150,6 +150,15 @@ TARGET_CLIPS = int(os.environ.get("HIGHLIGHT_TARGET_CLIPS", "4"))
 PANN_GUN_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
 PANN_GUN_INFERENCE_FLOOR = float(os.environ.get("HIGHLIGHT_PANN_INFERENCE_FLOOR", "0.18"))
 PANN_GUN_SPEECH_RATIO_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_SPEECH_RATIO", "0.08"))
+
+
+def pann_gun_min() -> float:
+    """Runtime HIGHLIGHT_PANN_GUN_MIN so soft L2/L3 actually applies."""
+    return float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
+
+
+def pann_gun_inference_floor() -> float:
+    return float(os.environ.get("HIGHLIGHT_PANN_INFERENCE_FLOOR", "0.18"))
 CLIP_MIN_SHOOTER = float(os.environ.get("HIGHLIGHT_CLIP_MIN_SHOOTER", "0.10"))
 CLASSIFIER_MIN = float(os.environ.get("HIGHLIGHT_CLASSIFIER_MIN", "0.6"))
 
@@ -943,18 +952,20 @@ def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> 
 
 def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
     """Owner-label separation — stream RU Metro has low absolute PANNs gun scores."""
+    gun_cap = pann_gun_min()
+    floor = pann_gun_inference_floor()
     if os.environ.get("HIGHLIGHT_PANN_FIXED", "0") == "1":
-        return PANN_GUN_MIN
+        return gun_cap
     starts = _owner_anchor_starts(video_path, profile)
     labels_path = _owner_labels_path(normalize_profile(profile))
     if not starts or labels_path is None:
-        return PANN_GUN_MIN
+        return gun_cap
     try:
         data = json.loads(labels_path.read_text(encoding="utf-8"))
         vid = video_path.stem[3:] if video_path.stem.startswith("yt_") else video_path.stem
         rows = data.get("videos", {}).get(vid, [])
     except (json.JSONDecodeError, OSError):
-        return PANN_GUN_MIN
+        return gun_cap
 
     good_scores: list[float] = []
     bad_scores: list[float] = []
@@ -970,12 +981,12 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
             bad_scores.append(s)
 
     if not good_scores:
-        return PANN_GUN_MIN
+        return gun_cap
     good_p90 = float(np.percentile(good_scores, 90))
     bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
     # Separate good from bad on this VOD; never drop below inference floor (RU streams).
-    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, PANN_GUN_INFERENCE_FLOOR)
-    return max(PANN_GUN_INFERENCE_FLOOR, min(dynamic, PANN_GUN_MIN))
+    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, floor)
+    return max(floor, min(dynamic, gun_cap))
 
 
 def audio_passes_shooter(
@@ -984,7 +995,7 @@ def audio_passes_shooter(
     gun_min: float | None = None,
 ) -> tuple[bool, str]:
     gun_max = panns["panns_gun_max"]
-    threshold = PANN_GUN_MIN if gun_min is None else gun_min
+    threshold = pann_gun_min() if gun_min is None else gun_min
     speech = max(panns["panns_speech"], 0.01)
     gun_ratio = gun_max / speech
     if gun_max < threshold:
@@ -1119,7 +1130,7 @@ def score_candidate_window(
         **{k: v for k, v in panns.items()},
     )
 
-    gun_min = calibrated_pann_gun_min(video_path, profile) if profile in SHOOTER_PROFILES else PANN_GUN_MIN
+    gun_min = calibrated_pann_gun_min(video_path, profile) if profile in SHOOTER_PROFILES else pann_gun_min()
     m.panns_gun_threshold = round(gun_min, 4)
 
     if profile in SHOOTER_PROFILES:
@@ -1351,19 +1362,25 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
+        seed_n = 0
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
                 continue
             try:
                 s = float(part) - WINDOW_SEC * 0.5
-                if s >= 60:
+                if s >= 30:
                     starts.add(round(s, 1))
+                    seed_n += 1
             except ValueError:
                 pass
-        out = sorted(starts)[:max_stage1]
-        log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
-        return out
+        log.info(
+            "highlight seed-merge %s: +%s seeds total_starts=%s (continue grid)",
+            video_path.name,
+            seed_n,
+            len(starts),
+        )
+        # Do not early-return — seeds alone starve discovery of real fight peaks.
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
         "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
@@ -1569,10 +1586,11 @@ def _accept_highlight_candidate(
     elif (
         metrics.hook_score < hook_min
         and profile in SHOOTER_PROFILES
-        and metrics.panns_gun_max >= 0.35
         and metrics.visual_pass
     ):
-        hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+        bypass_at = float(os.environ.get("VIRAL_COMBAT_PANN_HOOK_BYPASS", "0.28"))
+        if metrics.panns_gun_max >= bypass_at:
+            hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")

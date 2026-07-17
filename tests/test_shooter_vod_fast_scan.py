@@ -61,6 +61,24 @@ def test_fast_probe_passes_and_seeds_env(monkeypatch, tmp_path: Path) -> None:
     assert "HIGHLIGHT_SEED_STARTS" not in os.environ
 
 
+def test_fast_probe_allows_short_clutch_vod(monkeypatch, tmp_path: Path) -> None:
+    """3–4 min clutch VODs must not die as fast_probe_too_short."""
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("PUBG_METRO_VOD_SKIP_INTRO_SEC", "120")
+    vod = tmp_path / "yt_short.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(200.0)
+    with patch.dict(sys.modules, {"smart_video_editor": sve}):
+        with patch(
+            "shooter_vod_fast_scan.score_panns_audio",
+            return_value={"panns_gun_max": 0.20},
+        ):
+            ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is True
+    assert peaks
+    assert "too_short" not in reason
+
+
 def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "0")
     vod = tmp_path / "yt_test.mp4"

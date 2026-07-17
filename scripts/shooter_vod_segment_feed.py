@@ -70,6 +70,15 @@ EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
 
 
+def _shooter_vod_min_sec() -> float:
+    """PUBG clutch compilations are often 2–4 min — don't force MLBB's 3 min floor."""
+    return float(os.environ.get("SHOOTER_VOD_MIN_SEC", "120"))
+
+
+def _shooter_length_ok(dur: float) -> bool:
+    return _shooter_vod_min_sec() <= float(dur) <= _vod_max_sec()
+
+
 def _game() -> str:
     raw = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VOD_SEGMENT_GAME", "pubg")).strip().lower()
     return raw if raw in FEED_GAMES else "pubg"
@@ -257,9 +266,15 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
             except ValueError:
                 dur = 0.0
             # Unknown duration (flat search) is kept; known out-of-window is dropped.
-            if dur > 0 and not _vod_length_ok(Path("x.mp4"), dur):
-                skipped["duration"] = skipped.get("duration", 0) + 1
-                continue
+            if dur > 0:
+                length_ok = (
+                    _shooter_length_ok(dur)
+                    if game in ("pubg", "standoff")
+                    else _vod_length_ok(Path("x.mp4"), dur)
+                )
+                if not length_ok:
+                    skipped["duration"] = skipped.get("duration", 0) + 1
+                    continue
             seen.add(vid)
             out.append(
                 {
@@ -366,8 +381,14 @@ def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[boo
         if title and not ext_title_ok(game, title):
             return False, "bad_title"
 
-    if dur > 0 and not _vod_length_ok(Path("x.mp4"), dur):
-        return False, f"vod_length={dur:.0f}s"
+    if dur > 0:
+        length_ok = (
+            _shooter_length_ok(dur)
+            if game in ("pubg", "standoff")
+            else _vod_length_ok(Path("x.mp4"), dur)
+        )
+        if not length_ok:
+            return False, f"vod_length={dur:.0f}s"
     return True, ""
 
 
@@ -384,14 +405,20 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
     if path is None:
         return None
     file_dur = _ffprobe_duration(path)
-    if file_dur > 0 and not _vod_length_ok(path, file_dur):
-        log.warning("delete overlong download id=%s dur=%.0fs", pick.get("id"), file_dur)
-        pick["reject_reason"] = f"vod_length={file_dur:.0f}s"
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return None
+    if file_dur > 0:
+        length_ok = (
+            _shooter_length_ok(file_dur)
+            if game in ("pubg", "standoff")
+            else _vod_length_ok(path, file_dur)
+        )
+        if not length_ok:
+            log.warning("delete overlong download id=%s dur=%.0fs", pick.get("id"), file_dur)
+            pick["reject_reason"] = f"vod_length={file_dur:.0f}s"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
     return path
 
 
@@ -867,7 +894,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         dur = _ffprobe_duration(mp4)
-        if dur < _vod_min_sec():
+        min_sec = _shooter_vod_min_sec() if game in ("pubg", "standoff") else _vod_min_sec()
+        if dur < min_sec:
             if entry is None:
                 entry = {
                     "id": vod_youtube_id(mp4),

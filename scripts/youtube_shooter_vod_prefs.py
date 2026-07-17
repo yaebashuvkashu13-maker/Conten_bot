@@ -35,7 +35,7 @@ LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs|grand finals", re.I)
 BAD_TITLE_RE = re.compile(
     r"giveaway|#short\b|shorts\b|tiktok\b|montage|compilation|tutorial|"
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
-    r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
+    r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|\btips?\b|"
     r"guide|обзор|trick|совет|"
     r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"

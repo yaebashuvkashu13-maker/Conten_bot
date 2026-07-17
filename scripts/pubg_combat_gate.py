@@ -34,10 +34,34 @@ TRAINING_UI_KEYWORDS = (
     "разминк",
 )
 KILLFEED_KEYWORDS = ("kill", "knock", "eliminated", "headshot", "убил", "убийство", "нок")
-PANN_ABSOLUTE_MIN = float(os.environ.get("PUBG_COMBAT_PANN_MIN", "0.22"))
-MIN_HIT_FLASH_ANY = float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", "0.004"))
-MIN_WEAPON_EDGE_ANY = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025"))
-FRAMES_REQUIRED = int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", "3"))
+# Defaults only — soft L2/L3 patches env at runtime; always re-read below.
+_DEFAULT_PANN_MIN = 0.22
+_DEFAULT_HIT_FLASH = 0.004
+_DEFAULT_WEAPON_EDGE = 0.025
+_DEFAULT_FRAMES_REQUIRED = 3
+
+
+def _combat_pann_min() -> float:
+    return float(os.environ.get("PUBG_COMBAT_PANN_MIN", str(_DEFAULT_PANN_MIN)))
+
+
+def _combat_hit_flash_min() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", str(_DEFAULT_HIT_FLASH)))
+
+
+def _combat_weapon_edge_min() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", str(_DEFAULT_WEAPON_EDGE)))
+
+
+def _combat_frames_required() -> int:
+    return max(1, int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", str(_DEFAULT_FRAMES_REQUIRED))))
+
+
+# Back-compat aliases (tests / importers); prefer helpers at call sites.
+PANN_ABSOLUTE_MIN = float(os.environ.get("PUBG_COMBAT_PANN_MIN", str(_DEFAULT_PANN_MIN)))
+MIN_HIT_FLASH_ANY = float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", str(_DEFAULT_HIT_FLASH)))
+MIN_WEAPON_EDGE_ANY = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", str(_DEFAULT_WEAPON_EDGE)))
+FRAMES_REQUIRED = int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", str(_DEFAULT_FRAMES_REQUIRED)))
 
 
 def _norm_profile(profile: str) -> str:
@@ -87,7 +111,7 @@ def pubg_combat_visual_strict(
             }
         )
 
-    need = FRAMES_REQUIRED
+    need = _combat_frames_required()
     if passed < need:
         bad = [f"{f['label']}:{f.get('reason', '?')}" for f in frames_out if not f.get("pass")]
         return False, f"visual_frames={passed}/{need}:{','.join(bad[:3])}", {
@@ -96,7 +120,9 @@ def pubg_combat_visual_strict(
             "frames": frames_out,
         }
 
-    if best_flash < MIN_HIT_FLASH_ANY and best_weapon < MIN_WEAPON_EDGE_ANY:
+    flash_min = _combat_hit_flash_min()
+    weapon_min = _combat_weapon_edge_min()
+    if best_flash < flash_min and best_weapon < weapon_min:
         return False, (
             f"no_combat_signal flash={best_flash:.4f} weapon={best_weapon:.4f}"
         ), {
@@ -377,7 +403,7 @@ def pubg_passes_combat_gate(
     out: dict[str, Any] = {"start": round(start_sec, 3), "duration": round(duration_sec, 3)}
 
     from highlight_scorer import (
-        PANN_GUN_INFERENCE_FLOOR,
+        pann_gun_inference_floor,
         calibrated_pann_gun_min,
         score_panns_audio,
     )
@@ -399,7 +425,7 @@ def pubg_passes_combat_gate(
     if not shoot_ok:
         return False, shoot_reason, out
 
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    floor = max(pann_gun_inference_floor(), panns_thr, _combat_pann_min())
     out["panns_gun_max"] = round(panns_gun, 4)
     out["panns_gun_threshold"] = round(floor, 4)
     if panns_gun < floor:
