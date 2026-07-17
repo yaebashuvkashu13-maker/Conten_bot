@@ -75,8 +75,13 @@ def _shooter_vod_min_sec() -> float:
     return float(os.environ.get("SHOOTER_VOD_MIN_SEC", "120"))
 
 
+def _shooter_vod_max_sec() -> float:
+    """Allow longer Metro raids than MLBB's 20 min default (still below multi-hour streams)."""
+    return float(os.environ.get("SHOOTER_VOD_MAX_SEC", os.environ.get("MLBB_VOD_MAX_SEC", "2400")))
+
+
 def _shooter_length_ok(dur: float) -> bool:
-    return _shooter_vod_min_sec() <= float(dur) <= _vod_max_sec()
+    return _shooter_vod_min_sec() <= float(dur) <= _shooter_vod_max_sec()
 
 
 def _game() -> str:

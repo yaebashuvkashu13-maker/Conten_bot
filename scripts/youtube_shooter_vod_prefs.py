@@ -22,7 +22,9 @@ METRO_VAGUE_TITLE_RE = re.compile(
     r"обзор|гайд|guide|story|история|сюжет|"
     r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
     r"mysterious\s+voucher|gold\s+tickets?|fabled|"
-    r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale\s+map",
+    r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale\s+map|"
+    r"prize\s*path|honor\s+system|mission\s+not|rankings?\s+in|"
+    r"обновлен|patch\s+notes|creator\s+club",
     re.I,
 )
 CLASSIC_MODE_TITLE_RE = re.compile(
@@ -42,26 +44,33 @@ BAD_TITLE_RE = re.compile(
     r"loot\s+run|loot\s+farm|открытие|крафт|"
     r"🔴|\bLIVE\b|boss\s*drop|knife\s+drops?|что\s+падает|сопровожден|"
     r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"
-    r"первый\s+раз|first\s+time\s+play|noob\s+learn",
+    r"первый\s+раз|first\s+time\s+play|noob\s+learn|"
+    r"prize\s*path|honor\s+system|mission\s+not|rankings?\s+in|"
+    r"обновлен|patch\s+notes|creator\s+club",
     re.I,
 )
 COMBAT_TITLE_RE = re.compile(
     r"fight|clutch|squad\s*wipe|перестрел|файт|бой|ranked|ранкед|"
-    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|эвакуац|extract",
+    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|эвакуац|extract|"
+    r"катки|рейд|raid|wipe|дуэл|duel|rush|пуш|escape|flame|trap|corner",
+    re.I,
+)
+MATCH_TITLE_RE = re.compile(
+    r"match|матч|gameplay|геймплей|full\s+game|полный|replay|повтор",
     re.I,
 )
 
 PUBG_CORE_QUERIES = (
-    "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile Metro Royale full match",
-    "PUBG Mobile Metro Royale squad fight ranked",
-    "PUBG Mobile Metro Royale TPP ranked replay",
+    "PUBG Mobile Metro Royale clutch fight gameplay",
+    "PUBG Mobile Metro Royale 1v1 fight ranked",
+    "PUBG Mobile Metro Royale squad wipe fight",
+    "метро рояль пабг файт перестрелка",
     "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл файт клип",
-    "PUBG Mobile Metro Royale clutch fight",
-    "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг перестрелка русский",
+    "метро рояль пабг клип файт",
+    "PUBG Mobile Metro Royale extract fight",
+    "пабг метро рояль катки файт",
+    "метро рояль пабг снайпер дуэль",
+    "PUBG Mobile Metro Royale close range fight",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -73,10 +82,10 @@ STANDOFF_CORE_QUERIES = (
 
 PUBG_ANGLE_QUERIES = (
     "PUBG Mobile Metro Royale sniper fight",
-    "PUBG Mobile Metro Royale close range fight",
-    "PUBG Mobile Metro Royale final circle ranked",
-    "метро рояль пабг файт перестрелка",
-    "метро рояль пабг снайпер",
+    "метро рояль пабг 1v4 clutch",
+    "метро рояль пабг соло против сквада",
+    "PUBG Metro Royale rush fight gameplay",
+    "метро рояль пабг эвакуация файт",
 )
 
 STANDOFF_ANGLE_QUERIES = (
@@ -102,7 +111,10 @@ def title_ok(game: str, title: str) -> bool:
     if g == "pubg":
         if CLASSIC_MODE_TITLE_RE.search(t) or METRO_VAGUE_TITLE_RE.search(t):
             return False
-        return has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))
+        if not (has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))):
+            return False
+        # Drop mission/guide noise that still mentions Metro — need fight or match signal.
+        return bool(COMBAT_TITLE_RE.search(t) or MATCH_TITLE_RE.search(t))
     return False
 
 
@@ -123,8 +135,10 @@ def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
         if COMBAT_TITLE_RE.search(title):
             base += 2.5
         dur = float(row.get("duration") or 0)
-        if 480 <= dur <= 1200:
+        if 300 <= dur <= 1800:
             base += 1.0
+        if 480 <= dur <= 1200:
+            base += 0.5
         return base
 
     return sorted(candidates, key=_score, reverse=True)
