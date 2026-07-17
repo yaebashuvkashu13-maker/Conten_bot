@@ -92,6 +92,45 @@ def test_used_ids_allow_retryable_exhausted(tmp_path, monkeypatch) -> None:
     assert "BADTITLE000" in used
 
 
+def test_used_ids_blocks_spent_peaks_and_duplicate_rows(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(tmp_path / "pubg"))
+    state = {
+        "used_youtube_ids": [],
+        "vods": [
+            {
+                "id": "QDda58YJxUY",
+                "path": "",
+                "exhausted": True,
+                "reject_reason": "no_combat_peaks",
+                "last_pool_peaks": [{"peak_sec": 286.0}],
+                "last_scan_blocked": True,
+                "file_deleted": True,
+            },
+            {
+                "id": "QDda58YJxUY",
+                "path": "",
+                "exhausted": False,
+            },
+            {
+                "id": "BlockedPk01",
+                "path": "",
+                "exhausted": True,
+                "reject_reason": "all_peaks_blocked",
+            },
+        ],
+    }
+
+    class _Fake:
+        @staticmethod
+        def load_state(_g):
+            return state
+
+    monkeypatch.setitem(sys.modules, "vod_game_registry", _Fake)
+    used = pool.used_ids_for_game("pubg")
+    assert "QDda58YJxUY" in used
+    assert "BlockedPk01" in used
+
+
 def test_acquire_release_search_slot(monkeypatch) -> None:
     monkeypatch.setenv("VOD_SEARCH_MAX_CONCURRENT", "1")
     monkeypatch.setenv("VOD_SEARCH_MIN_INTERVAL_SEC", "0")

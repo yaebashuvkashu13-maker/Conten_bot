@@ -168,12 +168,92 @@ def _feed_lock(game: str):
 
 
 def _vod_registry_entry(state: dict, vod: Path) -> dict | None:
+    """Return the registry row for this VOD.
+
+    Prefer an exact path match. A stale id-only duplicate (exhausted, path="")
+    must not steal scan/exhaust updates from the live inbox file row — that bug
+    caused infinite rescans of the same PUBG VOD while the exhausted sibling
+    was the only one marked spent.
+    """
     vod_path = str(vod)
     vid = vod_youtube_id(vod)
-    for entry in state.get("vods", []):
-        if entry.get("path") == vod_path or entry.get("id") == vid:
-            return entry
-    return None
+    path_hit = None
+    id_live = None
+    id_any = None
+    for entry in state.get("vods") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("path") or "") == vod_path:
+            path_hit = entry
+            break
+        if vid and str(entry.get("id") or "") == vid:
+            if id_any is None:
+                id_any = entry
+            if str(entry.get("path") or "").strip() and id_live is None:
+                id_live = entry
+    return path_hit or id_live or id_any
+
+
+def _vod_registry_entries_for_id(state: dict, youtube_id: str) -> list[dict]:
+    vid = (youtube_id or "").strip()
+    if not vid:
+        return []
+    return [
+        e
+        for e in (state.get("vods") or [])
+        if isinstance(e, dict) and str(e.get("id") or "") == vid
+    ]
+
+
+def _reject_reason_permanently_spent(reason: str, entry: dict | None = None) -> bool:
+    r = (reason or "").strip()
+    if r in {"all_peaks_blocked", "peaks_spent"}:
+        return True
+    if entry and entry.get("last_scan_blocked"):
+        return True
+    if r == "no_combat_peaks":
+        peaks = (entry or {}).get("last_pool_peaks")
+        # Had peaks that are all spent/blocked — not a soft empty-pool miss.
+        if peaks is not None and len(peaks) > 0:
+            return True
+    return False
+
+
+def _youtube_id_permanently_spent(state: dict, youtube_id: str) -> bool:
+    """True when any registry row says this YouTube id has nothing left to mine."""
+    for entry in _vod_registry_entries_for_id(state, youtube_id):
+        if not entry.get("exhausted"):
+            continue
+        if entry.get("file_deleted"):
+            return True
+        if _reject_reason_permanently_spent(str(entry.get("reject_reason") or ""), entry):
+            return True
+    return False
+
+
+def _mark_siblings_exhausted(
+    state: dict,
+    *,
+    youtube_id: str,
+    reject_reason: str = "",
+    primary: dict | None = None,
+) -> list[dict]:
+    """Mark every registry row for this youtube id exhausted; sync spent flags."""
+    touched: list[dict] = []
+    now = time.time()
+    src = primary or {}
+    reason = (reject_reason or str(src.get("reject_reason") or "")).strip()
+    for entry in _vod_registry_entries_for_id(state, youtube_id):
+        entry["exhausted"] = True
+        entry.setdefault("exhausted_at", now)
+        if reason:
+            entry["reject_reason"] = reason
+        if src.get("last_scan_blocked") or reason in {"all_peaks_blocked", "peaks_spent"}:
+            entry["last_scan_blocked"] = True
+        if src.get("last_pool_peaks") is not None and entry.get("last_pool_peaks") is None:
+            entry["last_pool_peaks"] = src["last_pool_peaks"]
+        touched.append(entry)
+    return touched
 
 
 def _vod_title(state: dict, vod: Path) -> str:
@@ -310,10 +390,30 @@ def _cleanup_exhausted_entry(game: str, entry: dict | None, state: dict) -> None
     if not entry:
         return
     entry.setdefault("exhausted_at", time.time())
+    vid = str(entry.get("id") or "")
+    if vid:
+        _mark_siblings_exhausted(
+            state,
+            youtube_id=vid,
+            reject_reason=str(entry.get("reject_reason") or ""),
+            primary=entry,
+        )
     try:
         from vod_inbox_cleanup import cleanup_after_exhaust
 
-        cleanup_after_exhaust(game, entry, state=state)
+        # Prefer the sibling that still points at a live inbox path.
+        target = entry
+        for sibling in _vod_registry_entries_for_id(state, vid):
+            if str(sibling.get("path") or "").strip():
+                if entry.get("reject_reason"):
+                    sibling["reject_reason"] = entry["reject_reason"]
+                if entry.get("last_scan_blocked"):
+                    sibling["last_scan_blocked"] = True
+                sibling["exhausted"] = True
+                sibling.setdefault("exhausted_at", entry.get("exhausted_at") or time.time())
+                target = sibling
+                break
+        cleanup_after_exhaust(game, target, state=state)
     except Exception:
         log.exception("inbox cleanup after exhaust failed game=%s id=%s", game, entry.get("id"))
 
@@ -844,15 +944,15 @@ def _scan_vod_with_adaptive(
         record_zero_send_streak(entry, sent=0)
         force = should_force_exhaust_after_retries(entry)
         if should_mark_vod_exhausted(entry) or force:
-            if force and not entry.get("reject_reason"):
-                entry["reject_reason"] = "presend_retry_exhausted"
-            elif not entry.get("reject_reason"):
-                if not entry.get("last_pool_peaks"):
-                    entry["reject_reason"] = "no_combat_peaks"
-                elif entry.get("last_scan_blocked"):
-                    entry["reject_reason"] = "all_peaks_blocked"
             if force:
                 entry["last_scan_blocked"] = True
+                entry.setdefault("reject_reason", "presend_retry_exhausted")
+            elif entry.get("last_scan_blocked") and entry.get("last_pool_peaks"):
+                entry["reject_reason"] = "all_peaks_blocked"
+            elif not entry.get("last_pool_peaks"):
+                entry.setdefault("reject_reason", "no_combat_peaks")
+            elif entry.get("last_scan_blocked"):
+                entry["reject_reason"] = "all_peaks_blocked"
             entry["exhausted"] = True
             _cleanup_exhausted_entry(game, entry, state)
             log.info("exhausted vod=%s reason=%s", vod.name, entry.get("reject_reason"))
@@ -899,8 +999,35 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox.mkdir(parents=True, exist_ok=True)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
+        vid = vod_youtube_id(mp4)
+        # Sibling id-only row may already be spent while a live path duplicate remains.
+        if _youtube_id_permanently_spent(state, vid):
+            entry = _vod_registry_entry(state, mp4)
+            if entry is None:
+                entry = {
+                    "id": vid,
+                    "path": str(mp4),
+                    "title": "",
+                    "exhausted": True,
+                    "reject_reason": "all_peaks_blocked",
+                    "last_scan_blocked": True,
+                }
+                registry.append(entry)
+            else:
+                entry["path"] = str(mp4)
+                entry["exhausted"] = True
+                if not entry.get("reject_reason") or entry.get("reject_reason") == "no_combat_peaks":
+                    if entry.get("last_pool_peaks") or entry.get("last_scan_blocked"):
+                        entry["reject_reason"] = "all_peaks_blocked"
+                entry["last_scan_blocked"] = True
+            _cleanup_exhausted_entry(game, entry, state)
+            _save_state(game, state)
+            log.info("skip permanently spent inbox vod=%s id=%s", mp4.name, vid)
+            continue
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
+            _cleanup_exhausted_entry(game, entry, state)
+            _save_state(game, state)
             continue
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
@@ -910,7 +1037,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if dur < min_sec:
             if entry is None:
                 entry = {
-                    "id": vod_youtube_id(mp4),
+                    "id": vid,
                     "path": str(mp4),
                     "title": "",
                     "exhausted": True,
@@ -926,7 +1053,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if entry is None:
             entry = {
-                "id": vod_youtube_id(mp4),
+                "id": vid,
                 "path": str(mp4),
                 "title": "",
                 "exhausted": False,
@@ -955,6 +1082,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 if force:
                     entry.setdefault("reject_reason", "presend_retry_exhausted")
                     entry["last_scan_blocked"] = True
+                elif entry.get("last_scan_blocked") and entry.get("last_pool_peaks"):
+                    entry["reject_reason"] = "all_peaks_blocked"
                 elif not entry.get("last_pool_peaks"):
                     entry.setdefault("reject_reason", "no_combat_peaks")
                 else:

@@ -181,17 +181,30 @@ def used_ids_for_game(game: str) -> set[str]:
 
     Soft/transient rejects (fast_probe_too_short, empty highlight pool, download
     glitches) stay retryable so gate fixes can re-process the same VOD.
+    Blocked/spent peak sets are permanent — retrying them loops the inbox forever.
     """
     g = game.strip().lower()
     used: set[str] = set()
     retryable_prefixes = (
         "fast_probe_too_short",
         "fast_panns_",
-        "no_combat_peaks",
         "presend_retry_exhausted",
         "download_failed",
         "zero_yield_stuck",
     )
+
+    def _row_retryable(row: dict[str, Any]) -> bool:
+        reason = str(row.get("reject_reason") or "")
+        if row.get("last_scan_blocked") or reason in {"all_peaks_blocked", "peaks_spent"}:
+            return False
+        if reason == "no_combat_peaks":
+            peaks = row.get("last_pool_peaks")
+            # Empty pool may be a soft miss; a non-empty pool means peaks were spent.
+            if peaks is not None and len(peaks) > 0:
+                return False
+            return True
+        return any(reason.startswith(p) or p in reason for p in retryable_prefixes)
+
     try:
         from vod_game_registry import load_state
 
@@ -201,21 +214,26 @@ def used_ids_for_game(game: str) -> set[str]:
     for vid in state.get("used_youtube_ids") or []:
         if isinstance(vid, str) and len(vid) == 11:
             used.add(vid)
+    by_id: dict[str, list[dict[str, Any]]] = {}
     for row in state.get("vods") or []:
+        if not isinstance(row, dict):
+            continue
         vid = str(row.get("id") or "")
         if len(vid) != 11:
             continue
-        path = str(row.get("path") or "").strip()
-        reason = str(row.get("reject_reason") or "")
-        retryable = any(reason.startswith(p) or p in reason for p in retryable_prefixes)
-        if path:
+        by_id.setdefault(vid, []).append(row)
+    for vid, rows in by_id.items():
+        if any(str(r.get("path") or "").strip() for r in rows):
             used.add(vid)
             continue
-        if row.get("exhausted") and retryable:
-            # Allow rediscovery after soft/gate fixes.
+        # Any permanently spent sibling wins over a retryable duplicate.
+        if any(r.get("exhausted") and not _row_retryable(r) for r in rows):
+            used.add(vid)
+            continue
+        if any(r.get("exhausted") and _row_retryable(r) for r in rows):
             used.discard(vid)
             continue
-        if row.get("exhausted"):
+        if any(r.get("exhausted") for r in rows):
             used.add(vid)
     inbox = SPECS[g].inbox() if g in SPECS else None
     if inbox and inbox.is_dir():

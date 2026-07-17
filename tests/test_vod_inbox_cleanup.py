@@ -113,3 +113,35 @@ def test_grace_defers_delete(tmp_path, monkeypatch) -> None:
     deferred = cleanup.cleanup_after_exhaust("pubg", entry, state={"vods": [entry]})
     assert deferred["reason"] == "deferred_grace"
     assert vod.exists()
+
+
+def test_blocked_peaks_delete_immediately_despite_grace(tmp_path, monkeypatch) -> None:
+    root = _pubg_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("VOD_INBOX_DELETE_EXHAUSTED", "1")
+    monkeypatch.setenv("VOD_INBOX_DELETE_GRACE_SEC", "3600")
+    monkeypatch.setenv("VOD_INBOX_DELETE_ALL_EXHAUSTED", "1")
+
+    inbox = root / "youtube_nightly" / "inbox"
+    vod = inbox / "yt_blockedpk01.mp4"
+    vod.write_bytes(b"blocked")
+
+    entry = {
+        "id": "blockedpk01",
+        "path": str(vod),
+        "exhausted": True,
+        "reject_reason": "all_peaks_blocked",
+        "last_scan_blocked": True,
+        "last_pool_peaks": [{"peak_sec": 286.0}],
+        "exhausted_at": time.time(),
+        "last_scan_at": time.time(),
+    }
+    state = {"vods": [entry, {"id": "blockedpk01", "path": "", "exhausted": True}]}
+    (root / "vod_segment_state.json").write_text(
+        __import__("json").dumps({"vods": state["vods"], "used_youtube_ids": ["blockedpk01"]}),
+        encoding="utf-8",
+    )
+    result = cleanup.cleanup_after_exhaust("pubg", entry, state=state)
+    assert result.get("deleted") is True
+    assert not vod.exists()
+    assert all(r.get("path") == "" for r in state["vods"])
+    assert all(r.get("file_deleted") for r in state["vods"])

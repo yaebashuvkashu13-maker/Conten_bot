@@ -33,6 +33,7 @@ def _save_state(game: str, state: dict[str, Any]) -> None:
 _SPENT_REASONS = frozenset(
     {
         "all_peaks_blocked",
+        "peaks_spent",
         "no_combat_peaks",
         "presend_rejected_all_peaks",
     }
@@ -42,6 +43,14 @@ _SPENT_PREFIXES = (
     "fast_probe",
     "fast_panns",
     "scan_timeout",
+)
+# These must delete immediately: rescans refresh last_scan_at and would
+# otherwise keep the grace window from ever elapsing.
+_IMMEDIATE_DELETE_REASONS = frozenset(
+    {
+        "all_peaks_blocked",
+        "peaks_spent",
+    }
 )
 
 
@@ -87,10 +96,27 @@ def is_fully_spent(entry: dict[str, Any] | None) -> bool:
     return os.environ.get("VOD_INBOX_DELETE_ALL_EXHAUSTED", "1") == "1"
 
 
+def _immediate_delete(entry: dict[str, Any]) -> bool:
+    """Blocked/spent peaks should not wait on grace (rescans refresh mtimes)."""
+    if entry.get("last_scan_blocked"):
+        return True
+    return str(entry.get("reject_reason") or "").strip() in _IMMEDIATE_DELETE_REASONS
+
+
 def _entry_mtime_ok(entry: dict[str, Any], path: Path) -> bool:
     grace = delete_grace_sec()
     if grace <= 0:
         return True
+    if _immediate_delete(entry):
+        # Only exhausted_at counts — last_scan_at is refreshed on every blocked rescan.
+        try:
+            ts = float(entry.get("exhausted_at") or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        if ts <= 0:
+            return True
+        # Short grace only to avoid racing the scan that just marked exhaust.
+        return (time.time() - ts) >= min(grace, 15.0)
     markers = [
         entry.get("exhausted_at"),
         entry.get("last_scan_at"),
@@ -220,11 +246,23 @@ def _cleanup_orphan_exhausted(
     inbox = spec(game).inbox()
     if not inbox.is_dir():
         return {"deleted": 0, "freed": 0}
-    by_id = {
-        str(row.get("id") or ""): row
-        for row in (state.get("vods") or [])
-        if isinstance(row, dict) and row.get("id")
-    }
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in state.get("vods") or []:
+        if not isinstance(row, dict):
+            continue
+        vid = str(row.get("id") or "")
+        if not vid:
+            continue
+        prev = by_id.get(vid)
+        if prev is None:
+            by_id[vid] = row
+            continue
+        # Prefer an exhausted/spent sibling so orphans are deleted even when a
+        # stale non-exhausted duplicate also exists in the registry.
+        prev_score = (1 if prev.get("exhausted") else 0) + (1 if prev.get("last_scan_blocked") else 0)
+        row_score = (1 if row.get("exhausted") else 0) + (1 if row.get("last_scan_blocked") else 0)
+        if row_score >= prev_score:
+            by_id[vid] = row
     deleted = 0
     freed = 0
     for path in sorted(inbox.glob("yt_*.mp4")):
@@ -273,20 +311,53 @@ def cleanup_after_exhaust(
         return {"deleted": False, "reason": "disabled_or_empty"}
     # Stamp exhaust time for grace window.
     entry.setdefault("exhausted_at", time.time())
-    if delete_grace_sec() > 0:
+    # If path is empty, try to recover the inbox file from youtube id.
+    if not str(entry.get("path") or "").strip():
+        vid = str(entry.get("id") or "").strip()
+        if vid and len(vid) == 11:
+            candidate = spec(game).inbox() / f"yt_{vid}.mp4"
+            if candidate.is_file():
+                entry["path"] = str(candidate)
+    immediate = _immediate_delete(entry)
+    if not immediate and delete_grace_sec() > 0:
         # Defer unlink to the next sweep so grace can elapse.
         return {"deleted": False, "reason": "deferred_grace", "id": entry.get("id")}
-    result = delete_exhausted_file(entry)
+    # Blocked/spent peaks: delete now. Rescans refresh last_scan_at and would
+    # otherwise keep a normal grace window from ever completing.
+    if immediate:
+        prev_grace = os.environ.get("VOD_INBOX_DELETE_GRACE_SEC")
+        os.environ["VOD_INBOX_DELETE_GRACE_SEC"] = "0"
+        try:
+            result = delete_exhausted_file(entry)
+        finally:
+            if prev_grace is None:
+                os.environ.pop("VOD_INBOX_DELETE_GRACE_SEC", None)
+            else:
+                os.environ["VOD_INBOX_DELETE_GRACE_SEC"] = prev_grace
+    else:
+        result = delete_exhausted_file(entry)
     if result.get("deleted") or result.get("reason") == "already_missing":
+        vid = str(entry.get("id") or "")
         if state is not None:
+            for row in state.get("vods") or []:
+                if isinstance(row, dict) and str(row.get("id") or "") == vid:
+                    row["exhausted"] = True
+                    row["path"] = ""
+                    row["file_deleted"] = True
+                    if entry.get("reject_reason"):
+                        row["reject_reason"] = entry["reject_reason"]
+                    if entry.get("last_scan_blocked"):
+                        row["last_scan_blocked"] = True
             _save_state(game, state)
         else:
             st = _load_state(game)
-            vid = str(entry.get("id") or "")
             for row in st.get("vods") or []:
                 if str(row.get("id") or "") == vid:
-                    row.update(entry)
-                    break
+                    row["exhausted"] = True
+                    row["path"] = ""
+                    row["file_deleted"] = True
+                    if entry.get("reject_reason"):
+                        row["reject_reason"] = entry["reject_reason"]
             _save_state(game, st)
     return result
 
