@@ -23,6 +23,8 @@ def test_pubg_title_ok() -> None:
     assert not title_ok("pubg", "METRO ROYALE OPEN 20 GOLD TICKETS FOR FABLED MK14")
     assert not title_ok("pubg", "УЧУСЬ ИГРАТЬ В МЕТРО РОЯЛЬ | СТРИМ METRO ROYALE")
     assert not title_ok("pubg", "Learning to play PUBG Mobile Metro Royale")
+    assert not title_ok("pubg", "HOW TO SPAWN NEW NINE-TAILS BOSS IN METRO ROYALE")
+    assert not title_ok("pubg", "Metro Royale KARAMBIT KNIFE DROPS")
     assert title_ok("pubg", "No Escape from the Flames! Metro Royale")
     assert title_ok("pubg", "PUBG Metro Royale 1v1 Clutch Fight")
 

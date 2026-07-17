@@ -20,7 +20,7 @@ PUBG_TITLE_RE = re.compile(
 METRO_VAGUE_TITLE_RE = re.compile(
     r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
     r"обзор|гайд|guide|story|история|сюжет|"
-    r"how\s+to\s+get|how\s+to\s+farm|free\s+karambit|karambit|"
+    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
     r"mysterious\s+voucher|gold\s+tickets?|fabled|"
     r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale\s+map",
     re.I,
@@ -37,10 +37,10 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
     r"guide|обзор|trick|совет|"
-    r"how\s+to\s+get|how\s+to\s+farm|free\s+karambit|karambit|"
+    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
     r"loot\s+run|loot\s+farm|открытие|крафт|"
-    r"🔴|\bLIVE\b|boss\s*drop|что\s+падает|сопровожден|"
+    r"🔴|\bLIVE\b|boss\s*drop|knife\s+drops?|что\s+падает|сопровожден|"
     r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"
     r"первый\s+раз|first\s+time\s+play|noob\s+learn",
     re.I,

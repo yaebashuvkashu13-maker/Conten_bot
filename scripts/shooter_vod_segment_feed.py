@@ -311,34 +311,50 @@ def _notify_discovery_miss(game: str, token: str, chat_id: str, state: dict) -> 
     _save_state(game, state)
 
 
-def _probe_youtube_duration(url: str, env: dict[str, str]) -> float:
-    """Resolve duration before a multi-hour stream burns the disk/CPU."""
+def _probe_youtube_meta(url: str, env: dict[str, str]) -> tuple[str, float]:
+    """Resolve full title + duration before download (flat search truncates titles)."""
     from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
     cmd = ytdlp_cmd(env) + [
         "--skip-download",
         "--no-playlist",
         "--print",
-        "%(duration)s",
+        "%(title)s|%(duration)s",
         url,
     ]
     cmd += ytdlp_extra_args(env)
-    proc = run_ytdlp(cmd, env, timeout=90, label="probe-duration")
+    proc = run_ytdlp(cmd, env, timeout=90, label="probe-meta")
     if proc.returncode != 0:
-        return 0.0
+        return "", 0.0
     raw = (proc.stdout or "").strip().splitlines()
     if not raw:
-        return 0.0
+        return "", 0.0
+    line = raw[-1].strip()
+    if "|" not in line:
+        return line[:200], 0.0
+    title, dur_s = line.rsplit("|", 1)
     try:
-        val = float(raw[-1].strip())
+        dur = float(dur_s.strip()) if dur_s.strip() and dur_s.strip().upper() not in {"NA", "NONE"} else 0.0
     except ValueError:
-        return 0.0
-    return val if val > 0 else 0.0
+        dur = 0.0
+    return title.strip()[:200], dur if dur > 0 else 0.0
 
 
 def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[bool, str]:
     """Reject loot/learning titles and multi-hour streams before yt-dlp download."""
     title = str(pick.get("title") or "")
+    dur = float(pick.get("duration") or 0)
+    # Always refresh metadata when duration unknown or title looks truncated/weak.
+    need_meta = dur <= 0 or len(title) < 24 or title.endswith("…") or title.endswith("...")
+    if need_meta or game in ("pubg", "standoff"):
+        full_title, full_dur = _probe_youtube_meta(str(pick.get("url") or ""), env)
+        if full_title:
+            title = full_title
+            pick["title"] = full_title
+        if full_dur > 0:
+            dur = full_dur
+            pick["duration"] = full_dur
+
     if game in ("pubg", "standoff"):
         from youtube_shooter_vod_prefs import title_ok
 
@@ -350,11 +366,6 @@ def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[boo
         if title and not ext_title_ok(game, title):
             return False, "bad_title"
 
-    dur = float(pick.get("duration") or 0)
-    if dur <= 0:
-        dur = _probe_youtube_duration(str(pick.get("url") or ""), env)
-        if dur > 0:
-            pick["duration"] = dur
     if dur > 0 and not _vod_length_ok(Path("x.mp4"), dur):
         return False, f"vod_length={dur:.0f}s"
     return True, ""
