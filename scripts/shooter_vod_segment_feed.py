@@ -374,12 +374,6 @@ def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[boo
 def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
     from youtube_download import download_one
 
-    ok, reason = _preflight_vod_pick(game, pick, env)
-    if not ok:
-        log.warning("skip download id=%s reason=%s title=%s", pick.get("id"), reason, (pick.get("title") or "")[:80])
-        pick["reject_reason"] = reason
-        return None
-
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
     try:
@@ -970,6 +964,30 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         _notify_discovery_miss(game, token, chat_id, state)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
+    ok_dl, reject_pre = _preflight_vod_pick(game, pick, env)
+    if not ok_dl:
+        used.add(str(pick.get("id") or ""))
+        state["used_youtube_ids"] = sorted(x for x in used if x)
+        registry.append(
+            {
+                "id": pick.get("id"),
+                "path": "",
+                "title": pick.get("title", ""),
+                "exhausted": True,
+                "reject_reason": reject_pre,
+            }
+        )
+        state["vods"] = registry
+        _save_state(game, state)
+        log.warning(
+            "skip download id=%s reason=%s title=%s",
+            pick.get("id"),
+            reject_pre,
+            (pick.get("title") or "")[:80],
+        )
+        print(f"pipeline done sent=0 vods=0 game={game} reject={reject_pre}")
+        return 0
+
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:
