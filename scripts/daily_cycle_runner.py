@@ -43,6 +43,26 @@ def _load_runtime_env() -> dict[str, str]:
     return env
 
 
+def _cleanup_exhausted_inbox(env: dict[str, str]) -> None:
+    """Delete fully spent inbox VODs so disk does not fill with dead files."""
+    if env.get("VOD_INBOX_DELETE_EXHAUSTED", "1") != "1":
+        return
+    try:
+        from vod_inbox_cleanup import cleanup_all_games
+
+        rows = cleanup_all_games(dry_run=False)
+        deleted = sum(int(r.get("deleted") or 0) for r in rows)
+        freed = sum(int(r.get("freed_bytes") or 0) for r in rows)
+        if deleted:
+            log.info(
+                "inbox exhausted cleanup deleted=%s freed_gb=%.2f",
+                deleted,
+                freed / (1024**3),
+            )
+    except Exception:
+        log.exception("inbox exhausted cleanup failed")
+
+
 def _prefetch_search_pools(env: dict[str, str], active: str | None) -> None:
     """Warm per-game YouTube candidate pools so the active feed rarely blocks on search."""
     if env.get("VOD_SEARCH_POOL_ENABLED", "1") != "1":
@@ -71,6 +91,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     env = _load_runtime_env()
     if not enabled():
+        _cleanup_exhausted_inbox(env)
         _prefetch_search_pools(env, "mlbb")
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode
@@ -99,7 +120,8 @@ def main() -> int:
         notified["active_game"] = game
         save_state(state)
 
-    # Prefetch candidate pools for every game still under daily quota (parallel, rate-limited).
+    # Free disk from fully mined VODs, then warm search pools for remaining quotas.
+    _cleanup_exhausted_inbox(env)
     _prefetch_search_pools(env, game)
 
     if game == "mlbb":

@@ -334,12 +334,22 @@ def _sync_vod_entry_to_state(state: dict, entry: dict, vod: Path) -> None:
 def _mark_vod_exhausted(vod: Path) -> None:
     vid = vod_youtube_id(vod)
     state = _load_state()
+    target: dict | None = None
     for row in state.get("vods", []):
         row_path = Path(str(row.get("path", "")))
         if row.get("id") == vid or row_path == vod or row_path.name == vod.name:
             row["exhausted"] = True
             row["id"] = vid
+            row.setdefault("exhausted_at", time.time())
+            target = row
     _save_state(state)
+    if target is not None:
+        try:
+            from vod_inbox_cleanup import cleanup_after_exhaust
+
+            cleanup_after_exhaust("mlbb", target, state=state)
+        except Exception:
+            log.exception("inbox cleanup after exhaust failed vod=%s", vod.name)
 
 
 @contextmanager
@@ -2058,14 +2068,15 @@ def _process_vod_segments(
 
     if sent_total == 0 and not send_quota_blocked:
         if entry and should_mark_vod_exhausted(entry):
-            _mark_vod_exhausted(vod)
-            entry["exhausted"] = True
-            entry["id"] = vid
             if not entry.get("reject_reason"):
                 if not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
                 elif entry.get("last_scan_blocked"):
                     entry["reject_reason"] = "all_peaks_blocked"
+            entry["exhausted"] = True
+            entry["id"] = vid
+            entry.setdefault("exhausted_at", time.time())
+            _mark_vod_exhausted(vod)
             _record_zero_yield_uploader(entry)
             log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
             if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":

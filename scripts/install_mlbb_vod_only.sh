@@ -178,6 +178,7 @@ install -m 755 \
   "$REPO/scripts/wot_brawl_segment.py" \
   "$REPO/scripts/vod_scan_state.py" \
   "$REPO/scripts/vod_search_pool.py" \
+  "$REPO/scripts/vod_inbox_cleanup.py" \
   "$REPO/scripts/vod_game_registry.py" \
   "$REPO/scripts/pubg_metro_royale_gate.py" \
   "$REPO/scripts/youtube_shooter_vod_prefs.py" \

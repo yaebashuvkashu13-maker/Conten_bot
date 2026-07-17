@@ -284,6 +284,18 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
     return out
 
 
+def _cleanup_exhausted_entry(game: str, entry: dict | None, state: dict) -> None:
+    if not entry:
+        return
+    entry.setdefault("exhausted_at", time.time())
+    try:
+        from vod_inbox_cleanup import cleanup_after_exhaust
+
+        cleanup_after_exhaust(game, entry, state=state)
+    except Exception:
+        log.exception("inbox cleanup after exhaust failed game=%s id=%s", game, entry.get("id"))
+
+
 def _notify_discovery_miss(game: str, token: str, chat_id: str, state: dict) -> None:
     """Throttle repeated «не нашёл» Telegram spam (default 30 min)."""
     gap = max(60, int(os.environ.get("VOD_DISCOVERY_MISS_NOTIFY_SEC", "1800")))
@@ -577,6 +589,7 @@ def _scan_vod_with_adaptive(
                 entry["reject_reason"] = metro_reason
                 if _pubg_metro_should_exhaust(title, streak_in):
                     entry["exhausted"] = True
+                    _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
 
@@ -606,6 +619,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
@@ -633,6 +647,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
         apply_genshin_seeds(seed_peaks)
@@ -658,6 +673,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
@@ -750,6 +766,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             else:
                 entry["exhausted"] = True
                 entry.setdefault("reject_reason", f"vod_length={dur:.0f}s")
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             log.info("exhaust short inbox vod=%s dur=%.0fs", mp4.name, dur)
             continue
@@ -770,6 +787,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 entry["reject_reason"] = metro_reason
                 if _pubg_metro_should_exhaust(title, streak_in):
                     entry["exhausted"] = True
+                    _cleanup_exhausted_entry(game, entry, state)
                 _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
@@ -782,6 +800,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 else:
                     entry.setdefault("reject_reason", "all_peaks_blocked")
                 entry["exhausted"] = True
+                _cleanup_exhausted_entry(game, entry, state)
                 log.info(
                     "exhausted vod=%s reason=%s",
                     mp4.name,
@@ -845,15 +864,16 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
                 )
             exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
-            registry.append(
-                {
-                    "id": pick["id"],
-                    "path": str(vod),
-                    "title": pick.get("title", ""),
-                    "exhausted": exhausted,
-                    "reject_reason": metro_reason,
-                }
-            )
+            entry = {
+                "id": pick["id"],
+                "path": str(vod),
+                "title": pick.get("title", ""),
+                "exhausted": exhausted,
+                "reject_reason": metro_reason,
+            }
+            registry.append(entry)
+            if exhausted:
+                _cleanup_exhausted_entry(game, entry, state)
             used.add(pick["id"])
             state["vods"] = registry
             state["used_youtube_ids"] = sorted(used)
