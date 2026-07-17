@@ -177,9 +177,21 @@ def pop_candidate(game: str, used: set[str] | None = None) -> dict[str, Any] | N
 
 
 def used_ids_for_game(game: str) -> set[str]:
-    """Collect youtube ids already downloaded / registered for a game."""
+    """Collect youtube ids already downloaded / permanently rejected for a game.
+
+    Soft/transient rejects (fast_probe_too_short, empty highlight pool, download
+    glitches) stay retryable so gate fixes can re-process the same VOD.
+    """
     g = game.strip().lower()
     used: set[str] = set()
+    retryable_prefixes = (
+        "fast_probe_too_short",
+        "fast_panns_",
+        "no_combat_peaks",
+        "presend_retry_exhausted",
+        "download_failed",
+        "zero_yield_stuck",
+    )
     try:
         from vod_game_registry import load_state
 
@@ -191,7 +203,19 @@ def used_ids_for_game(game: str) -> set[str]:
             used.add(vid)
     for row in state.get("vods") or []:
         vid = str(row.get("id") or "")
-        if len(vid) == 11:
+        if len(vid) != 11:
+            continue
+        path = str(row.get("path") or "").strip()
+        reason = str(row.get("reject_reason") or "")
+        retryable = any(reason.startswith(p) or p in reason for p in retryable_prefixes)
+        if path:
+            used.add(vid)
+            continue
+        if row.get("exhausted") and retryable:
+            # Allow rediscovery after soft/gate fixes.
+            used.discard(vid)
+            continue
+        if row.get("exhausted"):
             used.add(vid)
     inbox = SPECS[g].inbox() if g in SPECS else None
     if inbox and inbox.is_dir():

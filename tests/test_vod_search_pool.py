@@ -54,6 +54,44 @@ def test_pool_needs_refresh_respects_gap(tmp_path, monkeypatch) -> None:
     assert pool.pool_needs_refresh("pubg", used=set()) is False
 
 
+def test_used_ids_allow_retryable_exhausted(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(tmp_path / "pubg"))
+    state = {
+        "used_youtube_ids": ["ZF3LCQ3080M", "BADTITLE000"],
+        "vods": [
+            {
+                "id": "ZF3LCQ3080M",
+                "path": "",
+                "exhausted": True,
+                "reject_reason": "fast_probe_too_short",
+            },
+            {
+                "id": "BADTITLE000",
+                "path": "",
+                "exhausted": True,
+                "reject_reason": "bad_title",
+            },
+            {
+                "id": "QDda58YJxUY",
+                "path": "",
+                "exhausted": True,
+                "reject_reason": "no_combat_peaks",
+            },
+        ],
+    }
+
+    class _Fake:
+        @staticmethod
+        def load_state(_g):
+            return state
+
+    monkeypatch.setitem(sys.modules, "vod_game_registry", _Fake)
+    used = pool.used_ids_for_game("pubg")
+    assert "ZF3LCQ3080M" not in used
+    assert "QDda58YJxUY" not in used
+    assert "BADTITLE000" in used
+
+
 def test_acquire_release_search_slot(monkeypatch) -> None:
     monkeypatch.setenv("VOD_SEARCH_MAX_CONCURRENT", "1")
     monkeypatch.setenv("VOD_SEARCH_MIN_INTERVAL_SEC", "0")

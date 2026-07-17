@@ -887,7 +887,14 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     state = _load_state(game)
     registry = state.setdefault("vods", [])
-    used = set(state.get("used_youtube_ids", []))
+    try:
+        from vod_search_pool import used_ids_for_game
+
+        used = used_ids_for_game(game)
+    except Exception:
+        used = set(state.get("used_youtube_ids", []))
+    # Keep state list in sync for permanent ids only.
+    state["used_youtube_ids"] = sorted(used)
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
