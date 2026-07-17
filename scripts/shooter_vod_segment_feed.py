@@ -311,17 +311,83 @@ def _notify_discovery_miss(game: str, token: str, chat_id: str, state: dict) -> 
     _save_state(game, state)
 
 
+def _probe_youtube_duration(url: str, env: dict[str, str]) -> float:
+    """Resolve duration before a multi-hour stream burns the disk/CPU."""
+    from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
+
+    cmd = ytdlp_cmd(env) + [
+        "--skip-download",
+        "--no-playlist",
+        "--print",
+        "%(duration)s",
+        url,
+    ]
+    cmd += ytdlp_extra_args(env)
+    proc = run_ytdlp(cmd, env, timeout=90, label="probe-duration")
+    if proc.returncode != 0:
+        return 0.0
+    raw = (proc.stdout or "").strip().splitlines()
+    if not raw:
+        return 0.0
+    try:
+        val = float(raw[-1].strip())
+    except ValueError:
+        return 0.0
+    return val if val > 0 else 0.0
+
+
+def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[bool, str]:
+    """Reject loot/learning titles and multi-hour streams before yt-dlp download."""
+    title = str(pick.get("title") or "")
+    if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import title_ok
+
+        if title and not title_ok(game, title):
+            return False, "bad_title"
+    elif game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import title_ok as ext_title_ok
+
+        if title and not ext_title_ok(game, title):
+            return False, "bad_title"
+
+    dur = float(pick.get("duration") or 0)
+    if dur <= 0:
+        dur = _probe_youtube_duration(str(pick.get("url") or ""), env)
+        if dur > 0:
+            pick["duration"] = dur
+    if dur > 0 and not _vod_length_ok(Path("x.mp4"), dur):
+        return False, f"vod_length={dur:.0f}s"
+    return True, ""
+
+
 def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
     from youtube_download import download_one
+
+    ok, reason = _preflight_vod_pick(game, pick, env)
+    if not ok:
+        log.warning("skip download id=%s reason=%s title=%s", pick.get("id"), reason, (pick.get("title") or "")[:80])
+        pick["reject_reason"] = reason
+        return None
 
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
     try:
         path = download_one(str(pick["url"]), inbox, env)
-        return path
     except Exception as exc:
         log.warning("download failed %s: %s", pick.get("id"), exc)
         return None
+    if path is None:
+        return None
+    file_dur = _ffprobe_duration(path)
+    if file_dur > 0 and not _vod_length_ok(path, file_dur):
+        log.warning("delete overlong download id=%s dur=%.0fs", pick.get("id"), file_dur)
+        pick["reject_reason"] = f"vod_length={file_dur:.0f}s"
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    return path
 
 
 def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
@@ -896,7 +962,23 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:
-        print(f"pipeline done sent=0 vods=0 game={game}")
+        # Avoid retrying the same bad pool/discovery hit forever.
+        used.add(str(pick.get("id") or ""))
+        state["used_youtube_ids"] = sorted(x for x in used if x)
+        reject = str(pick.get("reject_reason") or "download_failed")
+        registry.append(
+            {
+                "id": pick.get("id"),
+                "path": "",
+                "title": pick.get("title", ""),
+                "exhausted": True,
+                "reject_reason": reject,
+            }
+        )
+        state["vods"] = registry
+        _save_state(game, state)
+        log.info("marked undownloadable id=%s reason=%s", pick.get("id"), reject)
+        print(f"pipeline done sent=0 vods=0 game={game} reject={reject}")
         return 0
 
     if game == "pubg":

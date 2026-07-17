@@ -40,7 +40,9 @@ BAD_TITLE_RE = re.compile(
     r"how\s+to\s+get|how\s+to\s+farm|free\s+karambit|karambit|"
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
     r"loot\s+run|loot\s+farm|открытие|крафт|"
-    r"🔴|\bLIVE\b|boss\s*drop|что\s+падает|сопровожден",
+    r"🔴|\bLIVE\b|boss\s*drop|что\s+падает|сопровожден|"
+    r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"
+    r"первый\s+раз|first\s+time\s+play|noob\s+learn",
     re.I,
 )
 COMBAT_TITLE_RE = re.compile(
@@ -56,10 +58,10 @@ PUBG_CORE_QUERIES = (
     "PUBG Mobile Metro Royale TPP ranked replay",
     "метро рояль пабг мобайл ранкед матч",
     "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл стрим",
-    "PUBG Mobile Metro Royale стрим полный",
+    "метро рояль пабг мобайл файт клип",
+    "PUBG Mobile Metro Royale clutch fight",
     "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг стрим русский",
+    "метро рояль пабг перестрелка русский",
 )
 
 STANDOFF_CORE_QUERIES = (
