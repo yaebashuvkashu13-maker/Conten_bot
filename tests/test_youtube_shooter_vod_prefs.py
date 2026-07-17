@@ -30,6 +30,10 @@ def test_pubg_title_ok() -> None:
     assert title_ok("pubg", "No Escape from the Flames! Metro Royale")
     assert title_ok("pubg", "PUBG Metro Royale 1v1 Clutch Fight")
     assert title_ok("pubg", "ЖЕСТЬ ЛУЧШИЕ КАТКИ В МЕТРО РОЯЛЬ PUBG MOBILE")
+    assert title_ok(
+        "pubg",
+        "СОЛО ПРОТИВ ПАЧЕК НА 7 КАРТЕ В МЕТРО РОЯЛЬ ! PUBG Mobile - С ВЕБКОЙ НА РУКИ",
+    )
 
 
 def test_standoff_title_ok() -> None:

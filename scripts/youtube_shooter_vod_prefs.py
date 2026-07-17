@@ -51,8 +51,9 @@ BAD_TITLE_RE = re.compile(
 )
 COMBAT_TITLE_RE = re.compile(
     r"fight|clutch|squad\s*wipe|перестрел|файт|бой|ranked|ранкед|"
-    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|эвакуац|extract|"
-    r"катки|рейд|raid|wipe|дуэл|duel|rush|пуш|escape|flame|trap|corner",
+    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|против\s+пач|соло|"
+    r"эвакуац|extract|катки|рейд|raid|wipe|дуэл|duel|rush|пуш|"
+    r"escape|flame|trap|corner|handcam|вебк|пачк",
     re.I,
 )
 MATCH_TITLE_RE = re.compile(
