@@ -581,6 +581,19 @@ def _scan_vod_with_adaptive(
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
+    if entry is None:
+        entry = {
+            "id": vid,
+            "path": str(vod),
+            "title": title,
+            "exhausted": False,
+        }
+        state.setdefault("vods", []).append(entry)
+    else:
+        entry.setdefault("path", str(vod))
+        entry.setdefault("id", vid)
+        if title and not entry.get("title"):
+            entry["title"] = title
 
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
@@ -714,6 +727,34 @@ def _scan_vod_with_adaptive(
 
     new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
+    # Ensure registry row exists and reflects scan fields (empty pool must persist).
+    entry = _vod_registry_entry(state, vod) or entry
+    if entry is None:
+        entry = {
+            "id": vid,
+            "path": str(vod),
+            "title": title,
+            "exhausted": False,
+        }
+        state.setdefault("vods", []).append(entry)
+    if sent == 0:
+        record_zero_send_streak(entry, sent=0)
+        force = should_force_exhaust_after_retries(entry)
+        if should_mark_vod_exhausted(entry) or force:
+            if force and not entry.get("reject_reason"):
+                entry["reject_reason"] = "presend_retry_exhausted"
+            elif not entry.get("reject_reason"):
+                if not entry.get("last_pool_peaks"):
+                    entry["reject_reason"] = "no_combat_peaks"
+                elif entry.get("last_scan_blocked"):
+                    entry["reject_reason"] = "all_peaks_blocked"
+            if force:
+                entry["last_scan_blocked"] = True
+            entry["exhausted"] = True
+            _cleanup_exhausted_entry(game, entry, state)
+            log.info("exhausted vod=%s reason=%s", vod.name, entry.get("reject_reason"))
+    else:
+        record_zero_send_streak(entry, sent=sent)
     _save_state(game, state)
 
     if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":

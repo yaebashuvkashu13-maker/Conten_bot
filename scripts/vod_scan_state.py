@@ -106,7 +106,7 @@ def record_zero_send_streak(entry: dict[str, Any], *, sent: int) -> int:
 
 
 def should_force_exhaust_after_retries(entry: dict[str, Any] | None) -> bool:
-    """Exhaust VODs that keep failing presend with the same tiny pool."""
+    """Exhaust VODs that keep failing presend / yield empty pools."""
     if not entry or entry.get("exhausted"):
         return False
     cap = max(3, int(os.environ.get("VOD_ZERO_SEND_RETRY_EXHAUST", "8")))
@@ -114,7 +114,8 @@ def should_force_exhaust_after_retries(entry: dict[str, Any] | None) -> bool:
         return False
     peaks = entry.get("last_pool_peaks")
     if peaks is None:
-        return False
+        # Scan never persisted a pool — still stop infinite retries.
+        return True
     # Empty pool or a single weak peak that never passes presend.
     return len(peaks) <= 1
 
@@ -209,7 +210,8 @@ def record_vod_scan(
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
-    if pool:
+    # Always persist pool snapshot — including empty — so exhaust logic can fire.
+    if pool is not None:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:
             peak = round(float(clip.get("start", clip.get("peak_start", 0))), 1)
@@ -222,10 +224,10 @@ def record_vod_scan(
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
-    elif pool_peaks:
+    else:
         entry["last_pool_peaks"] = [
-            {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
-            for p in pool_peaks[:24]
+            {"peak_sec": round(float(p), 1), "score": 0.0, "blocked_reason": ""}
+            for p in (pool_peaks or [])[:24]
         ]
         entry["last_pool_at"] = time.time()
     if analysis_cache_key:

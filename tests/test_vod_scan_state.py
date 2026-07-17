@@ -121,6 +121,19 @@ def test_zero_send_streak_and_force_exhaust(monkeypatch: pytest.MonkeyPatch) -> 
     assert should_force_exhaust_after_retries(entry) is False
 
 
+def test_record_vod_scan_persists_empty_pool() -> None:
+    entry: dict = {}
+    record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+    assert entry["last_pool_peaks"] == []
+    assert should_mark_vod_exhausted(entry) is True
+
+
+def test_force_exhaust_when_pool_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_ZERO_SEND_RETRY_EXHAUST", "3")
+    entry = {"zero_send_streak": 3}
+    assert should_force_exhaust_after_retries(entry) is True
+
+
 def test_skip_rescan_after_zero_send_streak(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_ZERO_SEND_RETRY_BEFORE_COOLDOWN", "2")
     monkeypatch.setenv("MLBB_VOD_SCAN_COOLDOWN_SEC", "7200")

@@ -17,6 +17,12 @@ def test_pubg_title_ok() -> None:
     assert not title_ok("pubg", "PUBG Mobile ranked gameplay full match")
     assert not title_ok("pubg", "PUBG Mobile- Metro Royale Gone Without A Trace")
     assert not title_ok("pubg", "Mobile Legends mythic ranked")
+    assert not title_ok("pubg", "METRO ROYALE FREE KARAMBIT KNIFE IN MYSTERIOUS VOUCHER")
+    assert not title_ok("pubg", "HOW TO GET NEW KARAMBIT BLAZING SUN PUBG METRO ROYALE")
+    assert not title_ok("pubg", "NEW METRO ROYALE MAP!")
+    assert not title_ok("pubg", "METRO ROYALE OPEN 20 GOLD TICKETS FOR FABLED MK14")
+    assert title_ok("pubg", "No Escape from the Flames! Metro Royale")
+    assert title_ok("pubg", "PUBG Metro Royale 1v1 Clutch Fight")
 
 
 def test_standoff_title_ok() -> None:

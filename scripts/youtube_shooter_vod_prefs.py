@@ -19,7 +19,10 @@ PUBG_TITLE_RE = re.compile(
 )
 METRO_VAGUE_TITLE_RE = re.compile(
     r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
-    r"обзор|гайд|guide|story|история|сюжет",
+    r"обзор|гайд|guide|story|история|сюжет|"
+    r"how\s+to\s+get|how\s+to\s+farm|free\s+karambit|karambit|"
+    r"mysterious\s+voucher|gold\s+tickets?|fabled|"
+    r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale\s+map",
     re.I,
 )
 CLASSIC_MODE_TITLE_RE = re.compile(
@@ -34,7 +37,15 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
     r"guide|обзор|trick|совет|"
+    r"how\s+to\s+get|how\s+to\s+farm|free\s+karambit|karambit|"
+    r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
+    r"loot\s+run|loot\s+farm|открытие|крафт|"
     r"🔴|\bLIVE\b|boss\s*drop|что\s+падает|сопровожден",
+    re.I,
+)
+COMBAT_TITLE_RE = re.compile(
+    r"fight|clutch|squad\s*wipe|перестрел|файт|бой|ranked|ранкед|"
+    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|эвакуац|extract",
     re.I,
 )
 
@@ -82,12 +93,6 @@ def _queries_for(game: str) -> tuple[str, ...]:
 def title_ok(game: str, title: str) -> bool:
     t = title or ""
     g = game.strip().lower()
-    if g == "pubg" and has_metro_royale({"title": t}):
-        # RU Metro live VODs — allow «стрим» if title is clearly Metro Royale.
-        if re.search(r"стрим|stream", t, re.I) and not LIVE_TITLE_RE.search(t):
-            if CLASSIC_MODE_TITLE_RE.search(t) or METRO_VAGUE_TITLE_RE.search(t):
-                return False
-            return bool(PUBG_TITLE_RE.search(t))
     if LIVE_TITLE_RE.search(t) or BAD_TITLE_RE.search(t):
         return False
     if g == "standoff":
@@ -100,7 +105,7 @@ def title_ok(game: str, title: str) -> bool:
 
 
 def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
-    """Prefer Metro + Russian titles for PUBG discovery."""
+    """Prefer Metro + Russian + combat-ish titles for PUBG discovery."""
     if not candidates:
         return candidates
     g = game.strip().lower()
@@ -109,7 +114,18 @@ def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
     from youtube_game_prefs import rank_candidate
 
     spec = {"require_metro_royale": True, "prefer_russian": True}
-    return sorted(candidates, key=lambda row: -rank_candidate(row, spec))
+
+    def _score(row: dict) -> float:
+        base = float(rank_candidate(row, spec))
+        title = str(row.get("title") or "")
+        if COMBAT_TITLE_RE.search(title):
+            base += 2.5
+        dur = float(row.get("duration") or 0)
+        if 480 <= dur <= 1200:
+            base += 1.0
+        return base
+
+    return sorted(candidates, key=_score, reverse=True)
 
 
 def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
