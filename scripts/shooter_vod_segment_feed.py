@@ -54,7 +54,9 @@ from vod_scan_state import (
     pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    record_zero_send_streak,
     scan_zero_detail,
+    should_force_exhaust_after_retries,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
@@ -794,8 +796,14 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         state["vods"] = registry
         if n == 0:
             entry = _vod_registry_entry(state, mp4) or entry
-            if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
-                if not entry.get("last_pool_peaks"):
+            if entry is not None:
+                record_zero_send_streak(entry, sent=0)
+            force = should_force_exhaust_after_retries(entry)
+            if entry and not entry.get("exhausted") and (should_mark_vod_exhausted(entry) or force):
+                if force:
+                    entry.setdefault("reject_reason", "presend_retry_exhausted")
+                    entry["last_scan_blocked"] = True
+                elif not entry.get("last_pool_peaks"):
                     entry.setdefault("reject_reason", "no_combat_peaks")
                 else:
                     entry.setdefault("reject_reason", "all_peaks_blocked")
@@ -806,6 +814,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     mp4.name,
                     entry.get("reject_reason"),
                 )
+        elif entry is not None:
+            record_zero_send_streak(entry, sent=n)
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0

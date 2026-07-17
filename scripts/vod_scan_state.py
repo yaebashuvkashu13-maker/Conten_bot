@@ -84,9 +84,39 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    cooldown = scan_cooldown_sec(game)
+    if age < cooldown and entry.get("last_scan_blocked"):
+        return True
+    # Presend/soften keeps retrying the same pool forever unless we cool down.
+    zero_streak = int(entry.get("zero_send_streak") or 0)
+    retry_cap = max(2, int(os.environ.get("VOD_ZERO_SEND_RETRY_BEFORE_COOLDOWN", "3")))
+    if zero_streak >= retry_cap and age < cooldown:
         return True
     return False
+
+
+def record_zero_send_streak(entry: dict[str, Any], *, sent: int) -> int:
+    """Track consecutive zero-send scans on one VOD (for cooldown / exhaust)."""
+    if sent > 0:
+        entry["zero_send_streak"] = 0
+        return 0
+    n = int(entry.get("zero_send_streak") or 0) + 1
+    entry["zero_send_streak"] = n
+    return n
+
+
+def should_force_exhaust_after_retries(entry: dict[str, Any] | None) -> bool:
+    """Exhaust VODs that keep failing presend with the same tiny pool."""
+    if not entry or entry.get("exhausted"):
+        return False
+    cap = max(3, int(os.environ.get("VOD_ZERO_SEND_RETRY_EXHAUST", "8")))
+    if int(entry.get("zero_send_streak") or 0) < cap:
+        return False
+    peaks = entry.get("last_pool_peaks")
+    if peaks is None:
+        return False
+    # Empty pool or a single weak peak that never passes presend.
+    return len(peaks) <= 1
 
 
 def scan_zero_detail(entry: dict[str, Any] | None) -> str:

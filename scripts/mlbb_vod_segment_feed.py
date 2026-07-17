@@ -54,6 +54,8 @@ from vod_scan_state import (
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    record_zero_send_streak,
+    should_force_exhaust_after_retries,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
@@ -2066,13 +2068,21 @@ def _process_vod_segments(
     state["last_adaptive_level"] = active_level
     _save_state(state)
 
+    if entry is not None:
+        record_zero_send_streak(entry, sent=sent_total)
+
     if sent_total == 0 and not send_quota_blocked:
-        if entry and should_mark_vod_exhausted(entry):
+        force_exhaust = should_force_exhaust_after_retries(entry)
+        if entry and (should_mark_vod_exhausted(entry) or force_exhaust):
             if not entry.get("reject_reason"):
-                if not entry.get("last_pool_peaks"):
+                if force_exhaust:
+                    entry["reject_reason"] = "presend_retry_exhausted"
+                elif not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
                 elif entry.get("last_scan_blocked"):
                     entry["reject_reason"] = "all_peaks_blocked"
+            if force_exhaust:
+                entry["last_scan_blocked"] = True
             entry["exhausted"] = True
             entry["id"] = vid
             entry.setdefault("exhausted_at", time.time())
@@ -2247,6 +2257,23 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+
+            reset_if_new_day()
+            if active_game() != "mlbb":
+                log.info(
+                    "daily cycle mid-loop handoff active=%s sent=%s vods=%s — exit mlbb feed",
+                    active_game(),
+                    total_sent,
+                    vods_done,
+                )
+                break
+            ok_mlbb, why = can_send_for_game("mlbb", 1)
+            if not ok_mlbb:
+                log.info("daily cycle mid-loop stop: %s sent=%s vods=%s", why, total_sent, vods_done)
+                break
+
         vod, entry = _resolve_next_vod(
             env,
             registry,

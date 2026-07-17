@@ -17,7 +17,9 @@ from vod_scan_state import (  # noqa: E402
     pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    record_zero_send_streak,
     scan_zero_detail,
+    should_force_exhaust_after_retries,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     strict_peak_tries,
@@ -105,3 +107,27 @@ def test_pool_cache_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_POOL_TTL_SEC", "60")
     entry = {"last_pool_at": time.time() - 120, "last_pool_peaks": [{"peak_sec": 1.0, "score": 0, "blocked_reason": ""}]}
     assert pool_cache_valid(entry) is False
+
+
+def test_zero_send_streak_and_force_exhaust(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_ZERO_SEND_RETRY_EXHAUST", "3")
+    entry: dict = {"last_pool_peaks": [120.0]}
+    assert record_zero_send_streak(entry, sent=0) == 1
+    assert record_zero_send_streak(entry, sent=0) == 2
+    assert should_force_exhaust_after_retries(entry) is False
+    assert record_zero_send_streak(entry, sent=0) == 3
+    assert should_force_exhaust_after_retries(entry) is True
+    assert record_zero_send_streak(entry, sent=1) == 0
+    assert should_force_exhaust_after_retries(entry) is False
+
+
+def test_skip_rescan_after_zero_send_streak(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_ZERO_SEND_RETRY_BEFORE_COOLDOWN", "2")
+    monkeypatch.setenv("MLBB_VOD_SCAN_COOLDOWN_SEC", "7200")
+    entry = {
+        "zero_send_streak": 3,
+        "last_scan_at": time.time(),
+        "last_scan_sent": 0,
+        "last_scan_blocked": False,
+    }
+    assert should_skip_vod_rescan(entry, game="mlbb") is True
