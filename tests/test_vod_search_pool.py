@@ -88,7 +88,8 @@ def test_used_ids_allow_retryable_exhausted(tmp_path, monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "vod_game_registry", _Fake)
     used = pool.used_ids_for_game("pubg")
     assert "ZF3LCQ3080M" not in used
-    assert "QDda58YJxUY" not in used
+    # Empty combat pool after a full scan is permanent — do not re-download.
+    assert "QDda58YJxUY" in used
     assert "BADTITLE000" in used
 
 

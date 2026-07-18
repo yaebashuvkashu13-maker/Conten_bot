@@ -14,15 +14,16 @@ from youtube_mlbb_vod_prefs import (
 )
 
 PUBG_TITLE_RE = re.compile(
-    r"pubg|playerunknown|battlegrounds|metro\s*royale|пабг|метро\s*роял",
+    r"pubg|playerunknown|battlegrounds|metro\s*royale?|пабг|метро\s*роял[еь]?",
     re.I,
 )
 METRO_VAGUE_TITLE_RE = re.compile(
     r"gone without|without a trace|tips\s+and\s+tricks|highlights?|"
     r"обзор|гайд|guide|story|история|сюжет|"
-    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
+    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|керамбит|"
     r"mysterious\s+voucher|gold\s+tickets?|fabled|"
-    r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale\s+map|"
+    r"loot\s+run|loot\s+farm|million.?loot|new\s+metro\s+royale?\s+map|"
+    r"zero\s+to\s+hero|с\s+нуля\s+до|get\s+rich|strategy\s+to\s+get|"
     r"prize\s*path|honor\s+system|mission\s+not|rankings?\s+in|"
     r"обновлен|patch\s+notes|creator\s+club",
     re.I,
@@ -39,9 +40,10 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|\btips?\b|"
     r"guide|обзор|trick|совет|"
-    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|"
+    r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|керамбит|"
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
     r"loot\s+run|loot\s+farm|открытие|крафт|"
+    r"zero\s+to\s+hero|с\s+нуля\s+до|"
     r"🔴|\bLIVE\b|boss\s*drop|knife\s+drops?|что\s+падает|сопровожден|"
     r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"
     r"первый\s+раз|first\s+time\s+play|noob\s+learn|"
@@ -51,13 +53,17 @@ BAD_TITLE_RE = re.compile(
 )
 COMBAT_TITLE_RE = re.compile(
     r"fight|clutch|squad\s*wipe|перестрел|файт|бой|ranked|ранкед|"
-    r"sniper|снайпер|1v1|solo\s+vs|один\s+против|против\s+пач|соло|"
+    r"sniper|снайпер|1v\d|\bv[s]?\d+\b|\bvs\b|solo\s+vs|one\s+vs|"
+    r"один\s+против|против\s+пач|против\s+сквад|соло|"
     r"эвакуац|extract|катки|рейд|raid|wipe|дуэл|duel|rush|пуш|"
-    r"escape|flame|trap|corner|handcam|вебк|пачк",
+    r"escape|flame|trap|corner|handcam|вебк|пачк|"
+    r"battle|showdown|assault|штурм|кил|убил|вынес|против|сквад|squad|"
+    r"deadmatch|deathmatch|close[\s-]?range|close[\s-]?fight|duo\s+vs",
     re.I,
 )
 MATCH_TITLE_RE = re.compile(
-    r"match|матч|gameplay|геймплей|full\s+game|полный|replay|повтор",
+    r"match|матч|gameplay|геймплей|full\s+game|полный|replay|повтор|"
+    r"катка|нарезк",
     re.I,
 )
 
@@ -65,13 +71,16 @@ PUBG_CORE_QUERIES = (
     "PUBG Mobile Metro Royale clutch fight gameplay",
     "PUBG Mobile Metro Royale 1v1 fight ranked",
     "PUBG Mobile Metro Royale squad wipe fight",
+    "PUBG Mobile Metro Royale duo vs squads",
     "метро рояль пабг файт перестрелка",
     "метро рояль пабг мобайл ранкед матч",
     "метро рояль пабг клип файт",
+    "метро рояль дуо против сквада",
     "PUBG Mobile Metro Royale extract fight",
     "пабг метро рояль катки файт",
     "метро рояль пабг снайпер дуэль",
     "PUBG Mobile Metro Royale close range fight",
+    "пабг метро рояль соло против пачек",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -95,14 +104,26 @@ STANDOFF_ANGLE_QUERIES = (
 )
 
 
-def _queries_for(game: str) -> tuple[str, ...]:
+def _queries_for(game: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     g = game.strip().lower()
+    env = env or os.environ
     if g == "standoff":
+        raw = str(env.get("STANDOFF_VOD_SEARCH_QUERIES") or "").strip()
+        if raw:
+            custom = tuple(q.strip() for q in raw.split(",") if q.strip())
+            if custom:
+                return custom
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
+    # Prefer operator-tuned PUBG query CSV from env when present.
+    raw = str(env.get("PUBG_VOD_SEARCH_QUERIES") or env.get("SHOOTER_PUBG_SEARCH_QUERIES") or "").strip()
+    if raw:
+        custom = tuple(q.strip() for q in raw.split(",") if q.strip())
+        if custom:
+            return custom
     return PUBG_CORE_QUERIES + PUBG_ANGLE_QUERIES
 
 
-def title_ok(game: str, title: str) -> bool:
+def title_ok(game: str, title: str, *, uploader: str = "") -> bool:
     t = title or ""
     g = game.strip().lower()
     if LIVE_TITLE_RE.search(t) or BAD_TITLE_RE.search(t):
@@ -112,7 +133,8 @@ def title_ok(game: str, title: str) -> bool:
     if g == "pubg":
         if CLASSIC_MODE_TITLE_RE.search(t) or METRO_VAGUE_TITLE_RE.search(t):
             return False
-        if not (has_metro_royale({"title": t}) and bool(PUBG_TITLE_RE.search(t))):
+        meta = {"title": t, "uploader": uploader or ""}
+        if not (has_metro_royale(meta) and bool(PUBG_TITLE_RE.search(t))):
             return False
         # Drop mission/guide noise that still mentions Metro — need fight or match signal.
         return bool(COMBAT_TITLE_RE.search(t) or MATCH_TITLE_RE.search(t))
@@ -173,7 +195,7 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
     in a single URL, so we rotate modes across cycles (same idea as MLBB).
     """
     env = env or {}
-    queries = list(_queries_for(game))
+    queries = list(_queries_for(game, env))
     batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
     delay = float(env.get("MLBB_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
     limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "20")))

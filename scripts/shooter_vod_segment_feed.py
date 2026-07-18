@@ -316,12 +316,14 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
     seen: set[str] = set()
     skipped: dict[str, int] = {}
     for url in params.get("urls", []):
+        # Tab delimiter: titles often contain "|" which broke field parsing and
+        # dropped "Metro Royale" into the duration column.
         cmd = ytdlp_cmd(env) + [
             "--flat-playlist",
             "--playlist-end",
             str(limit),
             "--print",
-            "%(id)s|%(title)s|%(duration)s|%(uploader)s",
+            "%(id)s\t%(title)s\t%(duration)s\t%(uploader)s",
             url,
         ]
         cmd += ytdlp_extra_args(env)
@@ -331,18 +333,23 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
             skipped["search_fail"] = skipped.get("search_fail", 0) + 1
             continue
         for line in (proc.stdout or "").splitlines():
-            parts = line.split("|", 3)
+            parts = line.split("\t") if "\t" in line else line.split("|", 3)
             if len(parts) < 2:
                 skipped["parse"] = skipped.get("parse", 0) + 1
                 continue
-            vid, title = parts[0][:11], parts[1]
+            vid, title = parts[0][:11], parts[1].replace("\n", " ").strip()
+            uploader = (parts[3] if len(parts) > 3 else "")[:60]
             if len(vid) != 11:
                 skipped["bad_id"] = skipped.get("bad_id", 0) + 1
                 continue
             if vid in used or vid in seen:
                 skipped["used_or_dup"] = skipped.get("used_or_dup", 0) + 1
                 continue
-            if not title_ok_fn(game, title):
+            try:
+                ok_title = title_ok_fn(game, title, uploader=uploader)  # type: ignore[call-arg]
+            except TypeError:
+                ok_title = title_ok_fn(game, title)
+            if not ok_title:
                 skipped["title"] = skipped.get("title", 0) + 1
                 continue
             raw_dur = parts[2].strip() if len(parts) > 2 else ""
@@ -367,7 +374,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                     "title": title[:120],
                     "url": f"https://www.youtube.com/watch?v={vid}",
                     "duration": dur,
-                    "uploader": parts[3][:60] if len(parts) > 3 else "",
+                    "uploader": uploader,
                 }
             )
         time.sleep(float(params.get("delay", 6)))

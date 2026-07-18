@@ -195,14 +195,14 @@ def used_ids_for_game(game: str) -> set[str]:
 
     def _row_retryable(row: dict[str, Any]) -> bool:
         reason = str(row.get("reject_reason") or "")
-        if row.get("last_scan_blocked") or reason in {"all_peaks_blocked", "peaks_spent"}:
+        if row.get("last_scan_blocked") or reason in {
+            "all_peaks_blocked",
+            "peaks_spent",
+            "no_combat_peaks",
+        }:
+            # Full highlight scan already proved this VOD has nothing usable —
+            # re-downloading it starves discovery (seen with zM9TQlEI7VE loops).
             return False
-        if reason == "no_combat_peaks":
-            peaks = row.get("last_pool_peaks")
-            # Empty pool may be a soft miss; a non-empty pool means peaks were spent.
-            if peaks is not None and len(peaks) > 0:
-                return False
-            return True
         return any(reason.startswith(p) or p in reason for p in retryable_prefixes)
 
     try:

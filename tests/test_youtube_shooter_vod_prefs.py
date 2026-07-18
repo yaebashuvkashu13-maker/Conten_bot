@@ -34,6 +34,12 @@ def test_pubg_title_ok() -> None:
         "pubg",
         "СОЛО ПРОТИВ ПАЧЕК НА 7 КАРТЕ В МЕТРО РОЯЛЬ ! PUBG Mobile - С ВЕБКОЙ НА РУКИ",
     )
+    # Common YouTube typo "Metro Royal" + vs/squad fight wording.
+    assert title_ok("pubg", "1v8 clutch PUBG(Metro Royal)")
+    assert title_ok("pubg", "ZETIK VS RANDIR DUO VS SQUADS IN METRO ROYALE")
+    assert title_ok("pubg", "Daily one vs squad in the Metro Royale mode")
+    assert not title_ok("pubg", "ОТ НУЛЯ ДО ФУЛЛ 6 В МЕТРО РОЯЛЬ - НОЖ КЕРАМБИТ")
+    assert not title_ok("pubg", "DAY 1 ZERO TO HERO STRATEGY PUBG METRO ROYALE")
 
 
 def test_standoff_title_ok() -> None:
@@ -46,6 +52,12 @@ def test_discovery_rotates_queries() -> None:
     b = vod_discovery_search_cycle(1, "pubg", {})
     assert a["queries"] != b["queries"]
     assert len(a["queries"]) >= 1
+
+
+def test_discovery_uses_env_pubg_queries() -> None:
+    env = {"PUBG_VOD_SEARCH_QUERIES": "метро роял соло против сквада,метро роял пабг файт"}
+    a = vod_discovery_search_cycle(0, "pubg", env)
+    assert a["queries"] == ["метро роял соло против сквада", "метро роял пабг файт", "метро роял соло против сквада"]
 
 
 def test_discovery_rotates_filter_modes() -> None:
