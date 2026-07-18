@@ -1407,14 +1407,28 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     from vod_analysis_cache import analyze_video_cached
 
     analysis = analyze_video_cached(video_path)
-    if not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"):
-        peak_limit = int(os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"))
+    # MLBB seeds action peaks when anchors are off; shooters need them even with
+    # owner anchors — otherwise long Metro VODs only probe sparse motion grid.
+    seed_action_peaks = (
+        profile in SHOOTER_PROFILES
+        or (not owner_anchors_enabled() and profile in ("mobile_legends", "genshin", "wot"))
+    )
+    if seed_action_peaks:
+        peak_limit = int(
+            os.environ.get(
+                "SHOOTER_VOD_ACTION_PEAK_LIMIT"
+                if profile in SHOOTER_PROFILES
+                else "HIGHLIGHT_ACTION_PEAK_LIMIT",
+                os.environ.get("HIGHLIGHT_ACTION_PEAK_LIMIT", "40"),
+            )
+        )
         for peak_start in _action_peak_starts(analysis, profile, limit=peak_limit):
             starts.add(peak_start)
         log.info(
-            "highlight action peaks %s: %s windows (anchors_off)",
+            "highlight action peaks %s: +%s (profile=%s)",
             video_path.name,
-            min(peak_limit, len(starts)),
+            peak_limit,
+            profile,
         )
 
     win = float(analysis.get("window_seconds", 2.0))

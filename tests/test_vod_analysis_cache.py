@@ -55,6 +55,19 @@ def test_cache_hit_miss_and_mtime_invalidation(tmp_path: Path, monkeypatch: pyte
     assert get_cached(vod) is None
 
 
+def test_cache_invalidates_when_sample_fps_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOD_ANALYSIS_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("SMART_LONG_ANALYSIS_MAX_FPS", "0.35")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"vod-bytes")
+    set_cached(vod, _fake_analysis())
+    assert get_cached(vod) is not None
+    monkeypatch.setenv("SMART_LONG_ANALYSIS_MAX_FPS", "1.0")
+    assert get_cached(vod) is None
+
+
 def test_analyze_video_cached_uses_disk(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VOD_ANALYSIS_CACHE_DIR", str(tmp_path / "cache"))
     vod = tmp_path / "yt_test.mp4"

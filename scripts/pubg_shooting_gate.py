@@ -34,6 +34,22 @@ FORBIDDEN_REASONS = frozenset(
 )
 
 ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+# Prefixes returned by pubg_passes_owner_heuristics when PANNs/relax says combat.
+ALLOWED_OWNER_PREFIXES = (
+    "fight_audio",
+    "light_combat",
+    "panns_trust",
+    "panns_audio",
+    "panns_relax",
+    "relax_fight",
+)
+
+
+def _owner_reason_allows_pass(owner_reason: str) -> bool:
+    base = (owner_reason or "").split("=", 1)[0].strip()
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    return any(base.startswith(p) for p in ALLOWED_OWNER_PREFIXES)
 
 
 def _min_gunfire() -> float:
@@ -127,13 +143,16 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # PANNs trust must count — otherwise gunfire heard at 0.5–0.7 still dies as
+    # no_shots=...:ownerpanns_trust (legacy whitelist only had fight_audio/light_combat).
+    heuristic_audio = ok_owner and _owner_reason_allows_pass(owner_reason)
 
-    if owner_reason == "sniper_hold":
+    if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
             return False, f"sniper_hold_no_motion=motion{motion:.3f}:gun{gun:.3f}", metrics
         if gun < min_gun * 0.90:
             return False, f"sniper_hold_weak=gun{gun:.3f}", metrics
+        heuristic_audio = heuristic_audio or (ok_owner and motion >= 0.030 and gun >= min_gun * 0.90)
 
     if not strict_audio and not heuristic_audio:
         return (
