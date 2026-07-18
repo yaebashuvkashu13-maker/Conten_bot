@@ -76,8 +76,12 @@ def _shooter_vod_min_sec() -> float:
 
 
 def _shooter_vod_max_sec() -> float:
-    """Allow longer Metro raids than MLBB's 20 min default (still below multi-hour streams)."""
-    return float(os.environ.get("SHOOTER_VOD_MAX_SEC", os.environ.get("MLBB_VOD_MAX_SEC", "2400")))
+    """Allow longer Metro raids than MLBB's 20 min default (still below multi-hour streams).
+
+    Do not fall back to MLBB_VOD_MAX_SEC — that 20m cap starves PUBG discovery
+    (typical solo-vs-squad Metro VODs are 20–35 minutes).
+    """
+    return float(os.environ.get("SHOOTER_VOD_MAX_SEC", "2400"))
 
 
 def _shooter_length_ok(dur: float) -> bool:
