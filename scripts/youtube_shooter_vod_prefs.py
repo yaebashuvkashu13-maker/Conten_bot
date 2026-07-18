@@ -44,8 +44,10 @@ BAD_TITLE_RE = re.compile(
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
     r"loot\s+run|loot\s+farm|открытие|крафт|case\s*opening|billion\s+for\s+case|"
     r"sensitivity|no[\s-]?recoil|zero[\s-]?recoil|трениров|чувствительн|"
-    r"zero\s+to\s+hero|с\s+нуля\s+до|full\s+level\s*6|фулл\s*6|"
+    r"zero\s+to\s+hero|с\s+нуля\s+до|full\s+level\s*6|фулл\s*6|фулл\s*шесть|"
     r"pulled\s+\d+\s*million|\d+\s*million\s+metro|баг\s+с|дюп|dupe\b|"
+    r"farm\s+\w*\s*tickets?|kurama\s+tickets?|с\s+лута|full\s+gold|"
+    r"открыл\w*\s+золот|золот\w*\s+кейс|"
 
     r"🔴|\bLIVE\b|boss\s*drop|knife\s+drops?|что\s+падает|сопровожден|"
     r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"
