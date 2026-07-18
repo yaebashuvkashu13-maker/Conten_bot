@@ -24,7 +24,7 @@ def _analysis_fingerprint() -> str:
     return "|".join(
         (
             os.environ.get("SMART_LONG_SAMPLE_FPS", "1.0"),
-            os.environ.get("SMART_LONG_ANALYSIS_MAX_FPS", "0.35"),
+            os.environ.get("SMART_LONG_ANALYSIS_MAX_FPS", "1.0"),
             os.environ.get("SMART_SAMPLE_FPS", "4.0"),
             os.environ.get("SMART_LONG_WINDOW_SEC", "2.0"),
             os.environ.get("VOD_ANALYSIS_CACHE_REV", "1"),

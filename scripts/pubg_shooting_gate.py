@@ -181,13 +181,28 @@ def pubg_passes_shooting_gate(
         profile="pubg",
         crop_box=crop,
         min_gunfire=min_gun,
+        panns_gun_max=float(panns_gun_max or 0.0),
     )
     metrics["gate_reason"] = gate_reason
 
-    if reason_is_forbidden(gate_reason):
+    # Montage used to re-run owner heuristics without PANNs and convert trusted
+    # gunfights into run_fake_gun / no_shots. Keep hard junk rejects only.
+    panns_trusted = float(panns_gun_max or 0.0) >= float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    )
+    soft_motion_reject = gate_reason.split("=", 1)[0] in {
+        "run_fake_gun",
+        "run_loot",
+        "run_no_fight",
+        "run_no_shots",
+        "no_shots",
+        "below_owner_floor",
+        "streamer_talk",
+    }
+    if reason_is_forbidden(gate_reason) and not (panns_trusted and soft_motion_reject):
         return False, gate_reason, metrics
 
-    if not gate_ok:
+    if not gate_ok and not (panns_trusted and soft_motion_reject):
         return False, gate_reason, metrics
 
     pass_reason = (

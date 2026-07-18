@@ -102,8 +102,8 @@ SHOOTER_SOFTEN_L3: dict[str, str] = {
 # Level 4: streak 10+ — trust PANNs gun audio, probe more windows, lower hook bar.
 SHOOTER_SOFTEN_L4: dict[str, str] = {
     **SHOOTER_SOFTEN_L3,
-    "SHOOTER_VOD_MAX_PANN_PROBE": "28",
-    "HIGHLIGHT_MAX_STAGE1": "32",
+    "SHOOTER_VOD_MAX_PANN_PROBE": "40",
+    "HIGHLIGHT_MAX_STAGE1": "56",
     "HIGHLIGHT_PANN_PREFILTER_MIN": "0.06",
     "HIGHLIGHT_PANN_GUN_MIN": "0.12",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.08",

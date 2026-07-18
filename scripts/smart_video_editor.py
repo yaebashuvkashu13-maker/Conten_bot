@@ -446,7 +446,8 @@ def analyze_video(path: Path) -> dict:
         # Single ffmpeg pass (AV1-safe). Avoid per-timestamp ffmpeg spawns on 2–4h VOD.
         eff_fps = sample_fps
         if seek_mode and duration >= LONG_VIDEO_MIN_SEC:
-            cap_fps = float(os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS', '0.35'))
+            # Match MLBB density by default; long VODs previously starved at ~0.35 fps.
+            cap_fps = float(os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS', '1.0'))
             eff_fps = min(sample_fps, cap_fps)
         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none']
         ff_threads = int(os.environ.get('SMART_FFMPEG_THREADS', '0') or '0')

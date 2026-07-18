@@ -1383,7 +1383,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         # Do not early-return — seeds alone starve discovery of real fight peaks.
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
-        "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
+        "SHOOTER_VOD_SKIP_INTELLICLIP", "0"
     ) == "1"
     if skip_intelliclip:
         log.info("intelliclip stage1 skipped %s (shooter fast path)", video_path.name)

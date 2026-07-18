@@ -1,4 +1,4 @@
-"""PANNs-trusted gunfire must pass shooting gate (not die as no_shots)."""
+"""PANNs-trusted gunfire must pass shooting gate (not die as no_shots / run_fake_gun)."""
 
 from __future__ import annotations
 
@@ -35,4 +35,32 @@ def test_panns_trust_passes_despite_low_density(tmp_path: Path, monkeypatch) -> 
         ok, reason, row = pubg_passes_shooting_gate(vod, 94.0, 15.0, panns_gun_max=0.682)
     assert ok is True, reason
     assert "panns_trust" in reason or "panns" in reason
+    assert row.get("owner_reason", "").startswith("panns_trust")
+
+
+def test_panns_trust_survives_montage_run_fake_gun(tmp_path: Path, monkeypatch) -> None:
+    """Montage re-check without PANNs used to convert trust into run_fake_gun."""
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
+    monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.068")
+    vod = tmp_path / "yt_runfakegun01.mp4"
+    vod.write_bytes(b"x")
+    metrics = {
+        "start": 100.0,
+        "duration": 15.0,
+        "gunfire_density": 0.067,
+        "burst_ratio": 5.2,
+        "audio_rms": 0.03,
+        "center_motion": 0.174,
+        "center_text": 0.05,
+        "crop_box": [0, 0, 100, 100],
+    }
+    with patch("pubg_shooting_gate.pubg_probe_segment", return_value=metrics), patch(
+        "pubg_shooting_gate.segment_looks_like_pubg_loot_or_walk", return_value=False
+    ), patch(
+        "pubg_shooting_gate.segment_is_valid_for_montage",
+        return_value=(False, "run_fake_gun=motion0.174:gun0.067"),
+    ) as montage:
+        ok, reason, row = pubg_passes_shooting_gate(vod, 100.0, 15.0, panns_gun_max=0.544)
+    assert ok is True, reason
+    assert montage.call_args.kwargs.get("panns_gun_max") == 0.544
     assert row.get("owner_reason", "").startswith("panns_trust")
