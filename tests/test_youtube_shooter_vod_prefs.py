@@ -40,6 +40,8 @@ def test_pubg_title_ok() -> None:
     assert title_ok("pubg", "Daily one vs squad in the Metro Royale mode")
     assert not title_ok("pubg", "ОТ НУЛЯ ДО ФУЛЛ 6 В МЕТРО РОЯЛЬ - НОЖ КЕРАМБИТ")
     assert not title_ok("pubg", "DAY 1 ZERO TO HERO STRATEGY PUBG METRO ROYALE")
+    assert not title_ok("pubg", "Training sniper - pubg metro royal")
+    assert not title_ok("pubg", "5 BILLION for CASE OPENING in METRO ROYALE!! SOLO VS SQUADS")
 
 
 def test_standoff_title_ok() -> None:

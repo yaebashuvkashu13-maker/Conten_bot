@@ -37,12 +37,13 @@ STANDOFF_TITLE_RE = re.compile(r"standoff\s*2|standoff2|стендоф", re.I)
 LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs|grand finals", re.I)
 BAD_TITLE_RE = re.compile(
     r"giveaway|#short\b|shorts\b|tiktok\b|montage|compilation|tutorial|"
-    r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
+    r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|\btraining\b|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|\btips?\b|"
     r"guide|обзор|trick|совет|"
     r"how\s+to\s+get|how\s+to\s+farm|how\s+to\s+spawn|free\s+karambit|karambit|керамбит|"
     r"mysterious\s+voucher|voucher|mystery\s+ticket|gold\s+tickets?|fabled\s+mk|"
-    r"loot\s+run|loot\s+farm|открытие|крафт|"
+    r"loot\s+run|loot\s+farm|открытие|крафт|case\s*opening|billion\s+for\s+case|"
+    r"sensitivity|no[\s-]?recoil|zero[\s-]?recoil|трениров|чувствительн|"
     r"zero\s+to\s+hero|с\s+нуля\s+до|"
     r"🔴|\bLIVE\b|boss\s*drop|knife\s+drops?|что\s+падает|сопровожден|"
     r"учусь\s+играть|learning\s+to\s+play|beginner|новичок|"

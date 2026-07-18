@@ -265,11 +265,19 @@ def _vod_title(state: dict, vod: Path) -> str:
     return str((entry or {}).get("title") or "")
 
 
-def _pubg_metro_should_exhaust(title: str, streak: int) -> bool:
-    """Only permanently skip VOD when title and soften cannot override metro reject."""
-    from pubg_metro_royale_gate import title_metro_hint
+def _metro_reject_is_hard(reason: str) -> bool:
+    """Classic outdoor / map UI rejects must never be softened away."""
+    r = reason or ""
+    return "classic_outdoor_sky" in r or "classic_map_ui" in r
+
+
+def _pubg_metro_should_exhaust(title: str, streak: int, reason: str = "") -> bool:
+    """Permanently skip VOD when metro reject cannot be overridden."""
+    from pubg_metro_royale_gate import title_is_training_junk, title_metro_hint
     from shooter_vod_adaptive_gate import soften_level
 
+    if _metro_reject_is_hard(reason) or title_is_training_junk(title):
+        return True
     if title_metro_hint(title):
         return False
     if soften_level(streak) >= 2:
@@ -283,12 +291,17 @@ def _pubg_metro_vod_ok(
     title: str = "",
     streak: int = 0,
 ) -> tuple[bool, str]:
-    from pubg_metro_royale_gate import vod_looks_metro_royale
+    from pubg_metro_royale_gate import title_is_training_junk, vod_looks_metro_royale
     from shooter_vod_adaptive_gate import soften_level
 
+    if title_is_training_junk(title):
+        return False, "metro_training_junk_title"
     ok, reason = vod_looks_metro_royale(vod, title=title or None)
     if ok:
         return True, reason
+    # Soft L2+ may bypass ambiguous not_metro — never classic outdoor/map.
+    if _metro_reject_is_hard(reason):
+        return False, reason
     if soften_level(streak) >= 2:
         log.warning("metro soften override vod=%s streak=%s reason=%s", vod.name, streak, reason)
         return True, f"metro_soften_L{soften_level(streak)} ({reason})"
@@ -809,6 +822,7 @@ def _scan_vod_with_adaptive(
         if title and not entry.get("title"):
             entry["title"] = title
 
+    metro_trust_segments = False
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
         if not ok_metro:
@@ -816,11 +830,13 @@ def _scan_vod_with_adaptive(
             entry = _vod_registry_entry(state, vod)
             if entry:
                 entry["reject_reason"] = metro_reason
-                if _pubg_metro_should_exhaust(title, streak_in):
+                if _pubg_metro_should_exhaust(title, streak_in, metro_reason):
                     entry["exhausted"] = True
                     _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
+        # Soften override must not disable per-segment metro checks.
+        metro_trust_segments = not str(metro_reason).startswith("metro_soften")
 
     prev_level = int(state.get("last_adaptive_level") or 0)
     active_level = 0
@@ -911,7 +927,7 @@ def _scan_vod_with_adaptive(
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
         with ctx as level:
             active_level = level
-            if game == "pubg":
+            if game == "pubg" and metro_trust_segments:
                 os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
             if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
                 "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
@@ -1077,7 +1093,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
                 entry["reject_reason"] = metro_reason
-                if _pubg_metro_should_exhaust(title, streak_in):
+                if _pubg_metro_should_exhaust(title, streak_in, metro_reason):
                     entry["exhausted"] = True
                     _cleanup_exhausted_entry(game, entry, state)
                 _save_state(game, state)
@@ -1205,7 +1221,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     chat_id,
                     f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
                 )
-            exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
+            exhausted = _pubg_metro_should_exhaust(
+                str(pick.get("title") or ""),
+                streak_dl,
+                metro_reason,
+            )
             entry = {
                 "id": pick["id"],
                 "path": str(vod),

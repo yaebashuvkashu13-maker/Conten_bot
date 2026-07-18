@@ -36,7 +36,10 @@ from pubg_metro_royale_gate import (  # noqa: E402
 def test_title_metro_hint() -> None:
     assert title_metro_hint("Clutches in Metro Royale")
     assert title_metro_hint("96 Cash in метро роял")
+    assert title_metro_hint("1v8 clutch PUBG(Metro Royal)")
     assert not title_metro_hint("Classic Mode Erangel ranked")
+    assert not title_metro_hint("Training sniper - pubg metro royal")
+    assert not title_metro_hint("Perfect no-recoil sensitivity Metro Royale")
 
 
 def test_segment_trust_vod_skips_frames(monkeypatch: pytest.MonkeyPatch) -> None:

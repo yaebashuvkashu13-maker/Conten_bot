@@ -13,7 +13,7 @@ import numpy as np
 from gameplay_gate import _read_frame_at
 
 METRO_UI_RE = re.compile(
-    r"metro[\s_-]*royale|metroroyale|метро[\s_-]*роял|метророял",
+    r"metro[\s_-]*royale?|metroroyale|метро[\s_-]*роял[еь]?|метророял",
     re.I,
 )
 CLASSIC_MAP_RE = re.compile(
@@ -25,11 +25,24 @@ CLASSIC_MODE_UI_RE = re.compile(
     r"\b(classic|ranked match|unranked|tdm|team deathmatch)\b",
     re.I,
 )
+# Titles that mention Metro but are classic training / settings junk.
+TRAINING_JUNK_TITLE_RE = re.compile(
+    r"\btraining\b|aim\s*train|sensitivity|тренер|трениров|чувствительн|"
+    r"no[\s-]?recoil|zero[\s-]?recoil|config\s*sens|best\s+settings|"
+    r"case\s*opening|billion\s+for\s+case|открытие\s+(кейс|тикет)",
+    re.I,
+)
+
+
+def title_is_training_junk(title: str | None) -> bool:
+    return bool(title and TRAINING_JUNK_TITLE_RE.search(title))
 
 
 def title_metro_hint(title: str | None) -> bool:
     """YouTube title strongly suggests Metro Royale — relax frame probes."""
     if not title:
+        return False
+    if title_is_training_junk(title):
         return False
     return bool(METRO_UI_RE.search(title))
 
