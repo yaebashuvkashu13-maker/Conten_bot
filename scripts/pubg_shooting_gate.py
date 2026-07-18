@@ -165,12 +165,21 @@ def pubg_passes_shooting_gate(
     if crop is not None:
         crop = tuple(int(v) for v in crop)
 
-    if segment_looks_like_pubg_loot_or_walk(
-        video_path,
-        start_sec,
-        duration_sec,
-        crop_box=crop,
-        gunfire_density=gun,
+    panns_trusted = float(panns_gun_max or 0.0) >= float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    )
+
+    # Density-only loot_walk false-positives on real Metro gunfights with low
+    # energy metric but strong PANNs (0.5–0.7). Trust PANNs over walk heuristic.
+    if (
+        not panns_trusted
+        and segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop,
+            gunfire_density=gun,
+        )
     ):
         return False, f"loot_walk=density{gun:.3f}", metrics
 
@@ -187,9 +196,6 @@ def pubg_passes_shooting_gate(
 
     # Montage used to re-run owner heuristics without PANNs and convert trusted
     # gunfights into run_fake_gun / no_shots. Keep hard junk rejects only.
-    panns_trusted = float(panns_gun_max or 0.0) >= float(
-        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
-    )
     soft_motion_reject = gate_reason.split("=", 1)[0] in {
         "run_fake_gun",
         "run_loot",
@@ -198,6 +204,7 @@ def pubg_passes_shooting_gate(
         "no_shots",
         "below_owner_floor",
         "streamer_talk",
+        "loot_walk",
     }
     if reason_is_forbidden(gate_reason) and not (panns_trusted and soft_motion_reject):
         return False, gate_reason, metrics

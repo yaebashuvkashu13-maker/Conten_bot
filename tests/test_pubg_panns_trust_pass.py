@@ -38,6 +38,32 @@ def test_panns_trust_passes_despite_low_density(tmp_path: Path, monkeypatch) -> 
     assert row.get("owner_reason", "").startswith("panns_trust")
 
 
+def test_panns_trust_survives_loot_walk_false_positive(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
+    monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.068")
+    vod = tmp_path / "yt_lootwalk001.mp4"
+    vod.write_bytes(b"x")
+    metrics = {
+        "start": 90.0,
+        "duration": 15.0,
+        "gunfire_density": 0.031,
+        "burst_ratio": 5.05,
+        "audio_rms": 0.02,
+        "center_motion": 0.05,
+        "center_text": 0.05,
+        "crop_box": [0, 0, 100, 100],
+    }
+    with patch("pubg_shooting_gate.pubg_probe_segment", return_value=metrics), patch(
+        "pubg_shooting_gate.segment_looks_like_pubg_loot_or_walk", return_value=True
+    ), patch(
+        "pubg_shooting_gate.segment_is_valid_for_montage", return_value=(True, "ok")
+    ):
+        ok, reason, row = pubg_passes_shooting_gate(vod, 90.0, 15.0, panns_gun_max=0.517)
+    assert ok is True, reason
+    assert "loot_walk" not in reason
+    assert row.get("owner_reason", "").startswith("panns_trust")
+
+
 def test_panns_trust_survives_montage_run_fake_gun(tmp_path: Path, monkeypatch) -> None:
     """Montage re-check without PANNs used to convert trust into run_fake_gun."""
     monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
