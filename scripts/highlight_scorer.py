@@ -1146,6 +1146,20 @@ def score_candidate_window(
     m.visual_pass = bool(vis_row.get("visual_pass"))
     if not m.visual_pass:
         m.pass_reason = vis_row.get("fail_reason") or "visual_multi_fail"
+        # Metro HUD often tags as menu_overlay; strong gunfire still counts as combat.
+        if (
+            profile in SHOOTER_PROFILES
+            and "menu_overlay" in (m.pass_reason or "")
+            and m.panns_gun_max
+            >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        ):
+            m.visual_pass = True
+            m.pass_reason = ""
+            log.info(
+                "visual menu_overlay overridden by panns=%.3f start=%.1f",
+                m.panns_gun_max,
+                start_sec,
+            )
 
     if os.environ.get("HIGHLIGHT_HEATMAP", "1") == "1":
         try:
@@ -1748,6 +1762,7 @@ def discover_highlight_candidates(
                     break
                 if (
                     verified
+                    and profile == "mobile_legends"
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
                 ):
@@ -1765,6 +1780,7 @@ def discover_highlight_candidates(
                 break
             if (
                 verified
+                and profile == "mobile_legends"
                 and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
             ):

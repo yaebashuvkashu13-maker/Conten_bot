@@ -721,8 +721,14 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
+    max_per_vod = max(1, int(os.environ.get("SHOOTER_VOD_MAX_PER_VOD", "3")))
+    total_sent = 0
 
-    while peak_tries < max_tries:
+    while peak_tries < max_tries and total_sent < max_per_vod:
+        ok_cycle, cycle_reason = can_send_for_game(game, 1)
+        if not ok_cycle:
+            log.info("stop VOD scan — cycle %s game=%s sent=%s", cycle_reason, game, total_sent)
+            break
         rows: list[dict] = []
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
@@ -766,16 +772,26 @@ def _scan_vod(
                 blocked,
             )
             if entry is not None:
-                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
-            return 0
+                record_vod_scan(
+                    entry, sent=total_sent, pool_peaks=pool_peaks, blocked=blocked, pool=pool
+                )
+            return total_sent
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
-        if n > 0:
-            if entry is not None:
-                record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
-            return n
-        skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
+        peak = round(float(rows[0].get("peak_start", rows[0]["start"])), 1)
+        skip_peaks.add(peak)
         peak_tries += 1
+        if n > 0:
+            total_sent += n
+            used_peaks.append(float(rows[0].get("peak_start", rows[0]["start"])))
+            log.info(
+                "shooter multi-send vod=%s clip=%s/%s total_sent=%s",
+                vod.name,
+                total_sent,
+                max_per_vod,
+                total_sent,
+            )
+            continue
         log.warning(
             "presend rejected peak — try next (%s/%s) vod=%s game=%s",
             peak_tries,
@@ -784,8 +800,8 @@ def _scan_vod(
             game,
         )
     if entry is not None:
-        record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool)
-    return 0
+        record_vod_scan(entry, sent=total_sent, pool_peaks=pool_peaks, blocked=False, pool=pool)
+    return total_sent
 
 
 def _scan_vod_with_adaptive(
@@ -1273,8 +1289,11 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "32")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "48")
     os.environ.setdefault("SHOOTER_VOD_ACTION_PEAK_LIMIT", "40")
+    os.environ.setdefault("SHOOTER_VOD_MAX_PER_VOD", "3")
     os.environ.setdefault("SMART_LONG_SAMPLE_FPS", "1.0")
     os.environ.setdefault("SMART_LONG_ANALYSIS_MAX_FPS", "1.0")
+    os.environ.setdefault("VISUAL_MENU_OVERLAY_MAX", "0.72")
+    os.environ.setdefault("VISUAL_PUBG_MIN_FRAMES_PASS", "2")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
@@ -1292,8 +1311,11 @@ def main() -> int:
         "SHOOTER_VOD_MAX_PANN_PROBE",
         "HIGHLIGHT_MAX_STAGE1",
         "SHOOTER_VOD_ACTION_PEAK_LIMIT",
+        "SHOOTER_VOD_MAX_PER_VOD",
         "SMART_LONG_SAMPLE_FPS",
         "SMART_LONG_ANALYSIS_MAX_FPS",
+        "VISUAL_MENU_OVERLAY_MAX",
+        "VISUAL_PUBG_MIN_FRAMES_PASS",
         "SHOOTER_VOD_OWNER_EXEMPLARS",
         "SHOOTER_VOD_OWNER_BACKFILL",
         "SHOOTER_VOD_MIN_CLIP_SCORE",

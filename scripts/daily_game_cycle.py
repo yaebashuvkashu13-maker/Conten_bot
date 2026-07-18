@@ -37,11 +37,17 @@ def enabled() -> bool:
 
 
 def quota_for(game: str) -> int:
+    """Prefer DAILY_{GAME}_QUOTA; fall back to DAILY_GAME_{GAME}_QUOTA.
+
+    Both keys often exist on VPS — the non-GAME key wins (install sets *=10).
+    """
     game = game.strip().lower()
     defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
     env_key = f"DAILY_{game.upper()}_QUOTA"
     fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
-    raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
+    raw = os.environ.get(env_key)
+    if raw is None or str(raw).strip() == "":
+        raw = os.environ.get(fallback, str(defaults.get(game, 10)))
     try:
         return max(0, int(raw))
     except ValueError:
