@@ -1605,6 +1605,10 @@ def _accept_highlight_candidate(
         bypass_at = float(os.environ.get("VIRAL_COMBAT_PANN_HOOK_BYPASS", "0.28"))
         if metrics.panns_gun_max >= bypass_at:
             hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+        # Strong PANNs gunfire is itself the hook (Metro VODs often score ~0.02–0.03).
+        skip_at = float(os.environ.get("VIRAL_COMBAT_PANN_HOOK_SKIP", "0.40"))
+        if metrics.panns_gun_max >= skip_at and metrics.rule_pass:
+            return True
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
