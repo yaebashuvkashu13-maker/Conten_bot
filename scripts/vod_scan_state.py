@@ -105,14 +105,37 @@ def record_zero_send_streak(entry: dict[str, Any], *, sent: int) -> int:
     return n
 
 
+def _pool_max_score(peaks: list[Any] | None) -> float:
+    if not peaks:
+        return 0.0
+    best = 0.0
+    for item in peaks:
+        if isinstance(item, dict):
+            best = max(best, float(item.get("score") or 0.0))
+        else:
+            best = max(best, 0.0)
+    return best
+
+
 def should_force_exhaust_after_retries(entry: dict[str, Any] | None) -> bool:
     """Exhaust VODs that keep failing presend / yield empty pools."""
     if not entry or entry.get("exhausted"):
         return False
-    cap = max(3, int(os.environ.get("VOD_ZERO_SEND_RETRY_EXHAUST", "8")))
-    if int(entry.get("zero_send_streak") or 0) < cap:
-        return False
+    streak = int(entry.get("zero_send_streak") or 0)
     peaks = entry.get("last_pool_peaks")
+    # Single ultra-weak peak (e.g. low_clip_score forever): drop faster.
+    weak_cap = max(2, int(os.environ.get("VOD_WEAK_POOL_RETRY_EXHAUST", "3")))
+    weak_max = float(os.environ.get("VOD_WEAK_POOL_MAX_SCORE", "0.05"))
+    if (
+        peaks is not None
+        and 0 < len(peaks) <= 1
+        and _pool_max_score(peaks) < weak_max
+        and streak >= weak_cap
+    ):
+        return True
+    cap = max(3, int(os.environ.get("VOD_ZERO_SEND_RETRY_EXHAUST", "8")))
+    if streak < cap:
+        return False
     if peaks is None:
         # Scan never persisted a pool — still stop infinite retries.
         return True

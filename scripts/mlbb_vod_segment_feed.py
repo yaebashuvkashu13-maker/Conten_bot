@@ -2066,11 +2066,15 @@ def _process_vod_segments(
     state["scanned_vods"] = sorted(scanned)
     new_streak = record_vod_outcome(state, vod_id=vid, sent=sent_total)
     state["last_adaptive_level"] = active_level
-    _save_state(state)
 
+    # Persist zero_send_streak BEFORE save — otherwise retries never reach
+    # should_force_exhaust_after_retries and the same weak VOD loops forever.
     if entry is not None:
-        record_zero_send_streak(entry, sent=sent_total)
+        z_streak = record_zero_send_streak(entry, sent=sent_total)
+    else:
+        z_streak = 0
 
+    exhausted_now = False
     if sent_total == 0 and not send_quota_blocked:
         force_exhaust = should_force_exhaust_after_retries(entry)
         if entry and (should_mark_vod_exhausted(entry) or force_exhaust):
@@ -2086,17 +2090,21 @@ def _process_vod_segments(
             entry["exhausted"] = True
             entry["id"] = vid
             entry.setdefault("exhausted_at", time.time())
-            _mark_vod_exhausted(vod)
-            _record_zero_yield_uploader(entry)
-            log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
-            if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
-                send_message(
-                    token,
-                    chat_id,
-                    telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
-                )
+            exhausted_now = True
+            log.info(
+                "exhausted vod=%s adaptive_streak=%s zero_send_streak=%s level=%s",
+                vod.name,
+                new_streak,
+                z_streak,
+                active_level,
+            )
         else:
-            log.info("zero send — keep vod=%s for retry (presend/soften) streak=%s", vod.name, new_streak)
+            log.info(
+                "zero send — keep vod=%s for retry (presend/soften) streak=%s zero_send=%s",
+                vod.name,
+                new_streak,
+                z_streak,
+            )
     elif sent_total == 0 and send_quota_blocked:
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
@@ -2106,6 +2114,20 @@ def _process_vod_segments(
                 token,
                 chat_id,
                 f"✅ {sent_total} клип(ов) с мягких фильтров (L{active_level}) — возврат к strict после серии",
+            )
+
+    if entry:
+        _sync_vod_entry_to_state(state, entry, vod)
+    _save_state(state)
+
+    if exhausted_now and entry is not None:
+        _mark_vod_exhausted(vod)
+        _record_zero_yield_uploader(entry)
+        if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
+            send_message(
+                token,
+                chat_id,
+                telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
             )
     return sent_total
 

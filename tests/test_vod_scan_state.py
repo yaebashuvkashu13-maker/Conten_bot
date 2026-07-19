@@ -118,7 +118,19 @@ def test_zero_send_streak_and_force_exhaust(monkeypatch: pytest.MonkeyPatch) -> 
     assert record_zero_send_streak(entry, sent=0) == 3
     assert should_force_exhaust_after_retries(entry) is True
     assert record_zero_send_streak(entry, sent=1) == 0
+
+
+def test_weak_single_peak_force_exhaust_faster(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_WEAK_POOL_RETRY_EXHAUST", "3")
+    monkeypatch.setenv("VOD_WEAK_POOL_MAX_SCORE", "0.05")
+    monkeypatch.setenv("VOD_ZERO_SEND_RETRY_EXHAUST", "8")
+    entry: dict = {
+        "last_pool_peaks": [{"peak_sec": 682.0, "score": 0.0006, "blocked_reason": ""}],
+        "zero_send_streak": 2,
+    }
     assert should_force_exhaust_after_retries(entry) is False
+    entry["zero_send_streak"] = 3
+    assert should_force_exhaust_after_retries(entry) is True
 
 
 def test_record_vod_scan_persists_empty_pool() -> None:
