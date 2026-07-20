@@ -1793,6 +1793,10 @@ def discover_highlight_candidates(
             os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
             and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
         )
+        # WoT: keep a few peaks so expand/presend rejects can try the next fight.
+        send_one_n = 1
+        if profile == "wot":
+            send_one_n = max(1, int(os.environ.get("WOT_VOD_SEND_POOL", "3")))
         pool = ThreadPoolExecutor(max_workers=workers)
         stop_early = False
         try:
@@ -1824,9 +1828,10 @@ def discover_highlight_candidates(
                     _consume(start, metrics)
                     if len(verified) >= limit:
                         break
-                    if send_one and verified:
+                    if send_one and len(verified) >= send_one_n:
                         log.info(
-                            "vod send_one: stop after first highlight pass start=%.1f",
+                            "vod send_one: stop after %s highlight pass(es) last=%.1f",
+                            len(verified),
                             verified[-1]["start"],
                         )
                         stop_early = True

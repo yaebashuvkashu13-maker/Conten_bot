@@ -27,19 +27,19 @@ _CACHE: dict[str, dict] = {}
 
 
 def _min_sec() -> float:
-    return float(os.environ.get("WOT_BRAWL_FIGHT_MIN_SEC", "18"))
+    return float(os.environ.get("WOT_BRAWL_FIGHT_MIN_SEC", "16"))
 
 
 def _max_sec() -> float:
-    return float(os.environ.get("WOT_BRAWL_FIGHT_MAX_SEC", "55"))
+    return float(os.environ.get("WOT_BRAWL_FIGHT_MAX_SEC", "40"))
 
 
 def _hard_max_sec() -> float:
-    return float(os.environ.get("WOT_BRAWL_FIGHT_HARD_MAX_SEC", "75"))
+    return float(os.environ.get("WOT_BRAWL_FIGHT_HARD_MAX_SEC", "48"))
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("WOT_VOD_LEAD_SEC", "4"))
+    return float(os.environ.get("WOT_VOD_LEAD_SEC", "3"))
 
 
 def _step_sec() -> float:
@@ -47,11 +47,12 @@ def _step_sec() -> float:
 
 
 def _flash_keep() -> float:
-    return float(os.environ.get("WOT_BRAWL_FLASH_KEEP", "0.003"))
+    # Tighter than discovery — expand must stick to real hit exchanges.
+    return float(os.environ.get("WOT_BRAWL_FLASH_KEEP", "0.008"))
 
 
 def _edge_keep() -> float:
-    return float(os.environ.get("WOT_BRAWL_EDGE_KEEP", "0.024"))
+    return float(os.environ.get("WOT_BRAWL_EDGE_KEEP", "0.034"))
 
 
 def _gap_tolerate() -> int:
@@ -273,9 +274,9 @@ def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
         dur = end - start
 
     prefer_start = os.environ.get("WOT_BRAWL_FIGHT_PREFER_START", "1") == "1"
-    cap = hard_max
-    if dur > max_d and os.environ.get("WOT_BRAWL_FIGHT_TRIM_LONG", "0") == "1":
-        cap = max_d
+    # Always trim long runs for WoT — long cruise dilutes impact density at presend.
+    cap = max_d if os.environ.get("WOT_BRAWL_FIGHT_TRIM_LONG", "1") == "1" else hard_max
+    cap = min(cap, hard_max)
 
     if dur > cap:
         if prefer_start:
