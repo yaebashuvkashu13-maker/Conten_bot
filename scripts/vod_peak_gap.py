@@ -28,6 +28,17 @@ def segment_gap_sec(
         env_key = "MLBB_VOD_SEGMENT_GAP_SEC"
         soft_key = "MLBB_VOD_SOFT_SEGMENT_GAP_SEC"
         soft_default = 28.0
+    elif g == "genshin":
+        # Full boss fights are long — keep peaks from the same fight apart.
+        base = default if default is not None else float(
+            os.environ.get(
+                "GENSHIN_VOD_SEGMENT_GAP_SEC",
+                os.environ.get("SMART_GENSHIN_MIN_SEGMENT_GAP", "90"),
+            )
+        )
+        env_key = "GENSHIN_VOD_SEGMENT_GAP_SEC"
+        soft_key = "GENSHIN_VOD_SOFT_SEGMENT_GAP_SEC"
+        soft_default = 45.0
     else:
         base = default if default is not None else 18.0
         env_key = "SHOOTER_VOD_SEGMENT_GAP_SEC"
