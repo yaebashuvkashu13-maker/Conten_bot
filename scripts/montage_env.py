@@ -94,6 +94,9 @@ def genshin_combat_env() -> dict[str, str]:
         "SMART_ALLOW_EXCLUDED_FALLBACK": "0",
         "SMART_ACTION_CLIP_MIN_SEC": "8",
         "SMART_ACTION_CLIP_MAX_SEC": "11",
+        "VIRAL_SEGMENT_HOOK_MIN": "0.08",
+        "VIRAL_COMBAT_HOOK_MIN": "0.035",
+        "HIGHLIGHT_EXTENDED_CLIP_HOOK_MIN": "0.12",
     }
 
 
@@ -131,6 +134,9 @@ def wot_combat_env() -> dict[str, str]:
         "SMART_WOT_AUDIO_PERCENTILE": "52",
         "SMART_WOT_SCENE_PERCENTILE": "44",
         "SMART_WOT_IMPACT_PERCENTILE": "52",
+        "VIRAL_SEGMENT_HOOK_MIN": "0.08",
+        "VIRAL_COMBAT_HOOK_MIN": "0.035",
+        "HIGHLIGHT_EXTENDED_CLIP_HOOK_MIN": "0.12",
     }
 
 

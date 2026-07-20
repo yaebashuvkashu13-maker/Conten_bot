@@ -45,7 +45,11 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
   fi
   if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
     log "restart telegram_upload_bot"
-    nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+    if systemctl list-unit-files 2>/dev/null | grep -q '^telegram-upload-bot.service'; then
+      systemctl restart telegram-upload-bot || true
+    else
+      nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+    fi
   fi
   VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
   if ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \

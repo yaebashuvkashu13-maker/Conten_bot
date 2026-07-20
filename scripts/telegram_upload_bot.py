@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-07-20-network-retry-wot-hook-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -413,11 +413,34 @@ YOUTUBE_DOWNLOAD_CHATS: set[str] = set()
 YOUTUBE_DOWNLOAD_LOCK = threading.Lock()
 YOUTUBE_PENDING_QUEUES: dict[str, list[dict[str, str]]] = {}
 _TELEGRAM_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_TELEGRAM_API_RETRIES = max(1, int(os.environ.get("TELEGRAM_API_RETRIES", "5")))
+_TELEGRAM_API_RETRY_BASE_SEC = float(os.environ.get("TELEGRAM_API_RETRY_BASE_SEC", "2"))
 
 
 def telegram_urlopen(request: urllib.request.Request, timeout: int = 60):
     """Telegram API must not use HTTP_PROXY from .video_bot.env (dead CyberYozh IP)."""
-    return _TELEGRAM_OPENER.open(request, timeout=timeout)
+    last_error: Exception | None = None
+    for attempt in range(1, _TELEGRAM_API_RETRIES + 1):
+        try:
+            return _TELEGRAM_OPENER.open(request, timeout=timeout)
+        except Exception as exc:
+            last_error = exc
+            retryable = isinstance(
+                exc,
+                (urllib.error.URLError, TimeoutError, ConnectionError, OSError),
+            )
+            if not retryable or attempt >= _TELEGRAM_API_RETRIES:
+                raise
+            delay = min(60.0, _TELEGRAM_API_RETRY_BASE_SEC * (2 ** (attempt - 1)))
+            logging.warning(
+                "telegram network error attempt %s/%s: %s — retry in %.1fs",
+                attempt,
+                _TELEGRAM_API_RETRIES,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+    raise last_error  # pragma: no cover
 
 
 def api_call(method: str, payload: dict | None = None, timeout: int = 60):

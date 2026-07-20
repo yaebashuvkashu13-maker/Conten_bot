@@ -39,3 +39,13 @@ def test_genshin_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wot_l3_relaxes_impact() -> None:
     ov = overrides_for_level("wot", 3)
     assert float(ov["SMART_WOT_MIN_IMPACT_DENSITY"]) < float(overrides_for_level("wot", 1)["SMART_WOT_MIN_IMPACT_DENSITY"])
+    assert "VIRAL_SEGMENT_HOOK_MIN" in ov
+    assert float(ov["VIRAL_SEGMENT_HOOK_MIN"]) <= 0.05
+
+
+def test_wot_l4_disables_brawl_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXTENDED_VOD_ZERO_STREAK_SOFTEN", "2")
+    assert soften_level(10) == 4
+    ov = overrides_for_level("wot", 4)
+    assert ov.get("WOT_BRAWL_GATE") == "0"
+    assert float(ov["VIRAL_COMBAT_HOOK_MIN"]) <= 0.02

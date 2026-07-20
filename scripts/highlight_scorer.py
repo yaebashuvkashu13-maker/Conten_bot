@@ -171,6 +171,7 @@ GAME_LABELS = {
 }
 
 SHOOTER_PROFILES = frozenset({"pubg", "standoff"})
+EXTENDED_COMBAT_PROFILES = frozenset({"genshin", "wot"})
 
 
 def owner_anchors_enabled() -> bool:
@@ -1164,6 +1165,12 @@ def score_candidate_window(
         m.classifier_prob = 0.5
 
     combat_authoritative = profile in SHOOTER_PROFILES and m.rule_pass
+    if profile in EXTENDED_COMBAT_PROFILES and m.rule_pass:
+        panns_strong = (
+            m.panns_gun_max >= float(os.environ.get("HIGHLIGHT_EXTENDED_PANN_MIN", "0.22"))
+            or m.panns_explosion >= float(os.environ.get("HIGHLIGHT_EXTENDED_EXPLOSION_MIN", "0.20"))
+        )
+        combat_authoritative = combat_authoritative or (panns_strong and m.visual_pass)
     clf_ok = m.classifier_prob >= CLASSIFIER_MIN
     if not classifier_available(profile) and m.rule_pass and m.visual_pass:
         clf_ok = True
@@ -1199,6 +1206,8 @@ def score_candidate_window(
         m.rule_pass = False
         if profile in SHOOTER_PROFILES:
             m.pass_reason = gate_reason or "combat_gate_fail"
+        elif not m.visual_pass:
+            m.pass_reason = m.pass_reason or gate_reason or "visual_fail"
         elif not clf_ok:
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
         elif not m.pass_reason:
@@ -1573,9 +1582,29 @@ def _accept_highlight_candidate(
         and metrics.visual_pass
     ):
         hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+    elif (
+        metrics.hook_score < hook_min
+        and profile in EXTENDED_COMBAT_PROFILES
+        and metrics.rule_pass
+        and metrics.visual_pass
+        and (
+            metrics.panns_gun_max
+            >= float(os.environ.get("HIGHLIGHT_EXTENDED_PANN_MIN", "0.22"))
+            or metrics.panns_explosion
+            >= float(os.environ.get("HIGHLIGHT_EXTENDED_EXPLOSION_MIN", "0.20"))
+        )
+    ):
+        hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
+        ):
+            return True
+        if (
+            profile in EXTENDED_COMBAT_PROFILES
+            and metrics.rule_pass
+            and metrics.clip_score
+            >= float(os.environ.get("HIGHLIGHT_EXTENDED_CLIP_HOOK_MIN", "0.12"))
         ):
             return True
         log.info(

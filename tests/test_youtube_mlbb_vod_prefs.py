@@ -94,8 +94,8 @@ def test_upload_freshness_filter() -> None:
     fresh = _meta("MLBB Mythic Ranked", upload_date="20260619")
     stale = _meta("MLBB Mythic Ranked", upload_date="20260101")
     assert upload_age_days("20260619", now=now) == 2
-    assert passes_upload_freshness(fresh, max_age_days=21)
-    assert not passes_upload_freshness(stale, max_age_days=21)
+    assert passes_upload_freshness(fresh, max_age_days=21, now=now)
+    assert not passes_upload_freshness(stale, max_age_days=21, now=now)
 
 
 def test_rank_prefers_fresh_upload() -> None:
