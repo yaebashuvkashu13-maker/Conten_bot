@@ -1039,6 +1039,8 @@ def rule_gate(
     start_sec: float = 0,
     duration_sec: float = WINDOW_SEC,
 ) -> tuple[bool, str]:
+    if os.environ.get("VIRAL_INGEST_SKIP_RULE_GATE", "0") == "1":
+        return True, "viral_silver_skip"
     profile = normalize_profile(profile)
     if not metrics.visual_pass:
         return False, "visual_fail"
