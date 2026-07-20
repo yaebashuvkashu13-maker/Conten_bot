@@ -214,18 +214,20 @@ def suggest_thresholds(profile: str, viral: list[dict], owner_good: list[dict]) 
     notes: list[str] = []
 
     if profile == "mobile_legends":
-        hook_min = max(0.04, min(0.14, blended_hook * 0.85))
+        # Small nudge only — never jump above 0.10 or below current soft floor
+        hook_min = max(0.06, min(0.10, blended_hook * 0.55))
         apply["VIRAL_MLBB_HOOK_MIN"] = f"{hook_min:.4f}"
         apply["VIRAL_SEGMENT_HOOK_MIN"] = f"{hook_min:.4f}"
         notes.append(f"MLBB hook floor → {hook_min:.3f} (owner={o_hook:.3f} viral={v_hook:.3f})")
     elif profile in ("pubg", "standoff"):
-        hook_min = max(0.04, min(0.20, blended_hook * 0.8))
+        # Exemplars carry most of the learning; keep combat hook soft
+        hook_min = max(0.04, min(0.08, blended_hook * 0.35))
         apply["VIRAL_COMBAT_HOOK_MIN"] = f"{hook_min:.4f}"
-        notes.append(f"{profile} combat hook → {hook_min:.3f}")
+        notes.append(f"{profile} combat hook soft → {hook_min:.3f} (learning via exemplars)")
     elif profile == "genshin":
-        notes.append(f"Genshin viral combat_avg={_avg(viral, 'combat_score'):.3f} — keep full-fight bounds")
+        notes.append(f"Genshin viral combat_avg={_avg(viral, 'combat_score'):.3f} — improve via exemplars, keep fight bounds")
     elif profile == "wot":
-        notes.append(f"WoT viral gun_avg={_avg(viral, 'panns_gun_max'):.3f}")
+        notes.append(f"WoT viral gun_avg={_avg(viral, 'panns_gun_max'):.3f} — improve via exemplars")
 
     return {
         "status": "ok",

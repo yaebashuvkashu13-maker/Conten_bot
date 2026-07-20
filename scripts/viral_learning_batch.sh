@@ -9,7 +9,7 @@ LOCK="${LOCK:-/tmp/viral_learning_batch.lock}"
 PER_GAME="${PER_GAME:-10}"
 # TELEGRAM=1 → text improve report only (never videos)
 TELEGRAM="${TELEGRAM:-0}"
-APPLY_ENV="${APPLY_ENV:-1}"
+APPLY_ENV="${APPLY_ENV:-0}"
 
 exec 9>"$LOCK"
 if ! flock -n 9; then
