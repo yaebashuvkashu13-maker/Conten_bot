@@ -623,7 +623,7 @@ def _handle_shooter_vseg_callback(
     message_id: int,
     query_id: str,
 ) -> bool:
-    """Handle pubg_vseg_* / standoff_vseg_* callbacks. Returns True if handled."""
+    """Handle pubg/standoff/genshin/wot_vseg_* callbacks. Returns True if handled."""
     prefix = f'{game.strip().lower()}_vseg'
     if not data.startswith(f'{prefix}_'):
         return False
@@ -1069,6 +1069,183 @@ def _handle_game_shorts_callback(
     return False
 
 
+def _social_good_markup(prefix: str, item_id: str) -> dict:
+    """Restore post-OK keyboard (HQ + social) for a clip id."""
+    if prefix.endswith('_vseg'):
+        game = prefix[: -len('_vseg')] or 'mlbb'
+        if game == 'mlbb':
+            from mlbb_vod_segment_store import labeled_keyboard_markup as markup
+
+            return markup('good', segment_id=item_id)
+        from shooter_vod_segment_store import labeled_keyboard_markup as markup
+
+        return markup(game, 'good', segment_id=item_id)
+    game = prefix or 'mlbb'
+    if game == 'mlbb':
+        from mlbb_calibration_store import labeled_keyboard_markup as markup
+
+        return markup('good', video_id=item_id)
+    from calibration_dislike_reasons import labeled_keyboard_markup as markup
+
+    return markup(game, 'good', video_id=item_id)
+
+
+def _handle_social_publish_callback(
+    data: str,
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+) -> bool:
+    """Handle *_social / *_pub callbacks for VOD segments and Shorts."""
+    if '_social:' not in data and '_social_back:' not in data and '_pub:' not in data:
+        return False
+
+    prefixes = (
+        'mlbb_vseg',
+        'pubg_vseg',
+        'standoff_vseg',
+        'genshin_vseg',
+        'wot_vseg',
+        'mlbb',
+        'pubg',
+        'standoff',
+        'genshin',
+        'wot',
+    )
+    prefix = ''
+    action = ''
+    rest = ''
+    for cand in prefixes:
+        for act_name, act_suffix in (
+            ('social_back', '_social_back:'),
+            ('social', '_social:'),
+            ('pub', '_pub:'),
+        ):
+            token = f'{cand}{act_suffix}'
+            if data.startswith(token):
+                prefix = cand
+                action = act_name
+                rest = data[len(token) :]
+                break
+        if prefix:
+            break
+    if not prefix:
+        return False
+
+    if action == 'social':
+        item_id = rest.strip()
+        try:
+            from social_publish import format_status_message, platforms_keyboard
+
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Выбери площадку'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': platforms_keyboard(prefix, item_id),
+                },
+                timeout=15,
+            )
+            send_message(chat_id, format_status_message())
+        except Exception as exc:
+            logging.exception('social picker failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if action == 'social_back':
+        item_id = rest.strip()
+        try:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': _social_good_markup(prefix, item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('social back failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    # action == pub → yt|ig|tt|vk:item_id
+    try:
+        platform_short, item_id = rest.split(':', 1)
+    except ValueError:
+        api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+        return True
+    platform_short = platform_short.strip().lower()
+    item_id = item_id.strip()
+    kind = 'vseg' if prefix.endswith('_vseg') else 'shorts'
+    game = prefix[: -len('_vseg')] if prefix.endswith('_vseg') else prefix
+
+    try:
+        from social_publish import PLATFORM_LABELS, SHORT_TO_PLATFORM, publish_clip, resolve_clip_path
+
+        platform = SHORT_TO_PLATFORM.get(platform_short, platform_short)
+        label = PLATFORM_LABELS.get(platform, platform)
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': f'Заливаю в {label}…'},
+            timeout=15,
+        )
+        path, meta = resolve_clip_path(kind=kind, game=game, item_id=item_id)
+        if path is None:
+            send_message(chat_id, f'❌ Файл клипа не найден на диске ({game}/{kind} #{item_id}).')
+            return True
+        send_message(chat_id, f'📤 Публикую в {label}: {path.name}…')
+        result = publish_clip(platform, path, meta=meta)
+        url = str(result.get('url') or '').strip()
+        rid = str(result.get('id') or '').strip()
+        msg = f'✅ {label}: готово'
+        if rid:
+            msg += f'\nid={rid}'
+        if url:
+            msg += f'\n{url}'
+        send_message(chat_id, msg)
+        api_call(
+            'editMessageReplyMarkup',
+            {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'reply_markup': _social_good_markup(prefix, item_id),
+            },
+            timeout=15,
+        )
+    except Exception as exc:
+        logging.exception('social publish failed data=%s', data)
+        send_message(chat_id, f'❌ Не удалось залить: {exc}'[:500])
+        try:
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': _social_good_markup(prefix, item_id),
+                },
+                timeout=15,
+            )
+        except Exception:
+            pass
+    return True
+
+
 def handle_callback_query(query: dict) -> None:
     query_id = query.get('id')
     data = str(query.get('data') or '')
@@ -1096,6 +1273,14 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if _handle_social_publish_callback(
+        data,
+        chat_id=chat_id,
+        message_id=message_id,
+        query_id=query_id,
+    ):
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
@@ -1106,7 +1291,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -2843,6 +3028,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'mode', 'description': 'Текущий режим бота'},
         {'command': 'mlbb_yes', 'description': 'MLBB Shorts — хороший (#id)'},
         {'command': 'mlbb_no', 'description': 'MLBB Shorts — плохой (#id)'},
+        {'command': 'social_status', 'description': 'Статус заливки YT/IG/TT/VK'},
     ]
 
 
@@ -3356,6 +3542,17 @@ def handle_message(message: dict):
             send_message(chat_id, f'REFUSED: preview_id={preview_id}, reason=owner_rejected')
         except Exception as exc:
             send_message(chat_id, f'REFUSED: preview, reason={exc}')
+        return
+    if cmd in ('/social_status', '/social', '/publish_status'):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Только для владельца.')
+            return
+        try:
+            from social_publish import format_status_message
+
+            send_message(chat_id, format_status_message())
+        except Exception as exc:
+            send_message(chat_id, f'Ошибка social_status: {exc}')
         return
     if text.startswith('/status'):
         if limited:

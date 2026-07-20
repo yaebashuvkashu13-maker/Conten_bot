@@ -260,6 +260,12 @@ def labeled_keyboard_markup(
         rows: list[list[dict]] = [[{"text": "✅ Ок", "callback_data": "mlbb_noop"}]]
         if sid:
             rows.append([{"text": "📁 HQ файл", "callback_data": f"{prefix}_hq:{sid}"}])
+            try:
+                from social_publish import social_button_row
+
+                rows.append(social_button_row(prefix, sid))
+            except Exception:
+                pass
         return {"inline_keyboard": rows}
     mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}

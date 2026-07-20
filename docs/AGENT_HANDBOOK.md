@@ -376,7 +376,9 @@ conten_bot/
 ## 13. Backlog (не делать без запроса)
 
 - [ ] Новый Instagram-дайджест из `content_bot` + cron (замена n8n Cloud)
-- [ ] Кнопка «Опубликовать» → YouTube, TikTok, Instagram, VK, Rutube, Дзен
+- [x] Кнопка «Опубликовать» → YouTube, TikTok, Instagram, VK (см. `docs/SOCIAL_PUBLISH_SETUP.md`, `scripts/social_publish.py`)
+- [ ] Аналитика после заливки (YT Analytics / IG Insights / TikTok) → сводка в Telegram
+- [ ] Rutube, Дзен
 - [ ] Ассистент продаж (эскалация на оплату)
 - [ ] VPN + биллинг
 - [ ] Автоочистка `/root/hourly_previews`, старых исходников
