@@ -236,7 +236,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if dur and not _vod_length_ok(Path("x.mp4"), dur, game=game):
                 continue
             out.append(
                 {
@@ -447,7 +447,28 @@ def _scan_vod(
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
             if owner_exemplars and clip_score < min_clip:
                 continue
+            peak = float(clip.get("peak_start", clip.get("start", 0)))
             start = max(0.0, peak - lead)
+            dur = float(clip.get("input_duration") or clip.get("output_duration") or 0.0)
+            row_clip = {**clip, "start": start, "peak_start": peak}
+            if game == "genshin":
+                try:
+                    from genshin_boss_fight import expand_clip_to_full_boss_fight
+
+                    row_clip = expand_clip_to_full_boss_fight(vod, row_clip)
+                    start = float(row_clip["start"])
+                    dur = float(row_clip.get("input_duration") or dur)
+                    log.info(
+                        "genshin full boss fight peak=%.1f -> start=%.1f dur=%.1fs",
+                        peak,
+                        start,
+                        dur,
+                    )
+                except Exception as exc:
+                    log.warning("genshin full-fight expand failed peak=%.1f: %s", peak, exc)
+            if dur > 0:
+                row_clip["input_duration"] = dur
+                row_clip["output_duration"] = dur
             sid = segment_id(vid, start)
             if sid in blocked_ids:
                 continue
@@ -457,7 +478,8 @@ def _scan_vod(
                     "start": start,
                     "peak_start": peak,
                     "score": float(clip.get("score", 0)),
-                    "clip": {**clip, "start": start, "peak_start": peak},
+                    "clip": row_clip,
+                    "duration": dur if dur > 0 else None,
                 }
             )
         if not rows:
@@ -690,7 +712,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        if _ffprobe_duration(mp4) < _vod_min_sec(game):
             continue
         if entry is None:
             entry = {

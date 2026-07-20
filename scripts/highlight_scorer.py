@@ -1674,13 +1674,28 @@ def discover_highlight_candidates(
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
             return False
+        clip_start = round(start, 3)
+        clip_dur = WINDOW_SEC
+        if profile == "genshin":
+            try:
+                from genshin_boss_fight import expand_clip_to_full_boss_fight
+
+                expanded = expand_clip_to_full_boss_fight(
+                    video_path,
+                    {"start": start, "peak_start": start, "input_duration": WINDOW_SEC},
+                )
+                clip_start = float(expanded.get("start", start))
+                clip_dur = float(expanded.get("input_duration") or WINDOW_SEC)
+            except Exception as exc:
+                log.warning("genshin full-fight expand failed start=%.1f: %s", start, exc)
         verified.append(
             {
                 "source_path": str(video_path),
                 "game_name": GAME_LABELS.get(profile, profile),
-                "start": round(start, 3),
-                "input_duration": WINDOW_SEC,
-                "output_duration": WINDOW_SEC,
+                "start": round(clip_start, 3),
+                "peak_start": round(start, 3),
+                "input_duration": clip_dur,
+                "output_duration": clip_dur,
                 "speed": 1.0,
                 "score": metrics.viral_score or metrics.combined_score,
                 "strict_score": metrics.viral_score or metrics.combined_score,

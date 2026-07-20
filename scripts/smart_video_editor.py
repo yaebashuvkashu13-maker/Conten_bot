@@ -658,6 +658,12 @@ def profile_action_clip_bounds(profile: str) -> tuple[float, float]:
             float(os.environ.get('SMART_PUBG_CLIP_MIN_SEC', os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7'))),
             float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', os.environ.get('SMART_ACTION_CLIP_MAX_SEC', '9.5'))),
         )
+    if profile == 'genshin':
+        # Full boss fights — not mid-fight 10s fragments.
+        return (
+            float(os.environ.get('SMART_GENSHIN_CLIP_MIN_SEC', os.environ.get('GENSHIN_BOSS_FIGHT_MIN_SEC', '28'))),
+            float(os.environ.get('SMART_GENSHIN_CLIP_MAX_SEC', os.environ.get('GENSHIN_BOSS_FIGHT_MAX_SEC', '90'))),
+        )
     if profile in ACTION_PROFILES:
         return (
             float(os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7')),
