@@ -57,9 +57,16 @@ GAME_SEARCHES: dict[str, list[str]] = {
         "genshin boss rush",
     ],
     "wot": [
-        "world of tanks highlights",
-        "wot blitz best moments",
-        "tank battle explosion",
+        "wot blitz best moments shorts",
+        "world of tanks blitz epic frag shorts",
+        "wot blitz ace tanker shorts",
+        "wot blitz clutch 1v3 shorts",
+        "танки блиц эпичный выстрел shorts",
+        "wot blitz 7 kills ace shorts",
+        "world of tanks blitz brawl explosion shorts",
+        "wot blitz kolobanov shorts",
+        "танки блиц фраг shorts русский",
+        "wot blitz double kill tank shorts",
     ],
 }
 

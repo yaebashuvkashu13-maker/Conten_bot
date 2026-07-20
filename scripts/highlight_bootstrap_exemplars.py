@@ -43,8 +43,30 @@ def owner_labels_path(game: str) -> Path:
             return fb
     return path
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
+GAME_INBOX = {
+    "pubg": Path("/root/data/pubg/youtube_nightly/inbox"),
+    "standoff": Path("/root/data/standoff/youtube_nightly/inbox"),
+    "mobile_legends": Path("/root/data/mlbb/youtube_nightly/inbox"),
+    "genshin": Path("/root/data/genshin/youtube_nightly/inbox"),
+    "wot": Path("/root/data/wot/youtube_nightly/inbox"),
+}
 OUT = Path(os.environ.get("HIGHLIGHT_EXEMPLAR_ROOT", str(REPO / "data" / "highlight_exemplars")))
 CLIP_SEC = 4.0
+
+
+def _resolve_vod(game: str, vod_arg: str) -> Path:
+    raw = Path(vod_arg)
+    if raw.exists():
+        return raw
+    candidates = [
+        GAME_INBOX.get(game, INBOX) / vod_arg,
+        INBOX / vod_arg,
+        GAME_INBOX.get(game, INBOX).parent / "exhausted" / vod_arg,
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def cut_clip(vod: Path, start: float, out: Path) -> bool:
@@ -75,11 +97,14 @@ def main() -> int:
     parser.add_argument("--labels-path", type=Path, default=None)
     args = parser.parse_args()
 
-    vod = INBOX / args.vod if not Path(args.vod).exists() else Path(args.vod)
+    game = args.game.strip().lower()
+    if game == "mlbb":
+        game = "mobile_legends"
+    vod = _resolve_vod(game, args.vod)
     if not vod.exists():
         print(f"REFUSED: bootstrap, reason=vod_missing {vod}")
         return 1
-    labels_path = args.labels_path or owner_labels_path(args.game)
+    labels_path = args.labels_path or owner_labels_path(game)
     if not labels_path.exists():
         print(f"REFUSED: bootstrap, reason=no_owner_labels {labels_path}")
         return 1
@@ -94,13 +119,13 @@ def main() -> int:
             continue
         t = float(row["time_sec"])
         name = f"{vid}_{int(t)}_{label}.mp4"
-        dest = OUT / args.game / label / name
+        dest = OUT / game / label / name
         if cut_clip(vod, t - 1.0, dest):
             if label == "good":
                 good_n += 1
             else:
                 bad_n += 1
-    print(f"OK exemplars game={args.game} good={good_n} bad={bad_n} dir={OUT / args.game}")
+    print(f"OK exemplars game={game} good={good_n} bad={bad_n} dir={OUT / game}")
     return 0
 
 
