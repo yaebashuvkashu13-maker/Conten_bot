@@ -150,6 +150,11 @@ TARGET_CLIPS = int(os.environ.get("HIGHLIGHT_TARGET_CLIPS", "4"))
 PANN_GUN_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.25"))
 PANN_GUN_INFERENCE_FLOOR = float(os.environ.get("HIGHLIGHT_PANN_INFERENCE_FLOOR", "0.18"))
 PANN_GUN_SPEECH_RATIO_MIN = float(os.environ.get("HIGHLIGHT_PANN_GUN_SPEECH_RATIO", "0.08"))
+
+
+def pann_gun_inference_floor() -> float:
+    """Compat shim for pubg_combat_gate (VPS) — absolute floor for gun audio."""
+    return PANN_GUN_INFERENCE_FLOOR
 CLIP_MIN_SHOOTER = float(os.environ.get("HIGHLIGHT_CLIP_MIN_SHOOTER", "0.10"))
 CLASSIFIER_MIN = float(os.environ.get("HIGHLIGHT_CLASSIFIER_MIN", "0.6"))
 
@@ -1039,6 +1044,8 @@ def rule_gate(
     start_sec: float = 0,
     duration_sec: float = WINDOW_SEC,
 ) -> tuple[bool, str]:
+    if os.environ.get("VIRAL_INGEST_SKIP_RULE_GATE", "0") == "1":
+        return True, "viral_silver_skip"
     profile = normalize_profile(profile)
     if not metrics.visual_pass:
         return False, "visual_fail"
