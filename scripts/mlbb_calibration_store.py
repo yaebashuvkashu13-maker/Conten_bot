@@ -1155,7 +1155,7 @@ def labeled_keyboard_markup(label: str, *, reason: str = "", video_id: str = "")
             vid = vid[3:]
         rows: list[list[dict]] = [[{"text": "✅ Хорошо", "callback_data": "mlbb_noop"}]]
         if vid:
-            rows.append([{"text": "📁 HQ файл", "callback_data": f"mlbb_hq:{vid}"}])
+            rows.append([{"text": "📥 Скачать", "callback_data": f"mlbb_hq:{vid}"}])
         return {"inline_keyboard": rows}
     mark = f"❌ {dislike_reason_label(reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": "mlbb_noop"}]]}
