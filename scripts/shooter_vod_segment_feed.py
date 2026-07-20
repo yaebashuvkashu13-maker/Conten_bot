@@ -669,6 +669,11 @@ def _scan_vod_with_adaptive(
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
+        # Dense seeds changed discovery — drop stale peak pool so stage1 re-runs.
+        if entry is not None and seed_peaks:
+            entry.pop("last_pool_peaks", None)
+            entry.pop("last_pool_at", None)
+            _save_state(game, state)
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
