@@ -86,6 +86,11 @@ VIRAL_VIEWS_OVERRIDE = int(os.environ.get("VIRAL_INGEST_VIEWS_OVERRIDE", "50000"
 
 def _passes_viral_gameplay_gate(mp4: Path, *, title: str, view_count: int) -> tuple[bool, float, str]:
     """Softer gate for viral silver — strict gate rejects most real Shorts."""
+    if os.environ.get("VIRAL_INGEST_FAST", "0") == "1":
+        if NEGATIVE_TITLE.search(title):
+            return False, 0.0, "title_block"
+        return True, 0.7, "fast_pass"
+
     ok, score, reason = is_gameplay_video(
         mp4,
         csv_lookup={},

@@ -23,6 +23,8 @@ export HIGHLIGHT_EXEMPLAR_ROOT="$REPO/data/highlight_exemplars"
 export VIRAL_REFERENCE_ROOT="/root/datasets/viral_reference"
 export HIGHLIGHT_CLIP_DISABLED=0
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
+export VIRAL_INGEST_FAST="${VIRAL_INGEST_FAST:-1}"
+export VIRAL_INGEST_MIN_GAMEPLAY="${VIRAL_INGEST_MIN_GAMEPLAY:-0.52}"
 
 cd "$REPO"
 {
