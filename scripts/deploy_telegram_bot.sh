@@ -55,6 +55,7 @@ install_scripts() {
     vk_mlbb_upload.py \
     vk_mlbb_publish_slot.py \
     install_vk_mlbb_scheduler.sh \
+    install_telegram_bot_service.sh \
     resend_montage_preview.py; do
     if [[ -f "$REPO/scripts/$f" ]]; then
       install -m 755 "$REPO/scripts/$f" "$DEST/$f"
@@ -66,6 +67,25 @@ install_scripts() {
 }
 
 install_scripts
+
+if [[ -x "$REPO/scripts/install_telegram_bot_service.sh" ]]; then
+  bash "$REPO/scripts/install_telegram_bot_service.sh"
+elif systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
+  systemctl restart telegram-upload-bot
+  echo "restarted telegram-upload-bot"
+else
+  pkill -f telegram_upload_bot.py 2>/dev/null || true
+  sleep 2
+  pgrep -f telegram_upload_bot.py && pkill -9 -f telegram_upload_bot.py 2>/dev/null || true
+  sleep 1
+  nohup python3 "$DEST/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+  echo "started bot via nohup"
+fi
+
+# Legacy restart path when overnight montage blocks install above
+if pgrep -f 'overnight_youtube_batch.py|smart_video_editor.py' >/dev/null 2>&1; then
+  echo "NOTE: overnight montage in progress — bot may have been restarted above"
+fi
 
 if ! command -v yt-dlp >/dev/null 2>&1; then
   echo "WARN: yt-dlp not found — pip install -U yt-dlp"
@@ -88,23 +108,6 @@ if [[ -x "$DEST/install_pipeline_watchdog_cron.sh" ]]; then
 fi
 if [[ -x "$DEST/install_vk_mlbb_scheduler.sh" ]]; then
   bash "$DEST/install_vk_mlbb_scheduler.sh"
-fi
-
-# Bot restart only when overnight batch is idle (do not disrupt active montage)
-if pgrep -f 'overnight_youtube_batch.py|smart_video_editor.py' >/dev/null 2>&1; then
-  echo "SKIP bot restart: overnight montage in progress"
-else
-  pkill -f telegram_upload_bot.py 2>/dev/null || true
-  sleep 2
-  pgrep -f telegram_upload_bot.py && pkill -9 -f telegram_upload_bot.py 2>/dev/null || true
-  sleep 1
-  if systemctl list-units --type=service 2>/dev/null | grep -q telegram-upload-bot; then
-    systemctl restart telegram-upload-bot
-    echo "restarted telegram-upload-bot"
-  else
-    nohup python3 "$DEST/telegram_upload_bot.py" >>/root/telegram_upload_bot.log 2>&1 &
-    echo "started bot via nohup"
-  fi
 fi
 
 grep -m1 BOT_VERSION "$DEST/telegram_upload_bot.py" 2>/dev/null || true
