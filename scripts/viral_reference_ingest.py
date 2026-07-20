@@ -80,6 +80,26 @@ NEGATIVE_TITLE = re.compile(
     re.I,
 )
 
+VIRAL_MIN_GAMEPLAY = float(os.environ.get("VIRAL_INGEST_MIN_GAMEPLAY", "0.52"))
+VIRAL_VIEWS_OVERRIDE = int(os.environ.get("VIRAL_INGEST_VIEWS_OVERRIDE", "50000"))
+
+
+def _passes_viral_gameplay_gate(mp4: Path, *, title: str, view_count: int) -> tuple[bool, float, str]:
+    """Softer gate for viral silver — strict gate rejects most real Shorts."""
+    ok, score, reason = is_gameplay_video(
+        mp4,
+        csv_lookup={},
+        description=title,
+        min_score=VIRAL_MIN_GAMEPLAY,
+    )
+    if ok:
+        return ok, score, reason
+    if view_count >= VIRAL_VIEWS_OVERRIDE and score >= max(0.38, VIRAL_MIN_GAMEPLAY - 0.12):
+        return True, score, f"views_override:{reason}"
+    if NEGATIVE_TITLE.search(title):
+        return False, score, f"title_block:{reason}"
+    return ok, score, reason
+
 
 def _ffprobe_duration(path: Path) -> float:
     cmd = [
@@ -419,10 +439,15 @@ def ingest_game(
         if not mp4.exists():
             continue
 
-        ok, score, reason = is_gameplay_video(mp4, csv_lookup={}, description=row.get("title", ""))
+        ok, score, reason = _passes_viral_gameplay_gate(
+            mp4,
+            title=row.get("title", ""),
+            view_count=int(row.get("view_count") or 0),
+        )
         if not ok:
             row["reject_reason"] = reason
             row["is_gameplay"] = 0
+            row["gameplay_score"] = round(float(score), 4)
             if NEGATIVE_TITLE.search(row.get("title", "")):
                 bad_dest = EXEMPLAR_ROOT / profile / "bad" / f"viral_{mp4.stem}.mp4"
                 copy_exemplar(mp4, bad_dest)
