@@ -1789,33 +1789,53 @@ def discover_highlight_candidates(
         return True
 
     if workers > 1 and len(pending) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_evaluate_highlight_start, video_path, start, profile): start
-                for start in pending
-            }
-            for fut in as_completed(futures):
+        send_one = (
+            os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+            and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+        )
+        pool = ThreadPoolExecutor(max_workers=workers)
+        stop_early = False
+        try:
+            pending_iter = iter(pending)
+            in_flight: dict = {}
+
+            def _fill(n: int) -> None:
+                for _ in range(max(0, n)):
+                    try:
+                        start = next(pending_iter)
+                    except StopIteration:
+                        return
+                    in_flight[pool.submit(_evaluate_highlight_start, video_path, start, profile)] = start
+
+            _fill(workers)
+            while in_flight and not stop_early:
                 if len(verified) >= limit:
                     break
+                done_fut = next(as_completed(in_flight))
+                start_key = in_flight.pop(done_fut)
                 try:
-                    row = fut.result()
+                    row = done_fut.result()
                 except Exception as exc:
-                    log.warning("highlight parallel score failed start=%s: %s", futures[fut], exc)
+                    log.warning("highlight parallel score failed start=%s: %s", start_key, exc)
+                    _fill(1)
                     continue
-                if row is None:
-                    continue
-                start, metrics = row
-                if _consume(start, metrics) and len(verified) >= limit:
-                    break
-                if (
-                    verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                    and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                ):
-                    log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
-                    for pending_fut in futures:
-                        pending_fut.cancel()
-                    break
+                if row is not None:
+                    start, metrics = row
+                    _consume(start, metrics)
+                    if len(verified) >= limit:
+                        break
+                    if send_one and verified:
+                        log.info(
+                            "vod send_one: stop after first highlight pass start=%.1f",
+                            verified[-1]["start"],
+                        )
+                        stop_early = True
+                        break
+                if not stop_early:
+                    _fill(1)
+        finally:
+            # At most `workers` in-flight after wave scoring; wait only for those.
+            pool.shutdown(wait=True, cancel_futures=True)
     else:
         for start in pending:
             if len(verified) >= limit:
