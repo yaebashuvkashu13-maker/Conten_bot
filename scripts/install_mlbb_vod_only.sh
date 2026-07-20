@@ -171,6 +171,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_vod_fast_scan.py" \
   "$REPO/scripts/genshin_vod_fast_scan.py" \
   "$REPO/scripts/wot_vod_fast_scan.py" \
+  "$REPO/scripts/wot_brawl_fight.py" \
   "$REPO/scripts/vod_analysis_cache.py" \
   "$REPO/scripts/mlbb_teamfight_detector.py" \
   "$REPO/scripts/pubg_killfeed_ocr.py" \

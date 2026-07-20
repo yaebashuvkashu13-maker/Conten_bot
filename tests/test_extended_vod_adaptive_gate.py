@@ -24,6 +24,7 @@ def test_genshin_soften_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     assert soften_level(2) == 1
     assert soften_level(3) == 2
     assert soften_level(6) == 3
+    assert soften_level(8) == 4
 
 
 def test_genshin_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,3 +40,9 @@ def test_genshin_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wot_l3_relaxes_impact() -> None:
     ov = overrides_for_level("wot", 3)
     assert float(ov["SMART_WOT_MIN_IMPACT_DENSITY"]) < float(overrides_for_level("wot", 1)["SMART_WOT_MIN_IMPACT_DENSITY"])
+
+
+def test_wot_l4_disables_brawl_gate() -> None:
+    ov = overrides_for_level("wot", 4)
+    assert ov.get("WOT_BRAWL_GATE") == "0"
+    assert float(ov["SMART_WOT_MIN_IMPACT_DENSITY"]) <= 0.012

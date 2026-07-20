@@ -111,7 +111,13 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
             return True, f"low_hit_flashes={flashes}:need{min_flashes}"
         if impact < min_impact:
             return True, f"no_hits=density{impact:.3f}"
-        if motion >= 0.10 and impact < 0.05:
+        cruise_cap = float(
+            os.environ.get(
+                "SMART_WOT_CRUISE_IMPACT_CAP",
+                os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", "0.05"),
+            )
+        )
+        if motion >= 0.10 and impact < cruise_cap:
             return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
         burst = float(metrics.get("burst_ratio", 0))
         if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
@@ -123,7 +129,13 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
     if impact < min_impact:
         return True, f"no_hits=density{impact:.3f}"
-    if motion >= 0.10 and impact < max(min_impact * 1.35, 0.070):
+    cruise_cap = float(
+        os.environ.get(
+            "SMART_WOT_CRUISE_IMPACT_CAP",
+            os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", str(max(min_impact * 1.35, 0.070))),
+        )
+    )
+    if motion >= 0.10 and impact < cruise_cap:
         return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
     if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
         return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"

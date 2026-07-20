@@ -447,7 +447,43 @@ def _scan_vod(
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
             if owner_exemplars and clip_score < min_clip:
                 continue
+            peak = float(clip.get("peak_start", clip.get("start", 0)))
             start = max(0.0, peak - lead)
+            dur = float(clip.get("input_duration") or clip.get("output_duration") or 0.0)
+            row_clip = {**clip, "start": start, "peak_start": peak}
+            if game == "genshin":
+                try:
+                    from genshin_boss_fight import expand_clip_to_full_boss_fight
+
+                    row_clip = expand_clip_to_full_boss_fight(vod, row_clip)
+                    start = float(row_clip["start"])
+                    dur = float(row_clip.get("input_duration") or dur)
+                    log.info(
+                        "genshin full boss fight peak=%.1f -> start=%.1f dur=%.1fs",
+                        peak,
+                        start,
+                        dur,
+                    )
+                except Exception as exc:
+                    log.warning("genshin full-fight expand failed peak=%.1f: %s", peak, exc)
+            if game == "wot":
+                try:
+                    from wot_brawl_fight import expand_clip_to_full_brawl
+
+                    row_clip = expand_clip_to_full_brawl(vod, row_clip)
+                    start = float(row_clip["start"])
+                    dur = float(row_clip.get("input_duration") or dur)
+                    log.info(
+                        "wot full brawl peak=%.1f -> start=%.1f dur=%.1fs",
+                        peak,
+                        start,
+                        dur,
+                    )
+                except Exception as exc:
+                    log.warning("wot brawl expand failed peak=%.1f: %s", peak, exc)
+            if dur > 0:
+                row_clip["input_duration"] = dur
+                row_clip["output_duration"] = dur
             sid = segment_id(vid, start)
             if sid in blocked_ids:
                 continue
@@ -457,7 +493,8 @@ def _scan_vod(
                     "start": start,
                     "peak_start": peak,
                     "score": float(clip.get("score", 0)),
-                    "clip": {**clip, "start": start, "peak_start": peak},
+                    "clip": row_clip,
+                    "duration": dur if dur > 0 else None,
                 }
             )
         if not rows:
@@ -599,7 +636,24 @@ def _scan_vod_with_adaptive(
         )
 
         clear_fast_seeds = clear_wot_seeds
-        ok_fast, fast_reason, seed_peaks = vod_fast_impact_check(vod, _profile(game))
+        # After early-window exhaust / high soften streak, probe mid-VOD (Genshin/MLBB practice).
+        prev_frac = os.environ.get("WOT_DENSE_PROBE_FRACTION")
+        if streak_in >= 4 and not str(os.environ.get("WOT_DENSE_PROBE_FRACTION", "") or "").strip():
+            os.environ["WOT_DENSE_PROBE_FRACTION"] = os.environ.get(
+                "WOT_DENSE_PROBE_FRACTION_SOFT", "0.35"
+            )
+            log.info(
+                "wot mid-VOD dense probe fraction=%s streak=%s",
+                os.environ["WOT_DENSE_PROBE_FRACTION"],
+                streak_in,
+            )
+        try:
+            ok_fast, fast_reason, seed_peaks = vod_fast_impact_check(vod, _profile(game))
+        finally:
+            if prev_frac is None:
+                os.environ.pop("WOT_DENSE_PROBE_FRACTION", None)
+            else:
+                os.environ["WOT_DENSE_PROBE_FRACTION"] = prev_frac
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
             if entry is None:
@@ -615,6 +669,11 @@ def _scan_vod_with_adaptive(
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
+        # Dense seeds changed discovery — drop stale peak pool so stage1 re-runs.
+        if entry is not None and seed_peaks:
+            entry.pop("last_pool_peaks", None)
+            entry.pop("last_pool_at", None)
+            _save_state(game, state)
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
@@ -653,7 +712,9 @@ def _scan_vod_with_adaptive(
     _save_state(game, state)
 
     if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
-        if active_level == 0 or new_streak % 2 == 0:
+        # Genshin/WoT: less spam — notify every 5th zero-send, not every other.
+        notify_every = 5 if game in ("genshin", "wot") else 2
+        if active_level == 0 or new_streak % notify_every == 0:
             entry = _vod_registry_entry(state, vod)
             send_message(
                 token,

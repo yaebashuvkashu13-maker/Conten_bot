@@ -63,6 +63,17 @@ WOT_SOFTEN_L3: dict[str, str] = {
     "PUBG_REJECT_BOT_FARM": "0",
 }
 
+# L4 — quota push: disable strict brawl cruise reject, keep visual/impact soft floor.
+WOT_SOFTEN_L4: dict[str, str] = {
+    **WOT_SOFTEN_L3,
+    "WOT_BRAWL_GATE": "0",
+    "SMART_WOT_MIN_IMPACT_DENSITY": "0.010",
+    "SMART_WOT_CRUISE_IMPACT_CAP": "0.008",
+    "WOT_BRAWL_CRUISE_IMPACT_MAX": "0.008",
+    "WOT_BRAWL_MIN_HIT_FLASHES": "1",
+    "SMART_WOT_MIN_BURST_RATIO": "1.1",
+}
+
 
 def streak_threshold() -> int:
     raw = os.environ.get(
@@ -76,6 +87,8 @@ def soften_level(streak: int) -> int:
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 6:
+        return 4
     if streak >= need + 4:
         return 3
     if streak >= need + 1:
@@ -87,16 +100,13 @@ def overrides_for_level(game: str, level: int) -> dict[str, str]:
     if level <= 0:
         return {}
     g = game.strip().lower()
-    tiers = (
-        (GENSHIN_SOFTEN_L1, GENSHIN_SOFTEN_L2, GENSHIN_SOFTEN_L3)
-        if g == "genshin"
-        else (WOT_SOFTEN_L1, WOT_SOFTEN_L2, WOT_SOFTEN_L3)
-    )
-    if level >= 3:
-        return dict(tiers[2])
-    if level >= 2:
-        return dict(tiers[1])
-    return dict(tiers[0])
+    if g == "genshin":
+        tiers = (GENSHIN_SOFTEN_L1, GENSHIN_SOFTEN_L2, GENSHIN_SOFTEN_L3)
+        idx = min(level, len(tiers)) - 1
+        return dict(tiers[idx])
+    tiers = (WOT_SOFTEN_L1, WOT_SOFTEN_L2, WOT_SOFTEN_L3, WOT_SOFTEN_L4)
+    idx = min(level, len(tiers)) - 1
+    return dict(tiers[idx])
 
 
 def soften_summary(game: str, level: int) -> str:
