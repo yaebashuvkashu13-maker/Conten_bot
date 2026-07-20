@@ -272,6 +272,15 @@ def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> lis
                 skip_intro,
                 float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO_SHORT", "15")),
             )
+    elif profile == "wot":
+        # Impact/gun spikes + center motion (tank brawls are visual+audio).
+        combined = gun * 0.50 + motion * 0.35 + audio * 0.15
+        skip_intro = float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO", "45"))
+        if float(analysis.get("duration") or 0) < 360:
+            skip_intro = min(
+                skip_intro,
+                float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO_SHORT", "20")),
+            )
     elif profile == "mobile_legends":
         combined = motion * 0.45 + audio * 0.35 + gun * 0.20
         skip_intro = _mlbb_skip_intro_sec()
@@ -282,6 +291,8 @@ def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> lis
     min_gap = float(os.environ.get("HIGHLIGHT_PEAK_MIN_GAP_SEC", "75"))
     if profile == "genshin":
         min_gap = float(os.environ.get("GENSHIN_HIGHLIGHT_PEAK_MIN_GAP_SEC", "25"))
+    elif profile == "wot":
+        min_gap = float(os.environ.get("WOT_HIGHLIGHT_PEAK_MIN_GAP_SEC", "40"))
     order = np.argsort(combined)[::-1]
     starts: list[float] = []
     for idx in order:
@@ -341,6 +352,8 @@ def _rank_stage1_starts(
             scored.append((val, start))
         scored.sort(key=lambda row: row[0], reverse=True)
         return [s for _, s in scored]
+    elif profile == "wot":
+        weights = (0.50, 0.35, 0.15, 0.0)
     else:
         weights = (0.25, 0.40, 0.35, 0.0)
 
@@ -1089,9 +1102,14 @@ def rule_gate(
         return True, "mlbb_fight_ok"
 
     if profile == "wot":
-        if metrics.panns_explosion < 0.20 and metrics.panns_gun_max < 0.20:
+        # Soft rule gate: visual/motion can carry when PANNs miss cannon audio.
+        impact_ok = metrics.panns_explosion >= 0.12 or metrics.panns_gun_max >= 0.12
+        motion_ok = metrics.center_motion >= float(
+            os.environ.get("WOT_RULE_MOTION_MIN", "0.012")
+        )
+        if not impact_ok and not motion_ok:
             return False, f"panns_explosion_low={metrics.panns_explosion:.3f}"
-        if metrics.clip_score <= 0.03:
+        if metrics.clip_score <= 0.02:
             return False, f"clip_low={metrics.clip_score:.3f}"
         return True, "wot_impact_ok"
 
@@ -1201,6 +1219,14 @@ def score_candidate_window(
     ):
         # Genshin boss-bar/rule gate is authoritative — LR model often missing/stale.
         clf_ok = True
+    if (
+        profile == "wot"
+        and m.rule_pass
+        and m.visual_pass
+        and os.environ.get("WOT_USE_CLASSIFIER", "0") != "1"
+    ):
+        # WoT brawl/rule + visual hit-flash is authoritative — LR often stale.
+        clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
             m.panns_gun_max * 0.45
@@ -1215,6 +1241,13 @@ def score_candidate_window(
                 max(m.clip_score, 0) * 0.40
                 + m.boss_bar * 0.30
                 + m.center_motion * 0.20
+                + m.classifier_prob * 0.10
+            )
+        if profile == "wot":
+            m.combined_score = (
+                max(m.panns_gun_max, m.panns_explosion) * 0.35
+                + max(m.clip_score, 0) * 0.30
+                + m.center_motion * 0.25
                 + m.classifier_prob * 0.10
             )
         if segment_overlaps_owner_label(
@@ -1386,7 +1419,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     seed_starts: list[float] = []
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
-        min_seed = 15.0 if profile == "genshin" else 60.0
+        min_seed = 15.0 if profile in ("genshin", "wot") else 60.0
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
@@ -1464,12 +1497,21 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                 skip_intro,
                 float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO_SHORT", "15")),
             )
+    elif profile == "wot":
+        skip_intro = float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO", "45"))
+        if duration < 360:
+            skip_intro = min(
+                skip_intro,
+                float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO_SHORT", "20")),
+            )
     else:
         skip_intro = float(os.environ.get("SMART_SKIP_INTRO_SEC", "120"))
 
     step = STEP_SEC
     if profile == "genshin":
         step = float(os.environ.get("GENSHIN_HIGHLIGHT_STEP_SEC", "1.0"))
+    elif profile == "wot":
+        step = float(os.environ.get("WOT_HIGHLIGHT_STEP_SEC", "1.0"))
 
     t = skip_intro
     while t + WINDOW_SEC <= duration - 30:
