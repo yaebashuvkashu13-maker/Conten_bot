@@ -236,7 +236,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if dur and not _vod_length_ok(Path("x.mp4"), dur, game=game):
                 continue
             out.append(
                 {
@@ -712,7 +712,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        if _ffprobe_duration(mp4) < _vod_min_sec(game):
             continue
         if entry is None:
             entry = {
