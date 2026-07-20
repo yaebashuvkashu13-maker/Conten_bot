@@ -1762,22 +1762,30 @@ def discover_highlight_candidates(
         for start in starts
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
-    # Score dense/fast-probe seeds first (operational throughput for WoT/Genshin).
+    # Score dense/fast-probe seeds first — force-include even if stage1 filtered them.
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
     if seed_raw.strip() and profile in ("wot", "genshin"):
-        seed_set: set[float] = set()
+        seeded: list[float] = []
+        seen: set[float] = set()
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
                 continue
             try:
-                seed_set.add(round(float(part) - WINDOW_SEC * 0.5, 1))
-                seed_set.add(round(float(part), 1))
+                raw = float(part)
             except ValueError:
-                pass
-        if seed_set:
-            seeded = [s for s in pending if any(abs(s - t) <= 8.0 for t in seed_set)]
-            rest = [s for s in pending if s not in seeded]
+                continue
+            for candidate in (round(raw, 1), round(raw - WINDOW_SEC * 0.5, 1)):
+                if candidate < 10.0:
+                    continue
+                if any(abs(candidate - s) < 2.0 for s in seen):
+                    continue
+                if segment_key_fn and sig and segment_key_fn(sig, candidate) in used_keys:
+                    continue
+                seeded.append(candidate)
+                seen.add(candidate)
+        if seeded:
+            rest = [s for s in pending if not any(abs(s - t) < 2.0 for t in seen)]
             pending = seeded + rest
             log.info("highlight seed-priority %s: %s seed windows first", video_path.name, len(seeded))
     workers = _parallel_workers()
