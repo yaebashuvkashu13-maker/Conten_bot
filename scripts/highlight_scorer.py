@@ -1813,6 +1813,8 @@ def discover_highlight_candidates(
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
+                    for pending_fut in futures:
+                        pending_fut.cancel()
                     break
     else:
         for start in pending:

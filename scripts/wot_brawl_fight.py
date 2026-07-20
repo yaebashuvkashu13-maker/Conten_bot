@@ -203,8 +203,11 @@ def _run_containing_peak(
 
 def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
     """Return (start, end, dur) for brawl containing peak. Prefer fight start."""
+    import logging
+
     from smart_video_editor import ffprobe_duration
 
+    log = logging.getLogger("wot_brawl_fight")
     file_dur = float(ffprobe_duration(vod) or 0.0)
     if file_dur <= 5.0:
         return 0.0, 0.0, 0.0
@@ -215,38 +218,47 @@ def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
     hard_max = _hard_max_sec()
     step = _step_sec()
 
-    # Search window around peak (analysis gunfire helps widen when available)
-    pad = max(hard_max, 45.0)
+    # Fixed pad around peak — avoid full-VOD analyze_video_cached (too slow).
+    pad = float(os.environ.get("WOT_BRAWL_SEARCH_PAD_SEC", "40"))
+    pad = max(hard_max * 0.6, min(pad, 60.0))
     t0 = max(0.0, peak - pad)
     t1 = min(file_dur, peak + pad)
 
-    try:
-        analysis = _analysis_for(vod)
-        win = float(analysis.get("window_seconds", 2.0))
-        gun = analysis.get("gunfire", analysis.get("audio"))
-        if gun is not None:
-            import numpy as np
+    if os.environ.get("WOT_BRAWL_USE_ANALYSIS", "0") == "1":
+        try:
+            analysis = _analysis_for(vod)
+            win = float(analysis.get("window_seconds", 2.0))
+            gun = analysis.get("gunfire", analysis.get("audio"))
+            if gun is not None:
+                import numpy as np
 
-            g = np.asarray(gun, dtype=np.float32)
-            i_peak = int(peak / win)
-            # Walk outward while gunfire stays elevated
-            thr = float(np.percentile(g, 60)) if g.size else 0.02
-            lo, hi = i_peak, i_peak
-            while lo > 0 and float(g[lo]) >= thr * 0.55:
-                lo -= 1
-            while hi < len(g) - 1 and float(g[hi]) >= thr * 0.55:
-                hi += 1
-            t0 = max(0.0, min(t0, lo * win - 5.0))
-            t1 = min(file_dur, max(t1, hi * win + 5.0))
-    except Exception:
-        pass
+                g = np.asarray(gun, dtype=np.float32)
+                i_peak = int(peak / win)
+                thr = float(np.percentile(g, 60)) if g.size else 0.02
+                lo, hi = i_peak, i_peak
+                while lo > 0 and float(g[lo]) >= thr * 0.55:
+                    lo -= 1
+                while hi < len(g) - 1 and float(g[hi]) >= thr * 0.55:
+                    hi += 1
+                t0 = max(0.0, min(t0, lo * win - 5.0))
+                t1 = min(file_dur, max(t1, hi * win + 5.0))
+        except Exception:
+            pass
 
+    log.info(
+        "wot brawl expand search peak=%.1f window=%.0f-%.0f step=%.1f",
+        peak,
+        t0,
+        t1,
+        step,
+    )
     series = _combat_series(vod, t0, t1, step=step)
     run = _run_containing_peak(series, peak)
     if run is None:
         # Fallback: fixed window from slightly before peak
         start = max(0.0, peak - lead)
         end = min(file_dur, start + min_d)
+        log.info("wot brawl expand fallback start=%.1f dur=%.1f", start, end - start)
         return round(start, 2), round(end, 2), round(end - start, 2)
 
     run_start, run_end = run
@@ -279,6 +291,15 @@ def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
             end = min(file_dur, start + cap)
         dur = end - start
 
+    log.info(
+        "wot brawl expand peak=%.1f -> start=%.1f end=%.1f dur=%.1f run=%.1f-%.1f",
+        peak,
+        start,
+        end,
+        dur,
+        run_start,
+        run_end,
+    )
     return round(start, 2), round(end, 2), round(dur, 2)
 
 
