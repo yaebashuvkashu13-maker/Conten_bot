@@ -399,6 +399,10 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
         from youtube_shooter_vod_prefs import rank_discovery_candidates
 
         out = rank_discovery_candidates(game, out)
+    elif game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import rank_discovery_candidates as rank_extended
+
+        out = rank_extended(game, out)
     if skipped:
         log.info(
             "discovery game=%s mode=%s raw_kept=%s skipped=%s",
@@ -1163,6 +1167,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             ranked = pick_discovery_candidate(game, [pick])
             if ranked is not None:
                 pick = ranked
+        elif pick and game in EXTENDED_GAMES:
+            from youtube_extended_vod_prefs import pick_discovery_candidate as pick_extended
+
+            ranked = pick_extended(game, [pick])
+            if ranked is not None:
+                pick = ranked
     else:
         candidates = _discover_candidates(game, env, used)
         if candidates:
@@ -1170,6 +1180,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 from youtube_shooter_vod_prefs import pick_discovery_candidate
 
                 pick = pick_discovery_candidate(game, candidates)
+            elif game in EXTENDED_GAMES:
+                from youtube_extended_vod_prefs import pick_discovery_candidate as pick_extended
+
+                pick = pick_extended(game, candidates)
             if pick is None:
                 pick = candidates[0]
     if pick is None:
