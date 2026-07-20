@@ -169,7 +169,14 @@ def download_short(url: str, out_dir: Path, env: dict[str, str]) -> Path | None:
     template = str(out_dir / "yt_%(id)s.%(ext)s")
     cmd = ytdlp_cmd(env, use_proxy=False) + [
         "-f",
-        env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b"),
+        env.get(
+            "YOUTUBE_SHORTS_FORMAT",
+            # Prefer H.264 — AV1 software decode is slow/broken on many VPS CPUs.
+            "bv*[vcodec^=avc1][height<=1080]+ba/"
+            "bv*[vcodec^=avc][height<=1080]+ba/"
+            "b[ext=mp4][height<=720]/"
+            "bv*[height<=720]+ba/b",
+        ),
         "--merge-output-format",
         "mp4",
         "-o",
