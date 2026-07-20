@@ -1,6 +1,17 @@
 {
-  "good": [],
-  "bad": [],
-  "feedback": [],
-  "updated_at": ""
+  "candidates": [
+    {
+      "video_id": "abcdefghijk",
+      "path": "/tmp/pytest-of-ubuntu/pytest-5/test_apply_owner_label_bad_blo0/shorts/yt_abcdefghijk.mp4",
+      "title": "MLBB savage",
+      "search_query": "mlbb savage shorts",
+      "view_count": 100,
+      "gameplay_pass": 0,
+      "gameplay_score": 0.0,
+      "ingested_at": "2026-07-20 10:48:47",
+      "id": "abcdefghijk",
+      "gameplay_reason": "not_gameplay"
+    }
+  ],
+  "updated_at": "2026-07-20 10:48:47"
 }

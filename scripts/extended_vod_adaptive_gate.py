@@ -36,6 +36,17 @@ GENSHIN_SOFTEN_L3: dict[str, str] = {
     "SMART_GENSHIN_STRICT_MIN_BOSS_SCORE": "0.18",
     "SMART_GENSHIN_STRICT_MIN_CENTER_MOTION": "0.07",
     "PUBG_RELAX_OWNER_HEURISTICS": "1",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.05",
+    "VIRAL_COMBAT_HOOK_MIN": "0.03",
+}
+
+GENSHIN_SOFTEN_L4: dict[str, str] = {
+    **GENSHIN_SOFTEN_L3,
+    "SMART_GENSHIN_STRICT_MIN_BOSS_SCORE": "0.14",
+    "SMART_GENSHIN_STRICT_MIN_CENTER_MOTION": "0.05",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.03",
+    "VIRAL_COMBAT_HOOK_MIN": "0.015",
+    "HIGHLIGHT_EXTENDED_CLIP_HOOK_MIN": "0.08",
 }
 
 WOT_SOFTEN_L1: dict[str, str] = {
@@ -53,6 +64,8 @@ WOT_SOFTEN_L2: dict[str, str] = {
     "SMART_WOT_MIN_BURST_RATIO": "1.7",
     "PUBG_COMBAT_FRAMES_REQUIRED": "1",
     "VISUAL_PUBG_MIN_FRAMES_PASS": "1",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.06",
+    "VIRAL_COMBAT_HOOK_MIN": "0.04",
 }
 
 WOT_SOFTEN_L3: dict[str, str] = {
@@ -61,6 +74,20 @@ WOT_SOFTEN_L3: dict[str, str] = {
     "SMART_WOT_MIN_BURST_RATIO": "1.4",
     "PUBG_RELAX_OWNER_HEURISTICS": "1",
     "PUBG_REJECT_BOT_FARM": "0",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.04",
+    "VIRAL_COMBAT_HOOK_MIN": "0.02",
+    "WOT_BRAWL_MIN_HIT_FLASHES": "1",
+}
+
+WOT_SOFTEN_L4: dict[str, str] = {
+    **WOT_SOFTEN_L3,
+    "SMART_WOT_MIN_IMPACT_DENSITY": "0.028",
+    "SMART_WOT_MIN_BURST_RATIO": "1.2",
+    "WOT_BRAWL_GATE": "0",
+    "VIRAL_SEGMENT_HOOK_MIN": "0.03",
+    "VIRAL_COMBAT_HOOK_MIN": "0.015",
+    "HIGHLIGHT_EXTENDED_CLIP_HOOK_MIN": "0.08",
+    "EXTENDED_VOD_SOFT_MAX_PEAK_TRIES": "10",
 }
 
 
@@ -76,6 +103,8 @@ def soften_level(streak: int) -> int:
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 8:
+        return 4
     if streak >= need + 4:
         return 3
     if streak >= need + 1:
@@ -87,11 +116,12 @@ def overrides_for_level(game: str, level: int) -> dict[str, str]:
     if level <= 0:
         return {}
     g = game.strip().lower()
-    tiers = (
-        (GENSHIN_SOFTEN_L1, GENSHIN_SOFTEN_L2, GENSHIN_SOFTEN_L3)
-        if g == "genshin"
-        else (WOT_SOFTEN_L1, WOT_SOFTEN_L2, WOT_SOFTEN_L3)
-    )
+    if g == "genshin":
+        tiers = (GENSHIN_SOFTEN_L1, GENSHIN_SOFTEN_L2, GENSHIN_SOFTEN_L3, GENSHIN_SOFTEN_L4)
+    else:
+        tiers = (WOT_SOFTEN_L1, WOT_SOFTEN_L2, WOT_SOFTEN_L3, WOT_SOFTEN_L4)
+    if level >= 4:
+        return dict(tiers[3])
     if level >= 3:
         return dict(tiers[2])
     if level >= 2:
