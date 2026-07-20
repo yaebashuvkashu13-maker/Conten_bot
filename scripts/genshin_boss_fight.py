@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Expand Genshin highlight peaks to the full boss fight window.
 
-Boss fights often last 30–90s. Highlight discovery scores a short window (~10s);
-this module walks combat/boss-bar sustain around the peak so the sent clip covers
-the whole fight, not a mid-fight fragment.
+Boss fights often last 30–90s. Discovery scores a short peak (~10s); this module
+finds the contiguous boss-HP-bar run that contains the peak and cuts from the
+fight START (not mid-fight).
 """
 
 from __future__ import annotations
@@ -29,19 +29,21 @@ def _hard_max_sec() -> float:
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("GENSHIN_VOD_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "3")))
+    """Seconds before boss bar appears (approach / lock-on)."""
+    return float(os.environ.get("GENSHIN_VOD_LEAD_SEC", "5"))
 
 
 def _bar_step_sec() -> float:
-    return float(os.environ.get("GENSHIN_BOSS_FIGHT_BAR_STEP_SEC", "4"))
+    return float(os.environ.get("GENSHIN_BOSS_FIGHT_BAR_STEP_SEC", "2"))
 
 
 def _bar_keep() -> float:
     return float(os.environ.get("GENSHIN_BOSS_FIGHT_BAR_KEEP", "0.12"))
 
 
-def _quiet_bins() -> int:
-    return max(1, int(os.environ.get("GENSHIN_BOSS_FIGHT_QUIET_BINS", "3")))
+def _gap_tolerate() -> int:
+    """Allow this many low-bar samples inside a fight without splitting the run."""
+    return max(0, int(os.environ.get("GENSHIN_BOSS_FIGHT_GAP_TOLERATE", "3")))
 
 
 def variable_length_enabled() -> bool:
@@ -83,7 +85,7 @@ def _boss_bar_series(
     *,
     step: float,
 ) -> list[tuple[float, float]]:
-    """Batch-decode boss-bar scores over [t0,t1] at ~1/step fps (fast path)."""
+    """Batch-decode boss-bar scores over [t0,t1] at ~1/step fps."""
     import subprocess
 
     from gameplay_gate import _genshin_boss_bar_score
@@ -114,7 +116,9 @@ def _boss_bar_series(
         "pipe:1",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=False, timeout=max(60, int(span) + 30))
+        proc = subprocess.run(
+            cmd, capture_output=True, check=False, timeout=max(60, int(span) + 30)
+        )
     except (subprocess.TimeoutExpired, OSError):
         proc = None
     out: list[tuple[float, float]] = []
@@ -131,7 +135,6 @@ def _boss_bar_series(
             idx += 1
     if out:
         return out
-    # Fallback: sparse seeks
     t = t0
     while t <= t1:
         out.append((t, _sample_boss_bar(vod, t)))
@@ -139,59 +142,67 @@ def _boss_bar_series(
     return out
 
 
-def _expand_by_boss_bar(
-    vod: Path,
-    start: float,
-    end: float,
-    file_dur: float,
+def _bar_runs(
+    series: list[tuple[float, float]],
     *,
-    crop_box=None,
-) -> tuple[float, float]:
-    """Walk outward while boss HP bar stays present — one ffmpeg batch, not N seeks."""
-    step = max(2.0, _bar_step_sec())
-    keep = _bar_keep()
-    hard = _hard_max_sec()
-    # Probe window around current bounds (enough to grow to hard max)
-    pad = hard
-    t0 = max(0.0, start - pad)
-    t1 = min(file_dur, end + pad)
-    series = _boss_bar_series(vod, t0, t1, step=step)
+    keep: float,
+    gap_tolerate: int,
+) -> list[tuple[float, float, float]]:
+    """
+    Contiguous boss-bar runs allowing short gaps (camera cuts / flicker).
+    Returns list of (run_start, run_end, max_bar).
+    """
     if not series:
-        return start, end
+        return []
+    runs: list[tuple[float, float, float]] = []
+    run_start: float | None = None
+    run_end: float | None = None
+    run_max = 0.0
+    miss = 0
+    for t, bar in series:
+        if bar >= keep:
+            if run_start is None:
+                run_start = t
+            run_end = t
+            run_max = max(run_max, bar)
+            miss = 0
+        else:
+            if run_start is None:
+                continue
+            miss += 1
+            if miss > gap_tolerate:
+                runs.append((run_start, run_end or run_start, run_max))
+                run_start = None
+                run_end = None
+                run_max = 0.0
+                miss = 0
+    if run_start is not None:
+        runs.append((run_start, run_end or run_start, run_max))
+    return runs
 
-    # Map times near start/end
-    left = start
-    right = end
-    # extend left: walk series backward from start
-    miss = 0
-    for t, bar in reversed([(t, b) for t, b in series if t <= start + 0.01]):
-        if (right - t) > hard:
-            break
-        if bar >= keep:
-            left = t
-            miss = 0
-        else:
-            miss += 1
-            if miss >= 2 and t < start:
-                break
-    # extend right
-    miss = 0
-    for t, bar in [(t, b) for t, b in series if t >= end - 0.01]:
-        if (t - left) > hard:
-            break
-        if bar >= keep:
-            right = min(file_dur, t + step * 0.5)
-            miss = 0
-        else:
-            miss += 1
-            if miss >= 2 and t > end:
-                break
-    return left, right
+
+def _run_containing_peak(
+    runs: list[tuple[float, float, float]],
+    peak: float,
+    *,
+    pad: float = 8.0,
+) -> tuple[float, float, float] | None:
+    for start, end, mx in runs:
+        if start - pad <= peak <= end + pad:
+            return start, end, mx
+    # nearest run by center distance
+    if not runs:
+        return None
+    return min(runs, key=lambda r: abs((r[0] + r[1]) / 2.0 - peak))
 
 
 def detect_boss_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float]:
     """
     Detect full boss-fight window around peak_sec.
+
+    Prefer the START of the boss-bar run that contains the peak.
+    If the run is longer than hard_max, keep the beginning and trim the end
+    (never cut the fight opening to keep the peak).
 
     Returns (start_sec, end_sec, duration_sec).
     """
@@ -199,98 +210,78 @@ def detect_boss_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, 
     max_d = _max_sec()
     hard_max = _hard_max_sec()
     lead = _lead_sec()
+    peak = float(peak_sec)
+
     analysis = _analysis_for(vod)
-    win = float(analysis.get("window_seconds", 2.0))
     file_dur = float(analysis.get("duration", 0.0))
-    bins = int(analysis.get("bins", 0))
-    if bins < 2 or file_dur <= 0:
-        start = max(0.0, float(peak_sec) - lead)
-        end = min(file_dur if file_dur > 0 else start + min_d, start + min(max_d, 45.0))
+    if file_dur <= 0:
+        from smart_video_editor import ffprobe_duration
+
+        file_dur = float(ffprobe_duration(vod) or 0.0)
+    if file_dur <= 0:
+        start = max(0.0, peak - lead)
+        end = start + min_d
+        return round(start, 2), round(end, 2), round(min_d, 2)
+
+    step = max(1.0, _bar_step_sec())
+    keep = _bar_keep()
+    # Scan enough to cover a full fight on either side of the peak
+    t0 = max(0.0, peak - hard_max - 15.0)
+    t1 = min(file_dur, peak + hard_max + 15.0)
+    series = _boss_bar_series(vod, t0, t1, step=step)
+    runs = _bar_runs(series, keep=keep, gap_tolerate=_gap_tolerate())
+    chosen = _run_containing_peak(runs, peak)
+
+    if chosen is None:
+        # Fallback: fixed window that still starts before the peak
+        start = max(0.0, peak - max(lead, min_d * 0.35))
+        end = min(file_dur, start + min(max_d, 45.0))
+        if end - start < min_d:
+            end = min(file_dur, start + min_d)
+            start = max(0.0, end - min_d)
         return round(start, 2), round(end, 2), round(max(0.0, end - start), 2)
 
-    motion = np.asarray(analysis["center_motion"], dtype=np.float32)
-    audio = np.asarray(analysis["audio"], dtype=np.float32)
-    scene = np.asarray(analysis["scene"], dtype=np.float32)
-    combined = motion * 0.40 + audio * 0.35 + scene * 0.25
-
-    sustain_thr = float(np.percentile(combined, 38)) if bins > 4 else float(combined.max()) * 0.70
-    motion_thr = float(np.percentile(motion, 48)) if bins > 3 else float(motion.max()) * 0.45
-
-    peak_idx = int(round(float(peak_sec) / win))
-    peak_idx = max(0, min(bins - 1, peak_idx))
-    extend = int(hard_max / max(win, 0.5)) + 4
-    quiet_need = _quiet_bins()
-
-    left = peak_idx
-    quiet = 0
-    while left > 0 and peak_idx - left < extend:
-        probe = left - 1
-        active = combined[probe] >= sustain_thr or motion[probe] >= motion_thr
-        left = probe
-        if active:
-            quiet = 0
-        else:
-            quiet += 1
-            if quiet >= quiet_need:
-                break
-
-    right = peak_idx
-    quiet = 0
-    while right < bins - 1 and right - peak_idx < extend:
-        probe = right + 1
-        active = combined[probe] >= sustain_thr * 0.90 or motion[probe] >= motion_thr * 0.92
-        right = probe
-        if active:
-            quiet = 0
-        else:
-            quiet += 1
-            if quiet >= quiet_need:
-                break
-
-    region_start = left * win
-    region_end = min(file_dur, (right + 1) * win)
-
-    # Prefer covering the peak with a short lead-in.
-    start = max(0.0, min(region_start, float(peak_sec) - lead))
-    end = min(file_dur, max(region_end, float(peak_sec) + lead))
-
-    if os.environ.get("GENSHIN_BOSS_FIGHT_BAR_EXPAND", "1") == "1":
-        try:
-            from gameplay_gate import detect_game_viewport_crop
-
-            crop = detect_game_viewport_crop(vod, float(peak_sec), min(12.0, max_d))
-            start, end = _expand_by_boss_bar(vod, start, end, file_dur, crop_box=crop)
-        except Exception:
-            pass
+    run_start, run_end, _mx = chosen
+    # Start slightly before bar appears (approach / intro of fight)
+    start = max(0.0, run_start - lead)
+    end = min(file_dur, max(run_end + step, peak + lead))
 
     dur = end - start
     if dur < min_d:
-        # Grow symmetrically around peak when sustain window is too short.
-        half = min_d / 2.0
-        start = max(0.0, float(peak_sec) - half)
+        # Grow forward first (keep fight start), then backward if needed
         end = min(file_dur, start + min_d)
         if end - start < min_d:
             start = max(0.0, end - min_d)
         dur = end - start
 
-    if dur > hard_max:
-        # Keep peak inside the hard cap window.
-        start = max(0.0, min(start, float(peak_sec) - lead))
-        end = min(file_dur, start + hard_max)
-        if float(peak_sec) > end:
-            end = min(file_dur, float(peak_sec) + lead)
-            start = max(0.0, end - hard_max)
-        dur = end - start
-    elif dur > max_d and os.environ.get("GENSHIN_BOSS_FIGHT_TRIM_LONG", "0") == "1":
-        end = min(file_dur, max(region_end, float(peak_sec) + lead))
-        start = max(0.0, end - max_d)
+    # Prefer keeping fight START when trimming long runs
+    prefer_start = os.environ.get("GENSHIN_BOSS_FIGHT_PREFER_START", "1") == "1"
+    cap = hard_max
+    if dur > max_d and os.environ.get("GENSHIN_BOSS_FIGHT_TRIM_LONG", "0") == "1":
+        cap = max_d
+
+    if dur > cap:
+        if prefer_start:
+            # Keep opening of the fight; trim the tail (peak may be mid/late — OK)
+            end = min(file_dur, start + cap)
+            # If peak would fall outside, shift just enough to include peak+lead
+            if peak + lead > end:
+                end = min(file_dur, peak + lead)
+                start = max(0.0, end - cap)
+                # Still bias toward run_start if peak fits
+                if run_start >= start and peak <= start + cap:
+                    start = max(0.0, min(run_start - lead, peak + lead - cap))
+                    end = min(file_dur, start + cap)
+        else:
+            start = max(0.0, peak - lead)
+            end = min(file_dur, start + cap)
         dur = end - start
 
     return round(start, 2), round(end, 2), round(dur, 2)
 
 
 def expand_clip_to_full_boss_fight(vod: Path, clip: dict) -> dict:
-    """Rewrite clip start/duration to cover the full boss fight around peak."""
+    """Rewrite clip start/duration to cover the full boss fight from the start."""
     if not variable_length_enabled():
         return clip
     peak = float(clip.get("peak_start", clip.get("start", 0)))
@@ -306,4 +297,5 @@ def expand_clip_to_full_boss_fight(vod: Path, clip: dict) -> dict:
         "output_duration": dur,
         "boss_fight_full": True,
         "boss_fight_dur": dur,
+        "boss_fight_from_start": True,
     }
