@@ -76,6 +76,69 @@ def _sample_boss_bar(vod: Path, t: float, *, crop_box=None) -> float:
     return float(_genshin_boss_bar_score(frame))
 
 
+def _boss_bar_series(
+    vod: Path,
+    t0: float,
+    t1: float,
+    *,
+    step: float,
+) -> list[tuple[float, float]]:
+    """Batch-decode boss-bar scores over [t0,t1] at ~1/step fps (fast path)."""
+    import subprocess
+
+    from gameplay_gate import _genshin_boss_bar_score
+
+    span = max(0.0, t1 - t0)
+    if span < 1.0:
+        return [(t0, _sample_boss_bar(vod, t0))]
+    fps = 1.0 / max(1.0, step)
+    w, h = 320, 180
+    frame_bytes = w * h * 3
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{t0:.3f}",
+        "-t",
+        f"{span:.3f}",
+        "-i",
+        str(vod),
+        "-vf",
+        f"fps={fps:.4f},scale={w}:{h}",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, check=False, timeout=max(60, int(span) + 30))
+    except (subprocess.TimeoutExpired, OSError):
+        proc = None
+    out: list[tuple[float, float]] = []
+    if proc is not None and proc.returncode == 0 and proc.stdout:
+        raw = proc.stdout
+        idx = 0
+        while True:
+            offset = idx * frame_bytes
+            chunk = raw[offset : offset + frame_bytes]
+            if len(chunk) < frame_bytes:
+                break
+            frame = np.frombuffer(chunk, dtype=np.uint8).reshape((h, w, 3)).copy()
+            out.append((t0 + idx * step, float(_genshin_boss_bar_score(frame))))
+            idx += 1
+    if out:
+        return out
+    # Fallback: sparse seeks
+    t = t0
+    while t <= t1:
+        out.append((t, _sample_boss_bar(vod, t)))
+        t += step
+    return out
+
+
 def _expand_by_boss_bar(
     vod: Path,
     start: float,
@@ -84,41 +147,45 @@ def _expand_by_boss_bar(
     *,
     crop_box=None,
 ) -> tuple[float, float]:
-    """Walk outward while boss HP bar stays present."""
+    """Walk outward while boss HP bar stays present — one ffmpeg batch, not N seeks."""
     step = max(2.0, _bar_step_sec())
     keep = _bar_keep()
     hard = _hard_max_sec()
+    # Probe window around current bounds (enough to grow to hard max)
+    pad = hard
+    t0 = max(0.0, start - pad)
+    t1 = min(file_dur, end + pad)
+    series = _boss_bar_series(vod, t0, t1, step=step)
+    if not series:
+        return start, end
+
+    # Map times near start/end
     left = start
     right = end
-
-    # extend left
-    t = start - step
+    # extend left: walk series backward from start
     miss = 0
-    while t >= 0 and (right - left) < hard:
-        bar = _sample_boss_bar(vod, max(0.0, t), crop_box=crop_box)
+    for t, bar in reversed([(t, b) for t, b in series if t <= start + 0.01]):
+        if (right - t) > hard:
+            break
         if bar >= keep:
-            left = max(0.0, t)
+            left = t
             miss = 0
         else:
             miss += 1
-            if miss >= 2:
+            if miss >= 2 and t < start:
                 break
-        t -= step
-
     # extend right
-    t = end + step
     miss = 0
-    while t <= file_dur and (right - left) < hard:
-        bar = _sample_boss_bar(vod, min(file_dur - 0.05, t), crop_box=crop_box)
+    for t, bar in [(t, b) for t, b in series if t >= end - 0.01]:
+        if (t - left) > hard:
+            break
         if bar >= keep:
             right = min(file_dur, t + step * 0.5)
             miss = 0
         else:
             miss += 1
-            if miss >= 2:
+            if miss >= 2 and t > end:
                 break
-        t += step
-
     return left, right
 
 
