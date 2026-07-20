@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-07-20-hq-download-on-button-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -598,10 +598,10 @@ def _shooter_send_vseg_hq_file(game: str, chat_id: str | int, segment_id: str) -
         logging.warning('shooter HQ missing seg=%s game=%s', sid, game)
         return False
     caption = (
-        f'{game.upper()} HQ файл #{sid}\n'
+        f'{game.upper()} файл #{sid}\n'
         f"VOD {row.get('vod_id') or sid.rsplit('_', 1)[0]}\n"
         f"peak={row.get('peak_start') or row.get('start', '?')}s\n"
-        f'📁 скачай файл — без пережатия Telegram'
+        f'📥 без пережатия Telegram'
     )
     ok = send_hq_files(
         BOT_TOKEN,
@@ -636,7 +636,7 @@ def _handle_shooter_vseg_callback(
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'text': 'Файл отправлен' if ok else 'Не удалось отправить файл',
                     'show_alert': not ok,
                 },
                 timeout=15,
@@ -644,7 +644,7 @@ def _handle_shooter_vseg_callback(
             if not ok:
                 send_message(
                     chat_id,
-                    f'HQ файл для {game.upper()} #{item_id} не отправился (нет файла на диске).',
+                    f'Файл для {game.upper()} #{item_id} не отправился (нет файла на диске).',
                 )
         except Exception as exc:
             logging.exception('%s_vseg_hq callback failed data=%s', game, data)
@@ -762,13 +762,7 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
-        if is_good:
-            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ/file delivery only on explicit 📥 Скачать — not auto after 👍.
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -822,7 +816,7 @@ def _mlbb_send_hq_file(chat_id: str | int, video_id: str) -> bool:
     if not path.exists():
         return False
     caption = (
-        f"MLBB HQ файл #{video_id}\n"
+        f"MLBB файл #{video_id}\n"
         f"{row.get('title', '')[:120]}\n"
         f"{row.get('url', '')}\n"
         f"#id {video_id}"
@@ -846,7 +840,7 @@ def _mlbb_send_vseg_hq_file(chat_id: str | int, segment_id: str) -> bool:
         else:
             return False
     caption = (
-        f"MLBB HQ файл #{sid}\n"
+        f"MLBB файл #{sid}\n"
         f"VOD {row.get('vod_id') or sid.rsplit('_', 1)[0]}\n"
         f"peak={row.get('peak_start') or row.get('start', '?')}s"
     )
@@ -959,7 +953,7 @@ def _handle_game_shorts_callback(
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'text': 'Файл отправлен' if ok else 'Не удалось отправить файл',
                     'show_alert': not ok,
                 },
                 timeout=15,
@@ -1106,7 +1100,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -1124,13 +1118,13 @@ def handle_callback_query(query: dict) -> None:
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'text': 'Файл отправлен' if ok else 'Не удалось отправить файл',
                     'show_alert': not ok,
                 },
                 timeout=15,
             )
             if not ok:
-                send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
+                send_message(chat_id, f'Файл для #{item_id} не отправился (нет файла или >50MB).')
         except Exception as exc:
             logging.exception('mlbb_hq callback failed data=%s', data)
             api_call(
@@ -1148,7 +1142,7 @@ def handle_callback_query(query: dict) -> None:
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
+                    'text': 'Файл отправлен' if ok else 'Не удалось отправить файл',
                     'show_alert': not ok,
                 },
                 timeout=15,
@@ -1156,7 +1150,7 @@ def handle_callback_query(query: dict) -> None:
             if not ok:
                 send_message(
                     chat_id,
-                    f'HQ файл для #{item_id} не отправился (нет файла на диске).',
+                    f'Файл для #{item_id} не отправился (нет файла на диске).',
                 )
         except Exception as exc:
             logging.exception('mlbb_vseg_hq callback failed data=%s', data)
@@ -1347,13 +1341,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'vseg' and is_good:
-            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ/file delivery only on explicit 📥 Скачать — not auto after 👍.
     except Exception as exc:
         try:
             api_call(
