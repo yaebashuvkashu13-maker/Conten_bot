@@ -31,35 +31,46 @@ DATA_ROOT = REPO / "data" / "viral_reference"
 DATASET_ROOT = Path(os.environ.get("VIRAL_REFERENCE_ROOT", "/root/datasets/viral_reference"))
 EXEMPLAR_ROOT = Path(os.environ.get("HIGHLIGHT_EXEMPLAR_ROOT", str(REPO / "data" / "highlight_exemplars")))
 
+ALL_PROFILES: tuple[str, ...] = (
+    "mobile_legends",
+    "pubg",
+    "standoff",
+    "genshin",
+    "wot",
+)
+
 GAME_SEARCHES: dict[str, list[str]] = {
     "pubg": [
-        "pubg mobile highlights",
-        "pubg best moments",
-        "pubg mobile clutch",
-        "pubg gunfight",
-        "pubg metro royale",
+        "pubg mobile highlights shorts",
+        "pubg best moments shorts",
+        "метро роял пабг shorts",
+        "метро роял перестрелка shorts",
+        "pubg metro royale clutch shorts",
     ],
     "mobile_legends": [
-        "mobile legends highlights",
-        "mlbb savage",
-        "mlbb teamfight",
-        "mlbb mythic rank",
-        "mobile legends bang bang clutch",
+        "mlbb savage shorts",
+        "mobile legends mythic teamfight shorts",
+        "mlbb triple kill shorts",
+        "mobile legends highlights shorts",
+        "mlbb mythic rank shorts",
     ],
     "standoff": [
-        "standoff 2 highlights",
-        "standoff 2 best moments",
-        "standoff 2 clutch",
+        "standoff 2 clutch shorts",
+        "стендоф 2 клатч shorts",
+        "standoff 2 ranked перестрелка shorts",
+        "стендоф 2 эйс shorts",
     ],
     "genshin": [
-        "genshin impact boss fight",
-        "genshin impact highlights",
-        "genshin boss rush",
+        "genshin impact boss fight shorts",
+        "геншин импакт босс shorts",
+        "genshin boss fight shorts русский",
+        "genshin impact highlights shorts",
     ],
     "wot": [
-        "world of tanks highlights",
-        "wot blitz best moments",
-        "tank battle explosion",
+        "world of tanks blitz фраг shorts",
+        "wot blitz эпичный выстрел shorts",
+        "танки фраг shorts русский",
+        "world of tanks highlights shorts",
     ],
 }
 
@@ -478,11 +489,7 @@ def main() -> int:
     parser.add_argument("--skip-download", action="store_true", help="Only process existing local clips")
     args = parser.parse_args()
 
-    profiles = (
-        ("pubg", "mobile_legends")
-        if args.profile == "all"
-        else (normalize_profile(args.profile),)
-    )
+    profiles = ALL_PROFILES if args.profile == "all" else (normalize_profile(args.profile),)
     code = 0
     for profile in profiles:
         if ingest_game(

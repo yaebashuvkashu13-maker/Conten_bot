@@ -26,6 +26,7 @@ export HIGHLIGHT_USE_OWNER_ANCHORS=0
 cd "$REPO"
 {
   echo "===== $(date -Is) viral_reference_refresh start ====="
+  python3 "$REPO/scripts/viral_learning_batch.py" --per-game 15 --profile all --train || \
   python3 "$REPO/scripts/viral_reference_ingest.py" --profile all --max-download 40
   python3 "$REPO/scripts/highlight_train.py" --profile pubg || true
   python3 "$REPO/scripts/highlight_train.py" --profile mobile_legends || true
