@@ -266,7 +266,12 @@ def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> lis
     elif profile == "genshin":
         scene = np.asarray(analysis["scene"], dtype=np.float32)
         combined = motion * 0.35 + audio * 0.30 + scene * 0.35
-        skip_intro = 120.0
+        skip_intro = float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO", "45"))
+        if float(analysis.get("duration") or 0) < 360:
+            skip_intro = min(
+                skip_intro,
+                float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO_SHORT", "15")),
+            )
     elif profile == "mobile_legends":
         combined = motion * 0.45 + audio * 0.35 + gun * 0.20
         skip_intro = _mlbb_skip_intro_sec()
@@ -275,6 +280,8 @@ def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> lis
         skip_intro = 120.0
 
     min_gap = float(os.environ.get("HIGHLIGHT_PEAK_MIN_GAP_SEC", "75"))
+    if profile == "genshin":
+        min_gap = float(os.environ.get("GENSHIN_HIGHLIGHT_PEAK_MIN_GAP_SEC", "25"))
     order = np.argsort(combined)[::-1]
     starts: list[float] = []
     for idx in order:
@@ -922,7 +929,12 @@ def classifier_probability(metrics: HighlightMetrics, profile: str | None = None
         return 0.0
 
 
-def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
+def _motion_context(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str = "",
+) -> dict[str, float]:
     from gameplay_gate import detect_game_viewport_crop, score_genshin_boss_likelihood, score_segment_combat
 
     crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
@@ -930,8 +942,11 @@ def _motion_context(video_path: Path, start_sec: float, duration_sec: float) -> 
         video_path, start_sec, duration_sec, crop_box=crop, sample_frames=5
     )
     boss_bar = 0.0
-    if normalize_profile(os.environ.get("_HIGHLIGHT_PROFILE", "")) == "genshin":
-        bar, _, _, _ = score_genshin_boss_likelihood(video_path, start_sec, duration_sec, crop_box=crop)
+    prof = normalize_profile(profile or os.environ.get("_HIGHLIGHT_PROFILE", ""))
+    if prof == "genshin":
+        bar, _, _, _ = score_genshin_boss_likelihood(
+            video_path, start_sec, duration_sec, crop_box=crop
+        )
         boss_bar = bar
     return {
         "center_motion": motion,
@@ -1055,11 +1070,14 @@ def rule_gate(
         return ok, reason
 
     if profile == "genshin":
-        if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
+        bar_min = float(os.environ.get("GENSHIN_RULE_BOSS_BAR_MIN", "0.20"))
+        motion_min = float(os.environ.get("GENSHIN_RULE_MOTION_MIN", "0.10"))
+        # Boss bar alone can pass; motion alone needs to be stronger.
+        if metrics.boss_bar < bar_min and metrics.center_motion < motion_min:
             return False, f"no_boss=motion{metrics.center_motion:.3f}:bar{metrics.boss_bar:.3f}"
-        if metrics.clip_score <= CLIP_MIN_SHOOTER:
+        if metrics.clip_score <= CLIP_MIN_SHOOTER and metrics.boss_bar < bar_min:
             return False, f"clip_low={metrics.clip_score:.3f}"
-        if metrics.center_motion < 0.18:
+        if metrics.center_motion < motion_min * 0.7 and metrics.boss_bar < bar_min * 1.2:
             return False, f"motion_low={metrics.center_motion:.3f}"
         return True, "genshin_boss_ok"
 
@@ -1102,7 +1120,7 @@ def score_candidate_window(
         )
         return m
     ocr_text, ocr_hits = score_killfeed_ocr(video_path, start_sec, duration_sec)
-    motion = _motion_context(video_path, start_sec, duration_sec)
+    motion = _motion_context(video_path, start_sec, duration_sec, profile)
 
     m = HighlightMetrics(
         start=start_sec,
@@ -1175,6 +1193,14 @@ def score_candidate_window(
     ):
         # Legacy bypass when no MLBB-trained classifier is active.
         clf_ok = True
+    if (
+        profile == "genshin"
+        and m.rule_pass
+        and m.visual_pass
+        and os.environ.get("GENSHIN_USE_CLASSIFIER", "0") != "1"
+    ):
+        # Genshin boss-bar/rule gate is authoritative — LR model often missing/stale.
+        clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
         m.combined_score = (
             m.panns_gun_max * 0.45
@@ -1183,6 +1209,14 @@ def score_candidate_window(
             + m.center_motion * 0.05
             + min(m.ocr_hits, 3) * 0.02
         )
+        if profile == "genshin":
+            # Weight boss bar / motion over gun audio (Genshin has little gunfire).
+            m.combined_score = (
+                max(m.clip_score, 0) * 0.40
+                + m.boss_bar * 0.30
+                + m.center_motion * 0.20
+                + m.classifier_prob * 0.10
+            )
         if segment_overlaps_owner_label(
             video_path,
             start_sec,
@@ -1199,9 +1233,9 @@ def score_candidate_window(
         m.rule_pass = False
         if profile in SHOOTER_PROFILES:
             m.pass_reason = gate_reason or "combat_gate_fail"
-        elif not clf_ok:
+        elif not clf_ok and classifier_available(profile):
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
-        elif not m.pass_reason:
+        else:
             m.pass_reason = gate_reason or "rule_fail"
 
     if os.environ.get("INTELLICLIP", "1") == "1":
@@ -1350,20 +1384,30 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             starts.add(vicinity_start)
 
     seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+    seed_starts: list[float] = []
     if seed_raw.strip() and os.environ.get("HIGHLIGHT_ALLOW_SEED_STARTS", "0") == "1":
+        min_seed = 15.0 if profile == "genshin" else 60.0
         for part in seed_raw.split(","):
             part = part.strip()
             if not part:
                 continue
             try:
                 s = float(part) - WINDOW_SEC * 0.5
-                if s >= 60:
+                if s >= min_seed:
+                    seed_starts.append(round(s, 1))
                     starts.add(round(s, 1))
             except ValueError:
                 pass
-        out = sorted(starts)[:max_stage1]
-        log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
-        return out
+        # Default: seeds replace full scan (fast path). Genshin dense 1fps: merge.
+        if os.environ.get("HIGHLIGHT_SEED_MERGE", "0") != "1":
+            out = sorted(starts)[:max_stage1]
+            log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
+            return out
+        log.info(
+            "highlight seed-merge %s: %s seed windows (continue stage1)",
+            video_path.name,
+            len(seed_starts),
+        )
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
         "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
@@ -1413,8 +1457,19 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         skip_intro = _mlbb_skip_intro_sec()
     elif profile == "pubg":
         skip_intro = 90.0
+    elif profile == "genshin":
+        skip_intro = float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO", "45"))
+        if duration < 360:
+            skip_intro = min(
+                skip_intro,
+                float(os.environ.get("GENSHIN_VOD_FAST_SKIP_INTRO_SHORT", "15")),
+            )
     else:
         skip_intro = float(os.environ.get("SMART_SKIP_INTRO_SEC", "120"))
+
+    step = STEP_SEC
+    if profile == "genshin":
+        step = float(os.environ.get("GENSHIN_HIGHLIGHT_STEP_SEC", "1.0"))
 
     t = skip_intro
     while t + WINDOW_SEC <= duration - 30:
@@ -1423,13 +1478,13 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         chunk_m = motion[i0:i1] if i1 <= len(motion) else motion[i0:]
         chunk_g = gun[i0:i1] if i1 <= len(gun) else gun[i0:]
         if chunk_m.size == 0:
-            t += STEP_SEC
+            t += step
             continue
         if float(np.max(chunk_m)) >= motion_thr or float(np.percentile(chunk_m, 90)) >= motion_thr:
             starts.add(round(t, 1))
         elif float(np.max(chunk_g)) >= float(np.percentile(gun, 85) if gun.size else 0.05):
             starts.add(round(t, 1))
-        t += STEP_SEC
+        t += step
 
     if owner_anchors_enabled():
         for anchor in _owner_anchor_starts(video_path, profile):
