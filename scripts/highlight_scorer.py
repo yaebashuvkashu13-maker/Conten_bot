@@ -1822,7 +1822,7 @@ def discover_highlight_candidates(
         # WoT: keep a few peaks so expand/presend rejects can try the next fight.
         send_one_n = 1
         if profile == "wot":
-            send_one_n = max(1, int(os.environ.get("WOT_VOD_SEND_POOL", "1")))
+            send_one_n = max(1, int(os.environ.get("WOT_VOD_SEND_POOL", "5")))
         pool = ThreadPoolExecutor(max_workers=workers)
         stop_early = False
         try:

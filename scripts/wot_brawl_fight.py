@@ -31,15 +31,16 @@ def _min_sec() -> float:
 
 
 def _max_sec() -> float:
-    return float(os.environ.get("WOT_BRAWL_FIGHT_MAX_SEC", "40"))
+    # Peak-centered default — shorter than full-run expand to keep impact density.
+    return float(os.environ.get("WOT_BRAWL_FIGHT_MAX_SEC", "28"))
 
 
 def _hard_max_sec() -> float:
-    return float(os.environ.get("WOT_BRAWL_FIGHT_HARD_MAX_SEC", "48"))
+    return float(os.environ.get("WOT_BRAWL_FIGHT_HARD_MAX_SEC", "36"))
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("WOT_VOD_LEAD_SEC", "3"))
+    return float(os.environ.get("WOT_VOD_LEAD_SEC", "8"))
 
 
 def _step_sec() -> float:
@@ -53,6 +54,14 @@ def _flash_keep() -> float:
 
 def _edge_keep() -> float:
     return float(os.environ.get("WOT_BRAWL_EDGE_KEEP", "0.034"))
+
+
+def _expand_mode() -> str:
+    """peak = centered on highlight peak (default); start = from brawl run start."""
+    raw = str(os.environ.get("WOT_BRAWL_EXPAND_MODE", "peak") or "peak").strip().lower()
+    if raw in {"start", "from_start", "run_start"}:
+        return "start"
+    return "peak"
 
 
 def _gap_tolerate() -> int:
@@ -273,29 +282,37 @@ def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
             start = max(0.0, end - min_d)
         dur = end - start
 
-    prefer_start = os.environ.get("WOT_BRAWL_FIGHT_PREFER_START", "1") == "1"
+    prefer_start = _expand_mode() == "start"
     # Always trim long runs for WoT — long cruise dilutes impact density at presend.
     cap = max_d if os.environ.get("WOT_BRAWL_FIGHT_TRIM_LONG", "1") == "1" else hard_max
     cap = min(cap, hard_max)
-    tail = float(os.environ.get("WOT_BRAWL_PEAK_TAIL_SEC", "8"))
+    tail = float(os.environ.get("WOT_BRAWL_PEAK_TAIL_SEC", "10"))
 
-    if dur > cap:
+    if not prefer_start:
+        # Peak-centered: keep the scored action dense for impact_density / cruise gates.
+        start = max(0.0, peak - lead)
+        end = min(file_dur, peak + tail)
+        if end - start < min_d:
+            end = min(file_dur, start + min_d)
+        if end - start > cap:
+            end = min(file_dur, start + cap)
+            if peak > end - 2.0:
+                end = min(file_dur, peak + max(2.0, tail * 0.5))
+                start = max(0.0, end - cap)
+        dur = end - start
+    elif dur > cap:
         fight_start = max(0.0, run_start - lead)
         # Must include the scored peak + short tail. Prefer earliest start that fits.
         need_end = min(file_dur, max(peak + tail, fight_start + min_d))
-        if prefer_start:
-            start = fight_start
-            end = min(file_dur, start + cap)
-            if peak > end - 1.0 or need_end > end:
-                # Peak would be clipped — slide window so peak sits near the end.
-                end = min(file_dur, need_end)
-                start = max(fight_start, end - cap)
-                if peak < start:
-                    start = max(0.0, peak - lead)
-                    end = min(file_dur, start + cap)
-        else:
-            start = max(0.0, peak - lead)
-            end = min(file_dur, start + cap)
+        start = fight_start
+        end = min(file_dur, start + cap)
+        if peak > end - 1.0 or need_end > end:
+            # Peak would be clipped — slide window so peak sits near the end.
+            end = min(file_dur, need_end)
+            start = max(fight_start, end - cap)
+            if peak < start:
+                start = max(0.0, peak - lead)
+                end = min(file_dur, start + cap)
         dur = end - start
 
     log.info(

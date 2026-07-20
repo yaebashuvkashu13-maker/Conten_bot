@@ -1116,7 +1116,13 @@ def segment_is_valid_for_montage(
                 return False, f"cruise_no_action=motion{center_motion:.3f}"
         if impact_density < min_impact * 0.85 and center_motion < 0.020:
             return False, f"empty_drive=density{impact_density:.3f}"
-        if center_motion >= 0.10 and impact_density < max(min_impact * 1.35, 0.070):
+        cruise_cap = float(
+            os.environ.get(
+                "SMART_WOT_CRUISE_IMPACT_CAP",
+                os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", "0.070"),
+            )
+        )
+        if center_motion >= 0.10 and impact_density < max(min_impact * 1.35, cruise_cap):
             return False, f"cruise_no_action=motion{center_motion:.3f}:impact{impact_density:.3f}"
         return True, "brawl_ok"
     if profile in ("pubg", "standoff"):
