@@ -253,6 +253,7 @@ def clip_embedding(path: Path, profile: str) -> np.ndarray | None:
 
 def extract_features(path: Path, profile: str, meta: dict) -> dict:
     profile = normalize_profile(profile)
+    os.environ.setdefault("VIRAL_INGEST_SKIP_RULE_GATE", "1")
     dur = _ffprobe_duration(path)
     window = min(WINDOW_SEC, max(4.0, dur * 0.8))
     m = score_candidate_window(path, 0.2, window, profile)

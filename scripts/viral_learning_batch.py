@@ -39,6 +39,8 @@ def run_batch(
 ) -> int:
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    os.environ["VIRAL_INGEST_FAST"] = os.environ.get("VIRAL_INGEST_FAST", "1")
+    os.environ["VIRAL_INGEST_SKIP_RULE_GATE"] = os.environ.get("VIRAL_INGEST_SKIP_RULE_GATE", "1")
 
     failed: list[str] = []
     for profile in profiles:
