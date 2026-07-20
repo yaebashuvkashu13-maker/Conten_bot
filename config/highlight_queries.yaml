@@ -41,9 +41,15 @@ genshin:
 
 wot:
   good_queries:
-    - "tank battle explosion hit marker impact"
-    - "artillery explosion tank combat"
+    - "tank battle explosion hit marker impact penetration"
+    - "artillery explosion tank combat brawl close range"
+    - "tank destroyer sniper shot hit confirmed"
+    - "heavy tank brawl multiple hits damage"
   bad_queries:
-    - "garage loading screen cruise map edge driving"
+    - "garage hangar loading screen menu interface"
+    - "map edge driving cruise empty field no combat"
+    - "premium shop store tank review guide"
+    - "hangar customization camouflage selection"
   viral_hook_queries:
-    - "tank shot impact explosion"
+    - "tank shot impact explosion first seconds brawl"
+    - "hit flash muzzle fire already in combat"

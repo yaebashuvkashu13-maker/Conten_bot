@@ -1,0 +1,117 @@
+# WoT Blitz YouTube discovery — query bank + duration priors (2026-07-20 audit).
+# Match length in-game: 3–7 min (max 7). Ideal YT upload: one full match ≈ 5–10 min.
+meta:
+  game: wot
+  profile: wot
+  # VPS yt-dlp sample (120 results, 10 queries): median 6.4 min, p25 4.6, p75 12.8
+  target_duration_sec: 390
+  recommended_min_sec: 120
+  recommended_max_sec: 1500
+  fast_probe_skip_intro_sec: 45
+  fast_probe_impact_min: 0.08
+  youtube_duration_sp: EgQQARgB  # YouTube UI: 4–20 minutes
+  prefer_russian: true
+
+# Core — full ranked / rating match replays (best VOD pool for segment mining)
+core_queries:
+  - "World of Tanks Blitz ranked gameplay full match"
+  - "WoT Blitz rating battle gameplay no commentary"
+  - "World of Tanks Blitz supremacy mode full match"
+  - "WoT Blitz realistic battle gameplay replay"
+  - "World of Tanks Blitz ranked match gameplay"
+  - "танки блиц ранкед матч геймплей полный"
+  - "wot blitz ранкед бой геймплей без комментариев"
+  - "world of tanks blitz полный матч геймплей"
+
+# Combat — frag / ace / clutch (short action-dense uploads)
+combat_queries:
+  - "WoT Blitz epic frag gameplay replay"
+  - "World of Tanks Blitz 7 kills ace replay"
+  - "WoT Blitz clutch 1v3 gameplay"
+  - "World of Tanks Blitz double kill brawl gameplay"
+  - "WoT Blitz 2000 damage game replay"
+  - "WoT Blitz kolobanov medal gameplay"
+  - "танки блиц эйс 7 фрагов геймплей"
+  - "wot blitz клатч 1в3 перестрелка"
+  - "world of tanks blitz фраг перестрелка танк"
+
+# Angle — map/mode variety without tournament streams
+angle_queries:
+  - "WoT Blitz medium tank brawl gameplay"
+  - "World of Tanks Blitz heavy tank frontline fight"
+  - "WoT Blitz TD sniper shot gameplay"
+  - "World of Tanks Blitz light tank flank ace"
+  - "WoT Blitz mad games gameplay match"  # event mode, not guide
+  - "танки блиц тяжелый танк бой геймплей"
+  - "wot blitz ПТ-САУ снайперский выстрел"
+
+# Reject in title (streams, guides, compilations — low hit rate for combat peaks)
+reject_title_patterns:
+  - "🔴"
+  - "\\bLIVE\\b"
+  - "\\bstream\\b"
+  - "стрим"
+  - "grand final"
+  - "tournament.*day"
+  - "summer cup"
+  - "international cup"
+  - "blitz masters"
+  - "chill.*chat"
+  - "chatting"
+  - "giveaway"
+  - "premium shop"
+  - "#short\\b"
+  - "\\bshorts\\b"
+  - "montage"
+  - "compilation"
+  - "highlights?"
+  - "хайлайт"
+  - "guide"
+  - "гайд"
+  - "how to"
+  - "tips and tricks"
+  - "обзор танка"
+  - "tier list"
+  - "trailer"
+  - "update review"
+  - "mad games event.*guide"
+  - "all active abilities"
+
+# Rank boosts (higher = prefer for download)
+boost_keywords:
+  - ["full match", 5.0]
+  - ["full game", 4.5]
+  - ["no commentary", 3.5]
+  - ["без комментариев", 3.5]
+  - ["ranked", 4.0]
+  - ["rating battle", 4.0]
+  - ["supremacy", 3.0]
+  - ["realistic", 2.5]
+  - ["gameplay", 2.0]
+  - ["replay", 2.5]
+  - ["ace", 4.0]
+  - ["7 kill", 4.5]
+  - ["kolobanov", 4.0]
+  - ["clutch", 3.5]
+  - ["1v3", 3.5]
+  - ["1v2", 3.0]
+  - ["frag", 3.0]
+  - ["фраг", 3.0]
+  - ["brawl", 2.5]
+  - ["damage", 2.0]
+  - ["перестрелка", 3.0]
+
+# CLIP / highlight scoring (Intel + industry: kill feed, impact, explosion)
+highlight_good_queries:
+  - "tank battle explosion hit marker impact shot"
+  - "artillery explosion tank combat brawl"
+  - "tank destroyer sniper penetration hit"
+  - "close range tank brawl multiple hits"
+highlight_bad_queries:
+  - "garage hangar loading screen menu"
+  - "map edge driving cruise empty field"
+  - "premium shop store interface"
+  - "tank review guide specifications"
+highlight_hook_queries:
+  - "tank shot impact explosion first seconds"
+  - "brawl already started hit flash"

@@ -61,7 +61,7 @@ def wot_fast_impact_check(video_path: Path) -> tuple[bool, str, list[float]]:
     dur = ffprobe_duration(video_path)
     if dur <= 0:
         return False, "fast_probe_no_duration", []
-    skip = float(os.environ.get("WOT_FAST_SKIP_INTRO", "60"))
+    skip = float(os.environ.get("WOT_FAST_SKIP_INTRO", os.environ.get("WOT_VOD_FAST_SKIP_INTRO", "45")))
     offsets = _probe_offsets(dur, skip_intro=skip, max_probes=6)
     if not offsets:
         return False, "fast_probe_too_short", []

@@ -76,15 +76,30 @@ LONG_VOD_TITLE_RE = re.compile(
 )
 
 
-def _vod_min_sec() -> float:
+def _vod_min_sec(game: str | None = None) -> float:
+    g = (game or os.environ.get("VOD_SEGMENT_GAME", "")).strip().lower()
+    if g == "wot":
+        return float(os.environ.get("WOT_VOD_MIN_SEC", "120"))
+    if g == "genshin":
+        return float(os.environ.get("GENSHIN_VOD_MIN_SEC", os.environ.get("MLBB_VOD_MIN_SEC", "180")))
     return float(os.environ.get("MLBB_VOD_MIN_SEC", "180"))
 
 
-def _vod_max_sec() -> float:
+def _vod_max_sec(game: str | None = None) -> float:
+    g = (game or os.environ.get("VOD_SEGMENT_GAME", "")).strip().lower()
+    if g == "wot":
+        return float(os.environ.get("WOT_VOD_MAX_SEC", "1500"))
+    if g == "genshin":
+        return float(os.environ.get("GENSHIN_VOD_MAX_SEC", os.environ.get("MLBB_VOD_MAX_SEC", "1200")))
     return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
 
 
-def _vod_target_dur_sec() -> float:
+def _vod_target_dur_sec(game: str | None = None) -> float:
+    g = (game or os.environ.get("VOD_SEGMENT_GAME", "")).strip().lower()
+    if g == "wot":
+        return float(os.environ.get("WOT_VOD_TARGET_DUR_SEC", "390"))
+    if g == "genshin":
+        return float(os.environ.get("GENSHIN_VOD_TARGET_DUR_SEC", os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "780")))
     return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "780"))
 
 
@@ -105,9 +120,9 @@ def _vod_min_peak_sec(vod: Path | None = None) -> float:
     return base
 
 
-def _vod_length_ok(path: Path, dur: float | None = None) -> bool:
+def _vod_length_ok(path: Path, dur: float | None = None, *, game: str | None = None) -> bool:
     length = dur if dur is not None else _ffprobe_duration(path)
-    return _vod_min_sec() <= length <= _vod_max_sec()
+    return _vod_min_sec(game) <= length <= _vod_max_sec(game)
 
 
 def _ffprobe_duration(path: Path) -> float:

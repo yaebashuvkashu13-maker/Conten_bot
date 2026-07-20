@@ -236,7 +236,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 dur = float(parts[2]) if len(parts) > 2 else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if dur and not _vod_length_ok(Path("x.mp4"), dur, game=game):
                 continue
             out.append(
                 {
@@ -248,6 +248,10 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 }
             )
         time.sleep(float(params.get("delay", 6)))
+    if game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import rank_extended_vod_candidates
+
+        return rank_extended_vod_candidates(game, out)
     return out
 
 
@@ -690,7 +694,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        if _ffprobe_duration(mp4) < _vod_min_sec(game):
             continue
         if entry is None:
             entry = {
@@ -746,6 +750,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         from youtube_shooter_vod_prefs import pick_discovery_candidate
 
         pick = pick_discovery_candidate(game, candidates)
+    elif game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import pick_discovery_candidate as ext_pick
+
+        pick = ext_pick(game, candidates)
     if pick is None:
         pick = candidates[0]
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")

@@ -37,12 +37,12 @@ def vod_fast_impact_check(
     if dur <= 0:
         return False, "fast_probe_no_duration", []
 
-    skip = float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO", "90"))
+    skip = float(os.environ.get("WOT_VOD_FAST_SKIP_INTRO", os.environ.get("WOT_FAST_SKIP_INTRO", "45")))
     offsets = _probe_offsets(dur, skip_intro=skip)
     if not offsets:
         return False, "fast_probe_too_short", []
 
-    impact_min = float(os.environ.get("WOT_VOD_FAST_IMPACT_MIN", "0.10"))
+    impact_min = float(os.environ.get("WOT_VOD_FAST_IMPACT_MIN", "0.08"))
     hits: list[float] = []
     top_impact = 0.0
     for t in offsets:
