@@ -43,10 +43,56 @@ def _load_runtime_env() -> dict[str, str]:
     return env
 
 
+def _cleanup_exhausted_inbox(env: dict[str, str]) -> None:
+    """Delete fully spent inbox VODs so disk does not fill with dead files."""
+    if env.get("VOD_INBOX_DELETE_EXHAUSTED", "1") != "1":
+        return
+    try:
+        from vod_inbox_cleanup import cleanup_all_games
+
+        rows = cleanup_all_games(dry_run=False)
+        deleted = sum(int(r.get("deleted") or 0) for r in rows)
+        freed = sum(int(r.get("freed_bytes") or 0) for r in rows)
+        if deleted:
+            log.info(
+                "inbox exhausted cleanup deleted=%s freed_gb=%.2f",
+                deleted,
+                freed / (1024**3),
+            )
+    except Exception:
+        log.exception("inbox exhausted cleanup failed")
+
+
+def _prefetch_search_pools(env: dict[str, str], active: str | None) -> None:
+    """Warm per-game YouTube candidate pools so the active feed rarely blocks on search."""
+    if env.get("VOD_SEARCH_POOL_ENABLED", "1") != "1":
+        return
+    if env.get("VOD_SEARCH_POOL_PREFETCH", "1") != "1":
+        return
+    try:
+        from daily_game_cycle import GAME_ORDER, quota_remaining
+        from vod_search_pool import prefetch_pools
+
+        games = [g for g in GAME_ORDER if quota_remaining(g) > 0]
+        if active and active not in games:
+            games.insert(0, active)
+        if not games:
+            return
+        results = prefetch_pools(games, env, force=False)
+        summary = ", ".join(
+            f"{r.get('game')}={'+' if r.get('refreshed') else '='}{r.get('depth', '?')}" for r in results
+        )
+        log.info("search pools prefetch: %s", summary or "none")
+    except Exception:
+        log.exception("search pool prefetch failed")
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     env = _load_runtime_env()
     if not enabled():
+        _cleanup_exhausted_inbox(env)
+        _prefetch_search_pools(env, "mlbb")
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode
 
@@ -73,6 +119,10 @@ def main() -> int:
         notified = state.setdefault("notified", {})
         notified["active_game"] = game
         save_state(state)
+
+    # Free disk from fully mined VODs, then warm search pools for remaining quotas.
+    _cleanup_exhausted_inbox(env)
+    _prefetch_search_pools(env, game)
 
     if game == "mlbb":
         script = SCRIPTS / "mlbb_vod_segment_feed.py"

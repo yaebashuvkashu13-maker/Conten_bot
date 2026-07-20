@@ -84,9 +84,63 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    cooldown = scan_cooldown_sec(game)
+    if age < cooldown and entry.get("last_scan_blocked"):
+        return True
+    # Presend/soften keeps retrying the same pool forever unless we cool down.
+    zero_streak = int(entry.get("zero_send_streak") or 0)
+    retry_cap = max(2, int(os.environ.get("VOD_ZERO_SEND_RETRY_BEFORE_COOLDOWN", "3")))
+    if zero_streak >= retry_cap and age < cooldown:
         return True
     return False
+
+
+def record_zero_send_streak(entry: dict[str, Any], *, sent: int) -> int:
+    """Track consecutive zero-send scans on one VOD (for cooldown / exhaust)."""
+    if sent > 0:
+        entry["zero_send_streak"] = 0
+        return 0
+    n = int(entry.get("zero_send_streak") or 0) + 1
+    entry["zero_send_streak"] = n
+    return n
+
+
+def _pool_max_score(peaks: list[Any] | None) -> float:
+    if not peaks:
+        return 0.0
+    best = 0.0
+    for item in peaks:
+        if isinstance(item, dict):
+            best = max(best, float(item.get("score") or 0.0))
+        else:
+            best = max(best, 0.0)
+    return best
+
+
+def should_force_exhaust_after_retries(entry: dict[str, Any] | None) -> bool:
+    """Exhaust VODs that keep failing presend / yield empty pools."""
+    if not entry or entry.get("exhausted"):
+        return False
+    streak = int(entry.get("zero_send_streak") or 0)
+    peaks = entry.get("last_pool_peaks")
+    # Single ultra-weak peak (e.g. low_clip_score forever): drop faster.
+    weak_cap = max(2, int(os.environ.get("VOD_WEAK_POOL_RETRY_EXHAUST", "3")))
+    weak_max = float(os.environ.get("VOD_WEAK_POOL_MAX_SCORE", "0.05"))
+    if (
+        peaks is not None
+        and 0 < len(peaks) <= 1
+        and _pool_max_score(peaks) < weak_max
+        and streak >= weak_cap
+    ):
+        return True
+    cap = max(3, int(os.environ.get("VOD_ZERO_SEND_RETRY_EXHAUST", "8")))
+    if streak < cap:
+        return False
+    if peaks is None:
+        # Scan never persisted a pool — still stop infinite retries.
+        return True
+    # Empty pool or a single weak peak that never passes presend.
+    return len(peaks) <= 1
 
 
 def scan_zero_detail(entry: dict[str, Any] | None) -> str:
@@ -179,7 +233,8 @@ def record_vod_scan(
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
-    if pool:
+    # Always persist pool snapshot — including empty — so exhaust logic can fire.
+    if pool is not None:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:
             peak = round(float(clip.get("start", clip.get("peak_start", 0))), 1)
@@ -192,10 +247,10 @@ def record_vod_scan(
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
-    elif pool_peaks:
+    else:
         entry["last_pool_peaks"] = [
-            {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
-            for p in pool_peaks[:24]
+            {"peak_sec": round(float(p), 1), "score": 0.0, "blocked_reason": ""}
+            for p in (pool_peaks or [])[:24]
         ]
         entry["last_pool_at"] = time.time()
     if analysis_cache_key:

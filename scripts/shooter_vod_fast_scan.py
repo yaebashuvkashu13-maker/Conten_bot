@@ -11,15 +11,21 @@ from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
     dur = max(0.0, float(duration))
-    if dur < skip_intro + 90:
+    # Short clutch VODs (3–6 min) cannot spare a 120s intro + 90s tail.
+    if dur < 420:
+        skip_intro = min(skip_intro, max(20.0, dur * 0.12))
+    if dur < skip_intro + 60:
+        if dur >= 90:
+            mid = max(15.0, dur * 0.40)
+            return [round(mid, 1)]
         return []
     offsets: list[float] = []
-    for delta in (0, 150, 360, 720, 1200, 1800):
+    for delta in (0, 90, 180, 360, 720, 1200, 1800):
         t = skip_intro + delta
-        if t + WINDOW_SEC < dur - 45:
+        if t + WINDOW_SEC < dur - 20:
             offsets.append(round(t, 1))
     mid = skip_intro + max(0.0, (dur - skip_intro) * 0.42)
-    if mid + WINDOW_SEC < dur - 45 and all(abs(mid - x) > 90 for x in offsets):
+    if mid + WINDOW_SEC < dur - 20 and all(abs(mid - x) > 60 for x in offsets):
         offsets.append(round(mid, 1))
     return sorted(set(offsets))[: int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "6"))]
 

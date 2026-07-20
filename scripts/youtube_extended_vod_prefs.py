@@ -51,12 +51,28 @@ GENSHIN_ANGLE_QUERIES = (
 WOT_ANGLE_QUERIES = (
     "WoT Blitz clutch 1v3 gameplay",
     "World of Tanks Blitz tournament fight replay",
+    "WoT Blitz ace tanker 7 kills damage gameplay",
+    "World of Tanks Blitz ranked brawl full match",
+    "танки блиц эйс танкер урон геймплей",
 )
 
 
-def _queries_for(game: str) -> tuple[str, ...]:
+WOT_COMBAT_TITLE_RE = re.compile(
+    r"ace\s*tanker|\b\d+\s*kills?\b|\b\d+\s*убий|\bdamage\b|\bурон\b|"
+    r"frag|фраг|brawl|перестрел|clutch|1v\d|domination|ownage",
+    re.I,
+)
+
+
+def _queries_for(game: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     g = game.strip().lower()
+    env = env or os.environ
     if g == "wot":
+        raw = str(env.get("WOT_VOD_SEARCH_QUERIES") or "").strip()
+        if raw:
+            custom = tuple(q.strip() for q in raw.split(",") if q.strip())
+            if custom:
+                return custom
         return WOT_CORE_QUERIES + WOT_ANGLE_QUERIES
     return GENSHIN_CORE_QUERIES + GENSHIN_ANGLE_QUERIES
 
@@ -77,9 +93,35 @@ def title_ok(game: str, title: str) -> bool:
     return False
 
 
+def rank_discovery_candidates(game: str, candidates: list[dict]) -> list[dict]:
+    """Prefer combat-heavy WoT titles (kills/damage/ace) over generic match replays."""
+    if not candidates or game.strip().lower() != "wot":
+        return candidates
+
+    def _score(row: dict) -> float:
+        title = str(row.get("title") or "")
+        score = 0.0
+        if WOT_COMBAT_TITLE_RE.search(title):
+            score += 3.0
+        dur = float(row.get("duration") or 0)
+        if 300 <= dur <= 1200:
+            score += 1.0
+        if 480 <= dur <= 900:
+            score += 0.5
+        return score
+
+    return sorted(candidates, key=_score, reverse=True)
+
+
+def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
+    ranked = rank_discovery_candidates(game, candidates)
+    return ranked[0] if ranked else None
+
+
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
+    """Rotate extended-game queries + YouTube filters (freshness / duration / week)."""
     env = env or {}
-    queries = list(_queries_for(game))
+    queries = list(_queries_for(game, env))
     batch = int(env.get("EXTENDED_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
     delay = float(env.get("EXTENDED_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
     limit = int(env.get("EXTENDED_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "20")))
@@ -87,22 +129,32 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
         return {"queries": [], "batch": batch, "delay": delay, "limit": limit, "sp": ""}
     offset = (cycle * batch) % len(queries)
     picked = [queries[(offset + i) % len(queries)] for i in range(batch)]
-    sp = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
-    freshness = (
-        YOUTUBE_FRESHNESS_SP_THIS_MONTH
-        if env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
-        else ""
-    )
-    duration_sp = YOUTUBE_DURATION_SP_4_TO_20 if sp else ""
+    mode = int(cycle) % 3
+    use_duration = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
+    use_fresh = env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
+    if mode == 0 and use_fresh:
+        sp = YOUTUBE_FRESHNESS_SP_THIS_MONTH
+        filter_mode = "fresh_month"
+    elif mode == 1 and use_duration:
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+        filter_mode = "duration_4_20"
+    elif use_fresh:
+        from youtube_mlbb_vod_prefs import YOUTUBE_FRESHNESS_SP_THIS_WEEK
+
+        sp = YOUTUBE_FRESHNESS_SP_THIS_WEEK
+        filter_mode = "fresh_week"
+    elif use_duration:
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+        filter_mode = "duration_4_20"
+    else:
+        sp = ""
+        filter_mode = "ytsearch"
     search_urls = []
     for q in picked:
-        url = f"ytsearch{limit}:{quote_plus(q)}"
-        if duration_sp or freshness:
-            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}"
-            if duration_sp:
-                url += f"&sp={duration_sp}"
-            elif freshness:
-                url += f"&sp={freshness}"
+        if sp:
+            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}&sp={sp}"
+        else:
+            url = f"ytsearch{limit}:{q}"
         search_urls.append(url)
     return {
         "queries": picked,
@@ -112,4 +164,6 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
         "limit": limit,
         "cycle": cycle,
         "game": game,
+        "filter_mode": filter_mode,
+        "sp": sp,
     }

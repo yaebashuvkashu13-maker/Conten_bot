@@ -69,12 +69,13 @@ def check_frame_visual(profile: str, frame: np.ndarray) -> tuple[bool, str, dict
 
     menu = _frame_menu_overlay(frame)
     metrics["menu_overlay"] = round(menu, 4)
-    menu_max = float(os.environ.get("VISUAL_MENU_OVERLAY_MAX", "0.42"))
-    if profile == "mobile_legends":
-        # MLBB always has skill/minimap HUD in the center band — not a lobby menu.
+    # Metro/Standoff HUD fills the center band — MLBB-like default, not lobby text.
+    if profile in ("pubg", "standoff"):
+        menu_max = float(os.environ.get("VISUAL_MENU_OVERLAY_MAX", "0.72"))
+    elif profile == "mobile_legends":
         menu_max = float(os.environ.get("VISUAL_MLBB_MENU_OVERLAY_MAX", "0.78"))
-    if menu > menu_max:
-        return False, "menu_overlay", metrics
+    else:
+        menu_max = float(os.environ.get("VISUAL_MENU_OVERLAY_MAX", "0.42"))
 
     center_edge = _laplacian_edge_score(frame, 0.22, 0.72, 0.12, 0.88)
     weapon_edge = _laplacian_edge_score(frame, 0.55, 0.92, 0.30, 0.70)
@@ -93,20 +94,25 @@ def check_frame_visual(profile: str, frame: np.ndarray) -> tuple[bool, str, dict
         min_flash = float(os.environ.get("VISUAL_PUBG_MIN_HIT_FLASH", "0.0015"))
         has_weapon_or_flash = weapon_edge >= min_weapon or flash >= min_flash
         combat = center_edge >= min_center and has_weapon_or_flash
-        if not combat:
-            return False, "no_visible_combat", metrics
-        # Running/loot: motion edges without muzzle or weapon silhouette.
-        if center_edge >= min_center * 1.35 and not (
-            weapon_edge >= min_weapon * 1.15 or flash >= min_flash * 2.5
-        ):
-            return False, "run_no_shots", metrics
-        sky_edge = _laplacian_edge_score(frame, 0.02, 0.35, 0.10, 0.90)
-        ground_edge = _laplacian_edge_score(frame, 0.45, 0.95, 0.10, 0.90)
-        metrics["sky_edge"] = round(sky_edge, 4)
-        metrics["ground_edge"] = round(ground_edge, 4)
-        if sky_edge > ground_edge * 1.6 and center_edge < min_center * 1.1 and flash < min_flash * 2:
-            return False, "sky_pan_no_fight", metrics
-        return True, "combat_visible", metrics
+        # Decide combat before menu: dense Metro HUD must not veto gunfights.
+        if combat:
+            if center_edge >= min_center * 1.35 and not (
+                weapon_edge >= min_weapon * 1.15 or flash >= min_flash * 2.5
+            ):
+                return False, "run_no_shots", metrics
+            sky_edge = _laplacian_edge_score(frame, 0.02, 0.35, 0.10, 0.90)
+            ground_edge = _laplacian_edge_score(frame, 0.45, 0.95, 0.10, 0.90)
+            metrics["sky_edge"] = round(sky_edge, 4)
+            metrics["ground_edge"] = round(ground_edge, 4)
+            if sky_edge > ground_edge * 1.6 and center_edge < min_center * 1.1 and flash < min_flash * 2:
+                return False, "sky_pan_no_fight", metrics
+            return True, "combat_visible", metrics
+        if menu > menu_max:
+            return False, "menu_overlay", metrics
+        return False, "no_visible_combat", metrics
+
+    if menu > menu_max:
+        return False, "menu_overlay", metrics
 
     if profile == "mobile_legends":
         min_mini = float(os.environ.get("VISUAL_MLBB_MIN_MINIMAP_STD", "7.5"))

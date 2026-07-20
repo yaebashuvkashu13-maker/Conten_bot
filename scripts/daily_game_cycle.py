@@ -37,15 +37,21 @@ def enabled() -> bool:
 
 
 def quota_for(game: str) -> int:
+    """Prefer DAILY_{GAME}_QUOTA; fall back to DAILY_GAME_{GAME}_QUOTA.
+
+    Target card: MLBB/PUBG/Standoff/Genshin/WoT = 5/5/5/2/2.
+    """
     game = game.strip().lower()
-    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
+    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 2, "wot": 2}
     env_key = f"DAILY_{game.upper()}_QUOTA"
     fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
-    raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
+    raw = os.environ.get(env_key)
+    if raw is None or str(raw).strip() == "":
+        raw = os.environ.get(fallback, str(defaults.get(game, 5)))
     try:
         return max(0, int(raw))
     except ValueError:
-        return defaults.get(game, 10)
+        return defaults.get(game, 5)
 
 
 def load_state() -> dict:

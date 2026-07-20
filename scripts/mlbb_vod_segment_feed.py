@@ -54,6 +54,8 @@ from vod_scan_state import (
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    record_zero_send_streak,
+    should_force_exhaust_after_retries,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
@@ -334,12 +336,22 @@ def _sync_vod_entry_to_state(state: dict, entry: dict, vod: Path) -> None:
 def _mark_vod_exhausted(vod: Path) -> None:
     vid = vod_youtube_id(vod)
     state = _load_state()
+    target: dict | None = None
     for row in state.get("vods", []):
         row_path = Path(str(row.get("path", "")))
         if row.get("id") == vid or row_path == vod or row_path.name == vod.name:
             row["exhausted"] = True
             row["id"] = vid
+            row.setdefault("exhausted_at", time.time())
+            target = row
     _save_state(state)
+    if target is not None:
+        try:
+            from vod_inbox_cleanup import cleanup_after_exhaust
+
+            cleanup_after_exhaust("mlbb", target, state=state)
+        except Exception:
+            log.exception("inbox cleanup after exhaust failed vod=%s", vod.name)
 
 
 @contextmanager
@@ -578,10 +590,22 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
     used = set(state.get("used_youtube_ids", []))
     used.update(r.get("id", "") for r in registry if r.get("id"))
 
-    candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
-    if not candidates:
-        return None
-    pick = candidates[0]
+    pick = None
+    if os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1":
+        try:
+            from vod_search_pool import pop_candidate
+
+            pick = pop_candidate("mlbb", used)
+            if pick:
+                log.info("mlbb download using search pool id=%s", pick.get("id"))
+        except Exception:
+            log.exception("mlbb search pool pop failed")
+            pick = None
+    if pick is None:
+        candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
+        if not candidates:
+            return None
+        pick = candidates[0]
 
     with _ytdlp_download_lock(blocking=True) as acquired:
         if not acquired:
@@ -607,6 +631,39 @@ def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttl
     _save_state(state)
     log.info("downloaded vod=%s title=%s", pick["id"], str(pick.get("title", ""))[:60])
     return path
+
+
+def _pending_download_ttl_sec() -> float:
+    return max(60.0, float(os.environ.get("MLBB_VOD_PENDING_DOWNLOAD_TTL_SEC", "1800")))
+
+
+def _pending_download_stale(pending: dict | None) -> bool:
+    """True when a crashed mid-download left status=downloading past TTL."""
+    if not pending or pending.get("status") != "downloading":
+        return False
+    started_ts = pending.get("started_ts")
+    try:
+        started = float(started_ts) if started_ts is not None else 0.0
+    except (TypeError, ValueError):
+        started = 0.0
+    if started <= 0:
+        # Legacy rows only had started_at string — treat as stale so bg can resume.
+        return True
+    return (time.time() - started) >= _pending_download_ttl_sec()
+
+
+def _clear_stale_pending_download(state: dict) -> dict:
+    pending = state.get("pending_download")
+    if _pending_download_stale(pending if isinstance(pending, dict) else None):
+        log.warning(
+            "clearing stale pending_download status=%s age — allow bg discovery",
+            (pending or {}).get("status"),
+        )
+        state["pending_download"] = {
+            "status": "stale_cleared",
+            "cleared_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    return state
 
 
 class VodPipelineDownloader:
@@ -644,15 +701,28 @@ class VodPipelineDownloader:
         path: Path | None = None
         err = ""
         try:
-            state = _load_state()
-            if state.get("pending_download", {}).get("status") == "downloading":
+            state = _clear_stale_pending_download(_load_state())
+            pending = state.get("pending_download") or {}
+            if pending.get("status") == "downloading":
                 log.info("another download already marked in state — skip bg")
+                _save_state(state)
             else:
                 state["pending_download"] = {
                     "status": "downloading",
                     "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "started_ts": time.time(),
                 }
                 _save_state(state)
+                # Prefer warm search pool so bg download doesn't wait on cold yt-dlp search.
+                if os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1":
+                    try:
+                        from vod_search_pool import refresh_game_pool
+
+                        used = set(state.get("used_youtube_ids") or [])
+                        used.update(r.get("id", "") for r in registry if r.get("id"))
+                        refresh_game_pool("mlbb", self.env, used=used, force=False)
+                    except Exception:
+                        log.exception("mlbb search pool refresh before bg download failed")
                 path = _download_new_mlbb_vod(self.env, registry, throttled=True)
         except Exception as exc:
             err = str(exc)
@@ -1996,28 +2066,45 @@ def _process_vod_segments(
     state["scanned_vods"] = sorted(scanned)
     new_streak = record_vod_outcome(state, vod_id=vid, sent=sent_total)
     state["last_adaptive_level"] = active_level
-    _save_state(state)
 
+    # Persist zero_send_streak BEFORE save — otherwise retries never reach
+    # should_force_exhaust_after_retries and the same weak VOD loops forever.
+    if entry is not None:
+        z_streak = record_zero_send_streak(entry, sent=sent_total)
+    else:
+        z_streak = 0
+
+    exhausted_now = False
     if sent_total == 0 and not send_quota_blocked:
-        if entry and should_mark_vod_exhausted(entry):
-            _mark_vod_exhausted(vod)
-            entry["exhausted"] = True
-            entry["id"] = vid
+        force_exhaust = should_force_exhaust_after_retries(entry)
+        if entry and (should_mark_vod_exhausted(entry) or force_exhaust):
             if not entry.get("reject_reason"):
-                if not entry.get("last_pool_peaks"):
+                if force_exhaust:
+                    entry["reject_reason"] = "presend_retry_exhausted"
+                elif not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
                 elif entry.get("last_scan_blocked"):
                     entry["reject_reason"] = "all_peaks_blocked"
-            _record_zero_yield_uploader(entry)
-            log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
-            if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
-                send_message(
-                    token,
-                    chat_id,
-                    telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
-                )
+            if force_exhaust:
+                entry["last_scan_blocked"] = True
+            entry["exhausted"] = True
+            entry["id"] = vid
+            entry.setdefault("exhausted_at", time.time())
+            exhausted_now = True
+            log.info(
+                "exhausted vod=%s adaptive_streak=%s zero_send_streak=%s level=%s",
+                vod.name,
+                new_streak,
+                z_streak,
+                active_level,
+            )
         else:
-            log.info("zero send — keep vod=%s for retry (presend/soften) streak=%s", vod.name, new_streak)
+            log.info(
+                "zero send — keep vod=%s for retry (presend/soften) streak=%s zero_send=%s",
+                vod.name,
+                new_streak,
+                z_streak,
+            )
     elif sent_total == 0 and send_quota_blocked:
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
@@ -2027,6 +2114,20 @@ def _process_vod_segments(
                 token,
                 chat_id,
                 f"✅ {sent_total} клип(ов) с мягких фильтров (L{active_level}) — возврат к strict после серии",
+            )
+
+    if entry:
+        _sync_vod_entry_to_state(state, entry, vod)
+    _save_state(state)
+
+    if exhausted_now and entry is not None:
+        _mark_vod_exhausted(vod)
+        _record_zero_yield_uploader(entry)
+        if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
+            send_message(
+                token,
+                chat_id,
+                telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
             )
     return sent_total
 
@@ -2178,6 +2279,23 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+
+            reset_if_new_day()
+            if active_game() != "mlbb":
+                log.info(
+                    "daily cycle mid-loop handoff active=%s sent=%s vods=%s — exit mlbb feed",
+                    active_game(),
+                    total_sent,
+                    vods_done,
+                )
+                break
+            ok_mlbb, why = can_send_for_game("mlbb", 1)
+            if not ok_mlbb:
+                log.info("daily cycle mid-loop stop: %s sent=%s vods=%s", why, total_sent, vods_done)
+                break
+
         vod, entry = _resolve_next_vod(
             env,
             registry,

@@ -54,7 +54,8 @@ def normalize_youtube_url(url: str) -> str:
         low = path.lower()
         for marker in ("/shorts/", "/live/", "/embed/", "/v/"):
             if marker in low:
-                vid = low.split(marker, 1)[-1].split("/")[0].split("?")[0][:11]
+                idx = low.index(marker) + len(marker)
+                vid = path[idx:].split("/")[0].split("?")[0][:11]
                 break
         if not vid and path.startswith("/watch"):
             vid = (parse_qs(parsed.query).get("v") or [""])[0][:11]
@@ -240,11 +241,38 @@ def run_ytdlp(
     return proc
 
 
+def parse_youtube_id(url: str) -> str:
+    """Best-effort 11-char id from a watch/shorts/youtu.be URL."""
+    normalized = normalize_youtube_url(url)
+    parsed = urlparse(normalized)
+    host = parsed.netloc.lower().split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    path = parsed.path or ""
+    if host == "youtu.be":
+        vid = path.strip("/").split("/")[0][:11]
+        return vid if len(vid) == 11 else ""
+    qs = parse_qs(parsed.query).get("v") or [""]
+    if qs[0] and len(qs[0]) >= 11:
+        return qs[0][:11]
+    low = path.lower()
+    for marker in ("/shorts/", "/live/", "/embed/", "/v/"):
+        if marker in low:
+            # Slice the original path (not lowercased) so YouTube ids keep case.
+            idx = low.index(marker) + len(marker)
+            vid = path[idx:].split("/")[0].split("?")[0][:11]
+            if len(vid) == 11:
+                return vid
+    return ""
+
+
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     env = {**os.environ, **(env or load_env())}
     url = normalize_youtube_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
+    vid = parse_youtube_id(url)
     template = dest_dir / "yt_%(id)s.%(ext)s"
+    expected = dest_dir / f"yt_{vid}.mp4" if vid else None
     cmd = ytdlp_cmd(env) + [
         "--no-playlist",
         "--restrict-filenames",
@@ -263,7 +291,15 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
         env=subprocess_env_no_proxy(env),
     )
-    files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if expected is not None and expected.exists() and expected.stat().st_size > 0:
+        return expected
+    if vid:
+        matches = [p for p in dest_dir.glob(f"yt_{vid}*.mp4") if p.stat().st_size > 0]
+        if matches:
+            return max(matches, key=lambda p: p.stat().st_mtime)
+    files = [p for p in dest_dir.glob("yt_*.mp4") if p.stat().st_size > 0]
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
-    return files[0]
+    if expected is not None:
+        raise RuntimeError(f"yt-dlp did not create expected file {expected} for {url}")
+    return max(files, key=lambda p: p.stat().st_mtime)

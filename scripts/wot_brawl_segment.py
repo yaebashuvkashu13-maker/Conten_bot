@@ -43,6 +43,10 @@ def count_hit_flashes(
     return flashes, best
 
 
+def _cruise_impact_max() -> float:
+    return float(os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", "0.05"))
+
+
 def validate_wot_brawl_segment(
     video_path: Path,
     start_sec: float,
@@ -71,6 +75,6 @@ def validate_wot_brawl_segment(
         return False, f"wot_low_flashes={flashes}:need{min_flashes}", out
     if impact < min_impact:
         return False, f"wot_low_impact=density{impact:.3f}:need{min_impact:.3f}", out
-    if motion > 0.10 and impact < 0.05 and duration_sec > 5.0:
+    if motion > 0.10 and impact < _cruise_impact_max() and duration_sec > 5.0:
         return False, f"wot_cruise=motion{motion:.3f}:impact{impact:.3f}", out
     return True, f"wot_brawl_ok=flashes{flashes}:impact{impact:.3f}", out

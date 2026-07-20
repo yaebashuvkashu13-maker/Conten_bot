@@ -34,6 +34,22 @@ FORBIDDEN_REASONS = frozenset(
 )
 
 ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+# Prefixes returned by pubg_passes_owner_heuristics when PANNs/relax says combat.
+ALLOWED_OWNER_PREFIXES = (
+    "fight_audio",
+    "light_combat",
+    "panns_trust",
+    "panns_audio",
+    "panns_relax",
+    "relax_fight",
+)
+
+
+def _owner_reason_allows_pass(owner_reason: str) -> bool:
+    base = (owner_reason or "").split("=", 1)[0].strip()
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    return any(base.startswith(p) for p in ALLOWED_OWNER_PREFIXES)
 
 
 def _min_gunfire() -> float:
@@ -127,13 +143,16 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # PANNs trust must count — otherwise gunfire heard at 0.5–0.7 still dies as
+    # no_shots=...:ownerpanns_trust (legacy whitelist only had fight_audio/light_combat).
+    heuristic_audio = ok_owner and _owner_reason_allows_pass(owner_reason)
 
-    if owner_reason == "sniper_hold":
+    if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
             return False, f"sniper_hold_no_motion=motion{motion:.3f}:gun{gun:.3f}", metrics
         if gun < min_gun * 0.90:
             return False, f"sniper_hold_weak=gun{gun:.3f}", metrics
+        heuristic_audio = heuristic_audio or (ok_owner and motion >= 0.030 and gun >= min_gun * 0.90)
 
     if not strict_audio and not heuristic_audio:
         return (
@@ -146,12 +165,21 @@ def pubg_passes_shooting_gate(
     if crop is not None:
         crop = tuple(int(v) for v in crop)
 
-    if segment_looks_like_pubg_loot_or_walk(
-        video_path,
-        start_sec,
-        duration_sec,
-        crop_box=crop,
-        gunfire_density=gun,
+    panns_trusted = float(panns_gun_max or 0.0) >= float(
+        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    )
+
+    # Density-only loot_walk false-positives on real Metro gunfights with low
+    # energy metric but strong PANNs (0.5–0.7). Trust PANNs over walk heuristic.
+    if (
+        not panns_trusted
+        and segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop,
+            gunfire_density=gun,
+        )
     ):
         return False, f"loot_walk=density{gun:.3f}", metrics
 
@@ -162,13 +190,26 @@ def pubg_passes_shooting_gate(
         profile="pubg",
         crop_box=crop,
         min_gunfire=min_gun,
+        panns_gun_max=float(panns_gun_max or 0.0),
     )
     metrics["gate_reason"] = gate_reason
 
-    if reason_is_forbidden(gate_reason):
+    # Montage used to re-run owner heuristics without PANNs and convert trusted
+    # gunfights into run_fake_gun / no_shots. Keep hard junk rejects only.
+    soft_motion_reject = gate_reason.split("=", 1)[0] in {
+        "run_fake_gun",
+        "run_loot",
+        "run_no_fight",
+        "run_no_shots",
+        "no_shots",
+        "below_owner_floor",
+        "streamer_talk",
+        "loot_walk",
+    }
+    if reason_is_forbidden(gate_reason) and not (panns_trusted and soft_motion_reject):
         return False, gate_reason, metrics
 
-    if not gate_ok:
+    if not gate_ok and not (panns_trusted and soft_motion_reject):
         return False, gate_reason, metrics
 
     pass_reason = (

@@ -39,3 +39,5 @@ def test_genshin_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wot_l3_relaxes_impact() -> None:
     ov = overrides_for_level("wot", 3)
     assert float(ov["SMART_WOT_MIN_IMPACT_DENSITY"]) < float(overrides_for_level("wot", 1)["SMART_WOT_MIN_IMPACT_DENSITY"])
+    assert float(ov["WOT_BRAWL_MIN_IMPACT_DENSITY"]) <= float(ov["SMART_WOT_MIN_IMPACT_DENSITY"])
+    assert int(ov["WOT_BRAWL_MIN_HIT_FLASHES"]) == 1

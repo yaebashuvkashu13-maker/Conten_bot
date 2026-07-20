@@ -19,15 +19,28 @@ def cache_root() -> Path:
     return Path(os.environ.get("VOD_ANALYSIS_CACHE_DIR", DEFAULT_ROOT))
 
 
-def cache_key_tuple(path: Path) -> tuple[str, int, int]:
+def _analysis_fingerprint() -> str:
+    """Invalidate cache when long-VOD sampling density changes."""
+    return "|".join(
+        (
+            os.environ.get("SMART_LONG_SAMPLE_FPS", "1.0"),
+            os.environ.get("SMART_LONG_ANALYSIS_MAX_FPS", "1.0"),
+            os.environ.get("SMART_SAMPLE_FPS", "4.0"),
+            os.environ.get("SMART_LONG_WINDOW_SEC", "2.0"),
+            os.environ.get("VOD_ANALYSIS_CACHE_REV", "1"),
+        )
+    )
+
+
+def cache_key_tuple(path: Path) -> tuple[str, int, int, str]:
     p = path.resolve()
     st = p.stat()
-    return str(p), int(st.st_mtime_ns), int(st.st_size)
+    return str(p), int(st.st_mtime_ns), int(st.st_size), _analysis_fingerprint()
 
 
 def cache_key_hash(path: Path) -> str:
-    path_s, mtime_ns, size = cache_key_tuple(path)
-    blob = f"{path_s}|{mtime_ns}|{size}".encode("utf-8", errors="replace")
+    path_s, mtime_ns, size, fp = cache_key_tuple(path)
+    blob = f"{path_s}|{mtime_ns}|{size}|{fp}".encode("utf-8", errors="replace")
     return hashlib.sha256(blob).hexdigest()[:32]
 
 
@@ -79,11 +92,12 @@ def get_cached(path: Path) -> dict[str, Any] | None:
     except (json.JSONDecodeError, OSError):
         return None
     key = payload.get("key") or {}
-    cur_path, cur_mtime, cur_size = cache_key_tuple(p)
+    cur_path, cur_mtime, cur_size, cur_fp = cache_key_tuple(p)
     if (
         key.get("path") != cur_path
         or int(key.get("mtime_ns") or 0) != cur_mtime
         or int(key.get("size") or 0) != cur_size
+        or str(key.get("fingerprint") or "") != cur_fp
     ):
         return None
     return _lists_to_arrays(payload.get("analysis") or {})
@@ -94,9 +108,9 @@ def set_cached(path: Path, analysis: dict[str, Any]) -> str:
     p = path.resolve()
     cache_root().mkdir(parents=True, exist_ok=True)
     key_hash = cache_key_hash(p)
-    path_s, mtime_ns, size = cache_key_tuple(p)
+    path_s, mtime_ns, size, fp = cache_key_tuple(p)
     payload = {
-        "key": {"path": path_s, "mtime_ns": mtime_ns, "size": size},
+        "key": {"path": path_s, "mtime_ns": mtime_ns, "size": size, "fingerprint": fp},
         "analysis": _arrays_to_lists(analysis),
     }
     cache_file = cache_root() / f"{key_hash}.json"

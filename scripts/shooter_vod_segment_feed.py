@@ -54,7 +54,9 @@ from vod_scan_state import (
     pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
+    record_zero_send_streak,
     scan_zero_detail,
+    should_force_exhaust_after_retries,
     should_mark_vod_exhausted,
     should_skip_vod_rescan,
     used_peaks_for_vod,
@@ -66,6 +68,24 @@ log = logging.getLogger("shooter_vod_feed")
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
+
+
+def _shooter_vod_min_sec() -> float:
+    """PUBG clutch compilations are often 2–4 min — don't force MLBB's 3 min floor."""
+    return float(os.environ.get("SHOOTER_VOD_MIN_SEC", "120"))
+
+
+def _shooter_vod_max_sec() -> float:
+    """Allow longer Metro raids than MLBB's 20 min default (still below multi-hour streams).
+
+    Do not fall back to MLBB_VOD_MAX_SEC — that 20m cap starves PUBG discovery
+    (typical solo-vs-squad Metro VODs are 20–35 minutes).
+    """
+    return float(os.environ.get("SHOOTER_VOD_MAX_SEC", "2400"))
+
+
+def _shooter_length_ok(dur: float) -> bool:
+    return _shooter_vod_min_sec() <= float(dur) <= _shooter_vod_max_sec()
 
 
 def _game() -> str:
@@ -152,12 +172,92 @@ def _feed_lock(game: str):
 
 
 def _vod_registry_entry(state: dict, vod: Path) -> dict | None:
+    """Return the registry row for this VOD.
+
+    Prefer an exact path match. A stale id-only duplicate (exhausted, path="")
+    must not steal scan/exhaust updates from the live inbox file row — that bug
+    caused infinite rescans of the same PUBG VOD while the exhausted sibling
+    was the only one marked spent.
+    """
     vod_path = str(vod)
     vid = vod_youtube_id(vod)
-    for entry in state.get("vods", []):
-        if entry.get("path") == vod_path or entry.get("id") == vid:
-            return entry
-    return None
+    path_hit = None
+    id_live = None
+    id_any = None
+    for entry in state.get("vods") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("path") or "") == vod_path:
+            path_hit = entry
+            break
+        if vid and str(entry.get("id") or "") == vid:
+            if id_any is None:
+                id_any = entry
+            if str(entry.get("path") or "").strip() and id_live is None:
+                id_live = entry
+    return path_hit or id_live or id_any
+
+
+def _vod_registry_entries_for_id(state: dict, youtube_id: str) -> list[dict]:
+    vid = (youtube_id or "").strip()
+    if not vid:
+        return []
+    return [
+        e
+        for e in (state.get("vods") or [])
+        if isinstance(e, dict) and str(e.get("id") or "") == vid
+    ]
+
+
+def _reject_reason_permanently_spent(reason: str, entry: dict | None = None) -> bool:
+    r = (reason or "").strip()
+    if r in {"all_peaks_blocked", "peaks_spent"}:
+        return True
+    if entry and entry.get("last_scan_blocked"):
+        return True
+    if r == "no_combat_peaks":
+        peaks = (entry or {}).get("last_pool_peaks")
+        # Had peaks that are all spent/blocked — not a soft empty-pool miss.
+        if peaks is not None and len(peaks) > 0:
+            return True
+    return False
+
+
+def _youtube_id_permanently_spent(state: dict, youtube_id: str) -> bool:
+    """True when any registry row says this YouTube id has nothing left to mine."""
+    for entry in _vod_registry_entries_for_id(state, youtube_id):
+        if not entry.get("exhausted"):
+            continue
+        if entry.get("file_deleted"):
+            return True
+        if _reject_reason_permanently_spent(str(entry.get("reject_reason") or ""), entry):
+            return True
+    return False
+
+
+def _mark_siblings_exhausted(
+    state: dict,
+    *,
+    youtube_id: str,
+    reject_reason: str = "",
+    primary: dict | None = None,
+) -> list[dict]:
+    """Mark every registry row for this youtube id exhausted; sync spent flags."""
+    touched: list[dict] = []
+    now = time.time()
+    src = primary or {}
+    reason = (reject_reason or str(src.get("reject_reason") or "")).strip()
+    for entry in _vod_registry_entries_for_id(state, youtube_id):
+        entry["exhausted"] = True
+        entry.setdefault("exhausted_at", now)
+        if reason:
+            entry["reject_reason"] = reason
+        if src.get("last_scan_blocked") or reason in {"all_peaks_blocked", "peaks_spent"}:
+            entry["last_scan_blocked"] = True
+        if src.get("last_pool_peaks") is not None and entry.get("last_pool_peaks") is None:
+            entry["last_pool_peaks"] = src["last_pool_peaks"]
+        touched.append(entry)
+    return touched
 
 
 def _vod_title(state: dict, vod: Path) -> str:
@@ -165,11 +265,19 @@ def _vod_title(state: dict, vod: Path) -> str:
     return str((entry or {}).get("title") or "")
 
 
-def _pubg_metro_should_exhaust(title: str, streak: int) -> bool:
-    """Only permanently skip VOD when title and soften cannot override metro reject."""
-    from pubg_metro_royale_gate import title_metro_hint
+def _metro_reject_is_hard(reason: str) -> bool:
+    """Classic outdoor / map UI rejects must never be softened away."""
+    r = reason or ""
+    return "classic_outdoor_sky" in r or "classic_map_ui" in r
+
+
+def _pubg_metro_should_exhaust(title: str, streak: int, reason: str = "") -> bool:
+    """Permanently skip VOD when metro reject cannot be overridden."""
+    from pubg_metro_royale_gate import title_is_training_junk, title_metro_hint
     from shooter_vod_adaptive_gate import soften_level
 
+    if _metro_reject_is_hard(reason) or title_is_training_junk(title):
+        return True
     if title_metro_hint(title):
         return False
     if soften_level(streak) >= 2:
@@ -183,12 +291,17 @@ def _pubg_metro_vod_ok(
     title: str = "",
     streak: int = 0,
 ) -> tuple[bool, str]:
-    from pubg_metro_royale_gate import vod_looks_metro_royale
+    from pubg_metro_royale_gate import title_is_training_junk, vod_looks_metro_royale
     from shooter_vod_adaptive_gate import soften_level
 
+    if title_is_training_junk(title):
+        return False, "metro_training_junk_title"
     ok, reason = vod_looks_metro_royale(vod, title=title or None)
     if ok:
         return True, reason
+    # Soft L2+ may bypass ambiguous not_metro — never classic outdoor/map.
+    if _metro_reject_is_hard(reason):
+        return False, reason
     if soften_level(streak) >= 2:
         log.warning("metro soften override vod=%s streak=%s reason=%s", vod.name, streak, reason)
         return True, f"metro_soften_L{soften_level(streak)} ({reason})"
@@ -215,40 +328,201 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
     state["discovery_cycle"] = cycle + 1
     _save_state(game, state)
 
+    limit = int(params.get("limit") or 20)
     out: list[dict] = []
+    seen: set[str] = set()
+    skipped: dict[str, int] = {}
     for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + ["--flat-playlist", "--print", "%(id)s|%(title)s|%(duration)s|%(uploader)s", url]
+        # Tab delimiter: titles often contain "|" which broke field parsing and
+        # dropped "Metro Royale" into the duration column.
+        cmd = ytdlp_cmd(env) + [
+            "--flat-playlist",
+            "--playlist-end",
+            str(limit),
+            "--print",
+            "%(id)s\t%(title)s\t%(duration)s\t%(uploader)s",
+            url,
+        ]
         cmd += ytdlp_extra_args(env)
         proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
         if proc.returncode != 0:
             log.warning("search failed %s: %s", url, (proc.stderr or "")[:200])
+            skipped["search_fail"] = skipped.get("search_fail", 0) + 1
             continue
         for line in (proc.stdout or "").splitlines():
-            parts = line.split("|", 3)
+            parts = line.split("\t") if "\t" in line else line.split("|", 3)
             if len(parts) < 2:
+                skipped["parse"] = skipped.get("parse", 0) + 1
                 continue
-            vid, title = parts[0][:11], parts[1]
-            if vid in used or len(vid) != 11:
+            vid, title = parts[0][:11], parts[1].replace("\n", " ").strip()
+            uploader = (parts[3] if len(parts) > 3 else "")[:60]
+            if len(vid) != 11:
+                skipped["bad_id"] = skipped.get("bad_id", 0) + 1
                 continue
-            if not title_ok_fn(game, title):
+            if vid in used or vid in seen:
+                skipped["used_or_dup"] = skipped.get("used_or_dup", 0) + 1
                 continue
             try:
-                dur = float(parts[2]) if len(parts) > 2 else 0.0
+                ok_title = title_ok_fn(game, title, uploader=uploader)  # type: ignore[call-arg]
+            except TypeError:
+                ok_title = title_ok_fn(game, title)
+            if not ok_title:
+                skipped["title"] = skipped.get("title", 0) + 1
+                continue
+            raw_dur = parts[2].strip() if len(parts) > 2 else ""
+            try:
+                dur = float(raw_dur) if raw_dur and raw_dur.upper() not in {"NA", "NONE", "NULL"} else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
-                continue
+            # Unknown duration (flat search) is kept; known out-of-window is dropped.
+            if dur > 0:
+                length_ok = (
+                    _shooter_length_ok(dur)
+                    if game in ("pubg", "standoff")
+                    else _vod_length_ok(Path("x.mp4"), dur)
+                )
+                if not length_ok:
+                    skipped["duration"] = skipped.get("duration", 0) + 1
+                    continue
+            seen.add(vid)
             out.append(
                 {
                     "id": vid,
                     "title": title[:120],
                     "url": f"https://www.youtube.com/watch?v={vid}",
                     "duration": dur,
-                    "uploader": parts[3][:60] if len(parts) > 3 else "",
+                    "uploader": uploader,
                 }
             )
         time.sleep(float(params.get("delay", 6)))
+    if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import rank_discovery_candidates
+
+        out = rank_discovery_candidates(game, out)
+    elif game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import rank_discovery_candidates as rank_extended
+
+        out = rank_extended(game, out)
+    if skipped:
+        log.info(
+            "discovery game=%s mode=%s raw_kept=%s skipped=%s",
+            game,
+            params.get("filter_mode"),
+            len(out),
+            skipped,
+        )
     return out
+
+
+def _cleanup_exhausted_entry(game: str, entry: dict | None, state: dict) -> None:
+    if not entry:
+        return
+    entry.setdefault("exhausted_at", time.time())
+    vid = str(entry.get("id") or "")
+    if vid:
+        _mark_siblings_exhausted(
+            state,
+            youtube_id=vid,
+            reject_reason=str(entry.get("reject_reason") or ""),
+            primary=entry,
+        )
+    try:
+        from vod_inbox_cleanup import cleanup_after_exhaust
+
+        # Prefer the sibling that still points at a live inbox path.
+        target = entry
+        for sibling in _vod_registry_entries_for_id(state, vid):
+            if str(sibling.get("path") or "").strip():
+                if entry.get("reject_reason"):
+                    sibling["reject_reason"] = entry["reject_reason"]
+                if entry.get("last_scan_blocked"):
+                    sibling["last_scan_blocked"] = True
+                sibling["exhausted"] = True
+                sibling.setdefault("exhausted_at", entry.get("exhausted_at") or time.time())
+                target = sibling
+                break
+        cleanup_after_exhaust(game, target, state=state)
+    except Exception:
+        log.exception("inbox cleanup after exhaust failed game=%s id=%s", game, entry.get("id"))
+
+
+def _notify_discovery_miss(game: str, token: str, chat_id: str, state: dict) -> None:
+    """Throttle repeated «не нашёл» Telegram spam (default 30 min)."""
+    gap = max(60, int(os.environ.get("VOD_DISCOVERY_MISS_NOTIFY_SEC", "1800")))
+    last = float(state.get("last_discovery_miss_notify_at") or 0)
+    now = time.time()
+    if now - last < gap:
+        log.info("discovery miss notify suppressed game=%s age=%.0fs", game, now - last)
+        return
+    send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+    state["last_discovery_miss_notify_at"] = now
+    _save_state(game, state)
+
+
+def _probe_youtube_meta(url: str, env: dict[str, str]) -> tuple[str, float]:
+    """Resolve full title + duration before download (flat search truncates titles)."""
+    from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
+
+    cmd = ytdlp_cmd(env) + [
+        "--skip-download",
+        "--no-playlist",
+        "--print",
+        "%(title)s|%(duration)s",
+        url,
+    ]
+    cmd += ytdlp_extra_args(env)
+    proc = run_ytdlp(cmd, env, timeout=90, label="probe-meta")
+    if proc.returncode != 0:
+        return "", 0.0
+    raw = (proc.stdout or "").strip().splitlines()
+    if not raw:
+        return "", 0.0
+    line = raw[-1].strip()
+    if "|" not in line:
+        return line[:200], 0.0
+    title, dur_s = line.rsplit("|", 1)
+    try:
+        dur = float(dur_s.strip()) if dur_s.strip() and dur_s.strip().upper() not in {"NA", "NONE"} else 0.0
+    except ValueError:
+        dur = 0.0
+    return title.strip()[:200], dur if dur > 0 else 0.0
+
+
+def _preflight_vod_pick(game: str, pick: dict, env: dict[str, str]) -> tuple[bool, str]:
+    """Reject loot/learning titles and multi-hour streams before yt-dlp download."""
+    title = str(pick.get("title") or "")
+    dur = float(pick.get("duration") or 0)
+    # Always refresh metadata when duration unknown or title looks truncated/weak.
+    need_meta = dur <= 0 or len(title) < 24 or title.endswith("…") or title.endswith("...")
+    if need_meta or game in ("pubg", "standoff"):
+        full_title, full_dur = _probe_youtube_meta(str(pick.get("url") or ""), env)
+        if full_title:
+            title = full_title
+            pick["title"] = full_title
+        if full_dur > 0:
+            dur = full_dur
+            pick["duration"] = full_dur
+
+    if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import title_ok
+
+        if title and not title_ok(game, title):
+            return False, "bad_title"
+    elif game in EXTENDED_GAMES:
+        from youtube_extended_vod_prefs import title_ok as ext_title_ok
+
+        if title and not ext_title_ok(game, title):
+            return False, "bad_title"
+
+    if dur > 0:
+        length_ok = (
+            _shooter_length_ok(dur)
+            if game in ("pubg", "standoff")
+            else _vod_length_ok(Path("x.mp4"), dur)
+        )
+        if not length_ok:
+            return False, f"vod_length={dur:.0f}s"
+    return True, ""
 
 
 def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
@@ -258,10 +532,27 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
     inbox.mkdir(parents=True, exist_ok=True)
     try:
         path = download_one(str(pick["url"]), inbox, env)
-        return path
     except Exception as exc:
         log.warning("download failed %s: %s", pick.get("id"), exc)
         return None
+    if path is None:
+        return None
+    file_dur = _ffprobe_duration(path)
+    if file_dur > 0:
+        length_ok = (
+            _shooter_length_ok(file_dur)
+            if game in ("pubg", "standoff")
+            else _vod_length_ok(path, file_dur)
+        )
+        if not length_ok:
+            log.warning("delete overlong download id=%s dur=%.0fs", pick.get("id"), file_dur)
+            pick["reject_reason"] = f"vod_length={file_dur:.0f}s"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+    return path
 
 
 def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
@@ -434,8 +725,14 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
+    max_per_vod = max(1, int(os.environ.get("SHOOTER_VOD_MAX_PER_VOD", "3")))
+    total_sent = 0
 
-    while peak_tries < max_tries:
+    while peak_tries < max_tries and total_sent < max_per_vod:
+        ok_cycle, cycle_reason = can_send_for_game(game, 1)
+        if not ok_cycle:
+            log.info("stop VOD scan — cycle %s game=%s sent=%s", cycle_reason, game, total_sent)
+            break
         rows: list[dict] = []
         for clip in pool[:probe_limit]:
             peak = float(clip.get("start", 0))
@@ -479,16 +776,26 @@ def _scan_vod(
                 blocked,
             )
             if entry is not None:
-                record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
-            return 0
+                record_vod_scan(
+                    entry, sent=total_sent, pool_peaks=pool_peaks, blocked=blocked, pool=pool
+                )
+            return total_sent
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
-        if n > 0:
-            if entry is not None:
-                record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
-            return n
-        skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
+        peak = round(float(rows[0].get("peak_start", rows[0]["start"])), 1)
+        skip_peaks.add(peak)
         peak_tries += 1
+        if n > 0:
+            total_sent += n
+            used_peaks.append(float(rows[0].get("peak_start", rows[0]["start"])))
+            log.info(
+                "shooter multi-send vod=%s clip=%s/%s total_sent=%s",
+                vod.name,
+                total_sent,
+                max_per_vod,
+                total_sent,
+            )
+            continue
         log.warning(
             "presend rejected peak — try next (%s/%s) vod=%s game=%s",
             peak_tries,
@@ -497,8 +804,8 @@ def _scan_vod(
             game,
         )
     if entry is not None:
-        record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool)
-    return 0
+        record_vod_scan(entry, sent=total_sent, pool_peaks=pool_peaks, blocked=False, pool=pool)
+    return total_sent
 
 
 def _scan_vod_with_adaptive(
@@ -521,7 +828,21 @@ def _scan_vod_with_adaptive(
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
+    if entry is None:
+        entry = {
+            "id": vid,
+            "path": str(vod),
+            "title": title,
+            "exhausted": False,
+        }
+        state.setdefault("vods", []).append(entry)
+    else:
+        entry.setdefault("path", str(vod))
+        entry.setdefault("id", vid)
+        if title and not entry.get("title"):
+            entry["title"] = title
 
+    metro_trust_segments = False
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
         if not ok_metro:
@@ -529,10 +850,13 @@ def _scan_vod_with_adaptive(
             entry = _vod_registry_entry(state, vod)
             if entry:
                 entry["reject_reason"] = metro_reason
-                if _pubg_metro_should_exhaust(title, streak_in):
+                if _pubg_metro_should_exhaust(title, streak_in, metro_reason):
                     entry["exhausted"] = True
+                    _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
+        # Soften override must not disable per-segment metro checks.
+        metro_trust_segments = not str(metro_reason).startswith("metro_soften")
 
     prev_level = int(state.get("last_adaptive_level") or 0)
     active_level = 0
@@ -560,6 +884,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
@@ -587,6 +912,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
         apply_genshin_seeds(seed_peaks)
@@ -612,6 +938,7 @@ def _scan_vod_with_adaptive(
             entry["reject_reason"] = fast_reason
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _cleanup_exhausted_entry(game, entry, state)
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
@@ -620,7 +947,7 @@ def _scan_vod_with_adaptive(
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
         with ctx as level:
             active_level = level
-            if game == "pubg":
+            if game == "pubg" and metro_trust_segments:
                 os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
             if should_notify_soften(streak_in, level, prev_level=prev_level) and os.environ.get(
                 "SHOOTER_VOD_ADAPTIVE_NOTIFY", os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1")
@@ -650,6 +977,34 @@ def _scan_vod_with_adaptive(
 
     new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
     state["last_adaptive_level"] = active_level
+    # Ensure registry row exists and reflects scan fields (empty pool must persist).
+    entry = _vod_registry_entry(state, vod) or entry
+    if entry is None:
+        entry = {
+            "id": vid,
+            "path": str(vod),
+            "title": title,
+            "exhausted": False,
+        }
+        state.setdefault("vods", []).append(entry)
+    if sent == 0:
+        record_zero_send_streak(entry, sent=0)
+        force = should_force_exhaust_after_retries(entry)
+        if should_mark_vod_exhausted(entry) or force:
+            if force:
+                entry["last_scan_blocked"] = True
+                entry.setdefault("reject_reason", "presend_retry_exhausted")
+            elif entry.get("last_scan_blocked") and entry.get("last_pool_peaks"):
+                entry["reject_reason"] = "all_peaks_blocked"
+            elif not entry.get("last_pool_peaks"):
+                entry.setdefault("reject_reason", "no_combat_peaks")
+            elif entry.get("last_scan_blocked"):
+                entry["reject_reason"] = "all_peaks_blocked"
+            entry["exhausted"] = True
+            _cleanup_exhausted_entry(game, entry, state)
+            log.info("exhausted vod=%s reason=%s", vod.name, entry.get("reject_reason"))
+    else:
+        record_zero_send_streak(entry, sent=sent)
     _save_state(game, state)
 
     if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
@@ -679,22 +1034,73 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     state = _load_state(game)
     registry = state.setdefault("vods", [])
-    used = set(state.get("used_youtube_ids", []))
+    try:
+        from vod_search_pool import used_ids_for_game
+
+        used = used_ids_for_game(game)
+    except Exception:
+        used = set(state.get("used_youtube_ids", []))
+    # Keep state list in sync for permanent ids only.
+    state["used_youtube_ids"] = sorted(used)
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
+        vid = vod_youtube_id(mp4)
+        # Sibling id-only row may already be spent while a live path duplicate remains.
+        if _youtube_id_permanently_spent(state, vid):
+            entry = _vod_registry_entry(state, mp4)
+            if entry is None:
+                entry = {
+                    "id": vid,
+                    "path": str(mp4),
+                    "title": "",
+                    "exhausted": True,
+                    "reject_reason": "all_peaks_blocked",
+                    "last_scan_blocked": True,
+                }
+                registry.append(entry)
+            else:
+                entry["path"] = str(mp4)
+                entry["exhausted"] = True
+                if not entry.get("reject_reason") or entry.get("reject_reason") == "no_combat_peaks":
+                    if entry.get("last_pool_peaks") or entry.get("last_scan_blocked"):
+                        entry["reject_reason"] = "all_peaks_blocked"
+                entry["last_scan_blocked"] = True
+            _cleanup_exhausted_entry(game, entry, state)
+            _save_state(game, state)
+            log.info("skip permanently spent inbox vod=%s id=%s", mp4.name, vid)
+            continue
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
+            _cleanup_exhausted_entry(game, entry, state)
+            _save_state(game, state)
             continue
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        dur = _ffprobe_duration(mp4)
+        min_sec = _shooter_vod_min_sec() if game in ("pubg", "standoff") else _vod_min_sec()
+        if dur < min_sec:
+            if entry is None:
+                entry = {
+                    "id": vid,
+                    "path": str(mp4),
+                    "title": "",
+                    "exhausted": True,
+                    "reject_reason": f"vod_length={dur:.0f}s",
+                }
+                registry.append(entry)
+            else:
+                entry["exhausted"] = True
+                entry.setdefault("reject_reason", f"vod_length={dur:.0f}s")
+            _cleanup_exhausted_entry(game, entry, state)
+            _save_state(game, state)
+            log.info("exhaust short inbox vod=%s dur=%.0fs", mp4.name, dur)
             continue
         if entry is None:
             entry = {
-                "id": vod_youtube_id(mp4),
+                "id": vid,
                 "path": str(mp4),
                 "title": "",
                 "exhausted": False,
@@ -707,25 +1113,37 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
                 entry["reject_reason"] = metro_reason
-                if _pubg_metro_should_exhaust(title, streak_in):
+                if _pubg_metro_should_exhaust(title, streak_in, metro_reason):
                     entry["exhausted"] = True
+                    _cleanup_exhausted_entry(game, entry, state)
                 _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
         state["vods"] = registry
         if n == 0:
             entry = _vod_registry_entry(state, mp4) or entry
-            if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
-                if not entry.get("last_pool_peaks"):
+            if entry is not None:
+                record_zero_send_streak(entry, sent=0)
+            force = should_force_exhaust_after_retries(entry)
+            if entry and not entry.get("exhausted") and (should_mark_vod_exhausted(entry) or force):
+                if force:
+                    entry.setdefault("reject_reason", "presend_retry_exhausted")
+                    entry["last_scan_blocked"] = True
+                elif entry.get("last_scan_blocked") and entry.get("last_pool_peaks"):
+                    entry["reject_reason"] = "all_peaks_blocked"
+                elif not entry.get("last_pool_peaks"):
                     entry.setdefault("reject_reason", "no_combat_peaks")
                 else:
                     entry.setdefault("reject_reason", "all_peaks_blocked")
                 entry["exhausted"] = True
+                _cleanup_exhausted_entry(game, entry, state)
                 log.info(
                     "exhausted vod=%s reason=%s",
                     mp4.name,
                     entry.get("reject_reason"),
                 )
+        elif entry is not None:
+            record_zero_send_streak(entry, sent=n)
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0
@@ -735,23 +1153,87 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
         return 0
 
-    candidates = _discover_candidates(game, env, used)
-    if not candidates:
-        send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+    pick = None
+    pool_on = os.environ.get("VOD_SEARCH_POOL_ENABLED", "1") == "1"
+    if pool_on:
+        from vod_search_pool import pop_candidate, pool_needs_refresh, refresh_game_pool
+
+        if pool_needs_refresh(game, used):
+            refresh_game_pool(game, env, used=used, force=True)
+        pick = pop_candidate(game, used)
+        if pick and game in ("pubg", "standoff"):
+            from youtube_shooter_vod_prefs import pick_discovery_candidate
+
+            ranked = pick_discovery_candidate(game, [pick])
+            if ranked is not None:
+                pick = ranked
+        elif pick and game in EXTENDED_GAMES:
+            from youtube_extended_vod_prefs import pick_discovery_candidate as pick_extended
+
+            ranked = pick_extended(game, [pick])
+            if ranked is not None:
+                pick = ranked
+    else:
+        candidates = _discover_candidates(game, env, used)
+        if candidates:
+            if game in ("pubg", "standoff"):
+                from youtube_shooter_vod_prefs import pick_discovery_candidate
+
+                pick = pick_discovery_candidate(game, candidates)
+            elif game in EXTENDED_GAMES:
+                from youtube_extended_vod_prefs import pick_discovery_candidate as pick_extended
+
+                pick = pick_extended(game, candidates)
+            if pick is None:
+                pick = candidates[0]
+    if pick is None:
+        _notify_discovery_miss(game, token, chat_id, state)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
+    ok_dl, reject_pre = _preflight_vod_pick(game, pick, env)
+    if not ok_dl:
+        used.add(str(pick.get("id") or ""))
+        state["used_youtube_ids"] = sorted(x for x in used if x)
+        registry.append(
+            {
+                "id": pick.get("id"),
+                "path": "",
+                "title": pick.get("title", ""),
+                "exhausted": True,
+                "reject_reason": reject_pre,
+            }
+        )
+        state["vods"] = registry
+        _save_state(game, state)
+        log.warning(
+            "skip download id=%s reason=%s title=%s",
+            pick.get("id"),
+            reject_pre,
+            (pick.get("title") or "")[:80],
+        )
+        print(f"pipeline done sent=0 vods=0 game={game} reject={reject_pre}")
+        return 0
 
-    pick = None
-    if game in ("pubg", "standoff"):
-        from youtube_shooter_vod_prefs import pick_discovery_candidate
-
-        pick = pick_discovery_candidate(game, candidates)
-    if pick is None:
-        pick = candidates[0]
     send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:
-        print(f"pipeline done sent=0 vods=0 game={game}")
+        # Avoid retrying the same bad pool/discovery hit forever.
+        used.add(str(pick.get("id") or ""))
+        state["used_youtube_ids"] = sorted(x for x in used if x)
+        reject = str(pick.get("reject_reason") or "download_failed")
+        registry.append(
+            {
+                "id": pick.get("id"),
+                "path": "",
+                "title": pick.get("title", ""),
+                "exhausted": True,
+                "reject_reason": reject,
+            }
+        )
+        state["vods"] = registry
+        _save_state(game, state)
+        log.info("marked undownloadable id=%s reason=%s", pick.get("id"), reject)
+        print(f"pipeline done sent=0 vods=0 game={game} reject={reject}")
         return 0
 
     if game == "pubg":
@@ -769,16 +1251,21 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     chat_id,
                     f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
                 )
-            exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
-            registry.append(
-                {
-                    "id": pick["id"],
-                    "path": str(vod),
-                    "title": pick.get("title", ""),
-                    "exhausted": exhausted,
-                    "reject_reason": metro_reason,
-                }
+            exhausted = _pubg_metro_should_exhaust(
+                str(pick.get("title") or ""),
+                streak_dl,
+                metro_reason,
             )
+            entry = {
+                "id": pick["id"],
+                "path": str(vod),
+                "title": pick.get("title", ""),
+                "exhausted": exhausted,
+                "reject_reason": metro_reason,
+            }
+            registry.append(entry)
+            if exhausted:
+                _cleanup_exhausted_entry(game, entry, state)
             used.add(pick["id"])
             state["vods"] = registry
             state["used_youtube_ids"] = sorted(used)
@@ -811,9 +1298,16 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
-    os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
-    os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
-    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
+    # Match MLBB discovery density: IntelliClip + denser long-VOD analysis.
+    os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "0")
+    os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "32")
+    os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "48")
+    os.environ.setdefault("SHOOTER_VOD_ACTION_PEAK_LIMIT", "40")
+    os.environ.setdefault("SHOOTER_VOD_MAX_PER_VOD", "3")
+    os.environ.setdefault("SMART_LONG_SAMPLE_FPS", "1.0")
+    os.environ.setdefault("SMART_LONG_ANALYSIS_MAX_FPS", "1.0")
+    os.environ.setdefault("VISUAL_MENU_OVERLAY_MAX", "0.72")
+    os.environ.setdefault("VISUAL_PUBG_MIN_FRAMES_PASS", "2")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
@@ -830,6 +1324,12 @@ def main() -> int:
         "SHOOTER_VOD_SKIP_INTELLICLIP",
         "SHOOTER_VOD_MAX_PANN_PROBE",
         "HIGHLIGHT_MAX_STAGE1",
+        "SHOOTER_VOD_ACTION_PEAK_LIMIT",
+        "SHOOTER_VOD_MAX_PER_VOD",
+        "SMART_LONG_SAMPLE_FPS",
+        "SMART_LONG_ANALYSIS_MAX_FPS",
+        "VISUAL_MENU_OVERLAY_MAX",
+        "VISUAL_PUBG_MIN_FRAMES_PASS",
         "SHOOTER_VOD_OWNER_EXEMPLARS",
         "SHOOTER_VOD_OWNER_BACKFILL",
         "SHOOTER_VOD_MIN_CLIP_SCORE",

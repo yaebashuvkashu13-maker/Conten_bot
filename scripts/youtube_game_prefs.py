@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import re
 
+# Accept common typo "Metro Royal" (missing final e) — frequent on YouTube.
 METRO_ROYALE_RE = re.compile(
-    r"metro[\s_-]*royale|metroroyale|метро[\s_-]*роял|метророял",
+    r"metro[\s_-]*royale?|metroroyale|метро[\s_-]*роял[еь]?|метророял",
     re.I,
 )
 CYRILLIC_RE = re.compile(r"[а-яё]", re.I)

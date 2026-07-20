@@ -61,6 +61,26 @@ def test_l3_trusts_metro_vod_on_presend() -> None:
     ov = overrides_for_level(3)
     assert ov.get("PUBG_METRO_SEGMENT_TRUST_VOD") == "1"
     assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
+    assert float(ov["PUBG_COMBAT_PANN_MIN"]) <= 0.14
+    assert ov.get("PUBG_COMBAT_FRAMES_REQUIRED") == "1"
+    assert "PUBG_COMBAT_MIN_HIT_FLASH" in ov
+    assert float(ov["VIRAL_COMBAT_PANN_HOOK_BYPASS"]) <= 0.14
+
+
+def test_soft_l3_runtime_combat_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Soft must change combat floors via env re-read (not import-time consts)."""
+    monkeypatch.setenv("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "2")
+    from highlight_scorer import pann_gun_inference_floor, pann_gun_min
+    from pubg_combat_gate import _combat_frames_required, _combat_pann_min
+
+    with adaptive_env(6) as level:
+        assert level == 3
+        assert _combat_pann_min() == float(os.environ["PUBG_COMBAT_PANN_MIN"])
+        assert _combat_frames_required() == 1
+        assert pann_gun_min() == float(os.environ["HIGHLIGHT_PANN_GUN_MIN"])
+        assert pann_gun_inference_floor() == float(os.environ["HIGHLIGHT_PANN_INFERENCE_FLOOR"])
+        assert float(os.environ["PUBG_COMBAT_MIN_HIT_FLASH"]) <= 0.001
+
 
 
 def test_l4_trusts_panns_and_more_probes() -> None:
