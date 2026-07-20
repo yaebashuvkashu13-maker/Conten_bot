@@ -55,6 +55,8 @@ def validate_wot_brawl_segment(
     base = dict(metrics or {})
     if not base:
         base = probe_segment(video_path, start_sec, duration_sec, "wot")
+    if os.environ.get("WOT_BRAWL_GATE", "1") != "1":
+        return True, "wot_brawl_gate_off", base
     impact = float(base.get("impact_density", 0))
     motion = float(base.get("center_motion", 0))
     flashes, best_flash = count_hit_flashes(video_path, start_sec, duration_sec)

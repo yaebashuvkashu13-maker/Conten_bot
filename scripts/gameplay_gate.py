@@ -1092,6 +1092,9 @@ def segment_is_valid_for_montage(
             return False, f"weak_boss=score{boss_score:.2f}:peak{bar_peak:.3f}"
         return True, "boss_ok"
     if profile in ("wot", "world_of_tanks"):
+        # L4 adaptive soften sets WOT_BRAWL_GATE=0 — skip cruise/hit hard rejects.
+        if os.environ.get("WOT_BRAWL_GATE", "1") != "1":
+            return True, "brawl_gate_off"
         if crop_box is None:
             crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
         impact_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(

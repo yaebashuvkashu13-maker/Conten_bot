@@ -26,6 +26,33 @@ def test_wot_brawl_gate_off_skips_cruise_reject(monkeypatch: pytest.MonkeyPatch)
     assert reason == ""
 
 
+def test_gameplay_gate_respects_wot_brawl_gate_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L4 sets WOT_BRAWL_GATE=0 — gameplay cruise reject must not fire."""
+    from gameplay_gate import segment_is_valid_for_montage
+
+    monkeypatch.setenv("WOT_BRAWL_GATE", "0")
+    ok, reason = segment_is_valid_for_montage(
+        Path("/nonexistent.mp4"), 0.0, 12.0, profile="wot"
+    )
+    assert ok is True
+    assert reason == "brawl_gate_off"
+
+
+def test_wot_brawl_segment_respects_gate_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wot_brawl_segment import validate_wot_brawl_segment
+
+    monkeypatch.setenv("WOT_BRAWL_GATE", "0")
+    ok, reason, metrics = validate_wot_brawl_segment(
+        Path("/nonexistent.mp4"),
+        0.0,
+        12.0,
+        metrics={"impact_density": 0.0, "center_motion": 0.3},
+    )
+    assert ok is True
+    assert reason == "wot_brawl_gate_off"
+    assert metrics["impact_density"] == 0.0
+
+
 def test_standoff_run_segment_fails_low_motion_and_gun() -> None:
     """motion=0.073 gun=0.075 must FAIL under strict standoff floors."""
     metrics = {
