@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Viral learning batch: 10 high-view Shorts per game + feature analysis + report.
+# Viral learning: download Shorts → analyze → compare with current good → improve exemplars.
+# Does NOT send Shorts to Telegram. Optional text report with --telegram.
 set -Eeuo pipefail
 
 REPO="${REPO:-/root/content_bot_ml}"
 LOG="${LOG:-/root/data/mlbb/viral_learning_batch.log}"
 LOCK="${LOCK:-/tmp/viral_learning_batch.lock}"
 PER_GAME="${PER_GAME:-10}"
+# TELEGRAM=1 → text improve report only (never videos)
+TELEGRAM="${TELEGRAM:-0}"
+APPLY_ENV="${APPLY_ENV:-1}"
 
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -27,12 +31,21 @@ export VIRAL_INGEST_FAST="${VIRAL_INGEST_FAST:-1}"
 export VIRAL_INGEST_MIN_GAMEPLAY="${VIRAL_INGEST_MIN_GAMEPLAY:-0.52}"
 export VIRAL_INGEST_SKIP_RULE_GATE="${VIRAL_INGEST_SKIP_RULE_GATE:-1}"
 
+EXTRA=()
+if [[ "$TELEGRAM" == "1" ]]; then
+  EXTRA+=(--telegram)
+fi
+if [[ "$APPLY_ENV" == "1" ]]; then
+  EXTRA+=(--apply-env)
+fi
+
 cd "$REPO"
 {
-  echo "===== $(date -Is) viral_learning_batch start per_game=$PER_GAME ====="
+  echo "===== $(date -Is) viral_learning_batch start per_game=$PER_GAME (improve, no video spam) ====="
   python3 "$REPO/scripts/viral_learning_batch.py" \
     --per-game "$PER_GAME" \
     --profile all \
-    --telegram
+    --train \
+    "${EXTRA[@]}"
   echo "===== $(date -Is) viral_learning_batch done ====="
 } >>"$LOG" 2>&1
