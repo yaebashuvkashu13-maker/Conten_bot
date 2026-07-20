@@ -1762,6 +1762,24 @@ def discover_highlight_candidates(
         for start in starts
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
+    # Score dense/fast-probe seeds first (operational throughput for WoT/Genshin).
+    seed_raw = os.environ.get("HIGHLIGHT_SEED_STARTS", "")
+    if seed_raw.strip() and profile in ("wot", "genshin"):
+        seed_set: set[float] = set()
+        for part in seed_raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                seed_set.add(round(float(part) - WINDOW_SEC * 0.5, 1))
+                seed_set.add(round(float(part), 1))
+            except ValueError:
+                pass
+        if seed_set:
+            seeded = [s for s in pending if any(abs(s - t) <= 8.0 for t in seed_set)]
+            rest = [s for s in pending if s not in seeded]
+            pending = seeded + rest
+            log.info("highlight seed-priority %s: %s seed windows first", video_path.name, len(seeded))
     workers = _parallel_workers()
     if workers > 1 and len(pending) > 1:
         log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
@@ -1796,7 +1814,7 @@ def discover_highlight_candidates(
         # WoT: keep a few peaks so expand/presend rejects can try the next fight.
         send_one_n = 1
         if profile == "wot":
-            send_one_n = max(1, int(os.environ.get("WOT_VOD_SEND_POOL", "3")))
+            send_one_n = max(1, int(os.environ.get("WOT_VOD_SEND_POOL", "1")))
         pool = ThreadPoolExecutor(max_workers=workers)
         stop_early = False
         try:
