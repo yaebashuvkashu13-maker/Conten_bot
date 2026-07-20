@@ -1825,6 +1825,10 @@ def discover_highlight_candidates(
                     continue
                 if row is not None:
                     start, metrics = row
+                    if any(abs(float(v.get("start", -1)) - float(start)) < 2.0 for v in verified):
+                        if not stop_early:
+                            _fill(1)
+                        continue
                     _consume(start, metrics)
                     if len(verified) >= limit:
                         break
