@@ -56,3 +56,25 @@ def test_run_containing_peak_gap_tolerance():
     assert run is not None
     assert run[0] == 10.0
     assert run[1] >= 14.0
+
+
+def test_trim_keeps_peak_inside_cap():
+    """Long soft run + late peak must still include the peak after cap trim."""
+    fight_start = 100.0
+    peak = 175.0
+    cap = 40.0
+    lead = 3.0
+    tail = 8.0
+    min_d = 16.0
+    file_dur = 300.0
+    need_end = min(file_dur, max(peak + tail, fight_start + min_d))
+    start = fight_start
+    end = min(file_dur, start + cap)
+    if peak > end - 1.0 or need_end > end:
+        end = min(file_dur, need_end)
+        start = max(fight_start, end - cap)
+        if peak < start:
+            start = max(0.0, peak - lead)
+            end = min(file_dur, start + cap)
+    assert start <= peak <= end
+    assert end - start <= cap + 0.01

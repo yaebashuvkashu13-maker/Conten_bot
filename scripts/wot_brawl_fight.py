@@ -277,15 +277,21 @@ def detect_brawl_bounds(vod: Path, peak: float) -> tuple[float, float, float]:
     # Always trim long runs for WoT — long cruise dilutes impact density at presend.
     cap = max_d if os.environ.get("WOT_BRAWL_FIGHT_TRIM_LONG", "1") == "1" else hard_max
     cap = min(cap, hard_max)
+    tail = float(os.environ.get("WOT_BRAWL_PEAK_TAIL_SEC", "8"))
 
     if dur > cap:
+        fight_start = max(0.0, run_start - lead)
+        # Must include the scored peak + short tail. Prefer earliest start that fits.
+        need_end = min(file_dur, max(peak + tail, fight_start + min_d))
         if prefer_start:
+            start = fight_start
             end = min(file_dur, start + cap)
-            if peak + lead > end:
-                end = min(file_dur, peak + lead)
-                start = max(0.0, end - cap)
-                if run_start >= start and peak <= start + cap:
-                    start = max(0.0, min(run_start - lead, peak + lead - cap))
+            if peak > end - 1.0 or need_end > end:
+                # Peak would be clipped — slide window so peak sits near the end.
+                end = min(file_dur, need_end)
+                start = max(fight_start, end - cap)
+                if peak < start:
+                    start = max(0.0, peak - lead)
                     end = min(file_dur, start + cap)
         else:
             start = max(0.0, peak - lead)
