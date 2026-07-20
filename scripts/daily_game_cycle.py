@@ -38,7 +38,7 @@ def enabled() -> bool:
 
 def quota_for(game: str) -> int:
     game = game.strip().lower()
-    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
+    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 5, "wot": 5}
     env_key = f"DAILY_{game.upper()}_QUOTA"
     fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
     raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
