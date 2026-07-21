@@ -677,6 +677,16 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         log.info("skip feed game=%s reason=%s", game, reason)
         return 0
 
+    def _cycle_ok() -> tuple[bool, str]:
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") != "1":
+            return True, ""
+        from daily_game_cycle import active_game
+
+        active = active_game()
+        if active != game:
+            return False, f"handoff_active={active}"
+        return can_send_for_game(game, 1)
+
     state = _load_state(game)
     registry = state.setdefault("vods", [])
     used = set(state.get("used_youtube_ids", []))
@@ -684,6 +694,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox.mkdir(parents=True, exist_ok=True)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
+        ok_cycle, cycle_reason = _cycle_ok()
+        if not ok_cycle:
+            log.info("daily cycle handoff mid-run game=%s reason=%s", game, cycle_reason)
+            break
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
             continue
@@ -739,6 +753,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     if not candidates:
         send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
         print(f"pipeline done sent=0 vods=0 game={game}")
+        return 0
+
+    ok_cycle, cycle_reason = _cycle_ok()
+    if not ok_cycle:
+        log.info("daily cycle handoff before discovery game=%s reason=%s", game, cycle_reason)
         return 0
 
     pick = None

@@ -1688,10 +1688,26 @@ def _send_segment_batch(
             f"👍 Ок / 👎 Не ок"
         )
         if not send_video(token, chat_id, out, caption, seg_id=sid):
+            # Learning-first daily cap OR multi-game cycle handoff both count as
+            # send_blocked so the VOD loop exits instead of retrying forever.
             ok_one, one_reason = can_send(1)
-            if not ok_one:
+            cycle_blocked = False
+            cycle_reason = ""
+            if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+                from daily_game_cycle import can_send_for_game
+
+                ok_cycle, cycle_reason = can_send_for_game("mlbb", 1)
+                cycle_blocked = not ok_cycle
+            if not ok_one or cycle_blocked:
                 send_blocked += 1
-                log.warning("send blocked seg=%s reason=%s", sid, one_reason)
+                log.warning(
+                    "send blocked seg=%s reason=%s cycle=%s",
+                    sid,
+                    one_reason if not ok_one else "ok",
+                    cycle_reason or "ok",
+                )
+                if cycle_blocked:
+                    break
                 continue
             send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")
             continue
@@ -2178,6 +2194,23 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        # Re-check daily cycle each VOD so MLBB hands off to PUBG/etc promptly.
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import active_game, can_send_for_game
+
+            if active_game() != "mlbb":
+                log.info(
+                    "daily cycle handoff: active_game=%s — stop mlbb feed (sent=%s vods=%s)",
+                    active_game(),
+                    total_sent,
+                    vods_done,
+                )
+                break
+            ok_mlbb, why = can_send_for_game("mlbb", 1)
+            if not ok_mlbb:
+                log.info("daily cycle mlbb blocked mid-run: %s — stop feed", why)
+                break
+
         vod, entry = _resolve_next_vod(
             env,
             registry,
@@ -2206,6 +2239,14 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         total_sent += n
         vods_done += 1
         registry[:] = _ensure_registry(env)
+
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import can_send_for_game
+
+            ok_mlbb, why = can_send_for_game("mlbb", 1)
+            if not ok_mlbb:
+                log.info("daily cycle mlbb blocked after vod (%s) — stop feed", why)
+                break
 
     print(f"pipeline done sent={total_sent} vods={vods_done}")
     return 0 if total_sent > 0 or vods_done > 0 else 0
