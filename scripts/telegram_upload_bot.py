@@ -56,7 +56,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-07-21-nonblocking-poll-v1'
+BOT_VERSION = '2026-07-22-poll-heartbeat-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -3688,6 +3688,7 @@ def main():
                 },
                 timeout=POLL_TIMEOUT + 10,
             )
+            touch_heartbeat()
             for update in updates:
                 state['last_update_id'] = update['update_id']
                 save_state(state)

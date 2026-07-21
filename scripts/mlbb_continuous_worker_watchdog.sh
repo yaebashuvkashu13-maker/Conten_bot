@@ -28,7 +28,7 @@ log() {
 
 telegram_heartbeat_stale() {
   local hb="/root/data/mlbb/telegram_bot_heartbeat.json"
-  local max_age="${TELEGRAM_BOT_HEARTBEAT_STALE_SEC:-600}"
+  local max_age="${TELEGRAM_BOT_HEARTBEAT_STALE_SEC:-1800}"
   [[ -f "$hb" ]] || return 1
   python3 - <<PY
 import json, sys, time
