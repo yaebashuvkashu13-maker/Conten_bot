@@ -1706,6 +1706,8 @@ def _send_segment_batch(
                     one_reason if not ok_one else "ok",
                     cycle_reason or "ok",
                 )
+                if cycle_blocked:
+                    break
                 continue
             send_message(token, chat_id, f"{caption}\n(файл >20MB — не отправился)")
             continue
@@ -2237,6 +2239,14 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         total_sent += n
         vods_done += 1
         registry[:] = _ensure_registry(env)
+
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import can_send_for_game
+
+            ok_mlbb, why = can_send_for_game("mlbb", 1)
+            if not ok_mlbb:
+                log.info("daily cycle mlbb blocked after vod (%s) — stop feed", why)
+                break
 
     print(f"pipeline done sent={total_sent} vods={vods_done}")
     return 0 if total_sent > 0 or vods_done > 0 else 0

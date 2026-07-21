@@ -202,6 +202,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
   "$REPO/scripts/mlbb_job_watchdog.py" \
   "$REPO/scripts/mlbb_vod_health_watchdog.sh" \
+  "$REPO/scripts/vod_cycle_watchdog.py" \
   "$REPO/scripts/mlbb_vod_only_verify.sh" \
   "$REPO/scripts/vps_apply_vod_only.sh" \
   "$REPO/scripts/mlbb_telegram_video.py" \

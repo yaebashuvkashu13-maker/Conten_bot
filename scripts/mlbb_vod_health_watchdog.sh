@@ -65,6 +65,12 @@ fi
 
 # Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
 FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+
+# Daily cycle handoff / zero-send loop / hung runner (every 5 min with this watchdog).
+if [[ "$(env_val DAILY_GAME_CYCLE_ENABLED)" == "1" ]] && [[ -x "$BIN/vod_cycle_watchdog.py" ]]; then
+  python3 "$BIN/vod_cycle_watchdog.py" >>"$LOG" 2>&1 || true
+fi
+
 if [[ -f "$FEED_LOG" ]]; then
   CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || echo 0)"
   if [[ "$CRASH_N" -gt 3 ]]; then
