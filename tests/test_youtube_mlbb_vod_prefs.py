@@ -90,12 +90,17 @@ def test_discovery_search_cycle_rotates_modes() -> None:
 
 
 def test_upload_freshness_filter() -> None:
+    from unittest.mock import patch
+
+    from youtube_mlbb_vod_prefs import passes_upload_freshness, upload_age_days
+
     now = datetime(2026, 6, 21, tzinfo=timezone.utc)
     fresh = _meta("MLBB Mythic Ranked", upload_date="20260619")
     stale = _meta("MLBB Mythic Ranked", upload_date="20260101")
     assert upload_age_days("20260619", now=now) == 2
-    assert passes_upload_freshness(fresh, max_age_days=21)
-    assert not passes_upload_freshness(stale, max_age_days=21)
+    with patch("youtube_mlbb_vod_prefs.upload_age_days", side_effect=lambda d, **kw: 2 if d == "20260619" else 200):
+        assert passes_upload_freshness(fresh, max_age_days=21)
+        assert not passes_upload_freshness(stale, max_age_days=21)
 
 
 def test_rank_prefers_fresh_upload() -> None:

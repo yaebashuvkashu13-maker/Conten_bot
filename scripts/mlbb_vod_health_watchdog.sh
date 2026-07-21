@@ -8,6 +8,30 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "[$(date -Is)] $*" >>"$LOG"; }
 
+telegram_heartbeat_stale() {
+  local hb="/root/data/mlbb/telegram_bot_heartbeat.json"
+  local max_age="${TELEGRAM_BOT_HEARTBEAT_STALE_SEC:-600}"
+  [[ -f "$hb" ]] || return 1
+  python3 - <<PY
+import json, sys, time
+from pathlib import Path
+max_age = int("${max_age}")
+try:
+    data = json.loads(Path("${hb}").read_text(encoding="utf-8"))
+    age = time.time() - float(data.get("ts") or 0)
+except Exception:
+    sys.exit(0)
+sys.exit(0 if age > max_age else 1)
+PY
+}
+
+restart_telegram_bot() {
+  log "restart telegram_upload_bot"
+  pkill -f 'telegram_upload_bot.py' 2>/dev/null || true
+  sleep 1
+  nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+}
+
 env_val() {
   local key="$1"
   grep "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
@@ -38,8 +62,10 @@ pgrep -af 'sync_owner_learning' 2>/dev/null | grep -v mlbb_vod_segment_feed | wh
 done
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
-  log "restart telegram_upload_bot"
-  nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+  restart_telegram_bot
+elif telegram_heartbeat_stale; then
+  log "telegram bot heartbeat stale — restart"
+  restart_telegram_bot
 fi
 
 if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
@@ -86,7 +112,7 @@ if [[ -f "$FEED_LOG" ]]; then
 fi
 
 # Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
-SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
+SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-14400}"
 if [[ "$SILENCE_SEC" -gt 0 ]]; then
   set -a
   # shellcheck disable=SC1090
