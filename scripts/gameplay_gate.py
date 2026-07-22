@@ -1057,6 +1057,7 @@ def segment_is_valid_for_montage(
     min_gunfire: float | None = None,
     min_boss: float | None = None,
     crop_box: tuple[int, int, int, int] | None = None,
+    panns_gun_max: float = 0.0,
 ) -> tuple[bool, str]:
     if profile == "genshin" and os.environ.get("SMART_GENSHIN_REQUIRE_BOSS", "1") == "1":
         if crop_box is None:
@@ -1159,7 +1160,11 @@ def segment_is_valid_for_montage(
             ):
                 return False, "owner_bad_window"
             ok_owner, owner_reason = pubg_passes_owner_heuristics(
-                gunfire_density, burst_ratio, audio_rms, center_motion
+                gunfire_density,
+                burst_ratio,
+                audio_rms,
+                center_motion,
+                panns_gun_max=float(panns_gun_max or 0.0),
             )
             if not ok_owner:
                 return False, owner_reason
@@ -1180,8 +1185,10 @@ def segment_is_valid_for_montage(
                 if not ok_tt:
                     return False, tt_reason
             strict_gun = gunfire_density >= min_gun and burst_ratio >= min_burst
-            heuristic_gun = owner_reason in ("fight_audio", "light_combat", "sniper_hold") or owner_reason.startswith(
-                "relax_"
+            heuristic_gun = (
+                owner_reason in ("fight_audio", "light_combat", "sniper_hold")
+                or owner_reason.startswith("relax_")
+                or str(owner_reason).startswith("panns_")
             )
             if not strict_gun and not heuristic_gun:
                 if owner_reason == "sniper_hold" and center_motion >= 0.030:
@@ -1200,19 +1207,26 @@ def segment_is_valid_for_montage(
         if audio_rms < min_audio * 0.85 and gunfire_density < min_gun * 0.90:
             return False, f"silent_segment=rms{audio_rms:.4f}"
         min_center_motion = float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018"))
+        panns_trusted = float(panns_gun_max or 0.0) >= float(
+            os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+        )
         if profile == "pubg":
             sniper_ok, _ = pubg_passes_owner_heuristics(
-                gunfire_density, burst_ratio, audio_rms, center_motion
+                gunfire_density,
+                burst_ratio,
+                audio_rms,
+                center_motion,
+                panns_gun_max=float(panns_gun_max or 0.0),
             )
             if sniper_ok and center_motion < min_center_motion:
                 min_center_motion = 0.010
-        if center_motion < min_center_motion:
+        if center_motion < min_center_motion and not panns_trusted:
             return False, f"no_aim_motion={center_motion:.3f}"
         default_max_text = "0.62" if profile == "pubg" else "0.14"
         max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", default_max_text))
         if center_text > max_text and gunfire_density < min_gun * 0.90:
             return False, f"menu_overlay={center_text:.2f}"
-        if profile == "pubg":
+        if profile == "pubg" and not panns_trusted:
             run_hi = float(os.environ.get("SMART_PUBG_MAX_RUN_MOTION", "0.21"))
             if (
                 center_motion >= 0.09
@@ -1222,7 +1236,8 @@ def segment_is_valid_for_montage(
                 return False, f"run_no_fight=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
         loot_cap = min_gun * (0.85 if profile == "pubg" else 1.0)
         if (
-            segment_looks_like_pubg_loot_or_walk(
+            not panns_trusted
+            and segment_looks_like_pubg_loot_or_walk(
                 video_path,
                 start_sec,
                 duration_sec,
