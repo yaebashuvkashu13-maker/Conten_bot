@@ -525,7 +525,7 @@ def pubg_passes_combat_gate(
             if kf >= float(os.environ.get("PUBG_KILLFEED_BONUS_MIN", "0.30")) or ocr_hits >= 1:
                 signals += 1
                 out["signal_killfeed"] = True
-            if panns_gun >= floor * 1.15:
+            if panns_gun >= required * 1.15:
                 signals += 1
                 out["signal_panns_strong"] = True
             quarters = int(shoot_row.get("gunfire_quarters_active") or shoot_row.get("active_quarters") or 0)
