@@ -195,22 +195,28 @@ def apply_run_trim_to_clip(clip: dict, vod: Path, *, game: str = "pubg") -> dict
 
 
 def pick_montage_rows(rows: list[dict]) -> list[dict]:
-    """Pick 2–4 spaced fight peaks; prefer higher score, allow weaker parts."""
+    """Pick 2–4 spaced fight peaks; prefer killfeed/gun/POV evidence over raw score."""
     if not rows:
         return []
     min_n = montage_min_clips()
     max_n = montage_max_clips()
     gap = montage_gap_sec()
 
-    ranked = sorted(
-        rows,
-        key=lambda r: (
-            float(r.get("score") or 0),
-            float(r.get("clip_score") or 0),
-            float(r.get("peak_start", r.get("start") or 0)),
-        ),
-        reverse=True,
-    )
+    def _precision_key(r: dict) -> tuple:
+        hm = r.get("highlight_metrics") or r.get("clip", {}).get("highlight_metrics") or {}
+        kf = float(r.get("killfeed_density") or hm.get("ocr_hits") or hm.get("killfeed_density") or 0)
+        gun_q = float(r.get("gunfire_quarters_active") or hm.get("gunfire_quarters_active") or 0)
+        gun_c = float(r.get("gunfire_clusters") or hm.get("gunfire_clusters") or 0)
+        panns = float(r.get("panns_gun_max") or hm.get("panns_gun_max") or 0)
+        clip_score = float(r.get("clip_score") or hm.get("clip_score") or 0)
+        score = float(r.get("score") or 0)
+        # Penalize sniper-hold / audio-only-ish rows when marked.
+        penalty = 0.0
+        if str(hm.get("pass_reason") or "").startswith("sniper"):
+            penalty -= 0.5
+        return (kf, gun_q + gun_c * 0.5, panns, clip_score + penalty, score)
+
+    ranked = sorted(rows, key=_precision_key, reverse=True)
     chosen: list[dict] = []
     for row in ranked:
         peak = float(row.get("peak_start", row.get("start") or 0))

@@ -1380,6 +1380,28 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         if motion < _presend_min_motion() and mini < _presend_min_minimap_delta():
             return False, f"{label}_idle_motion={motion:.4f}", report
 
+    # Pre-banner fight context: reject clips where the kill banner sits on idle/run.
+    if (
+        os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1"
+        and os.environ.get("MLBB_PRESEND_BANNER_CONTEXT", "1") == "1"
+    ):
+        banner_sec = float(row.get("banner_sec", peak_start) or peak_start)
+        lead = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "8")))
+        ctx_start = max(0.0, banner_sec - min(lead, 10.0))
+        ctx_dur = max(4.0, min(12.0, banner_sec + 3.0 - ctx_start))
+        ctx_motion, ctx_mini, ctx_skill, _ = score_segment_combat(
+            vod, ctx_start, ctx_dur, crop_box=crop, sample_frames=5
+        )
+        report["banner_ctx_motion"] = round(ctx_motion, 4)
+        report["banner_ctx_mini"] = round(ctx_mini, 4)
+        report["banner_ctx_skill"] = round(ctx_skill, 4)
+        if segment_looks_like_draft_or_queue(vod, ctx_start, ctx_dur, crop_box=crop):
+            return False, "banner_ctx_spawn_or_draft", report
+        need_m = _presend_min_motion() * 0.90
+        need_mini = _presend_min_minimap_delta() * 0.85
+        if ctx_motion < need_m and ctx_mini < need_mini and ctx_skill < need_m:
+            return False, f"banner_ctx_idle={ctx_motion:.4f}", report
+
     uniform_ok, uniform_reason = segment_uniform_gameplay_ok(
         vod, cut_start, dur, crop_box=crop, profile=PROFILE
     )

@@ -49,18 +49,20 @@ def test_record_vod_outcome_streak() -> None:
     assert streak_from_state(state) == 0
 
 
-def test_l2_has_pov_gate_off() -> None:
+def test_l2_keeps_pov_and_multi_frame() -> None:
     ov = overrides_for_level(2)
-    assert ov.get("PUBG_POV_GATE") == "0"
+    assert ov.get("PUBG_POV_GATE") == "1"
+    assert ov.get("VISUAL_PUBG_MIN_FRAMES_PASS") == "2"
     assert float(ov["VISUAL_MENU_OVERLAY_MAX"]) > float(overrides_for_level(1)["VISUAL_MENU_OVERLAY_MAX"])
     assert ov.get("PUBG_METRO_VOD_MIN_PROBES") == "1"
     assert ov.get("PUBG_METRO_SEGMENT_RELAX") == "1"
 
 
-def test_l3_trusts_metro_vod_on_presend() -> None:
+def test_l3_keeps_bot_farm_and_pov() -> None:
     ov = overrides_for_level(3)
     assert ov.get("PUBG_METRO_SEGMENT_TRUST_VOD") == "1"
-    assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
+    assert ov.get("PUBG_REJECT_BOT_FARM") == "1"
+    assert ov.get("PUBG_POV_GATE") == "1"
 
 
 def test_l4_trusts_panns_and_more_probes() -> None:
@@ -68,3 +70,5 @@ def test_l4_trusts_panns_and_more_probes() -> None:
     assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "2"
     assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) >= 24
     assert float(ov.get("PUBG_PANNS_TRUST_MIN", "0")) <= 0.30
+    assert ov.get("PUBG_REJECT_BOT_FARM") == "1"
+    assert ov.get("PUBG_POV_GATE") == "1"

@@ -28,9 +28,16 @@ def test_classify_savage_and_triple() -> None:
 
 
 def test_reject_single_kill_only() -> None:
-    single = classify_banner_text("You got a Kill")
-    assert single is not None
-    assert single.tier == 1
+    # Strong single phrase still accepted at text level.
+    strong = classify_banner_text("Enemy has been slain")
+    assert strong is not None
+    assert strong.tier == 1
+    assert strong.label == "single"
+    # Bare "kill" is weak — needs announce color in _classify_frame.
+    weak = classify_banner_text("You got a Kill")
+    assert weak is not None
+    assert weak.tier == 1
+    assert weak.label == "single_weak"
 
 
 def test_classify_double_kill() -> None:
@@ -56,6 +63,8 @@ def test_min_tier_double_accepts_double_rejects_single() -> None:
         single = classify_banner_text("You got a Kill")
         assert single is not None
         assert single.tier < kb._min_tier()
+        # Weak label should still be below double min tier.
+        assert single.label in {"single", "single_weak"}
     finally:
         if old is None:
             os.environ.pop("MLBB_KILL_BANNER_MIN_TIER", None)

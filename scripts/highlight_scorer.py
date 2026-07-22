@@ -1656,9 +1656,16 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
-                if not starts and os.environ.get("MLBB_VOD_BANNER_SKIP_ON_MISS", "0") == "1":
+                hard_miss = (
+                    os.environ.get("MLBB_VOD_BANNER_SKIP_ON_MISS", "0") == "1"
+                    or (
+                        os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+                        and os.environ.get("MLBB_VOD_BANNER_HARD_PREFILTER", "1") == "1"
+                    )
+                )
+                if not starts and hard_miss:
                     log.warning(
-                        "highlight %s: banner prefilter 0/%s — skip VOD",
+                        "highlight %s: banner prefilter 0/%s — skip VOD (hard)",
                         video_path.name,
                         before,
                     )

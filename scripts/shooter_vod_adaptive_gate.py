@@ -34,26 +34,27 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.014",
 }
 
-# Level 2: allow Metro highlight HUD, one good frame enough, POV gate off.
+# Level 2: allow Metro highlight HUD, slightly lower bars — keep POV + multi-frame visual.
 SHOOTER_SOFTEN_L2: dict[str, str] = {
     **SHOOTER_SOFTEN_L1,
     "VISUAL_MENU_OVERLAY_MAX": "0.78",
-    "VISUAL_PUBG_MIN_FRAMES_PASS": "1",
+    "VISUAL_PUBG_MIN_FRAMES_PASS": "2",
     "HIGHLIGHT_PANN_GUN_MIN": "0.18",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.12",
     "SMART_PUBG_MAX_CENTER_TEXT": "0.85",
     "SMART_STANDOFF_MAX_CENTER_TEXT": "0.28",
-    "PUBG_POV_GATE": "0",
-    "PUBG_POV_MIN_CENTER_MOTION": "0.012",
+    "PUBG_POV_GATE": "1",
+    "PUBG_POV_MIN_CENTER_MOTION": "0.014",
     "PUBG_COMBAT_PANN_MIN": "0.18",
     "VISUAL_PUBG_MIN_CENTER_EDGE": "0.018",
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.010",
     "VISUAL_PUBG_MIN_HIT_FLASH": "0.0010",
-    "PUBG_COMBAT_FRAMES_REQUIRED": "1",
+    "PUBG_COMBAT_FRAMES_REQUIRED": "2",
     "PUBG_METRO_VOD_MIN_PROBES": "1",
     "PUBG_METRO_MAX_SKY_RATIO": "0.20",
     "PUBG_METRO_SEGMENT_RELAX": "1",
     "HIGHLIGHT_PANN_PREFILTER_MIN": "0.10",
+    "SHOOTER_VOD_MAX_PANN_PROBE": "26",
 }
 
 
@@ -65,7 +66,7 @@ def streak_threshold() -> int:
     return max(1, int(raw))
 
 
-# Level 3: long zero streak — trust gun audio, skip run/loot owner heuristics.
+# Level 3: long zero streak — more probes / lower bars, but keep bot-farm + POV.
 SHOOTER_SOFTEN_L3: dict[str, str] = {
     **SHOOTER_SOFTEN_L2,
     "VISUAL_MENU_OVERLAY_MAX": "0.85",
@@ -74,21 +75,23 @@ SHOOTER_SOFTEN_L3: dict[str, str] = {
     "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.040",
     "PUBG_METRO_SEGMENT_TRUST_VOD": "1",
     "PUBG_METRO_TITLE_TRUST": "1",
-    "PUBG_REJECT_BOT_FARM": "0",
+    "PUBG_REJECT_BOT_FARM": "1",
+    "PUBG_POV_GATE": "1",
     "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
     "HIGHLIGHT_PANN_PREFILTER_MIN": "0.08",
     "HIGHLIGHT_PANN_GUN_MIN": "0.15",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.10",
     "PUBG_COMBAT_PANN_MIN": "0.14",
-    "PUBG_COMBAT_FRAMES_REQUIRED": "1",
+    "PUBG_COMBAT_FRAMES_REQUIRED": "2",
     "VISUAL_PUBG_MIN_HIT_FLASH": "0.0008",
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.008",
+    "SHOOTER_VOD_MAX_PANN_PROBE": "28",
 }
 
-# Level 4: streak 10+ — trust PANNs gun audio, probe more windows, lower hook bar.
+# Level 4: streak 10+ — trust PANNs more + probe more, still keep anti-bot/POV.
 SHOOTER_SOFTEN_L4: dict[str, str] = {
     **SHOOTER_SOFTEN_L3,
-    "SHOOTER_VOD_MAX_PANN_PROBE": "28",
+    "SHOOTER_VOD_MAX_PANN_PROBE": "32",
     "HIGHLIGHT_MAX_STAGE1": "32",
     "HIGHLIGHT_PANN_PREFILTER_MIN": "0.06",
     "HIGHLIGHT_PANN_GUN_MIN": "0.12",
@@ -96,7 +99,9 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
     "PUBG_PANNS_TRUST_MIN": "0.28",
     "PUBG_RELAX_OWNER_HEURISTICS": "2",
     "PUBG_COMBAT_PANN_MIN": "0.12",
-    "PUBG_COMBAT_FRAMES_REQUIRED": "1",
+    "PUBG_COMBAT_FRAMES_REQUIRED": "2",
+    "PUBG_REJECT_BOT_FARM": "1",
+    "PUBG_POV_GATE": "1",
     "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.032",
     "SMART_PUBG_MAX_RUN_MOTION": "0.35",
     "VIRAL_SEGMENT_HOOK_MIN": "0.04",

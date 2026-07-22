@@ -472,5 +472,42 @@ def pubg_passes_combat_gate(
         if not pov_ok:
             return False, pov_reason, out
 
+        # Precision: require ≥2 independent combat signals (not audio-only).
+        if os.environ.get("PUBG_COMBAT_MULTI_SIGNAL", "1") == "1":
+            signals = 0
+            kf = float(out.get("killfeed_density") or 0)
+            if kf >= float(os.environ.get("PUBG_KILLFEED_BONUS_MIN", "0.30")) or ocr_hits >= 1:
+                signals += 1
+                out["signal_killfeed"] = True
+            if panns_gun >= floor * 1.15:
+                signals += 1
+                out["signal_panns_strong"] = True
+            quarters = int(shoot_row.get("gunfire_quarters_active") or shoot_row.get("active_quarters") or 0)
+            clusters = int(shoot_row.get("gunfire_clusters") or shoot_row.get("burst_clusters") or 0)
+            burst = float(shoot_row.get("burst_ratio") or 0)
+            if (
+                (quarters >= int(os.environ.get("PUBG_PVP_MIN_ACTIVE_QUARTERS", "1")) and clusters >= 1)
+                or burst >= 4.8
+                or gun_density >= float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055")) * 1.2
+            ):
+                signals += 1
+                out["signal_gun_shape"] = True
+            pov_m = float(pov_row.get("center_motion") or center_motion or 0)
+            if pov_m >= float(os.environ.get("PUBG_POV_MIN_CENTER_MOTION", "0.020")):
+                signals += 1
+                out["signal_pov_motion"] = True
+            vis = out.get("combat_visual") or {}
+            if float(vis.get("best_hit_flash") or vis.get("hit_flash_max") or 0) >= float(
+                os.environ.get("VISUAL_PUBG_MIN_HIT_FLASH", "0.001")
+            ) or float(vis.get("best_weapon_edge") or vis.get("weapon_edge_max") or 0) >= float(
+                os.environ.get("VISUAL_PUBG_MIN_WEAPON_EDGE", "0.012")
+            ):
+                signals += 1
+                out["signal_visual_hit"] = True
+            need = max(2, int(os.environ.get("PUBG_COMBAT_MIN_SIGNALS", "2")))
+            out["combat_signals"] = signals
+            if signals < need:
+                return False, f"combat_signals_low={signals}:need>={need}", out
+
     out["pass"] = True
     return True, f"combat_ok=gun{panns_gun:.3f}:burst{shoot_row.get('burst_ratio')}", out

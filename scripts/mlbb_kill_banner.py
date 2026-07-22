@@ -60,8 +60,25 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
     (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
     (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill", re.I), 2, "double"),
-    (re.compile(r"\bkill\b|убийств", re.I), 1, "single"),
+    # Strong singles only — weak "kill" alone is handled as single_weak needing color.
+    (
+        re.compile(
+            r"has\s+slain|been\s+slain|killing\s+spree|first\s+blood|"
+            r"shutdown|rampage|"
+            r"убил|убийств|первая\s+кровь|серия\s+убий",
+            re.I,
+        ),
+        1,
+        "single",
+    ),
+    (re.compile(r"\bkill\b", re.I), 1, "single_weak"),
 ]
+
+_SINGLE_STRONG_RE = re.compile(
+    r"has\s+slain|been\s+slain|killing\s+spree|first\s+blood|shutdown|rampage|"
+    r"убил|убийств|первая\s+кровь|серия\s+убий",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -253,27 +270,51 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
+    color = _announce_color_score(frame)
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
-        return KillBannerHit(
-            sec=round(sec, 2),
-            tier=classified.tier,
-            label=classified.label,
-            text=classified.text,
-            source="ocr",
-        )
-    color = _announce_color_score(frame)
+        # Weak OCR "kill" without gold/white announce colors → subtitle/UI FP.
+        if classified.label == "single_weak" or (
+            classified.tier == 1 and not _SINGLE_STRONG_RE.search(classified.text)
+        ):
+            need = _color_min_score() * float(os.environ.get("MLBB_KILL_BANNER_WEAK_COLOR_MUL", "0.85"))
+            if color < need:
+                classified = None
+            else:
+                classified = KillBannerHit(
+                    sec=0.0,
+                    tier=1,
+                    label="single",
+                    text=classified.text,
+                    source="ocr",
+                )
+        if classified is not None:
+            return KillBannerHit(
+                sec=round(sec, 2),
+                tier=classified.tier,
+                label=classified.label if classified.label != "single_weak" else "single",
+                text=classified.text,
+                source="ocr",
+            )
     if color >= _color_min_score():
         deep_text = _ocr_banner_zones(frame, deep=True)
         if _ENEMY_STREAK_RE.search(deep_text):
             return None
-        if classify_banner_text(deep_text) is not None:
-            classified = classify_banner_text(deep_text)
-            assert classified is not None
+        classified = classify_banner_text(deep_text)
+        if classified is not None:
+            if classified.label == "single_weak" and not _SINGLE_STRONG_RE.search(classified.text):
+                # Color already strong here — accept as single.
+                classified = KillBannerHit(
+                    sec=0.0,
+                    tier=1,
+                    label="single",
+                    text=classified.text,
+                    source="ocr",
+                )
             return KillBannerHit(
                 sec=round(sec, 2),
                 tier=classified.tier,
-                label=classified.label,
+                label=classified.label if classified.label != "single_weak" else "single",
                 text=classified.text,
                 source="ocr",
             )
