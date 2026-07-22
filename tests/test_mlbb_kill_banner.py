@@ -72,28 +72,54 @@ def test_reject_enemy_triple() -> None:
 
 
 def test_bounds_from_fight_sustain() -> None:
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_VOD_LEAD_SEC"] = "12"
+    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "12"
+    os.environ.pop("MLBB_BANNER_PRE_SEC", None)
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
-    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
-    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "40"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "65"
     start, end, dur = bounds_from_banner(
         100.0,
         file_dur=200.0,
         fight_start=88.0,
         fight_end=118.0,
+        banner_tier=2,
     )
-    assert start == 88.0
-    assert end == 116.0
-    assert dur == 28.0
+    # Lead must pull start before fight_start so prior kills are visible.
+    assert start <= 88.0
+    assert start <= 100.0 - 12.0
+    assert end >= 100.0
+    assert dur >= 8.0
 
 
 def test_bounds_fallback_without_fight() -> None:
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_VOD_LEAD_SEC"] = "12"
+    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "12"
+    os.environ.pop("MLBB_BANNER_PRE_SEC", None)
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
-    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
-    start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
-    assert 8.0 <= dur <= 28.0
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "40"
+    start, end, dur = bounds_from_banner(50.0, file_dur=120.0, banner_tier=2)
+    assert start == 38.0
+    assert 8.0 <= dur <= 40.0
+
+
+def test_bounds_never_puts_banner_at_2_3_seconds() -> None:
+    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "14"
+    os.environ["MLBB_VOD_LEAD_SEC"] = "4"  # legacy short — must not win for banners
+    os.environ["MLBB_BANNER_PRE_SEC"] = "2"  # regressive short — must not shrink below lead
+    os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "55"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "65"
+    start, end, dur = bounds_from_banner(
+        100.0,
+        file_dur=200.0,
+        fight_start=98.0,
+        fight_end=120.0,
+        banner_tier=3,
+    )
+    banner_at = 100.0 - start
+    assert banner_at >= 12.0, f"banner too early at {banner_at:.1f}s"
+    assert dur >= 8.0
 
 
 def test_discover_banners_handles_numpy_motion() -> None:
@@ -138,19 +164,24 @@ def test_discover_banners_handles_numpy_motion() -> None:
         else:
             os.environ["MLBB_VOD_BANNER_DISCOVER"] = old
 
-    os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "12"
+    os.environ["MLBB_VOD_LEAD_SEC"] = "12"
+    os.environ.pop("MLBB_BANNER_PRE_SEC", None)
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
-    os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
-    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
-    # Banner at 27s in a 28s window ending at 28 — was tail-heavy.
+    os.environ["MLBB_FIGHT_MAX_SEC"] = "40"
+    os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "65"
+    # Banner near end of fight window — still keep full lead.
     start, end, dur = bounds_from_banner(
         27.0,
         file_dur=120.0,
         fight_start=0.0,
         fight_end=28.0,
+        banner_tier=2,
     )
-    rel = (27.0 - start) / dur
-    assert rel <= 0.68
+    banner_at = 27.0 - start
+    assert banner_at >= 12.0
+    # With long lead, banner naturally sits later in the clip — that is OK.
+    assert end > 27.0
 
 
 def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:

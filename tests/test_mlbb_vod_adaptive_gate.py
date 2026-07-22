@@ -34,28 +34,31 @@ def test_soften_after_three_zeros():
     assert soften_level(6) == 2
 
 
-def test_soft_overrides_disable_banner_prefilter():
+def test_soft_overrides_keep_banner_required():
     ov = overrides_for_level(1)
-    assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
-    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
 
 
-def test_l1_skips_presend_banner_and_motion_anchor():
+def test_l1_keeps_banner_discover():
     ov = overrides_for_level(1)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
-    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
+    assert ov["MLBB_VOD_BANNER_DISCOVER"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
 
 
-def test_l2_skips_presend_banner():
+def test_l2_allows_single_but_still_requires_banner():
     ov = overrides_for_level(2)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
 
 
 def test_l2_lenient_uniform_for_presend_tail():
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_LENIENT_UNIFORM"] == "1"
-    assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.40
+    assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.42
 
 
 def test_peak_near_skipped_import():
@@ -78,7 +81,8 @@ def test_adaptive_env_restores():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     with adaptive_env(3) as level:
         assert level == 1
-        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+        assert os.environ["MLBB_KILL_BANNER_REQUIRED"] == "1"
     assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
 
 

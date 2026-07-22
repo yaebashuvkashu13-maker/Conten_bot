@@ -56,7 +56,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-07-22-poll-heartbeat-v1'
+BOT_VERSION = '2026-07-22-quality-banner-lead-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -798,13 +798,7 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
-        if is_good:
-            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ file only via 📁 Download — never auto-send on 👍
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -1382,13 +1376,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'vseg' and is_good:
-            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ file only via 📁 Download button — never auto-send on 👍
     except Exception as exc:
         try:
             api_call(

@@ -30,7 +30,46 @@ def _extend_bins(max_d: float, win: float) -> int:
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    """Default pre-roll before peak/banner (prefer kill-banner lead, not short 2–4s)."""
+    return float(
+        os.environ.get(
+            "MLBB_VOD_LEAD_SEC",
+            os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", "12"),
+        )
+    )
+
+
+def banner_lead_sec(banner_tier: int | None = None) -> float:
+    """Pre-roll before kill banner — double/triple need prior kills visible."""
+    base = float(
+        os.environ.get(
+            "MLBB_KILL_BANNER_LEAD_SEC",
+            os.environ.get("MLBB_VOD_LEAD_SEC", "12"),
+        )
+    )
+    # Explicit BANNER_PRE_SEC only if >= base (never shrink lead for doubles).
+    pre_raw = (os.environ.get("MLBB_BANNER_PRE_SEC") or "").strip()
+    if pre_raw:
+        try:
+            base = max(base, float(pre_raw))
+        except ValueError:
+            pass
+    tier = int(banner_tier or 0)
+    if tier >= 5:
+        return float(os.environ.get("MLBB_SAVAGE_BANNER_LEAD_SEC", str(base + 10.0)))
+    if tier >= 4:
+        return float(os.environ.get("MLBB_MANIAC_BANNER_LEAD_SEC", str(base + 6.0)))
+    if tier >= 3:
+        return float(os.environ.get("MLBB_TRIPLE_BANNER_LEAD_SEC", str(base + 2.0)))
+    return base
+
+
+def _fight_post_sec() -> float:
+    return float(os.environ.get("MLBB_FIGHT_POST_SEC", "4"))
+
+
+def ideal_clip_min_sec() -> float:
+    return _lead_sec() + _fight_min_sec() + _fight_post_sec()
 
 
 _CACHE: dict[str, dict] = {}
