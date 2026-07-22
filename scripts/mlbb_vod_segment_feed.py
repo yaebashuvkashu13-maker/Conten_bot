@@ -1999,6 +1999,8 @@ def _process_vod_segments(
     _save_state(state)
 
     if sent_total == 0 and not send_quota_blocked:
+        if entry:
+            entry["zero_send_attempts"] = int(entry.get("zero_send_attempts") or 0) + 1
         if entry and should_mark_vod_exhausted(entry):
             _mark_vod_exhausted(vod)
             entry["exhausted"] = True
@@ -2022,6 +2024,8 @@ def _process_vod_segments(
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
+        if entry:
+            entry["zero_send_attempts"] = 0
         if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
             send_message(
                 token,

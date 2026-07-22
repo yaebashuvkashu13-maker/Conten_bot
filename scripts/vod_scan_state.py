@@ -42,6 +42,9 @@ def should_mark_vod_exhausted(entry: dict[str, Any]) -> bool:
     peaks = entry.get("last_pool_peaks")
     if peaks is not None and len(peaks) == 0:
         return True
+    max_attempts = max(3, int(os.environ.get("MLBB_VOD_MAX_ZERO_ATTEMPTS", "5")))
+    if int(entry.get("zero_send_attempts") or 0) >= max_attempts:
+        return True
     return False
 
 
