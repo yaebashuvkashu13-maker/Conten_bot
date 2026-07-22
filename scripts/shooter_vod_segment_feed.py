@@ -106,6 +106,11 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_FAST_PROBE_MAX": "10",
         "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
         "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.036",
+        # Never download multi-hour streams (flat search often hides duration).
+        "SHOOTER_VOD_MAX_SEC": "1200",
+        "SHOOTER_VOD_MIN_SEC": "180",
+        "SHOOTER_VOD_PREFER_MIN_SEC": "360",
+        "SHOOTER_VOD_PREFER_MAX_SEC": "1080",
     }
     if game == "pubg":
         defaults["PUBG_VOD_MONTAGE"] = "0"
@@ -123,6 +128,7 @@ def _apply_reliable_runtime(game: str) -> None:
         "PUBG_COMBAT_PANN_MIN",
         "PUBG_COMBAT_FRAMES_REQUIRED",
         "SHOOTER_VOD_FAST_PANN_MIN",
+        "SHOOTER_VOD_MAX_SEC",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
@@ -282,6 +288,35 @@ def _pubg_metro_vod_ok(
     return False, reason
 
 
+def _shooter_vod_min_sec() -> float:
+    return float(os.environ.get("SHOOTER_VOD_MIN_SEC", os.environ.get("MLBB_VOD_MIN_SEC", "180")))
+
+
+def _shooter_vod_max_sec() -> float:
+    # Hard cap — flat-playlist often omits duration and used to let multi-hour streams through.
+    return float(os.environ.get("SHOOTER_VOD_MAX_SEC", os.environ.get("MLBB_VOD_MAX_SEC", "1200")))
+
+
+def _shooter_duration_ok(dur: float) -> bool:
+    if dur <= 0:
+        return False
+    return _shooter_vod_min_sec() <= float(dur) <= _shooter_vod_max_sec()
+
+
+def _probe_youtube_duration(url: str, env: dict[str, str]) -> float:
+    from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
+
+    cmd = ytdlp_cmd(env) + ["--print", "%(duration)s", "--no-playlist", url]
+    cmd += ytdlp_extra_args(env)
+    proc = run_ytdlp(cmd, env, timeout=60, label="probe-duration")
+    if proc.returncode != 0:
+        return 0.0
+    try:
+        return float((proc.stdout or "").strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0.0
+
+
 def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list[dict]:
     from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
@@ -320,11 +355,13 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
             if not title_ok_fn(game, title):
                 continue
             try:
-                dur = float(parts[2]) if len(parts) > 2 else 0.0
+                raw = parts[2] if len(parts) > 2 else ""
+                dur = float(raw) if raw not in {"", "NA", "None"} else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            if dur > 0 and not _shooter_duration_ok(dur):
                 continue
+            # Duration unknown (flat playlist) — keep candidate; probe before download.
             out.append(
                 {
                     "id": vid,
@@ -343,8 +380,26 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
 
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
+    dur = float(pick.get("duration") or 0)
+    if not _shooter_duration_ok(dur):
+        dur = _probe_youtube_duration(str(pick.get("url") or ""), env)
+        pick["duration"] = dur
+    if not _shooter_duration_ok(dur):
+        log.info(
+            "skip download id=%s duration=%.0fs (need %.0f–%.0f)",
+            pick.get("id"),
+            dur,
+            _shooter_vod_min_sec(),
+            _shooter_vod_max_sec(),
+        )
+        return None
+    # yt-dlp hard filter — belt and suspenders if metadata lies until fetch.
+    dl_env = dict(env)
+    dl_env["YTDLP_MATCH_FILTER"] = (
+        f"duration > {_shooter_vod_min_sec()} & duration < {_shooter_vod_max_sec()}"
+    )
     try:
-        path = download_one(str(pick["url"]), inbox, env)
+        path = download_one(str(pick["url"]), inbox, dl_env)
         return path
     except Exception as exc:
         log.warning("download failed %s: %s", pick.get("id"), exc)
@@ -1058,7 +1113,20 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
-        if _ffprobe_duration(mp4) < _vod_min_sec():
+        if _ffprobe_duration(mp4) < _shooter_vod_min_sec():
+            continue
+        inbox_dur = _ffprobe_duration(mp4)
+        if not _shooter_duration_ok(inbox_dur):
+            log.info("skip inbox vod=%s duration=%.0fs outside shooter window", mp4.name, inbox_dur)
+            if _reliable_mode(game):
+                _hard_finish_vod(
+                    game,
+                    state,
+                    mp4,
+                    vid=vid_inbox,
+                    reason=f"duration_out={inbox_dur:.0f}",
+                    delete_file=True,
+                )
             continue
         if entry is None:
             entry = {
