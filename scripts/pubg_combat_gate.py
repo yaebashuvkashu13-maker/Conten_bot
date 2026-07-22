@@ -40,6 +40,23 @@ MIN_WEAPON_EDGE_ANY = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025
 FRAMES_REQUIRED = int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", "3"))
 
 
+def live_combat_pann_min() -> float:
+    """Soften/reliable update PUBG_COMBAT_PANN_MIN after import — read live."""
+    return float(os.environ.get("PUBG_COMBAT_PANN_MIN", str(PANN_ABSOLUTE_MIN)))
+
+
+def live_combat_frames_required() -> int:
+    return int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", str(FRAMES_REQUIRED)))
+
+
+def live_combat_min_hit_flash() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", str(MIN_HIT_FLASH_ANY)))
+
+
+def live_combat_min_weapon_edge() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", str(MIN_WEAPON_EDGE_ANY)))
+
+
 def _norm_profile(profile: str) -> str:
     p = profile.strip().lower()
     return "standoff" if p == "standoff" else "pubg" if p == "pubg" else p
@@ -99,7 +116,7 @@ def pubg_combat_visual_strict(
             }
         )
 
-    need = FRAMES_REQUIRED
+    need = live_combat_frames_required()
     # EOF seeks often miss the literal end frame — do not fail a fight for that alone.
     end_missing = any(
         f.get("label") == "end" and f.get("reason") == "frame_missing" for f in frames_out
@@ -114,7 +131,7 @@ def pubg_combat_visual_strict(
             "frames": frames_out,
         }
 
-    if best_flash < MIN_HIT_FLASH_ANY and best_weapon < MIN_WEAPON_EDGE_ANY:
+    if best_flash < live_combat_min_hit_flash() and best_weapon < live_combat_min_weapon_edge():
         return False, (
             f"no_combat_signal flash={best_flash:.4f} weapon={best_weapon:.4f}"
         ), {
@@ -395,8 +412,9 @@ def pubg_passes_combat_gate(
     out: dict[str, Any] = {"start": round(start_sec, 3), "duration": round(duration_sec, 3)}
 
     from highlight_scorer import (
-        PANN_GUN_INFERENCE_FLOOR,
         calibrated_pann_gun_min,
+        live_pann_gun_min,
+        live_pann_inference_floor,
         score_panns_audio,
     )
 
@@ -417,11 +435,15 @@ def pubg_passes_combat_gate(
     if not shoot_ok:
         return False, shoot_reason, out
 
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    # Soften/reliable lower env bars after import — never keep frozen 0.22/0.18 floors.
+    live_gun = live_pann_gun_min()
+    live_inf = live_pann_inference_floor()
+    live_abs = live_combat_pann_min()
+    required = max(min(live_inf, live_gun), min(float(panns_thr), live_gun), min(live_abs, live_gun))
     out["panns_gun_max"] = round(panns_gun, 4)
-    out["panns_gun_threshold"] = round(floor, 4)
-    if panns_gun < floor:
-        return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
+    out["panns_gun_threshold"] = round(required, 4)
+    if panns_gun < required:
+        return False, f"panns_gun_low={panns_gun:.3f}:floor{required:.3f}", out
 
     vis_ok, vis_reason, vis_row = pubg_combat_visual_strict(
         video_path, start_sec, duration_sec, profile

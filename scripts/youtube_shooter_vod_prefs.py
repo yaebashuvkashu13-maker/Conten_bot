@@ -116,21 +116,43 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
     ranked = rank_discovery_candidates(game, candidates)
     if not ranked:
         return None
+
+    def _dur(row: dict) -> float:
+        try:
+            return float(row.get("duration") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Prefer 6–18 min VODs — long Metro streams waste hours downloading for one clip.
+    prefer_max = float(os.environ.get("SHOOTER_VOD_PREFER_MAX_SEC", "1080"))
+    prefer_min = float(os.environ.get("SHOOTER_VOD_PREFER_MIN_SEC", "360"))
+
+    def _short_first(rows: list[dict]) -> list[dict]:
+        sweet = [r for r in rows if prefer_min <= _dur(r) <= prefer_max]
+        if sweet:
+            return sorted(sweet, key=_dur)
+        under = [r for r in rows if 0 < _dur(r) <= prefer_max]
+        if under:
+            return sorted(under, key=_dur)
+        return rows
+
     if game.strip().lower() == "pubg":
         from pubg_metro_royale_gate import title_metro_hint
         from youtube_game_prefs import russian_score
 
-        for cand in ranked[:12]:
+        pool = _short_first(ranked[:16])
+        for cand in pool[:12]:
             title = str(cand.get("title") or "")
             if title_metro_hint(title) and russian_score(cand) >= 0.06:
                 return cand
-        for cand in ranked[:12]:
+        for cand in pool[:12]:
             if title_metro_hint(str(cand.get("title") or "")):
                 return cand
-        for cand in ranked[:8]:
+        for cand in pool[:8]:
             if russian_score(cand) >= 0.12:
                 return cand
-    return ranked[0]
+        return pool[0]
+    return _short_first(ranked)[0]
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:

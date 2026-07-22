@@ -986,10 +986,11 @@ def calibrated_pann_gun_min(video_path: Path, profile: str) -> float:
         return live_min
     good_p90 = float(np.percentile(good_scores, 90))
     bad_p50 = float(np.percentile(bad_scores, 50)) if bad_scores else 0.0
-    # Separate good from bad on this VOD; never drop below inference floor (RU streams).
-    # Soften may lower HIGHLIGHT_PANN_GUN_MIN — always honor the live env ceiling.
-    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, floor)
-    return max(floor, min(dynamic, live_min))
+    # Separate good from bad on this VOD. Soften/reliable may lower live_min below the
+    # nominal inference floor — floor must never punch through that live ceiling.
+    effective_floor = min(floor, live_min)
+    dynamic = max(good_p90 * 0.85, bad_p50 * 1.35, effective_floor)
+    return min(live_min, max(dynamic, effective_floor))
 
 
 def audio_passes_shooter(

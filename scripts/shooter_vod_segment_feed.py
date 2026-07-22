@@ -86,26 +86,48 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_FAST_SKIP_NOTIFY": "0",
         "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY": "0",
         "SHOOTER_VOD_DOWNLOAD_NOTIFY": "0",
+        "SHOOTER_VOD_METRO_REJECT_NOTIFY": "0",
         "SHOOTER_VOD_MONTAGE": "0",
         "SHOOTER_VOD_SEND_ONE": "1",
         "SHOOTER_VOD_MAX_ZERO_ATTEMPTS": "1",
         "SHOOTER_VOD_PRESEND_EXHAUST_AFTER": "1",
         # Soften must be able to lower the live PANNs bar (was stuck at import 0.25).
         "HIGHLIGHT_PANN_FIXED": "0",
+        # Ship clips on first pass — do not wait for a zero-streak to soften.
+        "HIGHLIGHT_PANN_GUN_MIN": "0.15",
+        "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.10",
+        "HIGHLIGHT_PANN_PREFILTER_MIN": "0.08",
+        "PUBG_COMBAT_PANN_MIN": "0.14",
+        "PUBG_COMBAT_FRAMES_REQUIRED": "2",
+        "PUBG_PANNS_TRUST_MIN": "0.30",
+        "VIRAL_SEGMENT_HOOK_MIN": "0.08",
+        "VIRAL_COMBAT_HOOK_MIN": "0.06",
+        "SHOOTER_VOD_FAST_PANN_MIN": "0.08",
+        "SHOOTER_VOD_FAST_PROBE_MAX": "10",
+        "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.036",
     }
     if game == "pubg":
         defaults["PUBG_VOD_MONTAGE"] = "0"
+    force_keys = {
+        "SHOOTER_VOD_ADAPTIVE_NOTIFY",
+        "SHOOTER_VOD_EXHAUST_NOTIFY",
+        "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY",
+        "SHOOTER_VOD_METRO_REJECT_NOTIFY",
+        "SHOOTER_VOD_MONTAGE",
+        "PUBG_VOD_MONTAGE",
+        "SHOOTER_VOD_MAX_ZERO_ATTEMPTS",
+        "HIGHLIGHT_PANN_FIXED",
+        "HIGHLIGHT_PANN_GUN_MIN",
+        "HIGHLIGHT_PANN_INFERENCE_FLOOR",
+        "PUBG_COMBAT_PANN_MIN",
+        "PUBG_COMBAT_FRAMES_REQUIRED",
+        "SHOOTER_VOD_FAST_PANN_MIN",
+    }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
-        # Reliable mode forces these even if env had spam/montage on.
-        if key in {
-            "SHOOTER_VOD_ADAPTIVE_NOTIFY",
-            "SHOOTER_VOD_EXHAUST_NOTIFY",
-            "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY",
-            "SHOOTER_VOD_MONTAGE",
-            "PUBG_VOD_MONTAGE",
-            "SHOOTER_VOD_MAX_ZERO_ATTEMPTS",
-        }:
+        # Reliable mode forces these even if env had spam/montage/strict bars on.
+        if key in force_keys:
             os.environ[key] = value
 
 
@@ -880,6 +902,15 @@ def _scan_vod_with_adaptive(
                 state, vod, vid=vid, title=title, fast_reason=fast_reason, entry=entry
             )
             _save_state(game, state)
+            if _reliable_mode(game):
+                _hard_finish_vod(
+                    game,
+                    state,
+                    vod,
+                    vid=vid,
+                    reason=fast_reason,
+                    delete_file=True,
+                )
             if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
             return 0
@@ -1109,13 +1140,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         )
         if not ok_metro:
             log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)
-            if os.environ.get("SHOOTER_VOD_METRO_REJECT_NOTIFY", "1") == "1":
+            if os.environ.get("SHOOTER_VOD_METRO_REJECT_NOTIFY", "0") == "1":
                 send_message(
                     token,
                     chat_id,
                     f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
                 )
-            exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
+            exhausted = True if _reliable_mode(game) else _pubg_metro_should_exhaust(
+                str(pick.get("title") or ""), streak_dl
+            )
             registry.append(
                 {
                     "id": pick["id"],
@@ -1129,6 +1162,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             state["vods"] = registry
             state["used_youtube_ids"] = sorted(used)
             _save_state(game, state)
+            if exhausted and os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1":
+                try:
+                    if vod.exists():
+                        vod.unlink()
+                        log.info("deleted metro-reject vod=%s", vod.name)
+                except OSError as exc:
+                    log.warning("delete metro-reject failed %s: %s", vod.name, exc)
             print(f"pipeline done sent=0 vods=1 game={game} metro_reject=1")
             return 0
 

@@ -45,12 +45,12 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
             t += step
         return sorted(set(offsets))
 
-    for delta in (0, 150, 360, 720, 1200, 1800):
+    for delta in (0, 90, 180, 300, 480, 720, 960, 1200, 1500, 1800):
         t = skip + delta
         if t + WINDOW_SEC < dur - tail:
             offsets.append(round(t, 1))
     mid = skip + max(0.0, (dur - skip) * 0.42)
-    if mid + WINDOW_SEC < dur - tail and all(abs(mid - x) > 90 for x in offsets):
+    if mid + WINDOW_SEC < dur - tail and all(abs(mid - x) > 60 for x in offsets):
         offsets.append(round(mid, 1))
     return sorted(set(offsets))[:max_n]
 
@@ -83,7 +83,7 @@ def vod_fast_combat_check(
     if not offsets:
         return False, "fast_probe_too_short", []
 
-    gun_min = float(os.environ.get("SHOOTER_VOD_FAST_PANN_MIN", "0.14"))
+    gun_min = float(os.environ.get("SHOOTER_VOD_FAST_PANN_MIN", "0.08"))
     hits: list[float] = []
     top_gun = 0.0
     for t in offsets:
@@ -102,7 +102,7 @@ def vod_fast_combat_check(
 
     min_hits = max(1, int(os.environ.get("SHOOTER_VOD_FAST_MIN_HITS", "1")))
     strong_min = float(os.environ.get("SHOOTER_VOD_FAST_STRONG_PANN", "0.40"))
-    weak_pass_min = float(os.environ.get("SHOOTER_VOD_FAST_WEAK_PASS_MIN", "0.18"))
+    weak_pass_min = float(os.environ.get("SHOOTER_VOD_FAST_WEAK_PASS_MIN", "0.14"))
     if len(hits) < min_hits:
         if len(hits) == 1 and top_gun >= strong_min:
             return (
