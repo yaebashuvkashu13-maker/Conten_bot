@@ -126,6 +126,9 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   SHOOTER_VOD_SEGMENT_GAP_SEC=45 PUBG_METRO_GATE=1 \
   SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_PREFER_RUSSIAN=1 SHOOTER_VOD_SKIP_INTELLICLIP=1 \
   SHOOTER_VOD_MAX_PANN_PROBE=24 SHOOTER_VOD_SEED_FROM_FAST_PROBE=1 \
+  SHOOTER_VOD_MONTAGE=1 SHOOTER_VOD_MONTAGE_MIN_CLIPS=2 SHOOTER_VOD_MONTAGE_MAX_CLIPS=4 \
+  SHOOTER_VOD_MONTAGE_GAP_SEC=55 SHOOTER_VOD_TRIM_RUN=1 \
+  SHOOTER_VOD_MONTAGE_MIN_CLIP_SCORE=0.02 \
   MLBB_VOD_FAST_PROBE=1 GENSHIN_VOD_FAST_PROBE=1 WOT_VOD_FAST_PROBE=1 \
   VOD_ANALYSIS_USE_PROXY=1 VOD_POOL_TTL_SEC=21600 \
   MLBB_TEAMFIGHT_MIN_SCORE=0.45 GENSHIN_BOSS_BAR_MIN_RATIO=0.7 \
@@ -177,6 +180,7 @@ install -m 755 \
   "$REPO/scripts/shooter_vod_segment_store.py" \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/shooter_vod_fast_scan.py" \
+  "$REPO/scripts/shooter_vod_montage.py" \
   "$REPO/scripts/mlbb_vod_fast_scan.py" \
   "$REPO/scripts/genshin_vod_fast_scan.py" \
   "$REPO/scripts/wot_vod_fast_scan.py" \
@@ -189,6 +193,7 @@ install -m 755 \
   "$REPO/scripts/pubg_metro_royale_gate.py" \
   "$REPO/scripts/youtube_shooter_vod_prefs.py" \
   "$REPO/scripts/mlbb_vod_segment_feed.py" \
+  "$REPO/scripts/mlbb_vod_montage.py" \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_intervals.py" \
   "$REPO/scripts/mlbb_kill_banner.py" \

@@ -303,6 +303,13 @@ def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> boo
 
 
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
+    from shooter_vod_montage import montage_enabled, pick_montage_rows
+
+    if montage_enabled(game) and len(to_send) >= 2:
+        picked = pick_montage_rows(to_send)
+        if len(picked) >= 2:
+            return _send_montage_batch(game, token, chat_id, vod, picked, sig)
+
     ok_cycle, cycle_reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("cycle block game=%s reason=%s", game, cycle_reason)
@@ -314,7 +321,14 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     for row in to_send[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
-        if not render_single_segment(vod, row["clip"], out):
+        clip = row["clip"]
+        try:
+            from shooter_vod_montage import apply_run_trim_to_clip
+
+            clip = apply_run_trim_to_clip(clip, vod, game=game)
+        except Exception:
+            pass
+        if not render_single_segment(vod, clip, out):
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
         if not presend_ok:
@@ -365,19 +379,150 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
+def _send_montage_batch(
+    game: str,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    to_send: list[dict],
+    sig: str,
+) -> int:
+    """One Telegram video = xfade of 2–4 fight windows from the same VOD."""
+    import tempfile
+
+    from shooter_vod_montage import (
+        apply_run_trim_to_clip,
+        build_montage_id,
+        cleanup_temps,
+        concat_rendered_parts,
+    )
+    from smart_video_editor import ffprobe_duration as _probe_part_dur
+
+    ok_cycle, cycle_reason = can_send_for_game(game, 1)
+    if not ok_cycle:
+        log.info("cycle block game=%s reason=%s", game, cycle_reason)
+        return 0
+
+    vid = vod_youtube_id(vod)
+    mid = build_montage_id(vid, to_send)
+    seg_root = _paths(game)["segments"]
+    seg_root.mkdir(parents=True, exist_ok=True)
+    out = seg_root / f"seg_{mid}.mp4"
+    temps: list[Path] = []
+    try:
+        gated_rows: list[dict] = []
+        gated_parts: list[Path] = []
+        gated_durs: list[float] = []
+        for row in to_send:
+            part = Path(tempfile.mkstemp(suffix=".part.mp4")[1])
+            temps.append(part)
+            clip = apply_run_trim_to_clip(dict(row["clip"]), vod, game=game)
+            if not render_single_segment(vod, clip, part):
+                log.warning("montage part render fail %s", row.get("segment_id"))
+                continue
+            ok, reason, _rep = _validate_shooter_presend(game, vod, {**row, "clip": clip}, part)
+            if not ok:
+                log.warning("montage part REJECT %s: %s", row.get("segment_id"), reason)
+                continue
+            dur = float(clip.get("input_duration") or 0)
+            if dur < 1:
+                dur = float(_probe_part_dur(part) or 0)
+            gated_rows.append({**row, "clip": clip, "fight_dur": dur})
+            gated_parts.append(part)
+            gated_durs.append(dur)
+        if len(gated_rows) < 2:
+            log.warning("montage aborted — fewer than 2 parts (%s); fallback single", len(gated_rows))
+            if gated_rows:
+                # Temporarily disable montage to avoid recursion.
+                old = os.environ.get("SHOOTER_VOD_MONTAGE")
+                old_g = os.environ.get(f"{game.upper()}_VOD_MONTAGE")
+                os.environ["SHOOTER_VOD_MONTAGE"] = "0"
+                if old_g is not None:
+                    os.environ[f"{game.upper()}_VOD_MONTAGE"] = "0"
+                try:
+                    return _send_batch(game, token, chat_id, vod, gated_rows[:1], sig)
+                finally:
+                    if old is None:
+                        os.environ.pop("SHOOTER_VOD_MONTAGE", None)
+                    else:
+                        os.environ["SHOOTER_VOD_MONTAGE"] = old
+                    if old_g is None:
+                        os.environ.pop(f"{game.upper()}_VOD_MONTAGE", None)
+                    else:
+                        os.environ[f"{game.upper()}_VOD_MONTAGE"] = old_g
+            return 0
+
+        if not concat_rendered_parts(gated_parts, gated_durs, out):
+            log.warning("montage concat fail vod=%s", vid)
+            return 0
+
+        peaks = [int(float(r.get("peak_start", r["start"]))) for r in gated_rows]
+        seg_dur = _ffprobe_duration(out)
+        label = "Metro склейка" if game == "pubg" else "склейка"
+        caption = (
+            f"{game.upper()} {label} #{mid}\n"
+            f"🎯 {len(gated_rows)} боя @ {peaks}\n"
+            f"{vid} | {seg_dur:.0f}с\n"
+            f"✓ montage (anti-run trim)\n"
+            f"👍 Ок / 👎 Не ок"
+        )
+        if not send_video(
+            token,
+            chat_id,
+            out,
+            caption,
+            seg_id=mid,
+            record_learning=False,
+            reply_markup=keyboard(game, mid),
+            cycle_game=game,
+        ):
+            send_message(token, chat_id, f"{caption}\n(файл не отправился)")
+            return 0
+        upsert_segment(
+            game,
+            {
+                "segment_id": mid,
+                "path": str(out),
+                "vod": str(vod),
+                "vod_id": vid,
+                "start": gated_rows[0]["start"],
+                "duration": seg_dur,
+                "peak_start": gated_rows[0].get("peak_start", gated_rows[0]["start"]),
+                "score": max(float(r.get("score") or 0) for r in gated_rows),
+                "montage_parts": [r["segment_id"] for r in gated_rows],
+                "sig": sig,
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+        part_ids = [r["segment_id"] for r in gated_rows] + [mid]
+        mark_feed_sent(game, part_ids)
+        log.info("montage sent game=%s id=%s parts=%s dur=%.0f", game, mid, len(gated_rows), seg_dur)
+        st = stats(game)
+        send_message(
+            token,
+            chat_id,
+            f"✅ {game.upper()} montage parts={len(gated_rows)} | 👍{st['feedback_yes']} 👎{st['feedback_no']}",
+        )
+        return 1
+    finally:
+        cleanup_temps(temps)
+
+
 def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
-    """Unscanned VODs first; Metro + Russian titles before others."""
+    """Prefer rich leftover pools, then unscanned; Metro + Russian titles before others."""
     from pubg_metro_royale_gate import title_metro_hint
+    from shooter_vod_montage import vod_richness_rank
     from youtube_game_prefs import russian_score
 
-    entry = next((r for r in registry if r.get("path") == str(mp4)), None)
-    scanned = float((entry or {}).get("last_scan_at") or 0)
-    title = str((entry or {}).get("title") or "")
+    entry = next((r for r in registry if r.get("path") == str(mp4)), None) or {}
+    scanned = float(entry.get("last_scan_at") or 0)
+    title = str(entry.get("title") or "")
     metro_prio = 0 if title_metro_hint(title) else 1
-    ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
+    ru = russian_score({"title": title, "uploader": str(entry.get("uploader") or "")})
     ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
-    fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
-    return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
+    fast_fail = 1 if str(entry.get("reject_reason") or "").startswith("fast_panns_0") else 0
+    rich = vod_richness_rank(entry)
+    return (rich, 1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
 def _scan_vod(
@@ -390,6 +535,14 @@ def _scan_vod(
     soften_level: int = 0,
     entry: dict | None = None,
 ) -> int:
+    from shooter_vod_montage import (
+        apply_run_trim_to_clip,
+        montage_collect_env,
+        montage_enabled,
+        montage_max_clips,
+        pick_montage_rows,
+    )
+
     profile = _profile(game)
     sig = file_sha256(vod)
     labeled = labeled_ids(game)
@@ -400,6 +553,7 @@ def _scan_vod(
     index_segments = load_index(game).get("segments", [])
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
+    montage_on = montage_enabled(game)
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
@@ -415,11 +569,12 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
-    if entry and pool_cache_valid(entry):
-        pool = minimal_pool_from_entry(entry)
-        log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
-    else:
-        pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+    with montage_collect_env(game):
+        if entry and pool_cache_valid(entry):
+            pool = minimal_pool_from_entry(entry)
+            log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
+        else:
+            pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
@@ -428,6 +583,8 @@ def _scan_vod(
         return 0
 
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
+    if montage_on:
+        probe_limit = max(probe_limit, montage_max_clips() * 4)
     skip_peaks: set[float] = set()
     peak_tries = 0
     gate = _adaptive_gate(game)
@@ -437,29 +594,43 @@ def _scan_vod(
 
     while peak_tries < max_tries:
         rows: list[dict] = []
-        for clip in pool[:probe_limit]:
-            peak = float(clip.get("start", 0))
-            if any(abs(peak - s) <= 4.0 for s in skip_peaks):
-                continue
-            if _peak_too_close(peak, used_peaks, seg_gap):
-                continue
-            hm = clip.get("highlight_metrics") or {}
-            clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
-            if owner_exemplars and clip_score < min_clip:
-                continue
-            start = max(0.0, peak - lead)
-            sid = segment_id(vid, start)
-            if sid in blocked_ids:
-                continue
-            rows.append(
-                {
-                    "segment_id": sid,
-                    "start": start,
-                    "peak_start": peak,
-                    "score": float(clip.get("score", 0)),
-                    "clip": {**clip, "start": start, "peak_start": peak},
-                }
-            )
+        with montage_collect_env(game):
+            for clip in pool[:probe_limit]:
+                peak = float(clip.get("start", 0))
+                if any(abs(peak - s) <= 4.0 for s in skip_peaks):
+                    continue
+                if _peak_too_close(peak, used_peaks, seg_gap):
+                    continue
+                hm = clip.get("highlight_metrics") or {}
+                clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
+                if owner_exemplars and clip_score < min_clip and not montage_on:
+                    continue
+                if owner_exemplars and montage_on:
+                    mont_min = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIP_SCORE", "0.02"))
+                    if clip_score < mont_min:
+                        continue
+                start = max(0.0, peak - lead)
+                sid = segment_id(vid, start)
+                if sid in blocked_ids:
+                    continue
+                clip_out = {**clip, "start": start, "peak_start": peak}
+                try:
+                    clip_out = apply_run_trim_to_clip(clip_out, vod, game=game)
+                except Exception:
+                    pass
+                rows.append(
+                    {
+                        "segment_id": sid,
+                        "start": start,
+                        "peak_start": peak,
+                        "score": float(clip.get("score", 0)),
+                        "clip_score": clip_score,
+                        "fight_dur": float(clip_out.get("input_duration") or 0),
+                        "clip": clip_out,
+                    }
+                )
+                if montage_on and len(rows) >= max(montage_max_clips() * 2, 6):
+                    break
         if not rows:
             blocked = pool_peaks_fully_blocked(
                 pool_peaks,
@@ -482,12 +653,30 @@ def _scan_vod(
                 record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
-        n = _send_batch(game, token, chat_id, vod, rows[:1], sig)
+        batch = rows
+        if montage_on:
+            picked = pick_montage_rows(rows)
+            if picked:
+                log.info(
+                    "montage pick game=%s vod=%s n=%s peaks=%s",
+                    game,
+                    vod.name,
+                    len(picked),
+                    [int(float(r.get("peak_start", r["start"]))) for r in picked],
+                )
+                batch = picked
+            else:
+                batch = rows[:1]
+        else:
+            batch = rows[:1]
+        n = _send_batch(game, token, chat_id, vod, batch, sig)
         if n > 0:
             if entry is not None:
                 record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
             return n
-        skip_peaks.add(round(float(rows[0].get("peak_start", rows[0]["start"])), 1))
+        # Reject path: skip first attempted peak(s) and retry.
+        for row in batch:
+            skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
         peak_tries += 1
         log.warning(
             "presend rejected peak — try next (%s/%s) vod=%s game=%s",

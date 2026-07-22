@@ -1588,6 +1588,20 @@ def _accept_highlight_candidate(
     return True
 
 
+def _montage_keeps_collecting(profile: str) -> bool:
+    """When montage is on, keep scoring multiple peaks instead of send_one early-stop."""
+    p = normalize_profile(profile)
+    if p == "mobile_legends" and os.environ.get("MLBB_VOD_MONTAGE", "0") == "1":
+        return True
+    if p in {"pubg", "standoff"} and os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
+        return True
+    if p == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "0") == "1":
+        return True
+    if p == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "0") == "1":
+        return True
+    return False
+
+
 def discover_highlight_candidates(
     video_path: Path,
     profile: str,
@@ -1714,7 +1728,7 @@ def discover_highlight_candidates(
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                    and os.environ.get("MLBB_VOD_MONTAGE", "0") != "1"
+                    and not _montage_keeps_collecting(profile)
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
@@ -1732,7 +1746,7 @@ def discover_highlight_candidates(
                 verified
                 and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                and os.environ.get("MLBB_VOD_MONTAGE", "0") != "1"
+                and not _montage_keeps_collecting(profile)
             ):
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",
