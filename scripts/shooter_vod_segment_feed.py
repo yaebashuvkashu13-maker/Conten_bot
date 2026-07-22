@@ -270,6 +270,22 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
     dur = _ffprobe_duration(rendered)
     if dur <= 0:
         dur = float(row.get("duration", 15))
+    return _validate_shooter_window(game, vod, start, dur, profile=profile)
+
+
+def _validate_shooter_window(
+    game: str,
+    vod: Path,
+    start: float,
+    dur: float,
+    *,
+    profile: str | None = None,
+) -> tuple[bool, str, dict]:
+    """Cheap combat/metro check on source timestamps — run BEFORE ffmpeg encode."""
+    profile = profile or _profile(game)
+    vod_dur = _ffprobe_duration(vod)
+    if vod_dur > 0 and start + max(dur, 1.0) > vod_dur + 0.5:
+        return False, f"clip_past_eof start={start:.1f} dur={dur:.1f} vod={vod_dur:.1f}", {}
     if game == "pubg":
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
@@ -328,6 +344,12 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             clip = apply_run_trim_to_clip(clip, vod, game=game)
         except Exception:
             pass
+        peak = float(row.get("peak_start", row.get("start", 0)))
+        plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
+        pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, plan_dur)
+        if not pre_ok:
+            log.warning("presend PRE-REJECT (skip encode) %s: %s", sid, pre_reason)
+            continue
         if not render_single_segment(vod, clip, out):
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
@@ -414,9 +436,19 @@ def _send_montage_batch(
         gated_parts: list[Path] = []
         gated_durs: list[float] = []
         for row in to_send:
+            clip = apply_run_trim_to_clip(dict(row["clip"]), vod, game=game)
+            peak = float(row.get("peak_start", row.get("start", 0)))
+            plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
+            pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, plan_dur)
+            if not pre_ok:
+                log.warning(
+                    "montage part PRE-REJECT (skip encode) %s: %s",
+                    row.get("segment_id"),
+                    pre_reason,
+                )
+                continue
             part = Path(tempfile.mkstemp(suffix=".part.mp4")[1])
             temps.append(part)
-            clip = apply_run_trim_to_clip(dict(row["clip"]), vod, game=game)
             if not render_single_segment(vod, clip, part):
                 log.warning("montage part render fail %s", row.get("segment_id"))
                 continue

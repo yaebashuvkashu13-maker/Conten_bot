@@ -1396,10 +1396,15 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
             log.warning("intelliclip stage1 failed: %s", exc)
 
     # Enough gun seeds → expand neighborhoods without cold analyze_video.
+    # One strong hit is enough: expand ±90s around it (operational combat hunt).
     min_seeds_fast = max(1, int(os.environ.get("SHOOTER_VOD_SEED_FAST_MIN", "2")))
+    allow_one = os.environ.get("SHOOTER_VOD_SEED_FAST_ONE", "1") == "1"
+    enough_seeds = len(seed_starts) >= min_seeds_fast or (
+        allow_one and len(seed_starts) >= 1
+    )
     if (
         profile in SHOOTER_PROFILES
-        and len(seed_starts) >= min_seeds_fast
+        and enough_seeds
         and os.environ.get("SHOOTER_VOD_SEED_FAST_STAGE1", "1") == "1"
     ):
         for seed in list(seed_starts):
@@ -1417,9 +1422,10 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
         tail = [s for s in ranked if s not in seed_set]
         out = (head + tail)[:max_stage1]
         log.info(
-            "highlight seed-fast stage1 %s: %s windows (skipped analyze_video)",
+            "highlight seed-fast stage1 %s: %s windows from %s gun seeds (skipped analyze_video)",
             video_path.name,
             len(out),
+            len(seed_starts),
         )
         return out
 
@@ -1661,6 +1667,23 @@ def _montage_keeps_collecting(profile: str) -> bool:
     return False
 
 
+def _shooter_score_stop_n(profile: str, limit: int) -> int:
+    """Stop scoring once we have enough combat peaks for montage / send."""
+    p = normalize_profile(profile)
+    if p not in SHOOTER_PROFILES:
+        return limit
+    raw = (os.environ.get("SHOOTER_VOD_SCORE_STOP") or "").strip()
+    if raw:
+        return max(1, min(limit, int(raw)))
+    if _montage_keeps_collecting(profile):
+        max_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "4")))
+        # Need a small surplus so pick_montage_rows can space peaks.
+        return max(1, min(limit, max_clips * 2))
+    if os.environ.get("SHOOTER_VOD_SEND_ONE", "1") == "1":
+        return 1
+    return limit
+
+
 def discover_highlight_candidates(
     video_path: Path,
     profile: str,
@@ -1746,8 +1769,15 @@ def discover_highlight_candidates(
         if not (segment_key_fn and sig and segment_key_fn(sig, start) in used_keys)
     ]
     workers = _parallel_workers()
+    score_stop = _shooter_score_stop_n(profile, limit)
     if workers > 1 and len(pending) > 1:
-        log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
+        log.info(
+            "highlight parallel score %s: %s windows x%d workers (stop_at=%s)",
+            video_path.name,
+            len(pending),
+            workers,
+            score_stop,
+        )
 
     verified: list[dict] = []
 
@@ -1771,6 +1801,18 @@ def discover_highlight_candidates(
         )
         return True
 
+    def _should_stop() -> bool:
+        if len(verified) >= score_stop:
+            return True
+        if (
+            verified
+            and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+            and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+            and not _montage_keeps_collecting(profile)
+        ):
+            return True
+        return False
+
     if workers > 1 and len(pending) > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -1778,7 +1820,9 @@ def discover_highlight_candidates(
                 for start in pending
             }
             for fut in as_completed(futures):
-                if len(verified) >= limit:
+                if _should_stop():
+                    for pending_fut in futures:
+                        pending_fut.cancel()
                     break
                 try:
                     row = fut.result()
@@ -1788,35 +1832,30 @@ def discover_highlight_candidates(
                 if row is None:
                     continue
                 start, metrics = row
-                if _consume(start, metrics) and len(verified) >= limit:
-                    break
-                if (
-                    verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                    and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                    and not _montage_keeps_collecting(profile)
-                ):
-                    log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
+                if _consume(start, metrics) and _should_stop():
+                    log.info(
+                        "highlight early-stop %s: %s passed (need=%s)",
+                        video_path.name,
+                        len(verified),
+                        score_stop,
+                    )
+                    for pending_fut in futures:
+                        pending_fut.cancel()
                     break
     else:
         for start in pending:
-            if len(verified) >= limit:
+            if _should_stop():
                 break
             row = _evaluate_highlight_start(video_path, start, profile)
             if row is None:
                 continue
             start, metrics = row
-            if _consume(start, metrics) and len(verified) >= limit:
-                break
-            if (
-                verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                and not _montage_keeps_collecting(profile)
-            ):
+            if _consume(start, metrics) and _should_stop():
                 log.info(
-                    "vod send_one: stop after first highlight pass start=%.1f",
-                    verified[-1]["start"],
+                    "highlight early-stop %s: %s passed (need=%s)",
+                    video_path.name,
+                    len(verified),
+                    score_stop,
                 )
                 break
 

@@ -107,6 +107,7 @@ def test_single_fast_probe_seed_does_not_replace_stage1(monkeypatch) -> None:
     monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "204.0")
     monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
     monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_MIN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_ONE", "0")
     monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     monkeypatch.setenv("HIGHLIGHT_MAX_STAGE1", "16")
     monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
@@ -139,6 +140,30 @@ def test_single_fast_probe_seed_does_not_replace_stage1(monkeypatch) -> None:
                         out = stage1_candidates(Path("yt_fake.mp4"), "pubg")
     assert 204.0 in out
     assert len(out) >= 2
+
+
+def test_one_gun_seed_uses_seed_fast_without_analyze(monkeypatch) -> None:
+    from highlight_scorer import stage1_candidates
+
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "180.0")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_ONE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
+    monkeypatch.setenv("HIGHLIGHT_MAX_STAGE1", "16")
+
+    with patch("highlight_scorer._heatmap_stage0_starts", return_value=[]):
+        with patch("highlight_scorer.soft_anchor_enabled", return_value=False):
+            with patch("highlight_scorer.owner_anchors_enabled", return_value=False):
+                with patch("vod_analysis_cache.analyze_video_cached") as analyze:
+                    with patch(
+                        "highlight_scorer._filter_bad_label_starts",
+                        side_effect=lambda _v, _p, starts: starts,
+                    ):
+                        out = stage1_candidates(Path("yt_fake.mp4"), "pubg")
+    analyze.assert_not_called()
+    assert 180.0 in out
+    assert len(out) >= 5
 
 
 def test_shooter_rule_requires_video_path() -> None:
