@@ -442,7 +442,7 @@ def discover_vod_kill_banners(
         return probes < max_probes and time.monotonic() < deadline
 
     # Phase 1: narrow scan around stage1 motion peaks (fast).
-    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
+    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")))
     for peak in sorted(set(hint_peaks or []))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
@@ -451,8 +451,14 @@ def discover_vod_kill_banners(
         if hit:
             _merge_hit(hit)
 
-    # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
-    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+    want = max(2, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "2")))
+    force_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
+    # Bounded spike sweep when peaks-only is thin — finds banners motion peaks miss
+    # without the hours-long full-VOD OCR path.
+    need_spike = force_full or (
+        os.environ.get("MLBB_VOD_BANNER_DISCOVER_SPIKE", "1") == "1" and len(hits) < want
+    )
+    if not need_spike:
         hits.sort(key=lambda h: h.sec)
         log.info(
             "banner discover %s: peaks-only probes=%s hits=%s",
@@ -462,24 +468,36 @@ def discover_vod_kill_banners(
         )
         return hits
 
-    # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
+    # Phase 2: sparse motion-gated sweep (capped by remaining probes/deadline).
     if probes < max_probes and time.monotonic() < deadline:
         win = float(analysis.get("window_seconds", 2.0))
         motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
         audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
         combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
-        motion_thr = float(np.percentile(combined, 35)) if combined.size > 4 else 0.0
-        step = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "5.0"))
+        # Top spikes only — not every bin above p35 (that stalls).
+        spike_cap = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP", "10")))
+        if combined.size > 8:
+            thr = float(np.percentile(combined, 78))
+            idxs = [i for i, v in enumerate(combined) if float(v) >= thr]
+            # Thin to ~spike_cap evenly spaced spike times.
+            if len(idxs) > spike_cap:
+                step_i = max(1, len(idxs) // spike_cap)
+                idxs = idxs[::step_i][:spike_cap]
+        else:
+            idxs = list(range(combined.size))
         t0 = _adaptive_banner_scan_start(vod, duration)
-        t = t0
-        while t < duration - 4.0 and probes < max_probes and time.monotonic() < deadline:
-            bi = min(int(t / max(win, 0.5)), max(0, combined.size - 1))
-            if combined.size > bi and float(combined[bi]) < motion_thr:
-                t += step
+        known = {round(h.sec / 4.0) for h in hits}
+        for bi in idxs:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            t = bi * max(win, 0.5)
+            if t < t0 or t > duration - 4.0:
+                continue
+            if round(t / 4.0) in known:
                 continue
             if probes % 5 == 0:
                 log.info(
-                    "banner discover %s: probe=%s/%s t=%.0fs hits=%s",
+                    "banner discover %s: spike probe=%s/%s t=%.0fs hits=%s",
                     vod.name,
                     probes,
                     max_probes,
@@ -488,7 +506,8 @@ def discover_vod_kill_banners(
                 )
             if not _probe_at(t, deep=False):
                 break
-            t += step
+            if hits:
+                known.add(round(hits[-1].sec / 4.0))
 
     hits.sort(key=lambda h: h.sec)
     log.info(

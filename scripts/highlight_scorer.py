@@ -1714,6 +1714,7 @@ def discover_highlight_candidates(
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                    and os.environ.get("MLBB_VOD_MONTAGE", "0") != "1"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
@@ -1731,6 +1732,7 @@ def discover_highlight_candidates(
                 verified
                 and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                and os.environ.get("MLBB_VOD_MONTAGE", "0") != "1"
             ):
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",

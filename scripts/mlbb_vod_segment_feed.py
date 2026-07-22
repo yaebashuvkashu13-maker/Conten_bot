@@ -276,6 +276,27 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
     return n
 
 
+def _vod_richness_rank(row: dict) -> int:
+    """
+    Prefer VODs that already have unused fight peaks — extract more moments
+    from one file instead of cycling ~10 empty downloads.
+    Lower is better.
+    """
+    if row.get("last_scan_blocked"):
+        return 2
+    peaks = row.get("last_pool_peaks")
+    if not isinstance(peaks, list) or not peaks:
+        # Unscanned / empty pool: try once, but don't prefer over rich caches.
+        return 1 if float(row.get("last_scan_at") or 0) > 0 else 0
+    pool_n = len(peaks)
+    zero = int(row.get("zero_send_attempts") or 0)
+    if pool_n >= 3 and zero < 2:
+        return -1  # sticky rich VOD
+    if pool_n >= 1 and zero < 3:
+        return 0
+    return 1
+
+
 def _pick_available_vod(registry: list[dict]) -> dict | None:
     target = _vod_target_dur_sec()
     exhausted_ids = {
@@ -283,7 +304,7 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[int, float, float, float, dict]] = []
+    ranked: list[tuple[int, int, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
@@ -304,18 +325,21 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
-        ranked.append((1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        rich = _vod_richness_rank(row)
+        ranked.append((rich, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         return None
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-    pick = ranked[0][4]
-    dur = ranked[0][3]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    pick = ranked[0][5]
+    dur = ranked[0][4]
     log.info(
-        "pick vod id=%s dur_min=%.0f target_min=%.0f scanned=%s",
+        "pick vod id=%s dur_min=%.0f target_min=%.0f rich=%s scanned=%s pool=%s",
         pick.get("id", ""),
         dur / 60,
         target / 60,
-        bool(ranked[0][0]),
+        ranked[0][0],
+        bool(ranked[0][1]),
+        len(pick.get("last_pool_peaks") or []) if isinstance(pick.get("last_pool_peaks"), list) else 0,
     )
     return pick
 
@@ -879,6 +903,13 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             }
         start, end, dur, meta = resolved
         banner_sec = float(meta.get("banner_sec", peak))
+        try:
+            from mlbb_vod_montage import trim_idle_run_end
+
+            end = trim_idle_run_end(vod, start, end, banner_sec=banner_sec)
+            dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), end - start)
+        except Exception:
+            pass
         return {
             **clip,
             "start": start,
@@ -1499,9 +1530,46 @@ def _collect_scan_segments(
     entry: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     from mlbb_vod_adaptive_gate import peak_near_skipped
+    from mlbb_vod_montage import montage_enabled, montage_collect_env, montage_max_clips
     from vod_analysis_cache import cache_key_hash
     from vod_scan_state import minimal_pool_from_entry, pool_cache_valid
 
+    with montage_collect_env():
+        return _collect_scan_segments_inner(
+            vod,
+            sig,
+            labeled,
+            sent,
+            probe_limit,
+            pool=pool,
+            skip_peaks=skip_peaks,
+            entry=entry,
+            peak_near_skipped=peak_near_skipped,
+            montage_on=montage_enabled(),
+            montage_cap=montage_max_clips(),
+            cache_key_hash=cache_key_hash,
+            minimal_pool_from_entry=minimal_pool_from_entry,
+            pool_cache_valid=pool_cache_valid,
+        )
+
+
+def _collect_scan_segments_inner(
+    vod: Path,
+    sig: str,
+    labeled: dict,
+    sent: set,
+    probe_limit: int,
+    *,
+    pool: list[dict] | None,
+    skip_peaks: set[float] | None,
+    entry: dict | None,
+    peak_near_skipped,
+    montage_on: bool,
+    montage_cap: int,
+    cache_key_hash,
+    minimal_pool_from_entry,
+    pool_cache_valid,
+) -> tuple[list[dict], list[dict]]:
     if pool is None:
         if entry and pool_cache_valid(entry):
             pool = minimal_pool_from_entry(entry)
@@ -1586,16 +1654,33 @@ def _collect_scan_segments(
                 "highlight_metrics": metrics,
                 "visual_pass": vis.get("visual_pass", True),
                 "pass_reason": metrics.get("pass_reason") or metrics.get("gate_reason") or "",
-                "clip_score": float(metrics.get("clip_score") or 0),
                 "gate_reason": reason,
             }
         )
-        if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
+        if montage_on:
+            if len(out) >= max(montage_cap * 2, 6):
+                log.info("montage collect: enough candidates=%s — stop pool walk", len(out))
+                break
+        elif os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
             log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
             break
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
-    if batch_cap > 0:
+    if montage_on:
+        from mlbb_vod_montage import pick_montage_rows
+
+        picked = pick_montage_rows(deduped)
+        if picked:
+            log.info(
+                "montage pick vod=%s n=%s peaks=%s",
+                vod.name,
+                len(picked),
+                [int(float(r.get("peak_start", r["start"]))) for r in picked],
+            )
+            deduped = picked
+        elif batch_cap > 0:
+            deduped = deduped[:batch_cap]
+    elif batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):
         log.info(
@@ -1615,11 +1700,20 @@ def _send_segment_batch(
     to_send: list[dict],
     sig: str,
 ) -> tuple[int, int, int]:
-    """Render and send segments — one Telegram video per clip (no montage merge)."""
+    """Render and send segments — montage merge when MLBB_VOD_MONTAGE=1."""
     from mlbb_learning_first import can_send, daily_send_count, max_daily_sends
+    from mlbb_vod_montage import montage_enabled, pick_montage_rows
+
+    montage_on = montage_enabled() and len(to_send) >= 2
+    if montage_on:
+        picked = pick_montage_rows(to_send)
+        if len(picked) >= 2:
+            to_send = picked
+        else:
+            montage_on = False
 
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-    if send_one and len(to_send) > 1:
+    if send_one and not montage_on and len(to_send) > 1:
         to_send = to_send[:1]
 
     ok_batch, block_reason = can_send(1)
@@ -1637,11 +1731,14 @@ def _send_segment_batch(
     if cap_left <= 0:
         log.info("daily cap reached sent_today=%s cap=%s", daily_send_count(), max_daily_sends())
         return 0, 0, 0
-    if len(to_send) > cap_left:
-        log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
-        to_send = to_send[:cap_left]
+
+    if montage_on:
+        return _send_montage_batch(token, chat_id, vod, to_send, sig)
 
     if not send_one:
+        if len(to_send) > cap_left:
+            log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
+            to_send = to_send[:cap_left]
         seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
         send_message(
             token,
@@ -1726,6 +1823,116 @@ def _send_segment_batch(
     if sent_ids:
         mark_feed_sent(sent_ids)
     return len(sent_ids), len(skipped), send_blocked
+
+
+def _send_montage_batch(
+    token: str,
+    chat_id: str,
+    vod: Path,
+    to_send: list[dict],
+    sig: str,
+) -> tuple[int, int, int]:
+    """One Telegram video = xfade of 2–4 fight windows from the same VOD."""
+    from mlbb_vod_montage import build_montage_id, cleanup_temps, concat_rendered_parts
+    from smart_video_editor import ffprobe_duration as _probe_part_dur
+
+    vid = vod_youtube_id(vod)
+    mid = build_montage_id(vid, to_send)
+    SEGMENTS_ROOT = segments_root()
+    SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
+    out = SEGMENTS_ROOT / f"seg_{mid}.mp4"
+    temps: list[Path] = []
+    skipped: list[str] = []
+    try:
+        gated_rows: list[dict] = []
+        gated_parts: list[Path] = []
+        gated_durs: list[float] = []
+        for row in to_send:
+            part = Path(tempfile.mkstemp(suffix=".part.mp4")[1])
+            temps.append(part)
+            if not render_single_segment(vod, row["clip"], part):
+                skipped.append(f"{row['segment_id']}:render_fail")
+                continue
+            ok, reason, _rep = _validate_before_send(vod, row, part)
+            if not ok:
+                skipped.append(f"{row['segment_id']}:{reason}")
+                continue
+            dur = float(row.get("fight_dur") or row["clip"].get("input_duration") or 0)
+            if dur < 1:
+                dur = float(_probe_part_dur(part) or 0)
+            gated_rows.append(row)
+            gated_parts.append(part)
+            gated_durs.append(dur)
+        if len(gated_rows) < 2:
+            log.warning("montage aborted — fewer than 2 parts passed gate (%s)", len(gated_rows))
+            if gated_rows:
+                return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
+            return 0, len(skipped), 0
+
+        if not concat_rendered_parts(gated_parts, gated_durs, out):
+            skipped.append("concat_fail")
+            return 0, len(skipped), 0
+
+        banners = []
+        for row in gated_rows:
+            if row.get("kill_banner"):
+                banners.append(
+                    f"{str(row['kill_banner']).upper()}@{int(float(row.get('peak_start', row['start'])))}"
+                )
+        seg_dur = _ffprobe_duration(out)
+        caption = (
+            f"MLBB склейка #{mid}\n"
+            f"🎯 {' · '.join(banners) if banners else f'{len(gated_rows)} моментов'}\n"
+            f"{vid} | {len(gated_rows)} куска | {seg_dur:.0f}с\n"
+            f"✓ montage (anti-run trim)\n"
+            f"👍 Ок / 👎 Не ок"
+        )
+        if not send_video(token, chat_id, out, caption, seg_id=mid):
+            send_message(token, chat_id, f"{caption}\n(файл не отправился)")
+            return 0, len(skipped), 1
+        upsert_segment(
+            {
+                "segment_id": mid,
+                "path": str(out),
+                "vod": str(vod),
+                "vod_id": vid,
+                "start": gated_rows[0]["start"],
+                "duration": seg_dur,
+                "fight_dur": seg_dur,
+                "peak_start": gated_rows[0].get("peak_start", gated_rows[0]["start"]),
+                "score": max(float(r.get("score") or 0) for r in gated_rows),
+                "hook_score": max(float(r.get("hook_score") or 0) for r in gated_rows),
+                "clip_score": max(float(r.get("clip_score") or 0) for r in gated_rows),
+                "montage_parts": [r["segment_id"] for r in gated_rows],
+                "sig": sig,
+                "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        part_ids = [r["segment_id"] for r in gated_rows] + [mid]
+        mark_feed_sent(part_ids)
+        log.info("montage sent id=%s parts=%s dur=%.0f", mid, len(gated_rows), seg_dur)
+        return 1, len(skipped), 0
+    finally:
+        cleanup_temps(temps)
+
+
+def _send_single_fallback(
+    token: str,
+    chat_id: str,
+    vod: Path,
+    row: dict,
+    sig: str,
+) -> tuple[int, int, int]:
+    """Send one clip when montage collapsed to a single gated part."""
+    old = os.environ.get("MLBB_VOD_MONTAGE")
+    os.environ["MLBB_VOD_MONTAGE"] = "0"
+    try:
+        return _send_segment_batch(token, chat_id, vod, [row], sig)
+    finally:
+        if old is None:
+            os.environ.pop("MLBB_VOD_MONTAGE", None)
+        else:
+            os.environ["MLBB_VOD_MONTAGE"] = old
 
 
 def _resolve_next_vod(
