@@ -37,7 +37,14 @@ def test_adaptive_env_applies_menu_relax(monkeypatch: pytest.MonkeyPatch) -> Non
     with adaptive_env(2) as level:
         assert level == 1
         assert os.environ["VISUAL_MENU_OVERLAY_MAX"] == "0.58"
+        assert float(os.environ["VIRAL_COMBAT_HOOK_MIN"]) <= 0.06
     assert "VISUAL_MENU_OVERLAY_MAX" not in os.environ or os.environ.get("VISUAL_MENU_OVERLAY_MAX") != "0.58"
+
+
+def test_l1_relaxes_combat_hook() -> None:
+    ov = overrides_for_level(1)
+    assert float(ov["VIRAL_COMBAT_HOOK_MIN"]) <= 0.06
+    assert float(ov["VIRAL_SEGMENT_HOOK_MIN"]) <= 0.10
 
 
 def test_record_vod_outcome_streak() -> None:

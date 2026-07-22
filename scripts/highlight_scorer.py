@@ -1566,13 +1566,24 @@ def _accept_highlight_candidate(
     hook_min = float(os.environ.get("VIRAL_SEGMENT_HOOK_MIN", "0.35"))
     if profile == "mobile_legends" and metrics.rule_pass and metrics.visual_pass:
         hook_min = float(os.environ.get("VIRAL_MLBB_HOOK_MIN", "0.06"))
-    elif (
-        metrics.hook_score < hook_min
-        and profile in SHOOTER_PROFILES
-        and metrics.panns_gun_max >= 0.35
-        and metrics.visual_pass
-    ):
-        hook_min = float(os.environ.get("VIRAL_COMBAT_HOOK_MIN", "0.06"))
+    elif profile in SHOOTER_PROFILES and metrics.visual_pass:
+        # Combat relax must only lower the bar. A mis-set VIRAL_COMBAT_HOOK_MIN
+        # above VIRAL_SEGMENT_HOOK_MIN used to reject gunfire peaks (hook~0.1).
+        combat_reason = str(metrics.pass_reason or "").startswith("combat_ok")
+        panns_trust = float(
+            os.environ.get(
+                "PUBG_PANNS_TRUST_MIN",
+                os.environ.get("HIGHLIGHT_PANN_GUN_MIN", "0.35"),
+            )
+        )
+        if combat_reason or metrics.panns_gun_max >= max(0.35, panns_trust):
+            default_combat = 0.06
+            combat_min = float(
+                os.environ.get("VIRAL_COMBAT_HOOK_MIN", str(default_combat))
+            )
+            if combat_min >= hook_min:
+                combat_min = default_combat
+            hook_min = min(hook_min, combat_min)
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends" and metrics.clip_score >= float(
             os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")

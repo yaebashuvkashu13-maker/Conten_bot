@@ -32,6 +32,9 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
     "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
     "VISUAL_PUBG_MIN_CENTER_EDGE": "0.022",
     "VISUAL_PUBG_MIN_WEAPON_EDGE": "0.014",
+    # Gunfire peaks often score low visual hook; never wait until L4 to allow them.
+    "VIRAL_SEGMENT_HOOK_MIN": "0.08",
+    "VIRAL_COMBAT_HOOK_MIN": "0.06",
 }
 
 # Level 2: allow Metro highlight HUD, slightly lower bars — keep POV + multi-frame visual.
