@@ -99,6 +99,19 @@ def test_accept_combat_ok_relaxes_hook_never_raises(monkeypatch) -> None:
     assert _accept_highlight_candidate(Path("x.mp4"), 10.0, m_low_panns, "pubg") is False
 
 
+def test_live_pann_min_respects_soften_env(monkeypatch) -> None:
+    from highlight_scorer import audio_passes_shooter, live_pann_gun_min
+
+    monkeypatch.setenv("HIGHLIGHT_PANN_GUN_MIN", "0.12")
+    assert live_pann_gun_min() == pytest.approx(0.12)
+    ok, reason = audio_passes_shooter(
+        {"panns_gun_max": 0.176, "panns_speech": 0.1, "panns_music": 0.1},
+        gun_min=0.25,
+    )
+    assert ok is True
+    assert "panns_gun_ok" in reason
+
+
 def test_single_fast_probe_seed_does_not_replace_stage1(monkeypatch) -> None:
     """One fast-probe hit must merge into stage1, not early-return with 1 window."""
     from highlight_scorer import stage1_candidates

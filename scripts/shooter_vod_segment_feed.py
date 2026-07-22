@@ -68,6 +68,71 @@ EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
 
 
+def _reliable_mode(game: str = "") -> bool:
+    """Ship videos, not Telegram error spam. Default ON for PUBG/Standoff."""
+    raw = os.environ.get("SHOOTER_VOD_RELIABLE")
+    if raw is None or str(raw).strip() == "":
+        return (game or "").strip().lower() in {"pubg", "standoff", ""}
+    return str(raw).strip() not in {"0", "false", "False", "no"}
+
+
+def _apply_reliable_runtime(game: str) -> None:
+    """Mute owner noise + prefer singles + hard exhaust. Idempotent per process."""
+    if not _reliable_mode(game):
+        return
+    defaults = {
+        "SHOOTER_VOD_ADAPTIVE_NOTIFY": "0",
+        "SHOOTER_VOD_EXHAUST_NOTIFY": "0",
+        "SHOOTER_VOD_FAST_SKIP_NOTIFY": "0",
+        "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY": "0",
+        "SHOOTER_VOD_DOWNLOAD_NOTIFY": "0",
+        "SHOOTER_VOD_MONTAGE": "0",
+        "SHOOTER_VOD_SEND_ONE": "1",
+        "SHOOTER_VOD_MAX_ZERO_ATTEMPTS": "1",
+        "SHOOTER_VOD_PRESEND_EXHAUST_AFTER": "1",
+        # Soften must be able to lower the live PANNs bar (was stuck at import 0.25).
+        "HIGHLIGHT_PANN_FIXED": "0",
+    }
+    if game == "pubg":
+        defaults["PUBG_VOD_MONTAGE"] = "0"
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+        # Reliable mode forces these even if env had spam/montage on.
+        if key in {
+            "SHOOTER_VOD_ADAPTIVE_NOTIFY",
+            "SHOOTER_VOD_EXHAUST_NOTIFY",
+            "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY",
+            "SHOOTER_VOD_MONTAGE",
+            "PUBG_VOD_MONTAGE",
+            "SHOOTER_VOD_MAX_ZERO_ATTEMPTS",
+        }:
+            os.environ[key] = value
+
+
+def _hard_finish_vod(
+    game: str,
+    state: dict,
+    vod: Path,
+    *,
+    vid: str,
+    reason: str,
+    delete_file: bool = True,
+) -> None:
+    """Never rescan a finished/dead VOD — stop encode/notify loops forever."""
+    entry = _ensure_registry_entry(state, vod, vid=vid)
+    entry["exhausted"] = True
+    entry["reject_reason"] = reason
+    entry["path"] = str(vod)
+    _save_state(game, state)
+    if delete_file and os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1":
+        try:
+            if vod.exists():
+                vod.unlink()
+                log.info("deleted exhausted vod=%s reason=%s", vod.name, reason)
+        except OSError as exc:
+            log.warning("delete exhausted failed %s: %s", vod.name, exc)
+
+
 def _game() -> str:
     raw = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VOD_SEGMENT_GAME", "pubg")).strip().lower()
     return raw if raw in FEED_GAMES else "pubg"
@@ -892,7 +957,30 @@ def _scan_vod_with_adaptive(
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
 
-    if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
+    entry = _ensure_registry_entry(state, vod, vid=vid, title=title, entry=entry)
+    if sent > 0:
+        # One successful clip from a VOD is enough — do not rescan into notify/encode loops.
+        _hard_finish_vod(game, state, vod, vid=vid, reason="sent_ok", delete_file=True)
+    elif _reliable_mode(game):
+        zeros = int(entry.get("zero_send_attempts") or 0) + 1
+        entry["zero_send_attempts"] = zeros
+        max_zero = max(1, int(os.environ.get("SHOOTER_VOD_MAX_ZERO_ATTEMPTS", "1")))
+        if zeros >= max_zero or should_mark_vod_exhausted(entry):
+            _hard_finish_vod(
+                game,
+                state,
+                vod,
+                vid=vid,
+                reason=str(entry.get("reject_reason") or "zero_send_reliable"),
+                delete_file=True,
+            )
+        else:
+            _save_state(game, state)
+
+    notify_exhaust = os.environ.get(
+        "SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")
+    ) == "1"
+    if sent == 0 and notify_exhaust and not _reliable_mode(game):
         if active_level == 0 or new_streak % 2 == 0:
             entry = _vod_registry_entry(state, vod)
             send_message(
@@ -911,7 +999,8 @@ def _scan_vod_with_adaptive(
 
 
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
-    log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
+    _apply_reliable_runtime(game)
+    log.info("shooter feed start game=%s rev=%s reliable=%s", game, VOD_PIPELINE_REV, int(_reliable_mode(game)))
     ok_cycle, reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("skip feed game=%s reason=%s", game, reason)
@@ -988,7 +1077,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     candidates = _discover_candidates(game, env, used)
     if not candidates:
-        send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+        if os.environ.get("SHOOTER_VOD_DISCOVERY_MISS_NOTIFY", "0") == "1":
+            send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+        else:
+            log.info("discovery miss game=%s (notify muted)", game)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
@@ -999,7 +1091,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         pick = pick_discovery_candidate(game, candidates)
     if pick is None:
         pick = candidates[0]
-    send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+    if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
+        send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+    else:
+        log.info("downloading %s vod id=%s (notify muted)", game, pick.get("id"))
     vod = _download_vod(game, pick, env)
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
@@ -1058,6 +1153,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
+    _apply_reliable_runtime(game)
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
@@ -1065,6 +1161,8 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
+    os.environ.setdefault("SHOOTER_VOD_RELIABLE", "1")
+    _apply_reliable_runtime(game)
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")

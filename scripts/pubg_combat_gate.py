@@ -62,8 +62,20 @@ def pubg_combat_visual_strict(
     best_flash = 0.0
     best_weapon = 0.0
 
+    try:
+        from smart_video_editor import ffprobe_duration
+
+        vod_dur = float(ffprobe_duration(video_path) or 0.0)
+    except Exception:
+        vod_dur = 0.0
+
     for label, t in segment_frame_times(start_sec, duration_sec):
-        frame = _read_frame_at(video_path, t)
+        read_t = t
+        if vod_dur > 1.0:
+            read_t = min(t, max(0.0, vod_dur - 0.08))
+        frame = _read_frame_at(video_path, read_t)
+        if frame is None and read_t > 0.2:
+            frame = _read_frame_at(video_path, max(0.0, read_t - 0.25))
         if frame is None:
             frames_out.append({"label": label, "pass": False, "reason": "frame_missing"})
             continue
@@ -88,6 +100,12 @@ def pubg_combat_visual_strict(
         )
 
     need = FRAMES_REQUIRED
+    # EOF seeks often miss the literal end frame — do not fail a fight for that alone.
+    end_missing = any(
+        f.get("label") == "end" and f.get("reason") == "frame_missing" for f in frames_out
+    )
+    if end_missing and passed >= max(2, need - 1):
+        need = min(need, passed)
     if passed < need:
         bad = [f"{f['label']}:{f.get('reason', '?')}" for f in frames_out if not f.get("pass")]
         return False, f"visual_frames={passed}/{need}:{','.join(bad[:3])}", {
