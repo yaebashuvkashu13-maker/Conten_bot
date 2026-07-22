@@ -26,23 +26,27 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
         return []
 
     skip = float(skip_intro)
-    # Short VODs still have fights — don't demand skip+90 headroom.
-    if dur < float(os.environ.get("SHOOTER_VOD_FAST_SHORT_DUR_SEC", "900")):
-        skip = min(
-            skip,
-            float(os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO_SHORT", "60")),
-        )
+    max_n = max(3, int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "10")))
+    short_lim = float(os.environ.get("SHOOTER_VOD_FAST_SHORT_DUR_SEC", "900"))
+    # Very short clips: start early and probe densely — skip=120 leaves 1 sample on 3min VODs.
+    if dur < 360:
+        skip = min(skip, float(os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO_TINY", "20")))
+    elif dur < short_lim:
+        skip = min(skip, float(os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO_SHORT", "45")))
 
-    max_n = max(3, int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "8")))
-    tail = 20.0 if dur < 600 else 45.0
+    tail = 15.0 if dur < 600 else 45.0
     offsets: list[float] = []
 
-    if dur < float(os.environ.get("SHOOTER_VOD_FAST_SHORT_DUR_SEC", "900")):
-        step = float(os.environ.get("SHOOTER_VOD_FAST_PROBE_STEP_SHORT", "90"))
+    if dur < short_lim:
+        step = float(os.environ.get("SHOOTER_VOD_FAST_PROBE_STEP_SHORT", "60"))
+        if dur < 360:
+            step = float(os.environ.get("SHOOTER_VOD_FAST_PROBE_STEP_TINY", "35"))
         t = skip
         while t + WINDOW_SEC < dur - tail and len(offsets) < max_n:
             offsets.append(round(t, 1))
             t += step
+        if not offsets and skip + WINDOW_SEC < dur:
+            offsets.append(round(max(0.0, (dur - WINDOW_SEC) * 0.45), 1))
         return sorted(set(offsets))
 
     for delta in (0, 90, 180, 300, 480, 720, 960, 1200, 1500, 1800):

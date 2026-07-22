@@ -108,8 +108,8 @@ def _apply_reliable_runtime(game: str) -> None:
         "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.036",
         # Never download multi-hour streams (flat search often hides duration).
         "SHOOTER_VOD_MAX_SEC": "1200",
-        "SHOOTER_VOD_MIN_SEC": "180",
-        "SHOOTER_VOD_PREFER_MIN_SEC": "360",
+        "SHOOTER_VOD_MIN_SEC": "300",
+        "SHOOTER_VOD_PREFER_MIN_SEC": "420",
         "SHOOTER_VOD_PREFER_MAX_SEC": "1080",
     }
     if game == "pubg":
@@ -129,6 +129,8 @@ def _apply_reliable_runtime(game: str) -> None:
         "PUBG_COMBAT_FRAMES_REQUIRED",
         "SHOOTER_VOD_FAST_PANN_MIN",
         "SHOOTER_VOD_MAX_SEC",
+        "SHOOTER_VOD_MIN_SEC",
+        "PUBG_PANNS_TRUST_MIN",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)

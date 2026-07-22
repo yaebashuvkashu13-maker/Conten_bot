@@ -34,21 +34,29 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
     r"guide|обзор|trick|совет|"
-    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден",
+    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден|"
+    r"glitch|эксплойт|баг\b|exploring|exploration|сезон\s+(ид[её]т|coming)|"
+    r"season\s+\d+\s+is\s+coming|coming\s+soon|update\s+preview|"
+    r"loot\s*tour|туннел|tunnel\s+glitch|walkthrough|прохожден",
+    re.I,
+)
+
+FIGHT_TITLE_RE = re.compile(
+    r"fight|бое[йв]|перестрел|штурм|clutch|ranked\s+match|full\s+match|"
+    r"squad\s+fight|геймплей|gameplay|катк[аи]|рейд|pvp|перестрелк|"
+    r"файт|штурмов",
     re.I,
 )
 
 PUBG_CORE_QUERIES = (
-    "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile Metro Royale full match",
-    "PUBG Mobile Metro Royale squad fight ranked",
+    "PUBG Mobile Metro Royale gameplay ranked fight",
+    "PUBG Mobile Metro Royale full match squad fight",
     "PUBG Mobile Metro Royale TPP ranked replay",
-    "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл стрим",
-    "PUBG Mobile Metro Royale стрим полный",
-    "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг стрим русский",
+    "метро рояль пабг мобайл ранкед матч перестрелка",
+    "метро рояль пабг мобайл полный матч файт",
+    "метро рояль пабг штурм катка",
+    "пабг мобайл метро рояль геймплей бой",
+    "метро рояль пабг стрим русский файт",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -136,11 +144,15 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
             return sorted(under, key=_dur)
         return rows
 
+    def _fight_first(rows: list[dict]) -> list[dict]:
+        fights = [r for r in rows if FIGHT_TITLE_RE.search(str(r.get("title") or ""))]
+        return fights + [r for r in rows if r not in fights]
+
     if game.strip().lower() == "pubg":
         from pubg_metro_royale_gate import title_metro_hint
         from youtube_game_prefs import russian_score
 
-        pool = _short_first(ranked[:16])
+        pool = _fight_first(_short_first(ranked[:20]))
         for cand in pool[:12]:
             title = str(cand.get("title") or "")
             if title_metro_hint(title) and russian_score(cand) >= 0.06:
@@ -152,7 +164,7 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
             if russian_score(cand) >= 0.12:
                 return cand
         return pool[0]
-    return _short_first(ranked)[0]
+    return _fight_first(_short_first(ranked))[0]
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
