@@ -690,6 +690,46 @@ def _scan_vod(
     return 0
 
 
+def _ensure_registry_entry(
+    state: dict,
+    vod: Path,
+    *,
+    vid: str,
+    title: str = "",
+    entry: dict | None = None,
+) -> dict:
+    """Return registry row for vod, appending a new one when missing."""
+    if entry is not None:
+        return entry
+    found = _vod_registry_entry(state, vod)
+    if found is not None:
+        return found
+    row = {
+        "id": vid,
+        "path": str(vod),
+        "title": title,
+        "exhausted": False,
+    }
+    state.setdefault("vods", []).append(row)
+    return row
+
+
+def _mark_fast_skip_exhausted(
+    state: dict,
+    vod: Path,
+    *,
+    vid: str,
+    title: str,
+    fast_reason: str,
+    entry: dict | None,
+) -> dict:
+    row = _ensure_registry_entry(state, vod, vid=vid, title=title, entry=entry)
+    row["reject_reason"] = fast_reason
+    row["exhausted"] = True
+    record_vod_scan(row, sent=0, pool_peaks=[], blocked=False)
+    return row
+
+
 def _scan_vod_with_adaptive(
     game: str,
     token: str,
@@ -739,16 +779,9 @@ def _scan_vod_with_adaptive(
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = _vod_registry_entry(state, vod) or {
-                    "id": vid,
-                    "path": str(vod),
-                    "title": title,
-                    "exhausted": False,
-                }
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _mark_fast_skip_exhausted(
+                state, vod, vid=vid, title=title, fast_reason=fast_reason, entry=entry
+            )
             _save_state(game, state)
             if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
@@ -766,16 +799,9 @@ def _scan_vod_with_adaptive(
         ok_fast, fast_reason, seed_peaks = vod_fast_boss_check(vod, _profile(game))
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = _vod_registry_entry(state, vod) or {
-                    "id": vid,
-                    "path": str(vod),
-                    "title": title,
-                    "exhausted": False,
-                }
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _mark_fast_skip_exhausted(
+                state, vod, vid=vid, title=title, fast_reason=fast_reason, entry=entry
+            )
             _save_state(game, state)
             return 0
         apply_genshin_seeds(seed_peaks)
@@ -791,16 +817,9 @@ def _scan_vod_with_adaptive(
         ok_fast, fast_reason, seed_peaks = vod_fast_impact_check(vod, _profile(game))
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = _vod_registry_entry(state, vod) or {
-                    "id": vid,
-                    "path": str(vod),
-                    "title": title,
-                    "exhausted": False,
-                }
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _mark_fast_skip_exhausted(
+                state, vod, vid=vid, title=title, fast_reason=fast_reason, entry=entry
+            )
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
@@ -873,7 +892,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox.mkdir(parents=True, exist_ok=True)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
-        entry = next((r for r in registry if r.get("path") == str(mp4)), None)
+        vid_inbox = vod_youtube_id(mp4)
+        entry = next(
+            (
+                r
+                for r in registry
+                if r.get("path") == str(mp4) or r.get("id") == vid_inbox
+            ),
+            None,
+        )
         if entry and entry.get("exhausted"):
             continue
         if should_skip_vod_rescan(entry, game=game):
@@ -883,12 +910,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if entry is None:
             entry = {
-                "id": vod_youtube_id(mp4),
+                "id": vid_inbox,
                 "path": str(mp4),
                 "title": "",
                 "exhausted": False,
             }
             registry.append(entry)
+        else:
+            entry["path"] = str(mp4)
+            entry["id"] = entry.get("id") or vid_inbox
         if game == "pubg":
             streak_in = _adaptive_gate(game).streak_from_state(state)
             title = str(entry.get("title") or "")
