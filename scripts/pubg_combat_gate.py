@@ -511,7 +511,11 @@ def pubg_passes_combat_gate(
                 signals += 1
                 out["signal_visual_hit"] = True
             need = max(2, int(os.environ.get("PUBG_COMBAT_MIN_SIGNALS", "2")))
+            # Strong PANNs already proved gun audio — one more corroborating signal is enough.
+            if panns_trusted:
+                need = max(1, need - 1)
             out["combat_signals"] = signals
+            out["combat_signals_need"] = need
             if signals < need:
                 return False, f"combat_signals_low={signals}:need>={need}", out
 
