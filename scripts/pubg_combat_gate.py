@@ -416,12 +416,18 @@ def pubg_passes_combat_gate(
     crop = tuple(shoot_row["crop_box"]) if shoot_row.get("crop_box") else None
     if crop is not None:
         crop = tuple(int(v) for v in crop)
-    if segment_looks_like_pubg_loot_or_walk(
-        video_path,
-        start_sec,
-        duration_sec,
-        crop_box=crop,
-        gunfire_density=gun_density,
+    panns_trusted = panns_gun >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    # Strong PANNs gun often has near-zero energy-density metric on Metro VODs —
+    # do not treat that as loot/walk.
+    if (
+        not panns_trusted
+        and segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop,
+            gunfire_density=gun_density,
+        )
     ):
         return False, f"loot_walk=density{gun_density:.3f}", out
 
