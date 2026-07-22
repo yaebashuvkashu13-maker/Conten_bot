@@ -80,8 +80,8 @@ SEND_TELEGRAM = os.environ.get('SEND_TELEGRAM', '1') == '1'
 WINDOW_SECONDS = 1.0
 SAMPLE_FPS = float(os.environ.get('SMART_SAMPLE_FPS', '4.0'))
 LONG_VIDEO_MIN_SEC = float(os.environ.get('SMART_LONG_VIDEO_MIN_SEC', '1200'))  # 20+ min
-LONG_WINDOW_SECONDS = float(os.environ.get('SMART_LONG_WINDOW_SEC', '2.0'))
-LONG_SAMPLE_FPS = float(os.environ.get('SMART_LONG_SAMPLE_FPS', '1.0'))
+LONG_WINDOW_SECONDS = float(os.environ.get('SMART_LONG_WINDOW_SEC', '1.0'))
+LONG_SAMPLE_FPS = float(os.environ.get('SMART_LONG_SAMPLE_FPS', '2.0'))
 TARGET_HEIGHT = 1280
 TARGET_WIDTH = 720
 OUTPUT_FPS = 30
@@ -365,11 +365,54 @@ def analyze_audio_layers(
     return {'energy': energy, 'gunfire': gunfire}
 
 
+def analysis_detail_mode() -> str:
+    """max = densest frames; balanced = defaults; fast = overnight/CPU thrift."""
+    raw = (os.environ.get('SMART_ANALYSIS_DETAIL') or 'max').strip().lower()
+    if raw in {'max', 'maximum', 'dense', 'full'}:
+        return 'max'
+    if raw in {'fast', 'cheap', 'low'}:
+        return 'fast'
+    return 'balanced'
+
+
 def analysis_sampling(duration: float) -> tuple[float, float, bool]:
-    """Return (window_sec, sample_fps, use_seek_mode)."""
+    """Return (window_sec, sample_fps, use_seek_mode).
+
+    Shared by all games. Short VODs default to 4 fps / 1s bins. Long VODs used to
+    drop to 1 fps with a silent 0.35 cap — that skipped fights. detail=max keeps
+    long VODs at ≥2 fps with 1s bins.
+    """
+    detail = analysis_detail_mode()
     if duration >= LONG_VIDEO_MIN_SEC:
-        return LONG_WINDOW_SECONDS, LONG_SAMPLE_FPS, True
-    return WINDOW_SECONDS, SAMPLE_FPS, False
+        window = float(os.environ.get('SMART_LONG_WINDOW_SEC', str(LONG_WINDOW_SECONDS)))
+        fps = float(os.environ.get('SMART_LONG_SAMPLE_FPS', str(LONG_SAMPLE_FPS)))
+        if detail == 'max':
+            window = min(window, 1.0)
+            fps = max(fps, float(os.environ.get('SMART_LONG_SAMPLE_FPS_MAX', '2.0')))
+        elif detail == 'fast':
+            window = max(window, 2.0)
+            fps = min(fps, float(os.environ.get('SMART_LONG_SAMPLE_FPS_FAST', '1.0')))
+        return window, fps, True
+    window = WINDOW_SECONDS
+    fps = SAMPLE_FPS
+    if detail == 'max':
+        fps = max(fps, float(os.environ.get('SMART_SAMPLE_FPS_MAX', '4.0')))
+    elif detail == 'fast':
+        fps = min(fps, float(os.environ.get('SMART_SAMPLE_FPS_FAST', '2.0')))
+    return window, fps, False
+
+
+def analysis_effective_fps(duration: float, sample_fps: float, *, seek_mode: bool) -> float:
+    """Decode FPS — do not silently throttle below sample_fps unless env caps it."""
+    if not (seek_mode and duration >= LONG_VIDEO_MIN_SEC):
+        return sample_fps
+    cap_raw = os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS')
+    if cap_raw is None or str(cap_raw).strip() == '':
+        return sample_fps
+    cap_fps = float(cap_raw)
+    if analysis_detail_mode() == 'max' and cap_fps < sample_fps:
+        return sample_fps
+    return min(sample_fps, cap_fps)
 
 
 def max_candidates_for_duration(duration: float) -> int:
@@ -444,10 +487,16 @@ def analyze_video(path: Path) -> dict:
 
     if use_ffmpeg:
         # Single ffmpeg pass (AV1-safe). Avoid per-timestamp ffmpeg spawns on 2–4h VOD.
-        eff_fps = sample_fps
-        if seek_mode and duration >= LONG_VIDEO_MIN_SEC:
-            cap_fps = float(os.environ.get('SMART_LONG_ANALYSIS_MAX_FPS', '0.35'))
-            eff_fps = min(sample_fps, cap_fps)
+        eff_fps = analysis_effective_fps(duration, sample_fps, seek_mode=seek_mode)
+        logging.info(
+            'analyze_video %s: dur=%.0fs window=%.1fs sample_fps=%.2f eff_fps=%.2f detail=%s',
+            path.name,
+            duration,
+            window_sec,
+            sample_fps,
+            eff_fps,
+            analysis_detail_mode(),
+        )
         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'none']
         ff_threads = int(os.environ.get('SMART_FFMPEG_THREADS', '0') or '0')
         if ff_threads > 0:
