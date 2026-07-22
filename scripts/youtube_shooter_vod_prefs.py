@@ -37,7 +37,8 @@ BAD_TITLE_RE = re.compile(
     r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден|"
     r"glitch|эксплойт|баг\b|exploring|exploration|сезон\s+(ид[её]т|coming)|"
     r"season\s+\d+\s+is\s+coming|coming\s+soon|update\s+preview|"
-    r"loot\s*tour|туннел|tunnel\s+glitch|walkthrough|прохожден",
+    r"loot\s*tour|туннел|tunnel\s+glitch|walkthrough|прохожден|"
+    r"\bedit\b|edits\b|amv\b|music\s*video|recap\b",
     re.I,
 )
 
