@@ -137,17 +137,19 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
     prefer_min = float(os.environ.get("SHOOTER_VOD_PREFER_MIN_SEC", "360"))
 
     def _short_first(rows: list[dict]) -> list[dict]:
-        sweet = [r for r in rows if prefer_min <= _dur(r) <= prefer_max]
-        if sweet:
-            return sorted(sweet, key=_dur)
-        under = [r for r in rows if 0 < _dur(r) <= prefer_max]
-        if under:
-            return sorted(under, key=_dur)
-        return rows
+        known_ok = [r for r in rows if prefer_min <= _dur(r) <= prefer_max]
+        if known_ok:
+            return sorted(known_ok, key=_dur)
+        known_any = [r for r in rows if prefer_min <= _dur(r) <= float(os.environ.get("SHOOTER_VOD_MAX_SEC", "1200"))]
+        if known_any:
+            return sorted(known_any, key=_dur)
+        # Unknown duration last — must be probed before download.
+        unknown = [r for r in rows if _dur(r) <= 0]
+        return unknown + rows
 
     def _fight_first(rows: list[dict]) -> list[dict]:
         fights = [r for r in rows if FIGHT_TITLE_RE.search(str(r.get("title") or ""))]
-        return fights + [r for r in rows if r not in fights]
+        return (fights or []) + [r for r in rows if r not in fights]
 
     if game.strip().lower() == "pubg":
         from pubg_metro_royale_gate import title_metro_hint

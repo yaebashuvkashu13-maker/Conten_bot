@@ -1185,19 +1185,57 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
-    pick = None
     if game in ("pubg", "standoff"):
+        from youtube_shooter_vod_prefs import rank_discovery_candidates
+
+        ranked = rank_discovery_candidates(game, candidates)
         from youtube_shooter_vod_prefs import pick_discovery_candidate
 
-        pick = pick_discovery_candidate(game, candidates)
-    if pick is None:
-        pick = candidates[0]
-    if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
-        send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+        # Build an ordered try-list: preferred pick first, then other ranked.
+        primary = pick_discovery_candidate(game, candidates)
+        ordered: list[dict] = []
+        if primary:
+            ordered.append(primary)
+        for cand in ranked:
+            if primary and cand.get("id") == primary.get("id"):
+                continue
+            ordered.append(cand)
     else:
-        log.info("downloading %s vod id=%s (notify muted)", game, pick.get("id"))
-    vod = _download_vod(game, pick, env)
-    if not vod:
+        ordered = list(candidates)
+
+    vod = None
+    pick: dict | None = None
+    max_tries = max(1, int(os.environ.get("SHOOTER_VOD_DISCOVERY_TRY", "8")))
+    for cand in ordered[:max_tries]:
+        cid = str(cand.get("id") or "")
+        if not cid or cid in used:
+            continue
+        if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
+            send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+        else:
+            log.info("downloading %s vod id=%s (notify muted)", game, cid)
+        path = _download_vod(game, cand, env)
+        if path:
+            vod = path
+            pick = cand
+            break
+        # Duration/title rejects must not be retried forever.
+        used.add(cid)
+        registry.append(
+            {
+                "id": cid,
+                "path": "",
+                "title": cand.get("title", ""),
+                "exhausted": True,
+                "reject_reason": f"download_skip_dur={cand.get('duration') or 0}",
+            }
+        )
+        state["vods"] = registry
+        state["used_youtube_ids"] = sorted(used)
+        _save_state(game, state)
+        log.info("marked used after download skip id=%s dur=%s", cid, cand.get("duration"))
+
+    if not vod or pick is None:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
