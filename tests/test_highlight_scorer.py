@@ -99,6 +99,48 @@ def test_accept_combat_ok_relaxes_hook_never_raises(monkeypatch) -> None:
     assert _accept_highlight_candidate(Path("x.mp4"), 10.0, m_low_panns, "pubg") is False
 
 
+def test_single_fast_probe_seed_does_not_replace_stage1(monkeypatch) -> None:
+    """One fast-probe hit must merge into stage1, not early-return with 1 window."""
+    from highlight_scorer import stage1_candidates
+
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "204.0")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_MIN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
+    monkeypatch.setenv("HIGHLIGHT_MAX_STAGE1", "16")
+    monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+
+    analysis = {
+        "window_seconds": 2.0,
+        "duration": 400.0,
+        "bins": 200,
+        "center_motion": np.linspace(0.01, 0.08, 200),
+        "gunfire": np.zeros(200, dtype=np.float32),
+        "audio": np.linspace(0.01, 0.05, 200),
+        "scene": np.zeros(200, dtype=np.float32),
+    }
+    # Two spaced gun clusters so action peaks + grid can contribute.
+    analysis["gunfire"][60] = 0.9   # t=120s
+    analysis["gunfire"][100] = 0.85  # t=200s
+    analysis["gunfire"][140] = 0.8   # t=280s
+
+    with patch("highlight_scorer._heatmap_stage0_starts", return_value=[]):
+        with patch("highlight_scorer.soft_anchor_enabled", return_value=False):
+            with patch("highlight_scorer.owner_anchors_enabled", return_value=False):
+                with patch(
+                    "vod_analysis_cache.analyze_video_cached",
+                    return_value=analysis,
+                ):
+                    with patch(
+                        "highlight_scorer._filter_bad_label_starts",
+                        side_effect=lambda _v, _p, starts: starts,
+                    ):
+                        out = stage1_candidates(Path("yt_fake.mp4"), "pubg")
+    assert 204.0 in out
+    assert len(out) >= 2
+
+
 def test_shooter_rule_requires_video_path() -> None:
     m = HighlightMetrics(
         start=0,
