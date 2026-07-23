@@ -77,7 +77,7 @@ def soften_level(streak: int) -> int:
     need = streak_threshold()
     if streak < need:
         return 0
-    if streak >= need + 6:
+    if streak >= need + 4:
         return 3
     if streak >= need + 3:
         return 2

@@ -73,7 +73,8 @@ BAD_TITLE_RE = re.compile(
     r"(?:"
     r"giveaway|#short\b|shorts\b|tiktok\b|reels?\b|"
     r"montage|compilation|compilación|highlight(?:s)?\s+reel|best\s+(?:moment|play)|"
-    r"top\s+\d+\s+(?:play|moment|savage)|savage\s+montage|"
+    r"top\s+\d+\s+(?:play|moment|savage|best|heroes?|junglers?|mid|roam|exp|gold)|"
+    r"savage\s+montage|"
     r"tutorial|beginner\s+guide|how\s+to\s+(?:play|use|build)|tips\s+and\s+tricks|"
     r"build\s+guide|item\s+build|emblem\s+guide|"
     r"reaction(?:\s+only)?|react(?:ing|s)?\s+to|"
@@ -127,7 +128,16 @@ GUIDE_TITLE_RE = re.compile(
     r"best\s+\d+\s+heroes|heroes\s+for\s+every\s+role|for\s+every\s+role|"
     r"best\s+solo\s+carry\s+heroes|tier\s+list|hero\s+tier|"
     r"how\s+to\s+rank|rank\s+guide|emblem\s+setup|item\s+build\s+guide|"
-    r"wr\s+build|meta\s+build|passive\s+skill|skill\s+combo\s+guide"
+    r"wr\s+build|meta\s+build|passive\s+skill|skill\s+combo\s+guide|"
+    # Listicles / meta roundups that waste download quota (no real match HUD).
+    r"top\s+\d+\s+(?:best\s+)?(?:heroes?|junglers?|fighters?|mages?|assassins?|"
+    r"marksmen|supports?|tanks?|roamers?|mid(?:laners?)?|exp|gold)|"
+    r"most\s+picked|"
+    r"best\s+heroes?\s+to\s+(?:use|rank|play)|"
+    r"easy\s+rank\s+push\s+heroes|"
+    r"heroes?\s+above\s+(?:mythical|mythic|immortal)|"
+    r"short\s+guide|(?:hero\s+)?guide\s+for|until\s+you\s+watch|"
+    r"don't\s+use\s+\w+\s+until|do\s+not\s+use\s+\w+\s+until"
     r")",
     re.I,
 )
@@ -261,10 +271,11 @@ def vod_discovery_search_cycle(cycle: int, env: dict[str, str] | None = None) ->
 def passes_mlbb_game_title(title: str) -> bool:
     """Accept ranked VOD titles even when uploader omits 'MLBB' in the name."""
     blob = str(title or "")
+    # Guides/listicles often append "| MLBB" — reject before the explicit brand pass.
+    if GUIDE_TITLE_RE.search(blob) or BAD_TITLE_RE.search(blob):
+        return False
     if MLBB_EXPLICIT_TITLE_RE.search(blob):
         return True
-    if GUIDE_TITLE_RE.search(blob):
-        return False
     return bool(MLBB_IMPLICIT_TITLE_RE.search(blob) and RANKED_SIGNAL_RE.search(blob))
 
 

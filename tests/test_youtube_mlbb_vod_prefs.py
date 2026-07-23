@@ -47,6 +47,18 @@ def test_rejects_skin_showcase_titles() -> None:
 def test_rejects_guide_listicle_titles() -> None:
     assert not passes_mlbb_vod_filters(_meta("BEST SOLO CARRY Heroes For Every Role | Season 41 ~ Mobile Legends"))
     assert not passes_mlbb_game_title("BEST SOLO CARRY Heroes For Every Role | Season 41")
+    assert not passes_mlbb_vod_filters(
+        _meta("TOP 5 BEST Junglers for Season 41 Easy Rank Push Heroes | Mobile Legends MLBB")
+    )
+    assert not passes_mlbb_game_title(
+        "TOP 5 BEST Junglers for Season 41 Easy Rank Push Heroes | Mobile Legends MLBB"
+    )
+    assert not passes_mlbb_vod_filters(
+        _meta("Most Picked EXP Lane Heroes Above Mythical Immortal | MLBB Season 41")
+    )
+    assert not passes_mlbb_vod_filters(
+        _meta("Don't use RUBY until you watch this video! New RUBY Short Guide | MLBB")
+    )
 
 
 def test_accepts_ranked_match_titles() -> None:

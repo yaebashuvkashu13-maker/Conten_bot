@@ -366,6 +366,37 @@ def _mark_vod_exhausted(vod: Path) -> None:
     _save_state(state)
 
 
+def _hard_finish_mlbb_vod(
+    state: dict,
+    vod: Path,
+    *,
+    vid: str,
+    reason: str,
+    entry: dict | None = None,
+    delete_file: bool | None = None,
+) -> None:
+    """Exhaust + optionally delete so junk guides do not clog the inbox."""
+    if entry is None:
+        entry = {"id": vid, "path": str(vod), "exhausted": True}
+    entry["exhausted"] = True
+    entry["reject_reason"] = reason
+    entry["id"] = vid
+    entry["path"] = str(vod)
+    _sync_vod_entry_to_state(state, entry, vod)
+    if state.get("active_vod") == vod.name:
+        state["active_vod"] = ""
+    _save_state(state)
+    if delete_file is None:
+        delete_file = _mlbb_reliable_mode() and os.environ.get("MLBB_VOD_DELETE_EXHAUSTED", "1") == "1"
+    if delete_file:
+        try:
+            if vod.exists():
+                vod.unlink()
+                log.info("deleted exhausted vod=%s reason=%s", vod.name, reason)
+        except OSError as exc:
+            log.warning("delete exhausted failed %s: %s", vod.name, exc)
+
+
 @contextmanager
 def _feed_singleton_lock(blocking: bool = False):
     """Only one VOD feed process — continuous_worker bypasses shell flock."""
@@ -2066,9 +2097,15 @@ def _process_vod_segments(
             entry["exhausted"] = True
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
             state = _load_state()
-            if entry:
-                _sync_vod_entry_to_state(state, entry, vod)
-            _save_state(state)
+            record_vod_outcome(state, vod_id=vid, sent=0)
+            state["last_adaptive_level"] = 0
+            _hard_finish_mlbb_vod(
+                state,
+                vod,
+                vid=vid,
+                reason=str(fast_reason or "fast_probe_fail"),
+                entry=entry,
+            )
             if clear_fast_seeds:
                 clear_fast_seeds()
             return 0
@@ -2231,9 +2268,6 @@ def _process_vod_segments(
         if entry:
             entry["zero_send_attempts"] = int(entry.get("zero_send_attempts") or 0) + 1
         if entry and should_mark_vod_exhausted(entry):
-            _mark_vod_exhausted(vod)
-            entry["exhausted"] = True
-            entry["id"] = vid
             if not entry.get("reject_reason"):
                 if not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
@@ -2241,12 +2275,30 @@ def _process_vod_segments(
                     entry["reject_reason"] = "all_peaks_blocked"
             _record_zero_yield_uploader(entry)
             log.info("exhausted vod=%s adaptive_streak=%s level=%s", vod.name, new_streak, active_level)
+            _hard_finish_mlbb_vod(
+                state,
+                vod,
+                vid=vid,
+                reason=str(entry.get("reject_reason") or "zero_send"),
+                entry=entry,
+            )
             if os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1") == "1":
                 send_message(
                     token,
                     chat_id,
                     telegram_exhaust_notice(vid, level=active_level, streak=new_streak),
                 )
+        elif _mlbb_reliable_mode() and entry:
+            # Reliable: one zero attempt is enough — free disk and move on.
+            entry["reject_reason"] = entry.get("reject_reason") or "zero_send_reliable"
+            _hard_finish_mlbb_vod(
+                state,
+                vod,
+                vid=vid,
+                reason=str(entry["reject_reason"]),
+                entry=entry,
+            )
+            log.info("reliable zero — finished vod=%s streak=%s", vod.name, new_streak)
         else:
             log.info("zero send — keep vod=%s for retry (presend/soften) streak=%s", vod.name, new_streak)
     elif sent_total == 0 and send_quota_blocked:
@@ -2255,6 +2307,14 @@ def _process_vod_segments(
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
         if entry:
             entry["zero_send_attempts"] = 0
+        if _mlbb_reliable_mode():
+            _hard_finish_mlbb_vod(
+                state,
+                vod,
+                vid=vid,
+                reason="sent_ok",
+                entry=entry,
+            )
         if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
             send_message(
                 token,
@@ -2334,6 +2394,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_ADAPTIVE_NOTIFY",
         "MLBB_VOD_EXHAUST_NOTIFY",
         "MLBB_VOD_DISCOVERY_MISS_NOTIFY",
+        "MLBB_VOD_DOWNLOAD_NOTIFY",
         "MLBB_VOD_BANNER_HARD_PREFILTER",
         "MLBB_VOD_MAX_ZERO_ATTEMPTS",
     }
@@ -2448,6 +2509,10 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        download_notify = (
+            not notified_download
+            and os.environ.get("MLBB_VOD_DOWNLOAD_NOTIFY", "1") == "1"
+        )
         vod, entry = _resolve_next_vod(
             env,
             registry,
@@ -2455,7 +2520,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             auto_download=auto_download,
             token=token,
             chat_id=chat_id,
-            notify=not notified_download,
+            notify=download_notify,
         )
         if vod is None:
             if (

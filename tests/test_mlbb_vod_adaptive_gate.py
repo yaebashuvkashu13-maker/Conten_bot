@@ -32,6 +32,16 @@ def test_soften_after_three_zeros():
     assert soften_level(3) == 1
     assert soften_level(5) == 1
     assert soften_level(6) == 2
+    assert soften_level(7) == 3
+    assert soften_level(10) == 3
+
+
+def test_l3_allows_motion_without_banner():
+    ov = overrides_for_level(3)
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
 
 
 def test_soft_overrides_keep_banner_required():
