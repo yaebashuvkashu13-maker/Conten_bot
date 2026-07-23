@@ -51,6 +51,9 @@ def _neg_ref_min_sim() -> float:
 
 
 def _pos_ref_min_sim() -> float:
+    # Explicit env wins over stale calibration profile.
+    if "MLBB_BANNER_POS_REF_MIN_SIM" in os.environ:
+        return float(os.environ["MLBB_BANNER_POS_REF_MIN_SIM"])
     prof_path = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")) / "banner_calibration_profile.json"
     if prof_path.exists():
         try:
@@ -61,7 +64,7 @@ def _pos_ref_min_sim() -> float:
         except (json.JSONDecodeError, OSError, ValueError):
             pass
     # Higher default — weak matches were shipping gold-HUD junk as "savage".
-    return float(os.environ.get("MLBB_BANNER_POS_REF_MIN_SIM", "0.45"))
+    return 0.45
 
 
 def _pos_ref_min_sim_for_reason(reason: str) -> float:
