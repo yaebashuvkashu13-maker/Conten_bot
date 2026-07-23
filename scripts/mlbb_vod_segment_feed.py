@@ -2390,6 +2390,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
+        "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     }
     force = {
         "MLBB_VOD_ADAPTIVE_NOTIFY",
@@ -2397,6 +2398,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_DISCOVERY_MISS_NOTIFY",
         "MLBB_VOD_DOWNLOAD_NOTIFY",
         "MLBB_VOD_BANNER_HARD_PREFILTER",
+        "MLBB_VOD_BANNER_SKIP_ON_MISS",
         "MLBB_VOD_MAX_ZERO_ATTEMPTS",
     }
     for key, value in defaults.items():

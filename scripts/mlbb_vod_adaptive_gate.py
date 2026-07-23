@@ -44,9 +44,9 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
-    # Hard prefilter was deleting whole VODs → endless ⚠️ 0 клипов spam.
+    # Prefer banner; allow single; never hard-skip the whole VOD on OCR miss.
     "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
 }
 
 # Level 3: long silence — ship motion fights if banner OCR is blind.

@@ -1753,13 +1753,11 @@ def discover_highlight_candidates(
                         video_path.name,
                         len(starts),
                     )
-                hard_miss = (
-                    os.environ.get("MLBB_VOD_BANNER_SKIP_ON_MISS", "0") == "1"
-                    or (
-                        os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
-                        and os.environ.get("MLBB_VOD_BANNER_HARD_PREFILTER", "1") == "1"
-                    )
-                )
+                # Whole-VOD kill only when hard prefilter is explicitly on.
+                # MLBB_VOD_BANNER_SKIP_ON_MISS must NOT nuke the VOD — it was
+                # historically wired here and caused endless 0-clip loops even
+                # under soften L2/L3 / RELIABLE (HARD_PREFILTER=0).
+                hard_miss = os.environ.get("MLBB_VOD_BANNER_HARD_PREFILTER", "1") == "1"
                 if not starts and hard_miss:
                     log.warning(
                         "highlight %s: banner prefilter 0/%s — skip VOD (hard)",
