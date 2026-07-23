@@ -89,3 +89,44 @@ def test_disabled_cycle_allows_all(isolated_state: Path, monkeypatch: pytest.Mon
     ok, reason = cycle.can_send_for_game("standoff", 1)
     assert ok is True
     assert reason == "cycle_disabled"
+
+
+def test_discovery_miss_skips_game_after_streak(
+    isolated_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAILY_GAME_DISCOVERY_MISS_SKIP", "3")
+    for _ in range(10):
+        cycle.record_send("mlbb", 1)
+    assert cycle.active_game() == "pubg"
+
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is True
+
+    assert cycle.quota_remaining("pubg") == 0
+    assert cycle.active_game() == "standoff"
+    state = cycle.load_state()
+    assert state["skipped"]["pubg"]["reason"].startswith("discovery_miss")
+
+
+def test_discovery_hit_clears_miss_streak(
+    isolated_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAILY_GAME_DISCOVERY_MISS_SKIP", "3")
+    for _ in range(10):
+        cycle.record_send("mlbb", 1)
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    cycle.clear_discovery_miss("pubg")
+    # Streak reset — need 3 fresh misses again.
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    assert cycle.maybe_skip_on_discovery_miss("pubg") is False
+    assert cycle.quota_remaining("pubg") == 10
+
+
+def test_skip_game_quota_advances(isolated_state: Path) -> None:
+    for _ in range(10):
+        cycle.record_send("mlbb", 1)
+    cycle.skip_game_quota("pubg", reason="manual")
+    assert cycle.active_game() == "standoff"
+    assert cycle.send_count("pubg") == 10

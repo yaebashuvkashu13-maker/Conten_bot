@@ -110,6 +110,77 @@ def record_send(game: str, count: int = 1) -> None:
     save_state(state)
 
 
+def record_discovery_miss(game: str) -> int:
+    """
+    Count consecutive discovery misses for a game.
+    Returns the new miss streak for that game today.
+    """
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return 0
+    state = load_state()
+    misses = state.setdefault("discovery_misses", {})
+    # Reset other games' streaks so only the stuck game accumulates.
+    for g in list(misses.keys()):
+        if g != game:
+            misses[g] = 0
+    misses[game] = int(misses.get(game, 0)) + 1
+    state["discovery_misses"] = misses
+    save_state(state)
+    return int(misses[game])
+
+
+def clear_discovery_miss(game: str | None = None) -> None:
+    reset_if_new_day()
+    state = load_state()
+    misses = state.setdefault("discovery_misses", {})
+    if game is None:
+        state["discovery_misses"] = {g: 0 for g in GAME_ORDER}
+    else:
+        misses[game.strip().lower()] = 0
+    save_state(state)
+
+
+def skip_game_quota(game: str, *, reason: str = "discovery_miss") -> None:
+    """Mark game quota as filled for today so the cycle advances."""
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return
+    state = load_state()
+    sends = state.setdefault("sends", {})
+    need = quota_for(game)
+    sends[game] = max(int(sends.get(game, 0)), need)
+    skipped = state.setdefault("skipped", {})
+    skipped[game] = {"reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    # Clear miss streak after skip.
+    misses = state.setdefault("discovery_misses", {})
+    misses[game] = 0
+    save_state(state)
+
+
+def discovery_miss_skip_after() -> int:
+    return max(1, int(os.environ.get("DAILY_GAME_DISCOVERY_MISS_SKIP", "3")))
+
+
+def maybe_skip_on_discovery_miss(game: str) -> bool:
+    """
+    After N consecutive discovery misses, skip this game's remaining quota.
+    Returns True if the game was skipped.
+    """
+    if not enabled():
+        return False
+    if os.environ.get("DAILY_GAME_SKIP_ON_DISCOVERY_MISS", "1") != "1":
+        return False
+    streak = record_discovery_miss(game)
+    need = discovery_miss_skip_after()
+    if streak < need:
+        return False
+    skip_game_quota(game, reason=f"discovery_miss_x{streak}")
+    return True
+
+
 def active_game() -> str | None:
     """Next game that still has daily quota. None if all quotas met."""
     reset_if_new_day()

@@ -1182,8 +1182,32 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
         else:
             log.info("discovery miss game=%s (notify muted)", game)
+        try:
+            from daily_game_cycle import maybe_skip_on_discovery_miss
+
+            if maybe_skip_on_discovery_miss(game):
+                log.warning(
+                    "daily cycle skip game=%s after discovery misses — advance to next game",
+                    game,
+                )
+                if token and chat_id and os.environ.get("DAILY_GAME_SKIP_NOTIFY", "1") == "1":
+                    send_message(
+                        token,
+                        chat_id,
+                        f"⏭️ {game.upper()}: YouTube/поиск пустой несколько раз подряд — "
+                        f"пропускаю квоту и перехожу к следующей игре.",
+                    )
+        except Exception as exc:
+            log.warning("discovery-miss skip failed: %s", exc)
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
+
+    try:
+        from daily_game_cycle import clear_discovery_miss
+
+        clear_discovery_miss(game)
+    except Exception:
+        pass
 
     if game in ("pubg", "standoff"):
         from youtube_shooter_vod_prefs import rank_discovery_candidates

@@ -2686,7 +2686,20 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
                 send_message(token, chat_id, "⚠️ Не нашёл новый MLBB стрим. Повторю на следующем запуске.")
             else:
                 log.info("discovery miss (notify muted)")
+            try:
+                from daily_game_cycle import maybe_skip_on_discovery_miss
+
+                if maybe_skip_on_discovery_miss("mlbb"):
+                    log.warning("daily cycle skip mlbb after discovery misses")
+            except Exception as exc:
+                log.warning("discovery-miss skip failed: %s", exc)
             break
+        try:
+            from daily_game_cycle import clear_discovery_miss
+
+            clear_discovery_miss("mlbb")
+        except Exception:
+            pass
         notified_download = True
 
         n = _process_vod_segments(
