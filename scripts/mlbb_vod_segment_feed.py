@@ -938,8 +938,12 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
         try:
             from mlbb_vod_montage import trim_idle_run_end
 
-            end = trim_idle_run_end(vod, start, end, banner_sec=banner_sec)
-            dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), end - start)
+            # Motion-anchor peaks are not kill moments — run-trim often chops mid-fight.
+            if str(meta.get("anchor") or "") != "motion" or os.environ.get(
+                "MLBB_VOD_TRIM_MOTION_ANCHOR", "0"
+            ) == "1":
+                end = trim_idle_run_end(vod, start, end, banner_sec=banner_sec)
+                dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), end - start)
         except Exception:
             pass
         return {
@@ -1550,10 +1554,14 @@ def _dedupe_segments_by_gap(
 ) -> list[dict]:
     """Keep best clip per fight — no time overlap between highlight windows."""
 
-    def _rank_key(r: dict) -> tuple[float, float, float]:
+    def _rank_key(r: dict) -> tuple[float, float, float, float]:
         metrics = r.get("highlight_metrics") or {}
         clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
-        return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)))
+        tier = float(r.get("kill_banner_tier") or metrics.get("kill_banner_tier") or 0.0)
+        has_banner = 1.0 if (r.get("kill_banner") or tier > 0 or str(r.get("anchor") or "") == "banner") else 0.0
+        hook = float(r.get("hook_score") or metrics.get("hook_score") or 0.0)
+        # Prefer real kill-banner fights over motion-only soften filler.
+        return (has_banner, tier, clip_score, hook)
 
     gap = _interval_gap_sec()
     ranked = sorted(rows, key=_rank_key, reverse=True)
@@ -1568,7 +1576,8 @@ def _dedupe_segments_by_gap(
             continue
         taken.append((start, end))
         chosen.append(row)
-    chosen.sort(key=lambda r: r["start"])
+    # Keep quality order for SEND_ONE (best first), not chronological.
+    chosen.sort(key=_rank_key, reverse=True)
     return chosen
 
 
@@ -2391,6 +2400,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
         "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+        # Reliable = one clean fight clip, not jumpy multi-peak montage.
+        "MLBB_VOD_MONTAGE": "0",
+        "MLBB_SKIP_MONTAGE": "1",
+        "MLBB_VOD_SEND_ONE": "1",
     }
     force = {
         "MLBB_VOD_ADAPTIVE_NOTIFY",
@@ -2400,6 +2413,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_BANNER_HARD_PREFILTER",
         "MLBB_VOD_BANNER_SKIP_ON_MISS",
         "MLBB_VOD_MAX_ZERO_ATTEMPTS",
+        "MLBB_VOD_MONTAGE",
+        "MLBB_SKIP_MONTAGE",
+        "MLBB_VOD_SEND_ONE",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)

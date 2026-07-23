@@ -22,10 +22,23 @@ from mlbb_vod_montage import (  # noqa: E402
 
 
 def test_montage_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MLBB_SKIP_MONTAGE", raising=False)
     monkeypatch.setenv("MLBB_VOD_MONTAGE", "0")
     assert montage_enabled() is False
     monkeypatch.setenv("MLBB_VOD_MONTAGE", "1")
     assert montage_enabled() is True
+    monkeypatch.setenv("MLBB_SKIP_MONTAGE", "1")
+    assert montage_enabled() is False
+
+
+def test_pick_montage_rows_rejects_motion_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_MIN_CLIPS", "2")
+    rows = [
+        {"start": 100, "peak_start": 110, "kill_banner_tier": 0, "anchor": "motion", "clip_score": 0.4, "fight_dur": 12},
+        {"start": 300, "peak_start": 310, "kill_banner_tier": 0, "anchor": "motion", "clip_score": 0.5, "fight_dur": 14},
+        {"start": 500, "peak_start": 510, "kill_banner_tier": 0, "anchor": "motion", "clip_score": 0.3, "fight_dur": 11},
+    ]
+    assert pick_montage_rows(rows) == []
 
 
 def test_montage_collect_env_allows_single(monkeypatch: pytest.MonkeyPatch) -> None:

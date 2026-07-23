@@ -49,6 +49,8 @@ def test_l3_allows_motion_without_banner():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
     assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
     assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
+    assert ov["MLBB_VOD_MONTAGE"] == "0"
+    assert ov["MLBB_VOD_SEND_ONE"] == "1"
 
 
 def test_soft_overrides_keep_banner_required():

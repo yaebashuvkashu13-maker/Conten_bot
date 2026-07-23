@@ -57,6 +57,9 @@ SOFTEN_L3: dict[str, str] = {
     "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
     "MLBB_PRESEND_MIN_MOTION": "0.012",
+    # Soften can find weak motion peaks — never stitch them into a montage.
+    "MLBB_VOD_MONTAGE": "0",
+    "MLBB_VOD_SEND_ONE": "1",
 }
 
 

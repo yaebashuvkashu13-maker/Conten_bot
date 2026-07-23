@@ -15,6 +15,8 @@ log = logging.getLogger("mlbb_vod_montage")
 
 
 def montage_enabled() -> bool:
+    if os.environ.get("MLBB_SKIP_MONTAGE", "0") == "1":
+        return False
     return os.environ.get("MLBB_VOD_MONTAGE", "0") == "1"
 
 
@@ -143,6 +145,12 @@ def trim_idle_run_end(
     new_end = min(file_dur if file_dur > 0 else end, (cut_idx + 1) * win)
     new_end = max(new_end, anchor + min_post)
     new_end = min(new_end, end)
+    # Never delete more than half the fight window — over-trim caused mid-fight chops.
+    max_save = max(4.0, (end - start) * float(os.environ.get("MLBB_VOD_TRIM_MAX_FRAC", "0.35")))
+    if end - new_end > max_save:
+        new_end = end - max_save
+        new_end = max(new_end, anchor + min_post)
+        new_end = min(new_end, end)
     if new_end < end - 0.4:
         log.info(
             "trim run tail vod=%s %.1f→%.1f (saved %.1fs)",
@@ -158,6 +166,9 @@ def apply_run_trim_to_clip(clip: dict, vod: Path) -> dict:
     start = float(clip.get("start") or 0)
     dur = float(clip.get("input_duration") or 0)
     if dur < 6:
+        return clip
+    # Motion-anchor peaks are not kill banners — aggressive tail trim chops real fights.
+    if str(clip.get("anchor") or "") == "motion" and os.environ.get("MLBB_VOD_TRIM_MOTION_ANCHOR", "0") != "1":
         return clip
     end = start + dur
     banner = clip.get("peak_start", clip.get("banner_sec", start + dur * 0.4))
@@ -176,6 +187,18 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
     """Pick 2–4 spaced peaks; prefer a double+ when available, singles allowed."""
     if not rows:
         return []
+    # Never stitch motion-only soften clips — that produces jumpy "кривая нарезка".
+    bannered = [
+        r
+        for r in rows
+        if int(r.get("kill_banner_tier") or 0) > 0
+        or r.get("kill_banner")
+        or str(r.get("anchor") or "") not in {"", "motion"}
+    ]
+    if len(bannered) < montage_min_clips():
+        log.info("montage skip — need >=%s bannered fights (have %s)", montage_min_clips(), len(bannered))
+        return []
+    rows = bannered
     min_n = montage_min_clips()
     max_n = montage_max_clips()
     gap = montage_gap_sec()
