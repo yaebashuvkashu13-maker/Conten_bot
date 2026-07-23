@@ -32,9 +32,9 @@ def test_soften_after_three_zeros():
     assert soften_level(0) == 0
     assert soften_level(2) == 0
     assert soften_level(3) == 1
-    assert soften_level(5) == 1
-    assert soften_level(6) == 2
-    assert soften_level(7) == 3
+    assert soften_level(4) == 2
+    assert soften_level(5) == 2
+    assert soften_level(6) == 3
     assert soften_level(10) == 3
 
 
@@ -42,6 +42,10 @@ def test_l2_does_not_hard_skip_on_banner_miss():
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
     assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
+    # L2 must ship teamfights when OCR is blind — otherwise hours of silence.
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
 
 
 def test_l3_allows_motion_without_banner():
@@ -54,7 +58,7 @@ def test_l3_allows_motion_without_banner():
     assert ov["MLBB_VOD_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "1"
     # Soften must not reopen the farming floodgates.
-    assert float(ov["MLBB_RULE_COMBAT_MIN"]) >= 0.85
+    assert float(ov["MLBB_RULE_COMBAT_MIN"]) >= 0.80
     assert float(ov["HIGHLIGHT_MLBB_AUTO_CLIP_MIN"]) >= 0.12
     assert float(ov["MLBB_TEAMFIGHT_MIN_SCORE"]) >= 0.40
 
@@ -110,11 +114,12 @@ def test_l1_keeps_banner_discover():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
 
 
-def test_l2_allows_single_but_still_requires_banner():
+def test_l2_allows_single_and_motion_without_banner():
     ov = overrides_for_level(2)
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
 
 
 def test_l2_lenient_uniform_for_presend_tail():

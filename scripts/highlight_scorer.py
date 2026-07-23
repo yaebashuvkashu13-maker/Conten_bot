@@ -1797,10 +1797,20 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
-                    # Banner OCR blind — keep only real teamfight motion, not all peaks.
+                    # Banner OCR blind. Only keep teamfight peaks when motion
+                    # anchors are allowed — otherwise normalize rejects every
+                    # peak with no_streak_banner and burns ~30min per VOD.
+                    from mlbb_kill_banner import _motion_anchor_ok
                     from mlbb_fight_segment import _analysis_for
                     from mlbb_teamfight_detector import rank_starts_by_teamfight
 
+                    if not _motion_anchor_ok():
+                        log.info(
+                            "highlight %s: banner prefilter 0/%s — skip (banner required, OCR miss)",
+                            video_path.name,
+                            before,
+                        )
+                        return []
                     try:
                         analysis = _analysis_for(video_path)
                         ranked = rank_starts_by_teamfight(
