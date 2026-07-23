@@ -164,9 +164,20 @@ def discovery_miss_skip_after() -> int:
     return max(1, int(os.environ.get("DAILY_GAME_DISCOVERY_MISS_SKIP", "3")))
 
 
+def _other_games_have_quota(game: str) -> bool:
+    game = game.strip().lower()
+    for g in GAME_ORDER:
+        if g == game:
+            continue
+        if quota_remaining(g) > 0:
+            return True
+    return False
+
+
 def maybe_skip_on_discovery_miss(game: str) -> bool:
     """
     After N consecutive discovery misses, skip this game's remaining quota.
+    Never skips the last game that still has quota (avoids idle-until-midnight).
     Returns True if the game was skipped.
     """
     if not enabled():
@@ -176,6 +187,9 @@ def maybe_skip_on_discovery_miss(game: str) -> bool:
     streak = record_discovery_miss(game)
     need = discovery_miss_skip_after()
     if streak < need:
+        return False
+    # Flaky YouTube 403 must not zero out the only remaining game.
+    if not _other_games_have_quota(game):
         return False
     skip_game_quota(game, reason=f"discovery_miss_x{streak}")
     return True

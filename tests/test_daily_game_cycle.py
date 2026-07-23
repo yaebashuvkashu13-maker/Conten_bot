@@ -130,3 +130,19 @@ def test_skip_game_quota_advances(isolated_state: Path) -> None:
     cycle.skip_game_quota("pubg", reason="manual")
     assert cycle.active_game() == "standoff"
     assert cycle.send_count("pubg") == 10
+
+
+def test_discovery_miss_does_not_skip_last_game(
+    isolated_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DAILY_GAME_DISCOVERY_MISS_SKIP", "2")
+    monkeypatch.setenv("DAILY_PUBG_QUOTA", "0")
+    monkeypatch.setenv("DAILY_STANDOFF_QUOTA", "0")
+    monkeypatch.setenv("DAILY_GENSHIN_QUOTA", "0")
+    monkeypatch.setenv("DAILY_WOT_QUOTA", "0")
+    # Only MLBB has quota left.
+    assert cycle.active_game() == "mlbb"
+    assert cycle.maybe_skip_on_discovery_miss("mlbb") is False
+    assert cycle.maybe_skip_on_discovery_miss("mlbb") is False
+    assert cycle.quota_remaining("mlbb") == 10
+    assert cycle.active_game() == "mlbb"
