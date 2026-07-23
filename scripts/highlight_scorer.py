@@ -1747,6 +1747,8 @@ def discover_highlight_candidates(
         return []
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
+    banner_hit_count = 0
+    banner_anchor_starts: list[float] = []
     if profile == "mobile_legends":
         use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
@@ -1759,6 +1761,7 @@ def discover_highlight_candidates(
                 banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
             if banners:
+                banner_hit_count = len(banners)
                 log.info(
                     "highlight banner discover %s: %s tier>=%s hits",
                     video_path.name,
@@ -1766,7 +1769,9 @@ def discover_highlight_candidates(
                     os.environ.get("MLBB_KILL_BANNER_MIN_TIER", "double"),
                 )
                 for hit in banners:
-                    start_set.add(max(0.0, hit.sec - lead))
+                    anchor = max(0.0, hit.sec - lead)
+                    start_set.add(anchor)
+                    banner_anchor_starts.append(anchor)
             starts = sorted(start_set)
             if use_prefilter and starts:
                 before = len(starts)
@@ -1797,7 +1802,7 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
-                    # Banner OCR blind. Only keep teamfight peaks when motion
+                    # Banner OCR/ref blind. Only keep teamfight peaks when motion
                     # anchors are allowed — otherwise normalize rejects every
                     # peak with no_streak_banner and burns ~30min per VOD.
                     from mlbb_kill_banner import _motion_anchor_ok
@@ -1839,6 +1844,14 @@ def discover_highlight_candidates(
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 
+    # Prefer screenshot-bank / OCR banner anchors so multi-send finds every fight.
+    if banner_anchor_starts:
+        def _banner_priority(sec: float) -> tuple[int, float]:
+            near = any(abs(sec - b) <= 12.0 for b in banner_anchor_starts)
+            return (0 if near else 1, sec)
+
+        starts = sorted(starts, key=_banner_priority)
+
     pending = [
         start
         for start in starts
@@ -1846,6 +1859,18 @@ def discover_highlight_candidates(
     ]
     workers = _parallel_workers()
     score_stop = _shooter_score_stop_n(profile, limit)
+    # When banners exist, score ALL of them (plus a small surplus) — never early-stop at 1.
+    if profile == "mobile_legends" and banner_hit_count > 0:
+        max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+        want = max(banner_hit_count, max_per)
+        if os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1":
+            score_stop = max(score_stop, min(limit, want + 1))
+            log.info(
+                "highlight multi-banner score %s: stop_at=%s banners=%s",
+                video_path.name,
+                score_stop,
+                banner_hit_count,
+            )
     if workers > 1 and len(pending) > 1:
         log.info(
             "highlight parallel score %s: %s windows x%d workers (stop_at=%s)",
@@ -1880,6 +1905,9 @@ def discover_highlight_candidates(
     def _should_stop() -> bool:
         if len(verified) >= score_stop:
             return True
+        # With screenshot-bank hits, keep scoring until score_stop (all banners).
+        if banner_hit_count > 0 and os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1":
+            return False
         if (
             verified
             and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"

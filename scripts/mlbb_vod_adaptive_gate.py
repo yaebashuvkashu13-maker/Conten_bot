@@ -31,15 +31,18 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
+    "MLBB_VOD_SEND_ONE": "0",
+    "MLBB_VOD_SEND_ALL_BANNERS": "1",
 }
 
-# Level 2: OCR often blind — ship strong teamfights on motion anchors.
+# Level 2: OCR often blind — widen windows / allow single; NEVER drop banner.
+# Motion-only junk is what the owner called garbage.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
-    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
-    "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_KILL_BANNER_REQUIRED": "1",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "0",
+    "MLBB_VOD_BANNER_PRESEND": "1",
     "MLBB_PRESEND_MIN_MOTION": "0.016",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.012",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.10",
@@ -51,28 +54,27 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
-    # Prefer banner; allow single; never hard-skip the whole VOD on OCR miss.
     "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_RULE_COMBAT_MIN": "0.82",
     "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_MOTION_PEAK_MAX": "4",
     "MLBB_VOD_MONTAGE": "0",
-    "MLBB_VOD_SEND_ONE": "1",
+    # Collect every bannered fight in the VOD (not one then delete).
+    "MLBB_VOD_SEND_ONE": "0",
+    "MLBB_VOD_SEND_ALL_BANNERS": "1",
 }
 
-# Level 3: long silence — slightly lower bars, still teamfight-only motion.
+# Level 3: long silence — still banner-required; slightly lower bars only.
 SOFTEN_L3: dict[str, str] = {
     **SOFTEN_L2,
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.11",
-    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.13",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.09",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.11",
     "MLBB_PRESEND_MIN_MOTION": "0.015",
     "MLBB_RULE_COMBAT_MIN": "0.80",
     "MLBB_TEAMFIGHT_MIN_SCORE": "0.40",
-    "MLBB_TEAMFIGHT_RANK_FRAC": "0.80",
-    "MLBB_MOTION_PEAK_MAX": "4",
     "VIRAL_MLBB_HOOK_MIN": "0.08",
-    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.18",
+    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.16",
 }
 
 
@@ -89,11 +91,10 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft, 2=ship teamfight without banner, 3=more lenient."""
+    """0=strict, 1=soft, 2=single+wider OCR, 3=more lenient — always banner-required."""
     need = streak_threshold()
     if streak < need:
         return 0
-    # Reach motion-ship (L2) quickly after OCR-blind zeros.
     if streak >= need + 3:
         return 3
     if streak >= need + 1:

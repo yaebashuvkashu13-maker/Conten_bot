@@ -60,7 +60,19 @@ def _pos_ref_min_sim() -> float:
                 return float(th["MLBB_BANNER_POS_REF_MIN_SIM"])
         except (json.JSONDecodeError, OSError, ValueError):
             pass
-    return float(os.environ.get("MLBB_BANNER_POS_REF_MIN_SIM", "0.36"))
+    # Higher default — weak matches were shipping gold-HUD junk as "savage".
+    return float(os.environ.get("MLBB_BANNER_POS_REF_MIN_SIM", "0.45"))
+
+
+def _pos_ref_min_sim_for_reason(reason: str) -> float:
+    base = _pos_ref_min_sim()
+    r = str(reason or "").lower()
+    # Generic own-kill crops are noisier than labeled double/triple/savage.
+    if "own_kill" in r or "not_enemy" in r:
+        return max(base, float(os.environ.get("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.50")))
+    if "savage" in r:
+        return max(base, float(os.environ.get("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.48")))
+    return base
 
 
 def _pos_ref_match_enabled() -> bool:
@@ -335,12 +347,26 @@ def match_positive_owner_reference(frame) -> tuple[float, str, str] | None:
     """Return (score, reason, path) if frame matches owner-labeled good banner crop."""
     if not _pos_ref_match_enabled():
         return None
-    return _best_owner_match(
-        frame,
-        _load_positive_owner_ref_rows(),
-        min_combined=_pos_ref_min_sim(),
-        require_edge=os.environ.get("MLBB_BANNER_POS_REQUIRE_EDGE", "1") == "1",
-    )
+    rows = _load_positive_owner_ref_rows()
+    patch = extract_banner_zone_patch(frame)
+    if patch is None or not rows:
+        return None
+    best: tuple[float, str, str] | None = None
+    edge_floor = _edge_min_for_match()
+    require_edge = os.environ.get("MLBB_BANNER_POS_REQUIRE_EDGE", "1") == "1"
+    for path, reason, _tag in rows:
+        ref = _ref_patch_cached(path)
+        if ref is None:
+            continue
+        edge = patch_edge_similarity(patch, ref)
+        if require_edge and edge < edge_floor:
+            continue
+        score = patch_similarity(patch, ref)
+        if score < _pos_ref_min_sim_for_reason(reason):
+            continue
+        if best is None or score > best[0]:
+            best = (score, reason, path)
+    return best
 
 
 def match_positive_owner_reference_strict(frame) -> tuple[float, str, str] | None:

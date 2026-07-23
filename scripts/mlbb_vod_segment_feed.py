@@ -1489,7 +1489,30 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     report["visual_pass"] = vis.get("visual_pass")
     report["visual_fail"] = vis.get("fail_reason", "")
     if not vis.get("visual_pass"):
-        return False, f"visual:{vis.get('fail_reason', 'fail')}", report
+        # Confirmed kill-banner (OCR/ref) already proves this is a real fight moment —
+        # HUD OCR at clip start is unreliable (zoom, death cam, banner flash).
+        banner_ok_txt = str(report.get("kill_banner") or "")
+        skip_vis = os.environ.get("MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER", "1") == "1"
+        has_banner_meta = bool(
+            row.get("kill_banner")
+            or row.get("kill_banner_tier")
+            or str(row.get("anchor") or "") == "kill_banner"
+        )
+        if skip_vis and has_banner_meta and (
+            banner_ok_txt.startswith("source_banner_ok")
+            or banner_ok_txt.startswith("banner_ok")
+            or ":ref" in banner_ok_txt
+            or ":ocr" in banner_ok_txt
+        ):
+            report["visual_skipped"] = vis.get("fail_reason", "fail")
+            log.info(
+                "presend visual soft-skip %s reason=%s banner=%s",
+                row.get("segment_id"),
+                vis.get("fail_reason"),
+                banner_ok_txt,
+            )
+        else:
+            return False, f"visual:{vis.get('fail_reason', 'fail')}", report
 
     rend_motion, rend_mini, rend_skill, _ = score_segment_combat(
         rendered, 0.0, min(dur, _ffprobe_duration(rendered)), sample_frames=6
@@ -1751,6 +1774,8 @@ def _collect_scan_segments_inner(
                 "fight_dur": float(lead_clip.get("input_duration", 0)),
                 "kill_banner": lead_clip.get("kill_banner"),
                 "kill_banner_tier": lead_clip.get("kill_banner_tier"),
+                "banner_sec": lead_clip.get("banner_sec"),
+                "anchor": lead_clip.get("anchor"),
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
                 "clip_score": clip_score,
@@ -1763,6 +1788,24 @@ def _collect_scan_segments_inner(
         if montage_on:
             if len(out) >= max(montage_cap * 2, 6):
                 log.info("montage collect: enough candidates=%s — stop pool walk", len(out))
+                break
+        elif os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1":
+            # Keep walking the pool so every bannered fight is validated.
+            max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5")))
+            bannered_n = sum(
+                1
+                for r in out
+                if r.get("kill_banner")
+                or r.get("kill_banner_tier")
+                or str(r.get("anchor") or "") == "kill_banner"
+            )
+            if bannered_n >= max_per or len(out) >= max_per:
+                log.info(
+                    "send_all_banners: collected %s bannered / %s total (cap=%s)",
+                    bannered_n,
+                    len(out),
+                    max_per,
+                )
                 break
         elif os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
             log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
@@ -1816,7 +1859,25 @@ def _send_segment_batch(
             montage_on = False
 
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-    if send_one and not montage_on and len(to_send) > 1:
+    send_all_banners = os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1"
+    max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+    if send_all_banners and not montage_on:
+        bannered = [
+            r
+            for r in to_send
+            if r.get("kill_banner")
+            or r.get("kill_banner_tier")
+            or str(r.get("anchor") or "") == "kill_banner"
+            or r.get("banner_sec")
+        ]
+        if bannered:
+            # Prefer every verified kill-banner fight; drop motion-only fillers.
+            to_send = bannered[:max_per]
+            send_one = False
+            log.info("send_all_banners: shipping %s bannered clips", len(to_send))
+        elif send_one and len(to_send) > 1:
+            to_send = to_send[:1]
+    elif send_one and not montage_on and len(to_send) > 1:
         to_send = to_send[:1]
 
     ok_batch, block_reason = can_send(1)
@@ -2440,10 +2501,16 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
         "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
-        # Reliable = one clean fight clip, not jumpy multi-peak montage.
+        # Reliable = clean bannered fights, not jumpy montage — but ALL banners.
         "MLBB_VOD_MONTAGE": "0",
         "MLBB_SKIP_MONTAGE": "1",
-        "MLBB_VOD_SEND_ONE": "1",
+        "MLBB_VOD_SEND_ONE": "0",
+        "MLBB_VOD_SEND_ALL_BANNERS": "1",
+        "MLBB_VOD_MAX_PER_VOD": "5",
+        "MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER": "1",
+        "MLBB_KILL_BANNER_REQUIRED": "1",
+        "MLBB_VOD_BANNER_PRESEND": "1",
+        "MLBB_VOD_MOTION_ANCHOR_OK": "0",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
@@ -2462,6 +2529,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE",
         "MLBB_SKIP_MONTAGE",
         "MLBB_VOD_SEND_ONE",
+        "MLBB_VOD_SEND_ALL_BANNERS",
+        "MLBB_VOD_MAX_PER_VOD",
+        "MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER",
+        "MLBB_KILL_BANNER_REQUIRED",
+        "MLBB_VOD_BANNER_PRESEND",
+        "MLBB_VOD_MOTION_ANCHOR_OK",
         "MLBB_RULE_COMBAT_MIN",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN",
         "VIRAL_MLBB_CLIP_HOOK_MIN",

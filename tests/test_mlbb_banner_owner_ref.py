@@ -57,6 +57,8 @@ def test_classify_banner_reference_owner_positive(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(tmp_path))
     monkeypatch.setenv("MLBB_BANNER_POS_REF_MATCH", "1")
     monkeypatch.setenv("MLBB_BANNER_POS_REF_MIN_SIM", "0.30")
+    monkeypatch.setenv("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.30")
+    monkeypatch.setenv("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.30")
     monkeypatch.setenv("MLBB_BANNER_EDGE_MIN_SIM", "0.10")
     monkeypatch.setenv("MLBB_KILL_BANNER_MIN_TIER", "double")
     monkeypatch.setenv("MLBB_BANNER_NEG_REF_MATCH", "0")
