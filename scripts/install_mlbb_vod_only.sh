@@ -199,6 +199,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_vod_segment_store.py" \
   "$REPO/scripts/mlbb_vod_intervals.py" \
   "$REPO/scripts/mlbb_kill_banner.py" \
+  "$REPO/scripts/mlbb_banner_ref_match.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_vod_adaptive_gate.py" \
   "$REPO/scripts/audit_mlbb_vod_inbox.py" \

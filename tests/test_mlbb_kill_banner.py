@@ -291,3 +291,38 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = val
+
+
+def test_banner_hit_source_ok_accepts_ref() -> None:
+    import mlbb_kill_banner as kb
+
+    assert kb._banner_hit_source_ok("ocr") is True
+    assert kb._banner_hit_source_ok("ref") is True
+    assert kb._banner_hit_source_ok("ref_owner") is True
+    assert kb._banner_hit_source_ok("color") is False
+
+
+def test_classify_frame_prefers_ref_before_ocr(monkeypatch) -> None:
+    import numpy as np
+    import mlbb_kill_banner as kb
+    from unittest.mock import patch
+
+    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    ref_hit = kb.KillBannerHit(sec=12.0, tier=3, label="triple", text="owner_pos", source="ref")
+
+    monkeypatch.setenv("MLBB_BANNER_REF_BEFORE_OCR", "1")
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_MIN", "0.01")
+
+    with (
+        patch.object(kb, "_announce_color_score", return_value=0.2),
+        patch(
+            "mlbb_banner_ref_match.classify_banner_reference",
+            return_value=ref_hit,
+        ),
+        patch.object(kb, "_ocr_banner_zones") as ocr,
+    ):
+        out = kb._classify_frame(12.0, frame, deep=False, allow_ocr=True)
+        ocr.assert_not_called()
+    assert out is not None
+    assert out.source == "ref"
+    assert out.tier == 3
