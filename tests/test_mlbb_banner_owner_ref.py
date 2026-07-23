@@ -27,7 +27,9 @@ def test_tier_from_owner_reason() -> None:
     assert _tier_from_owner_reason("own_kill_good") == 2
 
 
-def test_positive_rows_include_vod_crops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_positive_rows_include_vod_crops_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pos = tmp_path / "owner_cal" / "positive" / "double_triple"
     pos.mkdir(parents=True)
     cv2.imwrite(str(pos / "a.png"), np.full((48, 160, 3), 40, dtype=np.uint8))
@@ -43,12 +45,36 @@ def test_positive_rows_include_vod_crops(tmp_path: Path, monkeypatch: pytest.Mon
     assert "savage" in reasons
 
 
-def test_classify_banner_reference_owner_positive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vod_crops_excluded_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pos = tmp_path / "owner_cal" / "positive" / "double_triple"
+    pos.mkdir(parents=True)
+    cv2.imwrite(str(pos / "a.png"), np.full((48, 160, 3), 40, dtype=np.uint8))
+    crop = tmp_path / "vod_crops" / "triple"
+    crop.mkdir(parents=True)
+    cv2.imwrite(str(crop / "poison.png"), np.full((48, 160, 3), 80, dtype=np.uint8))
+    monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(tmp_path))
+    monkeypatch.delenv("MLBB_BANNER_POS_INCLUDE_VOD_CROPS", raising=False)
+    clear_banner_ref_cache()
+    rows = _load_positive_owner_ref_rows()
+    assert {r[1] for r in rows} == {"double_triple"}
+
+
+def _gold_banner_frame(banner: np.ndarray) -> np.ndarray:
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    h, w = frame.shape[:2]
+    y0, y1 = int(h * 0.02), int(h * 0.30)
+    x0, x1 = int(w * 0.15), int(w * 0.85)
+    frame[y0:y1, x0:x1] = cv2.resize(banner, (x1 - x0, y1 - y0))
+    return frame
+
+
+def test_classify_banner_reference_owner_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pos = tmp_path / "owner_cal" / "positive" / "double_triple"
     pos.mkdir(parents=True)
     banner = np.zeros((48, 160, 3), dtype=np.uint8)
     banner[:, :] = (20, 180, 220)  # gold-ish BGR
-    # Draw ornate edges so edge similarity is non-zero.
     banner[2:6, :] = (255, 255, 255)
     banner[-6:-2, :] = (255, 255, 255)
     banner[:, 2:6] = (255, 255, 255)
@@ -57,21 +83,42 @@ def test_classify_banner_reference_owner_positive(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(tmp_path))
     monkeypatch.setenv("MLBB_BANNER_POS_REF_MATCH", "1")
     monkeypatch.setenv("MLBB_BANNER_POS_REF_MIN_SIM", "0.30")
+    monkeypatch.setenv("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.30")
     monkeypatch.setenv("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.30")
     monkeypatch.setenv("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.30")
     monkeypatch.setenv("MLBB_BANNER_EDGE_MIN_SIM", "0.10")
+    monkeypatch.setenv("MLBB_BANNER_REF_COLOR_MUL", "0.2")
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_MIN", "0.01")
     monkeypatch.setenv("MLBB_KILL_BANNER_MIN_TIER", "double")
     monkeypatch.setenv("MLBB_BANNER_NEG_REF_MATCH", "0")
     clear_banner_ref_cache()
 
-    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-    h, w = frame.shape[:2]
-    y0, y1 = int(h * 0.02), int(h * 0.30)
-    x0, x1 = int(w * 0.15), int(w * 0.85)
-    frame[y0:y1, x0:x1] = cv2.resize(banner, (x1 - x0, y1 - y0))
-
-    hit = classify_banner_reference(100.0, frame)
+    hit = classify_banner_reference(100.0, _gold_banner_frame(banner))
     assert hit is not None
     assert hit.source == "ref"
     assert hit.tier >= 2
     assert "owner_pos" in hit.text
+
+
+def test_classify_rejects_low_color_combat_fp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WTJrJ-style junk: combat frame matching a crop without gold flash must fail."""
+    pos = tmp_path / "owner_cal" / "positive" / "triple"
+    pos.mkdir(parents=True)
+    banner = np.zeros((48, 160, 3), dtype=np.uint8)
+    banner[:, :] = (20, 180, 220)
+    banner[2:6, :] = (255, 255, 255)
+    cv2.imwrite(str(pos / "t.png"), banner)
+
+    monkeypatch.setenv("MLBB_BANNER_REF_ROOT", str(tmp_path))
+    monkeypatch.setenv("MLBB_BANNER_POS_REF_MATCH", "1")
+    monkeypatch.setenv("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.50")
+    monkeypatch.setenv("MLBB_BANNER_REF_COLOR_MUL", "1.25")
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_MIN", "0.045")
+    monkeypatch.setenv("MLBB_BANNER_NEG_REF_MATCH", "0")
+    clear_banner_ref_cache()
+
+    # Dark combat HUD — no gold announce.
+    frame = np.full((720, 1280, 3), 30, dtype=np.uint8)
+    assert classify_banner_reference(50.0, frame) is None

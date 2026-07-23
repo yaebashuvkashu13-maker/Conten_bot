@@ -22,7 +22,19 @@ def _repo_root() -> Path:
 
 
 def banner_ref_root() -> Path:
-    return Path(os.environ.get("MLBB_BANNER_REF_ROOT", str(_repo_root() / "data" / "mlbb_kill_banners")))
+    env = os.environ.get("MLBB_BANNER_REF_ROOT", "").strip()
+    if env:
+        return Path(env)
+    # Prefer the content-bot data bank — NEVER /usr/local/data (thin/poisoned copy).
+    repo = os.environ.get("CONTENT_BOT_REPO", "").strip()
+    if repo:
+        cand = Path(repo) / "data" / "mlbb_kill_banners"
+        if cand.exists():
+            return cand
+    cand = Path("/root/content_bot_ml/data/mlbb_kill_banners")
+    if cand.exists():
+        return cand
+    return _repo_root() / "data" / "mlbb_kill_banners"
 
 
 def _ref_match_enabled() -> bool:
@@ -288,8 +300,9 @@ def _load_positive_owner_ref_rows() -> tuple[tuple[str, str, str], ...]:
             if (not allow_ui) and path.name.startswith("ownerphoto_"):
                 continue
             rows.append((str(path), reason, reason))
-    # Labeled VOD crops (double/triple/savage) are the highest-precision bank.
-    if os.environ.get("MLBB_BANNER_POS_INCLUDE_VOD_CROPS", "1") == "1":
+    # Labeled VOD crops can poison live match (one bad crop matches all combat).
+    # Off by default — owner_cal positives are the trusted bank.
+    if os.environ.get("MLBB_BANNER_POS_INCLUDE_VOD_CROPS", "0") == "1":
         vod_root = banner_ref_root() / "vod_crops"
         for tier_name in ("savage", "maniac", "triple", "double"):
             d = vod_root / tier_name
@@ -475,40 +488,71 @@ def classify_banner_reference(sec: float, frame) -> KillBannerHit | None:
     """
     Match frame against the screenshot bank.
 
-    Order: owner-positive / vod_crops first (real in-game banners), then wiki/generic.
+    Ref alone is not enough — weak hist/edge matches fire on ordinary combat
+    (shipping junk). Require a strong gold announce flash, high structural
+    similarity, and prefer labeled double/triple/savage over generic own_kill.
     """
+    import cv2  # noqa: F401 — keep import path stable for callers
+
     labels = {5: "savage", 4: "maniac", 3: "triple", 2: "double", 1: "single"}
-    # Negatives can veto weak positives, but not a clearly stronger owner match.
+    # Color gate: real kill banners flash gold/white; farming combat does not.
+    try:
+        from mlbb_kill_banner import _announce_color_score, _color_min_score
+    except Exception:
+        return None
+    color = float(_announce_color_score(frame))
+    need_color = float(_color_min_score()) * float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
+    if color < need_color:
+        return None
+
     neg = match_negative_banner_reference(frame)
     pos = match_positive_owner_reference(frame)
     if pos is not None:
         score, reason, path = pos
-        if neg is not None and float(neg[0]) >= float(score) - 0.01:
-            # Near-tie or stronger negative — skip owner hit.
-            pass
+        tag = str(path)
+        # Poisoned vod_crops must never ship alone.
+        if "vod_crops" in tag.replace("\\", "/") and os.environ.get(
+            "MLBB_BANNER_ALLOW_VOD_CROP_REF", "0"
+        ) != "1":
+            pos = None
+        elif neg is not None and float(neg[0]) >= float(score) - 0.02:
+            pos = None
         else:
-            tier = _tier_from_owner_reason(reason)
-            if tier >= _min_tier():
-                return KillBannerHit(
-                    sec=round(sec, 2),
-                    tier=tier,
-                    label=labels.get(tier, "double"),
-                    text=f"owner_pos={reason} sim={score:.3f} path={Path(path).name}",
-                    source="ref",
-                )
-    row = match_banner_reference(frame, ignore_negative=neg is not None)
-    if row is None:
+            # Structural bar: junk FP on WTJrJ was ~0.55 hist-edge on every frame.
+            min_live = float(os.environ.get("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.62"))
+            reason_l = str(reason or "").lower()
+            if "own_kill" in reason_l or "not_enemy" in reason_l:
+                min_live = max(min_live, float(os.environ.get("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.68")))
+            if float(score) < min_live:
+                pos = None
+            else:
+                tier = _tier_from_owner_reason(reason)
+                if tier >= _min_tier():
+                    return KillBannerHit(
+                        sec=round(sec, 2),
+                        tier=tier,
+                        label=labels.get(tier, "double"),
+                        text=(
+                            f"owner_pos={reason} sim={score:.3f} "
+                            f"color={color:.3f} path={Path(path).name}"
+                        ),
+                        source="ref",
+                    )
+    # Wiki/generic refs are even noisier — only with very strong color.
+    if color < float(_color_min_score()) * float(os.environ.get("MLBB_BANNER_WIKI_COLOR_MUL", "1.6")):
         return None
-    if neg is not None:
+    row = match_banner_reference(frame, ignore_negative=True)
+    if row is None or neg is not None:
         return None
     score, name, source, tier = row
     if tier < _min_tier():
         return None
-    # Wiki skins often fire on gold HUD — require stronger edge via min_sim already.
+    if float(score) < float(os.environ.get("MLBB_BANNER_WIKI_MIN_SIM", "0.55")):
+        return None
     return KillBannerHit(
         sec=round(sec, 2),
         tier=tier,
         label=labels.get(tier, "double"),
-        text=f"ref={name} sim={score:.3f} src={source}",
+        text=f"ref={name} sim={score:.3f} src={source} color={color:.3f}",
         source="ref",
     )

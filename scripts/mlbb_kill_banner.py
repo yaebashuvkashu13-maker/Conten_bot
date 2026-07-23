@@ -288,7 +288,8 @@ def _classify_frame(
     Prefer the owner screenshot bank (fast) before Tesseract OCR (slow / often blind).
     """
     color = _announce_color_score(frame)
-    ref_color_gate = _color_min_score() * float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "0.50"))
+    # Ref needs a real gold announce flash — half-threshold was matching farming HUD.
+    ref_color_gate = _color_min_score() * float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
     if os.environ.get("MLBB_BANNER_REF_BEFORE_OCR", "1") == "1" and color >= ref_color_gate:
         try:
             from mlbb_banner_ref_match import classify_banner_reference
