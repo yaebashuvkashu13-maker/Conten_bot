@@ -700,7 +700,8 @@ class VodPipelineDownloader:
         err = ""
         try:
             state = _load_state()
-            if state.get("pending_download", {}).get("status") == "downloading":
+            pending = state.get("pending_download") or {}
+            if pending.get("status") == "downloading":
                 log.info("another download already marked in state — skip bg")
             else:
                 state["pending_download"] = {
