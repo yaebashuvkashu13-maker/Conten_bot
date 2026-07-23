@@ -23,8 +23,12 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.42",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
     "MLBB_PRESEND_MIN_MOTION": "0.016",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.07",
-    "VIRAL_MLBB_HOOK_MIN": "0.05",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.10",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
+    "VIRAL_MLBB_HOOK_MIN": "0.08",
+    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.18",
+    "MLBB_RULE_COMBAT_MIN": "0.82",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
 }
@@ -35,8 +39,8 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_MIN_TIER": "single",
     "MLBB_PRESEND_MIN_MOTION": "0.014",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
-    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.10",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.09",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.11",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "20",
     "MLBB_KILL_BANNER_QUICK_AFTER": "12",
@@ -47,16 +51,26 @@ SOFTEN_L2: dict[str, str] = {
     # Prefer banner; allow single; never hard-skip the whole VOD on OCR miss.
     "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+    "MLBB_RULE_COMBAT_MIN": "0.80",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.40",
 }
 
-# Level 3: long silence — ship motion fights if banner OCR is blind.
+# Level 3: long silence — ship strong teamfights if banner OCR is blind.
+# Motion anchors OK only with high combat score — not farming/recall junk.
 SOFTEN_L3: dict[str, str] = {
     **SOFTEN_L2,
     "MLBB_KILL_BANNER_REQUIRED": "0",
     "MLBB_VOD_MOTION_ANCHOR_OK": "1",
     "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
-    "MLBB_PRESEND_MIN_MOTION": "0.012",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.12",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.14",
+    "MLBB_PRESEND_MIN_MOTION": "0.018",
+    "MLBB_RULE_COMBAT_MIN": "0.88",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.45",
+    "MLBB_TEAMFIGHT_RANK_FRAC": "0.85",
+    "MLBB_MOTION_PEAK_MAX": "3",
+    "VIRAL_MLBB_HOOK_MIN": "0.10",
+    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.20",
     # Soften can find weak motion peaks — never stitch them into a montage.
     "MLBB_VOD_MONTAGE": "0",
     "MLBB_VOD_SEND_ONE": "1",

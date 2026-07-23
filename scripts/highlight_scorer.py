@@ -1081,11 +1081,31 @@ def rule_gate(
         return True, "genshin_boss_ok"
 
     if profile == "mobile_legends":
-        if metrics.minimap_delta < 0.012 or metrics.skill_delta < 0.007:
-            return False, f"hud_low=mini{metrics.minimap_delta:.3f}:skill{metrics.skill_delta:.3f}"
-        if metrics.clip_score <= 0.03:
-            return False, f"clip_low={metrics.clip_score:.3f}"
-        return True, "mlbb_fight_ok"
+        # Real fights move the minimap, pulse skills, and keep center chaos.
+        # The old gate (mini>=0.012 / skill>=0.007 / clip>0.03) passed farming.
+        mini_min = float(os.environ.get("MLBB_FIGHT_MIN_MINIMAP", "0.016"))
+        skill_min = float(os.environ.get("MLBB_FIGHT_MIN_SKILL", "0.014"))
+        motion_min = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+        clip_min = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
+        if metrics.minimap_delta < mini_min:
+            return False, f"minimap_low={metrics.minimap_delta:.3f}:thr{mini_min:.3f}"
+        if metrics.skill_delta < skill_min:
+            return False, f"skill_low={metrics.skill_delta:.3f}:thr{skill_min:.3f}"
+        if metrics.center_motion < motion_min:
+            return False, f"motion_low={metrics.center_motion:.3f}:thr{motion_min:.3f}"
+        if metrics.clip_score < clip_min:
+            return False, f"clip_low={metrics.clip_score:.3f}:thr{clip_min:.3f}"
+        from mlbb_teamfight_detector import metrics_combat_score
+
+        combat = metrics_combat_score(
+            center_motion=metrics.center_motion,
+            minimap_delta=metrics.minimap_delta,
+            skill_delta=metrics.skill_delta,
+        )
+        need = float(os.environ.get("MLBB_RULE_COMBAT_MIN", "0.85"))
+        if combat < need:
+            return False, f"combat_low={combat:.3f}:need{need:.3f}"
+        return True, f"mlbb_fight_ok combat={combat:.3f}"
 
     if profile == "wot":
         if metrics.panns_explosion < 0.20 and metrics.panns_gun_max < 0.20:
@@ -1654,10 +1674,21 @@ def _accept_highlight_candidate(
                 combat_min = default_combat
             hook_min = min(hook_min, combat_min)
     if metrics.hook_score < hook_min:
-        if profile == "mobile_legends" and metrics.clip_score >= float(
-            os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.12")
-        ):
-            return True
+        if profile == "mobile_legends":
+            clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.18"))
+            motion_min = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+            # CLIP alone used to green-light low-hook farming; require fight motion too.
+            if metrics.clip_score >= clip_bypass and metrics.center_motion >= motion_min:
+                from mlbb_teamfight_detector import metrics_combat_score
+
+                combat = metrics_combat_score(
+                    center_motion=metrics.center_motion,
+                    minimap_delta=metrics.minimap_delta,
+                    skill_delta=metrics.skill_delta,
+                )
+                need = float(os.environ.get("MLBB_RULE_COMBAT_MIN", "0.85"))
+                if combat >= need:
+                    return True
         log.info(
             "[FAIL] highlight start=%.1f hook=%.3f < %.3f",
             start,
@@ -1766,13 +1797,35 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
-                    cap = int(os.environ.get("HIGHLIGHT_MAX_STAGE1", "16"))
-                    starts = sorted(start_set)[:cap]
-                    log.info(
-                        "highlight %s: banner prefilter 0 — keep %s motion peaks",
-                        video_path.name,
-                        len(starts),
-                    )
+                    # Banner OCR blind — keep only real teamfight motion, not all peaks.
+                    from mlbb_fight_segment import _analysis_for
+                    from mlbb_teamfight_detector import rank_starts_by_teamfight
+
+                    try:
+                        analysis = _analysis_for(video_path)
+                        ranked = rank_starts_by_teamfight(
+                            analysis,
+                            sorted(start_set),
+                            video_path=video_path,
+                        )
+                    except Exception as exc:
+                        log.warning("teamfight filter after banner miss failed: %s", exc)
+                        ranked = []
+                    max_keep = max(1, int(os.environ.get("MLBB_MOTION_PEAK_MAX", "4")))
+                    starts = ranked[:max_keep]
+                    if starts:
+                        log.info(
+                            "highlight %s: banner prefilter 0 — keep %s teamfight peaks",
+                            video_path.name,
+                            len(starts),
+                        )
+                    else:
+                        log.info(
+                            "highlight %s: banner prefilter 0/%s — no teamfight peaks",
+                            video_path.name,
+                            before,
+                        )
+                        return []
     starts = stage1_panns_prefilter(video_path, starts, profile)
     log.info("highlight panns prefilter %s: %s windows", video_path.name, len(starts))
 

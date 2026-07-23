@@ -24,9 +24,14 @@ def _min_teamfight_score() -> float:
 
 def _motion_threshold(analysis: dict[str, Any]) -> float:
     motion = np.asarray(analysis.get("center_motion", []), dtype=np.float32)
+    abs_floor = float(
+        os.environ.get("MLBB_TEAMFIGHT_ABS_MOTION", os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+    )
     if motion.size < 4:
-        return 0.02
-    return max(0.018, float(np.percentile(motion, 55)) * 0.85)
+        return abs_floor
+    # Relative thr helps on loud VODs, but never below a real fight floor —
+    # otherwise a calm farming VOD normalizes to "everything is a fight".
+    return max(abs_floor, float(np.percentile(motion, 55)) * 0.85)
 
 
 def _sustain_bins(analysis: dict[str, Any], start: float, *, min_bins: int = 2) -> float:
@@ -133,7 +138,11 @@ def rank_starts_by_teamfight(
     video_path: Path | None = None,
     banner_tiers: dict[float, int] | None = None,
 ) -> list[float]:
-    """Re-rank stage-1 starts by combined teamfight score."""
+    """Re-rank stage-1 starts by combined teamfight score.
+
+    Never fall back to the full unfiltered list — that re-admitted farming /
+    recall junk after a banner miss.
+    """
     if not starts:
         return []
     tiers = banner_tiers or {}
@@ -148,4 +157,31 @@ def rank_starts_by_teamfight(
         )
         scored.append((sc, start))
     scored.sort(key=lambda row: row[0], reverse=True)
-    return [s for sc, s in scored if sc >= _min_teamfight_score() * 0.5] or [s for _, s in scored]
+    frac = float(os.environ.get("MLBB_TEAMFIGHT_RANK_FRAC", "0.75"))
+    min_keep = _min_teamfight_score() * max(0.35, min(1.0, frac))
+    kept = [s for sc, s in scored if sc >= min_keep]
+    if kept:
+        max_n = max(1, int(os.environ.get("MLBB_TEAMFIGHT_RANK_MAX", "8")))
+        return kept[:max_n]
+    floor = float(os.environ.get("MLBB_TEAMFIGHT_ABS_FLOOR", "0.30"))
+    if scored and scored[0][0] >= floor:
+        return [scored[0][1]]
+    return []
+
+
+def metrics_combat_score(
+    *,
+    center_motion: float,
+    minimap_delta: float,
+    skill_delta: float,
+) -> float:
+    """Cheap combat proxy from already-scored highlight metrics (0..1)."""
+    motion_min = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+    mini_min = float(os.environ.get("MLBB_FIGHT_MIN_MINIMAP", "0.016"))
+    skill_min = float(os.environ.get("MLBB_FIGHT_MIN_SKILL", "0.014"))
+    return min(
+        1.0,
+        min(1.0, float(center_motion) / max(motion_min, 1e-6)) * 0.40
+        + min(1.0, float(minimap_delta) / max(mini_min, 1e-6)) * 0.35
+        + min(1.0, float(skill_delta) / max(skill_min, 1e-6)) * 0.25,
+    )

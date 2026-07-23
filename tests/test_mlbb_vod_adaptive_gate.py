@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_adaptive_gate import (  # noqa: E402
@@ -51,6 +53,47 @@ def test_l3_allows_motion_without_banner():
     assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
     assert ov["MLBB_VOD_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "1"
+    # Soften must not reopen the farming floodgates.
+    assert float(ov["MLBB_RULE_COMBAT_MIN"]) >= 0.85
+    assert float(ov["HIGHLIGHT_MLBB_AUTO_CLIP_MIN"]) >= 0.12
+    assert float(ov["MLBB_TEAMFIGHT_MIN_SCORE"]) >= 0.40
+
+
+def test_mlbb_rule_gate_rejects_farming_hud(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_FIGHT_MIN_MOTION", "0.038")
+    monkeypatch.setenv("MLBB_FIGHT_MIN_MINIMAP", "0.016")
+    monkeypatch.setenv("MLBB_FIGHT_MIN_SKILL", "0.014")
+    monkeypatch.setenv("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10")
+    monkeypatch.setenv("MLBB_RULE_COMBAT_MIN", "0.85")
+    from highlight_scorer import HighlightMetrics, rule_gate
+
+    farm = HighlightMetrics(
+        start=100,
+        duration=15,
+        profile="mobile_legends",
+        clip_score=0.22,
+        center_motion=0.02,
+        minimap_delta=0.013,
+        skill_delta=0.008,
+        visual_pass=True,
+    )
+    ok, reason = rule_gate("mobile_legends", farm)
+    assert ok is False
+    assert "combat_low" in reason or "motion_low" in reason or "minimap_low" in reason or "skill_low" in reason
+
+    fight = HighlightMetrics(
+        start=200,
+        duration=15,
+        profile="mobile_legends",
+        clip_score=0.22,
+        center_motion=0.09,
+        minimap_delta=0.04,
+        skill_delta=0.03,
+        visual_pass=True,
+    )
+    ok2, reason2 = rule_gate("mobile_legends", fight)
+    assert ok2 is True
+    assert "mlbb_fight_ok" in reason2
 
 
 def test_soft_overrides_keep_banner_required():

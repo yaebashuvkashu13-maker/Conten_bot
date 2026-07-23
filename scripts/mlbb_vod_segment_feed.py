@@ -915,11 +915,29 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
                 fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak)
                 min_fight = float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
                 if fight_dur >= min_fight:
+                    from mlbb_teamfight_detector import (
+                        combined_teamfight_score,
+                        passes_teamfight_threshold,
+                    )
+
+                    tf = combined_teamfight_score(analysis, peak, video_path=vod)
+                    if not passes_teamfight_threshold(tf):
+                        return {
+                            **clip,
+                            "start": peak,
+                            "peak_start": peak,
+                            "input_duration": 0.0,
+                            "output_duration": 0.0,
+                            "banner_reject": f"motion_teamfight_low={tf:.3f}",
+                            "source_path": str(vod),
+                            "source_index": 0,
+                            "speed": 1.0,
+                        }
                     resolved = (
                         fight_start,
                         fight_end,
                         fight_dur,
-                        {"anchor": "motion", "banner_sec": peak},
+                        {"anchor": "motion", "banner_sec": peak, "teamfight_score": tf},
                     )
         if resolved is None:
             return {
@@ -935,6 +953,28 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             }
         start, end, dur, meta = resolved
         banner_sec = float(meta.get("banner_sec", peak))
+        if str(meta.get("anchor") or "") == "motion":
+            from mlbb_teamfight_detector import (
+                combined_teamfight_score,
+                passes_teamfight_threshold,
+            )
+
+            tf = float(meta.get("teamfight_score") or 0.0)
+            if tf <= 0:
+                tf = combined_teamfight_score(analysis, peak, video_path=vod)
+            if not passes_teamfight_threshold(tf):
+                return {
+                    **clip,
+                    "start": peak,
+                    "peak_start": peak,
+                    "input_duration": 0.0,
+                    "output_duration": 0.0,
+                    "banner_reject": f"motion_teamfight_low={tf:.3f}",
+                    "source_path": str(vod),
+                    "source_index": 0,
+                    "speed": 1.0,
+                }
+            meta = {**meta, "teamfight_score": tf}
         try:
             from mlbb_vod_montage import trim_idle_run_end
 
@@ -2404,6 +2444,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE": "0",
         "MLBB_SKIP_MONTAGE": "1",
         "MLBB_VOD_SEND_ONE": "1",
+        # Quality floor so OCR-blind soften cannot ship farming junk.
+        "MLBB_RULE_COMBAT_MIN": "0.85",
+        "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
+        "VIRAL_MLBB_CLIP_HOOK_MIN": "0.18",
+        "MLBB_TEAMFIGHT_MIN_SCORE": "0.45",
+        "MLBB_MOTION_PEAK_MAX": "4",
     }
     force = {
         "MLBB_VOD_ADAPTIVE_NOTIFY",
@@ -2416,6 +2462,11 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE",
         "MLBB_SKIP_MONTAGE",
         "MLBB_VOD_SEND_ONE",
+        "MLBB_RULE_COMBAT_MIN",
+        "HIGHLIGHT_MLBB_AUTO_CLIP_MIN",
+        "VIRAL_MLBB_CLIP_HOOK_MIN",
+        "MLBB_TEAMFIGHT_MIN_SCORE",
+        "MLBB_MOTION_PEAK_MAX",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
