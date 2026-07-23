@@ -320,7 +320,13 @@ def _probe_youtube_duration(url: str, env: dict[str, str]) -> float:
 
 
 def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list[dict]:
-    from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
+    from youtube_download import (
+        _ytdlp_is_403,
+        fallback_search_targets,
+        run_ytdlp,
+        ytdlp_cmd,
+        ytdlp_extra_args,
+    )
 
     if game in EXTENDED_GAMES:
         from youtube_extended_vod_prefs import title_ok as ext_title_ok, vod_discovery_search_cycle as ext_cycle
@@ -340,40 +346,66 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
     _save_state(game, state)
 
     out: list[dict] = []
-    for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + ["--flat-playlist", "--print", "%(id)s|%(title)s|%(duration)s|%(uploader)s", url]
-        cmd += ytdlp_extra_args(env)
-        proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
-        if proc.returncode != 0:
-            log.warning("search failed %s: %s", url, (proc.stderr or "")[:200])
-            continue
-        for line in (proc.stdout or "").splitlines():
-            parts = line.split("|", 3)
-            if len(parts) < 2:
+    limit = int(params.get("limit", 20) or 20)
+    attempts = params.get("attempts") or [[u] for u in params.get("urls", [])]
+    for targets in attempts:
+        targets = list(targets or [])
+        # Ensure ytsearch fallback exists even for older prefs without attempts.
+        if targets and targets[0].startswith("http"):
+            for alt in fallback_search_targets(targets[0], limit=limit):
+                if alt not in targets:
+                    targets.append(alt)
+        got = False
+        for url in targets:
+            cmd = ytdlp_cmd(env) + [
+                "--flat-playlist",
+                "--playlist-end",
+                str(limit),
+                "--print",
+                "%(id)s|%(title)s|%(duration)s|%(uploader)s",
+                url,
+            ]
+            cmd += ytdlp_extra_args(env)
+            proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
+            if proc.returncode != 0:
+                err = (proc.stderr or "")[:200]
+                if _ytdlp_is_403(proc):
+                    log.warning("search 403 %s — trying fallback", url[:120])
+                    time.sleep(float(env.get("YTDLP_403_RETRY_DELAY", "4")))
+                else:
+                    log.warning("search failed %s: %s", url, err)
                 continue
-            vid, title = parts[0][:11], parts[1]
-            if vid in used or len(vid) != 11:
-                continue
-            if not title_ok_fn(game, title):
-                continue
-            try:
-                raw = parts[2] if len(parts) > 2 else ""
-                dur = float(raw) if raw not in {"", "NA", "None"} else 0.0
-            except ValueError:
-                dur = 0.0
-            if dur > 0 and not _shooter_duration_ok(dur):
-                continue
-            # Duration unknown (flat playlist) — keep candidate; probe before download.
-            out.append(
-                {
-                    "id": vid,
-                    "title": title[:120],
-                    "url": f"https://www.youtube.com/watch?v={vid}",
-                    "duration": dur,
-                    "uploader": parts[3][:60] if len(parts) > 3 else "",
-                }
-            )
-        time.sleep(float(params.get("delay", 6)))
+            if url.startswith("ytsearch"):
+                log.info("search ok via ytsearch game=%s", game)
+            for line in (proc.stdout or "").splitlines():
+                parts = line.split("|", 3)
+                if len(parts) < 2:
+                    continue
+                vid, title = parts[0][:11], parts[1]
+                if vid in used or len(vid) != 11:
+                    continue
+                if not title_ok_fn(game, title):
+                    continue
+                try:
+                    raw = parts[2] if len(parts) > 2 else ""
+                    dur = float(raw) if raw not in {"", "NA", "None"} else 0.0
+                except ValueError:
+                    dur = 0.0
+                if dur > 0 and not _shooter_duration_ok(dur):
+                    continue
+                # Duration unknown (flat playlist) — keep candidate; probe before download.
+                out.append(
+                    {
+                        "id": vid,
+                        "title": title[:120],
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "duration": dur,
+                        "uploader": parts[3][:60] if len(parts) > 3 else "",
+                    }
+                )
+            got = True
+            break
+        time.sleep(float(params.get("delay", 6)) * (1.5 if not got else 1.0))
     return out
 
 
