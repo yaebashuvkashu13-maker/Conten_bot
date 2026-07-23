@@ -2309,8 +2309,43 @@ def _bootstrap_shorts_exemplars_for_vod() -> dict:
     return out
 
 
+def _mlbb_reliable_mode() -> bool:
+    """Ship videos, not Telegram error spam. Default ON."""
+    raw = os.environ.get("MLBB_VOD_RELIABLE")
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip() not in {"0", "false", "False", "no"}
+
+
+def _apply_mlbb_reliable_runtime() -> None:
+    if not _mlbb_reliable_mode():
+        return
+    defaults = {
+        "MLBB_VOD_ADAPTIVE_NOTIFY": "0",
+        "MLBB_VOD_EXHAUST_NOTIFY": "0",
+        "MLBB_VOD_DISCOVERY_MISS_NOTIFY": "0",
+        "MLBB_VOD_DOWNLOAD_NOTIFY": "0",
+        "MLBB_VOD_PRESEND_REJECT_NOTIFY": "0",
+        "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
+        # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
+        "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
+    }
+    force = {
+        "MLBB_VOD_ADAPTIVE_NOTIFY",
+        "MLBB_VOD_EXHAUST_NOTIFY",
+        "MLBB_VOD_DISCOVERY_MISS_NOTIFY",
+        "MLBB_VOD_BANNER_HARD_PREFILTER",
+        "MLBB_VOD_MAX_ZERO_ATTEMPTS",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+        if key in force:
+            os.environ[key] = value
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    _apply_mlbb_reliable_runtime()
 
     if os.environ.get("MLBB_EVAL_ONLY", "0") == "1":
         from mlbb_learning_first import eval_transition_gate
@@ -2327,6 +2362,8 @@ def main() -> int:
     if os.environ.get("MLBB_ONLY_MODE", "1") != "1":
         print("SKIP: MLBB_ONLY_MODE not set")
         return 0
+
+    log.info("mlbb feed start reliable=%s", int(_mlbb_reliable_mode()))
 
     seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
@@ -2421,8 +2458,14 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             notify=not notified_download,
         )
         if vod is None:
-            if not notified_download and auto_download:
+            if (
+                not notified_download
+                and auto_download
+                and os.environ.get("MLBB_VOD_DISCOVERY_MISS_NOTIFY", "0") == "1"
+            ):
                 send_message(token, chat_id, "⚠️ Не нашёл новый MLBB стрим. Повторю на следующем запуске.")
+            else:
+                log.info("discovery miss (notify muted)")
             break
         notified_download = True
 

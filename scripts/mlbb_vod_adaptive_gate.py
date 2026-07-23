@@ -29,7 +29,7 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
 }
 
-# Level 2: still banner-required; allow single only after long silence.
+# Level 2: still prefer banner; allow single; do NOT hard-skip whole VOD on miss.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     "MLBB_KILL_BANNER_MIN_TIER": "single",
@@ -44,6 +44,19 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+    # Hard prefilter was deleting whole VODs → endless ⚠️ 0 клипов spam.
+    "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+}
+
+# Level 3: long silence — ship motion fights if banner OCR is blind.
+SOFTEN_L3: dict[str, str] = {
+    **SOFTEN_L2,
+    "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
+    "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
+    "MLBB_PRESEND_MIN_MOTION": "0.012",
 }
 
 
@@ -60,10 +73,12 @@ def streak_threshold() -> int:
 
 
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft, 2=softer, 3=ship-motion (long silence)."""
     need = streak_threshold()
     if streak < need:
         return 0
+    if streak >= need + 6:
+        return 3
     if streak >= need + 3:
         return 2
     return 1
@@ -72,6 +87,8 @@ def soften_level(streak: int) -> int:
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
+    if level >= 3:
+        return dict(SOFTEN_L3)
     if level >= 2:
         return dict(SOFTEN_L2)
     return dict(SOFTEN_L1)
