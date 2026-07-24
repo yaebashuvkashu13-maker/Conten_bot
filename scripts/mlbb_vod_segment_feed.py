@@ -1415,13 +1415,22 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier
 
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
-            banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
-            if not banner_ok:
-                banner_ok, banner_reason = verify_rendered_clip(
-                    rendered,
-                    banner_sec=banner_sec if row.get("banner_sec") else None,
-                    clip_start=cut_start,
-                )
+            # Discover already proved the kill banner — don't re-OCR the whole source
+            # (that can stall Telegram delivery for many minutes after the header text).
+            trust_discover = (
+                os.environ.get("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "1") == "1"
+                and bool(row.get("kill_banner") or row.get("kill_banner_tier"))
+            )
+            if trust_discover:
+                banner_ok, banner_reason = True, f"trusted_discover:{row.get('kill_banner') or row.get('kill_banner_tier')}"
+            else:
+                banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
+                if not banner_ok:
+                    banner_ok, banner_reason = verify_rendered_clip(
+                        rendered,
+                        banner_sec=banner_sec if row.get("banner_sec") else None,
+                        clip_start=cut_start,
+                    )
             report["kill_banner"] = banner_reason
             if not banner_ok:
                 return False, banner_reason, report
@@ -1485,34 +1494,50 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if not uniform_ok:
         return False, uniform_reason, report
 
-    vis = extract_and_check_segment(vod, cut_start, dur, PROFILE, crop_box=crop)
-    report["visual_pass"] = vis.get("visual_pass")
-    report["visual_fail"] = vis.get("fail_reason", "")
-    if not vis.get("visual_pass"):
-        # Confirmed kill-banner (OCR/ref) already proves this is a real fight moment —
-        # HUD OCR at clip start is unreliable (zoom, death cam, banner flash).
-        banner_ok_txt = str(report.get("kill_banner") or "")
-        skip_vis = os.environ.get("MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER", "1") == "1"
-        has_banner_meta = bool(
-            row.get("kill_banner")
-            or row.get("kill_banner_tier")
-            or str(row.get("anchor") or "") == "kill_banner"
+    skip_vis = os.environ.get("MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER", "1") == "1"
+    has_banner_meta = bool(
+        row.get("kill_banner")
+        or row.get("kill_banner_tier")
+        or str(row.get("anchor") or "") == "kill_banner"
+    )
+    banner_ok_txt = str(report.get("kill_banner") or "")
+    trust_banner_for_visual = has_banner_meta and (
+        banner_ok_txt.startswith("source_banner_ok")
+        or banner_ok_txt.startswith("banner_ok")
+        or banner_ok_txt.startswith("trusted_discover")
+        or ":ref" in banner_ok_txt
+        or ":ocr" in banner_ok_txt
+    )
+    if skip_vis and trust_banner_for_visual:
+        report["visual_pass"] = True
+        report["visual_skipped"] = "trusted_banner_meta"
+        log.info(
+            "presend visual skip-upfront %s banner=%s",
+            row.get("segment_id"),
+            banner_ok_txt,
         )
-        if skip_vis and has_banner_meta and (
-            banner_ok_txt.startswith("source_banner_ok")
-            or banner_ok_txt.startswith("banner_ok")
-            or ":ref" in banner_ok_txt
-            or ":ocr" in banner_ok_txt
-        ):
-            report["visual_skipped"] = vis.get("fail_reason", "fail")
-            log.info(
-                "presend visual soft-skip %s reason=%s banner=%s",
-                row.get("segment_id"),
-                vis.get("fail_reason"),
-                banner_ok_txt,
-            )
-        else:
-            return False, f"visual:{vis.get('fail_reason', 'fail')}", report
+    else:
+        vis = extract_and_check_segment(vod, cut_start, dur, PROFILE, crop_box=crop)
+        report["visual_pass"] = vis.get("visual_pass")
+        report["visual_fail"] = vis.get("fail_reason", "")
+        if not vis.get("visual_pass"):
+            # Confirmed kill-banner (OCR/ref) already proves this is a real fight moment —
+            # HUD OCR at clip start is unreliable (zoom, death cam, banner flash).
+            if skip_vis and has_banner_meta and (
+                banner_ok_txt.startswith("source_banner_ok")
+                or banner_ok_txt.startswith("banner_ok")
+                or ":ref" in banner_ok_txt
+                or ":ocr" in banner_ok_txt
+            ):
+                report["visual_skipped"] = vis.get("fail_reason", "fail")
+                log.info(
+                    "presend visual soft-skip %s reason=%s banner=%s",
+                    row.get("segment_id"),
+                    vis.get("fail_reason"),
+                    banner_ok_txt,
+                )
+            else:
+                return False, f"visual:{vis.get('fail_reason', 'fail')}", report
 
     rend_motion, rend_mini, rend_skill, _ = score_segment_combat(
         rendered, 0.0, min(dur, _ffprobe_duration(rendered)), sample_frames=6
@@ -1903,20 +1928,12 @@ def _send_segment_batch(
         if len(to_send) > cap_left:
             log.info("daily cap trim batch %s -> %s", len(to_send), cap_left)
             to_send = to_send[:cap_left]
-        seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
-        send_message(
-            token,
-            chat_id,
-            f"MLBB VOD — {len(to_send)} кусков (~{seg_sec}с)\n"
-            f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
-            f"👍 Ок / 👎 Не ок под каждым\n"
-            f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
-        )
     SEGMENTS_ROOT = segments_root()
     SEGMENTS_ROOT.mkdir(parents=True, exist_ok=True)
     sent_ids: list[str] = []
     skipped: list[str] = []
     send_blocked = 0
+    header_sent = False
     for row in to_send:
         sid = row["segment_id"]
         out = SEGMENTS_ROOT / f"seg_{sid}.mp4"
@@ -1930,6 +1947,20 @@ def _send_segment_batch(
             log.warning("presend REJECT %s reason=%s report=%s", sid, presend_reason, presend_report)
             skipped.append(f"{sid}:{presend_reason}")
             continue
+        # Announce only when the first clip is actually ready to upload —
+        # otherwise the owner gets a text with no videos for minutes.
+        if not send_one and not header_sent:
+            seg_sec = int(float(os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")))
+            planned = len(to_send) - len(skipped)
+            send_message(
+                token,
+                chat_id,
+                f"MLBB VOD — {planned} кусков (~{seg_sec}с)\n"
+                f"Стрим: {vod_youtube_id(vod)} ({vod.name})\n"
+                f"👍 Ок / 👎 Не ок под каждым\n"
+                f"Статистика: 👍{stats()['feedback_yes']} 👎{stats()['feedback_no']}",
+            )
+            header_sent = True
         seg_dur = _ffprobe_duration(out)
         peak = int(row.get("peak_start", row["start"]))
         report_line = _format_send_report(row, presend_report)
