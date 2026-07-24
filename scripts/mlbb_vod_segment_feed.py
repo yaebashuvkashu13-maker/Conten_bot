@@ -1640,7 +1640,8 @@ def _dedupe_segments_by_gap(
     min_gap: float,
     reserved_intervals: list[tuple[float, float]],
 ) -> list[dict]:
-    """Keep best clip per fight — no time overlap between highlight windows."""
+    """Keep best clip per fight — no time overlap / same kill-banner moment."""
+    from mlbb_vod_intervals import fight_anchor_sec, same_fight_anchor
 
     def _rank_key(r: dict) -> tuple[float, float, float, float]:
         metrics = r.get("highlight_metrics") or {}
@@ -1661,6 +1662,14 @@ def _dedupe_segments_by_gap(
             continue
         # Legacy start-only guard for peaks very close together inside same fight blob.
         if any(abs(start - s) < min_gap for s, _ in taken):
+            continue
+        # Same kill banner / peak → one clip only (soft gap used to ship near-duplicates).
+        if any(same_fight_anchor(row, prev) for prev in chosen):
+            log.info(
+                "dedupe same-fight drop sid=%s anchor=%.0f kept_better",
+                row.get("segment_id"),
+                fight_anchor_sec(row),
+            )
             continue
         taken.append((start, end))
         chosen.append(row)
@@ -2539,6 +2548,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_SEND_ALL_BANNERS": "1",
         "MLBB_VOD_MAX_PER_VOD": "5",
         "MLBB_VOD_SEGMENT_GAP_SEC": "45",
+        "MLBB_VOD_INTERVAL_GAP_SEC": "12",
+        "MLBB_VOD_BANNER_DEDUP_SEC": "25",
         "MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER": "1",
         "MLBB_KILL_BANNER_REQUIRED": "1",
         "MLBB_VOD_BANNER_PRESEND": "1",
@@ -2569,6 +2580,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_SEND_ALL_BANNERS",
         "MLBB_VOD_MAX_PER_VOD",
         "MLBB_VOD_SEGMENT_GAP_SEC",
+        "MLBB_VOD_INTERVAL_GAP_SEC",
+        "MLBB_VOD_BANNER_DEDUP_SEC",
         "MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER",
         "MLBB_KILL_BANNER_REQUIRED",
         "MLBB_VOD_BANNER_PRESEND",

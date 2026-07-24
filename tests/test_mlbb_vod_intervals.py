@@ -10,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_intervals import (
     conflicts_any_interval,
+    fight_anchor_sec,
     interval_gap_sec,
     intervals_overlap,
+    same_fight_anchor,
     segment_duration,
     segment_interval,
 )
@@ -34,6 +36,16 @@ class VodIntervalOverlapTest(unittest.TestCase):
         start, end = segment_interval(row)
         self.assertEqual(start, 100.0)
         self.assertEqual(end, 142.0)
+
+    def test_same_fight_anchor_by_banner(self) -> None:
+        a = {"start": 282.0, "banner_sec": 334.0, "peak_start": 300.0, "kill_banner": "triple"}
+        b = {"start": 318.0, "banner_sec": 334.0, "peak_start": 334.0, "kill_banner": "triple"}
+        self.assertTrue(same_fight_anchor(a, b))
+        self.assertEqual(fight_anchor_sec(a), 334.0)
+
+    def test_near_adjacent_windows_conflict_with_default_gap(self) -> None:
+        # Dhwn-style: 282→314 and 318→349 with default interval gap 12 → conflict
+        self.assertTrue(intervals_overlap(282.0, 314.0, 318.0, 349.0, gap=interval_gap_sec()))
 
 
 if __name__ == "__main__":
