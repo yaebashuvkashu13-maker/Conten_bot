@@ -517,12 +517,21 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         try:
             from shooter_vod_montage import apply_run_trim_to_clip
 
-            clip = apply_run_trim_to_clip(clip, vod, game=game)
+            if game != "genshin" or os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") != "1":
+                clip = apply_run_trim_to_clip(clip, vod, game=game)
         except Exception:
             pass
         peak = float(row.get("peak_start", row.get("start", 0)))
         plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
-        pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, plan_dur)
+        # Gate on the fight body (after lead-in). Full-fight clips start earlier than the peak.
+        if game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1":
+            lead_pad = float(os.environ.get("GENSHIN_VOD_LEAD_SEC", "5"))
+            validate_t0 = float(row.get("start", peak)) + lead_pad
+            validate_dur = min(20.0, max(8.0, plan_dur - lead_pad))
+        else:
+            validate_t0 = peak
+            validate_dur = plan_dur
+        pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, validate_t0, validate_dur)
         if not pre_ok:
             log.warning("presend PRE-REJECT (skip encode) %s: %s", sid, pre_reason)
             continue
@@ -541,8 +550,12 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         ) if game == "pubg" else (
             f"{game.upper()} кусок #{sid}\n"
             f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
-            f"{'Boss' if game == 'genshin' else 'Combat' if game == 'wot' else 'POV combat'} ✓ | {presend_reason}\n"
-            f"👍 Ок / 👎 Не ок"
+            + (
+                f"Boss fight с начала ✓ | {presend_reason}\n"
+                if game == "genshin"
+                else f"{'Boss' if game == 'genshin' else 'Combat' if game == 'wot' else 'POV combat'} ✓ | {presend_reason}\n"
+            )
+            + f"👍 Ок / 👎 Не ок"
         )
         if send_video(
             token,
@@ -756,7 +769,12 @@ def _scan_vod(
     labeled = labeled_ids(game)
     sent_set = load_feed_sent(game)
     vid = vod_youtube_id(vod)
-    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    lead = float(
+        os.environ.get(
+            f"{game.upper()}_VOD_LEAD_SEC",
+            os.environ.get("MLBB_VOD_LEAD_SEC", "4"),
+        )
+    )
     seg_gap = segment_gap_sec(game, soften_level=soften_level)
     index_segments = load_index(game).get("segments", [])
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
@@ -818,12 +836,35 @@ def _scan_vod(
                     if clip_score < mont_min:
                         continue
                 start = max(0.0, peak - lead)
+                fight_dur = float(
+                    clip.get("input_duration")
+                    or os.environ.get("HIGHLIGHT_WINDOW_SEC", "15")
+                )
+                if game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1":
+                    from genshin_boss_fight_window import expand_boss_fight_window
+
+                    start, fight_dur, fight_meta = expand_boss_fight_window(vod, peak)
+                    log.info(
+                        "genshin full-fight peak=%.0f -> start=%.0f dur=%.0f onset=%.0f",
+                        peak,
+                        start,
+                        fight_dur,
+                        float(fight_meta.get("onset") or start),
+                    )
                 sid = segment_id(vid, start)
                 if sid in blocked_ids:
                     continue
-                clip_out = {**clip, "start": start, "peak_start": peak}
+                clip_out = {
+                    **clip,
+                    "start": start,
+                    "peak_start": peak,
+                    "input_duration": fight_dur,
+                    "output_duration": fight_dur,
+                }
                 try:
-                    clip_out = apply_run_trim_to_clip(clip_out, vod, game=game)
+                    # Don't let idle-run trim eat the boss-fight opening.
+                    if game != "genshin" or os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") != "1":
+                        clip_out = apply_run_trim_to_clip(clip_out, vod, game=game)
                 except Exception:
                     pass
                 rows.append(
@@ -833,7 +874,7 @@ def _scan_vod(
                         "peak_start": peak,
                         "score": float(clip.get("score", 0)),
                         "clip_score": clip_score,
-                        "fight_dur": float(clip_out.get("input_duration") or 0),
+                        "fight_dur": float(clip_out.get("input_duration") or fight_dur),
                         "clip": clip_out,
                     }
                 )
