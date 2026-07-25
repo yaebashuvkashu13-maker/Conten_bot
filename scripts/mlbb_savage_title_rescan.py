@@ -260,6 +260,7 @@ def scan_and_send(
     from mlbb_kill_banner import discover_vod_kill_banners
     from mlbb_vod_title import title_min_banner_tier, vod_title_blob
     from mlbb_telegram_video import send_video_file, send_document_file, TELEGRAM_MAX_BYTES
+    from mlbb_fight_segment import banner_lead_sec
     from smart_video_editor import load_env
 
     env = load_env(Path("/root/.video_bot.env"))
@@ -289,9 +290,9 @@ def scan_and_send(
 
     sent = 0
     report: list[dict] = []
-    lead = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "8")))
-    tail = float(os.environ.get("MLBB_KILL_BANNER_TAIL_SEC", "6"))
-    clip_dur = float(os.environ.get("MLBB_SAVAGE_CLIP_SEC", "18"))
+    tail = float(os.environ.get("MLBB_KILL_BANNER_TAIL_SEC", "8"))
+    # Long enough to fit savage pre-roll (prior kills) + banner + short aftermath.
+    clip_dur = float(os.environ.get("MLBB_SAVAGE_CLIP_SEC", "28"))
     dedup_gap = _send_dedup_gap_sec()
     sent_reg = _load_sent_registry()
 
@@ -350,14 +351,16 @@ def scan_and_send(
                 break
             if _already_sent_near(sent_reg, vid, h.sec, gap=dedup_gap):
                 continue
+            lead = banner_lead_sec(h.tier)
             start = max(0.0, h.sec - lead)
-            dur_clip = min(clip_dur, lead + tail)
+            dur_clip = max(clip_dur, lead + tail)
             out = _out_dir() / f"yt_{vid}_{h.label}_{int(h.sec)}.mp4"
             if not _render_clip(vod, start, dur_clip, out):
                 log.warning("render fail %s @%.1f", vid, h.sec)
                 continue
             caption = (
                 f"MLBB {h.label.upper()} (tier {h.tier}) @ {h.sec:.0f}s\n"
+                f"pre-roll {lead:.0f}s before banner\n"
                 f"{title[:80]}\n"
                 f"id={vid} source={h.source} (title rescan)"
             )

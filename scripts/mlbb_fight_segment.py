@@ -40,7 +40,7 @@ def _lead_sec() -> float:
 
 
 def banner_lead_sec(banner_tier: int | None = None) -> float:
-    """Pre-roll before kill banner — double/triple need prior kills visible."""
+    """Pre-roll before kill banner — double/triple/maniac/savage need prior kills visible."""
     base = float(
         os.environ.get(
             "MLBB_KILL_BANNER_LEAD_SEC",
@@ -55,12 +55,24 @@ def banner_lead_sec(banner_tier: int | None = None) -> float:
         except ValueError:
             pass
     tier = int(banner_tier or 0)
+
+    def _tier_lead(env_key: str, default_extra: float) -> float:
+        # Never allow tier-specific overrides to shrink below the global lead.
+        raw = (os.environ.get(env_key) or "").strip()
+        if raw:
+            try:
+                return max(base, float(raw))
+            except ValueError:
+                pass
+        return base + default_extra
+
     if tier >= 5:
-        return float(os.environ.get("MLBB_SAVAGE_BANNER_LEAD_SEC", str(base + 10.0)))
+        # Savage: show the whole streak before the final banner (~20s+ setup).
+        return _tier_lead("MLBB_SAVAGE_BANNER_LEAD_SEC", 10.0)
     if tier >= 4:
-        return float(os.environ.get("MLBB_MANIAC_BANNER_LEAD_SEC", str(base + 6.0)))
+        return _tier_lead("MLBB_MANIAC_BANNER_LEAD_SEC", 8.0)
     if tier >= 3:
-        return float(os.environ.get("MLBB_TRIPLE_BANNER_LEAD_SEC", str(base + 2.0)))
+        return _tier_lead("MLBB_TRIPLE_BANNER_LEAD_SEC", 2.0)
     return base
 
 
