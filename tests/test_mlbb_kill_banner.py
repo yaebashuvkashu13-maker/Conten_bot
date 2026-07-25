@@ -131,6 +131,112 @@ def test_bounds_never_puts_banner_at_2_3_seconds() -> None:
     assert dur >= 8.0
 
 
+def test_discover_hit_target_honors_send_all() -> None:
+    import mlbb_kill_banner as kb
+
+    old = {
+        k: os.environ.get(k)
+        for k in (
+            "MLBB_VOD_SEND_ALL_BANNERS",
+            "MLBB_KILL_BANNER_DISCOVER_MIN_HITS",
+            "MLBB_KILL_BANNER_DISCOVER_TARGET",
+            "MLBB_VOD_MAX_PER_VOD",
+        )
+    }
+    try:
+        os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MIN_HITS"] = "2"
+        os.environ.pop("MLBB_KILL_BANNER_DISCOVER_TARGET", None)
+        os.environ["MLBB_VOD_MAX_PER_VOD"] = "5"
+        assert kb._discover_hit_target() == 5
+
+        os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "0"
+        assert kb._discover_hit_target() == 2
+
+        os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "7"
+        assert kb._discover_hit_target() == 7
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_discover_keeps_sweeping_until_target() -> None:
+    """Spike pass must not stop at MIN_HITS=2 when SEND_ALL targets 5."""
+    import numpy as np
+    import mlbb_kill_banner as kb
+    from unittest.mock import patch
+
+    vod = Path("/tmp/fake_vod_target.mp4")
+    fake_analysis = {
+        "duration": 600.0,
+        "window_seconds": 2.0,
+        "center_motion": np.linspace(0.01, 0.9, 300, dtype=np.float32),
+        "audio": np.linspace(0.0, 0.8, 300, dtype=np.float32),
+    }
+    calls = {"n": 0}
+
+    def fake_probe_hits(*_a, **_kw):
+        calls["n"] += 1
+        # Emit a unique hit every call so merge keeps growing.
+        sec = 100.0 + calls["n"] * 20.0
+        return [
+            kb.KillBannerHit(sec=sec, tier=2, label="double", text="DOUBLE", source="ref")
+        ]
+
+    old = {
+        k: os.environ.get(k)
+        for k in (
+            "MLBB_VOD_BANNER_DISCOVER",
+            "MLBB_VOD_KILL_BANNER",
+            "MLBB_VOD_SEND_ALL_BANNERS",
+            "MLBB_KILL_BANNER_DISCOVER_MIN_HITS",
+            "MLBB_KILL_BANNER_DISCOVER_TARGET",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC",
+            "MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP",
+            "MLBB_VOD_BANNER_DISCOVER_SPIKE",
+            "MLBB_BANNER_REF_MATCH",
+        )
+    }
+    os.environ.update(
+        {
+            "MLBB_VOD_BANNER_DISCOVER": "1",
+            "MLBB_VOD_KILL_BANNER": "1",
+            "MLBB_VOD_SEND_ALL_BANNERS": "1",
+            "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
+            "MLBB_KILL_BANNER_DISCOVER_TARGET": "5",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "40",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "60",
+            "MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP": "30",
+            "MLBB_VOD_BANNER_DISCOVER_SPIKE": "1",
+            "MLBB_BANNER_REF_MATCH": "1",
+        }
+    )
+    try:
+        with (
+            patch("mlbb_fight_segment._analysis_for", return_value=fake_analysis),
+            patch.object(kb, "find_banner_near_peak", return_value=None),
+            patch.object(kb, "scan_window", side_effect=fake_probe_hits),
+            patch(
+                "mlbb_owner_learning.owner_kill_anchor_secs_for_path",
+                return_value=[],
+            ),
+        ):
+            hits = kb.discover_vod_kill_banners(vod, hint_peaks=[120.0, 200.0])
+        assert len(hits) >= 5
+        assert calls["n"] >= 5
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def test_discover_banners_handles_numpy_motion() -> None:
     import numpy as np
     import mlbb_kill_banner as kb

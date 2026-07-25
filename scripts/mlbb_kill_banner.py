@@ -168,6 +168,8 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     except ImportError:
         return ""
 
+    # Normalize to a stable canvas, then upscale OCR crops — Tesseract is often
+    # blind on raw 480p banner text (gold outline / small glyphs).
     small = cv2.resize(frame, (480, 270))
     h, w = small.shape[:2]
     zones = [
@@ -176,11 +178,18 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     ]
     if deep:
         zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
+    upscale = max(1.0, float(os.environ.get("MLBB_KILL_BANNER_OCR_UPSCALE", "2.0")))
     texts: list[str] = []
     psms = (7, 8, 6) if deep else (7,)
     for zone in zones:
         if zone.size == 0:
             continue
+        if upscale > 1.01:
+            zone = cv2.resize(
+                zone,
+                (max(8, int(zone.shape[1] * upscale)), max(8, int(zone.shape[0] * upscale))),
+                interpolation=cv2.INTER_CUBIC,
+            )
         gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
         variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
         if deep:
@@ -415,11 +424,11 @@ def scan_window(
     if quick:
         deep = False
         span = max(0.0, t1 - t0)
-        sample_count = max(3, min(6, int(span / 0.5) + 1))
+        sample_count = max(4, min(8, int(span / 0.4) + 1))
         frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
         if not frames:
-            frames = _sample_frames(vod, t0, t1)[:6]
-        max_ocr = 2
+            frames = _sample_frames(vod, t0, t1)[:8]
+        max_ocr = max(2, int(os.environ.get("MLBB_KILL_BANNER_QUICK_MAX_OCR", "3")))
     else:
         frames = _sample_frames(vod, t0, t1)
         max_ocr = 6 if deep else 4
@@ -475,6 +484,25 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
+def _discover_hit_target() -> int:
+    """
+    How many banners discover should try to collect before stopping early.
+
+    MIN_HITS alone was too low with SEND_ALL_BANNERS — spike sweep stopped after
+    2 hits and skipped the rest of the VOD.
+    """
+    want = max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "2")))
+    if os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") != "1":
+        return want
+    target = int(
+        os.environ.get(
+            "MLBB_KILL_BANNER_DISCOVER_TARGET",
+            os.environ.get("MLBB_VOD_MAX_PER_VOD", "5"),
+        )
+    )
+    return max(want, target)
+
+
 def discover_vod_kill_banners(
     vod: Path,
     *,
@@ -505,6 +533,7 @@ def discover_vod_kill_banners(
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
+    want = _discover_hit_target()
 
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or not _banner_hit_source_ok(hit.source):
@@ -520,38 +549,67 @@ def discover_vod_kill_banners(
         if probes >= max_probes or time.monotonic() >= deadline:
             return False
         probes += 1
+        # Wider probe window catches banners slightly after the motion spike.
+        half = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER", "3.0"))
         for hit in scan_window(
-            vod, t - 0.5, t + 2.5, focus_sec=t, deep=deep, allow_ocr=allow_ocr
+            vod, t - 0.75, t + max(2.5, half), focus_sec=t, deep=deep, allow_ocr=allow_ocr
         ):
             _merge_hit(hit)
             if hits:
                 return True
         return probes < max_probes and time.monotonic() < deadline
 
-    # Phase 1: narrow scan around stage1 motion peaks (fast).
+    # Seed with owner-confirmed kill times when labels exist for this VOD.
+    peak_hints: list[float] = list(hint_peaks or [])
+    try:
+        from mlbb_owner_learning import owner_kill_anchor_secs_for_path
+
+        anchors = owner_kill_anchor_secs_for_path(vod)
+        if anchors:
+            peak_hints = list(dict.fromkeys([*anchors, *peak_hints]))
+            log.info("banner discover %s: owner anchors=%s", vod.name, len(anchors))
+    except Exception as exc:
+        log.debug("owner kill anchors unavailable: %s", exc)
+
+    # Phase 1: narrow scan around stage1 motion peaks (fast), then full retry
+    # on a few misses — quick windows often stop just before the banner flash.
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")))
-    for peak in sorted(set(hint_peaks or []))[:peak_limit]:
+    full_retry = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "3")))
+    missed_peaks: list[float] = []
+    for peak in list(dict.fromkeys(peak_hints))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         probes += 1
         hit = find_banner_near_peak(vod, peak, quick=True)
         if hit:
             _merge_hit(hit)
+        else:
+            missed_peaks.append(peak)
+    for peak in missed_peaks[:full_retry]:
+        if probes >= max_probes or time.monotonic() >= deadline:
+            break
+        if len(hits) >= want:
+            break
+        probes += 1
+        hit = find_banner_near_peak(vod, peak, quick=False)
+        if hit:
+            _merge_hit(hit)
 
-    want = max(2, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "2")))
     force_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     # Bounded spike sweep when peaks-only is thin — finds banners motion peaks miss
-    # without the hours-long full-VOD OCR path.
+    # without the hours-long full-VOD OCR path. With SEND_ALL, `want` is the
+    # per-VOD target (not just MIN_HITS=2), so we keep sweeping until budget.
     need_spike = force_full or (
         os.environ.get("MLBB_VOD_BANNER_DISCOVER_SPIKE", "1") == "1" and len(hits) < want
     )
     if not need_spike:
         hits.sort(key=lambda h: h.sec)
         log.info(
-            "banner discover %s: peaks-only probes=%s hits=%s",
+            "banner discover %s: peaks-only probes=%s hits=%s target=%s",
             vod.name,
             probes,
             len(hits),
+            want,
         )
         return hits
 
@@ -573,7 +631,9 @@ def discover_vod_kill_banners(
             ),
         )
         if combined.size > 8:
-            thr = float(np.percentile(combined, 72))
+            spike_pct = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_SPIKE_PCT", "65"))
+            spike_pct = max(50.0, min(95.0, spike_pct))
+            thr = float(np.percentile(combined, spike_pct))
             idxs = [i for i, v in enumerate(combined) if float(v) >= thr]
             if len(idxs) > spike_cap:
                 step_i = max(1, len(idxs) // spike_cap)
@@ -583,12 +643,12 @@ def discover_vod_kill_banners(
         t0 = _adaptive_banner_scan_start(vod, duration)
         known = {round(h.sec / 4.0) for h in hits}
 
-        def _run_spike_pass(*, allow_ocr: bool, label: str) -> None:
+        def _run_spike_pass(*, allow_ocr: bool, label: str, stop_at: int) -> None:
             nonlocal probes
             for bi in idxs:
                 if probes >= max_probes or time.monotonic() >= deadline:
                     break
-                if len(hits) >= want and not force_full:
+                if len(hits) >= stop_at and not force_full:
                     break
                 t = bi * max(win, 0.5)
                 if t < t0 or t > duration - 4.0:
@@ -597,33 +657,39 @@ def discover_vod_kill_banners(
                     continue
                 if probes % 8 == 0:
                     log.info(
-                        "banner discover %s: %s probe=%s/%s t=%.0fs hits=%s",
+                        "banner discover %s: %s probe=%s/%s t=%.0fs hits=%s/%s",
                         vod.name,
                         label,
                         probes,
                         max_probes,
                         t,
                         len(hits),
+                        want,
                     )
                 if not _probe_at(t, deep=False, allow_ocr=allow_ocr):
                     break
                 if hits:
                     known.add(round(hits[-1].sec / 4.0))
 
-        _run_spike_pass(allow_ocr=False, label="ref")
+        _run_spike_pass(allow_ocr=False, label="ref", stop_at=want)
         if len(hits) < want and probes < max_probes and time.monotonic() < deadline:
-            # OCR fallback on remaining budget — fewer spikes.
-            idxs = idxs[: max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "8")))]
-            _run_spike_pass(allow_ocr=True, label="ocr")
+            # OCR fallback on remaining budget — more spikes when target > min hits.
+            ocr_spikes = max(
+                4,
+                int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "12")),
+            )
+            idxs = idxs[:ocr_spikes]
+            _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want)
 
     hits.sort(key=lambda h: h.sec)
     ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
     ocr_n = sum(1 for h in hits if str(h.source).startswith("ocr"))
     log.info(
-        "banner discover %s: done probes=%s hits=%s (ref=%s ocr=%s) elapsed=%.0fs",
+        "banner discover %s: done probes=%s hits=%s/%s (ref=%s ocr=%s) elapsed=%.0fs",
         vod.name,
         probes,
         len(hits),
+        want,
         ref_n,
         ocr_n,
         max_sec - max(0.0, deadline - time.monotonic()),
