@@ -223,21 +223,27 @@ def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "maniac"
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
     # Title-promised streaks: OCR is often blind on YouTube compressions.
-    # Slightly soften live owner-pos ref floor so known savage banks still hit.
+    # Soften live owner-pos ref floor so cross-VOD banks can still hit maniac/savage.
     os.environ["MLBB_BANNER_REF_MATCH"] = "1"
-    os.environ.setdefault("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.55")
+    os.environ.setdefault("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.48")
     os.environ.setdefault("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.45")
+    os.environ.setdefault("MLBB_BANNER_REF_COLOR_MUL", "0.85")
+    # Long pre-roll so clips start before the final kill, not on it.
+    os.environ.setdefault("MLBB_KILL_BANNER_LEAD_SEC", "16")
+    os.environ.setdefault("MLBB_MANIAC_BANNER_LEAD_SEC", "18")
+    os.environ.setdefault("MLBB_SAVAGE_BANNER_LEAD_SEC", "22")
+    os.environ.setdefault("MLBB_SAVAGE_CLIP_SEC", "30")
     if dense:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
         # Ops rescans should not inherit the live-feed 5s step.
-        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "2"
-        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(120, int(dur / 2) + 32))
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(180, int(dur) + 40))
         # Dense + OCR is slow; give title rescans a real wall budget.
         os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(
             max(480.0, min(1200.0, dur * 2.0 + 120.0))
         )
-        # Prefer more OCR attempts on title-promised streaks.
-        os.environ.setdefault("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "3")
+        # OCR on YT compressions is usually garbage — prefer ref; sparse OCR only.
+        os.environ.setdefault("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "8")
     else:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
         # Fast path: denser spike/OCR budget without 1 Hz full sweep.
