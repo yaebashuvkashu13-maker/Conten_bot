@@ -484,6 +484,37 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
+def _dense_scan_enabled() -> bool:
+    return os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1"
+
+
+def _discover_scan_start(vod: Path, duration: float) -> float:
+    """Earliest sec to scan — title-promised savage fights often start in first 2–3 min."""
+    try:
+        from mlbb_vod_title import title_scan_start_sec, vod_title_blob
+
+        blob = vod_title_blob(vod)
+        title_start = title_scan_start_sec(blob, duration)
+        if title_start is not None:
+            return float(title_start)
+    except Exception:
+        pass
+    return _adaptive_banner_scan_start(vod, duration)
+
+
+def _title_min_tier_override() -> int:
+    raw = os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "").strip()
+    if raw.isdigit():
+        return max(0, int(raw))
+    return 0
+
+
+def _effective_discover_min_tier(min_tier: int | None) -> int:
+    need = min_tier if min_tier is not None else _min_tier()
+    title_need = _title_min_tier_override()
+    return max(need, title_need) if title_need > 0 else need
+
+
 def _discover_hit_target() -> int:
     """
     How many banners discover should try to collect before stopping early.
@@ -525,11 +556,23 @@ def discover_vod_kill_banners(
     duration = float(analysis.get("duration") or 0.0)
     if duration < 20.0:
         return []
-    need = min_tier if min_tier is not None else _min_tier()
+    dense = _dense_scan_enabled()
+    need = _effective_discover_min_tier(min_tier)
     # Ref-first discover is cheap — allow more probes so screenshot bank covers the VOD.
     default_probes = "28" if os.environ.get("MLBB_BANNER_REF_MATCH", "1") == "1" else "16"
-    max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", default_probes)))
-    max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
+    if dense:
+        scan_span = max(60.0, duration - _discover_scan_start(vod, duration))
+        max_probes = max(
+            int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "96")),
+            int(scan_span) + 16,
+            min(1800, int(duration) + 32),
+        )
+        max_sec = max(120.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "900")))
+        dense_step = min(1.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "1.0")))
+    else:
+        max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", default_probes)))
+        max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
+        dense_step = 1.0
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
@@ -588,12 +631,87 @@ def discover_vod_kill_banners(
     for peak in missed_peaks[:full_retry]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
-        if len(hits) >= want:
+        if len(hits) >= want and not dense:
             break
         probes += 1
         hit = find_banner_near_peak(vod, peak, quick=False)
         if hit:
             _merge_hit(hit)
+
+    # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
+    if dense and probes < max_probes and time.monotonic() < deadline:
+        t0 = _discover_scan_start(vod, duration)
+        span = max(8.0, duration - t0 - 2.0)
+        log.info(
+            "banner discover %s: dense_1hz start=%.0fs span=%.0fs max_probes=%s max_sec=%.0f need_tier=%s",
+            vod.name,
+            t0,
+            span,
+            max_probes,
+            max_sec,
+            need,
+        )
+        try:
+            import cv2
+
+            cap = cv2.VideoCapture(str(vod))
+        except Exception:
+            cap = None
+        color_floor = _color_min_score() * 0.65
+        t = t0
+        step_i = 0
+        while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            probes += 1
+            frame = None
+            if cap is not None:
+                try:
+                    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t) * 1000.0)
+                    ok, frame = cap.read()
+                    if not ok:
+                        frame = None
+                except Exception:
+                    frame = None
+            if frame is None:
+                from gameplay_gate import _read_frame_at
+
+                frame = _read_frame_at(vod, t)
+            if frame is not None and _announce_color_score(frame) >= color_floor:
+                hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
+                if hit is not None:
+                    _merge_hit(hit)
+            if step_i % 60 == 0 or step_i < 3:
+                log.info(
+                    "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
+                    vod.name,
+                    t,
+                    probes,
+                    max_probes,
+                    len(hits),
+                )
+            t += dense_step
+            step_i += 1
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        hits.sort(key=lambda h: h.sec)
+        ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
+        ocr_n = sum(1 for h in hits if str(h.source).startswith("ocr"))
+        log.info(
+            "banner discover %s: dense=%s probes=%s hits=%s/%s need_tier=%s (ref=%s ocr=%s)",
+            vod.name,
+            dense,
+            probes,
+            len(hits),
+            want,
+            need,
+            ref_n,
+            ocr_n,
+        )
+        return hits
 
     force_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     # Bounded spike sweep when peaks-only is thin — finds banners motion peaks miss
@@ -605,11 +723,12 @@ def discover_vod_kill_banners(
     if not need_spike:
         hits.sort(key=lambda h: h.sec)
         log.info(
-            "banner discover %s: peaks-only probes=%s hits=%s target=%s",
+            "banner discover %s: peaks-only probes=%s hits=%s target=%s need_tier=%s",
             vod.name,
             probes,
             len(hits),
             want,
+            need,
         )
         return hits
 
@@ -640,7 +759,7 @@ def discover_vod_kill_banners(
                 idxs = idxs[::step_i][:spike_cap]
         else:
             idxs = list(range(combined.size))
-        t0 = _adaptive_banner_scan_start(vod, duration)
+        t0 = _discover_scan_start(vod, duration)
         known = {round(h.sec / 4.0) for h in hits}
 
         def _run_spike_pass(*, allow_ocr: bool, label: str, stop_at: int) -> None:
@@ -685,7 +804,7 @@ def discover_vod_kill_banners(
     ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
     ocr_n = sum(1 for h in hits if str(h.source).startswith("ocr"))
     log.info(
-        "banner discover %s: done probes=%s hits=%s/%s (ref=%s ocr=%s) elapsed=%.0fs",
+        "banner discover %s: done probes=%s hits=%s/%s (ref=%s ocr=%s) elapsed=%.0fs need_tier=%s",
         vod.name,
         probes,
         len(hits),
@@ -693,6 +812,7 @@ def discover_vod_kill_banners(
         ref_n,
         ocr_n,
         max_sec - max(0.0, deadline - time.monotonic()),
+        need,
     )
     return hits
 

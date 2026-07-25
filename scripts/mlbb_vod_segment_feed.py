@@ -80,6 +80,24 @@ def _vod_min_sec() -> float:
     return float(os.environ.get("MLBB_VOD_MIN_SEC", "180"))
 
 
+def _effective_vod_min_sec(meta: dict | None = None) -> float:
+    """Allow short savage/maniac montages when title promises kill streak."""
+    base = _vod_min_sec()
+    if os.environ.get("MLBB_VOD_SAVAGE_SHORT_OK", "1") != "1":
+        return base
+    if meta is None:
+        return base
+    try:
+        from mlbb_vod_title import title_promises_kill_streak
+
+        title = str(meta.get("title") or "")
+        if title_promises_kill_streak(title.lower()):
+            return min(base, float(os.environ.get("MLBB_VOD_SAVAGE_SHORT_MIN_SEC", "60")))
+    except Exception:
+        pass
+    return base
+
+
 def _vod_max_sec() -> float:
     return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
 
@@ -473,7 +491,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         vod_max_age_days,
     )
 
-    min_sec = _vod_min_sec()
+    min_sec = _effective_vod_min_sec()
     max_sec = _vod_max_sec()
     target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
@@ -532,6 +550,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         seen.add(vid)
         title = str(meta.get("title") or "")
         dur = float(meta.get("duration") or 0)
+        eff_min = _effective_vod_min_sec(meta)
         if LIVE_TITLE_RE.search(title) or LONG_VOD_TITLE_RE.search(title):
             skipped["live_or_long"] = skipped.get("live_or_long", 0) + 1
             continue
@@ -540,7 +559,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         if not passes_mlbb_game_title(title):
             skipped["not_mlbb"] = skipped.get("not_mlbb", 0) + 1
             continue
-        if dur < min_sec or dur > max_sec:
+        if dur < eff_min or dur > max_sec:
             skipped["duration"] = skipped.get("duration", 0) + 1
             continue
         uploader = normalize_uploader(meta)
@@ -1443,6 +1462,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 except (TypeError, ValueError):
                     tier_i = 0
                 min_tier = _min_tier()
+                title_min = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+                if title_min > min_tier:
+                    min_tier = title_min
                 if tier_i < min_tier:
                     return (
                         False,
@@ -2219,6 +2241,31 @@ def _process_vod_segments(
     sig = file_sha256(vod)
     sent = load_feed_sent()
     vid = vod_youtube_id(vod)
+    # Title-aware scan: savage/maniac in title → early dense discover + min banner tier.
+    try:
+        from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
+
+        title_blob = vod_title_blob(vod, entry)
+        os.environ["MLBB_VOD_SCAN_TITLE"] = str((entry or {}).get("title") or "")
+        title_tier = title_min_banner_tier(title_blob)
+        if title_tier > 0:
+            os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
+            # Dense 1 Hz only when title promises a high streak — keeps normal VODs fast.
+            if title_promises_kill_streak(title_blob) and os.environ.get(
+                "MLBB_VOD_TITLE_DENSE_AUTO", "1"
+            ) == "1":
+                os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+            log.info(
+                "title_gate vod=%s tier_need=%s dense=%s blob=%s",
+                vod.name,
+                title_tier,
+                os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0"),
+                title_blob[:80],
+            )
+        else:
+            os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
+    except Exception as exc:
+        log.warning("title_gate skipped: %s", exc)
     state_pre = _load_state()
     streak_in = streak_from_state(state_pre)
     prev_level = int(state_pre.get("last_adaptive_level") or 0)

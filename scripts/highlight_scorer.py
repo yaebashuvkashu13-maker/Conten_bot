@@ -1108,11 +1108,33 @@ def rule_gate(
         return True, f"mlbb_fight_ok combat={combat:.3f}"
 
     if profile == "wot":
-        if metrics.panns_explosion < 0.20 and metrics.panns_gun_max < 0.20:
-            return False, f"panns_explosion_low={metrics.panns_explosion:.3f}"
-        if metrics.clip_score <= 0.03:
-            return False, f"clip_low={metrics.clip_score:.3f}"
-        return True, "wot_impact_ok"
+        # Blitz VODs often have silent/misclassified PANNs — prefer visual brawl.
+        if metrics.panns_explosion >= 0.20 or metrics.panns_gun_max >= 0.20:
+            if metrics.clip_score <= 0.03:
+                return False, f"clip_low={metrics.clip_score:.3f}"
+            return True, "wot_impact_ok"
+        if video_path is not None and os.environ.get("WOT_BRAWL_GATE", "1") == "1":
+            try:
+                from wot_brawl_segment import validate_wot_brawl_segment
+
+                ok, reason, _rep = validate_wot_brawl_segment(
+                    video_path, start_sec, duration_sec
+                )
+                if ok:
+                    return True, reason or "wot_brawl_ok"
+                # Keep probing softer visual fallback below; don't hard-fail yet.
+                soft_reason = reason
+            except Exception as exc:
+                soft_reason = f"wot_brawl_err={exc}"
+        else:
+            soft_reason = "wot_panns_silent"
+        motion_min = float(os.environ.get("WOT_RULE_MOTION_MIN", "0.035"))
+        clip_min = float(os.environ.get("WOT_RULE_CLIP_MIN", "0.10"))
+        if metrics.center_motion >= motion_min and metrics.clip_score >= clip_min:
+            return True, f"wot_visual_ok:{soft_reason}"
+        if metrics.center_motion < motion_min:
+            return False, f"wot_motion_low={metrics.center_motion:.3f}:thr{motion_min:.3f}"
+        return False, f"clip_low={metrics.clip_score:.3f}:thr{clip_min:.3f}"
 
     return False, "unknown_profile"
 
@@ -1201,6 +1223,9 @@ def score_candidate_window(
         m.classifier_prob = 0.5
 
     combat_authoritative = profile in SHOOTER_PROFILES and m.rule_pass
+    if profile == "wot" and m.rule_pass:
+        # WoT combat is visual/brawl-authoritative; PANNs classifier is not trained for Blitz.
+        combat_authoritative = True
     clf_ok = m.classifier_prob >= CLASSIFIER_MIN
     if not classifier_available(profile) and m.rule_pass and m.visual_pass:
         clf_ok = True
@@ -1212,14 +1237,37 @@ def score_candidate_window(
     ):
         # Legacy bypass when no MLBB-trained classifier is active.
         clf_ok = True
+    if (
+        profile == "wot"
+        and m.rule_pass
+        and m.visual_pass
+        and os.environ.get("WOT_USE_CLASSIFIER", "0") != "1"
+    ):
+        clf_ok = True
+    if (
+        profile == "genshin"
+        and m.rule_pass
+        and m.visual_pass
+        and os.environ.get("GENSHIN_USE_CLASSIFIER", "0") != "1"
+    ):
+        clf_ok = True
     if m.rule_pass and (combat_authoritative or clf_ok):
-        m.combined_score = (
-            m.panns_gun_max * 0.45
-            + max(m.clip_score, 0) * 0.35
-            + m.classifier_prob * 0.15
-            + m.center_motion * 0.05
-            + min(m.ocr_hits, 3) * 0.02
-        )
+        if profile == "wot":
+            m.combined_score = (
+                max(m.clip_score, 0) * 0.45
+                + m.center_motion * 0.25
+                + m.classifier_prob * 0.10
+                + max(m.panns_gun_max, m.panns_explosion) * 0.15
+                + min(m.ocr_hits, 3) * 0.02
+            )
+        else:
+            m.combined_score = (
+                m.panns_gun_max * 0.45
+                + max(m.clip_score, 0) * 0.35
+                + m.classifier_prob * 0.15
+                + m.center_motion * 0.05
+                + min(m.ocr_hits, 3) * 0.02
+            )
         if segment_overlaps_owner_label(
             video_path,
             start_sec,
@@ -1234,9 +1282,10 @@ def score_candidate_window(
         m.combined_score = 0.0
         gate_reason = m.pass_reason or rule_reason
         m.rule_pass = False
-        if profile in SHOOTER_PROFILES:
+        # Never mask the real gate failure behind a neutral classifier default (0.5).
+        if profile in SHOOTER_PROFILES or profile == "wot":
             m.pass_reason = gate_reason or "combat_gate_fail"
-        elif not clf_ok:
+        elif not clf_ok and classifier_available(profile):
             m.pass_reason = f"classifier_low={m.classifier_prob:.3f}"
         elif not m.pass_reason:
             m.pass_reason = gate_reason or "rule_fail"
@@ -1673,6 +1722,9 @@ def _accept_highlight_candidate(
             if combat_min >= hook_min:
                 combat_min = default_combat
             hook_min = min(hook_min, combat_min)
+    elif profile == "wot" and metrics.visual_pass and metrics.rule_pass:
+        # Dense hit-flash seeds often have mid hook; don't require viral short energy.
+        hook_min = min(hook_min, float(os.environ.get("VIRAL_WOT_HOOK_MIN", "0.08")))
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends":
             clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.18"))
@@ -1758,7 +1810,19 @@ def discover_highlight_candidates(
             start_set = set(starts)
             banners: list = []
             if use_discover:
-                banners = discover_vod_kill_banners(video_path, hint_peaks=starts)
+                from mlbb_vod_title import title_min_banner_tier, vod_title_blob
+
+                title_blob = vod_title_blob(video_path)
+                title_tier = title_min_banner_tier(title_blob)
+                if title_tier > 0:
+                    os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
+                    if os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1":
+                        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+                banners = discover_vod_kill_banners(
+                    video_path,
+                    hint_peaks=starts,
+                    min_tier=title_tier if title_tier > 0 else None,
+                )
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
             if banners:
                 banner_hit_count = len(banners)
