@@ -1723,8 +1723,9 @@ def _accept_highlight_candidate(
                 combat_min = default_combat
             hook_min = min(hook_min, combat_min)
     elif profile == "wot" and metrics.visual_pass and metrics.rule_pass:
-        # Dense hit-flash seeds often have mid hook; don't require viral short energy.
-        hook_min = min(hook_min, float(os.environ.get("VIRAL_WOT_HOOK_MIN", "0.08")))
+        # Dense hit-flash seeds often have low viral hook; force a low floor (do not
+        # min() against VIRAL_SEGMENT_HOOK_MIN — on VPS that is already 0.06).
+        hook_min = float(os.environ.get("VIRAL_WOT_HOOK_MIN", "0.02"))
     if metrics.hook_score < hook_min:
         if profile == "mobile_legends":
             clip_bypass = float(os.environ.get("VIRAL_MLBB_CLIP_HOOK_MIN", "0.18"))
