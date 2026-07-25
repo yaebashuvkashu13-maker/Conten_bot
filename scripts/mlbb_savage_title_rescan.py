@@ -42,6 +42,75 @@ def _out_dir() -> Path:
     return p
 
 
+def _sent_registry_path() -> Path:
+    return Path(
+        os.environ.get(
+            "MLBB_SAVAGE_SENT_REGISTRY",
+            str(Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb")) / "savage_title_sent.json"),
+        )
+    )
+
+
+def _send_dedup_gap_sec() -> float:
+    return max(15.0, float(os.environ.get("MLBB_SAVAGE_SEND_DEDUP_SEC", "45")))
+
+
+def _load_sent_registry() -> dict:
+    path = _sent_registry_path()
+    if not path.exists():
+        return {"clips": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"clips": []}
+    if not isinstance(data, dict):
+        return {"clips": []}
+    clips = data.get("clips")
+    if not isinstance(clips, list):
+        data["clips"] = []
+    return data
+
+
+def _save_sent_registry(data: dict) -> None:
+    path = _sent_registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _already_sent_near(registry: dict, video_id: str, sec: float, *, gap: float | None = None) -> bool:
+    gap = _send_dedup_gap_sec() if gap is None else gap
+    for row in registry.get("clips") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("id") or "") != video_id:
+            continue
+        try:
+            prev = float(row.get("sec") or -999)
+        except (TypeError, ValueError):
+            continue
+        if abs(prev - sec) < gap:
+            return True
+    return False
+
+
+def _mark_sent(registry: dict, *, video_id: str, sec: float, label: str, source: str, file: str) -> None:
+    clips = registry.setdefault("clips", [])
+    clips.append(
+        {
+            "id": video_id,
+            "sec": round(float(sec), 2),
+            "label": label,
+            "source": source,
+            "file": file,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    # Keep registry bounded.
+    if len(clips) > 500:
+        registry["clips"] = clips[-500:]
+    _save_sent_registry(registry)
+
+
 def _load_queue() -> list[dict]:
     path = _queue_path()
     if not path.exists():
@@ -223,6 +292,8 @@ def scan_and_send(
     lead = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "8")))
     tail = float(os.environ.get("MLBB_KILL_BANNER_TAIL_SEC", "6"))
     clip_dur = float(os.environ.get("MLBB_SAVAGE_CLIP_SEC", "18"))
+    dedup_gap = _send_dedup_gap_sec()
+    sent_reg = _load_sent_registry()
 
     for row in queue:
         if sent >= max_clips:
@@ -250,10 +321,13 @@ def scan_and_send(
         # Prefer OCR-confirmed banners; ref-only is allowed as fallback.
         ocr_high = [h for h in high if str(h.source).startswith("ocr")]
         pool = ocr_high or high
-        # Dedup near-duplicate banners.
+        # Dedup near-duplicate banners within this run + across prior rescans.
         kept = []
         for h in sorted(pool, key=lambda x: (-x.tier, 0 if str(x.source).startswith("ocr") else 1, x.sec)):
-            if any(abs(h.sec - k.sec) < 20.0 for k in kept):
+            if any(abs(h.sec - k.sec) < dedup_gap for k in kept):
+                continue
+            if _already_sent_near(sent_reg, vid, h.sec, gap=dedup_gap):
+                log.info("skip already-sent near vod=%s sec=%.1f gap=%.0fs", vid, h.sec, dedup_gap)
                 continue
             kept.append(h)
         log.info(
@@ -274,6 +348,8 @@ def scan_and_send(
         for h in kept:
             if sent >= max_clips:
                 break
+            if _already_sent_near(sent_reg, vid, h.sec, gap=dedup_gap):
+                continue
             start = max(0.0, h.sec - lead)
             dur_clip = min(clip_dur, lead + tail)
             out = _out_dir() / f"yt_{vid}_{h.label}_{int(h.sec)}.mp4"
@@ -301,6 +377,14 @@ def scan_and_send(
             log.info("send %s ok=%s", out.name, ok)
             if ok:
                 entry["sent"].append({"file": out.name, "sec": h.sec, "tier": h.tier, "label": h.label})
+                _mark_sent(
+                    sent_reg,
+                    video_id=vid,
+                    sec=h.sec,
+                    label=h.label,
+                    source=h.source,
+                    file=out.name,
+                )
                 sent += 1
         report.append(entry)
 
