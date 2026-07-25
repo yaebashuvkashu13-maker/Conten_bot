@@ -99,6 +99,20 @@ def probe_segment(
     return metrics
 
 
+def _wot_cruise_impact_cap(min_impact: float) -> float:
+    """Max impact still treated as 'cruise' when motion is high (lower = more permissive)."""
+    raw = os.environ.get(
+        "SMART_WOT_CRUISE_IMPACT_CAP",
+        os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", ""),
+    )
+    if raw.strip():
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return max(min_impact * 1.35, 0.050)
+
+
 def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject tank cruise: motion without sustained hits."""
     if os.environ.get("WOT_BRAWL_GATE", "1") == "1":
@@ -107,11 +121,12 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
         flashes = int(metrics.get("hit_flash_count", 0))
         min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
         min_flashes = max(1, int(os.environ.get("WOT_BRAWL_MIN_HIT_FLASHES", "2")))
+        cruise_cap = _wot_cruise_impact_cap(min_impact)
         if flashes and flashes < min_flashes:
             return True, f"low_hit_flashes={flashes}:need{min_flashes}"
         if impact < min_impact:
             return True, f"no_hits=density{impact:.3f}"
-        if motion >= 0.10 and impact < 0.05:
+        if motion >= 0.10 and impact < cruise_cap:
             return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
         burst = float(metrics.get("burst_ratio", 0))
         if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
@@ -121,9 +136,10 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     motion = float(metrics.get("center_motion", 0))
     burst = float(metrics.get("burst_ratio", 0))
     min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
+    cruise_cap = _wot_cruise_impact_cap(min_impact)
     if impact < min_impact:
         return True, f"no_hits=density{impact:.3f}"
-    if motion >= 0.10 and impact < max(min_impact * 1.35, 0.070):
+    if motion >= 0.10 and impact < cruise_cap:
         return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
     if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
         return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"
