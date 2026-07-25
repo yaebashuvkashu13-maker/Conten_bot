@@ -659,7 +659,7 @@ def _handle_shooter_vseg_callback(
     message_id: int,
     query_id: str,
 ) -> bool:
-    """Handle pubg_vseg_* / standoff_vseg_* callbacks. Returns True if handled."""
+    """Handle {game}_vseg_* callbacks for PUBG/Standoff/Genshin/WoT. Returns True if handled."""
     prefix = f'{game.strip().lower()}_vseg'
     if not data.startswith(f'{prefix}_'):
         return False
@@ -968,6 +968,9 @@ def _handle_game_shorts_callback(
     prefix = g
     if not data.startswith(f'{prefix}_'):
         return False
+    # VOD segment callbacks are `{game}_vseg_*` — never treat as Shorts calibration.
+    if data.startswith(f'{prefix}_vseg_'):
+        return False
 
     if data == f'{prefix}_noop':
         api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
@@ -1136,7 +1139,8 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    # VOD segment buttons for all non-MLBB games (pubg/standoff/genshin/wot).
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
