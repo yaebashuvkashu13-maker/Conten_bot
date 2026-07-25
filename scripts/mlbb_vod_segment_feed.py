@@ -636,11 +636,13 @@ def _download_vod_ytdlp_throttled(url: str, env: dict[str, str], *, video_id: st
         timeout=int(vod_env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
         env=subprocess_env_no_proxy(vod_env),
     )
+    from video_frame_io import ensure_h264_mp4
+
     if expected.exists() and expected.stat().st_size > 0:
-        return expected
+        return ensure_h264_mp4(expected)
     matches = [p for p in INBOX.glob(f"yt_{vid}*.mp4") if p.stat().st_size > 0]
     if matches:
-        return max(matches, key=lambda p: p.stat().st_mtime)
+        return ensure_h264_mp4(max(matches, key=lambda p: p.stat().st_mtime))
     files = [p for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 0]
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url} (id={vid})")

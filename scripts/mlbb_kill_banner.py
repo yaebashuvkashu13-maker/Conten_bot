@@ -659,7 +659,17 @@ def discover_vod_kill_banners(
         )
         from gameplay_gate import _read_frame_at
 
-        color_floor = _color_min_score() * 0.65
+        color_floor = _color_min_score() * float(
+            os.environ.get("MLBB_KILL_BANNER_DENSE_COLOR_MUL", "0.65")
+        )
+        # Title-promised maniac/savage: force periodic OCR even when gold flash is weak
+        # (white/EN banners often sit under the color floor and were skipped forever).
+        title_ocr_every = 0
+        if need >= 4:
+            title_ocr_every = max(
+                0,
+                int(os.environ.get("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "4")),
+            )
         t = t0
         step_i = 0
         while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
@@ -667,10 +677,13 @@ def discover_vod_kill_banners(
             frame = _read_frame_at(vod, t)
             if frame is not None:
                 color = _announce_color_score(frame)
-                if color >= color_floor:
-                    # Ref/color-cheap first; OCR only on stronger announce flashes.
+                force_ocr = title_ocr_every > 0 and (step_i % title_ocr_every == 0)
+                if color >= color_floor or force_ocr:
+                    # Ref/color-cheap first; OCR on stronger flashes or title cadence.
                     hit = _classify_frame(t, frame, deep=False, allow_ocr=False)
-                    if hit is None and color >= color_floor * 1.15:
+                    if hit is None and (
+                        force_ocr or color >= color_floor * 1.15
+                    ):
                         hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
                     if hit is not None:
                         _merge_hit(hit)

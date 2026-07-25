@@ -52,6 +52,8 @@ def _load_queue() -> list[dict]:
 
 
 def _ensure_vod(video_id: str, path_hint: str | None = None) -> Path | None:
+    from video_frame_io import ensure_h264_mp4
+
     inbox = _inbox()
     inbox.mkdir(parents=True, exist_ok=True)
     candidates = [
@@ -60,13 +62,19 @@ def _ensure_vod(video_id: str, path_hint: str | None = None) -> Path | None:
     ]
     for p in candidates:
         if p and p.is_file() and p.stat().st_size > 2_000_000:
-            return p
+            return ensure_h264_mp4(p)
     url = f"https://www.youtube.com/watch?v={video_id}"
     out_tmpl = str(inbox / f"yt_{video_id}.%(ext)s")
+    # Prefer AVC1 so OpenCV/dense OCR do not stall on AV1.
+    fmt = os.environ.get(
+        "YOUTUBE_FORMAT",
+        "bv*[height<=720][vcodec^=avc1]+ba/b[height<=720][vcodec^=avc1]/"
+        "bv*[height<=720]+ba/b[height<=720]/b",
+    )
     cmd = [
         "yt-dlp",
         "-f",
-        "bv*[height<=720]+ba/b[height<=720]/b",
+        fmt,
         "--merge-output-format",
         "mp4",
         "-o",
@@ -79,7 +87,9 @@ def _ensure_vod(video_id: str, path_hint: str | None = None) -> Path | None:
         log.warning("download failed id=%s code=%s", video_id, proc.returncode)
         return None
     final = inbox / f"yt_{video_id}.mp4"
-    return final if final.is_file() else None
+    if not final.is_file():
+        return None
+    return ensure_h264_mp4(final)
 
 
 def _ffprobe_duration(vod: Path) -> float:
@@ -227,9 +237,12 @@ def scan_and_send(
             _prepare_env_for_scan(title, dur, tier_need, dense=True)
             hits = discover_vod_kill_banners(vod, min_tier=need)
             high = [h for h in hits if h.tier >= need]
+        # Prefer OCR-confirmed banners; ref-only is allowed as fallback.
+        ocr_high = [h for h in high if str(h.source).startswith("ocr")]
+        pool = ocr_high or high
         # Dedup near-duplicate banners.
         kept = []
-        for h in sorted(high, key=lambda x: (-x.tier, x.sec)):
+        for h in sorted(pool, key=lambda x: (-x.tier, 0 if str(x.source).startswith("ocr") else 1, x.sec)):
             if any(abs(h.sec - k.sec) < 20.0 for k in kept):
                 continue
             kept.append(h)
