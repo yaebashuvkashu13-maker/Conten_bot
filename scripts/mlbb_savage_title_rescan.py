@@ -158,7 +158,12 @@ def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool
         # Ops rescans should not inherit the live-feed 5s step.
         os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "2"
         os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(120, int(dur / 2) + 32))
-        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max(240.0, min(720.0, dur * 0.8)))
+        # Dense + OCR is slow; give title rescans a real wall budget.
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(
+            max(480.0, min(1200.0, dur * 2.0 + 120.0))
+        )
+        # Prefer more OCR attempts on title-promised streaks.
+        os.environ.setdefault("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "3")
     else:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
         # Fast path: denser spike/OCR budget without 1 Hz full sweep.

@@ -658,6 +658,7 @@ def discover_vod_kill_banners(
             need,
         )
         from gameplay_gate import _read_frame_at
+        import cv2
 
         color_floor = _color_min_score() * float(
             os.environ.get("MLBB_KILL_BANNER_DENSE_COLOR_MUL", "0.65")
@@ -670,34 +671,50 @@ def discover_vod_kill_banners(
                 0,
                 int(os.environ.get("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "4")),
             )
+        # Reuse one OpenCV capture for H.264; fall back to per-seek ffmpeg for AV1/VP9.
+        dense_cap = None
+        try:
+            from video_frame_io import prefer_ffmpeg_decode
+
+            if not prefer_ffmpeg_decode(vod):
+                dense_cap = cv2.VideoCapture(str(vod))
+                if dense_cap is not None and not dense_cap.isOpened():
+                    dense_cap.release()
+                    dense_cap = None
+        except Exception:
+            dense_cap = None
         t = t0
         step_i = 0
-        while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
-            probes += 1
-            frame = _read_frame_at(vod, t)
-            if frame is not None:
-                color = _announce_color_score(frame)
-                force_ocr = title_ocr_every > 0 and (step_i % title_ocr_every == 0)
-                if color >= color_floor or force_ocr:
-                    # Ref/color-cheap first; OCR on stronger flashes or title cadence.
-                    hit = _classify_frame(t, frame, deep=False, allow_ocr=False)
-                    if hit is None and (
-                        force_ocr or color >= color_floor * 1.15
-                    ):
-                        hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
-                    if hit is not None:
-                        _merge_hit(hit)
-            if step_i % 30 == 0 or step_i < 3:
-                log.info(
-                    "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
-                    vod.name,
-                    t,
-                    probes,
-                    max_probes,
-                    len(hits),
-                )
-            t += dense_step
-            step_i += 1
+        try:
+            while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+                probes += 1
+                frame = _read_frame_at(vod, t, dense_cap)
+                if frame is not None:
+                    color = _announce_color_score(frame)
+                    force_ocr = title_ocr_every > 0 and (step_i % title_ocr_every == 0)
+                    if color >= color_floor or force_ocr:
+                        # Ref/color-cheap first; OCR on stronger flashes or title cadence.
+                        hit = _classify_frame(t, frame, deep=False, allow_ocr=False)
+                        if hit is None and (
+                            force_ocr or color >= color_floor * 1.15
+                        ):
+                            hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
+                        if hit is not None:
+                            _merge_hit(hit)
+                if step_i % 30 == 0 or step_i < 3:
+                    log.info(
+                        "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
+                        vod.name,
+                        t,
+                        probes,
+                        max_probes,
+                        len(hits),
+                    )
+                t += dense_step
+                step_i += 1
+        finally:
+            if dense_cap is not None:
+                dense_cap.release()
         hits.sort(key=lambda h: h.sec)
         ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
         ocr_n = sum(1 for h in hits if str(h.source).startswith("ocr"))
