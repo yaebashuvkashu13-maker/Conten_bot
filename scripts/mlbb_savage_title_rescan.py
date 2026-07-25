@@ -145,9 +145,8 @@ def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
     if dense:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
-        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = os.environ.get(
-            "MLBB_KILL_BANNER_DISCOVER_STEP", "2"
-        )
+        # Ops rescans should not inherit the live-feed 5s step.
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "2"
         os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(120, int(dur / 2) + 32))
         os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max(240.0, min(720.0, dur * 0.8)))
     else:
