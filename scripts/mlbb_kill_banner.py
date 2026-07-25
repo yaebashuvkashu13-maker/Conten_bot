@@ -642,46 +642,39 @@ def discover_vod_kill_banners(
     if dense and probes < max_probes and time.monotonic() < deadline:
         t0 = _discover_scan_start(vod, duration)
         span = max(8.0, duration - t0 - 2.0)
+        # Default 2s step keeps title rescans practical; set DISCOVER_STEP=1 for true 1 Hz.
+        dense_step = max(
+            1.0,
+            float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_STEP", "2.0")),
+        )
         log.info(
-            "banner discover %s: dense_1hz start=%.0fs span=%.0fs max_probes=%s max_sec=%.0f need_tier=%s",
+            "banner discover %s: dense_1hz start=%.0fs span=%.0fs step=%.1fs max_probes=%s max_sec=%.0f need_tier=%s",
             vod.name,
             t0,
             span,
+            dense_step,
             max_probes,
             max_sec,
             need,
         )
-        try:
-            import cv2
+        from gameplay_gate import _read_frame_at
 
-            cap = cv2.VideoCapture(str(vod))
-        except Exception:
-            cap = None
         color_floor = _color_min_score() * 0.65
         t = t0
         step_i = 0
         while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
-            if probes >= max_probes or time.monotonic() >= deadline:
-                break
             probes += 1
-            frame = None
-            if cap is not None:
-                try:
-                    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t) * 1000.0)
-                    ok, frame = cap.read()
-                    if not ok:
-                        frame = None
-                except Exception:
-                    frame = None
-            if frame is None:
-                from gameplay_gate import _read_frame_at
-
-                frame = _read_frame_at(vod, t)
-            if frame is not None and _announce_color_score(frame) >= color_floor:
-                hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
-                if hit is not None:
-                    _merge_hit(hit)
-            if step_i % 60 == 0 or step_i < 3:
+            frame = _read_frame_at(vod, t)
+            if frame is not None:
+                color = _announce_color_score(frame)
+                if color >= color_floor:
+                    # Ref/color-cheap first; OCR only on stronger announce flashes.
+                    hit = _classify_frame(t, frame, deep=False, allow_ocr=False)
+                    if hit is None and color >= color_floor * 1.15:
+                        hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
+                    if hit is not None:
+                        _merge_hit(hit)
+            if step_i % 30 == 0 or step_i < 3:
                 log.info(
                     "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
                     vod.name,
@@ -692,11 +685,6 @@ def discover_vod_kill_banners(
                 )
             t += dense_step
             step_i += 1
-        if cap is not None:
-            try:
-                cap.release()
-            except Exception:
-                pass
         hits.sort(key=lambda h: h.sec)
         ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
         ocr_n = sum(1 for h in hits if str(h.source).startswith("ocr"))

@@ -136,16 +136,30 @@ def _render_clip(vod: Path, start: float, dur: float, out: Path) -> bool:
     return subprocess.run(cmd, check=False, timeout=300).returncode == 0
 
 
-def _prepare_env_for_dense(title: str, dur: float, tier_need: int) -> None:
-    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool) -> None:
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_VOD_SCAN_TITLE"] = title
     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(max(4, tier_need))
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "maniac"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(400, int(dur) + 64))
-    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max(600.0, min(1800.0, dur * 1.2)))
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
+    if dense:
+        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = os.environ.get(
+            "MLBB_KILL_BANNER_DISCOVER_STEP", "2"
+        )
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(max(120, int(dur / 2) + 32))
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max(240.0, min(720.0, dur * 0.8)))
+    else:
+        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+        # Fast path: denser spike/OCR budget without 1 Hz full sweep.
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = str(
+            max(48, int(os.environ.get("MLBB_SAVAGE_SPIKE_PROBES", "64")))
+        )
+        os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP"] = "40"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "24"
+        os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = str(max(180.0, min(420.0, dur * 0.5)))
+        os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "6"
 
 
 def scan_and_send(
