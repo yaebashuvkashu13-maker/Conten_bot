@@ -216,13 +216,18 @@ def scan_and_send(
             report.append({"id": vid, "error": "download_failed"})
             continue
         dur = _ffprobe_duration(vod)
-        _prepare_env_for_dense(title, dur, tier_need)
         blob = vod_title_blob(vod, {"title": title})
         need = max(4, title_min_banner_tier(blob) or tier_need)
         log.info("scan vod=%s need_tier=%s dur=%.0fs title=%s", vod.name, need, dur, title[:70])
         t0 = time.monotonic()
+        _prepare_env_for_scan(title, dur, tier_need, dense=False)
         hits = discover_vod_kill_banners(vod, min_tier=need)
         high = [h for h in hits if h.tier >= need]
+        if not high and os.environ.get("MLBB_SAVAGE_DENSE_FALLBACK", "1") == "1":
+            log.info("spike miss vod=%s — dense fallback", vod.name)
+            _prepare_env_for_scan(title, dur, tier_need, dense=True)
+            hits = discover_vod_kill_banners(vod, min_tier=need)
+            high = [h for h in hits if h.tier >= need]
         # Dedup near-duplicate banners.
         kept = []
         for h in sorted(high, key=lambda x: (-x.tier, x.sec)):

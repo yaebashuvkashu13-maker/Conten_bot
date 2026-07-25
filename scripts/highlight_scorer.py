@@ -1108,12 +1108,20 @@ def rule_gate(
         return True, f"mlbb_fight_ok combat={combat:.3f}"
 
     if profile == "wot":
-        # Blitz VODs often have silent/misclassified PANNs — prefer visual brawl.
+        # Blitz VODs often have silent/misclassified PANNs — prefer cheap visual signals.
+        # Keep heavy hit-flash brawl probing in presend (WOT_BRAWL_GATE), not here.
         if metrics.panns_explosion >= 0.20 or metrics.panns_gun_max >= 0.20:
             if metrics.clip_score <= 0.03:
                 return False, f"clip_low={metrics.clip_score:.3f}"
             return True, "wot_impact_ok"
-        if video_path is not None and os.environ.get("WOT_BRAWL_GATE", "1") == "1":
+        motion_min = float(os.environ.get("WOT_RULE_MOTION_MIN", "0.035"))
+        clip_min = float(os.environ.get("WOT_RULE_CLIP_MIN", "0.10"))
+        if metrics.center_motion >= motion_min and metrics.clip_score >= clip_min:
+            return True, "wot_visual_ok"
+        if (
+            video_path is not None
+            and os.environ.get("WOT_BRAWL_IN_RULE_GATE", "0") == "1"
+        ):
             try:
                 from wot_brawl_segment import validate_wot_brawl_segment
 
@@ -1122,16 +1130,8 @@ def rule_gate(
                 )
                 if ok:
                     return True, reason or "wot_brawl_ok"
-                # Keep probing softer visual fallback below; don't hard-fail yet.
-                soft_reason = reason
             except Exception as exc:
-                soft_reason = f"wot_brawl_err={exc}"
-        else:
-            soft_reason = "wot_panns_silent"
-        motion_min = float(os.environ.get("WOT_RULE_MOTION_MIN", "0.035"))
-        clip_min = float(os.environ.get("WOT_RULE_CLIP_MIN", "0.10"))
-        if metrics.center_motion >= motion_min and metrics.clip_score >= clip_min:
-            return True, f"wot_visual_ok:{soft_reason}"
+                return False, f"wot_brawl_err={exc}"
         if metrics.center_motion < motion_min:
             return False, f"wot_motion_low={metrics.center_motion:.3f}:thr{motion_min:.3f}"
         return False, f"clip_low={metrics.clip_score:.3f}:thr{clip_min:.3f}"
