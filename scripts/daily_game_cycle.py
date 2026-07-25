@@ -195,12 +195,84 @@ def maybe_skip_on_discovery_miss(game: str) -> bool:
     return True
 
 
+def catchup_games() -> tuple[str, ...]:
+    """Games eligible for one end-of-day catch-up after discovery_miss skip."""
+    raw = os.environ.get("DAILY_GAME_CATCHUP_GAMES", "mlbb").strip()
+    if not raw or raw in ("0", "none", "off"):
+        return ()
+    allowed = set(GAME_ORDER)
+    out: list[str] = []
+    for part in raw.split(","):
+        g = part.strip().lower()
+        if g in allowed and g not in out:
+            out.append(g)
+    return tuple(out)
+
+
+def maybe_catchup_skipped_games() -> list[str]:
+    """
+    Once per day, after every game has filled its quota, reopen games that were
+    skipped due to discovery_miss (default: mlbb only).
+
+    Keeps WoT (or any still-active game) running — catch-up only triggers when
+    the cycle would otherwise idle.
+    """
+    if not enabled():
+        return []
+    if os.environ.get("DAILY_GAME_CATCHUP_ON_SKIP", "1") != "1":
+        return []
+    candidates = catchup_games()
+    if not candidates:
+        return []
+
+    state = load_state()
+    if bool(state.get("catchup_done")):
+        return []
+
+    sends = state.get("sends") or {}
+    all_done = all(int(sends.get(g, 0) or 0) >= quota_for(g) for g in GAME_ORDER)
+    if not all_done:
+        return []
+
+    skipped = state.get("skipped") or {}
+    reopen: list[str] = []
+    for g in candidates:
+        meta = skipped.get(g)
+        if not isinstance(meta, dict):
+            continue
+        reason = str(meta.get("reason") or "")
+        if reason.startswith("discovery_miss"):
+            reopen.append(g)
+
+    state["catchup_done"] = True
+    if not reopen:
+        save_state(state)
+        return []
+
+    sends = state.setdefault("sends", {})
+    skipped_map = state.setdefault("skipped", {})
+    misses = state.setdefault("discovery_misses", {})
+    for g in reopen:
+        sends[g] = 0
+        skipped_map.pop(g, None)
+        misses[g] = 0
+    state["catchup_games"] = reopen
+    state["catchup_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_state(state)
+    return reopen
+
+
 def active_game() -> str | None:
     """Next game that still has daily quota. None if all quotas met."""
     reset_if_new_day()
     for game in GAME_ORDER:
         if quota_remaining(game) > 0:
             return game
+    # All quotas look filled — reopen discovery_miss skips once (e.g. MLBB after WoT).
+    if maybe_catchup_skipped_games():
+        for game in GAME_ORDER:
+            if quota_remaining(game) > 0:
+                return game
     return None
 
 
@@ -225,15 +297,24 @@ def profile_for_game(game: str) -> str:
 
 def status_summary() -> dict:
     reset_if_new_day()
+    # Resolve active (may trigger one-shot discovery_miss catch-up).
+    active = active_game()
     state = load_state()
     sends = {g: int(state.get("sends", {}).get(g, 0)) for g in GAME_ORDER}
     quotas = {g: quota_for(g) for g in GAME_ORDER}
     return {
         "day": state.get("day"),
-        "active_game": active_game(),
+        "active_game": active,
         "sends": sends,
         "quotas": quotas,
         "remaining": {g: max(0, quotas[g] - sends[g]) for g in GAME_ORDER},
+        "catchup_done": bool(state.get("catchup_done")),
+        "catchup_games": list(state.get("catchup_games") or []),
+        "skipped": {
+            g: (state.get("skipped") or {}).get(g)
+            for g in GAME_ORDER
+            if (state.get("skipped") or {}).get(g)
+        },
     }
 
 
