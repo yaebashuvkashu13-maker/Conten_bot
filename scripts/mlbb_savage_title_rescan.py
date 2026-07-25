@@ -153,6 +153,11 @@ def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool
     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(max(4, tier_need))
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "maniac"
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
+    # Title-promised streaks: OCR is often blind on YouTube compressions.
+    # Slightly soften live owner-pos ref floor so known savage banks still hit.
+    os.environ["MLBB_BANNER_REF_MATCH"] = "1"
+    os.environ.setdefault("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.55")
+    os.environ.setdefault("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.45")
     if dense:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
         # Ops rescans should not inherit the live-feed 5s step.
