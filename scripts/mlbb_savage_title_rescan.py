@@ -25,7 +25,7 @@ log = logging.getLogger("mlbb_savage_title_rescan")
 def _load_env() -> dict[str, str]:
     from smart_video_editor import load_env
 
-    return load_env("/root/.video_bot.env")
+    return load_env(Path("/root/.video_bot.env"))
 
 
 def _queue_path() -> Path:
@@ -160,7 +160,7 @@ def scan_and_send(
     from mlbb_telegram_video import send_video_file, send_document_file, TELEGRAM_MAX_BYTES
     from smart_video_editor import load_env
 
-    env = load_env("/root/.video_bot.env")
+    env = load_env(Path("/root/.video_bot.env"))
     for k, v in env.items():
         os.environ.setdefault(k, v)
     # Title rescan is an ops/manual path — never block on daily MLBB quota.
