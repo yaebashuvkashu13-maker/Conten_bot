@@ -54,17 +54,29 @@ def test_wot_cruise_cap_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("WOT_BRAWL_GATE", "1")
     monkeypatch.setenv("SMART_WOT_MIN_IMPACT_DENSITY", "0.012")
+    monkeypatch.setenv("WOT_BRAWL_MIN_IMPACT_DENSITY", "0.012")
     monkeypatch.setenv("WOT_BRAWL_MIN_HIT_FLASHES", "1")
     monkeypatch.setenv("SMART_WOT_CRUISE_IMPACT_CAP", "0.020")
-    # High motion, impact at/above lowered cruise cap — passes.
+    # High motion + no flashes + impact below cruise cap → reject.
     reject, reason = _wot_extra_reject(
-        {"impact_density": 0.022, "center_motion": 0.18, "hit_flash_count": 2, "burst_ratio": 3.0}
-    )
-    assert reject is False, reason
-    # Same clip fails with old-style high cruise cap.
-    monkeypatch.setenv("SMART_WOT_CRUISE_IMPACT_CAP", "0.050")
-    reject, reason = _wot_extra_reject(
-        {"impact_density": 0.022, "center_motion": 0.18, "hit_flash_count": 2, "burst_ratio": 3.0}
+        {
+            "impact_density": 0.008,
+            "center_motion": 0.18,
+            "hit_flash_count": 0,
+            "best_hit_flash": 0.0,
+            "burst_ratio": 1.2,
+        }
     )
     assert reject is True
     assert "cruise_no_action" in reason
+    # Same motion with hit flashes → combat proof, pass.
+    reject, reason = _wot_extra_reject(
+        {
+            "impact_density": 0.008,
+            "center_motion": 0.18,
+            "hit_flash_count": 2,
+            "best_hit_flash": 0.03,
+            "burst_ratio": 1.2,
+        }
+    )
+    assert reject is False, reason

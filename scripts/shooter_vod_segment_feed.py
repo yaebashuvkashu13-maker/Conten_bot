@@ -528,6 +528,14 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             lead_pad = float(os.environ.get("GENSHIN_VOD_LEAD_SEC", "5"))
             validate_t0 = float(row.get("start", peak)) + lead_pad
             validate_dur = min(20.0, max(8.0, plan_dur - lead_pad))
+        elif game == "wot":
+            # Score the combat core around the peak — long post-fight drive dilutes
+            # impact/flash metrics and falsely trips cruise_no_action.
+            validate_t0 = peak
+            validate_dur = min(
+                14.0,
+                max(8.0, float(os.environ.get("WOT_PRESEND_VALIDATE_SEC", "12"))),
+            )
         else:
             validate_t0 = peak
             validate_dur = plan_dur
@@ -628,7 +636,14 @@ def _send_montage_batch(
             clip = apply_run_trim_to_clip(dict(row["clip"]), vod, game=game)
             peak = float(row.get("peak_start", row.get("start", 0)))
             plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
-            pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, plan_dur)
+            if game == "wot":
+                validate_dur = min(
+                    14.0,
+                    max(8.0, float(os.environ.get("WOT_PRESEND_VALIDATE_SEC", "12"))),
+                )
+            else:
+                validate_dur = plan_dur
+            pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, validate_dur)
             if not pre_ok:
                 log.warning(
                     "montage part PRE-REJECT (skip encode) %s: %s",
