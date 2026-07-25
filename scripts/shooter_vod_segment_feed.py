@@ -679,7 +679,12 @@ def _send_montage_batch(
 
         peaks = [int(float(r.get("peak_start", r["start"]))) for r in gated_rows]
         seg_dur = _ffprobe_duration(out)
-        label = "Metro склейка" if game == "pubg" else "склейка"
+        if game == "pubg":
+            label = "Metro склейка"
+        elif game == "standoff":
+            label = "Standoff склейка"
+        else:
+            label = "склейка"
         caption = (
             f"{game.upper()} {label} #{mid}\n"
             f"🎯 {len(gated_rows)} боя @ {peaks}\n"

@@ -25,12 +25,16 @@ from shooter_vod_montage import (  # noqa: E402
 def test_montage_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHOOTER_VOD_MONTAGE", raising=False)
     monkeypatch.delenv("PUBG_VOD_MONTAGE", raising=False)
+    monkeypatch.delenv("STANDOFF_VOD_MONTAGE", raising=False)
     assert montage_enabled("pubg") is False
+    # Standoff montage is on by default.
+    assert montage_enabled("standoff") is True
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "1")
     assert montage_enabled("pubg") is True
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "0")
     monkeypatch.setenv("PUBG_VOD_MONTAGE", "1")
     assert montage_enabled("pubg") is True
+    monkeypatch.setenv("STANDOFF_VOD_MONTAGE", "0")
     assert montage_enabled("standoff") is False
 
 

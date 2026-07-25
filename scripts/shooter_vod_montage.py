@@ -14,13 +14,16 @@ log = logging.getLogger("shooter_vod_montage")
 
 
 def montage_enabled(game: str = "") -> bool:
-    """Enable via SHOOTER_VOD_MONTAGE=1, or game-specific PUBG_VOD_MONTAGE / STANDOFF_VOD_MONTAGE."""
+    """Enable via SHOOTER_VOD_MONTAGE=1, or game-specific PUBG/STANDOFF flags.
+
+    Standoff defaults ON — merge several fights into one video.
+    """
     if os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
         return True
     g = (game or "").strip().lower()
     if g == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "0") == "1":
         return True
-    if g == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "0") == "1":
+    if g == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "1") == "1":
         return True
     return False
 
