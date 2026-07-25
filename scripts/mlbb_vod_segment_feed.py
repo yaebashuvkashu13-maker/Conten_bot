@@ -2257,11 +2257,18 @@ def _process_vod_segments(
                 "MLBB_VOD_TITLE_DENSE_AUTO", "1"
             ) == "1":
                 os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+                # YouTube OCR is often blind; allow owner-pos ref slightly below the
+                # live anti-FP floor so title-promised savage/maniac still ship.
+                os.environ["MLBB_BANNER_POS_LIVE_MIN_SIM"] = os.environ.get(
+                    "MLBB_BANNER_TITLE_LIVE_MIN_SIM", "0.55"
+                )
+                os.environ.setdefault("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "4")
             log.info(
-                "title_gate vod=%s tier_need=%s dense=%s blob=%s",
+                "title_gate vod=%s tier_need=%s dense=%s live_sim=%s blob=%s",
                 vod.name,
                 title_tier,
                 os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0"),
+                os.environ.get("MLBB_BANNER_POS_LIVE_MIN_SIM", ""),
                 title_blob[:80],
             )
         else:
