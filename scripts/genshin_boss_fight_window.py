@@ -42,6 +42,9 @@ def expand_boss_fight_window(
     """
     From an action peak, walk along the boss HP bar and return (start, duration)
     that begins near fight onset (bar appears / stays high), not mid-fight.
+
+    Guarantees the peak stays inside the clip. Caps how far back we walk so an
+    earlier cutscene / previous fight cannot steal the window.
     """
     import cv2
 
@@ -49,12 +52,14 @@ def expand_boss_fight_window(
     step = max(0.5, _fenv("GENSHIN_BOSS_FIGHT_BAR_STEP_SEC", 2.0))
     keep = max(0.02, _fenv("GENSHIN_BOSS_FIGHT_BAR_KEEP", 0.10))
     min_sec = max(8.0, _fenv("GENSHIN_BOSS_FIGHT_MIN_SEC", 28.0))
-    max_sec = max(min_sec, _fenv("GENSHIN_BOSS_FIGHT_MAX_SEC", 90.0))
-    hard_max = max(max_sec, _fenv("GENSHIN_BOSS_FIGHT_HARD_MAX_SEC", 120.0))
-    lead = max(0.0, _fenv("GENSHIN_VOD_LEAD_SEC", 5.0))
-    post = max(0.0, _fenv("GENSHIN_BOSS_FIGHT_POST_SEC", 4.0))
+    max_sec = max(min_sec, _fenv("GENSHIN_BOSS_FIGHT_MAX_SEC", 100.0))
+    hard_max = max(max_sec, _fenv("GENSHIN_BOSS_FIGHT_HARD_MAX_SEC", 140.0))
+    lead = max(0.0, _fenv("GENSHIN_VOD_LEAD_SEC", 3.0))
+    post = max(0.0, _fenv("GENSHIN_BOSS_FIGHT_POST_SEC", 10.0))
+    # How far before the peak we may walk (blocks cutscene / prior fight).
+    max_back = max(12.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_BACK_SEC", 45.0))
     tolerate = max(0, _ienv("GENSHIN_BOSS_FIGHT_GAP_TOLERATE", 3))
-    prefer_start = os.environ.get("GENSHIN_BOSS_FIGHT_PREFER_START", "1") == "1"
+    prefer_start = os.environ.get("GENSHIN_BOSS_FIGHT_PREFER_START", "0") == "1"
     enabled = os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1"
     if not enabled:
         win = _fenv("HIGHLIGHT_WINDOW_SEC", 15.0)
@@ -73,12 +78,12 @@ def expand_boss_fight_window(
             vod_duration = (frames / fps) if fps > 1e-3 else peak + hard_max
         vod_duration = max(peak + 1.0, float(vod_duration))
 
-        # Walk backward while boss bar stays present.
+        # Walk backward while boss bar stays present — but not endlessly.
         onset = peak
         t = peak
         miss = 0
-        max_back = min(hard_max, peak)
-        while (peak - t) < max_back:
+        max_back_span = min(hard_max, max_back, peak)
+        while (peak - t) < max_back_span:
             t = max(0.0, t - step)
             bar = _bar_at_cap(video_path, t, cap)
             if bar >= keep:
@@ -89,8 +94,10 @@ def expand_boss_fight_window(
                 if miss > tolerate:
                     break
             if t <= 0.0:
-                onset = 0.0
                 break
+
+        # Never keep an onset older than max_back before the peak.
+        onset = max(onset, peak - max_back)
 
         # Walk forward for fight end (keep climax / finish).
         end = min(vod_duration, peak + post)
@@ -111,22 +118,44 @@ def expand_boss_fight_window(
 
     start = max(0.0, onset - lead)
     end = max(start + min_sec, min(vod_duration, end + post))
+    # Peak must always sit inside the clip with post-roll room.
+    end = max(end, min(vod_duration, peak + post))
+    if peak < start:
+        start = max(0.0, peak - lead)
     dur = end - start
 
     if dur > max_sec:
         if prefer_start:
-            # Keep fight beginning (full HP); truncate the tail.
-            end = start + max_sec
-            # But never drop the peak if it still fits under hard_max.
-            if peak + post - start <= hard_max and peak >= start:
-                end = max(end, min(start + hard_max, peak + post))
-                if end - start > hard_max:
-                    end = start + hard_max
+            # Keep fight opening, but never drop the peak / finish.
+            end_pref = start + max_sec
+            need_end = min(vod_duration, peak + post)
+            if need_end > end_pref:
+                end = need_end
+                start = max(0.0, end - max_sec)
+                if peak < start:
+                    start = max(0.0, peak - min(lead + 8.0, max_back * 0.5))
+                    end = min(vod_duration, max(start + min_sec, peak + post))
+            else:
+                end = end_pref
+            if end - start > hard_max:
+                end = start + hard_max
+                if peak + post > end:
+                    end = min(vod_duration, peak + post)
+                    start = max(0.0, end - hard_max)
             dur = end - start
         else:
-            # Keep climax: pad before peak.
-            end = min(vod_duration, peak + post)
+            # Default: keep climax + finish; trim the early tail (cutscenes go first).
+            end = min(vod_duration, max(end, peak + post))
             start = max(0.0, end - max_sec)
+            # Still show some pre-peak combat when budget allows.
+            pre_want = min(max_back, max(lead + 12.0, max_sec * 0.55))
+            start = min(start, max(0.0, peak - pre_want))
+            if end - start > max_sec:
+                start = max(0.0, end - max_sec)
+            if peak < start:
+                start = max(0.0, peak - lead)
+            if end - start > hard_max:
+                start = max(0.0, end - hard_max)
             dur = end - start
 
     if dur < min_sec:
@@ -136,6 +165,14 @@ def expand_boss_fight_window(
             start = max(0.0, end - min_sec)
             dur = end - start
 
+    # Final safety: peak inside window.
+    if not (start - 0.05 <= peak <= end + 0.05):
+        end = min(vod_duration, max(end, peak + post))
+        start = max(0.0, min(start, peak - lead))
+        if end - start > hard_max:
+            start = max(0.0, end - hard_max)
+        dur = end - start
+
     meta = {
         "enabled": True,
         "onset": round(onset, 2),
@@ -144,6 +181,8 @@ def expand_boss_fight_window(
         "start": round(start, 2),
         "duration": round(dur, 2),
         "lead": lead,
+        "post": post,
+        "max_back": max_back,
         "prefer_start": prefer_start,
     }
     log.info(
