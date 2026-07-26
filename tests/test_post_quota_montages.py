@@ -124,6 +124,27 @@ def test_clip_run_fraction_detects_sprint_tail(tmp_path: Path, monkeypatch) -> N
     assert frac > 0.35
 
 
+def test_post_quota_lock_blocks_parallel(tmp_path: Path, monkeypatch) -> None:
+    import fcntl
+    import post_quota_montages as pqm
+
+    monkeypatch.setenv("POST_QUOTA_MONTAGE", "1")
+    monkeypatch.setenv("DAILY_GAME_CYCLE_ENABLED", "1")
+    monkeypatch.setenv("MONTAGE_DEDUP_STATE", str(tmp_path / "dedup.json"))
+    lock = tmp_path / "post.lock"
+    monkeypatch.setenv("POST_QUOTA_MONTAGE_LOCK", str(lock))
+
+    # Hold the lock in this process.
+    fh = open(lock, "a+", encoding="utf-8")
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        out = pqm.run_once(token="", chat_id="", max_games=1)
+        assert out.get("reason") == "locked"
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+
+
 def test_daily_cycle_calls_post_quota(tmp_path: Path, monkeypatch) -> None:
     env_file = tmp_path / ".video_bot.env"
     env_file.write_text(

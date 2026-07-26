@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -77,6 +78,9 @@ def main() -> int:
             if post_quota_enabled():
                 result = run_once(token=token, chat_id=chat_id, max_games=1)
                 log.info("post_quota_montages: %s", result)
+                # When locked / all done, avoid tight loop burn — feed.sh also sleeps.
+                if result.get("reason") in {"locked", "all_done", "disabled"}:
+                    time.sleep(float(os.environ.get("POST_QUOTA_IDLE_SEC", "20")))
         except Exception:
             log.exception("post_quota_montages failed")
         return 0

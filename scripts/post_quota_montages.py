@@ -8,6 +8,7 @@ and never reuses prior montage peaks (see montage_dedup).
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import subprocess
@@ -24,6 +25,7 @@ log = logging.getLogger("post_quota_montages")
 
 SCRIPTS = Path(__file__).resolve().parent
 ENV_PATH = Path(os.environ.get("VIDEO_BOT_ENV", "/root/.video_bot.env"))
+DATA_ROOT = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
 
 
 def post_quota_enabled() -> bool:
@@ -42,6 +44,32 @@ def montage_only_mode() -> bool:
 def games_pending_today() -> list[str]:
     day = _today_key()
     return [g for g in GAME_ORDER if not day_montage_done(g, day)]
+
+
+def _lock_path() -> Path:
+    return Path(
+        os.environ.get(
+            "POST_QUOTA_MONTAGE_LOCK",
+            str(DATA_ROOT / "post_quota_montage.lock"),
+        )
+    )
+
+
+def _try_lock():
+    """Non-blocking flock so the feed loop cannot spawn parallel montages."""
+    path = _lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.close()
+        return None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid={os.getpid()} at={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    fh.flush()
+    return fh
 
 
 def _notify(token: str, chat_id: str, text: str) -> None:
@@ -137,35 +165,52 @@ def run_once(*, token: str = "", chat_id: str = "", max_games: int = 1) -> dict:
     if not pending:
         return {"skipped": True, "reason": "all_done", "day": day}
 
-    reports: list[dict] = []
-    for game in pending[: max(1, max_games)]:
-        log.info("post-quota montage start game=%s day=%s", game, day)
-        if game == "mlbb":
-            rep = _run_mlbb(dict(os.environ))
-        else:
-            rep = _run_shooter(game, dict(os.environ))
-        reports.append(rep)
-        # Mission / feed already mark dedup on success; if they forgot, at least
-        # mark the day slot so we don't spin forever on a broken game.
-        if rep.get("ok"):
-            if not day_montage_done(game, day):
-                mark_montage_sent(
-                    game,
-                    day=day,
-                    vod_id="unknown",
-                    peaks=[],
-                    montage_id="post_quota_ok",
+    lock_fh = _try_lock()
+    if lock_fh is None:
+        return {"skipped": True, "reason": "locked", "day": day, "pending": pending}
+
+    try:
+        # Re-check under lock — another tick may have finished while we waited.
+        pending = games_pending_today()
+        if not pending:
+            return {"skipped": True, "reason": "all_done", "day": day}
+
+        reports: list[dict] = []
+        for game in pending[: max(1, max_games)]:
+            log.info("post-quota montage start game=%s day=%s", game, day)
+            if game == "mlbb":
+                rep = _run_mlbb(dict(os.environ))
+            else:
+                rep = _run_shooter(game, dict(os.environ))
+            reports.append(rep)
+            if rep.get("ok"):
+                if not day_montage_done(game, day):
+                    mark_montage_sent(
+                        game,
+                        day=day,
+                        vod_id="unknown",
+                        peaks=[],
+                        montage_id="post_quota_ok",
+                    )
+                _notify(
+                    token,
+                    chat_id,
+                    f"🎬 Post-quota склейка: {game.upper()} готова "
+                    f"({status_summary().get('day')})",
                 )
-            _notify(
-                token,
-                chat_id,
-                f"🎬 Post-quota склейка: {game.upper()} готова "
-                f"({status_summary().get('day')})",
-            )
-        else:
-            log.warning("post-quota montage failed game=%s rc=%s", game, rep.get("rc"))
-            # Don't burn the day slot on failure — retry next tick / next VOD.
-    return {"day": day, "pending_before": pending, "reports": reports}
+            else:
+                log.warning(
+                    "post-quota montage failed game=%s rc=%s",
+                    game,
+                    rep.get("rc"),
+                )
+        return {"day": day, "pending_before": pending, "reports": reports}
+    finally:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_fh.close()
 
 
 def main() -> int:
