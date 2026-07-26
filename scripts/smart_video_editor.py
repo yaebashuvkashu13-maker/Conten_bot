@@ -707,6 +707,17 @@ def profile_action_clip_bounds(profile: str) -> tuple[float, float]:
             float(os.environ.get('SMART_PUBG_CLIP_MIN_SEC', os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7'))),
             float(os.environ.get('SMART_PUBG_CLIP_MAX_SEC', os.environ.get('SMART_ACTION_CLIP_MAX_SEC', '9.5'))),
         )
+    if profile in ('wot', 'world_of_tanks'):
+        # Tank exchanges run longer than shooter spray clips; expand later via wot_brawl_fight.
+        return (
+            float(os.environ.get('SMART_WOT_CLIP_MIN_SEC', '12')),
+            float(
+                os.environ.get(
+                    'SMART_WOT_CLIP_MAX_SEC',
+                    os.environ.get('WOT_BRAWL_FIGHT_MAX_SEC', '42'),
+                )
+            ),
+        )
     if profile in ACTION_PROFILES:
         return (
             float(os.environ.get('SMART_ACTION_CLIP_MIN_SEC', '7')),

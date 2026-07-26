@@ -517,7 +517,11 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         try:
             from shooter_vod_montage import apply_run_trim_to_clip
 
-            if game != "genshin" or os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") != "1":
+            skip_idle_trim = (
+                (game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1")
+                or (game == "wot" and os.environ.get("WOT_BRAWL_FULL_FIGHT", "1") == "1")
+            )
+            if not skip_idle_trim:
                 clip = apply_run_trim_to_clip(clip, vod, game=game)
         except Exception:
             pass
@@ -871,6 +875,28 @@ def _scan_vod(
                         fight_dur,
                         float(fight_meta.get("onset") or start),
                     )
+                elif game == "wot" and os.environ.get("WOT_BRAWL_FULL_FIGHT", "1") == "1":
+                    from wot_brawl_fight import expand_clip_to_full_brawl
+
+                    expanded = expand_clip_to_full_brawl(
+                        vod,
+                        {
+                            **clip,
+                            "start": start,
+                            "peak_start": peak,
+                            "input_duration": fight_dur,
+                        },
+                    )
+                    start = float(expanded.get("start", start))
+                    fight_dur = float(expanded.get("input_duration") or fight_dur)
+                    clip = expanded
+                    log.info(
+                        "wot full-brawl peak=%.0f -> start=%.0f dur=%.0f end=%.0f",
+                        peak,
+                        start,
+                        fight_dur,
+                        start + fight_dur,
+                    )
                 sid = segment_id(vid, start)
                 if sid in blocked_ids:
                     continue
@@ -882,8 +908,12 @@ def _scan_vod(
                     "output_duration": fight_dur,
                 }
                 try:
-                    # Don't let idle-run trim eat the boss-fight opening.
-                    if game != "genshin" or os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") != "1":
+                    # Don't let idle-run trim eat boss/brawl openings or fight finish.
+                    skip_idle_trim = (
+                        (game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1")
+                        or (game == "wot" and os.environ.get("WOT_BRAWL_FULL_FIGHT", "1") == "1")
+                    )
+                    if not skip_idle_trim:
                         clip_out = apply_run_trim_to_clip(clip_out, vod, game=game)
                 except Exception:
                     pass
