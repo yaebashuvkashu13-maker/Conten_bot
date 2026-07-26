@@ -21,7 +21,7 @@ def montage_enabled() -> bool:
 
 
 def montage_min_clips() -> int:
-    return max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "2")))
+    return max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
 
 
 def montage_max_clips() -> int:
@@ -29,12 +29,12 @@ def montage_max_clips() -> int:
 
 
 def montage_gap_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MONTAGE_GAP_SEC", "75"))
+    return float(os.environ.get("MLBB_VOD_MONTAGE_GAP_SEC", "45"))
 
 
 def montage_target_sec() -> tuple[float, float]:
-    lo = float(os.environ.get("MLBB_VOD_MONTAGE_MIN_SEC", "28"))
-    hi = float(os.environ.get("MLBB_VOD_MONTAGE_MAX_SEC", "55"))
+    lo = float(os.environ.get("MLBB_VOD_MONTAGE_MIN_SEC", "32"))
+    hi = float(os.environ.get("MLBB_VOD_MONTAGE_MAX_SEC", "70"))
     return lo, hi
 
 
