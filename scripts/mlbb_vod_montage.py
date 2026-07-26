@@ -183,6 +183,85 @@ def apply_run_trim_to_clip(clip: dict, vod: Path) -> dict:
     return out
 
 
+def clip_run_fraction(
+    vod: Path,
+    start: float,
+    end: float,
+    *,
+    banner_sec: float | None = None,
+) -> float:
+    """
+    Share of the window that looks like post-fight / lane jogging:
+    low combat energy (audio+scene) while center motion stays elevated.
+    Returns 0..1. Used to reject montage parts that are mostly running.
+    """
+    if end <= start + 4:
+        return 0.0
+    try:
+        from mlbb_fight_segment import _analysis_for
+        import numpy as np
+    except Exception:
+        return 0.0
+
+    try:
+        analysis = _analysis_for(vod)
+    except Exception:
+        return 0.0
+
+    win = float(analysis.get("window_seconds") or 2.0)
+    bins = int(analysis.get("bins") or 0)
+    if bins < 4 or win <= 0:
+        return 0.0
+
+    motion = np.asarray(analysis["center_motion"], dtype=np.float32)
+    audio = np.asarray(analysis["audio"], dtype=np.float32)
+    scene_raw = analysis.get("scene")
+    scene = audio if scene_raw is None else np.asarray(scene_raw, dtype=np.float32)
+    combat = audio * 0.55 + scene * 0.45
+
+    start_idx = max(0, int(round(start / win)))
+    end_idx = min(bins - 1, int(round(end / win)))
+    if end_idx <= start_idx + 1:
+        return 0.0
+
+    # Protect a short core around the banner — don't count the kill flash as run.
+    anchor = float(banner_sec if banner_sec is not None else start + (end - start) * 0.4)
+    core_pad = float(os.environ.get("MLBB_RUN_FRAC_CORE_PAD_SEC", "3.0"))
+    core_lo = max(start_idx, int(round((anchor - core_pad) / win)))
+    core_hi = min(end_idx, int(round((anchor + core_pad) / win)))
+
+    combat_slice = combat[start_idx : end_idx + 1]
+    motion_slice = motion[start_idx : end_idx + 1]
+    if combat_slice.size < 3:
+        return 0.0
+    combat_thr = max(
+        float(np.median(combat_slice)) * 0.70,
+        float(np.percentile(combat_slice, 30)),
+    )
+    motion_thr = max(
+        float(np.median(motion_slice)) * 0.80,
+        float(np.percentile(motion_slice, 40)),
+    )
+
+    run_bins = 0
+    total = 0
+    for idx in range(start_idx, end_idx + 1):
+        if core_lo <= idx <= core_hi:
+            continue
+        total += 1
+        # Inclusive threshold: median combat bins must still count as "low".
+        low_combat = float(combat[idx]) <= combat_thr * 1.05
+        high_motion = float(motion[idx]) >= motion_thr * 0.85
+        if low_combat and high_motion:
+            run_bins += 1
+        elif low_combat and float(motion[idx]) < motion_thr * 0.55:
+            # Standing still after fight / recall channel — also dead air.
+            run_bins += 1
+    if total <= 0:
+        return 0.0
+    return float(run_bins) / float(total)
+
+
 def _montage_timeline_key(row: dict) -> float:
     """VOD timeline position — peak/banner time, not clip window start."""
     return float(row.get("peak_start", row.get("banner_sec", row.get("start") or 0)) or 0)

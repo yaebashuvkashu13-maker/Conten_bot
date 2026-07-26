@@ -100,8 +100,11 @@ def quota_remaining(game: str) -> int:
 
 
 def record_send(game: str, count: int = 1) -> None:
-    reset_if_new_day()
     game = game.strip().lower()
+    # Post-quota / ignore-quota sends must not inflate the daily single-clip counters.
+    if ignore_daily_quota(game):
+        return
+    reset_if_new_day()
     if game not in GAME_ORDER:
         return
     state = load_state()
@@ -276,11 +279,35 @@ def active_game() -> str | None:
     return None
 
 
+def ignore_daily_quota(game: str = "") -> bool:
+    """Post-quota montages / one-off rescans must not be blocked by filled quotas."""
+    if os.environ.get("POST_QUOTA_MONTAGE_PASS", "0") == "1":
+        return True
+    if os.environ.get("VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    g = (game or "").strip().lower()
+    if g and os.environ.get(f"{g.upper()}_VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    if g == "mlbb" and os.environ.get("MLBB_VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    return False
+
+
+def montage_only_mode() -> bool:
+    """
+    Future mode: when daily quotas are stably filled, ship only montages.
+    Off by default — enable with MONTAGE_ONLY_MODE=1 after quotas are reliable.
+    """
+    return os.environ.get("MONTAGE_ONLY_MODE", "0") == "1"
+
+
 def can_send_for_game(game: str, count: int = 1) -> tuple[bool, str]:
     if not enabled():
         return True, "cycle_disabled"
-    reset_if_new_day()
     game = game.strip().lower()
+    if ignore_daily_quota(game):
+        return True, "ignore_daily_quota"
+    reset_if_new_day()
     active = active_game()
     if active is None:
         return False, "all_quotas_done"

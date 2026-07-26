@@ -1510,6 +1510,53 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         need_mini = _presend_min_minimap_delta() * 0.85
         if ctx_motion < need_m and ctx_mini < need_mini and ctx_skill < need_m:
             return False, f"banner_ctx_idle={ctx_motion:.4f}", report
+        # Running-around: high camera motion but no fight HUD (skills/minimap).
+        # Idle check above misses this — sprint looks "active" on motion alone.
+        if os.environ.get("MLBB_PRESEND_REJECT_RUN", "1") == "1":
+            run_m = float(os.environ.get("MLBB_PRESEND_RUN_MOTION_MIN", "0.026"))
+            need_skill_run = float(os.environ.get("MLBB_PRESEND_RUN_MIN_SKILL", "0.009"))
+            need_mini_run = float(os.environ.get("MLBB_PRESEND_RUN_MIN_MINI", "0.009"))
+            if (
+                ctx_motion >= run_m
+                and ctx_skill < need_skill_run
+                and ctx_mini < need_mini_run
+            ):
+                return (
+                    False,
+                    f"banner_ctx_run={ctx_motion:.4f}/skill={ctx_skill:.4f}/mini={ctx_mini:.4f}",
+                    report,
+                )
+            # Also require at least some skill OR minimap activity near the banner
+            # (real teamfights tick both; lane jog usually ticks neither).
+            if os.environ.get("MLBB_PRESEND_REQUIRE_FIGHT_HUD", "1") == "1":
+                hud_floor = float(os.environ.get("MLBB_PRESEND_FIGHT_HUD_MIN", "0.008"))
+                if ctx_skill < hud_floor and ctx_mini < hud_floor:
+                    return (
+                        False,
+                        f"banner_ctx_no_fight_hud=skill={ctx_skill:.4f}/mini={ctx_mini:.4f}",
+                        report,
+                    )
+
+    # Analysis-based run density (audio/combat dead while center motion stays high).
+    if os.environ.get("MLBB_MONTAGE_COMBAT_GATE", "0") == "1" or (
+        os.environ.get("MLBB_PRESEND_REJECT_RUN", "1") == "1"
+        and os.environ.get("MLBB_VOD_MONTAGE", "0") == "1"
+    ):
+        try:
+            from mlbb_vod_montage import clip_run_fraction
+
+            run_frac = clip_run_fraction(
+                vod,
+                cut_start,
+                cut_start + dur,
+                banner_sec=float(row.get("banner_sec", peak_start) or peak_start),
+            )
+            report["run_fraction"] = round(run_frac, 3)
+            max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.42"))
+            if run_frac > max_run:
+                return False, f"clip_run_frac={run_frac:.2f}>{max_run:.2f}", report
+        except Exception as exc:
+            log.debug("run_fraction skip: %s", exc)
 
     uniform_ok, uniform_reason = segment_uniform_gameplay_ok(
         vod, cut_start, dur, crop_box=crop, profile=PROFILE
@@ -2149,6 +2196,22 @@ def _send_montage_batch(
         )
         part_ids = [r["segment_id"] for r in gated_rows] + [mid]
         mark_feed_sent(part_ids)
+        try:
+            from daily_game_cycle import _today_key
+            from montage_dedup import mark_montage_sent
+
+            peaks = [
+                float(r.get("peak_start", r.get("start") or 0) or 0) for r in gated_rows
+            ]
+            mark_montage_sent(
+                "mlbb",
+                day=_today_key(),
+                vod_id=vid,
+                peaks=peaks,
+                montage_id=mid,
+            )
+        except Exception as exc:
+            log.warning("montage_dedup mark fail: %s", exc)
         log.info("montage sent id=%s parts=%s dur=%.0f", mid, len(gated_rows), seg_dur)
         return 1, len(skipped), 0
     finally:
@@ -2626,6 +2689,14 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_POS_LIVE_MIN_SIM": "0.62",
         "MLBB_BANNER_REF_ROOT": "/root/content_bot_ml/data/mlbb_kill_banners",
         "CONTENT_BOT_REPO": "/root/content_bot_ml",
+        # Reject lane-jog / empty run near kill banner (motion alone is not a fight).
+        "MLBB_PRESEND_REJECT_RUN": "1",
+        "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
+        "MLBB_PRESEND_BANNER_CONTEXT": "1",
+        "MLBB_PRESEND_RUN_MOTION_MIN": "0.026",
+        "MLBB_PRESEND_RUN_MIN_SKILL": "0.009",
+        "MLBB_PRESEND_RUN_MIN_MINI": "0.009",
+        "MLBB_PRESEND_FIGHT_HUD_MIN": "0.008",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",

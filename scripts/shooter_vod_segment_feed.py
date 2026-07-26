@@ -757,6 +757,22 @@ def _send_montage_batch(
         )
         part_ids = [r["segment_id"] for r in gated_rows] + [mid]
         mark_feed_sent(game, part_ids)
+        try:
+            from daily_game_cycle import _today_key
+            from montage_dedup import mark_montage_sent
+
+            peaks = [
+                float(r.get("peak_start", r.get("start") or 0) or 0) for r in gated_rows
+            ]
+            mark_montage_sent(
+                game,
+                day=_today_key(),
+                vod_id=vid,
+                peaks=peaks,
+                montage_id=mid,
+            )
+        except Exception as exc:
+            log.warning("montage_dedup mark fail game=%s: %s", game, exc)
         log.info("montage sent game=%s id=%s parts=%s dur=%.0f", game, mid, len(gated_rows), seg_dur)
         st = stats(game)
         send_message(
@@ -1241,6 +1257,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
         vid_inbox = vod_youtube_id(mp4)
+        if os.environ.get("MONTAGE_PREFER_FRESH_VOD", "0") == "1":
+            try:
+                from montage_dedup import used_vods
+
+                if vid_inbox in used_vods(game) and os.environ.get("MONTAGE_ALLOW_VOD_REUSE", "0") != "1":
+                    log.info("skip already-montaged vod=%s game=%s", mp4.name, game)
+                    continue
+            except Exception:
+                pass
         entry = next(
             (
                 r

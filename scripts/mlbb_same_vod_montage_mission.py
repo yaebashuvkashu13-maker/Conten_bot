@@ -60,16 +60,36 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "32"
     os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_PCT"] = "55"
     os.environ["MLBB_SAVAGE_DENSE_FALLBACK"] = "0"
-    # Soft gates: owner OCR is weak on YT compressions.
+    # Soft gates: owner OCR is weak on YT compressions — but keep ref match.
     os.environ["MLBB_BANNER_OWNER_GATE"] = "0"
     os.environ["MLBB_BANNER_SEND_STRICT"] = "0"
     os.environ["MLBB_BANNER_REF_MATCH"] = "1"
-    os.environ["MLBB_BANNER_POS_LIVE_MIN_SIM"] = "0.46"
-    os.environ["MLBB_BANNER_POS_SAVAGE_MIN_SIM"] = "0.44"
-    os.environ["MLBB_BANNER_REF_COLOR_MUL"] = "0.85"
-    # Do not burn daily cycle quota on this experiment.
+    os.environ["MLBB_BANNER_POS_LIVE_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_POS_LIVE_MIN_SIM", "0.50"
+    )
+    os.environ["MLBB_BANNER_POS_SAVAGE_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.48"
+    )
+    os.environ["MLBB_BANNER_REF_COLOR_MUL"] = "0.90"
+    # Anti-run: reject lane-jog windows even if a kill banner OCR fires.
+    os.environ["MLBB_PRESEND_REJECT_RUN"] = "1"
+    os.environ["MLBB_PRESEND_REQUIRE_FIGHT_HUD"] = "1"
+    os.environ["MLBB_PRESEND_BANNER_CONTEXT"] = "1"
+    os.environ["MLBB_MONTAGE_COMBAT_GATE"] = "1"
+    os.environ["MLBB_PRESEND_MIN_MOTION"] = os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.020")
+    os.environ["MLBB_PRESEND_MIN_MINIMAP_DELTA"] = os.environ.get(
+        "MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.013"
+    )
+    os.environ["MLBB_PRESEND_RUN_MOTION_MIN"] = "0.024"
+    os.environ["MLBB_PRESEND_RUN_MIN_SKILL"] = "0.010"
+    os.environ["MLBB_PRESEND_RUN_MIN_MINI"] = "0.010"
+    os.environ["MLBB_PRESEND_FIGHT_HUD_MIN"] = "0.009"
+    os.environ["MLBB_PRESEND_MAX_RUN_FRAC"] = "0.38"
+    # Do not burn daily cycle quota on montages.
     os.environ["DAILY_GAME_CYCLE_ENABLED"] = "0"
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
+    os.environ.setdefault("MONTAGE_PREFER_FRESH_VOD", "1")
+    os.environ.setdefault("MONTAGE_ALLOW_VOD_REUSE", "0")
 
 
 def _inbox_vods(inbox: Path, *, min_sec: float, max_sec: float) -> list[Path]:
@@ -180,6 +200,8 @@ def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
 
 def _discover_rows(vod: Path) -> list[dict]:
     from mlbb_kill_banner import discover_vod_kill_banners, find_banner_near_peak
+    from mlbb_vod_montage import clip_run_fraction
+    from montage_dedup import filter_rows_exclude_used
 
     file_dur = _ffprobe_duration(vod)
     vid = _vod_id(vod)
@@ -207,10 +229,37 @@ def _discover_rows(vod: Path) -> list[dict]:
         time.monotonic() - t0,
     )
     rows: list[dict] = []
+    max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.38"))
     for h in sorted(hits, key=lambda x: (-int(x.tier), float(x.sec))):
         row = _hit_to_row(vod, h, file_dur)
-        if row:
-            rows.append(row)
+        if not row:
+            continue
+        # Drop run-heavy windows before montage pick (banner OCR alone is not enough).
+        if os.environ.get("MLBB_MONTAGE_COMBAT_GATE", "1") == "1":
+            start = float(row["start"])
+            end = start + float(row.get("fight_dur") or 0)
+            frac = clip_run_fraction(
+                vod, start, end, banner_sec=float(row.get("peak_start") or start)
+            )
+            row["run_fraction"] = round(frac, 3)
+            if frac > max_run:
+                log.info(
+                    "drop run-heavy peak=%.0f frac=%.2f vod=%s",
+                    float(row.get("peak_start") or 0),
+                    frac,
+                    vod.name,
+                )
+                continue
+        rows.append(row)
+    # Never reuse peaks already shipped in prior montages (same maniac spam).
+    before = len(rows)
+    rows = filter_rows_exclude_used("mlbb", vid, rows)
+    if len(rows) < before:
+        log.info(
+            "dedup dropped %s already-used peaks vod=%s",
+            before - len(rows),
+            vid,
+        )
     return rows
 
 
@@ -342,6 +391,20 @@ def _build_and_send_one(
                 }
             )
             mark_feed_sent([r["segment_id"] for r in gated] + [mid])
+            try:
+                from daily_game_cycle import _today_key
+                from montage_dedup import mark_montage_sent
+
+                peaks = [float(r.get("peak_start") or 0) for r in gated]
+                mark_montage_sent(
+                    "mlbb",
+                    day=_today_key(),
+                    vod_id=vid,
+                    peaks=peaks,
+                    montage_id=mid,
+                )
+            except Exception as exc:
+                log.warning("montage_dedup mark fail: %s", exc)
         return report
     finally:
         cleanup_temps(temps)
@@ -393,6 +456,23 @@ def main() -> int:
                 log.warning("missing vod %s", p)
     else:
         vods = _inbox_vods(args.inbox, min_sec=args.min_sec, max_sec=args.max_sec)
+    # Prefer VODs never used for a montage; never farm the same maniac across cuts.
+    if os.environ.get("MONTAGE_PREFER_FRESH_VOD", "1") == "1":
+        from montage_dedup import prefer_fresh_vods
+
+        fresh = prefer_fresh_vods("mlbb", vods, vod_id_fn=_vod_id)
+        if fresh:
+            log.info(
+                "fresh VODs=%s / candidates=%s (skipping already-montaged)",
+                len(fresh),
+                len(vods),
+            )
+            vods = fresh
+        else:
+            log.warning("no fresh VODs left for montage (allow_reuse=%s)", os.environ.get("MONTAGE_ALLOW_VOD_REUSE", "0"))
+            if os.environ.get("MONTAGE_ALLOW_VOD_REUSE", "0") != "1":
+                print(json.dumps({"sent": 0, "want": args.count, "error": "no_fresh_vod"}))
+                return 1
     log.info("candidate vods=%s (%.0f–%.0fs)", len(vods), args.min_sec, args.max_sec)
     if not vods:
         log.error("no VODs in duration window")
@@ -400,9 +480,15 @@ def main() -> int:
 
     reports: list[dict] = []
     sent = 0
+    # One montage = one VOD. Never stitch a second montage from the same file
+    # in this run (avoids repeating the best maniac peak across cuts).
+    used_this_run: set[str] = set()
     for vod in vods:
         if sent >= args.count:
             break
+        vid = _vod_id(vod)
+        if vid in used_this_run:
+            continue
         log.info("=== montage from %s (%.0fs) ===", vod.name, _ffprobe_duration(vod))
         if args.dry_run:
             rows = _discover_rows(vod)
@@ -411,7 +497,7 @@ def main() -> int:
             picked = pick_montage_rows(rows)
             reports.append(
                 {
-                    "vod_id": _vod_id(vod),
+                    "vod_id": vid,
                     "hits": len(rows),
                     "picked": len(picked),
                     "peaks": [r.get("peak_start") for r in picked],
@@ -420,9 +506,11 @@ def main() -> int:
             )
             if len(picked) >= 3:
                 sent += 1
+                used_this_run.add(vid)
             continue
         rep = _build_and_send_one(vod, token=token, chat_id=chat, out_dir=args.out_dir)
         reports.append(rep)
+        used_this_run.add(vid)
         if rep.get("ok"):
             sent += 1
             log.info("sent montage %s parts=%s", rep.get("montage_id"), len(rep.get("picked") or []))
