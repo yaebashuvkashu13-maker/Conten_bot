@@ -183,6 +183,11 @@ def apply_run_trim_to_clip(clip: dict, vod: Path) -> dict:
     return out
 
 
+def _montage_timeline_key(row: dict) -> float:
+    """VOD timeline position — peak/banner time, not clip window start."""
+    return float(row.get("peak_start", row.get("banner_sec", row.get("start") or 0)) or 0)
+
+
 def pick_montage_rows(rows: list[dict]) -> list[dict]:
     """Pick 2–4 spaced peaks; prefer a double+ when available, singles allowed."""
     if not rows:
@@ -228,7 +233,7 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
         chosen.append(row)
         if len(chosen) >= max_n:
             break
-    chosen.sort(key=lambda r: float(r.get("start") or 0))
+    chosen.sort(key=_montage_timeline_key)
     if len(chosen) < min_n:
         return []
     lo, hi = montage_target_sec()
@@ -236,11 +241,14 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
     xfade = float(os.environ.get("TRANSITION_DURATION", "0.28"))
     est -= xfade * max(0, len(chosen) - 1)
     while len(chosen) > min_n and est > hi:
+        # Drop the latest moment so earlier chronology stays intact.
         chosen.pop()
         est = sum(float(r.get("fight_dur") or 12) for r in chosen) - xfade * max(0, len(chosen) - 1)
     if est < lo and len(chosen) < max_n:
         # keep as-is — short montage still better than spam
         pass
+    # Final guarantee: match timeline order (never score/tier order).
+    chosen.sort(key=_montage_timeline_key)
     return chosen
 
 

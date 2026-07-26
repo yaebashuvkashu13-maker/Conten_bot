@@ -228,7 +228,7 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
         chosen.append(row)
         if len(chosen) >= max_n:
             break
-    chosen.sort(key=lambda r: float(r.get("start") or 0))
+    chosen.sort(key=lambda r: float(r.get("peak_start", r.get("start") or 0)))
     if len(chosen) < min_n:
         return []
     lo, hi = montage_target_sec()
@@ -240,6 +240,7 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
         est = sum(float(r.get("fight_dur") or 8) for r in chosen) - xfade * max(0, len(chosen) - 1)
     if est < lo:
         pass
+    chosen.sort(key=lambda r: float(r.get("peak_start", r.get("start") or 0)))
     return chosen
 
 

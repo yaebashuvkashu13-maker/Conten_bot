@@ -2097,6 +2097,17 @@ def _send_montage_batch(
                 return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
             return 0, len(skipped), 0
 
+        # Keep VOD chronology even if a middle part was dropped by the gate.
+        order = sorted(
+            range(len(gated_rows)),
+            key=lambda i: float(
+                gated_rows[i].get("peak_start", gated_rows[i].get("start") or 0) or 0
+            ),
+        )
+        gated_rows = [gated_rows[i] for i in order]
+        gated_parts = [gated_parts[i] for i in order]
+        gated_durs = [gated_durs[i] for i in order]
+
         if not concat_rendered_parts(gated_parts, gated_durs, out):
             skipped.append("concat_fail")
             return 0, len(skipped), 0

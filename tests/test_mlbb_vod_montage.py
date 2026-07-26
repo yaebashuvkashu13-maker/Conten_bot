@@ -69,6 +69,21 @@ def test_pick_montage_rows_prefers_multi_and_gap(monkeypatch: pytest.MonkeyPatch
         assert b - a >= 60
 
 
+def test_pick_montage_rows_keeps_vod_chronology(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Later peaks with earlier window starts must not jump ahead in the stitch."""
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_MAX_CLIPS", "3")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_GAP_SEC", "40")
+    rows = [
+        # peak 205 wrongly expanded to start=0 (would sort first by start)
+        {"start": 0, "peak_start": 205, "kill_banner_tier": 3, "clip_score": 0.9, "fight_dur": 14},
+        {"start": 90, "peak_start": 108, "kill_banner_tier": 3, "clip_score": 0.5, "fight_dur": 14},
+        {"start": 1, "peak_start": 8, "kill_banner_tier": 3, "clip_score": 0.4, "fight_dur": 14},
+    ]
+    picked = pick_montage_rows(rows)
+    assert [int(r["peak_start"]) for r in picked] == [8, 108, 205]
+
+
 def test_pick_montage_rows_too_few() -> None:
     rows = [
         {"start": 100, "peak_start": 110, "kill_banner_tier": 1, "clip_score": 0.2, "fight_dur": 12},
