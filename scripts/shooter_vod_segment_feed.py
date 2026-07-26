@@ -637,7 +637,13 @@ def _send_montage_batch(
         gated_parts: list[Path] = []
         gated_durs: list[float] = []
         for row in to_send:
-            clip = apply_run_trim_to_clip(dict(row["clip"]), vod, game=game)
+            clip = dict(row["clip"])
+            skip_idle_trim = (
+                (game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1")
+                or (game == "wot" and os.environ.get("WOT_BRAWL_FULL_FIGHT", "1") == "1")
+            )
+            if not skip_idle_trim:
+                clip = apply_run_trim_to_clip(clip, vod, game=game)
             peak = float(row.get("peak_start", row.get("start", 0)))
             plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
             if game == "wot":
