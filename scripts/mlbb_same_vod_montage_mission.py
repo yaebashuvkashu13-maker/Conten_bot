@@ -38,29 +38,34 @@ def _ffprobe_duration(path: Path) -> float:
 def _prepare_montage_env() -> None:
     # Prefer mid-length ranked VODs; singles allowed inside montages.
     os.environ["MLBB_VOD_MONTAGE"] = "1"
-    os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")
-    os.environ["MLBB_VOD_MONTAGE_MAX_CLIPS"] = os.environ.get("MLBB_VOD_MONTAGE_MAX_CLIPS", "4")
+    os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = "3"
+    os.environ["MLBB_VOD_MONTAGE_MAX_CLIPS"] = "4"
     # Mid VODs need tighter spacing than long streams.
-    os.environ.setdefault("MLBB_VOD_MONTAGE_GAP_SEC", "45")
-    os.environ.setdefault("MLBB_VOD_MONTAGE_MIN_SEC", "32")
-    os.environ.setdefault("MLBB_VOD_MONTAGE_MAX_SEC", "70")
-    os.environ.setdefault("MLBB_VOD_MONTAGE_MIN_TIER", "single")
+    os.environ["MLBB_VOD_MONTAGE_GAP_SEC"] = "40"
+    os.environ["MLBB_VOD_MONTAGE_MIN_SEC"] = "32"
+    os.environ["MLBB_VOD_MONTAGE_MAX_SEC"] = "75"
+    os.environ["MLBB_VOD_MONTAGE_MIN_TIER"] = "single"
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "single"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
     os.environ["MLBB_VOD_MOTION_ANCHOR_OK"] = "0"
     os.environ["MLBB_VOD_TRIM_RUN"] = "1"
-    # Dense banner sweep — montages live or die on banner recall.
-    os.environ.setdefault("MLBB_VOD_BANNER_DENSE_SEC", "1")
-    os.environ.setdefault("MLBB_KILL_BANNER_DISCOVER_STEP", "1")
-    os.environ.setdefault("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "220")
-    os.environ.setdefault("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "480")
-    os.environ.setdefault("MLBB_KILL_BANNER_DISCOVER_TARGET", "10")
+    # Dense banner sweep — force overrides (feed caps via setdefault are too low).
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = "320"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = "720"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "12"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP"] = "80"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "40"
+    os.environ["MLBB_KILL_BANNER_TITLE_OCR_EVERY"] = "4"
     # Soft gates: owner OCR is weak on YT compressions.
-    os.environ.setdefault("MLBB_BANNER_OWNER_GATE", "0")
-    os.environ.setdefault("MLBB_BANNER_SEND_STRICT", "0")
-    os.environ.setdefault("MLBB_BANNER_REF_MATCH", "1")
-    os.environ.setdefault("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.48")
+    os.environ["MLBB_BANNER_OWNER_GATE"] = "0"
+    os.environ["MLBB_BANNER_SEND_STRICT"] = "0"
+    os.environ["MLBB_BANNER_REF_MATCH"] = "1"
+    os.environ["MLBB_BANNER_POS_LIVE_MIN_SIM"] = "0.46"
+    os.environ["MLBB_BANNER_POS_SAVAGE_MIN_SIM"] = "0.44"
+    os.environ["MLBB_BANNER_REF_COLOR_MUL"] = "0.85"
     # Do not burn daily cycle quota on this experiment.
     os.environ["DAILY_GAME_CYCLE_ENABLED"] = "0"
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
