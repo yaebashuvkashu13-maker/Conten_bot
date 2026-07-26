@@ -85,6 +85,10 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_PRESEND_RUN_MIN_MINI"] = "0.010"
     os.environ["MLBB_PRESEND_FIGHT_HUD_MIN"] = "0.009"
     os.environ["MLBB_PRESEND_MAX_RUN_FRAC"] = "0.38"
+    # Cut ~3s after last kill banner — no post-fight jog.
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_FIGHT_POST_SEC"] = "3"
+    os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
     # Do not burn daily cycle quota on montages.
     os.environ["DAILY_GAME_CYCLE_ENABLED"] = "0"
     os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"

@@ -120,7 +120,39 @@ def test_trim_idle_run_end_cuts_sprint_tail(tmp_path: Path, monkeypatch: pytest.
     assert new_end >= 14.0 + 3.0
 
 
-def test_vod_richness_prefers_rich_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_run_trim_hard_caps_after_banner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mlbb_vod_montage import apply_run_trim_to_clip
+
+    monkeypatch.setenv("MLBB_VOD_TRIM_RUN", "1")
+    monkeypatch.setenv("MLBB_BANNER_POST_SEC", "3")
+    monkeypatch.setenv("MLBB_BANNER_HARD_POST_CUT", "1")
+    monkeypatch.setenv("MLBB_FIGHT_MIN_SEC", "5")
+    vod = tmp_path / "yt_x.mp4"
+    vod.write_bytes(b"x")
+    # No combat decay signal — hard post cut must still fire.
+    motion = np.ones(30, dtype=np.float32) * 0.5
+    audio = np.ones(30, dtype=np.float32) * 0.5
+    analysis = {
+        "window_seconds": 1.0,
+        "duration": 30.0,
+        "bins": 30,
+        "center_motion": motion,
+        "audio": audio,
+        "scene": audio,
+    }
+    clip = {
+        "start": 5.0,
+        "peak_start": 12.0,
+        "banner_sec": 12.0,
+        "input_duration": 20.0,
+        "output_duration": 20.0,
+        "anchor": "kill_banner",
+    }
+    with patch("mlbb_fight_segment._analysis_for", return_value=analysis):
+        out = apply_run_trim_to_clip(clip, vod)
+    assert float(out["fight_end"]) <= 15.0 + 0.05
+    assert float(out["input_duration"]) <= 10.05
+
     from mlbb_vod_segment_feed import _vod_richness_rank
 
     rich = {"last_pool_peaks": [100, 200, 300, 400], "zero_send_attempts": 0}

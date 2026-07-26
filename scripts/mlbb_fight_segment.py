@@ -78,7 +78,18 @@ def banner_lead_sec(banner_tier: int | None = None) -> float:
 
 
 def _fight_post_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_POST_SEC", "4"))
+    """Seconds to keep after the last kill banner — short to avoid post-fight running."""
+    return float(
+        os.environ.get(
+            "MLBB_BANNER_POST_SEC",
+            os.environ.get("MLBB_FIGHT_POST_SEC", "3"),
+        )
+    )
+
+
+def banner_post_sec() -> float:
+    """Public alias: cut highlight this many seconds after the kill banner."""
+    return _fight_post_sec()
 
 
 def ideal_clip_min_sec() -> float:

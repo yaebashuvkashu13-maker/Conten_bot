@@ -1004,7 +1004,23 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
                 "MLBB_VOD_TRIM_MOTION_ANCHOR", "0"
             ) == "1":
                 end = trim_idle_run_end(vod, start, end, banner_sec=banner_sec)
-                dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), end - start)
+                # Hard cut ~3s after kill banner (banner = last kill of this moment).
+                post = float(os.environ.get("MLBB_BANNER_POST_SEC", "3"))
+                if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1" and banner_sec is not None:
+                    try:
+                        from mlbb_fight_segment import banner_post_sec
+
+                        post = banner_post_sec()
+                    except Exception:
+                        pass
+                    end = min(end, float(banner_sec) + post)
+                    dur = max(4.0, end - start)
+                    hard_dur = max(4.0, float(banner_sec) + post - start)
+                    if hard_dur >= 4.0:
+                        dur = min(dur, hard_dur)
+                        end = start + dur
+                else:
+                    dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), end - start)
         except Exception:
             pass
         return {
@@ -2697,6 +2713,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_RUN_MIN_SKILL": "0.009",
         "MLBB_PRESEND_RUN_MIN_MINI": "0.009",
         "MLBB_PRESEND_FIGHT_HUD_MIN": "0.008",
+        # Cut highlight ~3s after last kill banner (no lane jog tail).
+        "MLBB_BANNER_POST_SEC": "3",
+        "MLBB_FIGHT_POST_SEC": "3",
+        "MLBB_BANNER_HARD_POST_CUT": "1",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
