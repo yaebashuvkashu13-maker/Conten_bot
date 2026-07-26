@@ -698,6 +698,16 @@ def _send_montage_batch(
                         os.environ[f"{game.upper()}_VOD_MONTAGE"] = old_g
             return 0
 
+        order = sorted(
+            range(len(gated_rows)),
+            key=lambda i: float(
+                gated_rows[i].get("peak_start", gated_rows[i].get("start") or 0) or 0
+            ),
+        )
+        gated_rows = [gated_rows[i] for i in order]
+        gated_parts = [gated_parts[i] for i in order]
+        gated_durs = [gated_durs[i] for i in order]
+
         if not concat_rendered_parts(gated_parts, gated_durs, out):
             log.warning("montage concat fail vod=%s", vid)
             return 0
