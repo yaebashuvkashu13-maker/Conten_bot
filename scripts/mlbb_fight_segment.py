@@ -14,11 +14,11 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "55"))
+    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "60"))
 
 
 def _fight_hard_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "65"))
+    return float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "75"))
 
 
 def _sustain_quiet_bins() -> int:
@@ -67,12 +67,13 @@ def banner_lead_sec(banner_tier: int | None = None) -> float:
         return base + default_extra
 
     if tier >= 5:
-        # Savage: show the whole streak before the final banner (~20s+ setup).
-        return _tier_lead("MLBB_SAVAGE_BANNER_LEAD_SEC", 10.0)
+        # Savage: full streak (kills 1→5). 22s often lands on the triple.
+        return _tier_lead("MLBB_SAVAGE_BANNER_LEAD_SEC", 24.0)
     if tier >= 4:
-        return _tier_lead("MLBB_MANIAC_BANNER_LEAD_SEC", 8.0)
+        # Maniac: prior kills before the 4th banner, not mid-combo.
+        return _tier_lead("MLBB_MANIAC_BANNER_LEAD_SEC", 12.0)
     if tier >= 3:
-        return _tier_lead("MLBB_TRIPLE_BANNER_LEAD_SEC", 2.0)
+        return _tier_lead("MLBB_TRIPLE_BANNER_LEAD_SEC", 6.0)
     return base
 
 

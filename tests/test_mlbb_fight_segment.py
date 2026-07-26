@@ -11,6 +11,30 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 
+class BannerLeadTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        for k in (
+            "MLBB_VOD_LEAD_SEC",
+            "MLBB_KILL_BANNER_LEAD_SEC",
+            "MLBB_BANNER_PRE_SEC",
+            "MLBB_SAVAGE_BANNER_LEAD_SEC",
+            "MLBB_MANIAC_BANNER_LEAD_SEC",
+            "MLBB_TRIPLE_BANNER_LEAD_SEC",
+        ):
+            os.environ.pop(k, None)
+
+    def test_savage_lead_covers_full_streak_not_just_triple(self) -> None:
+        os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "16"
+        from mlbb_fight_segment import banner_lead_sec
+
+        # Default extra (~24) → ~40s before savage banner.
+        self.assertGreaterEqual(banner_lead_sec(5), 40.0)
+        self.assertGreaterEqual(banner_lead_sec(4), 28.0)
+        # Explicit env may raise further, never shrink below base+extra floor via max(base, env).
+        os.environ["MLBB_SAVAGE_BANNER_LEAD_SEC"] = "40"
+        self.assertEqual(banner_lead_sec(5), 40.0)
+
+
 class FightSegmentBoundsTest(unittest.TestCase):
     def test_hard_max_allows_longer_than_soft_max(self) -> None:
         os.environ["MLBB_FIGHT_MAX_SEC"] = "35"

@@ -228,11 +228,11 @@ def _prepare_env_for_scan(title: str, dur: float, tier_need: int, *, dense: bool
     os.environ.setdefault("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.48")
     os.environ.setdefault("MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.45")
     os.environ.setdefault("MLBB_BANNER_REF_COLOR_MUL", "0.85")
-    # Long pre-roll so clips start before the final kill, not on it.
-    os.environ.setdefault("MLBB_KILL_BANNER_LEAD_SEC", "16")
-    os.environ.setdefault("MLBB_MANIAC_BANNER_LEAD_SEC", "18")
-    os.environ.setdefault("MLBB_SAVAGE_BANNER_LEAD_SEC", "22")
-    os.environ.setdefault("MLBB_SAVAGE_CLIP_SEC", "30")
+    # Long pre-roll so clips start before the streak, not on the triple/maniac.
+    os.environ.setdefault("MLBB_KILL_BANNER_LEAD_SEC", "18")
+    os.environ.setdefault("MLBB_MANIAC_BANNER_LEAD_SEC", "28")
+    os.environ.setdefault("MLBB_SAVAGE_BANNER_LEAD_SEC", "40")
+    os.environ.setdefault("MLBB_SAVAGE_CLIP_SEC", "52")
     if dense:
         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
         # Ops rescans should not inherit the live-feed 5s step.
