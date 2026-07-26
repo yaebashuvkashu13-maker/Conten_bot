@@ -50,15 +50,16 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
     os.environ["MLBB_VOD_MOTION_ANCHOR_OK"] = "0"
     os.environ["MLBB_VOD_TRIM_RUN"] = "1"
-    # Dense banner sweep — force overrides (feed caps via setdefault are too low).
-    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+    # Spike-first discover (dense 1Hz is too slow under live WoT load).
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
     os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = "320"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = "720"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "12"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP"] = "80"
-    os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "40"
-    os.environ["MLBB_KILL_BANNER_TITLE_OCR_EVERY"] = "4"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = "96"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = "360"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "8"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP"] = "64"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "32"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_PCT"] = "55"
+    os.environ["MLBB_SAVAGE_DENSE_FALLBACK"] = "0"
     # Soft gates: owner OCR is weak on YT compressions.
     os.environ["MLBB_BANNER_OWNER_GATE"] = "0"
     os.environ["MLBB_BANNER_SEND_STRICT"] = "0"
@@ -128,12 +129,76 @@ def _hit_to_row(vod: Path, hit, file_dur: float) -> dict | None:
     }
 
 
+# Optional time hints (seconds) from prior successful scans — verified near-peak.
+_SEED_PEAKS: dict[str, list[float]] = {
+    "deK4Mjt6cjc": [8.0, 106.0, 206.0, 301.0, 413.0, 516.0, 621.0],
+    "FFNfHF2DPyI": [291.0, 583.0],
+    "NwfAgipU9_E": [],
+    "zzJugySyscM": [],
+}
+
+
+def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
+    """Combat-ish timestamps from analysis cache (audio/motion), spaced."""
+    try:
+        import numpy as np
+        from vod_analysis_cache import analyze_video_cached
+
+        a = analyze_video_cached(vod)
+        win = float(a.get("window_seconds") or 1.0)
+        audio = np.asarray(a.get("audio") or [], dtype=np.float32)
+        motion = np.asarray(a.get("center_motion") or a.get("motion") or [], dtype=np.float32)
+        if audio.size < 8:
+            return []
+        n = min(audio.size, motion.size) if motion.size else audio.size
+        score = audio[:n].copy()
+        if motion.size:
+            score = score * 0.55 + motion[:n] * 0.45
+        # Skip intro / outro edges.
+        lo = max(1, int(8 / win))
+        hi = max(lo + 1, n - int(5 / win))
+        score[:lo] = 0
+        score[hi:] = 0
+        order = np.argsort(score)[::-1]
+        out: list[float] = []
+        gap = 25.0
+        for idx in order:
+            if float(score[idx]) <= 1e-6:
+                break
+            t = float(idx) * win
+            if any(abs(t - x) < gap for x in out):
+                continue
+            out.append(t)
+            if len(out) >= top_n:
+                break
+        return out
+    except Exception as exc:
+        log.warning("spike times fail %s: %s", vod.name, exc)
+        return []
+
+
 def _discover_rows(vod: Path) -> list[dict]:
-    from mlbb_kill_banner import discover_vod_kill_banners
+    from mlbb_kill_banner import KillBannerHit, discover_vod_kill_banners, find_banner_near_peak
 
     file_dur = _ffprobe_duration(vod)
+    vid = _vod_id(vod)
     t0 = time.monotonic()
-    hits = discover_vod_kill_banners(vod, min_tier=1)
+    hits = list(discover_vod_kill_banners(vod, min_tier=1) or [])
+    # Augment with seeded + analysis spikes → local banner confirm.
+    hints = list(_SEED_PEAKS.get(vid) or [])
+    hints.extend(_analysis_spike_times(vod, top_n=14))
+    seen = {round(float(h.sec), 0) for h in hits}
+    for t in hints:
+        if any(abs(float(t) - s) < 12 for s in seen):
+            continue
+        try:
+            h = find_banner_near_peak(vod, float(t), quick=True)
+        except Exception:
+            h = None
+        if h is None or int(getattr(h, "tier", 0) or 0) < 1:
+            continue
+        hits.append(h)
+        seen.add(round(float(h.sec), 0))
     log.info(
         "discover vod=%s hits=%s elapsed=%.0fs",
         vod.name,
