@@ -58,6 +58,8 @@ def expand_boss_fight_window(
     post = max(0.0, _fenv("GENSHIN_BOSS_FIGHT_POST_SEC", 10.0))
     # How far before the peak we may walk (blocks cutscene / prior fight).
     max_back = max(12.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_BACK_SEC", 45.0))
+    # How far after the peak we may walk (blocks post-fight UI false bars).
+    max_forward = max(8.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_FORWARD_SEC", 40.0))
     tolerate = max(0, _ienv("GENSHIN_BOSS_FIGHT_GAP_TOLERATE", 3))
     prefer_start = os.environ.get("GENSHIN_BOSS_FIGHT_PREFER_START", "0") == "1"
     enabled = os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1"
@@ -99,11 +101,11 @@ def expand_boss_fight_window(
         # Never keep an onset older than max_back before the peak.
         onset = max(onset, peak - max_back)
 
-        # Walk forward for fight end (keep climax / finish).
+        # Walk forward for fight end — capped so false bars don't stretch forever.
         end = min(vod_duration, peak + post)
         t = peak
         miss = 0
-        while (t - onset) < hard_max and t < vod_duration:
+        while (t - peak) < max_forward and (t - onset) < hard_max and t < vod_duration:
             t = min(vod_duration, t + step)
             bar = _bar_at_cap(video_path, t, cap)
             if bar >= keep:
@@ -127,34 +129,34 @@ def expand_boss_fight_window(
     if dur > max_sec:
         if prefer_start:
             # Keep fight opening, but never drop the peak / finish.
-            end_pref = start + max_sec
             need_end = min(vod_duration, peak + post)
-            if need_end > end_pref:
-                end = need_end
-                start = max(0.0, end - max_sec)
-                if peak < start:
-                    start = max(0.0, peak - min(lead + 8.0, max_back * 0.5))
-                    end = min(vod_duration, max(start + min_sec, peak + post))
-            else:
-                end = end_pref
-            if end - start > hard_max:
-                end = start + hard_max
-                if peak + post > end:
-                    end = min(vod_duration, peak + post)
-                    start = max(0.0, end - hard_max)
-            dur = end - start
-        else:
-            # Default: keep climax + finish; trim the early tail (cutscenes go first).
-            end = min(vod_duration, max(end, peak + post))
-            start = max(0.0, end - max_sec)
-            # Still show some pre-peak combat when budget allows.
-            pre_want = min(max_back, max(lead + 12.0, max_sec * 0.55))
-            start = min(start, max(0.0, peak - pre_want))
+            end = max(start + max_sec, need_end)
             if end - start > max_sec:
                 start = max(0.0, end - max_sec)
             if peak < start:
-                start = max(0.0, peak - lead)
+                start = max(0.0, peak - min(lead + 8.0, max_back * 0.5))
+                end = min(vod_duration, max(start + min_sec, peak + post))
             if end - start > hard_max:
+                end = min(vod_duration, peak + post)
+                start = max(0.0, end - hard_max)
+            dur = end - start
+        else:
+            # Default: keep climax + finish; trim early tail (cutscenes go first).
+            end = min(vod_duration, max(end, peak + post))
+            start = max(0.0, end - max_sec)
+            # Prefer not cutting off more pre-peak combat than max_back allows.
+            earliest = max(0.0, peak - max_back - lead)
+            if start < earliest:
+                start = earliest
+                end = min(vod_duration, start + max_sec)
+                end = max(end, min(vod_duration, peak + post))
+                if end - start > max_sec:
+                    start = max(0.0, end - max_sec)
+            if peak < start:
+                start = max(0.0, peak - lead)
+                end = min(vod_duration, max(start + min_sec, peak + post))
+            if end - start > hard_max:
+                end = min(vod_duration, peak + post)
                 start = max(0.0, end - hard_max)
             dur = end - start
 
