@@ -150,22 +150,23 @@ def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
         motion = np.asarray(a.get("center_motion") or a.get("motion") or [], dtype=np.float32)
         if audio.size < 8:
             return []
-        n = min(audio.size, motion.size) if motion.size else audio.size
+        n = int(min(int(audio.size), int(motion.size))) if motion.size else int(audio.size)
         score = audio[:n].copy()
-        if motion.size:
+        if int(motion.size) > 0:
             score = score * 0.55 + motion[:n] * 0.45
         # Skip intro / outro edges.
         lo = max(1, int(8 / win))
         hi = max(lo + 1, n - int(5 / win))
-        score[:lo] = 0
-        score[hi:] = 0
+        score[:lo] = 0.0
+        if hi < n:
+            score[hi:] = 0.0
         order = np.argsort(score)[::-1]
         out: list[float] = []
         gap = 25.0
-        for idx in order:
-            if float(score[idx]) <= 1e-6:
+        for idx in order.tolist():
+            if float(score[int(idx)]) <= 1e-6:
                 break
-            t = float(idx) * win
+            t = float(int(idx)) * win
             if any(abs(t - x) < gap for x in out):
                 continue
             out.append(t)
@@ -178,7 +179,7 @@ def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
 
 
 def _discover_rows(vod: Path) -> list[dict]:
-    from mlbb_kill_banner import KillBannerHit, discover_vod_kill_banners, find_banner_near_peak
+    from mlbb_kill_banner import discover_vod_kill_banners, find_banner_near_peak
 
     file_dur = _ffprobe_duration(vod)
     vid = _vod_id(vod)
