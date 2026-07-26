@@ -267,6 +267,7 @@ def scan_and_send(
     from mlbb_vod_title import title_min_banner_tier, vod_title_blob
     from mlbb_telegram_video import send_video_file, send_document_file, TELEGRAM_MAX_BYTES
     from mlbb_fight_segment import banner_lead_sec
+    from mlbb_vod_segment_store import inline_keyboard_markup, segment_id, upsert_segment
     from smart_video_editor import load_env
 
     env = load_env(Path("/root/.video_bot.env"))
@@ -368,24 +369,56 @@ def scan_and_send(
                 f"MLBB {h.label.upper()} (tier {h.tier}) @ {h.sec:.0f}s\n"
                 f"pre-roll {lead:.0f}s before banner\n"
                 f"{title[:80]}\n"
-                f"id={vid} source={h.source} (title rescan)"
+                f"id={vid} source={h.source} (title rescan)\n"
+                f"👍 Ок / 👎 Не ок"
             )
+            sid = segment_id(vod, float(h.sec))
+            markup = inline_keyboard_markup(sid)
             if dry_run:
-                log.info("dry-run would send %s", out.name)
-                entry["sent"].append({"file": out.name, "dry_run": True})
+                log.info("dry-run would send %s sid=%s", out.name, sid)
+                entry["sent"].append({"file": out.name, "dry_run": True, "seg_id": sid})
                 sent += 1
                 continue
             ok = False
             try:
                 if out.stat().st_size <= TELEGRAM_MAX_BYTES:
-                    ok = bool(send_video_file(token, chat_id, out, caption))
+                    ok = bool(
+                        send_video_file(token, chat_id, out, caption, reply_markup=markup)
+                    )
                 else:
-                    ok = bool(send_document_file(token, chat_id, out, caption))
+                    ok = bool(
+                        send_document_file(
+                            token, chat_id, out, caption, reply_markup=markup
+                        )
+                    )
             except Exception as exc:
                 log.warning("telegram send failed %s: %s", out.name, exc)
-            log.info("send %s ok=%s", out.name, ok)
+            log.info("send %s ok=%s sid=%s", out.name, ok, sid)
             if ok:
-                entry["sent"].append({"file": out.name, "sec": h.sec, "tier": h.tier, "label": h.label})
+                upsert_segment(
+                    {
+                        "segment_id": sid,
+                        "path": str(out),
+                        "vod": str(vod),
+                        "vod_id": vid,
+                        "start": float(start),
+                        "banner_sec": float(h.sec),
+                        "duration": float(dur_clip),
+                        "score": float(h.tier),
+                        "label": h.label,
+                        "source": h.source,
+                        "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                )
+                entry["sent"].append(
+                    {
+                        "file": out.name,
+                        "sec": h.sec,
+                        "tier": h.tier,
+                        "label": h.label,
+                        "seg_id": sid,
+                    }
+                )
                 _mark_sent(
                     sent_reg,
                     video_id=vid,
