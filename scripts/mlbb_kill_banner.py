@@ -504,16 +504,36 @@ def scan_window(
     return hits
 
 
-def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) -> KillBannerHit | None:
+def find_banner_near_peak(
+    vod: Path,
+    peak_sec: float,
+    *,
+    quick: bool = False,
+    allow_ocr: bool = True,
+) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     if quick:
         before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
-        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
-        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, quick=True)
+        # Banner flash is usually *after* the motion peak (kill confirm).
+        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "10"))
+        hits = scan_window(
+            vod,
+            peak_sec - before,
+            peak_sec + after,
+            focus_sec=peak_sec,
+            quick=True,
+            allow_ocr=allow_ocr,
+        )
     else:
         before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
         after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
-        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
+        hits = scan_window(
+            vod,
+            peak_sec - before,
+            peak_sec + after,
+            focus_sec=peak_sec,
+            allow_ocr=allow_ocr,
+        )
     if not hits:
         return None
     min_tier = _min_tier()
@@ -573,9 +593,13 @@ def _discover_hit_target() -> int:
     How many banners discover should try to collect before stopping early.
 
     MIN_HITS alone was too low with SEND_ALL_BANNERS — spike sweep stopped after
-    2 hits and skipped the rest of the VOD.
+    2 hits and skipped the rest of the VOD. Montage mode also needs enough
+    distinct banners to glue 3–4 fights.
     """
     want = max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "2")))
+    if os.environ.get("MLBB_VOD_MONTAGE", "0") == "1" and os.environ.get("MLBB_SKIP_MONTAGE", "0") != "1":
+        mont = max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
+        want = max(want, mont)
     if os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") != "1":
         return want
     target = int(
@@ -609,8 +633,21 @@ def discover_vod_kill_banners(
     duration = float(analysis.get("duration") or 0.0)
     if duration < 20.0:
         return []
-    dense = _dense_scan_enabled()
     need = _effective_discover_min_tier(min_tier)
+    dense = _dense_scan_enabled()
+    # Title-promised maniac/savage must not fall into the sparse peak+OCR path
+    # that historically burned 240s on ~9 probes and returned 0 hits.
+    if (
+        not dense
+        and need >= 4
+        and os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1"
+    ):
+        dense = True
+        log.info(
+            "banner discover %s: auto-dense for title/min tier=%s",
+            vod.name,
+            need,
+        )
     # Ref-first discover is cheap — allow more probes so screenshot bank covers the VOD.
     default_probes = "28" if os.environ.get("MLBB_BANNER_REF_MATCH", "1") == "1" else "16"
     if dense:
@@ -626,7 +663,13 @@ def discover_vod_kill_banners(
         max_probes = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", default_probes)))
         max_sec = max(30.0, float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "120")))
         dense_step = 1.0
-    deadline = time.monotonic() + max_sec
+    t_discover0 = time.monotonic()
+    deadline = t_discover0 + max_sec
+    # Peak+OCR historically exhausted the whole wall budget (~9 probes / 240s)
+    # and never reached the spike sweep. Reserve time for spikes.
+    peak_frac = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC", "0.40"))
+    peak_frac = max(0.20, min(0.75, peak_frac))
+    peak_deadline = t_discover0 + (max_sec * peak_frac if not dense else max_sec)
     hits: list[KillBannerHit] = []
     probes = 0
     want = _discover_hit_target()
@@ -640,20 +683,31 @@ def discover_vod_kill_banners(
         else:
             hits.append(hit)
 
+    def _budget_ok(*, peak_phase: bool = False) -> bool:
+        limit = peak_deadline if peak_phase and not dense else deadline
+        return probes < max_probes and time.monotonic() < limit
+
     def _probe_at(t: float, *, deep: bool, allow_ocr: bool = True) -> bool:
         nonlocal probes
-        if probes >= max_probes or time.monotonic() >= deadline:
+        if not _budget_ok(peak_phase=False):
             return False
         probes += 1
         # Wider probe window catches banners slightly after the motion spike.
-        half = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER", "3.0"))
+        half = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER", "4.0"))
+        # Always quick-sample: full window OCR on every spike burned the budget.
         for hit in scan_window(
-            vod, t - 0.75, t + max(2.5, half), focus_sec=t, deep=deep, allow_ocr=allow_ocr
+            vod,
+            t - 1.0,
+            t + max(2.5, half),
+            focus_sec=t,
+            deep=deep,
+            quick=True,
+            allow_ocr=allow_ocr,
         ):
             _merge_hit(hit)
             if hits:
                 return True
-        return probes < max_probes and time.monotonic() < deadline
+        return _budget_ok(peak_phase=False)
 
     # Seed with owner-confirmed kill times when labels exist for this VOD.
     peak_hints: list[float] = list(hint_peaks or [])
@@ -667,29 +721,57 @@ def discover_vod_kill_banners(
     except Exception as exc:
         log.debug("owner kill anchors unavailable: %s", exc)
 
-    # Phase 1: narrow scan around stage1 motion peaks (fast), then full retry
-    # on a few misses — quick windows often stop just before the banner flash.
+    # Phase 1: peaks — ref-first (cheap), then OCR escalate, then a few full retries.
+    # Keep this under peak_deadline so the spike sweep still runs.
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")))
-    full_retry = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "3")))
+    full_retry = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
     missed_peaks: list[float] = []
+    ocr_missed: list[float] = []
     for peak in list(dict.fromkeys(peak_hints))[:peak_limit]:
-        if probes >= max_probes or time.monotonic() >= deadline:
+        if not _budget_ok(peak_phase=True):
             break
         probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=True)
+        hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=False)
         if hit:
             _merge_hit(hit)
         else:
             missed_peaks.append(peak)
-    for peak in missed_peaks[:full_retry]:
-        if probes >= max_probes or time.monotonic() >= deadline:
+    for peak in missed_peaks:
+        if not _budget_ok(peak_phase=True):
             break
         if len(hits) >= want and not dense:
             break
         probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=False)
+        hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=True)
         if hit:
             _merge_hit(hit)
+        else:
+            ocr_missed.append(peak)
+    for peak in ocr_missed[:full_retry]:
+        if not _budget_ok(peak_phase=True):
+            break
+        if len(hits) >= want and not dense:
+            break
+        # Need ~15s+ left overall so spike still gets a real window.
+        if (deadline - time.monotonic()) < 20.0:
+            break
+        probes += 1
+        hit = find_banner_near_peak(vod, peak, quick=False, allow_ocr=True)
+        if hit:
+            _merge_hit(hit)
+    if not dense:
+        log.info(
+            "banner discover %s: peak-phase probes=%s hits=%s/%s elapsed=%.0fs "
+            "(budget=%.0fs/%.0fs) need_tier=%s",
+            vod.name,
+            probes,
+            len(hits),
+            want,
+            time.monotonic() - t_discover0,
+            max_sec * peak_frac,
+            max_sec,
+            need,
+        )
 
     # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
     if dense and probes < max_probes and time.monotonic() < deadline:

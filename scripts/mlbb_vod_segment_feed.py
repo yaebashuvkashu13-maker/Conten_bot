@@ -2749,6 +2749,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
         "MLBB_ADAPTIVE_ALLOW_SINGLE": "0",
         "MLBB_BANNER_SEND_MIN_TIER": "double",
+        # Discover: don't let peak OCR burn the whole wall budget (was ~9 probes/240s).
+        "MLBB_KILL_BANNER_QUICK_AFTER": "10",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.40",
+        "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "2",
+        "MLBB_VOD_TITLE_DENSE_AUTO": "1",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
@@ -2794,6 +2800,11 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OCR_WEAK_SINGLE",
         "MLBB_ADAPTIVE_ALLOW_SINGLE",
         "MLBB_BANNER_SEND_MIN_TIER",
+        "MLBB_KILL_BANNER_QUICK_AFTER",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
+        "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY",
+        "MLBB_VOD_TITLE_DENSE_AUTO",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)

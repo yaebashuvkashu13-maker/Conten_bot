@@ -233,9 +233,14 @@ def test_discover_hit_target_honors_send_all() -> None:
             "MLBB_KILL_BANNER_DISCOVER_MIN_HITS",
             "MLBB_KILL_BANNER_DISCOVER_TARGET",
             "MLBB_VOD_MAX_PER_VOD",
+            "MLBB_VOD_MONTAGE",
+            "MLBB_SKIP_MONTAGE",
+            "MLBB_VOD_MONTAGE_MIN_CLIPS",
         )
     }
     try:
+        os.environ["MLBB_VOD_MONTAGE"] = "0"
+        os.environ["MLBB_SKIP_MONTAGE"] = "0"
         os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "1"
         os.environ["MLBB_KILL_BANNER_DISCOVER_MIN_HITS"] = "2"
         os.environ.pop("MLBB_KILL_BANNER_DISCOVER_TARGET", None)
@@ -245,7 +250,12 @@ def test_discover_hit_target_honors_send_all() -> None:
         os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "0"
         assert kb._discover_hit_target() == 2
 
+        os.environ["MLBB_VOD_MONTAGE"] = "1"
+        os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = "3"
+        assert kb._discover_hit_target() == 3
+
         os.environ["MLBB_VOD_SEND_ALL_BANNERS"] = "1"
+        os.environ["MLBB_VOD_MONTAGE"] = "0"
         os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "7"
         assert kb._discover_hit_target() == 7
     finally:
@@ -254,6 +264,135 @@ def test_discover_hit_target_honors_send_all() -> None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+def test_discover_peak_budget_reaches_spike(monkeypatch) -> None:
+    """Peak OCR must not consume the whole wall budget before spike sweep."""
+    from unittest.mock import patch
+
+    import mlbb_kill_banner as kb
+
+    vod = Path("/tmp/fake_budget_vod.mp4")
+    fake_analysis = {
+        "duration": 900.0,
+        "window_seconds": 2.0,
+        "center_motion": [0.01] * 50 + [0.9] * 20 + [0.02] * 380,
+        "audio": [0.01] * 450,
+    }
+    calls = {"peak": 0, "spike": 0, "t": 1000.0}
+
+    def fake_time():
+        return calls["t"]
+
+    def fake_find(vod_path, peak, *, quick=False, allow_ocr=True):
+        calls["peak"] += 1
+        # Each peak OCR used to burn ~25s — simulate cost but stay under peak budget.
+        calls["t"] += 8.0 if allow_ocr else 1.0
+        return None
+
+    def fake_scan(*_a, **kw):
+        calls["spike"] += 1
+        calls["t"] += 2.0
+        # First spike OCR hit after peaks.
+        if calls["spike"] >= 3 and kw.get("allow_ocr", True):
+            return [kb.KillBannerHit(sec=400.0, tier=2, label="double", text="DOUBLE", source="ocr")]
+        return []
+
+    monkeypatch.setenv("MLBB_VOD_BANNER_DISCOVER", "1")
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_VOD_BANNER_DENSE_SEC", "0")
+    monkeypatch.setenv("MLBB_VOD_SEND_ALL_BANNERS", "0")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE", "0")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "1")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "40")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "100")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC", "0.40")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP", "20")
+    monkeypatch.setenv("MLBB_VOD_BANNER_DISCOVER_SPIKE", "1")
+    monkeypatch.setenv("MLBB_BANNER_REF_MATCH", "1")
+    monkeypatch.setenv("MLBB_VOD_MIN_PEAK_SEC", "0")
+
+    with (
+        patch("mlbb_fight_segment._analysis_for", return_value=fake_analysis),
+        patch.object(kb, "find_banner_near_peak", side_effect=fake_find),
+        patch.object(kb, "scan_window", side_effect=fake_scan),
+        patch.object(kb.time, "monotonic", side_effect=fake_time),
+        patch(
+            "mlbb_owner_learning.owner_kill_anchor_secs_for_path",
+            return_value=[],
+        ),
+    ):
+        hits = kb.discover_vod_kill_banners(
+            vod, hint_peaks=[100.0, 140.0, 180.0, 220.0, 260.0, 300.0, 340.0, 380.0]
+        )
+    assert calls["spike"] >= 1, "spike sweep must run after peak budget"
+    assert hits and hits[0].tier >= 2
+
+
+def test_discover_auto_dense_for_maniac_tier(monkeypatch) -> None:
+    import sys
+    import types
+    from unittest.mock import patch
+
+    import mlbb_kill_banner as kb
+
+    vod = Path("/tmp/fake_dense_vod.mp4")
+    fake_analysis = {
+        "duration": 400.0,
+        "window_seconds": 2.0,
+        "center_motion": [0.1] * 200,
+        "audio": [0.1] * 200,
+    }
+    seen = {"dense": False}
+
+    # Dense path imports gameplay_gate/cv2 — stub if missing in test env.
+    if "cv2" not in sys.modules:
+        cv2_stub = types.ModuleType("cv2")
+
+        class _Cap:
+            def isOpened(self):
+                return False
+
+            def release(self):
+                return None
+
+        cv2_stub.VideoCapture = lambda *_a, **_k: _Cap()
+        sys.modules["cv2"] = cv2_stub
+    if "gameplay_gate" not in sys.modules:
+        gg = types.ModuleType("gameplay_gate")
+        gg._read_frame_at = lambda *_a, **_k: None
+        sys.modules["gameplay_gate"] = gg
+
+    monkeypatch.setenv("MLBB_VOD_BANNER_DISCOVER", "1")
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_VOD_BANNER_DENSE_SEC", "0")
+    monkeypatch.setenv("MLBB_VOD_TITLE_DENSE_AUTO", "1")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MAX_PROBES", "20")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MAX_SEC", "30")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_STEP", "30")
+    monkeypatch.setenv("MLBB_VOD_MIN_PEAK_SEC", "0")
+    monkeypatch.setenv("MLBB_VOD_TITLE_MIN_TIER", "4")
+
+    real_log = kb.log.info
+
+    def spy_info(msg, *args, **kwargs):
+        text = msg % args if args else str(msg)
+        if "dense_1hz" in text or "auto-dense" in text:
+            seen["dense"] = True
+        return real_log(msg, *args, **kwargs)
+
+    with (
+        patch("mlbb_fight_segment._analysis_for", return_value=fake_analysis),
+        patch.object(kb.log, "info", side_effect=spy_info),
+        patch(
+            "mlbb_owner_learning.owner_kill_anchor_secs_for_path",
+            return_value=[],
+        ),
+    ):
+        kb.discover_vod_kill_banners(vod, min_tier=4, hint_peaks=[60.0])
+    assert seen["dense"] is True
 
 
 def test_discover_keeps_sweeping_until_target() -> None:
