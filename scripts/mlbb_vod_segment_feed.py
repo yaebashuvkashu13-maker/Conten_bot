@@ -346,6 +346,8 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         rich = _vod_richness_rank(row)
         ranked.append((rich, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
+        if _revive_exhausted_inbox_candidates(registry):
+            return _pick_available_vod(registry)
         return None
     ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
     pick = ranked[0][5]
@@ -458,6 +460,91 @@ def _zero_yield_uploaders() -> set[str]:
     return {str(u).casefold() for u in state.get("zero_yield_uploaders", []) if str(u).strip()}
 
 
+def _discovery_starvation_level() -> int:
+    """How hard discovery has been failing recently (feed-local + daily cycle)."""
+    state = _load_state()
+    local = int(state.get("discovery_empty_streak") or 0)
+    cycle = 0
+    try:
+        from daily_game_cycle import load_state as load_cycle
+
+        cycle = int((load_cycle().get("discovery_misses") or {}).get("mlbb") or 0)
+    except Exception:
+        cycle = 0
+    return max(local, cycle)
+
+
+def _zero_yield_block_active() -> bool:
+    """
+    Permanent uploader blocklist starves discovery after a few bad channels.
+
+    After N empty discovery rounds, temporarily ignore the blocklist so fresh
+    VODs from those channels can be tried again.
+    """
+    if os.environ.get("MLBB_VOD_BYPASS_ZERO_YIELD", "0") == "1":
+        return False
+    need = max(2, int(os.environ.get("MLBB_VOD_ZERO_YIELD_BYPASS_AFTER", "3")))
+    return _discovery_starvation_level() < need
+
+
+def _note_discovery_empty(*, kept: int) -> None:
+    state = _load_state()
+    if kept > 0:
+        state["discovery_empty_streak"] = 0
+    else:
+        state["discovery_empty_streak"] = int(state.get("discovery_empty_streak") or 0) + 1
+    _save_state(state)
+
+
+def _title_promise_revive_ok(title: str) -> bool:
+    t = str(title or "")
+    return bool(
+        re.search(r"\b(?:savage|maniac|triple\s*kill|double\s*kill|legendary)\b", t, re.I)
+        or re.search(r"саваж|маньяк|тройн|двойн", t, re.I)
+    )
+
+
+def _revive_exhausted_inbox_candidates(registry: list[dict], *, limit: int = 3) -> int:
+    """
+    When discovery is starving, reopen on-disk exhausted VODs that promise
+    kill streaks in the title — better than looping empty YouTube search.
+    """
+    if os.environ.get("MLBB_VOD_REVIVE_TITLE", "1") != "1":
+        return 0
+    if _discovery_starvation_level() < max(2, int(os.environ.get("MLBB_VOD_REVIVE_AFTER_MISS", "2"))):
+        return 0
+    revived = 0
+    for row in registry:
+        if revived >= limit:
+            break
+        if not row.get("exhausted"):
+            continue
+        if int(row.get("revive_count") or 0) >= int(os.environ.get("MLBB_VOD_REVIVE_MAX", "1")):
+            continue
+        path = Path(str(row.get("path") or ""))
+        if not path.exists() or path.stat().st_size < 1_000_000:
+            continue
+        title = str(row.get("title") or path.stem)
+        if not _title_promise_revive_ok(title):
+            continue
+        row["exhausted"] = False
+        row["revive_count"] = int(row.get("revive_count") or 0) + 1
+        row["revive_skip_fast_probe"] = True
+        row["reject_reason"] = ""
+        row["last_scan_blocked"] = False
+        revived += 1
+        log.info(
+            "revive exhausted inbox id=%s title=%s reason=discovery_starve",
+            row.get("id") or path.name,
+            title[:70],
+        )
+    if revived:
+        state = _load_state()
+        state["vods"] = registry
+        _save_state(state)
+    return revived
+
+
 def _record_zero_yield_uploader(meta: dict | None) -> None:
     if not meta:
         return
@@ -496,7 +583,12 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
     search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", "25"))
-    blocked_uploaders = _zero_yield_uploaders()
+    blocked_uploaders = _zero_yield_uploaders() if _zero_yield_block_active() else set()
+    if not blocked_uploaders and _zero_yield_uploaders():
+        log.info(
+            "discovery: bypass zero_yield blocklist (starvation=%s)",
+            _discovery_starvation_level(),
+        )
     all_queries = [
         q.strip()
         for q in os.environ.get("MLBB_VOD_SEARCH_QUERIES", DEFAULT_SEARCH_QUERIES).split(",")
@@ -555,6 +647,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             skipped["live_or_long"] = skipped.get("live_or_long", 0) + 1
             continue
         if vid in used:
+            skipped["already_used"] = skipped.get("already_used", 0) + 1
             continue
         if not passes_mlbb_game_title(title):
             skipped["not_mlbb"] = skipped.get("not_mlbb", 0) + 1
@@ -574,6 +667,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             skipped["stale_upload"] = skipped.get("stale_upload", 0) + 1
             continue
         out.append(meta)
+    _note_discovery_empty(kept=len(out))
     if skipped:
         log.info("discovery filtered raw=%s kept=%s skipped=%s", len(raw), len(out), skipped)
     out.sort(
@@ -2399,7 +2493,12 @@ def _process_vod_segments(
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
     clear_fast_seeds = None
-    if os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":
+    skip_fast = bool(entry and entry.get("revive_skip_fast_probe"))
+    if skip_fast:
+        log.info("revive: skip fast-probe vod=%s", vod.name)
+        if entry is not None:
+            entry["revive_skip_fast_probe"] = False
+    if (not skip_fast) and os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":
         from mlbb_vod_fast_scan import (
             apply_fast_probe_seeds,
             clear_fast_probe_seeds,
