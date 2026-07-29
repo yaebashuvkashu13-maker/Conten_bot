@@ -29,6 +29,23 @@ def load_env(path: Path) -> dict[str, str]:
     return env
 
 
+def apply_env(env: dict[str, str]) -> None:
+    """Expose bot env to gather_ops_snapshot (montage flags, quotas, paths)."""
+    for key, value in env.items():
+        if key and key not in os.environ:
+            os.environ[key] = value
+    for key in (
+        "MLBB_VOD_MONTAGE",
+        "MONTAGE_ONLY_MODE",
+        "POST_QUOTA_MONTAGE",
+        "DAILY_GAME_CYCLE_STATE",
+        "MONTAGE_DEDUP_STATE",
+        "MLBB_STATE_DIR",
+    ):
+        if key in env:
+            os.environ[key] = env[key]
+
+
 def send_text(token: str, chat_id: str, text: str) -> bool:
     clean = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
     result = subprocess.run(
@@ -62,6 +79,9 @@ def main() -> int:
     ap.add_argument("--out", default="")
     ap.add_argument("--day", default="")
     args = ap.parse_args()
+
+    env = load_env(ENV_FILE)
+    apply_env(env)
 
     snap = gather_ops_snapshot(args.day or None)
     day = str(snap.get("day") or msk_now().date().isoformat())
@@ -106,7 +126,6 @@ def main() -> int:
             print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    env = load_env(ENV_FILE)
     token = env.get("TG_BOT_TOKEN") or os.environ.get("TG_BOT_TOKEN", "")
     chat_id = env.get("TG_CHAT_ID") or os.environ.get("TG_CHAT_ID", "")
     if not token or not chat_id:

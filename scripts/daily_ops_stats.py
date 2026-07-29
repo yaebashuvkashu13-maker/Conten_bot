@@ -123,16 +123,25 @@ def _montage_today(day: str) -> list[dict]:
 def _process_snapshot() -> dict:
     out = {"cycle": False, "mlbb_feed": False, "feed_shell": False}
     try:
-        r = subprocess.run(
-            ["pgrep", "-af", "daily_cycle_runner|mlbb_vod_segment_feed"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        blob = r.stdout or ""
-        out["cycle"] = "daily_cycle_runner" in blob
-        out["mlbb_feed"] = "mlbb_vod_segment_feed.py" in blob
-        out["feed_shell"] = "mlbb_vod_segment_feed.sh" in blob
+        for needle, key in (
+            ("daily_cycle_runner", "cycle"),
+            ("mlbb_vod_segment_feed.py", "mlbb_feed"),
+            ("mlbb_vod_segment_feed.sh", "feed_shell"),
+        ):
+            r = subprocess.run(
+                ["pgrep", "-af", needle],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            blob = r.stdout or ""
+            # Ignore the pgrep line itself and this report script.
+            hits = [
+                ln
+                for ln in blob.splitlines()
+                if needle in ln and "pgrep" not in ln and "daily_ops" not in ln
+            ]
+            out[key] = bool(hits)
     except (subprocess.TimeoutExpired, OSError):
         pass
     return out
