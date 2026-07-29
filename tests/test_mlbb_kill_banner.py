@@ -13,7 +13,68 @@ from mlbb_kill_banner import (  # noqa: E402
 )
 
 
-def test_classify_savage_and_triple() -> None:
+def test_send_min_tier_floors_double(monkeypatch) -> None:
+    from mlbb_kill_banner import send_min_tier
+
+    monkeypatch.setenv("MLBB_KILL_BANNER_MIN_TIER", "single")
+    monkeypatch.delenv("MLBB_BANNER_SEND_MIN_TIER", raising=False)
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "0")
+    assert send_min_tier() == 2
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "1")
+    assert send_min_tier() == 1
+    monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "triple")
+    assert send_min_tier() == 3
+
+
+def test_may_trust_discover_rejects_ocr_single(monkeypatch) -> None:
+    from mlbb_kill_banner import _may_trust_discover_banner
+
+    monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "1")
+    assert (
+        _may_trust_discover_banner(
+            {"kill_banner": "single", "kill_banner_tier": 1, "banner_source": "ocr"}
+        )
+        is False
+    )
+    assert (
+        _may_trust_discover_banner(
+            {"kill_banner": "double", "kill_banner_tier": 2, "banner_source": "ref:owner"}
+        )
+        is True
+    )
+    monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "0")
+    monkeypatch.setenv("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "0")
+    assert (
+        _may_trust_discover_banner(
+            {"kill_banner": "double", "kill_banner_tier": 2, "banner_source": "ref"}
+        )
+        is False
+    )
+
+
+def test_accept_ocr_rejects_garbled_kill(monkeypatch) -> None:
+    """Bare OCR 'kill' in HUD noise must not become a shippable single."""
+    import numpy as np
+    from unittest.mock import patch
+
+    from mlbb_kill_banner import _classify_frame, KillBannerHit
+
+    monkeypatch.setenv("MLBB_BANNER_OCR_WEAK_SINGLE", "0")
+    monkeypatch.setenv("MLBB_BANNER_REF_BEFORE_OCR", "0")
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_ONLY", "0")
+    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    garbled = KillBannerHit(
+        sec=0.0,
+        tier=1,
+        label="single_weak",
+        text="_ J na | be a? * i eee WY, L,. c kill",
+        source="ocr",
+    )
+    with patch("mlbb_kill_banner._announce_color_score", return_value=0.2):
+        with patch("mlbb_kill_banner._ocr_banner_zones", return_value=garbled.text):
+            with patch("mlbb_kill_banner.classify_banner_text", return_value=garbled):
+                assert _classify_frame(10.0, frame, deep=True) is None
+
     s = classify_banner_text("SAVAGE!")
     assert s is not None
     assert s.tier == 5

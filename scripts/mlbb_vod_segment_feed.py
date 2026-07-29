@@ -1449,24 +1449,32 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         if presend_banner:
-            from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier
+            from mlbb_kill_banner import (
+                verify_banner_on_source,
+                verify_rendered_clip,
+                _min_tier,
+                send_min_tier,
+                _may_trust_discover_banner,
+            )
 
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
-            # Discover already proved the kill banner — don't re-OCR the whole source
-            # (that can stall Telegram delivery for many minutes after the header text).
-            trust_discover = (
-                os.environ.get("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "1") == "1"
-                and bool(row.get("kill_banner") or row.get("kill_banner_tier"))
-            )
+            # Never blind-trust OCR "single" discover hits — they FPs on HUD noise
+            # (asSYCsoCSPs_959: trusted_discover:single with no real kill).
+            trust_discover = _may_trust_discover_banner(row)
             if trust_discover:
                 banner_ok, banner_reason = True, f"trusted_discover:{row.get('kill_banner') or row.get('kill_banner_tier')}"
             else:
-                banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
+                # Presend verify uses send floor (double+) even if soften opened singles for scan.
+                verify_need = send_min_tier()
+                banner_ok, banner_reason = verify_banner_on_source(
+                    vod, banner_sec, min_tier=verify_need
+                )
                 if not banner_ok:
                     banner_ok, banner_reason = verify_rendered_clip(
                         rendered,
                         banner_sec=banner_sec if row.get("banner_sec") else None,
                         clip_start=cut_start,
+                        min_tier=verify_need,
                     )
             report["kill_banner"] = banner_reason
             if not banner_ok:
@@ -1479,7 +1487,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     tier_i = int(tier) if tier is not None else 0
                 except (TypeError, ValueError):
                     tier_i = 0
-                min_tier = _min_tier()
+                min_tier = send_min_tier()
                 title_min = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
                 if title_min > min_tier:
                     min_tier = title_min
@@ -1489,6 +1497,20 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
+                # OCR-only singles are never shippable.
+                src = str(
+                    row.get("banner_source")
+                    or row.get("kill_banner_source")
+                    or row.get("clip", {}).get("banner_source")
+                    or ""
+                )
+                label = str(row.get("kill_banner") or "").lower()
+                if (
+                    os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1"
+                    and tier_i <= 1
+                    and (src.startswith("ocr") or label in {"single", "single_weak"})
+                ):
+                    return False, f"ocr_single_reject:{label or src or 'tier1'}", report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -2717,6 +2739,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_POST_SEC": "3",
         "MLBB_FIGHT_POST_SEC": "3",
         "MLBB_BANNER_HARD_POST_CUT": "1",
+        # Never blind-trust OCR discover singles at presend.
+        "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER": "0",
+        "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
+        "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
+        "MLBB_ADAPTIVE_ALLOW_SINGLE": "0",
+        "MLBB_BANNER_SEND_MIN_TIER": "double",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
@@ -2754,6 +2782,11 @@ def _apply_mlbb_reliable_runtime() -> None:
         "VIRAL_MLBB_CLIP_HOOK_MIN",
         "MLBB_TEAMFIGHT_MIN_SCORE",
         "MLBB_MOTION_PEAK_MAX",
+        "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER",
+        "MLBB_BANNER_REJECT_OCR_SINGLE",
+        "MLBB_BANNER_OCR_WEAK_SINGLE",
+        "MLBB_ADAPTIVE_ALLOW_SINGLE",
+        "MLBB_BANNER_SEND_MIN_TIER",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)

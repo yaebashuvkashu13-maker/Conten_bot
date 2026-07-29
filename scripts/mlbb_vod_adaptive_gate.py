@@ -35,11 +35,12 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_SEND_ALL_BANNERS": "1",
 }
 
-# Level 2: OCR often blind — widen windows / allow single; NEVER drop banner.
+# Level 2: OCR often blind — widen windows; keep double+ for send (no OCR "kill" FPs).
 # Motion-only junk is what the owner called garbage.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
+    # Singles via soften caused false "KILL" OCR spam — keep double unless explicitly allowed.
+    "MLBB_KILL_BANNER_MIN_TIER": "double",
     "MLBB_KILL_BANNER_REQUIRED": "1",
     "MLBB_VOD_MOTION_ANCHOR_OK": "0",
     "MLBB_VOD_BANNER_PRESEND": "1",
@@ -90,8 +91,26 @@ def streak_threshold() -> int:
     return max(1, int(os.environ.get("MLBB_VOD_ZERO_STREAK_SOFTEN", str(DEFAULT_STREAK_THRESHOLD))))
 
 
+def overrides_for_level(level: int) -> dict[str, str]:
+    if level <= 0:
+        return {}
+    if level >= 3:
+        out = dict(SOFTEN_L3)
+    elif level >= 2:
+        out = dict(SOFTEN_L2)
+    else:
+        out = dict(SOFTEN_L1)
+    # Opt-in only: allow single kill banners under soften (default off — OCR FPs).
+    if (
+        level >= 2
+        and os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
+    ):
+        out["MLBB_KILL_BANNER_MIN_TIER"] = "single"
+    return out
+
+
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft, 2=single+wider OCR, 3=more lenient — always banner-required."""
+    """0=strict, 1=soft, 2=wider OCR, 3=more lenient — always banner-required."""
     need = streak_threshold()
     if streak < need:
         return 0
@@ -100,16 +119,6 @@ def soften_level(streak: int) -> int:
     if streak >= need + 1:
         return 2
     return 1
-
-
-def overrides_for_level(level: int) -> dict[str, str]:
-    if level <= 0:
-        return {}
-    if level >= 3:
-        return dict(SOFTEN_L3)
-    if level >= 2:
-        return dict(SOFTEN_L2)
-    return dict(SOFTEN_L1)
 
 
 def trailing_zero_streak(results: list[dict]) -> int:

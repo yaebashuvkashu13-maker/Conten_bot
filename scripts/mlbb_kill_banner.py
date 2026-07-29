@@ -97,6 +97,58 @@ def _min_tier() -> int:
     return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 2)
 
 
+def _may_trust_discover_banner(row: dict) -> bool:
+    """
+    Blind-trust discover only for strong ref-backed multi-kills.
+
+    Default OFF (also honors MLBB_VOD_PRESEND_TRUST_DISCOVERY). Never trust
+    OCR singles — that shipped asSYCsoCSPs_959 with no real kill.
+    """
+    trust_raw = os.environ.get(
+        "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER",
+        os.environ.get("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "0"),
+    )
+    if str(trust_raw).strip() not in {"1", "true", "True", "yes"}:
+        return False
+    if not (row.get("kill_banner") or row.get("kill_banner_tier")):
+        return False
+    try:
+        tier_i = int(row.get("kill_banner_tier") or 0)
+    except (TypeError, ValueError):
+        tier_i = 0
+    label = str(row.get("kill_banner") or "").lower()
+    src = str(
+        row.get("banner_source")
+        or row.get("kill_banner_source")
+        or (row.get("clip") or {}).get("banner_source")
+        or ""
+    )
+    if tier_i <= 1 or label in {"single", "single_weak", "color", "announce"}:
+        return False
+    if src.startswith("ocr") or src.startswith("color"):
+        return False
+    return True
+
+
+def send_min_tier() -> int:
+    """
+    Minimum banner tier allowed to SEND (presend floor).
+
+    Soften may widen OCR search but must not ship OCR 'single' FPs unless
+    MLBB_ADAPTIVE_ALLOW_SINGLE=1 / MLBB_BANNER_SEND_MIN_TIER=single.
+    """
+    raw = (os.environ.get("MLBB_BANNER_SEND_MIN_TIER") or "").strip().lower()
+    if raw:
+        if raw.isdigit():
+            return max(1, int(raw))
+        return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 2)
+    # Default floor: double, even if discover soften temporarily set min_tier=single.
+    floor = 2
+    if os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1":
+        floor = 1
+    return max(_min_tier(), floor)
+
+
 def _banner_required() -> bool:
     return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
 
@@ -312,54 +364,56 @@ def _classify_frame(
     if not allow_ocr:
         return None
 
-    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
-    if classified is not None:
-        # Weak OCR "kill" without gold/white announce colors → subtitle/UI FP.
-        if classified.label == "single_weak" or (
-            classified.tier == 1 and not _SINGLE_STRONG_RE.search(classified.text)
-        ):
-            need = _color_min_score() * float(os.environ.get("MLBB_KILL_BANNER_WEAK_COLOR_MUL", "0.85"))
-            if color < need:
-                classified = None
-            else:
-                classified = KillBannerHit(
-                    sec=0.0,
-                    tier=1,
-                    label="single",
-                    text=classified.text,
-                    source="ocr",
-                )
-        if classified is not None:
+    def _accept_ocr_hit(classified: KillBannerHit) -> KillBannerHit | None:
+        """
+        OCR alone is noisy on YT compressions. Bare 'kill' in HUD/subtitles is a
+        common FP (asSYCsoCSPs_959). Require a strong single phrase, or double+.
+        """
+        text = str(classified.text or "")
+        # Garbled OCR: too few letters relative to junk.
+        letters = sum(ch.isalpha() for ch in text)
+        if letters < int(os.environ.get("MLBB_BANNER_OCR_MIN_LETTERS", "8")) and classified.tier <= 1:
+            return None
+        if classified.tier >= 2:
             return KillBannerHit(
                 sec=round(sec, 2),
                 tier=classified.tier,
                 label=classified.label if classified.label != "single_weak" else "single",
-                text=classified.text,
+                text=text[:120],
                 source="ocr",
             )
+        # Tier-1: strong phrase only (has been slain / first blood / …).
+        if classified.label == "single_weak" or not _SINGLE_STRONG_RE.search(text):
+            if os.environ.get("MLBB_BANNER_OCR_WEAK_SINGLE", "0") != "1":
+                return None
+            need = _color_min_score() * float(
+                os.environ.get("MLBB_KILL_BANNER_WEAK_COLOR_MUL", "1.15")
+            )
+            if color < need:
+                return None
+        return KillBannerHit(
+            sec=round(sec, 2),
+            tier=1,
+            label="single",
+            text=text[:120],
+            source="ocr",
+        )
+
+    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
+    if classified is not None:
+        hit = _accept_ocr_hit(classified)
+        if hit is not None:
+            return hit
     if color >= _color_min_score():
         deep_text = _ocr_banner_zones(frame, deep=True)
         if _ENEMY_STREAK_RE.search(deep_text):
             return None
         classified = classify_banner_text(deep_text)
         if classified is not None:
-            if classified.label == "single_weak" and not _SINGLE_STRONG_RE.search(classified.text):
-                # Color already strong here — accept as single.
-                classified = KillBannerHit(
-                    sec=0.0,
-                    tier=1,
-                    label="single",
-                    text=classified.text,
-                    source="ocr",
-                )
-            return KillBannerHit(
-                sec=round(sec, 2),
-                tier=classified.tier,
-                label=classified.label if classified.label != "single_weak" else "single",
-                text=classified.text,
-                source="ocr",
-            )
-        # OCR blind but gold announce present — try screenshot bank again.
+            hit = _accept_ocr_hit(classified)
+            if hit is not None:
+                return hit
+        # Color-only without readable streak text — try ref bank once more, else drop.
         try:
             from mlbb_banner_ref_match import classify_banner_reference
 
@@ -368,15 +422,14 @@ def _classify_frame(
                 return ref_hit
         except Exception:
             pass
-        if not _color_only_allowed():
-            return None
-        return KillBannerHit(
-            sec=round(sec, 2),
-            tier=3,
-            label="announce",
-            text=f"color={color:.3f}",
-            source="color",
-        )
+        if os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1":
+            return KillBannerHit(
+                sec=round(sec, 2),
+                tier=1,
+                label="color",
+                text=f"color={color:.3f}",
+                source="color",
+            )
     return None
 
 

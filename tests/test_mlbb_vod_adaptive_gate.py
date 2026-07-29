@@ -38,7 +38,8 @@ def test_soften_after_three_zeros():
     assert soften_level(10) == 3
 
 
-def test_l2_does_not_hard_skip_on_banner_miss():
+def test_l2_does_not_hard_skip_on_banner_miss(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MLBB_ADAPTIVE_ALLOW_SINGLE", raising=False)
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
     assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
@@ -48,6 +49,14 @@ def test_l2_does_not_hard_skip_on_banner_miss():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
     assert ov["MLBB_VOD_SEND_ALL_BANNERS"] == "1"
     assert ov["MLBB_VOD_SEND_ONE"] == "0"
+    # Soften must NOT drop to OCR singles (false kill spam).
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+
+
+def test_l2_allow_single_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "1")
+    ov = overrides_for_level(2)
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
 
 
 def test_l3_keeps_banner_and_multi_send():
@@ -117,9 +126,10 @@ def test_l1_keeps_banner_discover():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
 
 
-def test_l2_allows_single_but_keeps_banner():
+def test_l2_keeps_double_floor_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MLBB_ADAPTIVE_ALLOW_SINGLE", raising=False)
     ov = overrides_for_level(2)
-    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
