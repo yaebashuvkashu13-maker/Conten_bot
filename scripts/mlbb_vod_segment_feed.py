@@ -2449,6 +2449,11 @@ def _process_vod_segments(
     sig = file_sha256(vod)
     sent = load_feed_sent()
     vid = vod_youtube_id(vod)
+    # Reset per-VOD title gates — leftovers from the previous file poisoned
+    # dense/min-tier (wanwan VOD inherited "maniac+savage sun" from prior).
+    os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+    os.environ.pop("MLBB_BANNER_POS_LIVE_MIN_SIM", None)
     # Title-aware scan: savage/maniac in title → early dense discover + min banner tier.
     try:
         from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
