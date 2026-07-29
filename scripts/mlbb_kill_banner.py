@@ -583,9 +583,21 @@ def _title_min_tier_override() -> int:
 
 
 def _effective_discover_min_tier(min_tier: int | None) -> int:
-    need = min_tier if min_tier is not None else _min_tier()
+    """
+    Discover floor for merging hits.
+
+    Title may promise savage/maniac (enables dense scan), but forcing discover
+    to tier 5 made OCR-blind VODs return hits=0 for hours. Cap title influence
+    unless MLBB_VOD_TITLE_FORCE_DISCOVER_TIER=1.
+    """
+    base = _min_tier()
+    requested = min_tier if min_tier is not None else base
     title_need = _title_min_tier_override()
-    return max(need, title_need) if title_need > 0 else need
+    want = max(base, requested, title_need) if title_need > 0 else max(base, requested)
+    if os.environ.get("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", "0") == "1":
+        return want
+    cap = max(base, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", str(base))))
+    return min(want, cap)
 
 
 def _discover_hit_target() -> int:
@@ -634,18 +646,21 @@ def discover_vod_kill_banners(
     if duration < 20.0:
         return []
     need = _effective_discover_min_tier(min_tier)
+    title_need = _title_min_tier_override()
+    dense_tier = max(need, title_need, int(min_tier or 0))
     dense = _dense_scan_enabled()
     # Title-promised maniac/savage must not fall into the sparse peak+OCR path
     # that historically burned 240s on ~9 probes and returned 0 hits.
     if (
         not dense
-        and need >= 4
+        and dense_tier >= 4
         and os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1"
     ):
         dense = True
         log.info(
-            "banner discover %s: auto-dense for title/min tier=%s",
+            "banner discover %s: auto-dense for title/min tier=%s (discover_floor=%s)",
             vod.name,
+            dense_tier,
             need,
         )
     # Ref-first discover is cheap — allow more probes so screenshot bank covers the VOD.
