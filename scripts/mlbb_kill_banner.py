@@ -681,13 +681,26 @@ def discover_vod_kill_banners(
     t_discover0 = time.monotonic()
     deadline = t_discover0 + max_sec
     # Peak+OCR historically exhausted the whole wall budget (~9 probes / 240s)
-    # and never reached the spike sweep. Reserve time for spikes.
-    peak_frac = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC", "0.40"))
-    peak_frac = max(0.20, min(0.75, peak_frac))
-    peak_deadline = t_discover0 + (max_sec * peak_frac if not dense else max_sec)
+    # and never reached the spike/dense sweep. Always reserve time after peaks.
+    # Dense title scans need most of the budget for the 1–2s sweep.
+    default_peak_frac = "0.20" if dense else "0.40"
+    peak_frac = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC", default_peak_frac))
+    peak_frac = max(0.10, min(0.60, peak_frac))
+    peak_deadline = t_discover0 + max_sec * peak_frac
     hits: list[KillBannerHit] = []
     probes = 0
     want = _discover_hit_target()
+    log.info(
+        "banner discover %s: start dense=%s max_probes=%s max_sec=%.0f "
+        "peak_budget=%.0fs need_tier=%s want=%s",
+        vod.name,
+        dense,
+        max_probes,
+        max_sec,
+        max_sec * peak_frac,
+        need,
+        want,
+    )
 
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or not _banner_hit_source_ok(hit.source):
@@ -699,7 +712,7 @@ def discover_vod_kill_banners(
             hits.append(hit)
 
     def _budget_ok(*, peak_phase: bool = False) -> bool:
-        limit = peak_deadline if peak_phase and not dense else deadline
+        limit = peak_deadline if peak_phase else deadline
         return probes < max_probes and time.monotonic() < limit
 
     def _probe_at(t: float, *, deep: bool, allow_ocr: bool = True) -> bool:
@@ -737,9 +750,10 @@ def discover_vod_kill_banners(
         log.debug("owner kill anchors unavailable: %s", exc)
 
     # Phase 1: peaks — ref-first (cheap), then OCR escalate, then a few full retries.
-    # Keep this under peak_deadline so the spike sweep still runs.
+    # Keep this under peak_deadline so spike/dense still run.
+    # Dense title path: ref-only on peaks (no OCR escalate) — dense sweep does the rest.
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")))
-    full_retry = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
+    full_retry = 0 if dense else max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
     missed_peaks: list[float] = []
     ocr_missed: list[float] = []
     for peak in list(dict.fromkeys(peak_hints))[:peak_limit]:
@@ -751,29 +765,30 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
         else:
             missed_peaks.append(peak)
-    for peak in missed_peaks:
-        if not _budget_ok(peak_phase=True):
-            break
-        if len(hits) >= want and not dense:
-            break
-        probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=True)
-        if hit:
-            _merge_hit(hit)
-        else:
-            ocr_missed.append(peak)
-    for peak in ocr_missed[:full_retry]:
-        if not _budget_ok(peak_phase=True):
-            break
-        if len(hits) >= want and not dense:
-            break
-        # Need ~15s+ left overall so spike still gets a real window.
-        if (deadline - time.monotonic()) < 20.0:
-            break
-        probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=False, allow_ocr=True)
-        if hit:
-            _merge_hit(hit)
+    if not dense:
+        for peak in missed_peaks:
+            if not _budget_ok(peak_phase=True):
+                break
+            if len(hits) >= want:
+                break
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=True)
+            if hit:
+                _merge_hit(hit)
+            else:
+                ocr_missed.append(peak)
+        for peak in ocr_missed[:full_retry]:
+            if not _budget_ok(peak_phase=True):
+                break
+            if len(hits) >= want:
+                break
+            # Need ~15s+ left overall so spike still gets a real window.
+            if (deadline - time.monotonic()) < 20.0:
+                break
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=False, allow_ocr=True)
+            if hit:
+                _merge_hit(hit)
     if not dense:
         log.info(
             "banner discover %s: peak-phase probes=%s hits=%s/%s elapsed=%.0fs "
@@ -785,6 +800,17 @@ def discover_vod_kill_banners(
             time.monotonic() - t_discover0,
             max_sec * peak_frac,
             max_sec,
+            need,
+        )
+    else:
+        log.info(
+            "banner discover %s: peak-phase-before-dense probes=%s hits=%s/%s "
+            "elapsed=%.0fs need_tier=%s",
+            vod.name,
+            probes,
+            len(hits),
+            want,
+            time.monotonic() - t_discover0,
             need,
         )
 
