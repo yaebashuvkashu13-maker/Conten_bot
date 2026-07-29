@@ -1572,7 +1572,22 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
     if not starts and profile in SHOOTER_PROFILES:
         log.warning("highlight stage1 %s: no combat windows — refusing filler grid", video_path.name)
 
-    ranked = _rank_stage1_starts(analysis, profile, sorted(starts), video_path=video_path)
+    # MLBB + banner discover: CLIP-rank of 60 windows × 500 exemplars can stall
+    # 10+ minutes before discover even starts (root cause of "no MLBB for hours"
+    # while CPU sat at 350%). Banner discover is the real gate — rank later.
+    if (
+        profile == "mobile_legends"
+        and os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        and os.environ.get("MLBB_STAGE1_SKIP_CLIP_RANK", "1") == "1"
+    ):
+        ranked = sorted(starts)
+        log.info(
+            "highlight stage1 %s: skip CLIP rank (%s windows) — banner discover next",
+            video_path.name,
+            len(ranked),
+        )
+    else:
+        ranked = _rank_stage1_starts(analysis, profile, sorted(starts), video_path=video_path)
     if not ranked:
         ranked = sorted(starts)
     ranked = _filter_bad_label_starts(video_path, profile, ranked)
