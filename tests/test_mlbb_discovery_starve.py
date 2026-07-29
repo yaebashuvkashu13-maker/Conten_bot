@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from mlbb_vod_segment_feed import (  # noqa: E402
     _title_promise_revive_ok,
     _zero_yield_block_active,
+    _zero_yield_ttl_sec,
+    _zero_yield_uploaders,
 )
 
 
@@ -41,3 +43,24 @@ def test_zero_yield_block_bypasses_when_starving(monkeypatch) -> None:
     assert _zero_yield_block_active() is True
     monkeypatch.setenv("MLBB_VOD_BYPASS_ZERO_YIELD", "1")
     assert _zero_yield_block_active() is False
+
+
+def test_zero_yield_ttl_expires(monkeypatch) -> None:
+    import time
+
+    monkeypatch.setenv("MLBB_VOD_ZERO_YIELD_TTL_SEC", "3600")
+    now = time.time()
+    monkeypatch.setattr(
+        "mlbb_vod_segment_feed._load_state",
+        lambda: {
+            "zero_yield_uploaders_ts": {
+                "fresh_channel": now - 60,
+                "stale_channel": now - 10_000,
+            },
+            "zero_yield_uploaders": ["fresh_channel", "stale_channel"],
+        },
+    )
+    blocked = _zero_yield_uploaders()
+    assert "fresh_channel" in blocked
+    assert "stale_channel" not in blocked
+    assert _zero_yield_ttl_sec() == 3600.0

@@ -32,6 +32,43 @@ def test_should_mark_vod_exhausted() -> None:
     assert should_mark_vod_exhausted({"last_pool_peaks": [124.0], "zero_send_attempts": 5}) is True
 
 
+def test_should_not_exhaust_when_banner_gap_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_scan_state import should_retry_banner_gap
+
+    monkeypatch.setenv("MLBB_VOD_BANNER_GAP_RETRY", "1")
+    monkeypatch.setenv("MLBB_VOD_BANNER_GAP_RETRIES", "2")
+    entry = {
+        "last_scan_blocked": True,
+        "last_banner_hits": 5,
+        "banner_gap_retries": 0,
+        "last_pool_peaks": [{"peak_sec": 120.0, "kill_banner_tier": 2}],
+    }
+    assert should_retry_banner_gap(entry) is True
+    assert should_mark_vod_exhausted(entry) is False
+    entry["banner_gap_retries"] = 2
+    assert should_retry_banner_gap(entry) is False
+    assert should_mark_vod_exhausted(entry) is True
+
+
+def test_record_vod_scan_tracks_banner_hits() -> None:
+    entry: dict = {}
+    record_vod_scan(
+        entry,
+        sent=0,
+        pool_peaks=[100.0, 200.0],
+        blocked=True,
+        pool=[
+            {"start": 100.0, "score": 0.5, "kill_banner_tier": 2, "kill_banner": "double"},
+            {"start": 200.0, "score": 0.4, "kill_banner_tier": 0},
+        ],
+    )
+    assert entry["last_banner_hits"] == 1
+    assert entry["last_pool_peaks"][0]["kill_banner_tier"] == 2
+    pool = minimal_pool_from_entry(entry)
+    assert pool[0].get("kill_banner_tier") == 2
+    assert pool[0].get("anchor") == "kill_banner"
+
+
 def test_scan_zero_detail() -> None:
     assert "пики" in scan_zero_detail({"last_scan_blocked": True})
     assert "pool=0" in scan_zero_detail({"last_pool_peaks": []})

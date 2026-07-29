@@ -49,12 +49,14 @@ from preview_gate import validate_clips_before_preview
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import reserved_sent_only, segment_gap_sec
 from vod_scan_state import (
+    banner_hits_in_entry,
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
     pool_peaks_fully_blocked,
     record_vod_scan,
     should_mark_vod_exhausted,
+    should_retry_banner_gap,
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
@@ -455,8 +457,24 @@ def _ytdlp_download_lock(blocking: bool = True):
         handle.close()
 
 
+def _zero_yield_ttl_sec() -> float:
+    return max(3600.0, float(os.environ.get("MLBB_VOD_ZERO_YIELD_TTL_SEC", str(7 * 86400))))
+
+
 def _zero_yield_uploaders() -> set[str]:
+    """Uploaders that recently yielded zero — expired after TTL (not permanent)."""
     state = _load_state()
+    now = time.time()
+    ttl = _zero_yield_ttl_sec()
+    ts_map = state.get("zero_yield_uploaders_ts")
+    if isinstance(ts_map, dict) and ts_map:
+        alive = {
+            str(u).casefold()
+            for u, ts in ts_map.items()
+            if str(u).strip() and (now - float(ts or 0)) < ttl
+        }
+        return alive
+    # Legacy permanent list — still honor until rewritten with timestamps.
     return {str(u).casefold() for u in state.get("zero_yield_uploaders", []) if str(u).strip()}
 
 
@@ -554,13 +572,27 @@ def _record_zero_yield_uploader(meta: dict | None) -> None:
     if not uploader:
         return
     state = _load_state()
-    blocked = {str(u).casefold() for u in state.get("zero_yield_uploaders", [])}
-    if uploader in blocked:
+    now = time.time()
+    ttl = _zero_yield_ttl_sec()
+    ts_map = {
+        str(u).casefold(): float(ts)
+        for u, ts in (state.get("zero_yield_uploaders_ts") or {}).items()
+        if str(u).strip() and (now - float(ts or 0)) < ttl
+    }
+    # Migrate legacy permanent names once, with "now" so they expire under TTL.
+    for u in state.get("zero_yield_uploaders", []) or []:
+        key = str(u).casefold()
+        if key and key not in ts_map:
+            ts_map[key] = now
+    if uploader in ts_map:
         return
-    blocked.add(uploader)
-    state["zero_yield_uploaders"] = sorted(blocked)[-200:]
+    ts_map[uploader] = now
+    # Keep newest 200
+    pruned = dict(sorted(ts_map.items(), key=lambda kv: kv[1], reverse=True)[:200])
+    state["zero_yield_uploaders_ts"] = pruned
+    state["zero_yield_uploaders"] = sorted(pruned.keys())
     _save_state(state)
-    log.info("zero-yield uploader blocked: %s", uploader)
+    log.info("zero-yield uploader blocked: %s (ttl=%.0fh)", uploader, ttl / 3600.0)
 
 
 def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, throttled: bool = False) -> list[dict]:
@@ -1774,7 +1806,20 @@ def _segment_gap_sec() -> float:
     level = 2 if reserved_sent_only() else (
         1 if os.environ.get("MLBB_KILL_BANNER_REQUIRED") == "0" else 0
     )
-    return segment_gap_sec("mlbb", soften_level=level)
+    gap = segment_gap_sec("mlbb", soften_level=level)
+    # Soft retry after all_peaks_blocked with banner hits — allow closer fights.
+    if os.environ.get("MLBB_VOD_BANNER_GAP_SOFT", "0") == "1":
+        soft = float(os.environ.get("MLBB_VOD_BANNER_PEAK_GAP_SEC", "18"))
+        gap = min(gap, soft)
+    return gap
+
+
+def _collect_interval_gap_sec(*, bannered: bool = False) -> float:
+    gap = _interval_gap_sec()
+    if bannered and os.environ.get("MLBB_VOD_BANNER_GAP_SOFT", "0") == "1":
+        soft = float(os.environ.get("MLBB_VOD_BANNER_INTERVAL_GAP_SEC", "4"))
+        gap = min(gap, soft)
+    return gap
 
 
 def _parse_start_from_segment_id(sid: str, vid: str, stem: str) -> float | None:
@@ -1955,7 +2000,6 @@ def _collect_scan_segments_inner(
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
     out: list[dict] = []
     min_peak = _vod_min_peak_sec(vod)
-    gap = _interval_gap_sec()
     for clip in pool:
         peak = float(clip.get("start", 0))
         if peak_near_skipped(peak, skip_peaks):
@@ -1976,6 +2020,12 @@ def _collect_scan_segments_inner(
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
             continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
+        clip_bannered = bool(
+            int(lead_clip.get("kill_banner_tier") or 0) > 0
+            or lead_clip.get("kill_banner")
+            or str(lead_clip.get("anchor") or "") not in {"", "motion"}
+        )
+        gap = _collect_interval_gap_sec(bannered=clip_bannered)
         if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
             continue
         sid = segment_id(vod, start)
@@ -2050,7 +2100,7 @@ def _collect_scan_segments_inner(
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if montage_on:
-        from mlbb_vod_montage import pick_montage_rows
+        from mlbb_vod_montage import bannered_rows, pick_montage_rows
 
         picked = pick_montage_rows(deduped)
         if picked:
@@ -2061,8 +2111,20 @@ def _collect_scan_segments_inner(
                 [int(float(r.get("peak_start", r["start"]))) for r in picked],
             )
             deduped = picked
-        elif batch_cap > 0:
-            deduped = deduped[:batch_cap]
+        else:
+            # Need < montage min (e.g. 1 double) — still ship singles instead of nothing.
+            bannered = bannered_rows(deduped)
+            if bannered and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
+                max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+                deduped = bannered[:max_per]
+                log.info(
+                    "montage fallback singles vod=%s n=%s peaks=%s",
+                    vod.name,
+                    len(deduped),
+                    [int(float(r.get("peak_start", r["start"]))) for r in deduped],
+                )
+            elif batch_cap > 0:
+                deduped = deduped[:batch_cap]
     elif batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):
@@ -2092,8 +2154,10 @@ def _send_segment_batch(
         picked = pick_montage_rows(to_send)
         if len(picked) >= 2:
             to_send = picked
+            log.info("send montage n=%s", len(to_send))
         else:
             montage_on = False
+            log.info("montage pick thin — fall back to singles n=%s", len(to_send))
 
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
     send_all_banners = os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1"
@@ -2116,6 +2180,14 @@ def _send_segment_batch(
             to_send = to_send[:1]
     elif send_one and not montage_on and len(to_send) > 1:
         to_send = to_send[:1]
+    elif (
+        not montage_on
+        and not send_one
+        and not send_all_banners
+        and len(to_send) > max_per
+    ):
+        # Reliable montage-off fallback: still respect per-VOD cap.
+        to_send = to_send[:max_per]
 
     ok_batch, block_reason = can_send(1)
     if not ok_batch:
@@ -2454,6 +2526,7 @@ def _process_vod_segments(
     os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
     os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
     os.environ.pop("MLBB_BANNER_POS_LIVE_MIN_SIM", None)
+    os.environ.pop("MLBB_VOD_BANNER_GAP_SOFT", None)
     # Title-aware scan: savage/maniac in title → early dense discover + min banner tier.
     try:
         from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
@@ -2557,6 +2630,17 @@ def _process_vod_segments(
 
             max_peak_attempts = max_peak_tries(level, game="mlbb", soft_max_fn=soft_max_peak_tries)
             gap = segment_gap_sec("mlbb", soften_level=level)
+            # Soften peak/interval gap when a prior scan found banners but gap-blocked them.
+            if entry and int(entry.get("banner_gap_retries") or 0) > 0:
+                os.environ["MLBB_VOD_BANNER_GAP_SOFT"] = "1"
+                soft_peak = float(os.environ.get("MLBB_VOD_BANNER_PEAK_GAP_SEC", "18"))
+                gap = min(gap, soft_peak)
+                log.info(
+                    "banner gap soft vod=%s retries=%s gap=%.0fs",
+                    vod.name,
+                    entry.get("banner_gap_retries"),
+                    gap,
+                )
             blocked_ids = labeled_set | sent
             index_segments = load_index().get("segments", [])
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
@@ -2572,9 +2656,36 @@ def _process_vod_segments(
                     vod_id=vid,
                     lead_sec=lead,
                 ):
-                    log.info("skip highlight rescan — cached peaks blocked vod=%s peaks=%s", vod.name, cached[:4])
-                    record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True, pool=pool_cache)
-                    cached_blocked = True
+                    # Banner hits under a hard gap: force rescan with soft gap instead of delete loop.
+                    if (
+                        banner_hits_in_entry(entry) > 0
+                        and int(entry.get("banner_gap_retries") or 0)
+                        < max(0, int(os.environ.get("MLBB_VOD_BANNER_GAP_RETRIES", "2")))
+                        and os.environ.get("MLBB_VOD_BANNER_GAP_SOFT", "0") != "1"
+                    ):
+                        os.environ["MLBB_VOD_BANNER_GAP_SOFT"] = "1"
+                        soft_peak = float(os.environ.get("MLBB_VOD_BANNER_PEAK_GAP_SEC", "18"))
+                        gap = min(gap, soft_peak)
+                        entry["banner_gap_retries"] = int(entry.get("banner_gap_retries") or 0) + 1
+                        entry["last_scan_blocked"] = False
+                        log.info(
+                            "cached peaks blocked but banners=%s — soft-gap rescan vod=%s gap=%.0fs",
+                            banner_hits_in_entry(entry),
+                            vod.name,
+                            gap,
+                        )
+                        # Invalidate cache so collect re-discovers / re-validates under soft gap.
+                        pool_cache = None
+                        if entry.get("last_pool_at"):
+                            entry["last_pool_at"] = 0
+                    else:
+                        log.info(
+                            "skip highlight rescan — cached peaks blocked vod=%s peaks=%s",
+                            vod.name,
+                            cached[:4],
+                        )
+                        record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True, pool=pool_cache)
+                        cached_blocked = True
 
             while not cached_blocked:
                 if max_per_vod > 0 and sent_total >= max_per_vod:
@@ -2690,7 +2801,21 @@ def _process_vod_segments(
     if sent_total == 0 and not send_quota_blocked:
         if entry:
             entry["zero_send_attempts"] = int(entry.get("zero_send_attempts") or 0) + 1
-        if entry and should_mark_vod_exhausted(entry):
+        # Banner hits found but blocked by prior used-peak gap — soft retry, don't delete.
+        if entry and should_retry_banner_gap(entry):
+            entry["banner_gap_retries"] = int(entry.get("banner_gap_retries") or 0) + 1
+            entry["last_scan_blocked"] = False
+            entry["reject_reason"] = "banner_gap_retry"
+            state = _load_state()
+            _sync_vod_entry_to_state(state, entry, vod)
+            _save_state(state)
+            log.info(
+                "banner gap retry vod=%s hits=%s attempt=%s — keep file",
+                vod.name,
+                banner_hits_in_entry(entry),
+                entry["banner_gap_retries"],
+            )
+        elif entry and should_mark_vod_exhausted(entry):
             if not entry.get("reject_reason"):
                 if not entry.get("last_pool_peaks"):
                     entry["reject_reason"] = "no_combat_peaks"
@@ -2713,15 +2838,29 @@ def _process_vod_segments(
                 )
         elif _mlbb_reliable_mode() and entry:
             # Reliable: one zero attempt is enough — free disk and move on.
-            entry["reject_reason"] = entry.get("reject_reason") or "zero_send_reliable"
-            _hard_finish_mlbb_vod(
-                state,
-                vod,
-                vid=vid,
-                reason=str(entry["reject_reason"]),
-                entry=entry,
-            )
-            log.info("reliable zero — finished vod=%s streak=%s", vod.name, new_streak)
+            # Exception: banner hits exist but couldn't stitch yet — keep for fallback send.
+            if banner_hits_in_entry(entry) > 0 and os.environ.get(
+                "MLBB_VOD_KEEP_BANNER_MISS", "1"
+            ) == "1":
+                entry["reject_reason"] = entry.get("reject_reason") or "banner_hits_no_send"
+                state = _load_state()
+                _sync_vod_entry_to_state(state, entry, vod)
+                _save_state(state)
+                log.info(
+                    "reliable zero but banner hits=%s — keep vod=%s",
+                    banner_hits_in_entry(entry),
+                    vod.name,
+                )
+            else:
+                entry["reject_reason"] = entry.get("reject_reason") or "zero_send_reliable"
+                _hard_finish_mlbb_vod(
+                    state,
+                    vod,
+                    vid=vid,
+                    reason=str(entry["reject_reason"]),
+                    entry=entry,
+                )
+                log.info("reliable zero — finished vod=%s streak=%s", vod.name, new_streak)
         else:
             log.info("zero send — keep vod=%s for retry (presend/soften) streak=%s", vod.name, new_streak)
     elif sent_total == 0 and send_quota_blocked:

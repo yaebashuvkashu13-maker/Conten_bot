@@ -304,25 +304,45 @@ def _montage_timeline_key(row: dict) -> float:
     return float(row.get("peak_start", row.get("banner_sec", row.get("start") or 0)) or 0)
 
 
+def _is_bannered_row(row: dict) -> bool:
+    return bool(
+        int(row.get("kill_banner_tier") or 0) > 0
+        or row.get("kill_banner")
+        or str(row.get("anchor") or "") not in {"", "motion"}
+    )
+
+
+def bannered_rows(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if _is_bannered_row(r)]
+
+
 def pick_montage_rows(rows: list[dict]) -> list[dict]:
     """Pick 2–4 spaced peaks; prefer a double+ when available, singles allowed."""
     if not rows:
         return []
     # Never stitch motion-only soften clips — that produces jumpy "кривая нарезка".
-    bannered = [
-        r
-        for r in rows
-        if int(r.get("kill_banner_tier") or 0) > 0
-        or r.get("kill_banner")
-        or str(r.get("anchor") or "") not in {"", "motion"}
-    ]
-    if len(bannered) < montage_min_clips():
-        log.info("montage skip — need >=%s bannered fights (have %s)", montage_min_clips(), len(bannered))
-        return []
-    rows = bannered
+    bannered = bannered_rows(rows)
+    soft_fallback = os.environ.get("MLBB_VOD_MONTAGE_SOFT_FALLBACK", "1") == "1"
+    soft_min = max(2, int(os.environ.get("MLBB_VOD_MONTAGE_SOFT_MIN", "2")))
     min_n = montage_min_clips()
+    if len(bannered) < min_n:
+        if soft_fallback and len(bannered) >= soft_min:
+            log.info(
+                "montage soft — have %s bannered (wanted %s) — stitch what we have",
+                len(bannered),
+                min_n,
+            )
+        else:
+            log.info(
+                "montage skip — need >=%s bannered fights (have %s)",
+                min_n,
+                len(bannered),
+            )
+            return []
+    rows = bannered
     max_n = montage_max_clips()
     gap = montage_gap_sec()
+    effective_min = min_n if len(bannered) >= min_n else soft_min
 
     ranked = sorted(
         rows,
@@ -350,13 +370,13 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
         if len(chosen) >= max_n:
             break
     chosen.sort(key=_montage_timeline_key)
-    if len(chosen) < min_n:
+    if len(chosen) < effective_min:
         return []
     lo, hi = montage_target_sec()
     est = sum(float(r.get("fight_dur") or r.get("clip", {}).get("input_duration") or 12) for r in chosen)
     xfade = float(os.environ.get("TRANSITION_DURATION", "0.28"))
     est -= xfade * max(0, len(chosen) - 1)
-    while len(chosen) > min_n and est > hi:
+    while len(chosen) > effective_min and est > hi:
         # Drop the latest moment so earlier chronology stays intact.
         chosen.pop()
         est = sum(float(r.get("fight_dur") or 12) for r in chosen) - xfade * max(0, len(chosen) - 1)

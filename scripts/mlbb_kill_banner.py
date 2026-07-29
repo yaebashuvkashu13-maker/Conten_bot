@@ -756,15 +756,40 @@ def discover_vod_kill_banners(
     full_retry = 0 if dense else max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
     missed_peaks: list[float] = []
     ocr_missed: list[float] = []
-    for peak in list(dict.fromkeys(peak_hints))[:peak_limit]:
-        if not _budget_ok(peak_phase=True):
+    # Kill banners often flash 2–4s after the motion spike — probe those offsets too.
+    post_offsets = [0.0]
+    if os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK", "1") == "1":
+        raw_offs = os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS", "2,4")
+        for part in raw_offs.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                off = float(part)
+            except ValueError:
+                continue
+            if off > 0 and off not in post_offsets:
+                post_offsets.append(off)
+    post_peak_max = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_MAX", "4")))
+    for peak_i, base_peak in enumerate(list(dict.fromkeys(peak_hints))[:peak_limit]):
+        base_hit = False
+        offsets = post_offsets if peak_i < post_peak_max else [0.0]
+        for off in offsets:
+            if not _budget_ok(peak_phase=True):
+                break
+            if len(hits) >= want:
+                break
+            peak = max(0.0, float(base_peak) + off)
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=False)
+            if hit:
+                _merge_hit(hit)
+                base_hit = True
+                break
+        if not base_hit:
+            missed_peaks.append(float(base_peak))
+        if not _budget_ok(peak_phase=True) or len(hits) >= want:
             break
-        probes += 1
-        hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=False)
-        if hit:
-            _merge_hit(hit)
-        else:
-            missed_peaks.append(peak)
     if not dense:
         for peak in missed_peaks:
             if not _budget_ok(peak_phase=True):
@@ -861,8 +886,19 @@ def discover_vod_kill_banners(
             dense_cap = None
         t = t0
         step_i = 0
+        force_full_dense = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
         try:
             while t < duration - 2.0 and probes < max_probes and time.monotonic() < deadline:
+                if len(hits) >= want and not force_full_dense:
+                    log.info(
+                        "banner discover %s: dense early-stop hits=%s want=%s t=%.0fs probes=%s",
+                        vod.name,
+                        len(hits),
+                        want,
+                        t,
+                        probes,
+                    )
+                    break
                 probes += 1
                 frame = _read_frame_at(vod, t, dense_cap)
                 if frame is not None:
