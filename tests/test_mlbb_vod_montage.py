@@ -153,6 +153,9 @@ def test_apply_run_trim_hard_caps_after_banner(tmp_path: Path, monkeypatch: pyte
     assert float(out["fight_end"]) <= 15.0 + 0.05
     assert float(out["input_duration"]) <= 10.05
 
+
+def test_vod_richness_prefers_rich_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("cv2")
     from mlbb_vod_segment_feed import _vod_richness_rank
 
     rich = {"last_pool_peaks": [100, 200, 300, 400], "zero_send_attempts": 0}

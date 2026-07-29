@@ -35,8 +35,7 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_SEND_ALL_BANNERS": "1",
 }
 
-# Level 2: OCR often blind — widen windows; keep double+ for send (no OCR "kill" FPs).
-# Motion-only junk is what the owner called garbage.
+# Soften must not disable daily montages (owner wants glued highlights).
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
     # Singles via soften caused false "KILL" OCR spam — keep double unless explicitly allowed.
@@ -60,10 +59,12 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_RULE_COMBAT_MIN": "0.82",
     "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_MOTION_PEAK_MAX": "4",
-    "MLBB_VOD_MONTAGE": "0",
-    # Collect every bannered fight in the VOD (not one then delete).
+    # Keep montages on under soften (do not flip back to singles flood).
+    "MLBB_VOD_MONTAGE": "1",
+    "MLBB_SKIP_MONTAGE": "0",
     "MLBB_VOD_SEND_ONE": "0",
-    "MLBB_VOD_SEND_ALL_BANNERS": "1",
+    "MLBB_VOD_SEND_ALL_BANNERS": "0",
+    "MLBB_VOD_MAX_PER_VOD": "1",
 }
 
 # Level 3: long silence — still banner-required; slightly lower bars only.

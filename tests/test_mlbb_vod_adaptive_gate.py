@@ -47,7 +47,8 @@ def test_l2_does_not_hard_skip_on_banner_miss(monkeypatch: pytest.MonkeyPatch):
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
-    assert ov["MLBB_VOD_SEND_ALL_BANNERS"] == "1"
+    assert ov["MLBB_VOD_MONTAGE"] == "1"
+    assert ov["MLBB_SKIP_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "0"
     # Soften must NOT drop to OCR singles (false kill spam).
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
@@ -66,9 +67,9 @@ def test_l3_keeps_banner_and_multi_send():
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
     assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
     assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
-    assert ov["MLBB_VOD_MONTAGE"] == "0"
+    assert ov["MLBB_VOD_MONTAGE"] == "1"
+    assert ov["MLBB_SKIP_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "0"
-    assert ov["MLBB_VOD_SEND_ALL_BANNERS"] == "1"
     # Soften must not reopen the farming floodgates.
     assert float(ov["MLBB_RULE_COMBAT_MIN"]) >= 0.80
     assert float(ov["HIGHLIGHT_MLBB_AUTO_CLIP_MIN"]) >= 0.11
