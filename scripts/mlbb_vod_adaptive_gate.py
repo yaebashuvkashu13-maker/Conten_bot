@@ -17,10 +17,10 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
     "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
     "MLBB_KILL_BANNER_REQUIRED": "1",
-    "MLBB_VOD_BANNER_PRESEND": "1",
+    "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_VOD_BANNER_DISCOVER": "1",
     "MLBB_VOD_MOTION_ANCHOR_OK": "0",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.42",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
@@ -44,7 +44,8 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_MIN_TIER": "double",
     "MLBB_KILL_BANNER_REQUIRED": "1",
     "MLBB_VOD_MOTION_ANCHOR_OK": "0",
-    "MLBB_VOD_BANNER_PRESEND": "1",
+    # Do not re-enable hung presend OCR or disable multi-banner under soften.
+    "MLBB_VOD_BANNER_PRESEND": "0",
     "MLBB_PRESEND_MIN_MOTION": "0.016",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.012",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.10",
@@ -56,8 +57,9 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
-    "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+    # Keep hard miss skip — teamfight fallback ships ally junk.
+    "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
     "MLBB_RULE_COMBAT_MIN": "0.82",
     "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_MOTION_PEAK_MAX": "4",
@@ -65,8 +67,8 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_VOD_MONTAGE": "1",
     "MLBB_SKIP_MONTAGE": "0",
     "MLBB_VOD_SEND_ONE": "0",
-    "MLBB_VOD_SEND_ALL_BANNERS": "0",
-    "MLBB_VOD_MAX_PER_VOD": "1",
+    "MLBB_VOD_SEND_ALL_BANNERS": "1",
+    "MLBB_VOD_MAX_PER_VOD": "2",
 }
 
 # Level 3: long silence — still banner-required; slightly lower bars only.
