@@ -41,10 +41,12 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = "3"
     os.environ["MLBB_VOD_MONTAGE_MAX_CLIPS"] = "4"
     # Mid VODs need tighter spacing than long streams.
-    os.environ["MLBB_VOD_MONTAGE_GAP_SEC"] = "40"
+    os.environ["MLBB_VOD_MONTAGE_GAP_SEC"] = "18"
     os.environ["MLBB_VOD_MONTAGE_MIN_SEC"] = "32"
     os.environ["MLBB_VOD_MONTAGE_MAX_SEC"] = "75"
     os.environ["MLBB_VOD_MONTAGE_MIN_TIER"] = "single"
+    os.environ["MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE"] = "1"
+    os.environ["MLBB_ADAPTIVE_ALLOW_SINGLE"] = "1"
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "single"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
@@ -183,8 +185,9 @@ def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
             return []
         n = int(min(int(audio.size), int(motion.size))) if motion.size else int(audio.size)
         score = audio[:n].copy()
-        if int(motion.size) > 0:
-            score = score * 0.55 + motion[:n] * 0.45
+        if int(getattr(motion, "size", 0) or 0) > 0:
+            m = motion[:n]
+            score = score * 0.55 + m * 0.45
         # Skip intro / outro edges.
         lo = max(1, int(8 / win))
         hi = max(lo + 1, n - int(5 / win))
@@ -300,6 +303,9 @@ def _build_and_send_one(
     vid = _vod_id(vod)
     rows = _discover_rows(vod)
     picked = pick_montage_rows(rows)
+    from mlbb_vod_montage import montage_min_clips
+
+    need = max(2, montage_min_clips())
     report: dict = {
         "vod_id": vid,
         "vod": str(vod),
@@ -307,8 +313,8 @@ def _build_and_send_one(
         "picked": [],
         "ok": False,
     }
-    if len(picked) < 3:
-        report["error"] = f"need>=3 bannered parts, got {len(picked)}"
+    if len(picked) < need:
+        report["error"] = f"need>={need} bannered parts, got {len(picked)}"
         log.warning("%s %s", vid, report["error"])
         return report
 
@@ -338,8 +344,8 @@ def _build_and_send_one(
             gated.append(row)
             parts.append(part)
             durs.append(dur)
-        if len(gated) < 3:
-            report["error"] = f"gated_parts={len(gated)} (<3)"
+        if len(gated) < need:
+            report["error"] = f"gated_parts={len(gated)} (<{need})"
             return report
         # Cap at 4 after gates.
         gated, parts, durs = gated[:4], parts[:4], durs[:4]

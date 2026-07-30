@@ -47,7 +47,7 @@ def _row_banner_source(row: dict) -> str:
 
 
 def montage_single_row_ok(row: dict) -> bool:
-    """Ref-backed single OK for montage; weak OCR singles still rejected."""
+    """Single OK for montage: prefer ref; OCR singles only when explicitly allowed."""
     tier = int(row.get("kill_banner_tier") or 0)
     if tier < 1:
         return False
@@ -55,9 +55,21 @@ def montage_single_row_ok(row: dict) -> bool:
         return True
     src = _row_banner_source(row)
     label = str(row.get("kill_banner") or "").lower()
-    if os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1":
-        if src.startswith("ocr") or label in {"single_weak", "color", "announce"}:
+    allow_ocr = (
+        os.environ.get("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0") == "1"
+        or os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
+    )
+    if src.startswith("ocr") or label in {"single_weak", "color", "announce"}:
+        if not allow_ocr:
             return False
+        # Still reject garbled OCR labels.
+        if label in {"single_weak", "color", "announce"}:
+            return False
+        return True
+    if os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1" and not src:
+        # Empty source + single label — treat as OCR unless allow flag set.
+        if not allow_ocr:
+            return src.startswith("ref")
     return src.startswith("ref") or label in {"single", "double", "triple", "maniac", "savage"}
 
 
@@ -454,6 +466,27 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
         if len(chosen) >= max_n:
             break
     chosen.sort(key=_montage_timeline_key)
+    if len(chosen) < effective_min and gap > 18.0:
+        # Close fights (22s dense hit gap) must still montage — retry with tighter spacing.
+        tight = max(12.0, gap * 0.5)
+        chosen = []
+        for row in ranked:
+            if row in chosen:
+                continue
+            peak = float(row.get("peak_start", row.get("start") or 0))
+            if any(abs(peak - float(c.get("peak_start", c.get("start") or 0))) < tight for c in chosen):
+                continue
+            chosen.append(row)
+            if len(chosen) >= max_n:
+                break
+        chosen.sort(key=_montage_timeline_key)
+        log.info(
+            "montage tight-gap retry gap=%.0f→%.0f picked=%s need=%s",
+            gap,
+            tight,
+            len(chosen),
+            effective_min,
+        )
     if len(chosen) < effective_min:
         log.info(
             "montage skip — %s pool=%s picked=%s need>=%s",
