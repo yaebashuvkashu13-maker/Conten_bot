@@ -921,6 +921,9 @@ def _discover_vod_kill_banners_inner(
     hits: list[KillBannerHit] = []
     probes = 0
     want = _discover_hit_target()
+    # Quota path: one fresh own-kill is enough to ship; extra OCR only burns the day.
+    if os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST", "1") == "1":
+        want = 1
     log.info(
         "banner discover %s: start dense=%s fight_first=%s max_probes=%s max_sec=%.0f "
         "peak_budget=%.0fs need_tier=%s want=%s",
