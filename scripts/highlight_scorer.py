@@ -1457,11 +1457,20 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                 len(seed_starts),
             )
 
-    skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
-        "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
-    ) == "1"
-    if skip_intelliclip:
+    skip_intelliclip = False
+    if profile in SHOOTER_PROFILES and os.environ.get("SHOOTER_VOD_SKIP_INTELLICLIP", "1") == "1":
+        skip_intelliclip = True
         log.info("intelliclip stage1 skipped %s (shooter fast path)", video_path.name)
+    elif (
+        profile == "mobile_legends"
+        and os.environ.get("MLBB_STAGE1_SKIP_INTELLICLIP", "1") == "1"
+    ):
+        # Fight-first + banner OCR path — IntelliCLIP stage1 wastes wall and can
+        # pull CLIP weights even when CLIP rank is skipped next.
+        skip_intelliclip = True
+        log.info("intelliclip stage1 skipped %s (mlbb banner/fight-first path)", video_path.name)
+    if skip_intelliclip:
+        pass
     elif os.environ.get("INTELLICLIP_STAGE1", "1") == "1":
         try:
             from intelliclip_scorer import rank_window_starts

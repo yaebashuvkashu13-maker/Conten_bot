@@ -371,7 +371,7 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[int, float, int, float, float, float, dict]] = []
+    ranked: list[tuple[int, float, int, int, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
@@ -402,6 +402,16 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
                     continue
             except Exception:
                 pass
+        try:
+            from mlbb_vod_yield_memory import should_skip_inbox_pick
+
+            if vid and should_skip_inbox_pick(vid):
+                log.info("skip yield-dead vod id=%s (banner_miss memory)", vid)
+                row["exhausted"] = True
+                row["reject_reason"] = row.get("reject_reason") or "yield_banner_miss"
+                continue
+        except Exception:
+            pass
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
@@ -419,22 +429,37 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
             )
         except Exception:
             yield_pen = 0.0
-        ranked.append((rich, yield_pen, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        title_rank = 1
+        try:
+            from mlbb_vod_title import title_kill_count, title_promises_kill_streak
+
+            blob = str(row.get("title") or path.stem).lower()
+            kills = title_kill_count(blob)
+            if title_promises_kill_streak(blob) or kills >= 12:
+                title_rank = -1
+            elif kills >= 8:
+                title_rank = 0
+        except Exception:
+            title_rank = 1
+        ranked.append(
+            (rich, yield_pen, title_rank, 1 if scanned else 0, scanned, abs(dur - target), dur, row)
+        )
     if not ranked:
         if _revive_exhausted_inbox_candidates(registry):
             return _pick_available_vod(registry)
         return None
-    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
-    pick = ranked[0][6]
-    dur = ranked[0][5]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4], item[5]))
+    pick = ranked[0][7]
+    dur = ranked[0][6]
     log.info(
-        "pick vod id=%s dur_min=%.0f target_min=%.0f rich=%s yield_pen=%s scanned=%s pool=%s",
+        "pick vod id=%s dur_min=%.0f target_min=%.0f rich=%s yield_pen=%s title_rank=%s scanned=%s pool=%s",
         pick.get("id", ""),
         dur / 60,
         target / 60,
         ranked[0][0],
         ranked[0][1],
-        bool(ranked[0][2]),
+        ranked[0][2],
+        bool(ranked[0][3]),
         len(pick.get("last_pool_peaks") or []) if isinstance(pick.get("last_pool_peaks"), list) else 0,
     )
     return pick
@@ -3244,17 +3269,18 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_DISCOVERY_MISS_NOTIFY": "0",
         "MLBB_VOD_DOWNLOAD_NOTIFY": "0",
         "MLBB_VOD_PRESEND_REJECT_NOTIFY": "0",
-        "MLBB_VOD_MAX_ZERO_ATTEMPTS": "3",
-        # Keep VOD on disk until shippable — deleting after first OCR miss caused 20h idle.
-        "MLBB_VOD_DELETE_EXHAUSTED": "0",
-        "MLBB_VOD_KEEP_BANNER_MISS": "1",
+        # One zero attempt is enough — yield-dead VODs must not loop for hours.
+        "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
+        # Delete exhausted / banner-miss files so pick cannot revive dead Lylia loops.
+        "MLBB_VOD_DELETE_EXHAUSTED": "1",
+        "MLBB_VOD_KEEP_BANNER_MISS": "0",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
         "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
-        # Reliable = bannered fights glued into one clip (3–4 moments), not OCR singles.
+        # Reliable = own-kill banner clips; ship 1 strong moment if montage thin.
         "MLBB_VOD_MONTAGE": "1",
         "MLBB_SKIP_MONTAGE": "0",
-        "MLBB_VOD_MONTAGE_MIN_CLIPS": "2",
+        "MLBB_VOD_MONTAGE_MIN_CLIPS": "1",
         "MLBB_VOD_MONTAGE_MAX_CLIPS": "4",
         "MLBB_VOD_MONTAGE_MIN_TIER": "single",
         "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
@@ -3291,15 +3317,16 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER": "0",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
-        # Discover: fight-first spends budget on fight peaks; dense is miss fallback.
+        # Discover: fight-first spends budget on fight peaks; abort fast on miss.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "2",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "1",
         "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Discover: collect single+ anchors; montage ships ref singles.
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "45",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "240",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "32",
         "MLBB_KILL_BANNER_DISCOVER_STEP": "1.5",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
@@ -3311,15 +3338,16 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
         "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
-        # Fight-first: find teamfight peaks, then scan kill banner after the fight.
+        # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
-        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "12",
+        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
+        "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
-        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,5,8",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
-        "MLBB_KILL_BANNER_QUICK_AFTER": "8",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "12",
+        "MLBB_KILL_BANNER_QUICK_AFTER": "6",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.45",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "8",
         # Dense only after miss streak when fight-first is on.
         "MLBB_VOD_BANNER_DENSE_SEC": "0",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
@@ -3329,7 +3357,15 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_YIELD_MEMORY_ENABLED": "1",
         "MLBB_VOD_OWNER_EXEMPLARS": "0",
         "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
+        "HIGHLIGHT_CLIP_DISABLED": "1",
+        "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
+        "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
+        "INTELLICLIP_STAGE1": "0",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
+        # Cooldowns: do not sit idle 30–45 min after a miss when quota is open.
+        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "120",
+        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "180",
+        "MLBB_VOD_SCAN_COOLDOWN_SEC": "300",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.80",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.10",
@@ -3401,17 +3437,28 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
+        "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS",
         "MLBB_KILL_BANNER_QUICK_BEFORE",
         "MLBB_KILL_BANNER_QUICK_AFTER",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
+        "MLBB_VOD_BANNER_DENSE_SEC",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
         "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS",
+        "MLBB_VOD_TITLE_DENSE_AUTO",
         "MLBB_VOD_YIELD_MEMORY_ENABLED",
         "MLBB_VOD_OWNER_EXEMPLARS",
         "HIGHLIGHT_USE_OWNER_ANCHORS",
+        "HIGHLIGHT_CLIP_DISABLED",
+        "MLBB_STAGE1_SKIP_CLIP_RANK",
+        "MLBB_STAGE1_SKIP_INTELLICLIP",
+        "INTELLICLIP_STAGE1",
+        "MLBB_VOD_PRESEND_COOLDOWN_SEC",
+        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC",
+        "MLBB_VOD_SCAN_COOLDOWN_SEC",
         "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():
@@ -3476,6 +3523,10 @@ def main() -> int:
             os.environ[key] = str(env[key])
     # Re-force after .video_bot.env — do not let stale OWNER_EXEMPLARS=1 revive CLIP.
     _apply_mlbb_reliable_runtime()
+    if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "0") != "1":
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "1"
+        os.environ["MLBB_STAGE1_SKIP_INTELLICLIP"] = "1"
+        os.environ["INTELLICLIP_STAGE1"] = "0"
     _bootstrap_shorts_exemplars_for_vod()
     if env.get("MLBB_SEND_ENABLED", "1") == "1":
         from mlbb_learning_first import set_transition_passed

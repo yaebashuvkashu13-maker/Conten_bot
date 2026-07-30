@@ -1100,6 +1100,24 @@ def _discover_vod_kill_banners_inner(
             need,
         )
 
+    # Throughput: if fight peaks found zero banners, do not burn the remaining
+    # wall on sparse ref/OCR spikes (historically +3–8 min of dead probes).
+    if (
+        fight_first
+        and not hits
+        and not dense
+        and probes >= max(3, int(os.environ.get("MLBB_FIGHT_FIRST_MISS_MIN_PROBES", "4")))
+        and os.environ.get("MLBB_FIGHT_FIRST_ABORT_ON_MISS", "1") == "1"
+    ):
+        hits.sort(key=lambda h: h.sec)
+        log.info(
+            "banner discover %s: fight-first miss abort probes=%s elapsed=%.0fs — skip spike",
+            vod.name,
+            probes,
+            time.monotonic() - t_discover0,
+        )
+        return hits
+
     # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
     # Fight-first: skip dense when fight peaks already found enough own-kill banners.
     if (

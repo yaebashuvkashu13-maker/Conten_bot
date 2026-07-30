@@ -262,6 +262,11 @@ def row_score(row: dict | None) -> float:
     # Repeated scans with zero own kills = wasted wall time.
     if attempts >= 2 and own == 0:
         score -= 2.0 * min(attempts, 5)
+    # Banner miss: burned discover wall for nothing — hard chill.
+    if banners == 0 and own == 0 and attempts >= 1:
+        score -= 5.0
+        if str(row.get("last_outcome") or "") == "banner_miss":
+            score -= 3.0
     # Yield rate bonus.
     score += 2.0 * (own / attempts)
     return score
@@ -310,7 +315,17 @@ def pick_penalty(youtube_id: str = "", uploader: str = "", title: str = "") -> f
     data = load_memory()
     score = 0.0
     if youtube_id and youtube_id in data.get("videos", {}):
-        score += row_score(data["videos"][youtube_id])
+        row = data["videos"][youtube_id]
+        # Already burned a full discover with 0 banners — do not re-pick today.
+        if (
+            int(row.get("banner_hits") or 0) == 0
+            and int(row.get("own_kill_hits") or 0) == 0
+            and int(row.get("attempts") or 0) >= 1
+        ):
+            return 5.0
+        if str(row.get("last_outcome") or "") == "banner_miss":
+            return 5.0
+        score += row_score(row)
     up = (uploader or "").casefold()
     if up and up in data.get("uploaders", {}):
         score += row_score(data["uploaders"][up]) * 0.8
@@ -327,6 +342,22 @@ def pick_penalty(youtube_id: str = "", uploader: str = "", title: str = "") -> f
     if score <= -1.5:
         return 1.0
     return 0.0
+
+
+def should_skip_inbox_pick(youtube_id: str = "") -> bool:
+    """True when this VOD already proved banner-dead — skip without re-scanning."""
+    if not enabled() or not youtube_id:
+        return False
+    row = (load_memory().get("videos") or {}).get(str(youtube_id))
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("last_outcome") or "") == "banner_miss":
+        return True
+    return (
+        int(row.get("attempts") or 0) >= 1
+        and int(row.get("banner_hits") or 0) == 0
+        and int(row.get("own_kill_hits") or 0) == 0
+    )
 
 
 def preferred_heroes(limit: int = 8) -> list[str]:

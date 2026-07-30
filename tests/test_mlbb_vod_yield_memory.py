@@ -64,6 +64,27 @@ def test_yield_memory_prefer_liked_own_kill(tmp_path, monkeypatch) -> None:
     assert row_score(data["videos"]["GOODVIDEO01"]) > row_score(data["videos"]["TRAPVIDEO001"])
 
 
+def test_yield_memory_banner_miss_skips_repick(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "vod_yield_memory.json"
+    monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY", str(path))
+    monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY_ENABLED", "1")
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+
+    from mlbb_vod_yield_memory import should_skip_inbox_pick
+
+    record_scan(
+        youtube_id="DEADLYLIA01",
+        uploader="Ash",
+        title="Lylia burst queen MVP",
+        banner_hits=0,
+        own_kill_hits=0,
+        own_kill_rejects=0,
+    )
+    assert should_skip_inbox_pick("DEADLYLIA01")
+    assert pick_penalty(youtube_id="DEADLYLIA01") >= 5.0
+    assert row_score(load_memory()["videos"]["DEADLYLIA01"]) < -4.0
+
+
 def test_yield_memory_disabled(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY", str(tmp_path / "m.json"))
     monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY_ENABLED", "0")
