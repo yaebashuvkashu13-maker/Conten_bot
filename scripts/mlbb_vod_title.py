@@ -119,15 +119,35 @@ def title_min_banner_tier(blob: str) -> int:
     return 0
 
 
+_KILL_COUNT_RE = re.compile(r"\b(\d{1,2})\s*kills?\b", re.I)
+
+
+def title_kill_count(blob: str) -> int:
+    m = _KILL_COUNT_RE.search(blob or "")
+    if not m:
+        return 0
+    try:
+        return int(m.group(1))
+    except (TypeError, ValueError):
+        return 0
+
+
 def title_promises_kill_streak(blob: str) -> bool:
-    return title_min_banner_tier(blob) >= 2
+    return title_min_banner_tier(blob) >= 2 or title_kill_count(blob) >= 10
 
 
 def title_scan_start_sec(blob: str, duration: float) -> float | None:
-    """Early start for savage-titled VODs — fights often in first 2–3 min."""
-    if not title_promises_kill_streak(blob):
+    """Early start for savage-titled or high-kill VODs — fights often in first 2–3 min."""
+    kill_n = title_kill_count(blob)
+    if not title_promises_kill_streak(blob) and kill_n < 10:
         return None
     base = float(os.environ.get("MLBB_BANNER_SAVAGE_TITLE_START_SEC", "3"))
+    if kill_n >= 15:
+        base = min(base, 8.0)
+    elif kill_n >= 10:
+        base = min(base, 12.0)
     if duration <= 240:
         return max(0.0, base)
-    return max(0.0, min(base, 15.0))
+    if duration <= 900:
+        return max(0.0, min(base, 20.0))
+    return max(0.0, min(base, 30.0))

@@ -39,6 +39,11 @@ def test_enemy_savage_title_not_forced() -> None:
 def test_title_scan_start_early_for_savage() -> None:
     assert title_scan_start_sec("savage montage", 180.0) == 3.0
     assert title_scan_start_sec("ranked gameplay", 600.0) is None
+    assert title_scan_start_sec("hyper alice 21 kills unstoppable", 638.0) == 12.0
+
+
+def test_title_promises_kill_streak_on_high_kills() -> None:
+    assert title_promises_kill_streak("21 kills mvp gameplay")
 
 
 def test_vod_title_blob_from_env(monkeypatch, tmp_path: Path) -> None:

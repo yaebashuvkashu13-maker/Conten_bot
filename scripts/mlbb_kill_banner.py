@@ -679,12 +679,14 @@ def banner_hit_from_clip_meta(clip_meta: dict | None) -> KillBannerHit | None:
 
 
 def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
-    """Earliest sec to scan for banners — short VODs have fights before 5 min."""
+    """Earliest sec to scan for banners — short/medium VODs have fights before 5 min."""
     base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300"))
     if duration <= 240:
         return 15.0
     if duration <= 480:
         return min(base, 90.0)
+    if duration <= 1200:
+        return min(base, 45.0)
     return base
 
 
@@ -1008,6 +1010,20 @@ def _discover_vod_kill_banners_inner(
     # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
     if dense and probes < max_probes and time.monotonic() < deadline:
         t0 = _discover_scan_start(vod, duration)
+        if peak_hints:
+            hint_floor = max(
+                0.0,
+                min(float(p) for p in peak_hints)
+                - float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_HINT_PAD", "10")),
+            )
+            if hint_floor < t0:
+                log.info(
+                    "banner discover %s: dense hint floor %.0fs (was %.0fs)",
+                    vod.name,
+                    hint_floor,
+                    t0,
+                )
+                t0 = hint_floor
         span = max(8.0, duration - t0 - 2.0)
         # Default 2s step keeps title rescans practical; set DISCOVER_STEP=1 for true 1 Hz.
         dense_step = max(

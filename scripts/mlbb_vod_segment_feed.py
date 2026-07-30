@@ -292,6 +292,7 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
         log.info("repaired registry youtube ids")
     if _repair_registry_paths(registry):
         log.info("repaired registry vod paths")
+    _prune_dead_registry(registry)
     known = {r.get("id") for r in registry}
     known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))
@@ -474,6 +475,17 @@ def _hard_finish_mlbb_vod(
                 log.info("deleted exhausted vod=%s reason=%s", vod.name, reason)
         except OSError as exc:
             log.warning("delete exhausted failed %s: %s", vod.name, exc)
+    if vid and reason in {
+        "zero_send_reliable",
+        "no_combat_peaks",
+        "zero_send",
+        "presend_banner_floor",
+        "banner_hits_no_send",
+    }:
+        zs = {str(x) for x in (state.get("zero_send_youtube_ids") or []) if x}
+        zs.add(vid)
+        state["zero_send_youtube_ids"] = sorted(zs)[-400:]
+        _save_state(state)
 
 
 @contextmanager
@@ -573,10 +585,57 @@ def _note_discovery_empty(*, kept: int) -> None:
 
 def _title_promise_revive_ok(title: str) -> bool:
     t = str(title or "")
-    return bool(
-        re.search(r"\b(?:savage|maniac|triple\s*kill|double\s*kill|legendary)\b", t, re.I)
-        or re.search(r"саваж|маньяк|тройн|двойн", t, re.I)
+    if re.search(r"\b(?:savage|maniac|triple\s*kill|double\s*kill|legendary)\b", t, re.I):
+        return True
+    if re.search(r"саваж|маньяк|тройн|двойн", t, re.I):
+        return True
+    m = re.search(r"\b(\d{1,2})\s*kills?\b", t, re.I)
+    if m and int(m.group(1)) >= 12:
+        return True
+    return False
+
+
+def _discovery_effective_used(used: set[str]) -> set[str]:
+    """
+    When discovery starves, allow re-download of VODs that previously zero-sent.
+    Permanent used_youtube_ids (484+) was blocking almost every fresh search hit.
+    """
+    if os.environ.get("MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND", "1") != "1":
+        return used
+    need = max(3, int(os.environ.get("MLBB_VOD_DISCOVERY_REUSE_AFTER_MISS", "3")))
+    if _discovery_starvation_level() < need:
+        return used
+    state = _load_state()
+    zero_send = {str(v) for v in (state.get("zero_send_youtube_ids") or []) if v}
+    if not zero_send:
+        return used
+    freed = {vid for vid in used if vid in zero_send}
+    if not freed:
+        return used
+    effective = used - freed
+    log.info(
+        "discovery reuse: unblocked %s zero-send ids (starve=%s used=%s)",
+        len(freed),
+        _discovery_starvation_level(),
+        len(used),
     )
+    return effective if effective else used
+
+
+def _prune_dead_registry(registry: list[dict]) -> int:
+    """Drop rows whose mp4 was deleted — registry was 400+ dead entries."""
+    kept: list[dict] = []
+    dropped = 0
+    for row in registry:
+        path = Path(str(row.get("path") or ""))
+        if not path.exists():
+            dropped += 1
+            continue
+        kept.append(row)
+    if dropped:
+        log.info("pruned dead registry rows=%s kept=%s", dropped, len(kept))
+        registry[:] = kept
+    return dropped
 
 
 def _revive_exhausted_inbox_candidates(registry: list[dict], *, limit: int = 3) -> int:
@@ -834,7 +893,7 @@ def _download_vod_ytdlp_throttled(url: str, env: dict[str, str], *, video_id: st
 
 def _download_new_mlbb_vod(env: dict[str, str], registry: list[dict], *, throttled: bool = True) -> Path | None:
     state = _load_state()
-    used = set(state.get("used_youtube_ids", []))
+    used = _discovery_effective_used(set(state.get("used_youtube_ids", [])))
     used.update(r.get("id", "") for r in registry if r.get("id"))
 
     candidates = _discover_mlbb_vod_candidates(env, used, throttled=throttled)
