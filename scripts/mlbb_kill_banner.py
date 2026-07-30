@@ -90,6 +90,21 @@ class KillBannerHit:
     source: str = "ocr"
 
 
+def _discover_active() -> bool:
+    return os.environ.get("MLBB_BANNER_DISCOVER_ACTIVE", "0") == "1"
+
+
+def _discover_merge_min_tier() -> int:
+    """Discover collects single+ anchors; send/presend still enforces double+."""
+    return max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")))
+
+
+def _ref_classify_min_tier() -> int:
+    if _discover_active():
+        return _discover_merge_min_tier()
+    return _min_tier()
+
+
 def _min_tier() -> int:
     raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "double").strip().lower()
     if raw.isdigit():
@@ -228,11 +243,18 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
         small[int(h * 0.04) : int(h * 0.32), int(w * 0.18) : int(w * 0.82)],
     ]
+    if os.environ.get("MLBB_KILL_BANNER_OCR_WIDE", "1") == "1":
+        zones.extend(
+            [
+                small[int(h * 0.00) : int(h * 0.22), int(w * 0.05) : int(w * 0.95)],
+                small[int(h * 0.10) : int(h * 0.40), int(w * 0.25) : int(w * 0.75)],
+            ]
+        )
     if deep:
         zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
     upscale = max(1.0, float(os.environ.get("MLBB_KILL_BANNER_OCR_UPSCALE", "2.0")))
     texts: list[str] = []
-    psms = (7, 8, 6) if deep else (7,)
+    psms = (7, 8, 6, 11) if deep else (7, 11)
     for zone in zones:
         if zone.size == 0:
             continue
@@ -350,7 +372,13 @@ def _classify_frame(
     """
     color = _announce_color_score(frame)
     # Ref needs a real gold announce flash — half-threshold was matching farming HUD.
-    ref_color_gate = _color_min_score() * float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
+    ref_mul = float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
+    if _discover_active():
+        ref_mul = min(
+            ref_mul,
+            float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.75")),
+        )
+    ref_color_gate = _color_min_score() * ref_mul
     if os.environ.get("MLBB_BANNER_REF_BEFORE_OCR", "1") == "1" and color >= ref_color_gate:
         try:
             from mlbb_banner_ref_match import classify_banner_reference
@@ -558,7 +586,19 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
 
 
 def _dense_scan_enabled() -> bool:
-    return os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1"
+    if os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1":
+        return True
+    if os.environ.get("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "0") == "1":
+        return True
+    # After several empty discovery rounds, brute-force 1–2 Hz ref+OCR sweep.
+    try:
+        miss = int(os.environ.get("MLBB_VOD_DISCOVER_MISS_STREAK", "0") or "0")
+        need = max(1, int(os.environ.get("MLBB_VOD_DISCOVER_DENSE_AFTER_MISS", "2")))
+        if miss >= need:
+            return True
+    except ValueError:
+        pass
+    return False
 
 
 def _discover_scan_start(vod: Path, duration: float) -> float:
@@ -586,17 +626,19 @@ def _effective_discover_min_tier(min_tier: int | None) -> int:
     """
     Discover floor for merging hits.
 
+    Discover is intentionally looser than send: collect single+ anchors so
+  OCR/ref hits are not dropped before presend enforces double+.
     Title may promise savage/maniac (enables dense scan), but forcing discover
     to tier 5 made OCR-blind VODs return hits=0 for hours. Cap title influence
     unless MLBB_VOD_TITLE_FORCE_DISCOVER_TIER=1.
     """
-    base = _min_tier()
+    base = _discover_merge_min_tier()
     requested = min_tier if min_tier is not None else base
     title_need = _title_min_tier_override()
     want = max(base, requested, title_need) if title_need > 0 else max(base, requested)
     if os.environ.get("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", "0") == "1":
         return want
-    cap = max(base, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", str(base))))
+    cap = max(base, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", "2")))
     return min(want, cap)
 
 
@@ -637,6 +679,27 @@ def discover_vod_kill_banners(
         return []
     if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
         return []
+    discover_saved = os.environ.get("MLBB_BANNER_DISCOVER_ACTIVE")
+    os.environ["MLBB_BANNER_DISCOVER_ACTIVE"] = "1"
+    try:
+        return _discover_vod_kill_banners_inner(
+            vod,
+            min_tier=min_tier,
+            hint_peaks=hint_peaks,
+        )
+    finally:
+        if discover_saved is None:
+            os.environ.pop("MLBB_BANNER_DISCOVER_ACTIVE", None)
+        else:
+            os.environ["MLBB_BANNER_DISCOVER_ACTIVE"] = discover_saved
+
+
+def _discover_vod_kill_banners_inner(
+    vod: Path,
+    *,
+    min_tier: int | None = None,
+    hint_peaks: list[float] | None = None,
+) -> list[KillBannerHit]:
     import numpy as np
 
     from mlbb_fight_segment import _analysis_for
@@ -715,21 +778,21 @@ def discover_vod_kill_banners(
         limit = peak_deadline if peak_phase else deadline
         return probes < max_probes and time.monotonic() < limit
 
-    def _probe_at(t: float, *, deep: bool, allow_ocr: bool = True) -> bool:
+    def _probe_at(t: float, *, deep: bool, allow_ocr: bool = True, quick: bool = True) -> bool:
         nonlocal probes
         if not _budget_ok(peak_phase=False):
             return False
         probes += 1
         # Wider probe window catches banners slightly after the motion spike.
         half = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER", "4.0"))
-        # Always quick-sample: full window OCR on every spike burned the budget.
+        before = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PROBE_BEFORE", "2.0"))
         for hit in scan_window(
             vod,
-            t - 1.0,
-            t + max(2.5, half),
+            t - before,
+            t + max(3.0, half),
             focus_sec=t,
             deep=deep,
-            quick=True,
+            quick=quick,
             allow_ocr=allow_ocr,
         ):
             _merge_hit(hit)
@@ -781,7 +844,7 @@ def discover_vod_kill_banners(
                 break
             peak = max(0.0, float(base_peak) + off)
             probes += 1
-            hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=False)
+            hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=True)
             if hit:
                 _merge_hit(hit)
                 base_hit = True
@@ -862,16 +925,13 @@ def discover_vod_kill_banners(
         import cv2
 
         color_floor = _color_min_score() * float(
-            os.environ.get("MLBB_KILL_BANNER_DENSE_COLOR_MUL", "0.65")
+            os.environ.get("MLBB_KILL_BANNER_DENSE_COLOR_MUL", "0.45")
         )
-        # Title-promised maniac/savage: force periodic OCR even when gold flash is weak
-        # (white/EN banners often sit under the color floor and were skipped forever).
-        title_ocr_every = 0
-        if need >= 4:
-            title_ocr_every = max(
-                0,
-                int(os.environ.get("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "4")),
-            )
+        # Dense sweep: periodic OCR even on generic VODs — white/EN banners sit under color floor.
+        title_ocr_every = max(
+            0,
+            int(os.environ.get("MLBB_KILL_BANNER_TITLE_OCR_EVERY", "3")),
+        )
         # Reuse one OpenCV capture for H.264; fall back to per-seek ffmpeg for AV1/VP9.
         dense_cap = None
         try:
@@ -992,7 +1052,7 @@ def discover_vod_kill_banners(
         t0 = _discover_scan_start(vod, duration)
         known = {round(h.sec / 4.0) for h in hits}
 
-        def _run_spike_pass(*, allow_ocr: bool, label: str, stop_at: int) -> None:
+        def _run_spike_pass(*, allow_ocr: bool, label: str, stop_at: int, quick: bool = True) -> None:
             nonlocal probes
             for bi in idxs:
                 if probes >= max_probes or time.monotonic() >= deadline:
@@ -1015,20 +1075,20 @@ def discover_vod_kill_banners(
                         len(hits),
                         want,
                     )
-                if not _probe_at(t, deep=False, allow_ocr=allow_ocr):
+                if not _probe_at(t, deep=not quick, allow_ocr=allow_ocr, quick=quick):
                     break
                 if hits:
                     known.add(round(hits[-1].sec / 4.0))
 
-        _run_spike_pass(allow_ocr=False, label="ref", stop_at=want)
+        _run_spike_pass(allow_ocr=False, label="ref", stop_at=want, quick=True)
         if len(hits) < want and probes < max_probes and time.monotonic() < deadline:
-            # OCR fallback on remaining budget — more spikes when target > min hits.
+            # OCR fallback on remaining budget — full window on motion spikes.
             ocr_spikes = max(
                 4,
                 int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "12")),
             )
             idxs = idxs[:ocr_spikes]
-            _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want)
+            _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want, quick=False)
 
     hits.sort(key=lambda h: h.sec)
     ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))

@@ -243,11 +243,55 @@ def _repair_registry_ids(registry: list[dict]) -> bool:
     return changed
 
 
+def _repair_registry_paths(registry: list[dict]) -> bool:
+    """Fix stale paths (yt_ID.f299.mp4) when the file was remuxed to yt_ID.mp4."""
+    changed = False
+    for row in registry:
+        path = Path(str(row.get("path", "")))
+        if path.exists() and path.stat().st_size > 1_000_000:
+            continue
+        vid = str(row.get("id") or "").strip()
+        if not vid and path.name:
+            vid = vod_youtube_id(path)
+        if not vid:
+            continue
+        candidates: list[Path] = []
+        if INBOX.exists():
+            candidates.extend(INBOX.glob(f"yt_{vid}*.mp4"))
+            candidates.extend(INBOX.glob(f"*{vid}*.mp4"))
+        parent = path.parent
+        if parent.exists():
+            candidates.extend(parent.glob(f"yt_{vid}*.mp4"))
+            candidates.extend(parent.glob(f"*{vid}*.mp4"))
+        seen: set[str] = set()
+        best: Path | None = None
+        best_size = 0
+        for cand in candidates:
+            key = str(cand.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                size = cand.stat().st_size
+            except OSError:
+                continue
+            if size > best_size:
+                best = cand
+                best_size = size
+        if best is not None and best_size > 1_000_000:
+            row["path"] = str(best)
+            changed = True
+            log.info("repaired registry path id=%s -> %s", vid, best.name)
+    return changed
+
+
 def _ensure_registry(env: dict[str, str]) -> list[dict]:
     state = _load_state()
     registry: list[dict] = list(state.get("vods", []))
     if _repair_registry_ids(registry):
         log.info("repaired registry youtube ids")
+    if _repair_registry_paths(registry):
+        log.info("repaired registry vod paths")
     known = {r.get("id") for r in registry}
     known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))
@@ -1991,6 +2035,7 @@ def _collect_scan_segments_inner(
             from mlbb_fight_segment import clear_analysis_cache
 
             clear_analysis_cache()
+            _prime_banner_discover_env()
             pool = discover_strict_candidates(vod, PROFILE, sig, set())
             if entry is not None:
                 entry["last_analysis_cache_key"] = cache_key_hash(vod)
@@ -2478,6 +2523,14 @@ def _send_single_fallback(
             os.environ["MLBB_VOD_MONTAGE"] = old
 
 
+def _prime_banner_discover_env() -> None:
+    """Pass feed starvation into discover so dense sweep kicks in after misses."""
+    starve = _discovery_starvation_level()
+    os.environ["MLBB_VOD_DISCOVER_MISS_STREAK"] = str(starve)
+    if starve >= max(1, int(os.environ.get("MLBB_VOD_DISCOVER_DENSE_AFTER_MISS", "2"))):
+        os.environ.setdefault("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "1")
+
+
 def _resolve_next_vod(
     env: dict[str, str],
     registry: list[dict],
@@ -2493,6 +2546,10 @@ def _resolve_next_vod(
         path = Path(str(entry["path"]))
         if path.exists():
             return path, entry
+        if _repair_registry_paths(registry):
+            path = Path(str(entry["path"]))
+            if path.exists():
+                return path, entry
 
     ready = downloader.pop_ready()
     if ready and ready.exists():
@@ -3054,6 +3111,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "2",
         "MLBB_VOD_TITLE_DENSE_AUTO": "1",
+        # Discover: collect single+ anchors; presend still enforces double+.
+        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
+        "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "1",
+        "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.75",
+        "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.38",
+        "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM": "0.38",
+        "MLBB_KILL_BANNER_DENSE_COLOR_MUL": "0.45",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
@@ -3105,6 +3169,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY",
         "MLBB_VOD_TITLE_DENSE_AUTO",
+        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER",
+        "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
+        "MLBB_BANNER_DISCOVER_REF_COLOR_MUL",
+        "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
+        "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM",
+        "MLBB_KILL_BANNER_DENSE_COLOR_MUL",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)

@@ -19,16 +19,25 @@ def test_discover_scan_start_uses_title_early() -> None:
 
 
 def test_effective_discover_min_tier_title_override() -> None:
-    old = os.environ.get("MLBB_VOD_TITLE_MIN_TIER")
+    old_title = os.environ.get("MLBB_VOD_TITLE_MIN_TIER")
+    old_force = os.environ.get("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER")
     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = "5"
+    os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = "0"
     try:
+        # Title promises savage but discover merge stays capped (single+ anchors).
+        assert kb._effective_discover_min_tier(None) == 2
+        assert kb._effective_discover_min_tier(2) == 2
+        os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = "1"
         assert kb._effective_discover_min_tier(None) == 5
-        assert kb._effective_discover_min_tier(2) == 5
     finally:
-        if old is None:
+        if old_title is None:
             os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
         else:
-            os.environ["MLBB_VOD_TITLE_MIN_TIER"] = old
+            os.environ["MLBB_VOD_TITLE_MIN_TIER"] = old_title
+        if old_force is None:
+            os.environ.pop("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", None)
+        else:
+            os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = old_force
 
 
 def test_dense_scan_enabled() -> None:

@@ -497,14 +497,23 @@ def classify_banner_reference(sec: float, frame) -> KillBannerHit | None:
     labels = {5: "savage", 4: "maniac", 3: "triple", 2: "double", 1: "single"}
     # Color gate: real kill banners flash gold/white; farming combat does not.
     try:
-        from mlbb_kill_banner import _announce_color_score, _color_min_score
+        from mlbb_kill_banner import (
+            _announce_color_score,
+            _color_min_score,
+            _discover_active,
+            _ref_classify_min_tier,
+        )
     except Exception:
         return None
     color = float(_announce_color_score(frame))
-    need_color = float(_color_min_score()) * float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
+    ref_mul = float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
+    if _discover_active():
+        ref_mul = min(ref_mul, float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.75")))
+    need_color = float(_color_min_score()) * ref_mul
     if color < need_color:
         return None
 
+    min_tier_needed = _ref_classify_min_tier()
     neg = match_negative_banner_reference(frame)
     pos = match_positive_owner_reference(frame)
     if pos is not None:
@@ -520,14 +529,22 @@ def classify_banner_reference(sec: float, frame) -> KillBannerHit | None:
         else:
             # Structural bar: junk FP on WTJrJ was ~0.55 hist-edge on every frame.
             min_live = float(os.environ.get("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.62"))
+            if _discover_active():
+                min_live = min(
+                    min_live,
+                    float(os.environ.get("MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM", "0.38")),
+                )
             reason_l = str(reason or "").lower()
             if "own_kill" in reason_l or "not_enemy" in reason_l:
-                min_live = max(min_live, float(os.environ.get("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.68")))
+                own_min = float(os.environ.get("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.68"))
+                if _discover_active():
+                    own_min = min(own_min, float(os.environ.get("MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM", "0.42")))
+                min_live = max(min_live, own_min)
             if float(score) < min_live:
                 pos = None
             else:
                 tier = _tier_from_owner_reason(reason)
-                if tier >= _min_tier():
+                if tier >= min_tier_needed:
                     return KillBannerHit(
                         sec=round(sec, 2),
                         tier=tier,
@@ -539,15 +556,21 @@ def classify_banner_reference(sec: float, frame) -> KillBannerHit | None:
                         source="ref",
                     )
     # Wiki/generic refs are even noisier — only with very strong color.
-    if color < float(_color_min_score()) * float(os.environ.get("MLBB_BANNER_WIKI_COLOR_MUL", "1.6")):
+    wiki_color_mul = float(os.environ.get("MLBB_BANNER_WIKI_COLOR_MUL", "1.6"))
+    if _discover_active():
+        wiki_color_mul = min(wiki_color_mul, float(os.environ.get("MLBB_BANNER_DISCOVER_WIKI_COLOR_MUL", "1.1")))
+    if color < float(_color_min_score()) * wiki_color_mul:
         return None
     row = match_banner_reference(frame, ignore_negative=True)
     if row is None or neg is not None:
         return None
     score, name, source, tier = row
-    if tier < _min_tier():
+    if tier < min_tier_needed:
         return None
-    if float(score) < float(os.environ.get("MLBB_BANNER_WIKI_MIN_SIM", "0.55")):
+    wiki_min = float(os.environ.get("MLBB_BANNER_WIKI_MIN_SIM", "0.55"))
+    if _discover_active():
+        wiki_min = min(wiki_min, float(os.environ.get("MLBB_BANNER_DISCOVER_WIKI_MIN_SIM", "0.38")))
+    if float(score) < wiki_min:
         return None
     return KillBannerHit(
         sec=round(sec, 2),
