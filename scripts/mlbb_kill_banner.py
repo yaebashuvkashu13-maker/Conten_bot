@@ -968,7 +968,7 @@ def _discover_vod_kill_banners_inner(
     )
 
     exclude_secs: list[float] = []
-    exclude_gap = float(os.environ.get("MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC", "40") or "40")
+    exclude_gap = float(os.environ.get("MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC", "18") or "18")
     raw_exclude = str(os.environ.get("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", "") or "").strip()
     if raw_exclude:
         for part in raw_exclude.split(","):
