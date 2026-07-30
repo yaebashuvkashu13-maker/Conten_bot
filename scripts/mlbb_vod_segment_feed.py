@@ -1920,7 +1920,14 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     )
 
     # Analysis-based run density (audio/combat dead while center motion stays high).
-    if os.environ.get("MLBB_MONTAGE_COMBAT_GATE", "0") == "1" or (
+    # Trusted own-kill banners already passed HUD gate — run_frac false-rejects
+    # real teamfights that include a short rotate (BR6 triple @50s → 0.48>0.42).
+    trusted_own = str(
+        report.get("kill_banner") or row.get("kill_banner") or ""
+    ).startswith("trusted_discover")
+    if trusted_own and os.environ.get("MLBB_PRESEND_RUN_TRUST_OWN_KILL", "1") == "1":
+        pass
+    elif os.environ.get("MLBB_MONTAGE_COMBAT_GATE", "0") == "1" or (
         os.environ.get("MLBB_PRESEND_REJECT_RUN", "1") == "1"
         and os.environ.get("MLBB_VOD_MONTAGE", "0") == "1"
     ):
@@ -1934,7 +1941,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 banner_sec=float(row.get("banner_sec", peak_start) or peak_start),
             )
             report["run_fraction"] = round(run_frac, 3)
-            max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.42"))
+            max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.55"))
             if run_frac > max_run:
                 return False, f"clip_run_frac={run_frac:.2f}>{max_run:.2f}", report
         except Exception as exc:
@@ -3378,6 +3385,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_REF_ROOT": "/root/content_bot_ml/data/mlbb_kill_banners",
         "CONTENT_BOT_REPO": "/root/content_bot_ml",
         "MLBB_PRESEND_REJECT_RUN": "1",
+        "MLBB_PRESEND_MAX_RUN_FRAC": "0.55",
+        "MLBB_PRESEND_RUN_TRUST_OWN_KILL": "1",
         "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
         "MLBB_PRESEND_BANNER_CONTEXT": "0",
         "MLBB_PRESEND_RUN_MOTION_MIN": "0.025",
