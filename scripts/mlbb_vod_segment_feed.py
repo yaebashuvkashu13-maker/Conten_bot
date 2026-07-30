@@ -3321,8 +3321,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "12",
         # Dense only after miss streak when fight-first is on.
+        "MLBB_VOD_BANNER_DENSE_SEC": "0",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
         "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS": "2",
+        "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Live learning = yield memory (👍/👎 + own-kill), not CLIP exemplar mp4s.
         "MLBB_VOD_YIELD_MEMORY_ENABLED": "1",
         "MLBB_VOD_OWNER_EXEMPLARS": "0",
