@@ -33,6 +33,8 @@ def test_reject_coordination_russian() -> None:
 def test_reject_enemy_slain_by() -> None:
     assert is_enemy_kill_text("You have been slain by Gusion")
     assert classify_banner_text("You have been slain by Gusion") is None
+    assert is_enemy_kill_text("YOU HAVE BEEN SLAIN")
+    assert classify_banner_text("Enemy has slain Layla") is None
 
 
 def test_tank_support_roles() -> None:

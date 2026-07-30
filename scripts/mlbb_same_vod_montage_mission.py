@@ -47,6 +47,12 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_VOD_MONTAGE_MIN_TIER"] = "single"
     os.environ["MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE"] = "1"
     os.environ["MLBB_ADAPTIVE_ALLOW_SINGLE"] = "1"
+    # Quality: only ship banners where killer (LEFT) matches played HUD.
+    os.environ["MLBB_BANNER_OWN_KILL_REQUIRED"] = "1"
+    os.environ["MLBB_BANNER_HERO_MATCH"] = "1"
+    os.environ["MLBB_BANNER_OWN_HUD_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_OWN_HUD_MIN_SIM", "0.22"
+    )
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "single"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"

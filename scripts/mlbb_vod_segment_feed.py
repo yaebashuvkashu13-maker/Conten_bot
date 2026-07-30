@@ -3244,9 +3244,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.35",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM": "0.35",
         "MLBB_KILL_BANNER_DENSE_COLOR_MUL": "0.40",
-        # Own-kill gate: keep ON but soft — title hero match can miss skins.
-        "MLBB_BANNER_OWN_KILL_REQUIRED": "0",
+        # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
+        "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.80",
@@ -3316,6 +3317,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DENSE_COLOR_MUL",
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM",
         "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():

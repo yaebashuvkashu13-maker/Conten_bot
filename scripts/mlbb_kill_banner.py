@@ -46,10 +46,10 @@ _ENEMY_STREAK_RE = re.compile(
     r"(?:"
     r"enemy\s+(?:triple|double|maniac|savage|legendary|quadra|penta|killing|rampage|"
     r"unstoppable|dominating|god|wiped|ace|slain|has\s+slain)"
-    r"|(?:has\s+been\s+)?slain\s+by|killed\s+by|defeated\s+by"
+    r"|you\s+have\s+been\s+slain|(?:has\s+been\s+)?slain\s+by|killed\s+by|defeated\s+by"
     r"|вражеск.{0,16}(?:тройн|трипл|маньяк|саваж|легенд|убий)"
     r"|противник.{0,16}(?:тройн|трипл|маньяк|саваж|убил)"
-    r"|убит.{0,8}противник|убил.{0,8}вас"
+    r"|убит.{0,8}противник|убил.{0,8}вас|вас\s+убил"
     r")",
     re.I,
 )
@@ -516,13 +516,17 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
     try:
         from mlbb_banner_hero_match import validate_own_kill_frame
 
-        ocr_text = str(hit.text or "") if str(hit.source).startswith("ocr") else ""
+        # Always pass OCR/ref text — enemy/coordination phrases apply to all sources.
+        ocr_text = str(hit.text or "")
         ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
         if not ok:
-            log.debug("banner own_kill reject sec=%s reason=%s", hit.sec, reason)
+            log.info("banner own_kill reject sec=%s tier=%s reason=%s", hit.sec, hit.tier, reason)
             return None
+        log.debug("banner own_kill ok sec=%s reason=%s", hit.sec, reason)
     except Exception as exc:
-        log.debug("banner own_kill check failed: %s", exc)
+        # Fail closed: shipping ally/enemy banners is worse than missing a hit.
+        log.warning("banner own_kill check failed sec=%s: %s", hit.sec, exc)
+        return None
     return hit
 
 

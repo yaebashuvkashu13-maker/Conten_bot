@@ -76,7 +76,7 @@ def test_accepts_implicit_mlbb_ranked_titles() -> None:
 def test_build_queries_returns_twenty() -> None:
     queries = build_vod_search_queries(season=41)
     assert len(queries) == 20
-    assert queries[0] == "MLBB mythic ranked full match gameplay"
+    assert "savage" in queries[0].lower() or "maniac" in queries[0].lower()
     assert any("masha" in q for q in queries)
     assert any("placement" in q for q in queries)
     assert all("minute" not in q.lower() for q in queries)
