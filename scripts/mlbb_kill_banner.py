@@ -168,13 +168,17 @@ def _may_trust_discover_banner(row: dict) -> bool:
         row.get("banner_source")
         or row.get("kill_banner_source")
         or (row.get("clip") or {}).get("banner_source")
+        or (row.get("clip") or {}).get("kill_banner_source")
         or ""
     )
+    # Own-kill discover already gated HUD match; empty source is still the
+    # own-kill ref path (OCR allies never reach the send pool).
     if (
         os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "0") == "1"
         and os.environ.get("MLBB_VOD_BANNER_PRESEND_TRUST_OWN_KILL", "1") == "1"
         and tier_i >= 1
-        and src.startswith("ref")
+        and (src.startswith("ref") or not src)
+        and not src.startswith("ocr")
         and label not in {"single_weak", "color", "announce"}
     ):
         return True
