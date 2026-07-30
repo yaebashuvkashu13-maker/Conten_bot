@@ -484,7 +484,7 @@ def match_banner_reference(
     return best
 
 
-def classify_banner_reference(sec: float, frame) -> KillBannerHit | None:
+def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> KillBannerHit | None:
     """
     Match frame against the screenshot bank.
 

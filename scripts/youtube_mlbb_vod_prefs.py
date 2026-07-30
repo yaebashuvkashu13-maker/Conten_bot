@@ -48,25 +48,10 @@ VOD_COMBAT_SEARCH_QUERIES = (
 # YouTube upload-date filter: "This week" (alternate pool vs this month).
 YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
-# Popular heroes for rotating VOD search (includes Masha from user examples).
-VOD_SEARCH_HEROES = (
-    "masha",
-    "paquito",
-    "hayabusa",
-    "gusion",
-    "fanny",
-    "ling",
-    "chou",
-    "beatrix",
-    "moskov",
-    "valentina",
-    "joy",
-    "angela",
-    "tigreal",
-    "layla",
-    "kagura",
-    "lancelot",
-)
+# Popular carry/fight heroes for rotating VOD search (tanks/supports excluded).
+from mlbb_hero_roles import highlight_search_heroes
+
+VOD_SEARCH_HEROES = highlight_search_heroes()
 
 # Hard reject — montages, guides, promos, skin showcases.
 BAD_TITLE_RE = re.compile(
@@ -358,6 +343,13 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
         return False
     if not passes_mlbb_game_title(title):
         return False
+    try:
+        from mlbb_hero_roles import title_is_tank_support_only
+
+        if title_is_tank_support_only(title):
+            return False
+    except Exception:
+        pass
     return True
 
 
@@ -452,6 +444,17 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
     for needle, weight in penalties:
         if needle in blob:
             score += weight
+
+    try:
+        from mlbb_hero_roles import heroes_in_text, is_excluded_role, is_highlight_role
+
+        title_heroes = heroes_in_text(blob)
+        if title_heroes and all(is_excluded_role(h) for h in title_heroes):
+            score -= 18.0
+        elif any(is_highlight_role(h) for h in title_heroes):
+            score += 4.0
+    except Exception:
+        pass
 
     return score
 

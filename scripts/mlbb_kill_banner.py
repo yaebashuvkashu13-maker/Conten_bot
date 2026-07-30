@@ -45,9 +45,32 @@ TIER_LABELS = {
 _ENEMY_STREAK_RE = re.compile(
     r"(?:"
     r"enemy\s+(?:triple|double|maniac|savage|legendary|quadra|penta|killing|rampage|"
-    r"unstoppable|dominating|god|wiped|ace)"
-    r"|вражеск.{0,16}(?:тройн|трипл|маньяк|саваж|легенд)"
-    r"|противник.{0,16}(?:тройн|трипл|маньяк|саваж)"
+    r"unstoppable|dominating|god|wiped|ace|slain|has\s+slain)"
+    r"|(?:has\s+been\s+)?slain\s+by|killed\s+by|defeated\s+by"
+    r"|вражеск.{0,16}(?:тройн|трипл|маньяк|саваж|легенд|убий)"
+    r"|противник.{0,16}(?:тройн|трипл|маньяк|саваж|убил)"
+    r"|убит.{0,8}противник|убил.{0,8}вас"
+    r")",
+    re.I,
+)
+
+# Quick-chat / coordination overlays — not kill streak banners.
+_COORDINATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:gather|regroup|group\s*up|attack|retreat|defend|push|fall\s*back|"
+    r"initiate|on\s+my\s+way|request\s+backup|clear\s+lane|start\s+a\s+revolt|"
+    r"assemble|hold\s+on|wait\s+for\s+me|follow\s+me|split\s+push|"
+    r"destroy\s+turret|lord|turtle)\b"
+    r"|соберитесь|собраться|в\s+атаку|отступайте|отступить|защищайте|"
+    r"на\s+меня|держите\s+линию|подкреплен|к\s+лорду|к\s+черепах"
+    r")",
+    re.I,
+)
+
+_KILL_STREAK_HINT_RE = re.compile(
+    r"(?:"
+    r"savage|maniac|triple|double|legendary|rampage|shutdown|first\s+blood|"
+    r"has\s+slain|been\s+slain|killing\s+spree|убийств|саваж|маньяк|тройн|двойн"
     r")",
     re.I,
 )
@@ -193,11 +216,27 @@ def _color_min_score() -> float:
     return float(os.environ.get("MLBB_KILL_BANNER_COLOR_MIN", "0.045"))
 
 
+def is_enemy_kill_text(text: str) -> bool:
+    return bool(_ENEMY_STREAK_RE.search(str(text or "")))
+
+
+def is_coordination_banner_text(text: str) -> bool:
+    blob = str(text or "")
+    if not blob:
+        return False
+    if not _COORDINATION_RE.search(blob):
+        return False
+    # Coordination-only HUD: no kill streak phrase.
+    return not _KILL_STREAK_HINT_RE.search(blob)
+
+
 def classify_banner_text(text: str) -> KillBannerHit | None:
     blob = " ".join(str(text or "").split())
     if not blob:
         return None
-    if _ENEMY_STREAK_RE.search(blob):
+    if is_enemy_kill_text(blob):
+        return None
+    if is_coordination_banner_text(blob):
         return None
     best_tier = 0
     best_label = ""
@@ -364,6 +403,7 @@ def _classify_frame(
     *,
     deep: bool = False,
     allow_ocr: bool = True,
+    vod: Path | None = None,
 ) -> KillBannerHit | None:
     """
     Classify a frame as a kill-streak banner.
@@ -383,9 +423,9 @@ def _classify_frame(
         try:
             from mlbb_banner_ref_match import classify_banner_reference
 
-            ref_hit = classify_banner_reference(sec, frame)
+            ref_hit = classify_banner_reference(sec, frame, vod=vod)
             if ref_hit is not None:
-                return ref_hit
+                return _finalize_banner_hit(frame, ref_hit, vod=vod)
         except Exception as exc:
             log.debug("banner ref match failed: %s", exc)
 
@@ -431,34 +471,51 @@ def _classify_frame(
     if classified is not None:
         hit = _accept_ocr_hit(classified)
         if hit is not None:
-            return hit
+            return _finalize_banner_hit(frame, hit, vod=vod)
     if color >= _color_min_score():
         deep_text = _ocr_banner_zones(frame, deep=True)
-        if _ENEMY_STREAK_RE.search(deep_text):
+        if is_enemy_kill_text(deep_text) or is_coordination_banner_text(deep_text):
             return None
         classified = classify_banner_text(deep_text)
         if classified is not None:
             hit = _accept_ocr_hit(classified)
             if hit is not None:
-                return hit
+                return _finalize_banner_hit(frame, hit, vod=vod)
         # Color-only without readable streak text — try ref bank once more, else drop.
         try:
             from mlbb_banner_ref_match import classify_banner_reference
 
-            ref_hit = classify_banner_reference(sec, frame)
+            ref_hit = classify_banner_reference(sec, frame, vod=vod)
             if ref_hit is not None:
-                return ref_hit
+                return _finalize_banner_hit(frame, ref_hit, vod=vod)
         except Exception:
             pass
         if os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1":
-            return KillBannerHit(
+            hit = KillBannerHit(
                 sec=round(sec, 2),
                 tier=1,
                 label="color",
                 text=f"color={color:.3f}",
                 source="color",
             )
+            return _finalize_banner_hit(frame, hit, vod=vod)
     return None
+
+
+def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) -> KillBannerHit | None:
+    if os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "1") != "1":
+        return hit
+    try:
+        from mlbb_banner_hero_match import validate_own_kill_frame
+
+        ocr_text = str(hit.text or "") if str(hit.source).startswith("ocr") else ""
+        ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
+        if not ok:
+            log.debug("banner own_kill reject sec=%s reason=%s", hit.sec, reason)
+            return None
+    except Exception as exc:
+        log.debug("banner own_kill check failed: %s", exc)
+    return hit
 
 
 def _color_only_allowed() -> bool:
@@ -519,12 +576,12 @@ def scan_window(
         frame = frame_map.get(sec)
         if frame is None:
             continue
-        hit = _classify_frame(sec, frame, deep=deep, allow_ocr=allow_ocr)
+        hit = _classify_frame(sec, frame, deep=deep, allow_ocr=allow_ocr, vod=vod)
         if hit is not None:
             hits.append(hit)
     if not hits and frames and not quick and allow_ocr:
         for sec, frame in frames:
-            hit = _classify_frame(sec, frame, deep=True, allow_ocr=True)
+            hit = _classify_frame(sec, frame, deep=True, allow_ocr=True, vod=vod)
             if hit is not None and _banner_hit_source_ok(hit.source):
                 hits.append(hit)
                 break
@@ -966,11 +1023,11 @@ def _discover_vod_kill_banners_inner(
                     force_ocr = title_ocr_every > 0 and (step_i % title_ocr_every == 0)
                     if color >= color_floor or force_ocr:
                         # Ref/color-cheap first; OCR on stronger flashes or title cadence.
-                        hit = _classify_frame(t, frame, deep=False, allow_ocr=False)
+                        hit = _classify_frame(t, frame, deep=False, allow_ocr=False, vod=vod)
                         if hit is None and (
                             force_ocr or color >= color_floor * 1.15
                         ):
-                            hit = _classify_frame(t, frame, deep=False, allow_ocr=True)
+                            hit = _classify_frame(t, frame, deep=False, allow_ocr=True, vod=vod)
                         if hit is not None:
                             _merge_hit(hit)
                 if step_i % 30 == 0 or step_i < 3:

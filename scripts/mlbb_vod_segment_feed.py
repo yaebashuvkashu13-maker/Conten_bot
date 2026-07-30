@@ -386,6 +386,19 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         dur = _ffprobe_duration(path)
         if not _vod_length_ok(path, dur):
             continue
+        if os.environ.get("MLBB_VOD_SKIP_TANK_SUPPORT", "1") == "1":
+            try:
+                from mlbb_hero_roles import title_is_tank_support_only
+
+                if title_is_tank_support_only(str(row.get("title") or path.stem)):
+                    log.info(
+                        "skip tank/support vod id=%s title=%s",
+                        vid,
+                        str(row.get("title") or "")[:60],
+                    )
+                    continue
+            except Exception:
+                pass
         if vid:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
@@ -2154,7 +2167,7 @@ def _collect_scan_segments_inner(
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if montage_on:
-        from mlbb_vod_montage import bannered_rows, montage_eligible_rows, pick_montage_rows
+        from mlbb_vod_montage import bannered_rows, montage_eligible_rows, montage_max_clips, pick_montage_rows
 
         picked = pick_montage_rows(deduped)
         if picked:
@@ -3111,10 +3124,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_REJECT_RUN": "1",
         "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
         "MLBB_PRESEND_BANNER_CONTEXT": "1",
-        "MLBB_PRESEND_RUN_MOTION_MIN": "0.026",
-        "MLBB_PRESEND_RUN_MIN_SKILL": "0.009",
-        "MLBB_PRESEND_RUN_MIN_MINI": "0.009",
-        "MLBB_PRESEND_FIGHT_HUD_MIN": "0.008",
+        "MLBB_PRESEND_RUN_MOTION_MIN": "0.030",
+        "MLBB_PRESEND_RUN_MIN_SKILL": "0.010",
+        "MLBB_PRESEND_RUN_MIN_MINI": "0.010",
+        "MLBB_PRESEND_FIGHT_HUD_MIN": "0.010",
         # Cut highlight ~3s after last kill banner (no lane jog tail).
         "MLBB_BANNER_POST_SEC": "3",
         "MLBB_FIGHT_POST_SEC": "3",
@@ -3138,11 +3151,14 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.38",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM": "0.38",
         "MLBB_KILL_BANNER_DENSE_COLOR_MUL": "0.45",
+        "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
+        "MLBB_BANNER_HERO_MATCH": "1",
+        "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.85",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
         "VIRAL_MLBB_CLIP_HOOK_MIN": "0.18",
-        "MLBB_TEAMFIGHT_MIN_SCORE": "0.45",
+        "MLBB_TEAMFIGHT_MIN_SCORE": "0.50",
         "MLBB_MOTION_PEAK_MAX": "4",
     }
     force = {
@@ -3197,6 +3213,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM",
         "MLBB_KILL_BANNER_DENSE_COLOR_MUL",
+        "MLBB_BANNER_OWN_KILL_REQUIRED",
+        "MLBB_BANNER_HERO_MATCH",
+        "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
