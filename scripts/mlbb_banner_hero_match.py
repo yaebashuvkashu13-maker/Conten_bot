@@ -243,21 +243,21 @@ def validate_own_kill_frame(
 
         neg = match_negative_banner_reference(frame)
         if neg is not None:
-            score, reason, _path = neg
+            _score, reason, _path = neg
             reason_l = str(reason or "").lower()
+            # Only enemy/coordination-style neg refs. Generic not_kill/no_banner
+            # refs false-positive on real streak skins (LEGENDARY / HAS SLAIN).
             if any(
                 k in reason_l
                 for k in (
                     "enemy",
                     "coordination",
                     "quick_chat",
-                    "no_banner",
                     "gather",
                     "retreat",
+                    "attack",
                 )
             ):
-                return False, f"neg_ref:{reason}"
-            if float(score) >= float(os.environ.get("MLBB_BANNER_NEG_REF_MIN_SIM", "0.42")):
                 return False, f"neg_ref:{reason}"
     except Exception:
         pass
