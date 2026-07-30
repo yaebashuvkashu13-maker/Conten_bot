@@ -1812,7 +1812,18 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 min_tier = send_min_tier()
                 if montage_single and os.environ.get("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1") == "1":
                     min_tier = 1
-                title_min = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+                # Title "maniac/savage" must not reject a real own-kill double/triple —
+                # BR6 shipped tier=3 then died on need>=4 and burned the quota hour.
+                if str(banner_reason or "").startswith("trusted_discover"):
+                    title_min = 0
+                else:
+                    title_min = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
+                    title_cap = max(
+                        min_tier,
+                        int(os.environ.get("MLBB_TITLE_SEND_TIER_CAP", "2") or "2"),
+                    )
+                    if title_min > title_cap:
+                        title_min = title_cap
                 if title_min > min_tier:
                     min_tier = title_min
                 if tier_i < min_tier:
