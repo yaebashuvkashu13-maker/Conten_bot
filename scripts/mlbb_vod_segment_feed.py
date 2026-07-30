@@ -3446,11 +3446,11 @@ def main() -> int:
         "MLBB_VOD_NO_CROP",
         "MLBB_VOD_LANDSCAPE",
         "MLBB_VOD_VARIABLE_LENGTH",
-        "MLBB_VOD_OWNER_EXEMPLARS",
-        "HIGHLIGHT_USE_OWNER_ANCHORS",
     ):
         if key in env:
             os.environ[key] = str(env[key])
+    # Re-force after .video_bot.env — do not let stale OWNER_EXEMPLARS=1 revive CLIP.
+    _apply_mlbb_reliable_runtime()
     _bootstrap_shorts_exemplars_for_vod()
     if env.get("MLBB_SEND_ENABLED", "1") == "1":
         from mlbb_learning_first import set_transition_passed
