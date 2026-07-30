@@ -2792,6 +2792,7 @@ def _process_vod_segments(
     probe_limit: int,
     downloader: VodPipelineDownloader,
     registry: list[dict],
+    auto_download: bool = True,
 ) -> int:
     """Drain all scorable segments from one VOD; kick off next download in parallel."""
     from mlbb_vod_adaptive_gate import (
@@ -2804,7 +2805,8 @@ def _process_vod_segments(
         telegram_soften_notice,
     )
 
-    downloader.start_if_idle(registry)
+    if auto_download:
+        downloader.start_if_idle(registry)
     sent_total = 0
     max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
     sig = file_sha256(vod)
@@ -3084,7 +3086,8 @@ def _process_vod_segments(
                 sent = load_feed_sent()
                 blocked_ids = labeled_set | sent
                 used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
-                downloader.start_if_idle(registry)
+                if auto_download:
+                    downloader.start_if_idle(registry)
                 if entry is not None:
                     record_vod_scan(
                         entry,
@@ -3315,8 +3318,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_DELETE_EXHAUSTED": "0",
         "MLBB_VOD_KEEP_BANNER_MISS": "0",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
-        "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
-        "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+        # Banner-miss → teamfight/CLIP fallback ships ally junk. Skip the VOD.
+        "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
+        "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
         # Reliable = own-kill banner clips; ship 1 strong moment if montage thin.
         "MLBB_VOD_MONTAGE": "1",
         "MLBB_SKIP_MONTAGE": "0",
@@ -3402,6 +3406,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "HIGHLIGHT_CLIP_DISABLED": "1",
         "HIGHLIGHT_MLBB_BANNER_CLIP_MIN": "0.0",
         "MLBB_KILL_SCAN_SKIP_OCR": "1",
+        # Bounded discover OCR only — not presend (presend hangs on tesseract).
+        "MLBB_KILL_DISCOVER_ALLOW_OCR": "1",
+        "MLBB_TESSERACT_TIMEOUT_SEC": "4",
+        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "8",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
@@ -3510,6 +3518,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "HIGHLIGHT_CLIP_DISABLED",
         "HIGHLIGHT_MLBB_BANNER_CLIP_MIN",
         "MLBB_KILL_SCAN_SKIP_OCR",
+        "MLBB_KILL_DISCOVER_ALLOW_OCR",
+        "MLBB_TESSERACT_TIMEOUT_SEC",
+        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY",
         "MLBB_STAGE1_SKIP_CLIP_RANK",
         "MLBB_STAGE1_SKIP_INTELLICLIP",
@@ -3686,6 +3697,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             probe_limit=probe_limit,
             downloader=downloader,
             registry=registry,
+            auto_download=auto_download,
         )
         total_sent += n
         vods_done += 1

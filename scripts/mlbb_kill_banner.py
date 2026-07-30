@@ -439,7 +439,15 @@ def _classify_frame(
     Prefer the owner screenshot bank (fast) before Tesseract OCR (slow / often blind).
     """
     if os.environ.get("MLBB_KILL_SCAN_SKIP_OCR", "0") == "1":
-        allow_ocr = False
+        # Live/presend stays OCR-blind (tesseract hangs sends). Discover may
+        # still run a bounded OCR spike pass when explicitly allowed.
+        discover_ocr = (
+            allow_ocr
+            and _discover_active()
+            and os.environ.get("MLBB_KILL_DISCOVER_ALLOW_OCR", "1") == "1"
+        )
+        if not discover_ocr:
+            allow_ocr = False
     color = _announce_color_score(frame)
     # Ref needs a real gold announce flash — half-threshold was matching farming HUD.
     ref_mul = float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))

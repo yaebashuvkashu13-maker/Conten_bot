@@ -722,6 +722,7 @@ def test_classify_frame_prefers_ref_before_ocr(monkeypatch) -> None:
 
     monkeypatch.setenv("MLBB_BANNER_REF_BEFORE_OCR", "1")
     monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_MIN", "0.01")
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "0")
 
     with (
         patch.object(kb, "_announce_color_score", return_value=0.2),
@@ -736,3 +737,36 @@ def test_classify_frame_prefers_ref_before_ocr(monkeypatch) -> None:
     assert out is not None
     assert out.source == "ref"
     assert out.tier == 3
+
+
+def test_skip_ocr_still_allows_discover_ocr(monkeypatch) -> None:
+    import numpy as np
+    import mlbb_kill_banner as kb
+    from unittest.mock import patch
+
+    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    monkeypatch.setenv("MLBB_KILL_SCAN_SKIP_OCR", "1")
+    monkeypatch.setenv("MLBB_KILL_DISCOVER_ALLOW_OCR", "1")
+    monkeypatch.setenv("MLBB_BANNER_DISCOVER_ACTIVE", "1")
+    monkeypatch.setenv("MLBB_BANNER_REF_BEFORE_OCR", "0")
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLOR_MIN", "0.01")
+    monkeypatch.setenv("MLBB_BANNER_OCR_MIN_LETTERS", "4")
+
+    ocr_hit = kb.KillBannerHit(sec=9.0, tier=3, label="triple", text="triple kill", source="ocr")
+
+    with (
+        patch.object(kb, "_announce_color_score", return_value=0.3),
+        patch.object(kb, "_ocr_banner_zones", return_value="triple kill"),
+        patch.object(kb, "classify_banner_text", return_value=ocr_hit),
+        patch.object(kb, "_finalize_banner_hit", side_effect=lambda frame, hit, vod=None: hit),
+    ):
+        out = kb._classify_frame(9.0, frame, deep=False, allow_ocr=True)
+    assert out is not None
+    assert out.source == "ocr"
+
+    # Outside discover, SKIP_OCR still blocks.
+    monkeypatch.setenv("MLBB_BANNER_DISCOVER_ACTIVE", "0")
+    with patch.object(kb, "_ocr_banner_zones") as ocr:
+        out2 = kb._classify_frame(9.0, frame, deep=False, allow_ocr=True)
+        ocr.assert_not_called()
+    assert out2 is None
