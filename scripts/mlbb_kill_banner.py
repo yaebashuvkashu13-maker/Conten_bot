@@ -149,13 +149,14 @@ def _may_trust_discover_banner(row: dict) -> bool:
 
     Default OFF (also honors MLBB_VOD_PRESEND_TRUST_DISCOVERY). Never trust
     OCR singles — that shipped asSYCsoCSPs_959 with no real kill.
+
+    Exception: own-kill ref singles already passed the HUD killer gate at
+    discover — re-running deep OCR in presend hangs the feed for minutes.
     """
     trust_raw = os.environ.get(
         "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER",
         os.environ.get("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "0"),
     )
-    if str(trust_raw).strip() not in {"1", "true", "True", "yes"}:
-        return False
     if not (row.get("kill_banner") or row.get("kill_banner_tier")):
         return False
     try:
@@ -169,6 +170,16 @@ def _may_trust_discover_banner(row: dict) -> bool:
         or (row.get("clip") or {}).get("banner_source")
         or ""
     )
+    if (
+        os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "0") == "1"
+        and os.environ.get("MLBB_VOD_BANNER_PRESEND_TRUST_OWN_KILL", "1") == "1"
+        and tier_i >= 1
+        and src.startswith("ref")
+        and label not in {"single_weak", "color", "announce"}
+    ):
+        return True
+    if str(trust_raw).strip() not in {"1", "true", "True", "yes"}:
+        return False
     if tier_i <= 1 or label in {"single", "single_weak", "color", "announce"}:
         return False
     if src.startswith("ocr") or src.startswith("color"):
@@ -318,9 +329,14 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         for variant in variants:
             for psm in psms:
                 try:
+                    tess_timeout = max(
+                        2,
+                        int(os.environ.get("MLBB_TESSERACT_TIMEOUT_SEC", "6") or "6"),
+                    )
                     text = pytesseract.image_to_string(
                         variant,
                         config=f"--psm {psm} -l eng+rus",
+                        timeout=tess_timeout,
                     )
                 except Exception:
                     continue
