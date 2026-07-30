@@ -1091,7 +1091,18 @@ def _discover_vod_kill_banners_inner(
                         ):
                             hit = _classify_frame(t, frame, deep=False, allow_ocr=True, vod=vod)
                         if hit is not None:
+                            before_n = len(hits)
                             _merge_hit(hit)
+                            if len(hits) > before_n:
+                                # Jump past this fight — dense 1.5s crawl after a hit
+                                # burned minutes scanning the same teamfight.
+                                gap = max(
+                                    dense_step,
+                                    float(os.environ.get("MLBB_KILL_BANNER_DENSE_HIT_GAP", "22")),
+                                )
+                                t += gap
+                                step_i += 1
+                                continue
                 if step_i % 30 == 0 or step_i < 3:
                     log.info(
                         "banner discover %s: dense t=%.0fs probes=%s/%s hits=%s",
