@@ -21,7 +21,8 @@ def montage_enabled() -> bool:
 
 
 def montage_min_clips() -> int:
-    return max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
+    # Reliable quota path ships 1 own-kill moment; do not force a 2-clip floor.
+    return max(1, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
 
 
 def montage_max_clips() -> int:

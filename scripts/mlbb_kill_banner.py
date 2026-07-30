@@ -934,8 +934,43 @@ def _discover_vod_kill_banners_inner(
         want,
     )
 
+    exclude_secs: list[float] = []
+    exclude_gap = float(os.environ.get("MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC", "40") or "40")
+    raw_exclude = str(os.environ.get("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", "") or "").strip()
+    if raw_exclude:
+        for part in raw_exclude.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                exclude_secs.append(float(part))
+            except ValueError:
+                continue
+        if exclude_secs:
+            log.info(
+                "banner discover %s: exclude %s prior sent peaks (gap=%.0fs)",
+                vod.name,
+                [int(x) for x in exclude_secs[:8]],
+                exclude_gap,
+            )
+
+    def _near_excluded(sec: float) -> bool:
+        for ex in exclude_secs:
+            if abs(float(sec) - float(ex)) <= exclude_gap:
+                return True
+        return False
+
     def _merge_hit(hit: KillBannerHit) -> None:
         if hit.tier < need or not _banner_hit_source_ok(hit.source):
+            return
+        # Already-sent moments must not satisfy want=1 early-stop — keep scanning.
+        if _near_excluded(hit.sec):
+            log.info(
+                "banner discover %s: skip hit t=%.1f tier=%s near already-sent",
+                vod.name,
+                hit.sec,
+                hit.tier,
+            )
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier:
@@ -998,6 +1033,18 @@ def _discover_vod_kill_banners_inner(
                 )
         except Exception as exc:
             log.debug("fight-first re-rank skipped: %s", exc)
+    # Prefer fights away from already-sent peaks so want=N finds fresh kills.
+    if exclude_secs and peak_hints:
+        fresh = [p for p in peak_hints if not _near_excluded(p)]
+        stale = [p for p in peak_hints if _near_excluded(p)]
+        if fresh:
+            peak_hints = fresh + stale
+            log.info(
+                "banner discover %s: prefer %s fresh peaks (%s near already-sent)",
+                vod.name,
+                len(fresh),
+                len(stale),
+            )
 
     # Phase 1: peaks — ref-first (cheap), then OCR escalate, then a few full retries.
     # Keep this under peak_deadline so spike/dense still run.

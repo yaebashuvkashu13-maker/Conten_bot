@@ -2197,15 +2197,28 @@ def _collect_scan_segments_inner(
     reserved_intervals = _used_intervals_for_vod(vod, labeled_set, sent)
     out: list[dict] = []
     min_peak = _vod_min_peak_sec(vod)
+    skip_counts = {
+        "near_skipped": 0,
+        "below_min_peak": 0,
+        "banner_reject": 0,
+        "short": 0,
+        "interval": 0,
+        "already_sent": 0,
+        "gate": 0,
+        "low_clip": 0,
+    }
     for clip in pool:
         peak = float(clip.get("start", 0))
         peak_anchor = float(clip.get("peak_start", clip.get("banner_sec", peak)) or peak)
         if peak_near_skipped(peak, skip_peaks) or peak_near_skipped(peak_anchor, skip_peaks):
+            skip_counts["near_skipped"] += 1
             continue
         if peak < min_peak:
+            skip_counts["below_min_peak"] += 1
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
+            skip_counts["banner_reject"] += 1
             log.info(
                 "skip peak=%.1f banner_reject=%s",
                 peak,
@@ -2215,9 +2228,11 @@ def _collect_scan_segments_inner(
         start = float(lead_clip["start"])
         lead_anchor = float(lead_clip.get("peak_start", lead_clip.get("banner_sec", start)) or start)
         if peak_near_skipped(start, skip_peaks) or peak_near_skipped(lead_anchor, skip_peaks):
+            skip_counts["near_skipped"] += 1
             continue
         seg_dur = float(lead_clip.get("input_duration") or 0)
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
+            skip_counts["short"] += 1
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
             continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
@@ -2228,9 +2243,12 @@ def _collect_scan_segments_inner(
         )
         gap = _collect_interval_gap_sec(bannered=clip_bannered)
         if _conflicts_any_interval(start, end, reserved_intervals, gap=gap):
+            skip_counts["interval"] += 1
             continue
         sid = segment_id(vod, start)
         if sid in labeled_set or sid in sent:
+            skip_counts["already_sent"] += 1
+            log.info("skip %s already_sent_or_labeled", sid)
             continue
         hm = clip.get("highlight_metrics") or {}
         skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
@@ -2244,6 +2262,7 @@ def _collect_scan_segments_inner(
                 vod, PROFILE, [lead_clip]
             )
         if not ok:
+            skip_counts["gate"] += 1
             log.info("skip %s gate=%s", sid, reason)
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
@@ -2251,6 +2270,7 @@ def _collect_scan_segments_inner(
         clip_score = float(metrics.get("clip_score") or 0.0)
         min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
         if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+            skip_counts["low_clip"] += 1
             log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
             continue
         out.append(
@@ -2263,6 +2283,7 @@ def _collect_scan_segments_inner(
                 "kill_banner": lead_clip.get("kill_banner"),
                 "kill_banner_tier": lead_clip.get("kill_banner_tier"),
                 "banner_sec": lead_clip.get("banner_sec"),
+                "banner_source": lead_clip.get("banner_source"),
                 "anchor": lead_clip.get("anchor"),
                 "score": float(clip.get("score") or metrics.get("viral_score") or 0),
                 "hook_score": float(metrics.get("hook_score") or (clip.get("highlight_metrics") or {}).get("hook_score") or 0),
@@ -2298,6 +2319,17 @@ def _collect_scan_segments_inner(
         elif os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
             log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
             break
+    if not out and pool and sum(skip_counts.values()) > 0:
+        log.info(
+            "collect empty vod=%s pool=%s skips=%s",
+            vod.name,
+            len(pool),
+            {k: v for k, v in skip_counts.items() if v},
+        )
+        if entry is not None and skip_counts["already_sent"] > 0:
+            other = sum(v for k, v in skip_counts.items() if k != "already_sent")
+            if skip_counts["already_sent"] >= max(1, other):
+                entry["reject_reason"] = "already_sent"
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if montage_on:
@@ -2784,6 +2816,7 @@ def _process_vod_segments(
     os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
     os.environ.pop("MLBB_BANNER_POS_LIVE_MIN_SIM", None)
     os.environ.pop("MLBB_VOD_BANNER_GAP_SOFT", None)
+    os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
     # Title-aware scan: savage/maniac in title → early dense discover + min banner tier.
     try:
         from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
@@ -2901,6 +2934,13 @@ def _process_vod_segments(
             blocked_ids = labeled_set | sent
             index_segments = load_index().get("segments", [])
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
+            # Already-sent peaks must not satisfy discover want=1 early-stop.
+            if used_peaks:
+                os.environ["MLBB_BANNER_DISCOVER_EXCLUDE_SECS"] = ",".join(
+                    str(int(round(float(p)))) for p in used_peaks[:24]
+                )
+            else:
+                os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
 
             cached_blocked = False
             if entry and entry.get("last_pool_peaks"):
@@ -3322,7 +3362,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "1",
         "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Discover: collect single+ anchors; montage ships ref singles.
-        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
+        # Find several banners so an already-sent kill does not exhaust a 20-kill VOD.
+        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "3",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "45",

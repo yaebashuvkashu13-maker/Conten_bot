@@ -58,6 +58,9 @@ def should_retry_banner_gap(entry: dict[str, Any] | None) -> bool:
     """
     if not entry or os.environ.get("MLBB_VOD_BANNER_GAP_RETRY", "1") != "1":
         return False
+    # Already shipped this fight — discovering the same kill again is not a gap issue.
+    if str(entry.get("reject_reason") or "") in {"already_sent", "all_peaks_blocked"}:
+        return False
     if not entry.get("last_scan_blocked"):
         return False
     if banner_hits_in_entry(entry) <= 0:
