@@ -788,9 +788,9 @@ def _discover_hit_target() -> int:
     2 hits and skipped the rest of the VOD. Montage mode also needs enough
     distinct banners to glue 3–4 fights.
     """
-    want = max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "2")))
+    want = max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MIN_HITS", "1")))
     if os.environ.get("MLBB_VOD_MONTAGE", "0") == "1" and os.environ.get("MLBB_SKIP_MONTAGE", "0") != "1":
-        mont = max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
+        mont = max(1, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "1")))
         want = max(want, mont)
     if os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") != "1":
         return want

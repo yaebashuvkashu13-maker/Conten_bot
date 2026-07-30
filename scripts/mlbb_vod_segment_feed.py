@@ -3322,6 +3322,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "1",
         "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Discover: collect single+ anchors; montage ships ref singles.
+        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "45",
