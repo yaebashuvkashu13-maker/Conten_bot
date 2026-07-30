@@ -510,8 +510,22 @@ def _classify_frame(
     return None
 
 
+# Per-discover counters for yield memory (ally-trap vs own-kill).
+_OWN_KILL_STATS: dict[str, int] = {"accepts": 0, "rejects": 0}
+
+
+def reset_own_kill_stats() -> None:
+    _OWN_KILL_STATS["accepts"] = 0
+    _OWN_KILL_STATS["rejects"] = 0
+
+
+def own_kill_stats() -> dict[str, int]:
+    return dict(_OWN_KILL_STATS)
+
+
 def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) -> KillBannerHit | None:
     if os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "1") != "1":
+        _OWN_KILL_STATS["accepts"] = int(_OWN_KILL_STATS.get("accepts") or 0) + 1
         return hit
     try:
         from mlbb_banner_hero_match import validate_own_kill_frame
@@ -520,11 +534,14 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
         ocr_text = str(hit.text or "")
         ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
         if not ok:
+            _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
             log.info("banner own_kill reject sec=%s tier=%s reason=%s", hit.sec, hit.tier, reason)
             return None
+        _OWN_KILL_STATS["accepts"] = int(_OWN_KILL_STATS.get("accepts") or 0) + 1
         log.debug("banner own_kill ok sec=%s reason=%s", hit.sec, reason)
     except Exception as exc:
         # Fail closed: shipping ally/enemy banners is worse than missing a hit.
+        _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
         log.warning("banner own_kill check failed sec=%s: %s", hit.sec, exc)
         return None
     return hit
@@ -790,12 +807,38 @@ def discover_vod_kill_banners(
         return []
     discover_saved = os.environ.get("MLBB_BANNER_DISCOVER_ACTIVE")
     os.environ["MLBB_BANNER_DISCOVER_ACTIVE"] = "1"
+    reset_own_kill_stats()
     try:
-        return _discover_vod_kill_banners_inner(
+        hits = _discover_vod_kill_banners_inner(
             vod,
             min_tier=min_tier,
             hint_peaks=hint_peaks,
         )
+        try:
+            from mlbb_vod_segment_store import vod_youtube_id
+            from mlbb_vod_yield_memory import record_scan
+
+            title = ""
+            try:
+                from mlbb_vod_title import vod_title_blob
+
+                title = str(vod_title_blob(vod) or "")
+            except Exception:
+                title = str(vod.stem)
+            stats = own_kill_stats()
+            raw_banners = int(stats.get("accepts") or 0) + int(stats.get("rejects") or 0)
+            if raw_banners <= 0:
+                raw_banners = len(hits)
+            record_scan(
+                youtube_id=vod_youtube_id(vod),
+                title=title,
+                banner_hits=raw_banners,
+                own_kill_hits=int(stats.get("accepts") or len(hits)),
+                own_kill_rejects=int(stats.get("rejects") or 0),
+            )
+        except Exception as exc:
+            log.debug("yield memory scan record skipped: %s", exc)
+        return hits
     finally:
         if discover_saved is None:
             os.environ.pop("MLBB_BANNER_DISCOVER_ACTIVE", None)

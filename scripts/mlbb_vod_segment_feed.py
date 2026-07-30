@@ -371,7 +371,7 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
-    ranked: list[tuple[int, int, float, float, float, dict]] = []
+    ranked: list[tuple[int, float, int, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
@@ -406,21 +406,35 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
             seen_ids.add(vid)
         scanned = float(row.get("last_scan_at") or 0)
         rich = _vod_richness_rank(row)
-        ranked.append((rich, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
+        yield_pen = 0.0
+        try:
+            from mlbb_vod_yield_memory import pick_penalty
+
+            yield_pen = float(
+                pick_penalty(
+                    youtube_id=vid,
+                    uploader=str(row.get("uploader") or ""),
+                    title=str(row.get("title") or path.stem),
+                )
+            )
+        except Exception:
+            yield_pen = 0.0
+        ranked.append((rich, yield_pen, 1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
         if _revive_exhausted_inbox_candidates(registry):
             return _pick_available_vod(registry)
         return None
-    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
-    pick = ranked[0][5]
-    dur = ranked[0][4]
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+    pick = ranked[0][6]
+    dur = ranked[0][5]
     log.info(
-        "pick vod id=%s dur_min=%.0f target_min=%.0f rich=%s scanned=%s pool=%s",
+        "pick vod id=%s dur_min=%.0f target_min=%.0f rich=%s yield_pen=%s scanned=%s pool=%s",
         pick.get("id", ""),
         dur / 60,
         target / 60,
         ranked[0][0],
-        bool(ranked[0][1]),
+        ranked[0][1],
+        bool(ranked[0][2]),
         len(pick.get("last_pool_peaks") or []) if isinstance(pick.get("last_pool_peaks"), list) else 0,
     )
     return pick
@@ -755,6 +769,15 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             "discovery: bypass zero_yield blocklist (starvation=%s)",
             _discovery_starvation_level(),
         )
+    try:
+        from mlbb_vod_yield_memory import ally_trap_uploaders
+
+        traps = ally_trap_uploaders()
+        if traps:
+            blocked_uploaders = set(blocked_uploaders) | traps
+            log.info("discovery: yield-memory ally-trap uploaders=%s", len(traps))
+    except Exception:
+        pass
     all_queries = [
         q.strip()
         for q in os.environ.get("MLBB_VOD_SEARCH_QUERIES", DEFAULT_SEARCH_QUERIES).split(",")
@@ -3016,6 +3039,19 @@ def _process_vod_segments(
     state["last_adaptive_level"] = active_level
     _save_state(state)
 
+    if sent_total > 0:
+        try:
+            from mlbb_vod_yield_memory import record_send
+
+            record_send(
+                youtube_id=str(vid or ""),
+                uploader=str((entry or {}).get("uploader") or ""),
+                title=str((entry or {}).get("title") or vod.stem),
+                sent=int(sent_total),
+            )
+        except Exception as exc:
+            log.debug("yield send record skipped: %s", exc)
+
     if sent_total == 0 and not send_quota_blocked:
         if entry:
             entry["zero_send_attempts"] = int(entry.get("zero_send_attempts") or 0) + 1
@@ -3117,7 +3153,33 @@ def _process_vod_segments(
 
 
 def _bootstrap_shorts_exemplars_for_vod() -> dict:
-    """Load 600+ 👍/👎 Shorts exemplars into CLIP cache for VOD peak scoring."""
+    """Legacy CLIP exemplar bootstrap — off on banner/own-kill live path.
+
+    Yield memory (`mlbb_vod_yield_memory`) drives discovery/pick from 👍/👎
+    + own-kill outcomes. Loading 500+ Shorts mp4 into CLIP wastes RAM and
+    does not rank banner windows (stage1 CLIP rank is skipped).
+    """
+    if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "0") != "1":
+        try:
+            from mlbb_vod_yield_memory import summary
+
+            s = summary()
+            log.info(
+                "vod yield-memory active videos=%s uploaders=%s heroes=%s top_heroes=%s",
+                s.get("videos"),
+                s.get("uploaders"),
+                s.get("heroes"),
+                s.get("top_heroes"),
+            )
+        except Exception:
+            log.info("vod yield-memory active (CLIP exemplars off)")
+        return {
+            "good_exemplars": 0,
+            "bad_exemplars": 0,
+            "owner_rank": False,
+            "yield_memory": True,
+        }
+
     repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
     root = repo / "data" / "highlight_exemplars" / "mobile_legends"
     good_n = len(list((root / "good").glob("*.mp4"))) if (root / "good").exists() else 0
@@ -3248,6 +3310,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
         "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
+        # Live learning = yield memory (👍/👎 + own-kill), not CLIP exemplar mp4s.
+        "MLBB_VOD_YIELD_MEMORY_ENABLED": "1",
+        "MLBB_VOD_OWNER_EXEMPLARS": "0",
+        "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.80",
@@ -3318,6 +3384,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
+        "MLBB_VOD_YIELD_MEMORY_ENABLED",
+        "MLBB_VOD_OWNER_EXEMPLARS",
+        "HIGHLIGHT_USE_OWNER_ANCHORS",
         "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():
@@ -3354,11 +3423,12 @@ def main() -> int:
 
     seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
-    if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+    if os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "0") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
         os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
     else:
         os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+        os.environ.setdefault("MLBB_VOD_YIELD_MEMORY_ENABLED", "1")
     os.environ.setdefault("STRICT_PROBE_LIMIT", os.environ.get("MLBB_VOD_PROBE_LIMIT", "50"))
     os.environ.setdefault("OWNER_PREVIEW_REQUIRED", "0")
     os.environ.setdefault("MLBB_VOD_NO_CROP", "1")

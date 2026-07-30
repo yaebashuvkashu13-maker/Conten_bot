@@ -186,7 +186,18 @@ def build_vod_search_queries(
     """Combat-first query list: savage/maniac/double before generic ranked."""
     if include_supplements is None:
         include_supplements = vod_search_include_supplements()
-    heroes = heroes or VOD_SEARCH_HEROES
+    base_heroes = heroes or VOD_SEARCH_HEROES
+    # Prefer heroes that historically yield own kills + likes.
+    try:
+        from mlbb_vod_yield_memory import preferred_heroes
+
+        boosted = preferred_heroes(limit=max(4, max_hero_queries))
+        if boosted:
+            rest = [h for h in base_heroes if h not in boosted]
+            base_heroes = tuple(boosted + rest)
+    except Exception:
+        pass
+    heroes = base_heroes
     season = season if season is not None else vod_current_season()
     queries: list[str] = list(VOD_COMBAT_SEARCH_QUERIES)
 
@@ -467,6 +478,13 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
             score -= 18.0
         elif any(is_highlight_role(h) for h in title_heroes):
             score += 4.0
+    except Exception:
+        pass
+
+    try:
+        from mlbb_vod_yield_memory import candidate_bonus
+
+        score += float(candidate_bonus(meta))
     except Exception:
         pass
 
