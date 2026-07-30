@@ -312,9 +312,20 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
 
             meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
             title = str(meta.get("title") or p.stem)
+            # Prefer info.json title when yt meta is offline — stem alone fails MLBB_TITLE_RE.
+            if title == p.stem or title.startswith("yt_"):
+                info = p.with_suffix(".info.json")
+                if not info.exists():
+                    info = p.parent / f"yt_{vid}.info.json"
+                if info.exists():
+                    try:
+                        title = str(json.loads(info.read_text()).get("title") or title)
+                    except Exception:
+                        pass
             if LONG_VOD_TITLE_RE.search(title):
                 continue
-            if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
+            if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title) or p.exists():
+                # Inbox file on disk is enough — title regex must not block rescans.
                 registry.append(_registry_entry(p, title=title))
                 known.add(vid)
                 known_paths.add(str(p))

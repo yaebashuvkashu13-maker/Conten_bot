@@ -351,13 +351,14 @@ def should_skip_inbox_pick(youtube_id: str = "") -> bool:
     row = (load_memory().get("videos") or {}).get(str(youtube_id))
     if not isinstance(row, dict):
         return False
+    attempts = int(row.get("attempts") or 0)
+    banners = int(row.get("banner_hits") or 0)
+    own = int(row.get("own_kill_hits") or 0)
+    # One OCR-blind / ref-blind miss is not proof — allow a retry after code/env fixes.
+    miss_after = max(2, int(os.environ.get("MLBB_YIELD_BANNER_MISS_SKIP_AFTER", "2") or "2"))
     if str(row.get("last_outcome") or "") == "banner_miss":
-        return True
-    return (
-        int(row.get("attempts") or 0) >= 1
-        and int(row.get("banner_hits") or 0) == 0
-        and int(row.get("own_kill_hits") or 0) == 0
-    )
+        return attempts >= miss_after and banners == 0 and own == 0
+    return attempts >= miss_after and banners == 0 and own == 0
 
 
 def preferred_heroes(limit: int = 8) -> list[str]:
