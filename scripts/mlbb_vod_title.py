@@ -120,16 +120,25 @@ def title_min_banner_tier(blob: str) -> int:
 
 
 _KILL_COUNT_RE = re.compile(r"\b(\d{1,2})\s*kills?\b", re.I)
+_KDA_RE = re.compile(r"\b(\d{1,2})\s*/\s*\d{1,2}\s*/\s*\d{1,2}\b")
 
 
 def title_kill_count(blob: str) -> int:
+    """Best-effort kill count from title ('16 kills' or '20/1/20' KDA)."""
+    best = 0
     m = _KILL_COUNT_RE.search(blob or "")
-    if not m:
-        return 0
-    try:
-        return int(m.group(1))
-    except (TypeError, ValueError):
-        return 0
+    if m:
+        try:
+            best = max(best, int(m.group(1)))
+        except (TypeError, ValueError):
+            pass
+    m = _KDA_RE.search(blob or "")
+    if m:
+        try:
+            best = max(best, int(m.group(1)))
+        except (TypeError, ValueError):
+            pass
+    return best
 
 
 def title_promises_kill_streak(blob: str) -> bool:

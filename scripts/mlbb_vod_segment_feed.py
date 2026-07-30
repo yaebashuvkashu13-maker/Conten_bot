@@ -3373,6 +3373,11 @@ def _apply_mlbb_reliable_runtime() -> None:
         "VIRAL_MLBB_CLIP_HOOK_MIN": "0.15",
         "MLBB_TEAMFIGHT_MIN_SCORE": "0.40",
         "MLBB_MOTION_PEAK_MAX": "6",
+        # Faster analyze so VODs turn over in ~1–2 min, not 3–4.
+        "SMART_SAMPLE_FPS": "2.0",
+        "SMART_LONG_SAMPLE_FPS": "2.0",
+        "SMART_ANALYSIS_DETAIL": "fast",
+        "SMART_LONG_ANALYSIS_MAX_FPS": "2.0",
     }
     force = {
         "MLBB_VOD_ADAPTIVE_NOTIFY",
@@ -3413,6 +3418,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "VIRAL_MLBB_CLIP_HOOK_MIN",
         "MLBB_TEAMFIGHT_MIN_SCORE",
         "MLBB_MOTION_PEAK_MAX",
+        "SMART_SAMPLE_FPS",
+        "SMART_LONG_SAMPLE_FPS",
+        "SMART_ANALYSIS_DETAIL",
+        "SMART_LONG_ANALYSIS_MAX_FPS",
         "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER",
         "MLBB_BANNER_REJECT_OCR_SINGLE",
         "MLBB_BANNER_OCR_WEAK_SINGLE",
@@ -3422,6 +3431,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY",
+        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS",
         "MLBB_VOD_TITLE_DENSE_AUTO",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP",
