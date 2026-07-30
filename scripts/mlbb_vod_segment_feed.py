@@ -2906,6 +2906,24 @@ def _process_vod_segments(
 
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, PROFILE)
+        if not ok_fast and str(fast_reason) == "fast_probe_too_short":
+            # Title-promised savage/maniac shorts must still reach banner discover.
+            title_blob = str(
+                (entry or {}).get("title")
+                or os.environ.get("MLBB_VOD_SCAN_TITLE")
+                or ""
+            ).lower()
+            try:
+                from mlbb_vod_title import title_promises_kill_streak
+
+                if title_promises_kill_streak(title_blob):
+                    log.info(
+                        "fast-probe bypass short title-promised vod=%s",
+                        vod.name,
+                    )
+                    ok_fast, fast_reason, seed_peaks = True, "fast_probe_title_bypass", []
+            except Exception:
+                pass
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
             if entry is None:
