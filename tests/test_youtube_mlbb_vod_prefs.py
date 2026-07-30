@@ -143,6 +143,12 @@ def test_build_queries_includes_combat_angle() -> None:
     assert any("savage" in q or "maniac" in q for q in lowered)
 
 
+def test_build_queries_combat_first() -> None:
+    queries = build_vod_search_queries(season=41, limit=12)
+    assert "savage" in queries[0].lower() or "maniac" in queries[0].lower()
+    assert not any("roam mythic" in q.lower() for q in queries[:8])
+
+
 def test_fresh_search_uses_month_sp_not_duration_sp() -> None:
     assert vod_search_date_sort({"MLBB_VOD_SEARCH_FRESH": "1"}) is True
     assert vod_youtube_freshness_sp({"MLBB_VOD_SEARCH_FRESH": "1"}) == "EgQIBBAB"

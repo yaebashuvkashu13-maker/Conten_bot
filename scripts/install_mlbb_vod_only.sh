@@ -205,6 +205,8 @@ install -m 755 \
   "$REPO/scripts/mlbb_banner_ref_match.py" \
   "$REPO/scripts/mlbb_banner_hero_match.py" \
   "$REPO/scripts/mlbb_hero_roles.py" \
+  "$REPO/scripts/mlbb_hero_icon_ingest.py" \
+  "$REPO/scripts/mlbb_coordination_ref_ingest.py" \
   "$REPO/scripts/mlbb_fight_segment.py" \
   "$REPO/scripts/mlbb_vod_adaptive_gate.py" \
   "$REPO/scripts/audit_mlbb_vod_inbox.py" \

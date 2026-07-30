@@ -36,13 +36,22 @@ VOD_ANGLE_SEARCH_QUERIES = (
     "Mobile Legends ranked match MVP gameplay no commentary",
 )
 
-# Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
+# Kill-heavy titles — primary discovery pool (banner-rich VODs).
 VOD_COMBAT_SEARCH_QUERIES = (
-    "MLBB ranked match double kill teamfight replay",
-    "MLBB mythic ranked savage teamfight full match",
-    "Mobile Legends maniac triple kill ranked gameplay",
-    "Mobile Legends mythic glory 20 kills full game",
-    "MLBB mythic ranked mvp teamfight no montage",
+    "MLBB ranked match savage teamfight full gameplay",
+    "Mobile Legends maniac triple kill ranked full match",
+    "MLBB mythic glory double kill teamfight replay",
+    "MLBB ranked savage maniac highlights full game no montage",
+    "Mobile Legends mythic ranked 20 kills MVP teamfight",
+    "MLBB legend ranked triple kill savage gameplay",
+    "Mobile Legends double kill teamfight mythic ranked match",
+)
+
+# Hero + kill combo — rotated after combat core.
+VOD_HERO_COMBAT_TEMPLATES = (
+    "MLBB {hero} savage ranked full match gameplay",
+    "Mobile Legends {hero} maniac triple kill ranked",
+    "MLBB {hero} double kill mythic ranked teamfight",
 )
 
 # YouTube upload-date filter: "This week" (alternate pool vs this month).
@@ -174,32 +183,37 @@ def build_vod_search_queries(
     include_supplements: bool | None = None,
     limit: int = 20,
 ) -> list[str]:
-    """20 rotating queries: core + heroes + angles + optional season supplements."""
+    """Combat-first query list: savage/maniac/double before generic ranked."""
     if include_supplements is None:
         include_supplements = vod_search_include_supplements()
     heroes = heroes or VOD_SEARCH_HEROES
     season = season if season is not None else vod_current_season()
-    queries: list[str] = list(VOD_CORE_SEARCH_QUERIES)
-    hero_templates = (
-        "MLBB mythic {hero} ranked full match",
-        "Mobile Legends {hero} mythic glory ranked gameplay",
-    )
-    hero_slots = max(0, min(max_hero_queries, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 4))
+    queries: list[str] = list(VOD_COMBAT_SEARCH_QUERIES)
+
+    hero_slots = max(0, min(max_hero_queries, max(0, limit - 6)))
     for idx in range(hero_slots):
         hero = heroes[idx % len(heroes)]
-        tpl = hero_templates[idx % len(hero_templates)]
+        tpl = VOD_HERO_COMBAT_TEMPLATES[idx % len(VOD_HERO_COMBAT_TEMPLATES)]
         queries.append(tpl.format(hero=hero))
-    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
-    for idx in range(combat_slots):
-        queries.append(VOD_COMBAT_SEARCH_QUERIES[idx % len(VOD_COMBAT_SEARCH_QUERIES)])
+
+    # Small generic ranked tail — not the main pool anymore.
+    for q in VOD_CORE_SEARCH_QUERIES[:2]:
+        if len(queries) >= limit:
+            break
+        queries.append(q)
+
     for angle in VOD_ANGLE_SEARCH_QUERIES:
         if len(queries) >= limit:
             break
+        # Skip roam-biased angles — low kill-banner yield.
+        if "roam" in angle.lower():
+            continue
         queries.append(angle)
+
     if include_supplements and len(queries) < limit:
-        queries.append(f"MLBB mythic global ranked season {season}")
+        queries.append(f"MLBB mythic global savage season {season} ranked full match")
     if include_supplements and len(queries) < limit:
-        queries.append(f"MLBB mythic global masha season {season} ranked full match")
+        queries.append(f"MLBB mythic glory double kill season {season} ranked gameplay")
     # Dedupe while preserving order.
     seen: set[str] = set()
     out: list[str] = []
