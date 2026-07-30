@@ -219,11 +219,14 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
         }
         tier = int(row.get("kill_banner_tier") or 0)
         label = str(row.get("kill_banner") or "")
+        banner_sec = row.get("banner_sec")
         if tier > 0:
             clip["kill_banner_tier"] = tier
             clip["kill_banner"] = label or "double"
             clip["anchor"] = "kill_banner"
-            clip["banner_sec"] = peak
+            clip["banner_sec"] = float(banner_sec) if banner_sec is not None else peak
+            if row.get("banner_source"):
+                clip["banner_source"] = str(row["banner_source"])
         pool.append(clip)
     return pool
 
@@ -249,15 +252,19 @@ def record_vod_scan(
             label = str(clip.get("kill_banner") or "")
             if tier > 0 or label:
                 banner_hits += 1
-            detail.append(
-                {
-                    "peak_sec": peak,
-                    "score": round(float(clip.get("score") or 0), 4),
-                    "blocked_reason": str(clip.get("blocked_reason") or ""),
-                    "kill_banner_tier": tier,
-                    "kill_banner": label,
-                }
-            )
+            row_detail: dict[str, Any] = {
+                "peak_sec": peak,
+                "score": round(float(clip.get("score") or 0), 4),
+                "blocked_reason": str(clip.get("blocked_reason") or ""),
+                "kill_banner_tier": tier,
+                "kill_banner": label,
+            }
+            if clip.get("banner_sec") is not None:
+                row_detail["banner_sec"] = round(float(clip["banner_sec"]), 1)
+            src = clip.get("banner_source") or clip.get("kill_banner_source")
+            if src:
+                row_detail["banner_source"] = str(src)
+            detail.append(row_detail)
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
         entry["last_banner_hits"] = banner_hits

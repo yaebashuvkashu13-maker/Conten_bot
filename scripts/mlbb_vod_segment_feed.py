@@ -1111,7 +1111,7 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
         file_dur = float(analysis.get("duration") or 0.0)
         if file_dur <= 0:
             file_dur = _ffprobe_duration(vod)
-        resolved = resolve_fight_bounds(vod, peak, file_dur)
+        resolved = resolve_fight_bounds(vod, peak, file_dur, clip_meta=clip)
         if resolved is None:
             from mlbb_kill_banner import _motion_anchor_ok
 

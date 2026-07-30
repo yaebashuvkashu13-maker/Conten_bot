@@ -1962,24 +1962,53 @@ def discover_highlight_candidates(
 
     verified: list[dict] = []
 
+    def _nearest_banner(start: float):
+        if not banners:
+            return None
+        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        window = float(os.environ.get("MLBB_BANNER_ANCHOR_WINDOW", "18"))
+        best = None
+        best_d = 1e9
+        for hit in banners:
+            anchor = max(0.0, hit.sec - lead)
+            d = min(abs(start - anchor), abs(start - hit.sec))
+            if d < best_d:
+                best_d = d
+                best = hit
+        if best is not None and best_d <= window:
+            return best
+        return None
+
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
             return False
-        verified.append(
-            {
-                "source_path": str(video_path),
-                "game_name": GAME_LABELS.get(profile, profile),
-                "start": round(start, 3),
-                "input_duration": WINDOW_SEC,
-                "output_duration": WINDOW_SEC,
-                "speed": 1.0,
-                "score": metrics.viral_score or metrics.combined_score,
-                "strict_score": metrics.viral_score or metrics.combined_score,
-                "highlight_metrics": metrics.to_dict(),
-                "gate_reason": metrics.pass_reason,
-                "strict_metrics": metrics.to_dict(),
-            }
-        )
+        row = {
+            "source_path": str(video_path),
+            "game_name": GAME_LABELS.get(profile, profile),
+            "start": round(start, 3),
+            "input_duration": WINDOW_SEC,
+            "output_duration": WINDOW_SEC,
+            "speed": 1.0,
+            "score": metrics.viral_score or metrics.combined_score,
+            "strict_score": metrics.viral_score or metrics.combined_score,
+            "highlight_metrics": metrics.to_dict(),
+            "gate_reason": metrics.pass_reason,
+            "strict_metrics": metrics.to_dict(),
+        }
+        hit = _nearest_banner(start)
+        if hit is not None:
+            row.update(
+                {
+                    "anchor": "kill_banner",
+                    "banner_sec": hit.sec,
+                    "peak_start": hit.sec,
+                    "kill_banner": hit.label,
+                    "kill_banner_tier": hit.tier,
+                    "banner_text": hit.text,
+                    "banner_source": hit.source,
+                }
+            )
+        verified.append(row)
         return True
 
     def _should_stop() -> bool:

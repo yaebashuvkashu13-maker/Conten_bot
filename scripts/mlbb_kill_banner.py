@@ -122,6 +122,14 @@ def _discover_merge_min_tier() -> int:
     return max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")))
 
 
+def _collect_min_tier() -> int:
+    """Collect/normalize accepts discover-tier banners; presend still floors at send_min_tier."""
+    raw = os.environ.get("MLBB_KILL_BANNER_COLLECT_MIN_TIER")
+    if raw is not None and str(raw).strip():
+        return max(1, int(str(raw).strip()))
+    return _discover_merge_min_tier()
+
+
 def _ref_classify_min_tier() -> int:
     if _discover_active():
         return _discover_merge_min_tier()
@@ -595,6 +603,7 @@ def find_banner_near_peak(
     *,
     quick: bool = False,
     allow_ocr: bool = True,
+    min_tier: int | None = None,
 ) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     if quick:
@@ -621,15 +630,52 @@ def find_banner_near_peak(
         )
     if not hits:
         return None
-    min_tier = _min_tier()
+    need = min_tier if min_tier is not None else _min_tier()
     for hit in hits:
-        if hit.tier >= min_tier and _banner_hit_source_ok(hit.source):
+        if hit.tier >= need and _banner_hit_source_ok(hit.source):
             return hit
     if not _banner_required():
         for hit in hits:
-            if hit.tier >= min_tier:
+            if hit.tier >= need:
                 return hit
     return None
+
+
+def banner_hit_from_clip_meta(clip_meta: dict | None) -> KillBannerHit | None:
+    """Reuse discover/highlight banner fields without re-scanning the VOD."""
+    if not clip_meta:
+        return None
+    tier = clip_meta.get("kill_banner_tier")
+    if tier is None and clip_meta.get("kill_banner"):
+        tier = (clip_meta.get("kill_banner") or {}).get("tier")
+    try:
+        tier_i = int(tier) if tier is not None else 0
+    except (TypeError, ValueError):
+        tier_i = 0
+    if tier_i < _collect_min_tier():
+        return None
+    banner_sec = clip_meta.get("banner_sec")
+    if banner_sec is None:
+        banner_sec = clip_meta.get("peak_start")
+    if banner_sec is None:
+        return None
+    label = str(clip_meta.get("kill_banner") or "")
+    if isinstance(clip_meta.get("kill_banner"), dict):
+        label = str((clip_meta.get("kill_banner") or {}).get("label") or label)
+    src = str(
+        clip_meta.get("banner_source")
+        or clip_meta.get("kill_banner_source")
+        or ""
+    )
+    if src and not _banner_hit_source_ok(src):
+        return None
+    return KillBannerHit(
+        sec=float(banner_sec),
+        tier=tier_i,
+        label=label or "single",
+        text=str(clip_meta.get("banner_text") or ""),
+        source=src or "discover",
+    )
 
 
 def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
@@ -1306,6 +1352,8 @@ def resolve_fight_bounds(
     vod: Path,
     peak_sec: float,
     file_dur: float,
+    *,
+    clip_meta: dict | None = None,
 ) -> tuple[float, float, float, dict] | None:
     """
     Prefer kill-streak banner anchor inside motion sustain window.
@@ -1325,13 +1373,15 @@ def resolve_fight_bounds(
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return fight_start, fight_end, fight_dur, motion_meta
 
-    hit = find_banner_near_peak(vod, peak_sec, quick=True)
+    collect_need = _collect_min_tier()
+    hit = banner_hit_from_clip_meta(clip_meta)
     if hit is None:
-        hit = find_banner_near_peak(vod, peak_sec, quick=False)
-    min_tier = _min_tier()
+        hit = find_banner_near_peak(vod, peak_sec, quick=True, min_tier=collect_need)
+    if hit is None:
+        hit = find_banner_near_peak(vod, peak_sec, quick=False, min_tier=collect_need)
 
     if _motion_anchor_ok():
-        if hit is not None and hit.tier >= min_tier:
+        if hit is not None and hit.tier >= collect_need:
             start, end, dur = bounds_from_banner(
                 hit.sec,
                 file_dur,
@@ -1357,7 +1407,7 @@ def resolve_fight_bounds(
             )
         return fight_start, fight_end, fight_dur, motion_meta
 
-    if hit is None or hit.tier < min_tier:
+    if hit is None or hit.tier < collect_need:
         return None
 
     start, end, dur = bounds_from_banner(

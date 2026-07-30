@@ -13,6 +13,64 @@ from mlbb_kill_banner import (  # noqa: E402
 )
 
 
+def test_collect_min_tier_follows_discover_merge(monkeypatch) -> None:
+    from mlbb_kill_banner import _collect_min_tier, _discover_merge_min_tier
+
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")
+    monkeypatch.delenv("MLBB_KILL_BANNER_COLLECT_MIN_TIER", raising=False)
+    assert _collect_min_tier() == _discover_merge_min_tier()
+    monkeypatch.setenv("MLBB_KILL_BANNER_COLLECT_MIN_TIER", "2")
+    assert _collect_min_tier() == 2
+
+
+def test_banner_hit_from_clip_meta_reuses_discover(monkeypatch) -> None:
+    from mlbb_kill_banner import banner_hit_from_clip_meta
+
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")
+    hit = banner_hit_from_clip_meta(
+        {
+            "banner_sec": 304.1,
+            "kill_banner_tier": 1,
+            "kill_banner": "single",
+            "banner_source": "ref:owner",
+        }
+    )
+    assert hit is not None
+    assert hit.sec == 304.1
+    assert hit.tier == 1
+
+
+def test_resolve_fight_bounds_accepts_discover_single(monkeypatch) -> None:
+    from unittest.mock import patch
+
+    from mlbb_kill_banner import resolve_fight_bounds
+
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_KILL_BANNER_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")
+    monkeypatch.setenv("MLBB_VOD_MOTION_ANCHOR_OK", "0")
+    monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND", "1")
+
+    clip = {
+        "banner_sec": 304.1,
+        "kill_banner_tier": 1,
+        "kill_banner": "single",
+        "banner_source": "ref:owner",
+    }
+    with patch("mlbb_fight_segment.detect_fight_bounds", return_value=(280.0, 310.0, 30.0)):
+        with patch(
+            "mlbb_kill_banner.find_banner_near_peak",
+            return_value=None,
+        ):
+            resolved = resolve_fight_bounds(Path("x.mp4"), 288.8, 600.0, clip_meta=clip)
+    assert resolved is not None
+    start, end, dur, meta = resolved
+    assert meta["anchor"] == "kill_banner"
+    assert meta["kill_banner_tier"] == 1
+    assert meta["banner_sec"] == 304.1
+    assert dur >= 4.0
+
+
 def test_send_min_tier_floors_double(monkeypatch) -> None:
     from mlbb_kill_banner import send_min_tier
 
@@ -616,7 +674,7 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
     hit = kb.KillBannerHit(sec=102.0, tier=2, label="double", text="DOUBLE KILL", source="ocr")
     calls: list[bool] = []
 
-    def fake_find(_vod, _peak, *, quick: bool = False):
+    def fake_find(_vod, _peak, *, quick: bool = False, **kwargs):
         calls.append(quick)
         return hit if not quick else None
 
