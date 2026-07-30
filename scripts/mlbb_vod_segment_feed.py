@@ -3423,7 +3423,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
-        "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
+        "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "0",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
