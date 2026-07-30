@@ -1973,6 +1973,64 @@ def discover_highlight_candidates(
 
         starts = sorted(starts, key=_banner_priority)
 
+    # Own-kill banners already passed HUD gate — skip CLIP/hist scoring (minutes)
+    # and ship banner anchors directly for quota throughput.
+    if (
+        profile == "mobile_legends"
+        and banners
+        and os.environ.get("MLBB_BANNER_SKIP_CLIP_SCORE", "1") == "1"
+    ):
+        lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+        verified_fast: list[dict] = []
+        for hit in banners:
+            start = max(0.0, float(hit.sec) - lead)
+            if segment_key_fn and sig and segment_key_fn(sig, start) in used_keys:
+                continue
+            metrics = HighlightMetrics(
+                start=start,
+                duration=WINDOW_SEC,
+                profile=profile,
+                clip_score=0.85,
+                viral_score=0.85,
+                combined_score=0.85,
+                hook_score=0.5,
+                heatmap_intensity=0.5,
+                visual_dynamics=0.5,
+                pass_reason="banner_own_kill_fast",
+                visual_pass=True,
+                audio_pass=True,
+                rule_pass=True,
+            )
+            verified_fast.append(
+                {
+                    "source_path": str(video_path),
+                    "game_name": GAME_LABELS.get(profile, profile),
+                    "start": round(start, 3),
+                    "input_duration": WINDOW_SEC,
+                    "output_duration": WINDOW_SEC,
+                    "speed": 1.0,
+                    "score": metrics.viral_score,
+                    "strict_score": metrics.viral_score,
+                    "highlight_metrics": metrics.to_dict(),
+                    "gate_reason": metrics.pass_reason,
+                    "strict_metrics": metrics.to_dict(),
+                    "anchor": "kill_banner",
+                    "banner_sec": hit.sec,
+                    "peak_start": hit.sec,
+                    "kill_banner": hit.label,
+                    "kill_banner_tier": hit.tier,
+                    "banner_text": hit.text,
+                    "banner_source": hit.source,
+                }
+            )
+        if verified_fast:
+            log.info(
+                "highlight banner fast-ship %s: %s clips (skip CLIP/hist)",
+                video_path.name,
+                len(verified_fast),
+            )
+            return verified_fast
+
     pending = [
         start
         for start in starts

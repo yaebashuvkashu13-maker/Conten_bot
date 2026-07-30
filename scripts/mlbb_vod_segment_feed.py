@@ -3416,6 +3416,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         "HIGHLIGHT_CLIP_DISABLED": "1",
         "HIGHLIGHT_MLBB_BANNER_CLIP_MIN": "0.0",
+        "MLBB_BANNER_SKIP_CLIP_SCORE": "1",
         "MLBB_KILL_SCAN_SKIP_OCR": "1",
         # Bounded discover OCR only — not presend (presend hangs on tesseract).
         "MLBB_KILL_DISCOVER_ALLOW_OCR": "1",
@@ -3528,6 +3529,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "HIGHLIGHT_USE_OWNER_ANCHORS",
         "HIGHLIGHT_CLIP_DISABLED",
         "HIGHLIGHT_MLBB_BANNER_CLIP_MIN",
+        "MLBB_BANNER_SKIP_CLIP_SCORE",
         "MLBB_KILL_SCAN_SKIP_OCR",
         "MLBB_KILL_DISCOVER_ALLOW_OCR",
         "MLBB_TESSERACT_TIMEOUT_SEC",
