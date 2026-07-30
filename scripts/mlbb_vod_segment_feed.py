@@ -3464,7 +3464,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Bounded discover OCR only — not presend (presend hangs on tesseract).
         "MLBB_KILL_DISCOVER_ALLOW_OCR": "1",
         "MLBB_TESSERACT_TIMEOUT_SEC": "4",
-        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "8",
+        # OCR on spike probes hung for minutes (OQx); ref-first is enough for quota speed.
+        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "0",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
