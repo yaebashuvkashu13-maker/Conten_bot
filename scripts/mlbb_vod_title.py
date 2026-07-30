@@ -54,6 +54,12 @@ def _title_from_state(vid: str) -> str:
                 continue
             if str(row.get("id") or "") == vid and row.get("title"):
                 return str(row["title"])
+    elif isinstance(vods, list):
+        for row in vods:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("id") or "") == vid and row.get("title"):
+                return str(row["title"])
     queue = data.get("title_rescan_queue")
     if isinstance(queue, list):
         for row in queue:
@@ -64,41 +70,59 @@ def _title_from_state(vid: str) -> str:
 
 def vod_title_blob(vod: Path, entry: dict | None = None) -> str:
     """Lowercased title + id for keyword gates (savage in title → require savage banner)."""
-    env_title = os.environ.get("MLBB_VOD_SCAN_TITLE", "").strip()
     parts: list[str] = [_video_id_from_path(vod), vod.stem]
-    if env_title:
-        parts.append(env_title)
+    # Prefer explicit entry title. Only then env / state / registry — never mix a
+    # stale MLBB_VOD_SCAN_TITLE from the previous VOD on top of a fresh entry.
+    title = ""
     if entry and entry.get("title"):
-        parts.append(str(entry["title"]))
-    else:
+        title = str(entry["title"])
+    if not title:
+        title = os.environ.get("MLBB_VOD_SCAN_TITLE", "").strip()
+    if not title:
         vid = _video_id_from_path(vod)
-        found = _title_from_state(vid)
-        if found:
-            parts.append(found)
-        else:
-            reg = _registry_path()
-            if reg.exists():
-                try:
-                    rows = json.loads(reg.read_text(encoding="utf-8"))
-                    if isinstance(rows, list):
-                        for row in rows:
-                            if str(row.get("id", "")) == vid and row.get("title"):
-                                parts.append(str(row["title"]))
-                                break
-                except (json.JSONDecodeError, OSError):
-                    pass
-    # Standalone title_rescan_queue.json (ops helper).
+        title = _title_from_state(vid)
+    if not title:
+        reg = _registry_path()
+        if reg.exists():
+            try:
+                rows = json.loads(reg.read_text(encoding="utf-8"))
+                if isinstance(rows, list):
+                    for row in rows:
+                        if str(row.get("id", "")) == vid and row.get("title"):
+                            title = str(row["title"])
+                            break
+            except (json.JSONDecodeError, OSError):
+                pass
+    if not title:
+        # Standalone title_rescan_queue.json (ops helper).
+        try:
+            qpath = Path(
+                os.environ.get("MLBB_TITLE_RESCAN_QUEUE", "/root/data/mlbb/title_rescan_queue.json")
+            )
+            if qpath.exists():
+                payload = json.loads(qpath.read_text(encoding="utf-8"))
+                rows = payload.get("queued") if isinstance(payload, dict) else payload
+                vid = _video_id_from_path(vod)
+                if isinstance(rows, list):
+                    for row in rows:
+                        if (
+                            isinstance(row, dict)
+                            and str(row.get("id") or "") == vid
+                            and row.get("title")
+                        ):
+                            title = str(row["title"])
+                            break
+        except (json.JSONDecodeError, OSError):
+            pass
+    if title:
+        parts.append(title)
+    # Prefer on-disk info.json for this exact file when entry title is a stem fallback.
     try:
-        qpath = Path(os.environ.get("MLBB_TITLE_RESCAN_QUEUE", "/root/data/mlbb/title_rescan_queue.json"))
-        if qpath.exists():
-            payload = json.loads(qpath.read_text(encoding="utf-8"))
-            rows = payload.get("queued") if isinstance(payload, dict) else payload
-            vid = _video_id_from_path(vod)
-            if isinstance(rows, list):
-                for row in rows:
-                    if isinstance(row, dict) and str(row.get("id") or "") == vid and row.get("title"):
-                        parts.append(str(row["title"]))
-                        break
+        info = vod.with_suffix(".info.json")
+        if info.exists():
+            disk_title = str(json.loads(info.read_text(encoding="utf-8")).get("title") or "")
+            if disk_title and disk_title.lower() not in " ".join(parts).lower():
+                parts.append(disk_title)
     except (json.JSONDecodeError, OSError):
         pass
     return " ".join(parts).lower()

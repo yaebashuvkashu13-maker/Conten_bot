@@ -2849,11 +2849,13 @@ def _process_vod_segments(
     os.environ.pop("MLBB_VOD_BANNER_GAP_SOFT", None)
     os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
     # Title-aware scan: savage/maniac in title → early dense discover + min banner tier.
+    # Set SCAN_TITLE before vod_title_blob — leftover env from the previous VOD
+    # was poisoning tier gates (AJ2 inherited ZUK maniac; ZUK inherited OQx savage).
+    os.environ["MLBB_VOD_SCAN_TITLE"] = str((entry or {}).get("title") or "")
     try:
         from mlbb_vod_title import title_min_banner_tier, title_promises_kill_streak, vod_title_blob
 
         title_blob = vod_title_blob(vod, entry)
-        os.environ["MLBB_VOD_SCAN_TITLE"] = str((entry or {}).get("title") or "")
         title_tier = title_min_banner_tier(title_blob)
         if title_tier > 0:
             os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
