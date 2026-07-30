@@ -32,6 +32,35 @@ def montage_gap_sec() -> float:
     return float(os.environ.get("MLBB_VOD_MONTAGE_GAP_SEC", "45"))
 
 
+def montage_allow_singles() -> bool:
+    """Stitch several single-kill moments when no double+ is available."""
+    return os.environ.get("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1") == "1"
+
+
+def _row_banner_source(row: dict) -> str:
+    return str(
+        row.get("banner_source")
+        or row.get("kill_banner_source")
+        or (row.get("clip") or {}).get("banner_source")
+        or ""
+    )
+
+
+def montage_single_row_ok(row: dict) -> bool:
+    """Ref-backed single OK for montage; weak OCR singles still rejected."""
+    tier = int(row.get("kill_banner_tier") or 0)
+    if tier < 1:
+        return False
+    if tier >= 2:
+        return True
+    src = _row_banner_source(row)
+    label = str(row.get("kill_banner") or "").lower()
+    if os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1":
+        if src.startswith("ocr") or label in {"single_weak", "color", "announce"}:
+            return False
+    return src.startswith("ref") or label in {"single", "double", "triple", "maniac", "savage"}
+
+
 def montage_target_sec() -> tuple[float, float]:
     lo = float(os.environ.get("MLBB_VOD_MONTAGE_MIN_SEC", "32"))
     hi = float(os.environ.get("MLBB_VOD_MONTAGE_MAX_SEC", "70"))
@@ -333,34 +362,71 @@ def shippable_bannered_rows(rows: list[dict], *, min_tier: int | None = None) ->
     return out
 
 
+def montage_eligible_rows(rows: list[dict]) -> list[dict]:
+    """
+    Fights eligible for montage stitching.
+
+    Prefer double+; when none exist, ref-backed singles can fill a montage
+  instead of wasting the whole VOD.
+    """
+    shippable = shippable_bannered_rows(rows)
+    if not montage_allow_singles():
+        return shippable
+    out = list(shippable)
+    seen = {id(r) for r in out}
+    for row in bannered_rows(rows):
+        if id(row) in seen:
+            continue
+        if montage_single_row_ok(row):
+            out.append(row)
+            seen.add(id(row))
+    return out
+
+
 def pick_montage_rows(rows: list[dict]) -> list[dict]:
-    """Pick 2–4 spaced peaks; prefer a double+ when available, singles allowed."""
+    """Pick 2–4 spaced peaks; prefer double+, stitch singles when no double+."""
     if not rows:
         return []
     # Never stitch motion-only soften clips — that produces jumpy "кривая нарезка".
-    # Soft montage still requires send-floor banners (double+ in reliable mode).
     soft_fallback = os.environ.get("MLBB_VOD_MONTAGE_SOFT_FALLBACK", "1") == "1"
     soft_min = max(2, int(os.environ.get("MLBB_VOD_MONTAGE_SOFT_MIN", "2")))
     min_n = montage_min_clips()
-    bannered = shippable_bannered_rows(rows)
-    if len(bannered) < min_n:
-        if soft_fallback and len(bannered) >= soft_min:
-            log.info(
-                "montage soft — have %s shippable bannered (wanted %s) — stitch what we have",
-                len(bannered),
-                min_n,
-            )
-        else:
-            log.info(
-                "montage skip — need >=%s shippable bannered fights (have %s)",
-                min_n,
-                len(bannered),
-            )
-            return []
-    rows = bannered
+    shippable = shippable_bannered_rows(rows)
+    eligible = montage_eligible_rows(rows)
+    if len(shippable) >= min_n:
+        pool = shippable
+        pool_label = "double+"
+    elif len(eligible) >= min_n and montage_allow_singles():
+        pool = eligible
+        pool_label = "singles"
+        log.info(
+            "montage singles — no double+ floor, stitch %s ref-backed moments (wanted %s)",
+            len(eligible),
+            min_n,
+        )
+    elif soft_fallback and len(shippable) >= soft_min:
+        pool = shippable
+        pool_label = "double+soft"
+    elif soft_fallback and len(eligible) >= soft_min and montage_allow_singles():
+        pool = eligible
+        pool_label = "singles-soft"
+        log.info(
+            "montage soft singles — stitch %s moments (wanted %s)",
+            len(eligible),
+            min_n,
+        )
+    else:
+        log.info(
+            "montage skip — need >=%s eligible fights (double+=%s eligible=%s)",
+            min_n,
+            len(shippable),
+            len(eligible),
+        )
+        return []
+    rows = pool
     max_n = montage_max_clips()
     gap = montage_gap_sec()
-    effective_min = min_n if len(bannered) >= min_n else soft_min
+    effective_min = min_n if len(pool) >= min_n else soft_min
 
     ranked = sorted(
         rows,
@@ -389,6 +455,13 @@ def pick_montage_rows(rows: list[dict]) -> list[dict]:
             break
     chosen.sort(key=_montage_timeline_key)
     if len(chosen) < effective_min:
+        log.info(
+            "montage skip — %s pool=%s picked=%s need>=%s",
+            pool_label,
+            len(pool),
+            len(chosen),
+            effective_min,
+        )
         return []
     lo, hi = montage_target_sec()
     est = sum(float(r.get("fight_dur") or r.get("clip", {}).get("input_duration") or 12) for r in chosen)

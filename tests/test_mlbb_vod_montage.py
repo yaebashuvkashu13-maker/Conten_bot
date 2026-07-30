@@ -55,17 +55,70 @@ def test_pick_montage_soft_fallback_two_when_min_three(monkeypatch: pytest.Monke
     assert len(picked) == 2
 
 
+def test_pick_montage_stitches_ref_singles(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_SOFT_FALLBACK", "1")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1")
+    monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_GAP_SEC", "40")
+    rows = [
+        {
+            "start": 100,
+            "peak_start": 110,
+            "kill_banner_tier": 1,
+            "kill_banner": "single",
+            "banner_source": "ref",
+            "clip_score": 0.9,
+            "fight_dur": 12,
+        },
+        {
+            "start": 300,
+            "peak_start": 310,
+            "kill_banner_tier": 1,
+            "kill_banner": "single",
+            "banner_source": "ref",
+            "clip_score": 0.8,
+            "fight_dur": 14,
+        },
+        {
+            "start": 500,
+            "peak_start": 510,
+            "kill_banner_tier": 1,
+            "kill_banner": "single",
+            "banner_source": "ref",
+            "clip_score": 0.7,
+            "fight_dur": 11,
+        },
+    ]
+    picked = pick_montage_rows(rows)
+    assert len(picked) == 3
+    assert all(int(r["kill_banner_tier"]) == 1 for r in picked)
+
+
 def test_pick_montage_ignores_below_send_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MLBB_VOD_MONTAGE_MIN_CLIPS", "2")
     monkeypatch.setenv("MLBB_VOD_MONTAGE_SOFT_FALLBACK", "1")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "0")
     monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
     monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "0")
     rows = [
-        {"start": 100, "peak_start": 110, "kill_banner_tier": 1, "kill_banner": "single", "clip_score": 0.9, "fight_dur": 12},
-        {"start": 300, "peak_start": 310, "kill_banner_tier": 1, "kill_banner": "single", "clip_score": 0.8, "fight_dur": 14},
+        {"start": 100, "peak_start": 110, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ref", "clip_score": 0.9, "fight_dur": 12},
+        {"start": 300, "peak_start": 310, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ref", "clip_score": 0.8, "fight_dur": 14},
         {"start": 500, "peak_start": 510, "kill_banner_tier": 0, "anchor": "kill_banner", "clip_score": 0.7, "fight_dur": 11},
     ]
     assert pick_montage_rows(rows) == []
+
+
+def test_pick_montage_rejects_ocr_singles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mlbb_vod_montage import montage_eligible_rows
+
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1")
+    monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "1")
+    rows = [
+        {"start": 100, "peak_start": 110, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ocr", "fight_dur": 12},
+        {"start": 300, "peak_start": 310, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ref", "fight_dur": 14},
+    ]
+    assert len(montage_eligible_rows(rows)) == 1
 
 
 def test_shippable_bannered_rows_filters_singles(monkeypatch: pytest.MonkeyPatch) -> None:

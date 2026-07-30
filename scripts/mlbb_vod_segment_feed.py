@@ -1618,6 +1618,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
+        montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
         if presend_banner:
             from mlbb_kill_banner import (
                 verify_banner_on_source,
@@ -1634,8 +1635,10 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if trust_discover:
                 banner_ok, banner_reason = True, f"trusted_discover:{row.get('kill_banner') or row.get('kill_banner_tier')}"
             else:
-                # Presend verify uses send floor (double+) even if soften opened singles for scan.
+                # Presend verify uses send floor (double+) unless montage singles stitch.
                 verify_need = send_min_tier()
+                if montage_single and os.environ.get("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1") == "1":
+                    verify_need = 1
                 banner_ok, banner_reason = verify_banner_on_source(
                     vod, banner_sec, min_tier=verify_need
                 )
@@ -1658,6 +1661,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 except (TypeError, ValueError):
                     tier_i = 0
                 min_tier = send_min_tier()
+                if montage_single and os.environ.get("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1") == "1":
+                    min_tier = 1
                 title_min = int(os.environ.get("MLBB_VOD_TITLE_MIN_TIER", "0") or 0)
                 if title_min > min_tier:
                     min_tier = title_min
@@ -2149,26 +2154,25 @@ def _collect_scan_segments_inner(
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if montage_on:
-        from mlbb_vod_montage import bannered_rows, pick_montage_rows, shippable_bannered_rows
+        from mlbb_vod_montage import bannered_rows, montage_eligible_rows, pick_montage_rows
 
         picked = pick_montage_rows(deduped)
         if picked:
             log.info(
-                "montage pick vod=%s n=%s peaks=%s",
+                "montage pick vod=%s n=%s peaks=%s tiers=%s",
                 vod.name,
                 len(picked),
                 [int(float(r.get("peak_start", r["start"]))) for r in picked],
+                [int(r.get("kill_banner_tier") or 0) for r in picked],
             )
             deduped = picked
         else:
-            # Need < montage min — only ship singles that pass SEND floor (double+).
-            # Weak/single collect leftovers caused overnight ⚠️ spam loops.
-            shippable = shippable_bannered_rows(deduped)
-            if shippable and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
-                max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
-                deduped = shippable[:max_per]
+            eligible = montage_eligible_rows(deduped)
+            if eligible and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
+                max_per = max(montage_max_clips(), int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+                deduped = eligible[:max_per]
                 log.info(
-                    "montage fallback singles vod=%s n=%s peaks=%s tiers=%s",
+                    "montage eligible fallback vod=%s n=%s peaks=%s tiers=%s",
                     vod.name,
                     len(deduped),
                     [int(float(r.get("peak_start", r["start"]))) for r in deduped],
@@ -2176,10 +2180,10 @@ def _collect_scan_segments_inner(
                 )
             else:
                 log.info(
-                    "montage no shippable fallback vod=%s bannered=%s shippable=%s — skip send",
+                    "montage no eligible fallback vod=%s bannered=%s eligible=%s — skip send",
                     vod.name,
                     len(bannered_rows(deduped)),
-                    len(shippable),
+                    len(eligible),
                 )
                 deduped = []
     elif batch_cap > 0:
@@ -2414,7 +2418,15 @@ def _send_montage_batch(
             if not render_single_segment(vod, row["clip"], part):
                 skipped.append(f"{row['segment_id']}:render_fail")
                 continue
-            ok, reason, _rep = _validate_before_send(vod, row, part)
+            prev_montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE")
+            os.environ["MLBB_PRESEND_MONTAGE_SINGLE"] = "1"
+            try:
+                ok, reason, _rep = _validate_before_send(vod, row, part)
+            finally:
+                if prev_montage_single is None:
+                    os.environ.pop("MLBB_PRESEND_MONTAGE_SINGLE", None)
+                else:
+                    os.environ["MLBB_PRESEND_MONTAGE_SINGLE"] = prev_montage_single
             if not ok:
                 skipped.append(f"{row['segment_id']}:{reason}")
                 continue
@@ -2946,9 +2958,15 @@ def _process_vod_segments(
         elif _mlbb_reliable_mode() and entry:
             # Reliable: one zero attempt is enough — free disk and move on.
             # Keep only when pool still has SEND-floor banners (double+) to retry.
+            # Keep when pool still has montage-eligible banners (double+ or ref singles).
+            from mlbb_vod_montage import montage_single_row_ok
+
             shippable_hits = 0
             for row in entry.get("last_pool_peaks") or []:
-                if isinstance(row, dict) and int(row.get("kill_banner_tier") or 0) >= 2:
+                if not isinstance(row, dict):
+                    continue
+                tier = int(row.get("kill_banner_tier") or 0)
+                if tier >= 2 or montage_single_row_ok(row):
                     shippable_hits += 1
             if (
                 shippable_hits > 0
@@ -3071,6 +3089,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE_MIN_CLIPS": "3",
         "MLBB_VOD_MONTAGE_MAX_CLIPS": "4",
         "MLBB_VOD_MONTAGE_MIN_TIER": "double",
+        "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
+        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "1",
         "MLBB_VOD_MONTAGE_GAP_SEC": "45",
         "MLBB_VOD_SEND_ONE": "0",
         "MLBB_VOD_SEND_ALL_BANNERS": "0",
@@ -3139,6 +3159,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE_MIN_CLIPS",
         "MLBB_VOD_MONTAGE_MAX_CLIPS",
         "MLBB_VOD_MONTAGE_MIN_TIER",
+        "MLBB_VOD_MONTAGE_ALLOW_SINGLES",
+        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK",
         "MLBB_VOD_SEND_ONE",
         "MLBB_VOD_SEND_ALL_BANNERS",
         "MLBB_VOD_MAX_PER_VOD",
