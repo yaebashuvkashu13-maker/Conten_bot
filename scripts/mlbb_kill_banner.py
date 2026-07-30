@@ -438,6 +438,8 @@ def _classify_frame(
 
     Prefer the owner screenshot bank (fast) before Tesseract OCR (slow / often blind).
     """
+    if os.environ.get("MLBB_KILL_SCAN_SKIP_OCR", "0") == "1":
+        allow_ocr = False
     color = _announce_color_score(frame)
     # Ref needs a real gold announce flash — half-threshold was matching farming HUD.
     ref_mul = float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
