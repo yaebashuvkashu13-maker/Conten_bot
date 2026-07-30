@@ -1762,7 +1762,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
-                # OCR-only singles are never shippable.
+                # OCR-only singles: blocked by default (HUD FP). Allowed inside
+                # montage when MLBB_PRESEND_MONTAGE_SINGLE / ALLOW_OCR_SINGLE.
                 src = str(
                     row.get("banner_source")
                     or row.get("kill_banner_source")
@@ -1770,12 +1771,20 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     or ""
                 )
                 label = str(row.get("kill_banner") or "").lower()
+                allow_ocr_single = (
+                    montage_single
+                    or os.environ.get("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0") == "1"
+                    or os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
+                )
                 if (
                     os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1"
                     and tier_i <= 1
                     and (src.startswith("ocr") or label in {"single", "single_weak"})
+                    and not allow_ocr_single
                 ):
                     return False, f"ocr_single_reject:{label or src or 'tier1'}", report
+                if label in {"single_weak", "color", "announce"} and tier_i <= 1:
+                    return False, f"weak_banner_reject:{label}", report
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
