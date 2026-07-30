@@ -113,7 +113,7 @@ def _vod_skip_long_sec() -> float:
 
 
 def _vod_min_peak_sec(vod: Path | None = None) -> float:
-    """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
+    """Skip laning/spawn — scale min peak with VOD length."""
     base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
     if vod is None:
         return base
@@ -121,7 +121,9 @@ def _vod_min_peak_sec(vod: Path | None = None) -> float:
     if dur <= 240:
         return min(base, 45.0)
     if dur <= 480:
-        return min(base, 120.0)
+        return min(base, 90.0)
+    if dur <= 1200:
+        return min(base, 60.0)
     return base
 
 
@@ -603,22 +605,38 @@ def _discovery_effective_used(used: set[str]) -> set[str]:
     if os.environ.get("MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND", "1") != "1":
         return used
     need = max(3, int(os.environ.get("MLBB_VOD_DISCOVERY_REUSE_AFTER_MISS", "3")))
-    if _discovery_starvation_level() < need:
-        return used
+    starve = _discovery_starvation_level()
     state = _load_state()
     zero_send = {str(v) for v in (state.get("zero_send_youtube_ids") or []) if v}
-    if not zero_send:
-        return used
-    freed = {vid for vid in used if vid in zero_send}
-    if not freed:
-        return used
-    effective = used - freed
-    log.info(
-        "discovery reuse: unblocked %s zero-send ids (starve=%s used=%s)",
-        len(freed),
-        _discovery_starvation_level(),
-        len(used),
-    )
+    effective = set(used)
+    if starve >= need and zero_send:
+        freed = effective & zero_send
+        if freed:
+            effective -= freed
+            log.info(
+                "discovery reuse: unblocked %s zero-send ids (starve=%s)",
+                len(freed),
+                starve,
+            )
+    cap = max(120, int(os.environ.get("MLBB_USED_YOUTUBE_IDS_CAP", "220")))
+    if len(effective) > cap:
+        # Drop excess IDs that are not in the live inbox registry.
+        registry_ids = {
+            str(r.get("id") or "")
+            for r in (state.get("vods") or [])
+            if Path(str(r.get("path") or "")).exists()
+        }
+        trimmable = [vid for vid in sorted(effective) if vid and vid not in registry_ids]
+        drop_n = len(effective) - cap
+        for vid in trimmable[:drop_n]:
+            effective.discard(vid)
+        if drop_n > 0:
+            log.info(
+                "discovery trim: dropped %s stale used_ids (cap=%s left=%s)",
+                min(drop_n, len(trimmable)),
+                cap,
+                len(effective),
+            )
     return effective if effective else used
 
 
@@ -3205,7 +3223,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_TITLE_DENSE_AUTO": "1",
         # Discover: collect single+ anchors; presend still enforces double+.
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
+        "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "1",
+        "MLBB_VOD_MIN_PEAK_SEC": "60",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "420",
+        "MLBB_USED_YOUTUBE_IDS_CAP": "220",
+        "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
         "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.75",
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.38",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM": "0.38",
@@ -3267,6 +3290,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY",
         "MLBB_VOD_TITLE_DENSE_AUTO",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER",
+        "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP",
+        "MLBB_VOD_MIN_PEAK_SEC",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
         "MLBB_BANNER_DISCOVER_REF_COLOR_MUL",
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
@@ -3303,6 +3329,10 @@ def main() -> int:
         return 0
 
     log.info("mlbb feed start reliable=%s", int(_mlbb_reliable_mode()))
+
+    from mlbb_pipeline_health import log_pipeline_health
+
+    log_pipeline_health(state=_load_state())
 
     seg_sec = os.environ.get("MLBB_VOD_SEGMENT_SEC", "15")
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")

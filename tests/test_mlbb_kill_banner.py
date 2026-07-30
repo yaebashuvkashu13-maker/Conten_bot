@@ -87,11 +87,11 @@ def test_send_min_tier_floors_double(monkeypatch) -> None:
 def test_discover_title_tier_capped_by_default(monkeypatch) -> None:
     from mlbb_kill_banner import _effective_discover_min_tier
 
-    monkeypatch.setenv("MLBB_KILL_BANNER_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")
     monkeypatch.setenv("MLBB_VOD_TITLE_MIN_TIER", "5")
     monkeypatch.setenv("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", "0")
     monkeypatch.delenv("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", raising=False)
-    assert _effective_discover_min_tier(5) == 2
+    assert _effective_discover_min_tier(5) == 1
     monkeypatch.setenv("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", "1")
     assert _effective_discover_min_tier(5) == 5
 

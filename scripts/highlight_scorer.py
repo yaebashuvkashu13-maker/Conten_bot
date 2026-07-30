@@ -1834,10 +1834,11 @@ def discover_highlight_candidates(
                     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
                     if os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1":
                         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+                # Title tier is for presend only — discover must stay at merge tier (single+).
                 banners = discover_vod_kill_banners(
                     video_path,
                     hint_peaks=starts,
-                    min_tier=title_tier if title_tier > 0 else None,
+                    min_tier=None,
                 )
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
             if banners:
@@ -1882,16 +1883,14 @@ def discover_highlight_candidates(
                     )
                     return []
                 if not starts:
-                    # Banner OCR/ref blind. Only keep teamfight peaks when motion
-                    # anchors are allowed — otherwise normalize rejects every
-                    # peak with no_streak_banner and burns ~30min per VOD.
-                    from mlbb_kill_banner import _motion_anchor_ok
+                    # Banner OCR/ref blind. Score teamfight peaks so collect can
+                    # re-scan banners at motion anchors (collect_min_tier=1).
                     from mlbb_fight_segment import _analysis_for
                     from mlbb_teamfight_detector import rank_starts_by_teamfight
 
-                    if not _motion_anchor_ok():
+                    if not start_set:
                         log.info(
-                            "highlight %s: banner prefilter 0/%s — skip (banner required, OCR miss)",
+                            "highlight %s: banner prefilter 0/%s — no motion peaks",
                             video_path.name,
                             before,
                         )
@@ -1905,14 +1904,15 @@ def discover_highlight_candidates(
                         )
                     except Exception as exc:
                         log.warning("teamfight filter after banner miss failed: %s", exc)
-                        ranked = []
+                        ranked = sorted(start_set)
                     max_keep = max(1, int(os.environ.get("MLBB_MOTION_PEAK_MAX", "4")))
                     starts = ranked[:max_keep]
                     if starts:
                         log.info(
-                            "highlight %s: banner prefilter 0 — keep %s teamfight peaks",
+                            "highlight %s: banner miss — score %s teamfight peaks (pool=%s)",
                             video_path.name,
                             len(starts),
+                            len(start_set),
                         )
                     else:
                         log.info(

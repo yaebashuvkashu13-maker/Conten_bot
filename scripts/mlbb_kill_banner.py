@@ -743,7 +743,7 @@ def _effective_discover_min_tier(min_tier: int | None) -> int:
     want = max(base, requested, title_need) if title_need > 0 else max(base, requested)
     if os.environ.get("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", "0") == "1":
         return want
-    cap = max(base, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", "2")))
+    cap = max(base, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", "1")))
     return min(want, cap)
 
 
