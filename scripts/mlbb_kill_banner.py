@@ -1101,22 +1101,47 @@ def _discover_vod_kill_banners_inner(
         )
 
     # Throughput: if fight peaks found zero banners, do not burn the remaining
-    # wall on sparse ref/OCR spikes (historically +3–8 min of dead probes).
+    # wall on sparse ref/OCR spikes — unless the title promises many kills
+    # (then keep a short spike; historically these VODs still have banners).
     if (
         fight_first
         and not hits
         and not dense
-        and probes >= max(3, int(os.environ.get("MLBB_FIGHT_FIRST_MISS_MIN_PROBES", "4")))
+        and (
+            probes >= max(2, int(os.environ.get("MLBB_FIGHT_FIRST_MISS_MIN_PROBES", "3")))
+            or time.monotonic() >= peak_deadline
+        )
         and os.environ.get("MLBB_FIGHT_FIRST_ABORT_ON_MISS", "1") == "1"
     ):
-        hits.sort(key=lambda h: h.sec)
-        log.info(
-            "banner discover %s: fight-first miss abort probes=%s elapsed=%.0fs — skip spike",
-            vod.name,
-            probes,
-            time.monotonic() - t_discover0,
-        )
-        return hits
+        kill_rich = False
+        try:
+            from mlbb_vod_title import title_kill_count, title_promises_kill_streak, vod_title_blob
+
+            blob = str(vod_title_blob(vod) or vod.stem).lower()
+            kill_rich = title_promises_kill_streak(blob) or title_kill_count(blob) >= 10
+        except Exception:
+            kill_rich = False
+        if kill_rich and os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE", "1") == "1":
+            # Cap remaining wall so spike cannot recreate the 8-minute dead burn.
+            remain = max(45.0, float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", "90")))
+            deadline = time.monotonic() + remain
+            max_probes = min(max_probes, probes + max(6, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", "12"))))
+            log.info(
+                "banner discover %s: fight-first miss on kill-rich title — short spike "
+                "remain=%.0fs max_probes=%s",
+                vod.name,
+                remain,
+                max_probes,
+            )
+        else:
+            hits.sort(key=lambda h: h.sec)
+            log.info(
+                "banner discover %s: fight-first miss abort probes=%s elapsed=%.0fs — skip spike",
+                vod.name,
+                probes,
+                time.monotonic() - t_discover0,
+            )
+            return hits
 
     # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
     # Fight-first: skip dense when fight peaks already found enough own-kill banners.
