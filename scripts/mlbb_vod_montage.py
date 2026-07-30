@@ -316,25 +316,43 @@ def bannered_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if _is_bannered_row(r)]
 
 
+def shippable_bannered_rows(rows: list[dict], *, min_tier: int | None = None) -> list[dict]:
+    """Bannered fights that meet the SEND floor (not just collect/discover floor)."""
+    if min_tier is None:
+        try:
+            from mlbb_kill_banner import send_min_tier
+
+            min_tier = send_min_tier()
+        except Exception:
+            min_tier = 2
+    out: list[dict] = []
+    for row in bannered_rows(rows):
+        tier = int(row.get("kill_banner_tier") or 0)
+        if tier >= min_tier:
+            out.append(row)
+    return out
+
+
 def pick_montage_rows(rows: list[dict]) -> list[dict]:
     """Pick 2–4 spaced peaks; prefer a double+ when available, singles allowed."""
     if not rows:
         return []
     # Never stitch motion-only soften clips — that produces jumpy "кривая нарезка".
-    bannered = bannered_rows(rows)
+    # Soft montage still requires send-floor banners (double+ in reliable mode).
     soft_fallback = os.environ.get("MLBB_VOD_MONTAGE_SOFT_FALLBACK", "1") == "1"
     soft_min = max(2, int(os.environ.get("MLBB_VOD_MONTAGE_SOFT_MIN", "2")))
     min_n = montage_min_clips()
+    bannered = shippable_bannered_rows(rows)
     if len(bannered) < min_n:
         if soft_fallback and len(bannered) >= soft_min:
             log.info(
-                "montage soft — have %s bannered (wanted %s) — stitch what we have",
+                "montage soft — have %s shippable bannered (wanted %s) — stitch what we have",
                 len(bannered),
                 min_n,
             )
         else:
             log.info(
-                "montage skip — need >=%s bannered fights (have %s)",
+                "montage skip — need >=%s shippable bannered fights (have %s)",
                 min_n,
                 len(bannered),
             )

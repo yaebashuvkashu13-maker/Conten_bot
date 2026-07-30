@@ -2002,7 +2002,8 @@ def _collect_scan_segments_inner(
     min_peak = _vod_min_peak_sec(vod)
     for clip in pool:
         peak = float(clip.get("start", 0))
-        if peak_near_skipped(peak, skip_peaks):
+        peak_anchor = float(clip.get("peak_start", clip.get("banner_sec", peak)) or peak)
+        if peak_near_skipped(peak, skip_peaks) or peak_near_skipped(peak_anchor, skip_peaks):
             continue
         if peak < min_peak:
             continue
@@ -2015,6 +2016,9 @@ def _collect_scan_segments_inner(
             )
             continue
         start = float(lead_clip["start"])
+        lead_anchor = float(lead_clip.get("peak_start", lead_clip.get("banner_sec", start)) or start)
+        if peak_near_skipped(start, skip_peaks) or peak_near_skipped(lead_anchor, skip_peaks):
+            continue
         seg_dur = float(lead_clip.get("input_duration") or 0)
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
@@ -2100,7 +2104,7 @@ def _collect_scan_segments_inner(
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if montage_on:
-        from mlbb_vod_montage import bannered_rows, pick_montage_rows
+        from mlbb_vod_montage import bannered_rows, pick_montage_rows, shippable_bannered_rows
 
         picked = pick_montage_rows(deduped)
         if picked:
@@ -2112,19 +2116,27 @@ def _collect_scan_segments_inner(
             )
             deduped = picked
         else:
-            # Need < montage min (e.g. 1 double) — still ship singles instead of nothing.
-            bannered = bannered_rows(deduped)
-            if bannered and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
+            # Need < montage min — only ship singles that pass SEND floor (double+).
+            # Weak/single collect leftovers caused overnight ⚠️ spam loops.
+            shippable = shippable_bannered_rows(deduped)
+            if shippable and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
                 max_per = max(1, int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
-                deduped = bannered[:max_per]
+                deduped = shippable[:max_per]
                 log.info(
-                    "montage fallback singles vod=%s n=%s peaks=%s",
+                    "montage fallback singles vod=%s n=%s peaks=%s tiers=%s",
                     vod.name,
                     len(deduped),
                     [int(float(r.get("peak_start", r["start"]))) for r in deduped],
+                    [int(r.get("kill_banner_tier") or 0) for r in deduped],
                 )
-            elif batch_cap > 0:
-                deduped = deduped[:batch_cap]
+            else:
+                log.info(
+                    "montage no shippable fallback vod=%s bannered=%s shippable=%s — skip send",
+                    vod.name,
+                    len(bannered_rows(deduped)),
+                    len(shippable),
+                )
+                deduped = []
     elif batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):
@@ -2144,8 +2156,11 @@ def _send_segment_batch(
     vod: Path,
     to_send: list[dict],
     sig: str,
-) -> tuple[int, int, int]:
-    """Render and send segments — montage merge when MLBB_VOD_MONTAGE=1."""
+) -> tuple[int, int, int, bool]:
+    """Render and send segments — montage merge when MLBB_VOD_MONTAGE=1.
+
+    Returns (sent, skipped, send_blocked, permanent_reject).
+    """
     from mlbb_learning_first import can_send, daily_send_count, max_daily_sends
     from mlbb_vod_montage import montage_enabled, pick_montage_rows
 
@@ -2198,15 +2213,16 @@ def _send_segment_batch(
             f"⛔ Отправка кусков приостановлена: {block_reason}\n"
             f"(LEARNING_FIRST gate — проверь MLBB_SEND_ENABLED=1 на VPS)",
         )
-        return 0, 0, len(to_send)
+        return 0, 0, len(to_send), False
 
     cap_left = max_daily_sends() - daily_send_count()
     if cap_left <= 0:
         log.info("daily cap reached sent_today=%s cap=%s", daily_send_count(), max_daily_sends())
-        return 0, 0, 0
+        return 0, 0, 0, False
 
     if montage_on:
-        return _send_montage_batch(token, chat_id, vod, to_send, sig)
+        n, sk, bl = _send_montage_batch(token, chat_id, vod, to_send, sig)
+        return n, sk, bl, False
 
     if not send_one:
         if len(to_send) > cap_left:
@@ -2293,15 +2309,36 @@ def _send_segment_batch(
     if skipped:
         log.info("presend skipped=%s", "; ".join(skipped[:12]))
     if not sent_ids and skipped:
-        send_message(
-            token,
-            chat_id,
-            f"⚠️ {vod_youtube_id(vod)}: {len(skipped)} кусков не прошли presend\n"
-            + "\n".join(skipped[:6]),
-        )
+        # Reliable mode defaults PRESEND_REJECT_NOTIFY=0 — overnight spam was
+        # re-sending the same banner_missing_min_tier=2 warning ~every 8 min.
+        if os.environ.get("MLBB_VOD_PRESEND_REJECT_NOTIFY", "0") == "1":
+            send_message(
+                token,
+                chat_id,
+                f"⚠️ {vod_youtube_id(vod)}: {len(skipped)} кусков не прошли presend\n"
+                + "\n".join(skipped[:6]),
+            )
+        else:
+            log.info(
+                "presend reject notify suppressed vod=%s n=%s (set MLBB_VOD_PRESEND_REJECT_NOTIFY=1 to spam)",
+                vod.name,
+                len(skipped),
+            )
     if sent_ids:
         mark_feed_sent(sent_ids)
-    return len(sent_ids), len(skipped), send_blocked
+    permanent = bool(skipped) and all(
+        any(
+            key in s
+            for key in (
+                "banner_missing_min_tier",
+                "source_banner_missing",
+                "banner_reject",
+                "no_streak_banner",
+            )
+        )
+        for s in skipped
+    )
+    return len(sent_ids), len(skipped), send_blocked, permanent
 
 
 def _send_montage_batch(
@@ -2724,7 +2761,7 @@ def _process_vod_segments(
                             pool=pool_cache,
                         )
                     break
-                n, preskip, sblock = _send_segment_batch(token, chat_id, vod, to_send, sig)
+                n, preskip, sblock, permanent = _send_segment_batch(token, chat_id, vod, to_send, sig)
                 if n == 0:
                     if to_send and sblock > 0:
                         log.warning("batch blocked from send — keep vod=%s for retry", vod.name)
@@ -2740,18 +2777,31 @@ def _process_vod_segments(
                         break
                     if to_send and preskip >= len(to_send):
                         for row in to_send:
+                            # Skip both window-start and banner peak — they can differ by 10–20s
+                            # and previously caused the same failing clip to retry forever.
+                            skip_peaks.add(round(float(row.get("start") or 0), 1))
                             skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+                            if row.get("banner_sec") is not None:
+                                skip_peaks.add(round(float(row["banner_sec"]), 1))
                         peak_tries += 1
-                        if peak_tries < max_peak_attempts:
+                        # banner_missing_min_tier / no double will not improve on re-render.
+                        max_tries = 1 if permanent else max_peak_attempts
+                        if peak_tries < max_tries:
                             log.warning(
                                 "presend rejected peak — try next (%s/%s) vod=%s",
                                 peak_tries,
-                                max_peak_attempts,
+                                max_tries,
                                 vod.name,
                             )
                             continue
-                        log.warning("batch presend rejected all — stop vod=%s", vod.name)
+                        log.warning(
+                            "batch presend rejected all — stop vod=%s permanent=%s",
+                            vod.name,
+                            int(permanent),
+                        )
                         if entry is not None:
+                            if permanent:
+                                entry["reject_reason"] = entry.get("reject_reason") or "presend_banner_floor"
                             record_vod_scan(
                                 entry,
                                 sent=sent_total,
@@ -2838,17 +2888,23 @@ def _process_vod_segments(
                 )
         elif _mlbb_reliable_mode() and entry:
             # Reliable: one zero attempt is enough — free disk and move on.
-            # Exception: banner hits exist but couldn't stitch yet — keep for fallback send.
-            if banner_hits_in_entry(entry) > 0 and os.environ.get(
-                "MLBB_VOD_KEEP_BANNER_MISS", "1"
-            ) == "1":
+            # Keep only when pool still has SEND-floor banners (double+) to retry.
+            shippable_hits = 0
+            for row in entry.get("last_pool_peaks") or []:
+                if isinstance(row, dict) and int(row.get("kill_banner_tier") or 0) >= 2:
+                    shippable_hits += 1
+            if (
+                shippable_hits > 0
+                and entry.get("reject_reason") != "presend_banner_floor"
+                and os.environ.get("MLBB_VOD_KEEP_BANNER_MISS", "1") == "1"
+            ):
                 entry["reject_reason"] = entry.get("reject_reason") or "banner_hits_no_send"
                 state = _load_state()
                 _sync_vod_entry_to_state(state, entry, vod)
                 _save_state(state)
                 log.info(
-                    "reliable zero but banner hits=%s — keep vod=%s",
-                    banner_hits_in_entry(entry),
+                    "reliable zero but shippable banners=%s — keep vod=%s",
+                    shippable_hits,
                     vod.name,
                 )
             else:
@@ -3010,6 +3066,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_EXHAUST_NOTIFY",
         "MLBB_VOD_DISCOVERY_MISS_NOTIFY",
         "MLBB_VOD_DOWNLOAD_NOTIFY",
+        "MLBB_VOD_PRESEND_REJECT_NOTIFY",
         "MLBB_VOD_BANNER_HARD_PREFILTER",
         "MLBB_VOD_BANNER_SKIP_ON_MISS",
         "MLBB_VOD_MAX_ZERO_ATTEMPTS",
