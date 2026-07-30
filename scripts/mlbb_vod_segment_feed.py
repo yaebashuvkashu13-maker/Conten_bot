@@ -2661,8 +2661,12 @@ def _prime_banner_discover_env() -> None:
     """Pass feed starvation into discover so dense sweep kicks in after misses."""
     starve = _discovery_starvation_level()
     os.environ["MLBB_VOD_DISCOVER_MISS_STREAK"] = str(starve)
+    # Fight-first: only force dense after miss streak, never by default.
     if starve >= max(1, int(os.environ.get("MLBB_VOD_DISCOVER_DENSE_AFTER_MISS", "2"))):
-        os.environ.setdefault("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "1")
+        if os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1":
+            os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+        else:
+            os.environ.setdefault("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "1")
 
 
 def _resolve_next_vod(
@@ -3287,16 +3291,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER": "0",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
-        # Discover: don't let peak OCR burn the whole wall budget (was ~9 probes/240s).
-        "MLBB_KILL_BANNER_QUICK_AFTER": "10",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.25",
+        # Discover: fight-first spends budget on fight peaks; dense is miss fallback.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "2",
-        "MLBB_VOD_TITLE_DENSE_AUTO": "1",
+        "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Discover: collect single+ anchors; montage ships ref singles.
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
-        "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "45",
         "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "480",
         "MLBB_KILL_BANNER_DISCOVER_STEP": "1.5",
@@ -3310,6 +3311,18 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
         "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
+        # Fight-first: find teamfight peaks, then scan kill banner after the fight.
+        "MLBB_BANNER_FIGHT_FIRST": "1",
+        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "12",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,5,8",
+        "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
+        "MLBB_KILL_BANNER_QUICK_AFTER": "8",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "12",
+        # Dense only after miss streak when fight-first is on.
+        "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
+        "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS": "2",
         # Live learning = yield memory (👍/👎 + own-kill), not CLIP exemplar mp4s.
         "MLBB_VOD_YIELD_MEMORY_ENABLED": "1",
         "MLBB_VOD_OWNER_EXEMPLARS": "0",
@@ -3384,6 +3397,16 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
+        "MLBB_BANNER_FIGHT_FIRST",
+        "MLBB_BANNER_FIGHT_FIRST_PEAKS",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS",
+        "MLBB_KILL_BANNER_QUICK_BEFORE",
+        "MLBB_KILL_BANNER_QUICK_AFTER",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS",
+        "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
+        "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS",
         "MLBB_VOD_YIELD_MEMORY_ENABLED",
         "MLBB_VOD_OWNER_EXEMPLARS",
         "HIGHLIGHT_USE_OWNER_ANCHORS",

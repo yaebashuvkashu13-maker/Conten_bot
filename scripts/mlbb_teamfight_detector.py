@@ -169,6 +169,72 @@ def rank_starts_by_teamfight(
     return []
 
 
+def fight_first_peaks(
+    analysis: dict[str, Any],
+    starts: list[float] | None = None,
+    *,
+    limit: int | None = None,
+    min_score: float | None = None,
+) -> list[float]:
+    """
+    Cheap fight-first ranking: motion/audio bins only (no HUD decode).
+
+    Used to decide WHERE to look for kill banners — banner OCR runs after
+    a fight peak, not as a blind dense sweep of the whole VOD.
+    """
+    if starts is None:
+        starts = []
+    if not starts:
+        # Derive peaks from analysis motion when stage1 list is empty.
+        win = float(analysis.get("window_seconds", 2.0))
+        motion = np.asarray(analysis.get("center_motion", []), dtype=np.float32)
+        audio = np.asarray(analysis.get("audio", []), dtype=np.float32)
+        if motion.size == 0:
+            return []
+        combined = motion * 0.55 + (audio * 0.45 if audio.size == motion.size else 0.0)
+        order = np.argsort(combined)[::-1]
+        gap = float(os.environ.get("MLBB_FIGHT_FIRST_MIN_GAP_SEC", "18"))
+        skip = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "45"))
+        picked: list[float] = []
+        for idx in order:
+            t = float(idx) * win
+            if t < skip:
+                continue
+            if any(abs(t - s) < gap for s in picked):
+                continue
+            picked.append(round(t, 1))
+            if len(picked) >= int(os.environ.get("MLBB_BANNER_FIGHT_FIRST_POOL", "32")):
+                break
+        starts = picked
+    if not starts:
+        return []
+
+    floor = float(
+        min_score
+        if min_score is not None
+        else os.environ.get("MLBB_FIGHT_FIRST_MIN_SCORE", os.environ.get("MLBB_TEAMFIGHT_ABS_FLOOR", "0.28"))
+    )
+    cap = max(
+        1,
+        int(limit if limit is not None else os.environ.get("MLBB_BANNER_FIGHT_FIRST_PEAKS", "12")),
+    )
+    scored: list[tuple[float, float]] = []
+    for start in starts:
+        sc = float(score_teamfight_bins(analysis, float(start)))
+        if sc < floor:
+            continue
+        scored.append((sc, float(start)))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    if not scored:
+        # Keep strongest peaks even if under floor — still better than blind dense.
+        soft: list[tuple[float, float]] = [
+            (float(score_teamfight_bins(analysis, float(s))), float(s)) for s in starts
+        ]
+        soft.sort(key=lambda row: (-row[0], row[1]))
+        return [t for _, t in soft[:cap]]
+    return [t for _, t in scored[:cap]]
+
+
 def metrics_combat_score(
     *,
     center_motion: float,

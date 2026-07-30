@@ -53,14 +53,19 @@ def _prepare_montage_env() -> None:
     os.environ["MLBB_BANNER_OWN_HUD_MIN_SIM"] = os.environ.get(
         "MLBB_BANNER_OWN_HUD_MIN_SIM", "0.22"
     )
+    os.environ["MLBB_BANNER_FIGHT_FIRST"] = "1"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS"] = "3,5,8"
+    os.environ["MLBB_KILL_BANNER_QUICK_BEFORE"] = "2"
+    os.environ["MLBB_KILL_BANNER_QUICK_AFTER"] = "8"
+    os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "0"
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "single"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
     os.environ["MLBB_VOD_MOTION_ANCHOR_OK"] = "0"
     os.environ["MLBB_VOD_TRIM_RUN"] = "1"
     # Spike-first discover then dense fallback — always cover early game.
-    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
-    os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "1"
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+    os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "0"
     os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1.5"
     os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = "400"
     os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = "480"

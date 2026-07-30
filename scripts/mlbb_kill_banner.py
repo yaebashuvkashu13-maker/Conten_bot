@@ -628,14 +628,19 @@ def find_banner_near_peak(
 ) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     if quick:
-        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
-        # Banner flash is usually *after* the motion peak (kill confirm).
-        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "10"))
+        fight_first = os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
+        # Fight-first: look mostly AFTER the fight spike (banner confirms the kill).
+        default_before = "2" if fight_first else "10"
+        default_after = "8" if fight_first else "10"
+        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", default_before))
+        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", default_after))
+        # Prefer focus slightly after peak so OCR lands on the banner flash.
+        focus = peak_sec + (3.0 if fight_first else 0.0)
         hits = scan_window(
             vod,
             peak_sec - before,
             peak_sec + after,
-            focus_sec=peak_sec,
+            focus_sec=focus,
             quick=True,
             allow_ocr=allow_ocr,
         )
@@ -714,7 +719,14 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
 def _dense_scan_enabled() -> bool:
     if os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") == "1":
         return True
-    if os.environ.get("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "0") == "1":
+    # Fight-first path: dense is a miss-streak fallback, not the default.
+    if (
+        os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
+        and os.environ.get("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "0") == "1"
+        and os.environ.get("MLBB_FIGHT_FIRST_ALLOW_ALWAYS_DENSE", "0") != "1"
+    ):
+        pass  # fall through to miss-streak only
+    elif os.environ.get("MLBB_VOD_DISCOVER_ALWAYS_DENSE", "0") == "1":
         return True
     # After several empty discovery rounds, brute-force 1–2 Hz ref+OCR sweep.
     try:
@@ -897,19 +909,24 @@ def _discover_vod_kill_banners_inner(
     deadline = t_discover0 + max_sec
     # Peak+OCR historically exhausted the whole wall budget (~9 probes / 240s)
     # and never reached the spike/dense sweep. Always reserve time after peaks.
-    # Dense title scans need most of the budget for the 1–2s sweep.
-    default_peak_frac = "0.20" if dense else "0.40"
+    # Fight-first: most budget goes to fight peaks + post-peak banner probes.
+    fight_first = os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
+    if fight_first:
+        default_peak_frac = "0.55"
+    else:
+        default_peak_frac = "0.20" if dense else "0.40"
     peak_frac = float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC", default_peak_frac))
-    peak_frac = max(0.10, min(0.60, peak_frac))
+    peak_frac = max(0.10, min(0.75 if fight_first else 0.60, peak_frac))
     peak_deadline = t_discover0 + max_sec * peak_frac
     hits: list[KillBannerHit] = []
     probes = 0
     want = _discover_hit_target()
     log.info(
-        "banner discover %s: start dense=%s max_probes=%s max_sec=%.0f "
+        "banner discover %s: start dense=%s fight_first=%s max_probes=%s max_sec=%.0f "
         "peak_budget=%.0fs need_tier=%s want=%s",
         vod.name,
         dense,
+        int(fight_first),
         max_probes,
         max_sec,
         max_sec * peak_frac,
@@ -964,17 +981,38 @@ def _discover_vod_kill_banners_inner(
     except Exception as exc:
         log.debug("owner kill anchors unavailable: %s", exc)
 
+    fight_first = os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
+    if fight_first and peak_hints:
+        try:
+            from mlbb_fight_segment import _analysis_for
+            from mlbb_teamfight_detector import fight_first_peaks
+
+            analysis = _analysis_for(vod)
+            ranked = fight_first_peaks(analysis, peak_hints)
+            if ranked:
+                peak_hints = ranked
+                log.info(
+                    "banner discover %s: fight-first ranked peaks=%s",
+                    vod.name,
+                    len(peak_hints),
+                )
+        except Exception as exc:
+            log.debug("fight-first re-rank skipped: %s", exc)
+
     # Phase 1: peaks — ref-first (cheap), then OCR escalate, then a few full retries.
     # Keep this under peak_deadline so spike/dense still run.
     # Dense title path: ref-only on peaks (no OCR escalate) — dense sweep does the rest.
-    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "8")))
+    # Fight-first: spend more budget on fight peaks; dense is fallback only.
+    default_peak_hints = "12" if fight_first else "8"
+    peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", default_peak_hints)))
     full_retry = 0 if dense else max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
     missed_peaks: list[float] = []
     ocr_missed: list[float] = []
-    # Kill banners often flash 2–4s after the motion spike — probe those offsets too.
+    # Kill banners flash AFTER the fight spike — fight-first probes post-peak harder.
     post_offsets = [0.0]
     if os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK", "1") == "1":
-        raw_offs = os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS", "2,4")
+        default_offs = "3,5,8" if fight_first else "2,4"
+        raw_offs = os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS", default_offs)
         for part in raw_offs.split(","):
             part = part.strip()
             if not part:
@@ -985,7 +1023,15 @@ def _discover_vod_kill_banners_inner(
                 continue
             if off > 0 and off not in post_offsets:
                 post_offsets.append(off)
-    post_peak_max = max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_MAX", "4")))
+    post_peak_max = max(
+        0,
+        int(
+            os.environ.get(
+                "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_MAX",
+                str(peak_limit if fight_first else 4),
+            )
+        ),
+    )
     for peak_i, base_peak in enumerate(list(dict.fromkeys(peak_hints))[:peak_limit]):
         base_hit = False
         offsets = post_offsets if peak_i < post_peak_max else [0.0]
@@ -1055,7 +1101,19 @@ def _discover_vod_kill_banners_inner(
         )
 
     # Dense 1 Hz sweep for title-promised savage/maniac VODs (or explicit ops flag).
-    if dense and probes < max_probes and time.monotonic() < deadline:
+    # Fight-first: skip dense when fight peaks already found enough own-kill banners.
+    if (
+        fight_first
+        and len(hits) >= want
+        and os.environ.get("MLBB_FIGHT_FIRST_DENSE_WHEN_HIT", "0") != "1"
+    ):
+        log.info(
+            "banner discover %s: fight-first done hits=%s/%s — skip dense",
+            vod.name,
+            len(hits),
+            want,
+        )
+    elif dense and probes < max_probes and time.monotonic() < deadline:
         t0 = _discover_scan_start(vod, duration)
         if peak_hints:
             hint_floor = max(

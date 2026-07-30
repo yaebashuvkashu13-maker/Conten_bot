@@ -1834,10 +1834,29 @@ def discover_highlight_candidates(
                     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
                     if os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1":
                         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+                # Fight-first: rank motion peaks by teamfight intensity, THEN
+                # search kill banners near those fights (not blind dense OCR).
+                hint_peaks = list(starts)
+                if os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1":
+                    try:
+                        from mlbb_fight_segment import _analysis_for
+                        from mlbb_teamfight_detector import fight_first_peaks
+
+                        analysis = _analysis_for(video_path)
+                        fight_peaks = fight_first_peaks(analysis, starts)
+                        if fight_peaks:
+                            hint_peaks = fight_peaks
+                            log.info(
+                                "highlight fight-first %s: %s fights → banner scan",
+                                video_path.name,
+                                len(hint_peaks),
+                            )
+                    except Exception as exc:
+                        log.debug("fight-first peak rank skipped: %s", exc)
                 # Title tier is for presend only — discover must stay at merge tier (single+).
                 banners = discover_vod_kill_banners(
                     video_path,
-                    hint_peaks=starts,
+                    hint_peaks=hint_peaks,
                     min_tier=None,
                 )
             lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
