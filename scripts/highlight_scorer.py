@@ -762,7 +762,14 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     game = profile
     text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
-        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+        # Live MLBB banner/own-kill path intentionally disables CLIP weights.
+        # Do not refuse scoring — histogram fallback keeps bannered clips shippable.
+        allow_hist = (
+            os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1"
+            or profile == "mobile_legends"
+            or os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        )
+        if allow_hist:
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
             )
@@ -1087,6 +1094,12 @@ def rule_gate(
         skill_min = float(os.environ.get("MLBB_FIGHT_MIN_SKILL", "0.014"))
         motion_min = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
         clip_min = float(os.environ.get("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10"))
+        # Banner/own-kill live path: CLIP is off → do not fail every window on clip_low.
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1"
+            or os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        ):
+            clip_min = float(os.environ.get("HIGHLIGHT_MLBB_BANNER_CLIP_MIN", "0.0"))
         if metrics.minimap_delta < mini_min:
             return False, f"minimap_low={metrics.minimap_delta:.3f}:thr{mini_min:.3f}"
         if metrics.skill_delta < skill_min:

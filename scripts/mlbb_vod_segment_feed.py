@@ -3271,8 +3271,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_PRESEND_REJECT_NOTIFY": "0",
         # One zero attempt is enough — yield-dead VODs must not loop for hours.
         "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
-        # Delete exhausted / banner-miss files so pick cannot revive dead Lylia loops.
-        "MLBB_VOD_DELETE_EXHAUSTED": "1",
+        # Keep on disk: deleting own-kill VODs after CLIP-off false-empty was catastrophic.
+        "MLBB_VOD_DELETE_EXHAUSTED": "0",
         "MLBB_VOD_KEEP_BANNER_MISS": "0",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "0",
@@ -3359,6 +3359,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_OWNER_EXEMPLARS": "0",
         "HIGHLIGHT_USE_OWNER_ANCHORS": "0",
         "HIGHLIGHT_CLIP_DISABLED": "1",
+        "HIGHLIGHT_MLBB_BANNER_CLIP_MIN": "0.0",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
         "INTELLICLIP_STAGE1": "0",
@@ -3464,6 +3465,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_OWNER_EXEMPLARS",
         "HIGHLIGHT_USE_OWNER_ANCHORS",
         "HIGHLIGHT_CLIP_DISABLED",
+        "HIGHLIGHT_MLBB_BANNER_CLIP_MIN",
         "MLBB_STAGE1_SKIP_CLIP_RANK",
         "MLBB_STAGE1_SKIP_INTELLICLIP",
         "INTELLICLIP_STAGE1",
