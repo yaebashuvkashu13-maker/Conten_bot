@@ -23,6 +23,12 @@ from pathlib import Path
 MLBB_TITLE_RE = re.compile(r"mobile legends|mlbb|bang bang|мобайл легенд", re.I)
 LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs day|knockout stage|grand finals", re.I)
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
+HOLD_QUOTA = Path(
+    os.environ.get(
+        "MLBB_VOD_HOLD_QUOTA",
+        str(INBOX.parent / "hold_quota"),
+    )
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -704,6 +710,72 @@ def _prune_dead_registry(registry: list[dict]) -> int:
         log.info("pruned dead registry rows=%s kept=%s", dropped, len(kept))
         registry[:] = kept
     return dropped
+
+
+def _promote_hold_quota_to_inbox(*, limit: int | None = None) -> int:
+    """
+    Pull VODs from hold_quota when inbox has nothing to scan.
+    Prevents hours of silent discovery-miss loops after a productive VOD is finished.
+    """
+    if os.environ.get("MLBB_VOD_PROMOTE_HOLD", "1") != "1":
+        return 0
+    INBOX.mkdir(parents=True, exist_ok=True)
+    HOLD_QUOTA.mkdir(parents=True, exist_ok=True)
+    min_inbox = max(0, int(os.environ.get("MLBB_VOD_PROMOTE_HOLD_MIN_INBOX", "1")))
+    inbox_n = sum(1 for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 1_000_000)
+    if inbox_n >= min_inbox:
+        return 0
+    if limit is None:
+        limit = max(1, int(os.environ.get("MLBB_VOD_PROMOTE_HOLD_LIMIT", "4")))
+    moved = 0
+    for src in sorted(
+        HOLD_QUOTA.glob("yt_*.mp4"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
+        if moved >= limit:
+            break
+        if src.stat().st_size < 1_000_000:
+            continue
+        dest = INBOX / src.name
+        if dest.exists():
+            continue
+        info_src = HOLD_QUOTA / f"{src.stem}.info.json"
+        try:
+            src.rename(dest)
+            if info_src.exists():
+                info_src.rename(INBOX / info_src.name)
+            moved += 1
+            log.info("promoted hold→inbox vod=%s", dest.name)
+        except OSError as exc:
+            log.warning("promote hold failed %s: %s", src.name, exc)
+    return moved
+
+
+def _unexhaust_inbox_paths(registry: list[dict]) -> int:
+    """Clear exhausted flags for files currently sitting in inbox."""
+    n = 0
+    inbox_names = {p.name for p in INBOX.glob("yt_*.mp4")}
+    for row in registry:
+        vid = str(row.get("id") or "")
+        path = Path(str(row.get("path") or ""))
+        name = path.name if path.name in inbox_names else (f"yt_{vid}.mp4" if vid else "")
+        if name not in inbox_names:
+            continue
+        row["path"] = str(INBOX / name)
+        if not row.get("exhausted"):
+            continue
+        reason = str(row.get("reject_reason") or "")
+        # Do not revive permanently sent_ok / ally junk — only starve/miss leftovers.
+        if reason in {"sent_ok", "ally_trap", "disliked"}:
+            continue
+        row["exhausted"] = False
+        row["reject_reason"] = ""
+        row["zero_send_attempts"] = 0
+        row["last_scan_at"] = 0
+        n += 1
+        log.info("unexhaust promoted inbox id=%s reason=%s", row.get("id"), reason or "hold_promote")
+    return n
 
 
 def _revive_exhausted_inbox_candidates(registry: list[dict], *, limit: int = 3) -> int:
@@ -3699,11 +3771,29 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     if max_vods <= 0:
         max_vods = 10_000
 
+    # Empty inbox + AUTO_DOWNLOAD=0 → hours of mute. Pull hold_quota first.
+    promoted = _promote_hold_quota_to_inbox()
+    if promoted:
+        log.info("promoted %s vod(s) from hold_quota", promoted)
+
     registry = _ensure_registry(env)
+    if promoted:
+        if _unexhaust_inbox_paths(registry):
+            state = _load_state()
+            state["vods"] = registry
+            _save_state(state)
     if _auto_exhaust_oversized(registry):
         state = _load_state()
         state["vods"] = registry
         _save_state(state)
+    inbox_ready = sum(1 for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 1_000_000)
+    if (
+        not auto_download
+        and inbox_ready == 0
+        and os.environ.get("MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY", "1") == "1"
+    ):
+        auto_download = True
+        log.warning("inbox empty after hold promote — enabling AUTO_DOWNLOAD for this run")
     downloader = VodPipelineDownloader(env)
     total_sent = 0
     vods_done = 0
