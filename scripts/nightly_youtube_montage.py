@@ -187,29 +187,48 @@ def discover_candidates(
             from urllib.parse import quote_plus
 
             sp = freshness_sp or duration_sp
-            search_target = (
-                f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={sp}"
-            )
+            search_targets = [
+                f"ytsearch{search_limit}:{query}",
+                f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={sp}",
+            ]
+            # Prefer ytsearch when results pages are 403-blocked on the VPS.
+            if (env.get("YOUTUBE_SEARCH_PREFER_YTSEARCH") or "1").strip() != "1":
+                search_targets = list(reversed(search_targets))
         else:
-            search_target = f"ytsearch{search_limit}:{query}"
-        cmd = ytdlp_base(env) + [
-            search_target,
-            "--flat-playlist",
-            "--playlist-end",
-            str(search_limit),
-            "--print",
-            "%(id)s",
-        ]
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120, env=_ytdlp_env()
-            )
-        except subprocess.TimeoutExpired:
-            logging.warning("search timeout: %s", query)
+            search_targets = [f"ytsearch{search_limit}:{query}"]
+        result = None
+        used_target = ""
+        for search_target in search_targets:
+            cmd = ytdlp_base(env) + [
+                search_target,
+                "--flat-playlist",
+                "--playlist-end",
+                str(search_limit),
+                "--print",
+                "%(id)s",
+            ]
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=120, env=_ytdlp_env()
+                )
+            except subprocess.TimeoutExpired:
+                logging.warning("search timeout: %s", query)
+                result = None
+                continue
+            if result.returncode == 0:
+                used_target = search_target
+                break
+            err = (result.stderr or "")[:200]
+            if "403" in err or "Forbidden" in err:
+                logging.warning("search 403 %s — trying fallback", search_target[:100])
+                continue
+            logging.warning("search failed %s: %s", query, err)
+            result = None
+            break
+        if result is None or result.returncode != 0:
             continue
-        if result.returncode != 0:
-            logging.warning("search failed %s: %s", query, (result.stderr or "")[:200])
-            continue
+        if used_target.startswith("ytsearch"):
+            logging.info("search ok via ytsearch q=%s", query[:60])
         for line in result.stdout.splitlines():
             vid = line.strip()
             if not vid or vid in seen:

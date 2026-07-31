@@ -82,3 +82,17 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
             vod, "sig", {}, set(), 12, pool=cached, skip_peaks={384.0, 582.0}
         )
         assert third == []
+
+
+def test_repair_registry_paths_finds_renamed_vod(tmp_path, monkeypatch) -> None:
+    import mlbb_vod_segment_feed as feed
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    vid = "OZLs7XApiCI"
+    real = inbox / f"yt_{vid}.mp4"
+    real.write_bytes(b"x" * 2_000_000)
+    monkeypatch.setattr(feed, "INBOX", inbox)
+    registry = [{"id": vid, "path": str(inbox / f"yt_{vid}.f299.mp4"), "exhausted": False}]
+    assert feed._repair_registry_paths(registry) is True
+    assert registry[0]["path"] == str(real)

@@ -155,8 +155,6 @@ def kill_orphans(pattern: str) -> int:
 
 
 def nudge_stale(pattern: str, max_sec: float) -> bool:
-    if worker_running() and pattern in WORKER_CHILD_PATTERNS:
-        return False
     for pid in pids_matching(pattern):
         age = proc_age_sec(pid)
         if age >= 0 and age < max_sec:

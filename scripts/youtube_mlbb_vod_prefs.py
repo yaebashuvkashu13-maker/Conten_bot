@@ -36,44 +36,39 @@ VOD_ANGLE_SEARCH_QUERIES = (
     "Mobile Legends ranked match MVP gameplay no commentary",
 )
 
-# Kill-heavy titles — rotate into search to bias toward VODs with streak banners.
+# Kill-heavy titles — primary discovery pool (banner-rich VODs).
 VOD_COMBAT_SEARCH_QUERIES = (
-    "MLBB ranked match double kill teamfight replay",
-    "MLBB mythic ranked savage teamfight full match",
-    "Mobile Legends maniac triple kill ranked gameplay",
-    "Mobile Legends mythic glory 20 kills full game",
-    "MLBB mythic ranked mvp teamfight no montage",
+    "MLBB ranked match savage teamfight full gameplay",
+    "Mobile Legends maniac triple kill ranked full match",
+    "MLBB mythic glory double kill teamfight replay",
+    "MLBB ranked savage maniac highlights full game no montage",
+    "Mobile Legends mythic ranked 20 kills MVP teamfight",
+    "MLBB legend ranked triple kill savage gameplay",
+    "Mobile Legends double kill teamfight mythic ranked match",
+)
+
+# Hero + kill combo — rotated after combat core.
+VOD_HERO_COMBAT_TEMPLATES = (
+    "MLBB {hero} savage ranked full match gameplay",
+    "Mobile Legends {hero} maniac triple kill ranked",
+    "MLBB {hero} double kill mythic ranked teamfight",
 )
 
 # YouTube upload-date filter: "This week" (alternate pool vs this month).
 YOUTUBE_FRESHNESS_SP_THIS_WEEK = "EgQIARAB"
 
-# Popular heroes for rotating VOD search (includes Masha from user examples).
-VOD_SEARCH_HEROES = (
-    "masha",
-    "paquito",
-    "hayabusa",
-    "gusion",
-    "fanny",
-    "ling",
-    "chou",
-    "beatrix",
-    "moskov",
-    "valentina",
-    "joy",
-    "angela",
-    "tigreal",
-    "layla",
-    "kagura",
-    "lancelot",
-)
+# Popular carry/fight heroes for rotating VOD search (tanks/supports excluded).
+from mlbb_hero_roles import highlight_search_heroes
+
+VOD_SEARCH_HEROES = highlight_search_heroes()
 
 # Hard reject — montages, guides, promos, skin showcases.
 BAD_TITLE_RE = re.compile(
     r"(?:"
     r"giveaway|#short\b|shorts\b|tiktok\b|reels?\b|"
     r"montage|compilation|compilación|highlight(?:s)?\s+reel|best\s+(?:moment|play)|"
-    r"top\s+\d+\s+(?:play|moment|savage)|savage\s+montage|"
+    r"top\s+\d+\s+(?:play|moment|savage|best|heroes?|junglers?|mid|roam|exp|gold)|"
+    r"savage\s+montage|"
     r"tutorial|beginner\s+guide|how\s+to\s+(?:play|use|build)|tips\s+and\s+tricks|"
     r"build\s+guide|item\s+build|emblem\s+guide|"
     r"reaction(?:\s+only)?|react(?:ing|s)?\s+to|"
@@ -127,7 +122,16 @@ GUIDE_TITLE_RE = re.compile(
     r"best\s+\d+\s+heroes|heroes\s+for\s+every\s+role|for\s+every\s+role|"
     r"best\s+solo\s+carry\s+heroes|tier\s+list|hero\s+tier|"
     r"how\s+to\s+rank|rank\s+guide|emblem\s+setup|item\s+build\s+guide|"
-    r"wr\s+build|meta\s+build|passive\s+skill|skill\s+combo\s+guide"
+    r"wr\s+build|meta\s+build|passive\s+skill|skill\s+combo\s+guide|"
+    # Listicles / meta roundups that waste download quota (no real match HUD).
+    r"top\s+\d+\s+(?:best\s+)?(?:heroes?|junglers?|fighters?|mages?|assassins?|"
+    r"marksmen|supports?|tanks?|roamers?|mid(?:laners?)?|exp|gold)|"
+    r"most\s+picked|"
+    r"best\s+heroes?\s+to\s+(?:use|rank|play)|"
+    r"easy\s+rank\s+push\s+heroes|"
+    r"heroes?\s+above\s+(?:mythical|mythic|immortal)|"
+    r"short\s+guide|(?:hero\s+)?guide\s+for|until\s+you\s+watch|"
+    r"don't\s+use\s+\w+\s+until|do\s+not\s+use\s+\w+\s+until"
     r")",
     re.I,
 )
@@ -179,32 +183,48 @@ def build_vod_search_queries(
     include_supplements: bool | None = None,
     limit: int = 20,
 ) -> list[str]:
-    """20 rotating queries: core + heroes + angles + optional season supplements."""
+    """Combat-first query list: savage/maniac/double before generic ranked."""
     if include_supplements is None:
         include_supplements = vod_search_include_supplements()
-    heroes = heroes or VOD_SEARCH_HEROES
+    base_heroes = heroes or VOD_SEARCH_HEROES
+    # Prefer heroes that historically yield own kills + likes.
+    try:
+        from mlbb_vod_yield_memory import preferred_heroes
+
+        boosted = preferred_heroes(limit=max(4, max_hero_queries))
+        if boosted:
+            rest = [h for h in base_heroes if h not in boosted]
+            base_heroes = tuple(boosted + rest)
+    except Exception:
+        pass
+    heroes = base_heroes
     season = season if season is not None else vod_current_season()
-    queries: list[str] = list(VOD_CORE_SEARCH_QUERIES)
-    hero_templates = (
-        "MLBB mythic {hero} ranked full match",
-        "Mobile Legends {hero} mythic glory ranked gameplay",
-    )
-    hero_slots = max(0, min(max_hero_queries, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 4))
+    queries: list[str] = list(VOD_COMBAT_SEARCH_QUERIES)
+
+    hero_slots = max(0, min(max_hero_queries, max(0, limit - 6)))
     for idx in range(hero_slots):
         hero = heroes[idx % len(heroes)]
-        tpl = hero_templates[idx % len(hero_templates)]
+        tpl = VOD_HERO_COMBAT_TEMPLATES[idx % len(VOD_HERO_COMBAT_TEMPLATES)]
         queries.append(tpl.format(hero=hero))
-    combat_slots = min(3, max(0, limit - len(queries) - len(VOD_ANGLE_SEARCH_QUERIES) - 2))
-    for idx in range(combat_slots):
-        queries.append(VOD_COMBAT_SEARCH_QUERIES[idx % len(VOD_COMBAT_SEARCH_QUERIES)])
+
+    # Small generic ranked tail — not the main pool anymore.
+    for q in VOD_CORE_SEARCH_QUERIES[:2]:
+        if len(queries) >= limit:
+            break
+        queries.append(q)
+
     for angle in VOD_ANGLE_SEARCH_QUERIES:
         if len(queries) >= limit:
             break
+        # Skip roam-biased angles — low kill-banner yield.
+        if "roam" in angle.lower():
+            continue
         queries.append(angle)
+
     if include_supplements and len(queries) < limit:
-        queries.append(f"MLBB mythic global ranked season {season}")
+        queries.append(f"MLBB mythic global savage season {season} ranked full match")
     if include_supplements and len(queries) < limit:
-        queries.append(f"MLBB mythic global masha season {season} ranked full match")
+        queries.append(f"MLBB mythic glory double kill season {season} ranked gameplay")
     # Dedupe while preserving order.
     seen: set[str] = set()
     out: list[str] = []
@@ -261,10 +281,11 @@ def vod_discovery_search_cycle(cycle: int, env: dict[str, str] | None = None) ->
 def passes_mlbb_game_title(title: str) -> bool:
     """Accept ranked VOD titles even when uploader omits 'MLBB' in the name."""
     blob = str(title or "")
+    # Guides/listicles often append "| MLBB" — reject before the explicit brand pass.
+    if GUIDE_TITLE_RE.search(blob) or BAD_TITLE_RE.search(blob):
+        return False
     if MLBB_EXPLICIT_TITLE_RE.search(blob):
         return True
-    if GUIDE_TITLE_RE.search(blob):
-        return False
     return bool(MLBB_IMPLICIT_TITLE_RE.search(blob) and RANKED_SIGNAL_RE.search(blob))
 
 
@@ -347,6 +368,13 @@ def passes_mlbb_vod_filters(meta: dict) -> bool:
         return False
     if not passes_mlbb_game_title(title):
         return False
+    try:
+        from mlbb_hero_roles import title_is_tank_support_only
+
+        if title_is_tank_support_only(title):
+            return False
+    except Exception:
+        pass
     return True
 
 
@@ -441,6 +469,24 @@ def rank_mlbb_vod_candidate(meta: dict, *, target_dur_sec: float = 780.0) -> flo
     for needle, weight in penalties:
         if needle in blob:
             score += weight
+
+    try:
+        from mlbb_hero_roles import heroes_in_text, is_excluded_role, is_highlight_role
+
+        title_heroes = heroes_in_text(blob)
+        if title_heroes and all(is_excluded_role(h) for h in title_heroes):
+            score -= 18.0
+        elif any(is_highlight_role(h) for h in title_heroes):
+            score += 4.0
+    except Exception:
+        pass
+
+    try:
+        from mlbb_vod_yield_memory import candidate_bonus
+
+        score += float(candidate_bonus(meta))
+    except Exception:
+        pass
 
     return score
 
