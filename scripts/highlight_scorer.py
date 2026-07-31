@@ -1852,13 +1852,15 @@ def discover_highlight_candidates(
 
                 title_blob = vod_title_blob(video_path)
                 title_tier = title_min_banner_tier(title_blob)
-                if title_tier > 0:
+                # Feed already sets TITLE_MIN_TIER per VOD — do not overwrite.
+                if title_tier > 0 and not os.environ.get("MLBB_VOD_TITLE_MIN_TIER"):
                     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = str(title_tier)
                     if os.environ.get("MLBB_VOD_TITLE_DENSE_AUTO", "1") == "1":
                         os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
                 # Fight-first: rank motion peaks by teamfight intensity, THEN
                 # search kill banners near those fights (not blind dense OCR).
                 hint_peaks = list(starts)
+                os.environ.pop("MLBB_BANNER_HINTS_FIGHT_RANKED", None)
                 if os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1":
                     try:
                         from mlbb_fight_segment import _analysis_for
@@ -1868,6 +1870,7 @@ def discover_highlight_candidates(
                         fight_peaks = fight_first_peaks(analysis, starts)
                         if fight_peaks:
                             hint_peaks = fight_peaks
+                            os.environ["MLBB_BANNER_HINTS_FIGHT_RANKED"] = "1"
                             log.info(
                                 "highlight fight-first %s: %s fights → banner scan",
                                 video_path.name,
@@ -1876,12 +1879,20 @@ def discover_highlight_candidates(
                     except Exception as exc:
                         log.debug("fight-first peak rank skipped: %s", exc)
                 # Title tier is for presend only — discover must stay at merge tier (single+).
-                banners = discover_vod_kill_banners(
-                    video_path,
-                    hint_peaks=hint_peaks,
-                    min_tier=None,
-                )
-            lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+                try:
+                    banners = discover_vod_kill_banners(
+                        video_path,
+                        hint_peaks=hint_peaks,
+                        min_tier=None,
+                    )
+                finally:
+                    os.environ.pop("MLBB_BANNER_HINTS_FIGHT_RANKED", None)
+            try:
+                from mlbb_fight_segment import banner_lead_sec
+
+                lead = float(banner_lead_sec(1))
+            except Exception:
+                lead = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "8")))
             if banners:
                 banner_hit_count = len(banners)
                 log.info(

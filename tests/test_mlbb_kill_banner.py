@@ -100,6 +100,7 @@ def test_may_trust_discover_rejects_ocr_single(monkeypatch) -> None:
     from mlbb_kill_banner import _may_trust_discover_banner
 
     monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "1")
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "0")
     assert (
         _may_trust_discover_banner(
             {"kill_banner": "single", "kill_banner_tier": 1, "banner_source": "ocr"}
@@ -114,6 +115,7 @@ def test_may_trust_discover_rejects_ocr_single(monkeypatch) -> None:
     )
     monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND_TRUST_DISCOVER", "0")
     monkeypatch.setenv("MLBB_VOD_PRESEND_TRUST_DISCOVERY", "0")
+    monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND_TRUST_OWN_KILL", "0")
     assert (
         _may_trust_discover_banner(
             {"kill_banner": "double", "kill_banner_tier": 2, "banner_source": "ref"}
@@ -383,6 +385,10 @@ def test_discover_peak_budget_reaches_spike(monkeypatch) -> None:
     monkeypatch.setenv("MLBB_VOD_BANNER_DISCOVER_SPIKE", "1")
     monkeypatch.setenv("MLBB_BANNER_REF_MATCH", "1")
     monkeypatch.setenv("MLBB_VOD_MIN_PEAK_SEC", "0")
+    monkeypatch.setenv("MLBB_FIGHT_FIRST_ABORT_ON_MISS", "0")
+    monkeypatch.setenv("MLBB_DISCOVER_SHIP_ON_FIRST", "0")
+    monkeypatch.setenv("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "12")
+    monkeypatch.setenv("MLBB_BANNER_FIGHT_FIRST", "0")
 
     with (
         patch("mlbb_fight_segment._analysis_for", return_value=fake_analysis),
@@ -501,6 +507,9 @@ def test_discover_keeps_sweeping_until_target() -> None:
             "MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP",
             "MLBB_VOD_BANNER_DISCOVER_SPIKE",
             "MLBB_BANNER_REF_MATCH",
+            "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
+            "MLBB_DISCOVER_SHIP_ON_FIRST",
+            "MLBB_BANNER_FIGHT_FIRST",
         )
     }
     os.environ.update(
@@ -515,6 +524,9 @@ def test_discover_keeps_sweeping_until_target() -> None:
             "MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP": "30",
             "MLBB_VOD_BANNER_DISCOVER_SPIKE": "1",
             "MLBB_BANNER_REF_MATCH": "1",
+            "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "0",
+            "MLBB_DISCOVER_SHIP_ON_FIRST": "0",
+            "MLBB_BANNER_FIGHT_FIRST": "0",
         }
     )
     try:

@@ -41,12 +41,14 @@ def test_soften_after_three_zeros():
 def test_l2_does_not_hard_skip_on_banner_miss(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("MLBB_ADAPTIVE_ALLOW_SINGLE", raising=False)
     ov = overrides_for_level(2)
-    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
-    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
+    # Soften keeps hard miss skip — teamfight fallback ships ally junk.
+    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "1"
+    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "1"
     # Soften must still require kill banners — motion-only was shipping junk.
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    # Presend OCR hangs — keep off under soften too.
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
     assert ov["MLBB_VOD_MONTAGE"] == "1"
     assert ov["MLBB_SKIP_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "0"
@@ -64,9 +66,9 @@ def test_l3_keeps_banner_and_multi_send():
     ov = overrides_for_level(3)
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
-    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "0"
-    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "0"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "1"
+    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "1"
     assert ov["MLBB_VOD_MONTAGE"] == "1"
     assert ov["MLBB_SKIP_MONTAGE"] == "0"
     assert ov["MLBB_VOD_SEND_ONE"] == "0"
@@ -116,7 +118,7 @@ def test_mlbb_rule_gate_rejects_farming_hud(monkeypatch: pytest.MonkeyPatch) -> 
 def test_soft_overrides_keep_banner_required():
     ov = overrides_for_level(1)
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
 
@@ -124,7 +126,7 @@ def test_soft_overrides_keep_banner_required():
 def test_l1_keeps_banner_discover():
     ov = overrides_for_level(1)
     assert ov["MLBB_VOD_BANNER_DISCOVER"] == "1"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
 
 
 def test_l2_keeps_double_floor_by_default(monkeypatch: pytest.MonkeyPatch):
@@ -132,7 +134,7 @@ def test_l2_keeps_double_floor_by_default(monkeypatch: pytest.MonkeyPatch):
     ov = overrides_for_level(2)
     assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
     assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
     assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
 
 

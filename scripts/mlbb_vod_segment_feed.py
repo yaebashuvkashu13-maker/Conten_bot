@@ -1302,7 +1302,75 @@ def send_message(token: str, chat_id: str, text: str) -> None:
 
 
 def _vod_lead_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    try:
+        from mlbb_fight_segment import banner_lead_sec
+
+        return float(banner_lead_sec(1))
+    except Exception:
+        return float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "8")))
+
+
+def _banner_row_meta(row: dict) -> tuple[int, str, str]:
+    """Parse (tier, source, label) from a clip/send row — single source of truth."""
+    tier_i = 0
+    try:
+        tier_raw = row.get("kill_banner_tier")
+        if tier_raw is None and isinstance(row.get("kill_banner"), dict):
+            tier_raw = (row.get("kill_banner") or {}).get("tier")
+        tier_i = int(tier_raw) if tier_raw is not None else 0
+    except (TypeError, ValueError):
+        tier_i = 0
+    src = str(
+        row.get("banner_source")
+        or row.get("kill_banner_source")
+        or (row.get("clip") or {}).get("banner_source")
+        or ""
+    ).lower()
+    label = str(row.get("kill_banner") or "").lower()
+    if isinstance(row.get("kill_banner"), dict):
+        label = str((row.get("kill_banner") or {}).get("label") or label).lower()
+        if not src:
+            src = str((row.get("kill_banner") or {}).get("source") or "").lower()
+    return tier_i, src, label
+
+
+def _reject_ocr_single_send(src: str, label: str, tier_i: int, *, hud_own: bool) -> str | None:
+    """Shared OCR-single send gate. Returns reject reason or None."""
+    if os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") != "1":
+        return None
+    if tier_i > 1:
+        return None
+    if os.environ.get("MLBB_ALLOW_OCR_SINGLE_SEND", "0") == "1":
+        return None
+    if hud_own:
+        return None
+    ocr_like = (
+        src.startswith("ocr")
+        or src.startswith("color")
+        or not src
+        or label in {"single", "single_weak"}
+    )
+    if not ocr_like:
+        return None
+    return f"ocr_single_reject:{label or src or 'tier1'}"
+
+
+_SIG_CACHE: dict[str, tuple[int, int, str]] = {}
+
+
+def _vod_signature(vod: Path) -> str:
+    """SHA256 of VOD with size+mtime cache — full hash of multi‑GB files is slow."""
+    try:
+        st = vod.stat()
+        key = str(vod.resolve())
+        cached = _SIG_CACHE.get(key)
+        if cached and cached[0] == st.st_size and cached[1] == int(st.st_mtime):
+            return cached[2]
+        sig = file_sha256(vod)
+        _SIG_CACHE[key] = (st.st_size, int(st.st_mtime), sig)
+        return sig
+    except OSError:
+        return file_sha256(vod)
 
 
 def _apply_lead_start(start: float) -> float:
@@ -1843,25 +1911,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         # Always-on quality gates (even when BANNER_PRESEND=0). AJxz OCR-single
         # shipped ally double because full presend block was skipped.
-        tier_i = 0
-        try:
-            tier_raw = row.get("kill_banner_tier")
-            if tier_raw is None and isinstance(row.get("kill_banner"), dict):
-                tier_raw = (row.get("kill_banner") or {}).get("tier")
-            tier_i = int(tier_raw) if tier_raw is not None else 0
-        except (TypeError, ValueError):
-            tier_i = 0
-        src = str(
-            row.get("banner_source")
-            or row.get("kill_banner_source")
-            or (row.get("clip") or {}).get("banner_source")
-            or ""
-        ).lower()
-        label = str(row.get("kill_banner") or "").lower()
-        if isinstance(row.get("kill_banner"), dict):
-            label = str((row.get("kill_banner") or {}).get("label") or label).lower()
-            if not src:
-                src = str((row.get("kill_banner") or {}).get("source") or "").lower()
+        tier_i, src, label = _banner_row_meta(row)
         banner_sec = float(row.get("banner_sec", peak_start) or peak_start)
         # Cap absurd preroll on the row itself (defense if bounds drifted).
         try:
@@ -1888,6 +1938,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             try:
                 from gameplay_gate import _read_frame_at
                 from mlbb_banner_hero_match import validate_own_kill_frame
+                from mlbb_kill_banner import ocr_weak_needs_hud
 
                 fr = _read_frame_at(vod, banner_sec)
                 if fr is not None:
@@ -1895,27 +1946,15 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
-                    if (
-                        (src.startswith("ocr") or src.startswith("color") or not src)
-                        and tier_i <= 2
-                        and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_HUD", "1") == "1"
-                        and not str(own_reason).startswith("hud_killer_ok")
-                    ):
+                    if ocr_weak_needs_hud(src or "ocr", tier_i, str(own_reason)):
                         return False, f"ocr_single_no_hud:{own_reason}", report
             except Exception as exc:
                 log.warning("own_kill recheck failed: %s", exc)
                 return False, f"own_kill_recheck_error:{exc}", report
-        # OCR singles: reject unless HUD-confirmed own kill (or explicit allow).
-        allow_ocr_single = os.environ.get("MLBB_ALLOW_OCR_SINGLE_SEND", "0") == "1"
         hud_own = str(report.get("own_kill_recheck") or "").startswith("hud_killer_ok")
-        if (
-            os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1"
-            and tier_i <= 1
-            and (src.startswith("ocr") or label in {"single", "single_weak"} or not src)
-            and not allow_ocr_single
-            and not hud_own
-        ):
-            return False, f"ocr_single_reject:{label or src or 'tier1'}", report
+        ocr_rej = _reject_ocr_single_send(src, label, tier_i, hud_own=hud_own)
+        if ocr_rej:
+            return False, ocr_rej, report
 
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
@@ -1982,26 +2021,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
-                # Legacy OCR-single block kept for when full presend is on.
-                src = str(
-                    row.get("banner_source")
-                    or row.get("kill_banner_source")
-                    or row.get("clip", {}).get("banner_source")
-                    or ""
-                )
-                label = str(row.get("kill_banner") or "").lower()
-                allow_ocr_single = (
-                    montage_single
-                    or os.environ.get("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0") == "1"
-                    or os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
-                )
-                if (
-                    os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1"
-                    and tier_i <= 1
-                    and (src.startswith("ocr") or label in {"single", "single_weak"})
-                    and not allow_ocr_single
-                ):
-                    return False, f"ocr_single_reject:{label or src or 'tier1'}", report
                 if label in {"single_weak", "color", "announce"} and tier_i <= 1:
                     return False, f"weak_banner_reject:{label}", report
 
@@ -2987,7 +3006,7 @@ def _process_vod_segments(
         downloader.start_if_idle(registry)
     sent_total = 0
     max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
-    sig = file_sha256(vod)
+    sig = _vod_signature(vod)
     sent = load_feed_sent()
     vid = vod_youtube_id(vod)
     # Reset per-VOD title gates — leftovers from the previous file poisoned
@@ -3040,7 +3059,7 @@ def _process_vod_segments(
     peak_tries = 0
     send_quota_blocked = False
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
-    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    lead = _vod_lead_sec()
 
     clear_fast_seeds = None
     skip_fast = bool(entry and entry.get("revive_skip_fast_probe"))
@@ -3574,7 +3593,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_ALLOW_OCR_SINGLE_SEND": "0",
         # Discover: fight-first spends budget on fight peaks; abort fast on miss.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "1",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "0",
         "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         # Discover: collect single+ anchors; montage ships ref singles.
         # Find several banners so an already-sent kill does not exhaust a 20-kill VOD.
@@ -3621,6 +3640,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # OCR on spike probes hung for minutes (OQx); ref-first is enough for quota speed.
         "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "0",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
+        "MLBB_KILL_BANNER_OCR_WIDE": "0",
+        "MLBB_DISCOVER_OCR_CALL_BUDGET": "10",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
         "INTELLICLIP_STAGE1": "0",
@@ -3742,6 +3763,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_TESSERACT_TIMEOUT_SEC",
         "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY",
+        "MLBB_KILL_BANNER_OCR_WIDE",
+        "MLBB_DISCOVER_OCR_CALL_BUDGET",
         "MLBB_STAGE1_SKIP_CLIP_RANK",
         "MLBB_STAGE1_SKIP_INTELLICLIP",
         "INTELLICLIP_STAGE1",

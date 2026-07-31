@@ -21,23 +21,29 @@ def test_discover_scan_start_uses_title_early() -> None:
 def test_effective_discover_min_tier_title_override() -> None:
     old_title = os.environ.get("MLBB_VOD_TITLE_MIN_TIER")
     old_force = os.environ.get("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER")
+    old_cap = os.environ.get("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP")
+    old_merge = os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER")
     os.environ["MLBB_VOD_TITLE_MIN_TIER"] = "5"
     os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = "0"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MERGE_TIER"] = "1"
+    os.environ.pop("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", None)
     try:
-        # Title promises savage but discover merge stays capped (single+ anchors).
-        assert kb._effective_discover_min_tier(None) == 2
-        assert kb._effective_discover_min_tier(2) == 2
+        # Title promises savage but discover merge stays capped at merge tier.
+        assert kb._effective_discover_min_tier(None) == 1
+        assert kb._effective_discover_min_tier(2) == 1
         os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = "1"
         assert kb._effective_discover_min_tier(None) == 5
     finally:
-        if old_title is None:
-            os.environ.pop("MLBB_VOD_TITLE_MIN_TIER", None)
-        else:
-            os.environ["MLBB_VOD_TITLE_MIN_TIER"] = old_title
-        if old_force is None:
-            os.environ.pop("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", None)
-        else:
-            os.environ["MLBB_VOD_TITLE_FORCE_DISCOVER_TIER"] = old_force
+        for key, old in (
+            ("MLBB_VOD_TITLE_MIN_TIER", old_title),
+            ("MLBB_VOD_TITLE_FORCE_DISCOVER_TIER", old_force),
+            ("MLBB_KILL_BANNER_DISCOVER_TITLE_CAP", old_cap),
+            ("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", old_merge),
+        ):
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
 
 def test_dense_scan_enabled() -> None:

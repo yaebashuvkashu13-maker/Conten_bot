@@ -117,6 +117,42 @@ def _discover_active() -> bool:
     return os.environ.get("MLBB_BANNER_DISCOVER_ACTIVE", "0") == "1"
 
 
+# Soft cap on Tesseract calls during one discover pass (hang guard).
+_OCR_CALL_BUDGET: dict[str, int] = {"left": -1}
+
+
+def reset_ocr_call_budget(n: int | None = None) -> None:
+    """Reset per-discover OCR budget. n=None → env MLBB_DISCOVER_OCR_CALL_BUDGET (default 10)."""
+    if n is None:
+        n = max(0, int(os.environ.get("MLBB_DISCOVER_OCR_CALL_BUDGET", "10") or "10"))
+    _OCR_CALL_BUDGET["left"] = int(n)
+
+
+def _ocr_budget_ok() -> bool:
+    left = int(_OCR_CALL_BUDGET.get("left", -1))
+    return left != 0  # -1 = unlimited (non-discover / tests)
+
+
+def _ocr_budget_consume() -> None:
+    left = int(_OCR_CALL_BUDGET.get("left", -1))
+    if left > 0:
+        _OCR_CALL_BUDGET["left"] = left - 1
+
+
+def ocr_weak_needs_hud(source: str, tier: int, own_reason: str) -> bool:
+    """OCR/color tier≤2 without HUD portrait match must not ship (ally FP)."""
+    src = str(source or "").lower()
+    if src not in {"ocr", "color"} and src:
+        # Empty source treated as OCR-like at call sites; named ref/hud ok.
+        if not (src.startswith("ocr") or src.startswith("color")):
+            return False
+    if int(tier or 0) > 2:
+        return False
+    if os.environ.get("MLBB_OCR_SINGLE_REQUIRE_HUD", "1") != "1":
+        return False
+    return not str(own_reason or "").startswith("hud_killer_ok")
+
+
 def _discover_merge_min_tier() -> int:
     """Discover collects single+ anchors; send/presend still enforces double+."""
     return max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")))
@@ -297,6 +333,12 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     except ImportError:
         return ""
 
+    # Discover hang guard: stop after N zone-OCR calls per VOD pass.
+    if _discover_active() and not _ocr_budget_ok():
+        return ""
+    if _discover_active():
+        _ocr_budget_consume()
+
     # Normalize to a stable canvas, then upscale OCR crops — Tesseract is often
     # blind on raw 480p banner text (gold outline / small glyphs).
     small = cv2.resize(frame, (480, 270))
@@ -305,7 +347,8 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         small[int(h * 0.02) : int(h * 0.28), int(w * 0.10) : int(w * 0.90)],
         small[int(h * 0.04) : int(h * 0.32), int(w * 0.18) : int(w * 0.82)],
     ]
-    if os.environ.get("MLBB_KILL_BANNER_OCR_WIDE", "1") == "1":
+    # Wide zone fan-out multiplies tesseract work — off by default.
+    if os.environ.get("MLBB_KILL_BANNER_OCR_WIDE", "0") == "1":
         zones.extend(
             [
                 small[int(h * 0.00) : int(h * 0.22), int(w * 0.05) : int(w * 0.95)],
@@ -316,7 +359,8 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         zones.append(small[int(h * 0.08) : int(h * 0.38), int(w * 0.02) : int(w * 0.38)])
     upscale = max(1.0, float(os.environ.get("MLBB_KILL_BANNER_OCR_UPSCALE", "2.0")))
     texts: list[str] = []
-    psms = (7, 8, 6, 11) if deep else (7, 11)
+    # Deep used 4 PSMs × 2 variants × many zones → multi-minute hangs.
+    psms = (7, 6) if deep else (7, 11)
     for zone in zones:
         if zone.size == 0:
             continue
@@ -328,7 +372,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
             )
         gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
         variants = [cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]]
-        if deep:
+        if deep and os.environ.get("MLBB_KILL_BANNER_OCR_INV", "0") == "1":
             variants.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1])
         for variant in variants:
             for psm in psms:
@@ -347,7 +391,7 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
                 text = " ".join(text.split())
                 if text:
                     texts.append(text)
-                    if not deep and classify_banner_text(text) is not None:
+                    if classify_banner_text(text) is not None:
                         return " ".join(texts)
     return " ".join(texts)
 
@@ -570,12 +614,7 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
         # OCR singles/doubles: require HUD portrait match. Icon-only / unverifiable
         # accepts shipped ally doubles (AJxz second beat in #AJxzNqHrlyo_294).
         src = str(getattr(hit, "source", "") or "").lower()
-        if (
-            src in {"ocr", "color"}
-            and int(hit.tier or 0) <= 2
-            and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_HUD", "1") == "1"
-            and not str(reason).startswith("hud_killer_ok")
-        ):
+        if ocr_weak_needs_hud(src, int(hit.tier or 0), str(reason)):
             _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
             log.info(
                 "banner own_kill reject sec=%s tier=%s reason=ocr_single_no_hud:%s",
@@ -656,8 +695,11 @@ def scan_window(
         if hit is not None:
             hits.append(hit)
     if not hits and frames and not quick and allow_ocr:
+        # Respect caller allow_ocr — never force OCR (deep crawl hung for minutes).
         for sec, frame in frames:
-            hit = _classify_frame(sec, frame, deep=True, allow_ocr=True, vod=vod)
+            if _discover_active() and not _ocr_budget_ok():
+                break
+            hit = _classify_frame(sec, frame, deep=True, allow_ocr=allow_ocr, vod=vod)
             if hit is not None and _banner_hit_source_ok(hit.source):
                 hits.append(hit)
                 break
@@ -867,6 +909,7 @@ def discover_vod_kill_banners(
     discover_saved = os.environ.get("MLBB_BANNER_DISCOVER_ACTIVE")
     os.environ["MLBB_BANNER_DISCOVER_ACTIVE"] = "1"
     reset_own_kill_stats()
+    reset_ocr_call_budget()
     try:
         hits = _discover_vod_kill_banners_inner(
             vod,
@@ -969,7 +1012,7 @@ def _discover_vod_kill_banners_inner(
     probes = 0
     want = _discover_hit_target()
     # Quota path: one fresh own-kill is enough to ship; extra OCR only burns the day.
-    if os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST", "1") == "1":
+    if os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST", "0") == "1":
         want = 1
     log.info(
         "banner discover %s: start dense=%s fight_first=%s max_probes=%s max_sec=%.0f "
@@ -1067,7 +1110,9 @@ def _discover_vod_kill_banners_inner(
         log.debug("owner kill anchors unavailable: %s", exc)
 
     fight_first = os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
-    if fight_first and peak_hints:
+    # Skip re-rank when highlight_scorer already fight-ranked hints (same analysis).
+    already_ranked = os.environ.get("MLBB_BANNER_HINTS_FIGHT_RANKED", "0") == "1"
+    if fight_first and peak_hints and not already_ranked:
         try:
             from mlbb_fight_segment import _analysis_for
             from mlbb_teamfight_detector import fight_first_peaks
@@ -1102,7 +1147,7 @@ def _discover_vod_kill_banners_inner(
     # Fight-first: spend more budget on fight peaks; dense is fallback only.
     default_peak_hints = "12" if fight_first else "8"
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", default_peak_hints)))
-    full_retry = 0 if dense else max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "2")))
+    full_retry = 0 if dense else max(0, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY", "0")))
     missed_peaks: list[float] = []
     ocr_missed: list[float] = []
     # Kill banners flash AFTER the fight spike — fight-first probes post-peak harder.
@@ -1168,8 +1213,11 @@ def _discover_vod_kill_banners_inner(
             # Need ~15s+ left overall so spike still gets a real window.
             if (deadline - time.monotonic()) < 20.0:
                 break
+            if not _ocr_budget_ok():
+                break
             probes += 1
-            hit = find_banner_near_peak(vod, peak, quick=False, allow_ocr=True)
+            # Quick+OCR only — deep scan_window was a multi-minute hang vector.
+            hit = find_banner_near_peak(vod, peak, quick=True, allow_ocr=True)
             if hit:
                 _merge_hit(hit)
     if not dense:
@@ -1208,7 +1256,7 @@ def _discover_vod_kill_banners_inner(
             probes >= max(2, int(os.environ.get("MLBB_FIGHT_FIRST_MISS_MIN_PROBES", "3")))
             or time.monotonic() >= peak_deadline
         )
-        and os.environ.get("MLBB_FIGHT_FIRST_ABORT_ON_MISS", "1") == "1"
+        and os.environ.get("MLBB_FIGHT_FIRST_ABORT_ON_MISS", "0") == "1"
     ):
         kill_rich = False
         try:
@@ -1457,13 +1505,14 @@ def _discover_vod_kill_banners_inner(
 
         _run_spike_pass(allow_ocr=False, label="ref", stop_at=want, quick=True)
         if len(hits) < want and probes < max_probes and time.monotonic() < deadline:
-            # OCR fallback on remaining budget — full window on motion spikes.
+            # OCR fallback on remaining budget — off by default (tesseract hangs).
             ocr_spikes = max(
-                4,
-                int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "12")),
+                0,
+                int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0")),
             )
-            idxs = idxs[:ocr_spikes]
-            _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want, quick=False)
+            if ocr_spikes > 0 and _ocr_budget_ok():
+                idxs = idxs[:ocr_spikes]
+                _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want, quick=True)
 
     hits.sort(key=lambda h: h.sec)
     ref_n = sum(1 for h in hits if str(h.source).startswith("ref"))
@@ -1552,10 +1601,11 @@ def bounds_from_banner(
 
     # Hard rule: stop shortly after the kill banner (last kill of this moment).
     end = min(file_dur, banner + post)
-    # Lead window only — fight_start may TRIM idle preroll, never extend earlier
-    # (old min(fight_start, banner-lead) pulled 18s heads of jogging).
+    # Lead window only — fight_start may TRIM idle preroll on singles/doubles,
+    # never extend earlier (old min(fight_start, banner-lead) pulled 18s heads).
+    # Tier≥3 (triple+): keep full streak lead — fight detector often starts mid-combo.
     start = max(0.0, banner - lead)
-    if fight_start is not None:
+    if fight_start is not None and tier <= 2:
         fs = float(fight_start)
         if start < fs < banner - 1.0:
             start = fs

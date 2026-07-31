@@ -103,6 +103,8 @@ def main() -> int:
         env["VOD_SEGMENT_GAME"] = game
 
     # Future switch: when quotas are stable, ship only montages (not singles).
+    # Do NOT clear MLBB_VOD_RELIABLE — reliable already enables montage and
+    # turning it off re-opens CLIP/OCR/presend hang paths.
     try:
         from post_quota_montages import montage_only_mode
 
@@ -111,10 +113,8 @@ def main() -> int:
             env["MLBB_SKIP_MONTAGE"] = "0"
             env["SHOOTER_VOD_MONTAGE"] = "1"
             env[f"{game.upper()}_VOD_MONTAGE"] = "1"
-            env["SHOOTER_VOD_RELIABLE"] = "0"  # reliable mode forces montage off
-            env["MLBB_VOD_RELIABLE"] = "0"
             env["MLBB_PRESEND_REJECT_RUN"] = "1"
-            log.info("MONTAGE_ONLY_MODE active for game=%s", game)
+            log.info("MONTAGE_ONLY_MODE active for game=%s (reliable kept)", game)
     except Exception:
         pass
 

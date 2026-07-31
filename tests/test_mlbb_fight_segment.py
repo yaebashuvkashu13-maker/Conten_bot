@@ -89,6 +89,25 @@ class FightSegmentBoundsTest(unittest.TestCase):
         self.assertLessEqual(end, 315.1)
         self.assertLessEqual(dur, 12.0)
 
+    def test_banner_bounds_triple_keeps_lead_despite_late_fight_start(self) -> None:
+        """Tier≥3 must not let fight_start collapse streak preroll."""
+        os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "14"
+        os.environ["MLBB_BANNER_POST_SEC"] = "3"
+        os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
+        os.environ["MLBB_BANNER_IDEAL_MIN"] = "0"
+        os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
+        from mlbb_kill_banner import bounds_from_banner
+
+        start, end, dur = bounds_from_banner(
+            100.0,
+            200.0,
+            fight_start=98.0,
+            fight_end=120.0,
+            banner_tier=3,
+        )
+        self.assertGreaterEqual(100.0 - start, 12.0)
+        self.assertEqual(end, 103.0)
+
 
 if __name__ == "__main__":
     unittest.main()

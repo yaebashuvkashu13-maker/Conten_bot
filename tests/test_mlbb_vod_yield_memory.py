@@ -69,17 +69,20 @@ def test_yield_memory_banner_miss_skips_repick(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY", str(path))
     monkeypatch.setenv("MLBB_VOD_YIELD_MEMORY_ENABLED", "1")
     monkeypatch.setenv("MLBB_DATA_ROOT", str(tmp_path))
+    # One miss is retryable; skip only after N consecutive dead scans.
+    monkeypatch.setenv("MLBB_YIELD_BANNER_MISS_SKIP_AFTER", "2")
 
     from mlbb_vod_yield_memory import should_skip_inbox_pick
 
-    record_scan(
-        youtube_id="DEADLYLIA01",
-        uploader="Ash",
-        title="Lylia burst queen MVP",
-        banner_hits=0,
-        own_kill_hits=0,
-        own_kill_rejects=0,
-    )
+    for _ in range(2):
+        record_scan(
+            youtube_id="DEADLYLIA01",
+            uploader="Ash",
+            title="Lylia burst queen MVP",
+            banner_hits=0,
+            own_kill_hits=0,
+            own_kill_rejects=0,
+        )
     assert should_skip_inbox_pick("DEADLYLIA01")
     assert pick_penalty(youtube_id="DEADLYLIA01") >= 5.0
     assert row_score(load_memory()["videos"]["DEADLYLIA01"]) < -4.0
