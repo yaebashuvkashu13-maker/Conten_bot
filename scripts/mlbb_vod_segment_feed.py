@@ -3731,7 +3731,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.19",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.17",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
