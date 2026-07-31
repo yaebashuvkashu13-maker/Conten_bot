@@ -778,25 +778,63 @@ def _unexhaust_inbox_paths(registry: list[dict]) -> int:
     return n
 
 
-def _revive_exhausted_inbox_candidates(registry: list[dict], *, limit: int = 3) -> int:
+def _inbox_pickable_count(registry: list[dict]) -> int:
+    """Non-exhausted inbox mp4s the picker can actually take."""
+    exhausted = {
+        str(row.get("id") or "")
+        for row in registry
+        if row.get("exhausted") and row.get("id")
+    }
+    n = 0
+    for path in INBOX.glob("yt_*.mp4"):
+        try:
+            if path.stat().st_size < 1_000_000:
+                continue
+        except OSError:
+            continue
+        vid = vod_youtube_id(path)
+        if vid and vid in exhausted:
+            continue
+        n += 1
+    return n
+
+
+def _revive_exhausted_inbox_candidates(
+    registry: list[dict],
+    *,
+    limit: int = 3,
+    force: bool = False,
+) -> int:
     """
     When discovery is starving, reopen on-disk exhausted VODs that promise
     kill streaks in the title — better than looping empty YouTube search.
+
+    force=True: inbox has only exhausted files (starvation counter may still
+    be 0 because AUTO_DOWNLOAD=0 never called discovery).
     """
     if os.environ.get("MLBB_VOD_REVIVE_TITLE", "1") != "1":
         return 0
-    if _discovery_starvation_level() < max(2, int(os.environ.get("MLBB_VOD_REVIVE_AFTER_MISS", "2"))):
-        return 0
+    if not force:
+        if _discovery_starvation_level() < max(
+            2, int(os.environ.get("MLBB_VOD_REVIVE_AFTER_MISS", "2"))
+        ):
+            return 0
     revived = 0
+    revive_max = int(os.environ.get("MLBB_VOD_REVIVE_MAX", "1"))
+    if force:
+        revive_max = max(revive_max, int(os.environ.get("MLBB_VOD_REVIVE_MAX_FORCE", "2")))
     for row in registry:
         if revived >= limit:
             break
         if not row.get("exhausted"):
             continue
-        if int(row.get("revive_count") or 0) >= int(os.environ.get("MLBB_VOD_REVIVE_MAX", "1")):
+        if int(row.get("revive_count") or 0) >= revive_max:
             continue
         path = Path(str(row.get("path") or ""))
         if not path.exists() or path.stat().st_size < 1_000_000:
+            continue
+        # Only revive files still sitting in inbox (not park_dead).
+        if "park_dead" in str(path):
             continue
         title = str(row.get("title") or path.stem)
         if not _title_promise_revive_ok(title):
@@ -808,9 +846,10 @@ def _revive_exhausted_inbox_candidates(registry: list[dict], *, limit: int = 3) 
         row["last_scan_blocked"] = False
         revived += 1
         log.info(
-            "revive exhausted inbox id=%s title=%s reason=discovery_starve",
+            "revive exhausted inbox id=%s title=%s reason=%s",
             row.get("id") or path.name,
             title[:70],
+            "inbox_unpickable" if force else "discovery_starve",
         )
     if revived:
         state = _load_state()
@@ -3967,13 +4006,25 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         state["vods"] = registry
         _save_state(state)
     inbox_ready = sum(1 for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 1_000_000)
+    pickable = _inbox_pickable_count(registry)
+    # Exhausted mp4s still count as "inbox ready" and used to block downloads
+    # forever (discovery_empty_streak stayed 0 → no revive). Treat unpickable
+    # inbox like empty.
+    if pickable == 0 and inbox_ready > 0:
+        revived = _revive_exhausted_inbox_candidates(registry, force=True)
+        if revived:
+            pickable = _inbox_pickable_count(registry)
+            log.info("force-revived %s exhausted inbox vod(s); pickable=%s", revived, pickable)
     if (
         not auto_download
-        and inbox_ready == 0
+        and pickable == 0
         and os.environ.get("MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY", "1") == "1"
     ):
         auto_download = True
-        log.warning("inbox empty after hold promote — enabling AUTO_DOWNLOAD for this run")
+        log.warning(
+            "inbox unpickable (ready=%s pickable=0) — enabling AUTO_DOWNLOAD for this run",
+            inbox_ready,
+        )
     downloader = VodPipelineDownloader(env)
     total_sent = 0
     vods_done = 0
@@ -3994,6 +4045,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             notify=download_notify,
         )
         if vod is None:
+            _note_discovery_empty(kept=0)
             if (
                 not notified_download
                 and auto_download
@@ -4016,6 +4068,7 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
             clear_discovery_miss("mlbb")
         except Exception:
             pass
+        _note_discovery_empty(kept=1)
         notified_download = True
 
         n = _process_vod_segments(
