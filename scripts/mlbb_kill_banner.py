@@ -60,9 +60,9 @@ _COORDINATION_RE = re.compile(
     r"\b(?:gather|regroup|group\s*up|attack|retreat|defend|push|fall\s*back|"
     r"initiate|on\s+my\s+way|request\s+backup|clear\s+lane|start\s+a\s+revolt|"
     r"assemble|hold\s+on|wait\s+for\s+me|follow\s+me|split\s+push|"
-    r"destroy\s+turret|lord|turtle)\b"
+    r"destroy\s+turret|take\s+turtle|lord|turtle)\b"
     r"|соберитесь|собраться|в\s+атаку|отступайте|отступить|защищайте|"
-    r"на\s+меня|держите\s+линию|подкреплен|к\s+лорду|к\s+черепах"
+    r"на\s+меня|держите\s+линию|подкреплен|к\s+лорду|к\s+черепах|черепаха"
     r")",
     re.I,
 )
@@ -287,6 +287,30 @@ def is_coordination_banner_text(text: str) -> bool:
         return False
     # Coordination-only HUD: no kill streak phrase.
     return not _KILL_STREAK_HINT_RE.search(blob)
+
+
+def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
+    """
+    Cheap live OCR for coordination/enemy vetoes.
+
+    Ref-bank hits carry canned text ("TRIPLE KILL") which hides live overlays
+    like Take Turtle / Gather — AJ2o2jHhNfE_414 shipped a false triple that way.
+    """
+    if frame is None:
+        return ""
+    if os.environ.get("MLBB_BANNER_LIVE_OVERLAY_OCR", "1") != "1":
+        return ""
+    try:
+        # Do not consume discover OCR budget — this is a safety veto, not a hunt.
+        saved = int(_OCR_CALL_BUDGET.get("left", -1))
+        _OCR_CALL_BUDGET["left"] = -1
+        try:
+            text = _ocr_banner_zones(frame, deep=False)
+        finally:
+            _OCR_CALL_BUDGET["left"] = saved
+        return " ".join(str(text or "").split())[:max_chars]
+    except Exception:
+        return ""
 
 
 def classify_banner_text(text: str) -> KillBannerHit | None:
@@ -604,8 +628,28 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
     try:
         from mlbb_banner_hero_match import validate_own_kill_frame
 
-        # Always pass OCR/ref text — enemy/coordination phrases apply to all sources.
-        ocr_text = str(hit.text or "")
+        # Merge ref/OCR hit text with LIVE frame OCR so turtle/gather vetoes apply
+        # even when the ref bank label is a canned "TRIPLE KILL".
+        live = _live_overlay_text(frame)
+        ocr_text = " ".join(x for x in (str(hit.text or ""), live) if x).strip()
+        if live and is_coordination_banner_text(live):
+            _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
+            log.info(
+                "banner own_kill reject sec=%s tier=%s reason=live_coordination:%s",
+                hit.sec,
+                hit.tier,
+                live[:60],
+            )
+            return None
+        if live and is_enemy_kill_text(live):
+            _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
+            log.info(
+                "banner own_kill reject sec=%s tier=%s reason=live_enemy:%s",
+                hit.sec,
+                hit.tier,
+                live[:60],
+            )
+            return None
         ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
         if not ok:
             _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1

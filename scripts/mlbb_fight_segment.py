@@ -82,7 +82,7 @@ def _fight_post_sec() -> float:
     return float(
         os.environ.get(
             "MLBB_BANNER_POST_SEC",
-            os.environ.get("MLBB_FIGHT_POST_SEC", "3"),
+            os.environ.get("MLBB_FIGHT_POST_SEC", "1.5"),
         )
     )
 

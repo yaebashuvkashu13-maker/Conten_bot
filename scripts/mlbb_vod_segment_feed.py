@@ -1938,11 +1938,23 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             try:
                 from gameplay_gate import _read_frame_at
                 from mlbb_banner_hero_match import validate_own_kill_frame
-                from mlbb_kill_banner import ocr_weak_needs_hud
+                from mlbb_kill_banner import (
+                    ocr_weak_needs_hud,
+                    _live_overlay_text,
+                    is_coordination_banner_text,
+                    is_enemy_kill_text,
+                )
 
                 fr = _read_frame_at(vod, banner_sec)
                 if fr is not None:
-                    ok_own, own_reason = validate_own_kill_frame(fr, vod=vod)
+                    live = _live_overlay_text(fr)
+                    if live and is_coordination_banner_text(live):
+                        return False, f"live_coordination:{live[:40]}", report
+                    if live and is_enemy_kill_text(live):
+                        return False, f"live_enemy:{live[:40]}", report
+                    ok_own, own_reason = validate_own_kill_frame(
+                        fr, vod=vod, ocr_text=live
+                    )
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
@@ -1955,6 +1967,37 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         ocr_rej = _reject_ocr_single_send(src, label, tier_i, hud_own=hud_own)
         if ocr_rej:
             return False, ocr_rej, report
+
+        # Always enforce send floor — BANNER_PRESEND=0 used to skip this and ship
+        # lone singles / false streak labels.
+        try:
+            from mlbb_kill_banner import send_min_tier
+
+            min_tier = send_min_tier()
+            montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
+            # Lone clip must meet floor; multi-single stitch is handled by montage picker.
+            parts = int(row.get("montage_parts") or row.get("n_parts") or 1)
+            if tier_i < min_tier and not (montage_single and parts >= 2 and tier_i >= 1):
+                return False, f"kill_banner_tier_low={tier_i}:need>={min_tier}", report
+        except Exception as exc:
+            log.debug("send_min_tier gate skip: %s", exc)
+
+        # Post-banner jog: reject if the tail after the kill is mostly running.
+        try:
+            from mlbb_vod_montage import clip_run_fraction
+
+            clip_end = cut_start + dur
+            post_lo = float(banner_sec) + 0.4
+            if clip_end > post_lo + 0.8:
+                post_run = clip_run_fraction(
+                    vod, post_lo, clip_end, banner_sec=float(banner_sec)
+                )
+                report["post_run_fraction"] = round(post_run, 3)
+                max_post = float(os.environ.get("MLBB_PRESEND_MAX_POST_RUN_FRAC", "0.40"))
+                if post_run > max_post:
+                    return False, f"post_run_frac={post_run:.2f}>{max_post:.2f}", report
+        except Exception as exc:
+            log.debug("post_run gate skip: %s", exc)
 
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
@@ -3548,8 +3591,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "1",
         "MLBB_VOD_MONTAGE_GAP_SEC": "40",
         "MLBB_PRESEND_MONTAGE_SINGLE": "1",
-        "MLBB_ADAPTIVE_ALLOW_SINGLE": "1",
-        "MLBB_BANNER_SEND_MIN_TIER": "single",
+        "MLBB_ADAPTIVE_ALLOW_SINGLE": "0",
+        "MLBB_BANNER_SEND_MIN_TIER": "double",
         "MLBB_VOD_SEND_ONE": "0",
         # Collect multiple own-kills per VOD when discover finds them (quota speed).
         "MLBB_VOD_SEND_ALL_BANNERS": "1",
@@ -3573,7 +3616,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_REF_ROOT": "/root/content_bot_ml/data/mlbb_kill_banners",
         "CONTENT_BOT_REPO": "/root/content_bot_ml",
         "MLBB_PRESEND_REJECT_RUN": "1",
-        "MLBB_PRESEND_MAX_RUN_FRAC": "0.55",
+        "MLBB_PRESEND_MAX_RUN_FRAC": "0.45",
         "MLBB_PRESEND_RUN_TRUST_OWN_KILL": "1",
         "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
         "MLBB_PRESEND_BANNER_CONTEXT": "0",
@@ -3581,8 +3624,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_RUN_MIN_SKILL": "0.008",
         "MLBB_PRESEND_RUN_MIN_MINI": "0.008",
         "MLBB_PRESEND_FIGHT_HUD_MIN": "0.008",
-        "MLBB_BANNER_POST_SEC": "3",
-        "MLBB_FIGHT_POST_SEC": "3",
+        "MLBB_BANNER_POST_SEC": "1.5",
+        "MLBB_FIGHT_POST_SEC": "1.5",
         "MLBB_BANNER_HARD_POST_CUT": "1",
         "MLBB_KILL_BANNER_LEAD_SEC": "8",
         "MLBB_VOD_LEAD_SEC": "8",
@@ -3591,6 +3634,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
         "MLBB_ALLOW_OCR_SINGLE_SEND": "0",
+        "MLBB_PRESEND_MAX_POST_RUN_FRAC": "0.40",
+        "MLBB_BANNER_LIVE_OVERLAY_OCR": "1",
         # Discover: fight-first spends budget on fight peaks; abort fast on miss.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "0",
@@ -3712,6 +3757,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_REJECT_OCR_SINGLE",
         "MLBB_BANNER_OCR_WEAK_SINGLE",
         "MLBB_BANNER_HARD_POST_CUT",
+        "MLBB_BANNER_POST_SEC",
+        "MLBB_FIGHT_POST_SEC",
         "MLBB_KILL_BANNER_LEAD_SEC",
         "MLBB_VOD_LEAD_SEC",
         "MLBB_OCR_SINGLE_REQUIRE_HUD",
@@ -3719,6 +3766,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_ALLOW_OCR_SINGLE_SEND",
         "MLBB_ADAPTIVE_ALLOW_SINGLE",
         "MLBB_BANNER_SEND_MIN_TIER",
+        "MLBB_PRESEND_MAX_POST_RUN_FRAC",
+        "MLBB_BANNER_LIVE_OVERLAY_OCR",
+        "MLBB_PRESEND_MAX_RUN_FRAC",
         "MLBB_KILL_BANNER_QUICK_AFTER",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER",
