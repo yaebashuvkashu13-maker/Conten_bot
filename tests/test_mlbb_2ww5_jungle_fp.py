@@ -62,7 +62,6 @@ def test_presend_rejects_ocr_double_without_live_streak(monkeypatch) -> None:
 def test_presend_allows_ref_multi_when_hud_ok_even_if_live_ocr_blind(monkeypatch) -> None:
     """UGu: empty/ref source + own HUD must not die on clock OCR garbage."""
     import numpy as np
-    import pytest
 
     monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
     monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_RECHECK", "1")
@@ -97,13 +96,16 @@ def test_presend_allows_ref_multi_when_hud_ok_even_if_live_ocr_blind(monkeypatch
                 return_value=(True, "hud_killer_ok:0.42"),
             ),
             # If we reach this helper, ocr_multi_no_live_streak did not fire.
+            # The outer try/except turns this into own_kill_recheck_error.
             patch(
                 "mlbb_kill_banner.ocr_weak_needs_hud",
                 side_effect=RuntimeError("past_ocr_multi_gate"),
             ),
         ):
-            with pytest.raises(RuntimeError, match="past_ocr_multi_gate"):
-                feed._validate_before_send(Path("x.mp4"), row, Path("y.mp4"))
+            ok, reason, _report = feed._validate_before_send(Path("x.mp4"), row, Path("y.mp4"))
+            assert ok is False
+            assert "ocr_multi_no_live_streak" not in reason, (src, reason)
+            assert "past_ocr_multi_gate" in reason, (src, reason)
 
 
 def test_presend_rejects_near_lord_spawn(monkeypatch) -> None:
