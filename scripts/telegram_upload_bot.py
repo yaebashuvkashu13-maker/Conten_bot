@@ -46,12 +46,17 @@ WATERMARK_EXAMPLES_DIR = Path('/root/data/mlbb/watermark_examples')
 WATERMARK_REMOVE_SCRIPT = Path(__file__).resolve().parent / 'image_watermark_remove.py'
 RESEARCH_INBOX_DIR = Path('/root/research/inbox')
 POLL_TIMEOUT = 25
+HEARTBEAT_FILE = Path('/root/data/mlbb/telegram_bot_heartbeat.json')
+POLL_ERROR_ALERT_THRESHOLD = 3
+POLL_ERROR_ALERT_WINDOW_SEC = 300
+_poll_error_count = 0
+_poll_error_window_start = 0.0
 AD_MODE_TIMEOUT_SEC = 3600
 REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-07-22-quality-banner-lead-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -420,6 +425,37 @@ def telegram_urlopen(request: urllib.request.Request, timeout: int = 60):
     return _TELEGRAM_OPENER.open(request, timeout=timeout)
 
 
+def touch_heartbeat() -> None:
+    try:
+        HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HEARTBEAT_FILE.write_text(
+            json.dumps({'ts': time.time(), 'version': BOT_VERSION}),
+            encoding='utf-8',
+        )
+    except OSError as exc:
+        logging.debug('heartbeat write failed: %s', exc)
+
+
+def _record_poll_error() -> None:
+    global _poll_error_count, _poll_error_window_start
+    now = time.time()
+    if now - _poll_error_window_start > POLL_ERROR_ALERT_WINDOW_SEC:
+        _poll_error_window_start = now
+        _poll_error_count = 0
+    _poll_error_count += 1
+    if _poll_error_count >= POLL_ERROR_ALERT_THRESHOLD:
+        errors = _poll_error_count
+        _poll_error_count = 0
+        try:
+            notify_owner(
+                f'⚠️ Telegram bot ({BOT_VERSION}): {errors} ошибок poll loop за '
+                f'{POLL_ERROR_ALERT_WINDOW_SEC // 60} мин.\n'
+                f'Проверь {LOG_FILE}'
+            )
+        except Exception:
+            logging.exception('poll error alert failed')
+
+
 def api_call(method: str, payload: dict | None = None, timeout: int = 60):
     data = json.dumps(payload or {}).encode('utf-8')
     request = urllib.request.Request(
@@ -623,7 +659,7 @@ def _handle_shooter_vseg_callback(
     message_id: int,
     query_id: str,
 ) -> bool:
-    """Handle pubg_vseg_* / standoff_vseg_* callbacks. Returns True if handled."""
+    """Handle {game}_vseg_* callbacks for PUBG/Standoff/Genshin/WoT. Returns True if handled."""
     prefix = f'{game.strip().lower()}_vseg'
     if not data.startswith(f'{prefix}_'):
         return False
@@ -762,13 +798,7 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
-        if is_good:
-            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ file only via 📁 Download — never auto-send on 👍
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -938,6 +968,9 @@ def _handle_game_shorts_callback(
     prefix = g
     if not data.startswith(f'{prefix}_'):
         return False
+    # VOD segment callbacks are `{game}_vseg_*` — never treat as Shorts calibration.
+    if data.startswith(f'{prefix}_vseg_'):
+        return False
 
     if data == f'{prefix}_noop':
         api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
@@ -1106,7 +1139,8 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    # VOD segment buttons for all non-MLBB games (pubg/standoff/genshin/wot).
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -1119,18 +1153,19 @@ def handle_callback_query(query: dict) -> None:
     if data.startswith('mlbb_hq:'):
         item_id = data.split(':', 1)[1].strip()
         try:
-            ok = _mlbb_send_hq_file(chat_id, item_id)
             api_call(
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
-                    'show_alert': not ok,
+                    'text': 'Отправляю HQ файл…',
                 },
                 timeout=15,
             )
-            if not ok:
-                send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
+            threading.Thread(
+                target=_mlbb_hq_callback_worker,
+                args=(chat_id, item_id),
+                daemon=True,
+            ).start()
         except Exception as exc:
             logging.exception('mlbb_hq callback failed data=%s', data)
             api_call(
@@ -1143,21 +1178,19 @@ def handle_callback_query(query: dict) -> None:
     if data.startswith('mlbb_vseg_hq:'):
         item_id = data.split(':', 1)[1].strip()
         try:
-            ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
             api_call(
                 'answerCallbackQuery',
                 {
                     'callback_query_id': query_id,
-                    'text': 'HQ файл отправлен' if ok else 'Не удалось отправить HQ',
-                    'show_alert': not ok,
+                    'text': 'Отправляю HQ файл…',
                 },
                 timeout=15,
             )
-            if not ok:
-                send_message(
-                    chat_id,
-                    f'HQ файл для #{item_id} не отправился (нет файла на диске).',
-                )
+            threading.Thread(
+                target=_mlbb_vseg_hq_callback_worker,
+                args=(chat_id, item_id),
+                daemon=True,
+            ).start()
         except Exception as exc:
             logging.exception('mlbb_vseg_hq callback failed data=%s', data)
             api_call(
@@ -1347,13 +1380,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'vseg' and is_good:
-            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+        # HQ file only via 📁 Download button — never auto-send on 👍
     except Exception as exc:
         try:
             api_call(
@@ -1817,6 +1844,105 @@ def download_file(file_url: str, destination: Path):
         response = urllib.request.urlopen(request, timeout=300)
     with response, destination.open('wb') as handle:
         shutil.copyfileobj(response, handle)
+
+
+def _mlbb_hq_callback_worker(chat_id: str, item_id: str) -> None:
+    try:
+        ok = _mlbb_send_hq_file(chat_id, item_id)
+        if not ok:
+            send_message(chat_id, f'HQ файл для #{item_id} не отправился (нет файла или >50MB).')
+    except Exception as exc:
+        logging.exception('mlbb_hq callback worker failed item_id=%s', item_id)
+        send_message(chat_id, f'Ошибка HQ: {exc}'[:500])
+
+
+def _mlbb_vseg_hq_callback_worker(chat_id: str, item_id: str) -> None:
+    try:
+        ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
+        if not ok:
+            send_message(
+                chat_id,
+                f'HQ файл для #{item_id} не отправился (нет файла на диске).',
+            )
+    except Exception as exc:
+        logging.exception('mlbb_vseg_hq callback worker failed item_id=%s', item_id)
+        send_message(chat_id, f'Ошибка HQ: {exc}'[:500])
+
+
+def _video_url_worker(chat_id: str, url: str) -> None:
+    try:
+        saved = save_video_from_url(url, chat_id)
+        pending_count = count_pending(chat_id)
+        send_message(
+            chat_id,
+            f'Видео в очереди: {saved.name} ({pending_count} шт.). Можно /make.',
+        )
+    except Exception as exc:
+        logging.exception('video url download failed')
+        send_message(chat_id, f'Не скачалось по ссылке: {exc}\n\n{video_upload_help_text(True)}')
+
+
+def _video_upload_worker(
+    chat_id: str,
+    message: dict,
+    media: dict,
+    caption: str,
+    limited: bool,
+) -> None:
+    pending_dir = chat_pending_dir(chat_id)
+    try:
+        file_url = get_file_url(media['file_id'])
+        destination = pending_dir / f"{int(time.time())}_{media['file_unique_id']}{media['ext']}"
+        download_file(file_url, destination)
+    except Exception as exc:
+        logging.exception('video download failed chat=%s', chat_id)
+        send_message(
+            chat_id,
+            video_upload_help_text(is_owner(chat_id)) + f'\n\nОшибка Telegram: {exc}',
+        )
+        return
+    label = game_label_for_chat(chat_id, caption)
+    if is_standoff_exemplar_mode(chat_id):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Режим /upload_standoff2 только для владельца.')
+            return
+        try:
+            saved = store_standoff_exemplar_video(chat_id, destination, label)
+            total = count_standoff_exemplar_clips()
+            send_message(
+                chat_id,
+                f'Сохранил Standoff exemplar: {saved.name}\n'
+                f'Всего: {total} шт. Ещё клипы или /upload_standoff2_done.',
+            )
+        except Exception as exc:
+            logging.exception('standoff exemplar save failed')
+            send_message(chat_id, f'Не удалось сохранить exemplar: {exc}')
+        return
+    if is_vk_mlbb_upload_mode(chat_id):
+        if not is_owner(chat_id):
+            send_message(chat_id, 'Режим /upload_vkmlbb только для владельца.')
+            return
+        try:
+            saved = enqueue_vk_mlbb_video(chat_id, destination, label)
+            q = count_vk_mlbb_pending()
+            send_message(
+                chat_id,
+                f'В очередь VK MLBB: {saved.name}\n'
+                f'Всего в очереди: {q} шт. (по 3 за слот: 09:00 / 13:30 / 18:00 МСК).\n'
+                'Ещё видео или /upload_vkmlbb_done.',
+            )
+        except Exception as exc:
+            logging.exception('vk mlbb enqueue failed')
+            send_message(chat_id, f'Не удалось добавить в очередь VK: {exc}')
+        return
+    append_pending(chat_id, destination, label)
+    spawn_pubg_learning(destination, chat_id)
+    pending_count = count_pending(chat_id)
+    if chat_id in AUTO_MAKE_CHAT_IDS:
+        send_upload_status(chat_id, pending_count)
+        start_processing(chat_id, only_paths=[destination])
+        return
+    send_upload_status(chat_id, pending_count)
 
 
 def extract_photo(message: dict):
@@ -3397,7 +3523,12 @@ def handle_message(message: dict):
         if is_wm_mode(chat_id) or (
             is_owner(chat_id) and cap_cmd in ('/wm_test', '/test_wm', '/wm')
         ):
-            process_wm_photo(chat_id, message)
+            send_message(chat_id, 'Обрабатываю фото водяного знака…')
+            threading.Thread(
+                target=process_wm_photo,
+                args=(chat_id, message),
+                daemon=True,
+            ).start()
             return
         if is_ad_mode(chat_id):
             saved = save_ad_photo(chat_id, message)
@@ -3434,17 +3565,12 @@ def handle_message(message: dict):
     if is_owner(chat_id) and text and 'http' in text and not text.startswith('/'):
         url = parse_research_url(text)
         if url and looks_like_video_url(url):
-            send_message(chat_id, 'Качаю видео по ссылке на сервер (может занять несколько минут)…')
-            try:
-                saved = save_video_from_url(url, chat_id)
-                pending_count = count_pending(chat_id)
-                send_message(
-                    chat_id,
-                    f'Видео в очереди: {saved.name} ({pending_count} шт.). Можно /make.',
-                )
-            except Exception as exc:
-                logging.exception('video url download failed')
-                send_message(chat_id, f'Не скачалось по ссылке: {exc}\n\n{video_upload_help_text(True)}')
+            send_message(chat_id, 'Качаю видео по ссылке на сервер (в фоне, бот не зависает)…')
+            threading.Thread(
+                target=_video_url_worker,
+                args=(chat_id, url),
+                daemon=True,
+            ).start()
             return
         if url and looks_like_research_url(url):
             send_message(chat_id, 'Вижу ссылку — качаю на сервер…')
@@ -3522,65 +3648,18 @@ def handle_message(message: dict):
         send_message(chat_id, video_upload_help_text(is_owner(chat_id)))
         return
 
-    pending_dir = chat_pending_dir(chat_id)
-    try:
-        file_url = get_file_url(media['file_id'])
-        destination = pending_dir / f"{int(time.time())}_{media['file_unique_id']}{media['ext']}"
-        download_file(file_url, destination)
-    except Exception as exc:
-        logging.exception('video download failed chat=%s', chat_id)
-        send_message(
-            chat_id,
-            video_upload_help_text(is_owner(chat_id)) + f'\n\nОшибка Telegram: {exc}',
-        )
-        return
-    label = game_label_for_chat(chat_id, caption)
-    if is_standoff_exemplar_mode(chat_id):
-        if not is_owner(chat_id):
-            send_message(chat_id, 'Режим /upload_standoff2 только для владельца.')
-            return
-        try:
-            saved = store_standoff_exemplar_video(chat_id, destination, label)
-            total = count_standoff_exemplar_clips()
-            send_message(
-                chat_id,
-                f'Сохранил Standoff exemplar: {saved.name}\n'
-                f'Всего: {total} шт. Ещё клипы или /upload_standoff2_done.',
-            )
-        except Exception as exc:
-            logging.exception('standoff exemplar save failed')
-            send_message(chat_id, f'Не удалось сохранить exemplar: {exc}')
-        return
-    if is_vk_mlbb_upload_mode(chat_id):
-        if not is_owner(chat_id):
-            send_message(chat_id, 'Режим /upload_vkmlbb только для владельца.')
-            return
-        try:
-            saved = enqueue_vk_mlbb_video(chat_id, destination, label)
-            q = count_vk_mlbb_pending()
-            send_message(
-                chat_id,
-                f'В очередь VK MLBB: {saved.name}\n'
-                f'Всего в очереди: {q} шт. (по 3 за слот: 09:00 / 13:30 / 18:00 МСК).\n'
-                'Ещё видео или /upload_vkmlbb_done.',
-            )
-        except Exception as exc:
-            logging.exception('vk mlbb enqueue failed')
-            send_message(chat_id, f'Не удалось добавить в очередь VK: {exc}')
-        return
-    append_pending(chat_id, destination, label)
-    spawn_pubg_learning(destination, chat_id)
-    pending_count = count_pending(chat_id)
-    if chat_id in AUTO_MAKE_CHAT_IDS:
-        send_upload_status(chat_id, pending_count)
-        start_processing(chat_id, only_paths=[destination])
-        return
-    send_upload_status(chat_id, pending_count)
+    send_message(chat_id, 'Скачиваю видео с Telegram…')
+    threading.Thread(
+        target=_video_upload_worker,
+        args=(chat_id, message, media, caption, limited),
+        daemon=True,
+    ).start()
 
 
 def main():
     api_call('deleteWebhook', {'drop_pending_updates': False}, timeout=30)
     register_bot_commands()
+    touch_heartbeat()
     state = _bot_state()
     me = api_call('getMe', timeout=30)
     logging.info(
@@ -3601,9 +3680,11 @@ def main():
                 },
                 timeout=POLL_TIMEOUT + 10,
             )
+            touch_heartbeat()
             for update in updates:
                 state['last_update_id'] = update['update_id']
                 save_state(state)
+                touch_heartbeat()
                 callback = update.get('callback_query')
                 if callback:
                     handle_callback_query(callback)
@@ -3613,6 +3694,7 @@ def main():
                     handle_message(message)
         except Exception:
             logging.exception('poll loop error')
+            _record_poll_error()
             time.sleep(5)
 
 

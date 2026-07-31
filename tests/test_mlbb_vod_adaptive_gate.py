@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_adaptive_gate import (  # noqa: E402
@@ -30,32 +32,116 @@ def test_soften_after_three_zeros():
     assert soften_level(0) == 0
     assert soften_level(2) == 0
     assert soften_level(3) == 1
-    assert soften_level(5) == 1
-    assert soften_level(6) == 2
+    assert soften_level(4) == 2
+    assert soften_level(5) == 2
+    assert soften_level(6) == 3
+    assert soften_level(10) == 3
 
 
-def test_soft_overrides_disable_banner_prefilter():
-    ov = overrides_for_level(1)
-    assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
-    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
-
-
-def test_l1_skips_presend_banner_and_motion_anchor():
-    ov = overrides_for_level(1)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
-    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
-
-
-def test_l2_skips_presend_banner():
+def test_l2_does_not_hard_skip_on_banner_miss(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MLBB_ADAPTIVE_ALLOW_SINGLE", raising=False)
     ov = overrides_for_level(2)
+    # Soften keeps hard miss skip — teamfight fallback ships ally junk.
+    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "1"
+    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "1"
+    # Soften must still require kill banners — motion-only was shipping junk.
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    # Presend OCR hangs — keep off under soften too.
     assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_MONTAGE"] == "1"
+    assert ov["MLBB_SKIP_MONTAGE"] == "0"
+    assert ov["MLBB_VOD_SEND_ONE"] == "0"
+    # Soften must NOT drop to OCR singles (false kill spam).
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+
+
+def test_l2_allow_single_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "1")
+    ov = overrides_for_level(2)
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+
+
+def test_l3_keeps_banner_and_multi_send():
+    ov = overrides_for_level(3)
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_BANNER_HARD_PREFILTER"] == "1"
+    assert ov["MLBB_VOD_BANNER_SKIP_ON_MISS"] == "1"
+    assert ov["MLBB_VOD_MONTAGE"] == "1"
+    assert ov["MLBB_SKIP_MONTAGE"] == "0"
+    assert ov["MLBB_VOD_SEND_ONE"] == "0"
+    # Soften must not reopen the farming floodgates.
+    assert float(ov["MLBB_RULE_COMBAT_MIN"]) >= 0.80
+    assert float(ov["HIGHLIGHT_MLBB_AUTO_CLIP_MIN"]) >= 0.11
+    assert float(ov["MLBB_TEAMFIGHT_MIN_SCORE"]) >= 0.40
+
+
+def test_mlbb_rule_gate_rejects_farming_hud(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MLBB_FIGHT_MIN_MOTION", "0.038")
+    monkeypatch.setenv("MLBB_FIGHT_MIN_MINIMAP", "0.016")
+    monkeypatch.setenv("MLBB_FIGHT_MIN_SKILL", "0.014")
+    monkeypatch.setenv("HIGHLIGHT_MLBB_AUTO_CLIP_MIN", "0.10")
+    monkeypatch.setenv("MLBB_RULE_COMBAT_MIN", "0.85")
+    from highlight_scorer import HighlightMetrics, rule_gate
+
+    farm = HighlightMetrics(
+        start=100,
+        duration=15,
+        profile="mobile_legends",
+        clip_score=0.22,
+        center_motion=0.02,
+        minimap_delta=0.013,
+        skill_delta=0.008,
+        visual_pass=True,
+    )
+    ok, reason = rule_gate("mobile_legends", farm)
+    assert ok is False
+    assert "combat_low" in reason or "motion_low" in reason or "minimap_low" in reason or "skill_low" in reason
+
+    fight = HighlightMetrics(
+        start=200,
+        duration=15,
+        profile="mobile_legends",
+        clip_score=0.22,
+        center_motion=0.09,
+        minimap_delta=0.04,
+        skill_delta=0.03,
+        visual_pass=True,
+    )
+    ok2, reason2 = rule_gate("mobile_legends", fight)
+    assert ok2 is True
+    assert "mlbb_fight_ok" in reason2
+
+
+def test_soft_overrides_keep_banner_required():
+    ov = overrides_for_level(1)
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+
+
+def test_l1_keeps_banner_discover():
+    ov = overrides_for_level(1)
+    assert ov["MLBB_VOD_BANNER_DISCOVER"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+
+
+def test_l2_keeps_double_floor_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MLBB_ADAPTIVE_ALLOW_SINGLE", raising=False)
+    ov = overrides_for_level(2)
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
 
 
 def test_l2_lenient_uniform_for_presend_tail():
     ov = overrides_for_level(2)
     assert ov["MLBB_VOD_LENIENT_UNIFORM"] == "1"
-    assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.40
+    assert float(ov["MLBB_VOD_TAIL_MIN_HUD_RATE"]) <= 0.42
 
 
 def test_peak_near_skipped_import():
@@ -78,7 +164,8 @@ def test_adaptive_env_restores():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     with adaptive_env(3) as level:
         assert level == 1
-        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+        assert os.environ["MLBB_KILL_BANNER_REQUIRED"] == "1"
     assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
 
 

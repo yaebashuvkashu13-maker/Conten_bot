@@ -128,3 +128,82 @@ def read_frame_at(
                 return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
             return frame
     return ffmpeg_read_frame(path, t_sec, width=width, height=height)
+
+
+def ensure_h264_mp4(
+    path: Path,
+    *,
+    force: bool = False,
+    timeout_sec: int | None = None,
+) -> Path:
+    """
+    Transcode AV1/VP9/HEVC VODs to H.264 in-place for OpenCV + dense OCR speed.
+
+    ffmpeg_read_frame can decode AV1, but 1 Hz dense scans spawn hundreds of
+    ffmpeg processes and stall for hours. Prefer H.264 after download when
+    MLBB_VOD_ENSURE_H264=1 (default).
+    """
+    import logging
+    import os
+    import shutil
+
+    log = logging.getLogger("video_frame_io")
+    path = Path(path)
+    if not path.is_file():
+        return path
+    if os.environ.get("MLBB_VOD_ENSURE_H264", "1") != "1" and not force:
+        return path
+    codec = video_codec_name(path)
+    if codec in ("h264", "avc", "avc1", "mpeg4") and not force:
+        return path
+    if codec not in FFMPEG_CODECS and not force:
+        return path
+    out = path.with_suffix(".h264.mp4")
+    tmp = path.with_suffix(".h264.tmp.mp4")
+    # Drop stale partials from interrupted runs.
+    for stale in (tmp, out):
+        try:
+            if stale.exists() and stale.stat().st_size < 1_000_000:
+                stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.environ.get("MLBB_VOD_H264_PRESET", "veryfast"),
+        "-crf",
+        os.environ.get("MLBB_VOD_H264_CRF", "23"),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(tmp),
+    ]
+    to = timeout_sec
+    if to is None:
+        to = int(os.environ.get("MLBB_VOD_H264_TIMEOUT", "3600"))
+    log.info("ensure_h264 %s codec=%s -> h264", path.name, codec or "?")
+    proc = subprocess.run(cmd, check=False, timeout=max(60, to))
+    if proc.returncode != 0 or not tmp.is_file() or tmp.stat().st_size < 1_000_000:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        log.warning("ensure_h264 failed %s code=%s", path.name, proc.returncode)
+        return path
+    try:
+        tmp.replace(path)
+    except OSError:
+        shutil.move(str(tmp), str(path))
+    log.info("ensure_h264 ok %s", path.name)
+    return path

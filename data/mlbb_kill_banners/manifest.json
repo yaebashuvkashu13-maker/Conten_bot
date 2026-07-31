@@ -1,0 +1,216 @@
+{
+  "updated_at": "2026-07-07 11:57:23",
+  "root": "/workspace/data/mlbb_kill_banners",
+  "count": 13,
+  "refs": [
+    {
+      "name": "classic",
+      "source": "wiki",
+      "path": "wiki/classic.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "shinto_shrine",
+      "source": "wiki",
+      "path": "wiki/shinto_shrine.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "crystal",
+      "source": "wiki",
+      "path": "wiki/crystal.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "starlight",
+      "source": "wiki",
+      "path": "wiki/starlight.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "summer_gala",
+      "source": "wiki",
+      "path": "wiki/summer_gala.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "lightborn_declaration",
+      "source": "wiki",
+      "path": "wiki/lightborn_declaration.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "blazing_west",
+      "source": "wiki",
+      "path": "wiki/blazing_west.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "star_wars",
+      "source": "wiki",
+      "path": "wiki/star_wars.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "transformers",
+      "source": "wiki",
+      "path": "wiki/transformers.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "twilight_orb",
+      "source": "wiki",
+      "path": "wiki/twilight_orb.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "m3_glorious",
+      "source": "wiki",
+      "path": "wiki/m3_glorious.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "showdown",
+      "source": "wiki",
+      "path": "wiki/showdown.png",
+      "tier_hint": "unknown"
+    },
+    {
+      "name": "say_cheese",
+      "source": "wiki",
+      "path": "wiki/say_cheese.png",
+      "tier_hint": "unknown"
+    }
+  ],
+  "wiki_download": [
+    {
+      "name": "classic",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/8/85/Classic_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/classic.png",
+      "ok": true,
+      "bytes": 4280
+    },
+    {
+      "name": "shinto_shrine",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/5/54/Shinto_Shrine_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/shinto_shrine.png",
+      "ok": true,
+      "bytes": 5512
+    },
+    {
+      "name": "crystal",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/9/9e/Crystal_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/crystal.png",
+      "ok": true,
+      "bytes": 4376
+    },
+    {
+      "name": "starlight",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/c/cb/Starlight_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/starlight.png",
+      "ok": true,
+      "bytes": 4756
+    },
+    {
+      "name": "summer_gala",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/c/c6/Summer_Gala_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/summer_gala.png",
+      "ok": true,
+      "bytes": 4640
+    },
+    {
+      "name": "lightborn_declaration",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/5/53/Lightborn%27s_Declaration_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/lightborn_declaration.png",
+      "ok": true,
+      "bytes": 4728
+    },
+    {
+      "name": "blazing_west",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/a/ae/Blazing_West_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/blazing_west.png",
+      "ok": true,
+      "bytes": 4198
+    },
+    {
+      "name": "star_wars",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/9/94/MLBB_x_Star_Wars_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/star_wars.png",
+      "ok": true,
+      "bytes": 4816
+    },
+    {
+      "name": "transformers",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/3/37/One_shall_stand%2C_one_shall_fall._Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/transformers.png",
+      "ok": true,
+      "bytes": 4484
+    },
+    {
+      "name": "twilight_orb",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/e/e5/Twilight_Orb_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/twilight_orb.png",
+      "ok": true,
+      "bytes": 4666
+    },
+    {
+      "name": "m3_glorious",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/0/0d/M3_Glorious_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/m3_glorious.png",
+      "ok": true,
+      "bytes": 5068
+    },
+    {
+      "name": "showdown",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/c/c8/Showdown_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/showdown.png",
+      "ok": true,
+      "bytes": 5102
+    },
+    {
+      "name": "say_cheese",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/3/38/Notification_Say_Cheese%21_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/say_cheese.png",
+      "ok": true,
+      "bytes": 5046
+    },
+    {
+      "name": "jujutsu_kaisen",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/4/4f/Jujutsu_Kaisen_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/jujutsu_kaisen.png",
+      "ok": false,
+      "bytes": 0
+    },
+    {
+      "name": "attack_on_titan",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/4/4e/Attack_on_Titan_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/attack_on_titan.png",
+      "ok": false,
+      "bytes": 0
+    },
+    {
+      "name": "hunter_x_hunter",
+      "source": "wiki",
+      "url": "https://static.wikia.nocookie.net/mobile-legends/images/1/1a/HUNTER%C3%97HUNTER_Killing_Notification.png/revision/latest",
+      "path": "/workspace/data/mlbb_kill_banners/wiki/hunter_x_hunter.png",
+      "ok": false,
+      "bytes": 0
+    }
+  ],
+  "vod_extract": []
+}
