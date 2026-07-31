@@ -1399,9 +1399,12 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
                 post = float(os.environ.get("MLBB_BANNER_POST_SEC", "3"))
                 if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1" and banner_sec is not None:
                     try:
-                        from mlbb_fight_segment import banner_post_sec
+                        from mlbb_fight_segment import banner_post_sec, banner_lead_sec
 
                         post = banner_post_sec()
+                        tier_i = int(meta.get("banner_tier") or meta.get("kill_banner_tier") or 0)
+                        lead_cap = banner_lead_sec(tier_i or 1)
+                        start = max(start, float(banner_sec) - lead_cap)
                     except Exception:
                         pass
                     end = min(end, float(banner_sec) + post)
@@ -1838,6 +1841,82 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         return False, reason, report
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
+        # Always-on quality gates (even when BANNER_PRESEND=0). AJxz OCR-single
+        # shipped ally double because full presend block was skipped.
+        tier_i = 0
+        try:
+            tier_raw = row.get("kill_banner_tier")
+            if tier_raw is None and isinstance(row.get("kill_banner"), dict):
+                tier_raw = (row.get("kill_banner") or {}).get("tier")
+            tier_i = int(tier_raw) if tier_raw is not None else 0
+        except (TypeError, ValueError):
+            tier_i = 0
+        src = str(
+            row.get("banner_source")
+            or row.get("kill_banner_source")
+            or (row.get("clip") or {}).get("banner_source")
+            or ""
+        ).lower()
+        label = str(row.get("kill_banner") or "").lower()
+        if isinstance(row.get("kill_banner"), dict):
+            label = str((row.get("kill_banner") or {}).get("label") or label).lower()
+            if not src:
+                src = str((row.get("kill_banner") or {}).get("source") or "").lower()
+        banner_sec = float(row.get("banner_sec", peak_start) or peak_start)
+        # Cap absurd preroll on the row itself (defense if bounds drifted).
+        try:
+            from mlbb_fight_segment import banner_lead_sec, banner_post_sec
+
+            lead_cap = banner_lead_sec(tier_i or 1)
+            post_cap = banner_post_sec()
+            if cut_start < banner_sec - lead_cap - 0.5:
+                return (
+                    False,
+                    f"preroll_too_long={banner_sec - cut_start:.1f}>{lead_cap:.1f}",
+                    report,
+                )
+            clip_end = cut_start + dur
+            if clip_end > banner_sec + post_cap + 1.0:
+                return (
+                    False,
+                    f"post_tail_too_long={clip_end - banner_sec:.1f}>{post_cap:.1f}",
+                    report,
+                )
+        except Exception as exc:
+            log.debug("preroll/post gate skip: %s", exc)
+        if os.environ.get("MLBB_PRESEND_OWN_KILL_RECHECK", "1") == "1":
+            try:
+                from gameplay_gate import _read_frame_at
+                from mlbb_banner_hero_match import validate_own_kill_frame
+
+                fr = _read_frame_at(vod, banner_sec)
+                if fr is not None:
+                    ok_own, own_reason = validate_own_kill_frame(fr, vod=vod)
+                    report["own_kill_recheck"] = own_reason
+                    if not ok_own:
+                        return False, f"own_kill_recheck:{own_reason}", report
+                    if (
+                        (src.startswith("ocr") or src.startswith("color") or not src)
+                        and tier_i <= 2
+                        and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_HUD", "1") == "1"
+                        and not str(own_reason).startswith("hud_killer_ok")
+                    ):
+                        return False, f"ocr_single_no_hud:{own_reason}", report
+            except Exception as exc:
+                log.warning("own_kill recheck failed: %s", exc)
+                return False, f"own_kill_recheck_error:{exc}", report
+        # OCR singles: reject unless HUD-confirmed own kill (or explicit allow).
+        allow_ocr_single = os.environ.get("MLBB_ALLOW_OCR_SINGLE_SEND", "0") == "1"
+        hud_own = str(report.get("own_kill_recheck") or "").startswith("hud_killer_ok")
+        if (
+            os.environ.get("MLBB_BANNER_REJECT_OCR_SINGLE", "1") == "1"
+            and tier_i <= 1
+            and (src.startswith("ocr") or label in {"single", "single_weak"} or not src)
+            and not allow_ocr_single
+            and not hud_own
+        ):
+            return False, f"ocr_single_reject:{label or src or 'tier1'}", report
+
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
         montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
         if presend_banner:
@@ -1849,7 +1928,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 _may_trust_discover_banner,
             )
 
-            banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
             # Never blind-trust OCR "single" discover hits — they FPs on HUD noise
             # (asSYCsoCSPs_959: trusted_discover:single with no real kill).
             trust_discover = _may_trust_discover_banner(row)
@@ -1904,8 +1982,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         f"kill_banner_tier_low={tier_i}:need>={min_tier}",
                         report,
                     )
-                # OCR-only singles: blocked by default (HUD FP). Allowed inside
-                # montage when MLBB_PRESEND_MONTAGE_SINGLE / ALLOW_OCR_SINGLE.
+                # Legacy OCR-single block kept for when full presend is on.
                 src = str(
                     row.get("banner_source")
                     or row.get("kill_banner_source")
@@ -3488,8 +3565,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_POST_SEC": "3",
         "MLBB_FIGHT_POST_SEC": "3",
         "MLBB_BANNER_HARD_POST_CUT": "1",
+        "MLBB_KILL_BANNER_LEAD_SEC": "8",
+        "MLBB_VOD_LEAD_SEC": "8",
+        "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
+        "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
+        "MLBB_ALLOW_OCR_SINGLE_SEND": "0",
         # Discover: fight-first spends budget on fight peaks; abort fast on miss.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "1",
@@ -3608,6 +3690,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_SKIP_CLIP_SCORE",
         "MLBB_BANNER_REJECT_OCR_SINGLE",
         "MLBB_BANNER_OCR_WEAK_SINGLE",
+        "MLBB_BANNER_HARD_POST_CUT",
+        "MLBB_KILL_BANNER_LEAD_SEC",
+        "MLBB_VOD_LEAD_SEC",
+        "MLBB_OCR_SINGLE_REQUIRE_HUD",
+        "MLBB_PRESEND_OWN_KILL_RECHECK",
+        "MLBB_ALLOW_OCR_SINGLE_SEND",
         "MLBB_ADAPTIVE_ALLOW_SINGLE",
         "MLBB_BANNER_SEND_MIN_TIER",
         "MLBB_KILL_BANNER_QUICK_AFTER",

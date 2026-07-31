@@ -567,6 +567,23 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
             _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
             log.info("banner own_kill reject sec=%s tier=%s reason=%s", hit.sec, hit.tier, reason)
             return None
+        # OCR singles/doubles: require HUD portrait match. Icon-only / unverifiable
+        # accepts shipped ally doubles (AJxz second beat in #AJxzNqHrlyo_294).
+        src = str(getattr(hit, "source", "") or "").lower()
+        if (
+            src in {"ocr", "color"}
+            and int(hit.tier or 0) <= 2
+            and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_HUD", "1") == "1"
+            and not str(reason).startswith("hud_killer_ok")
+        ):
+            _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
+            log.info(
+                "banner own_kill reject sec=%s tier=%s reason=ocr_single_no_hud:%s",
+                hit.sec,
+                hit.tier,
+                reason,
+            )
+            return None
         _OWN_KILL_STATS["accepts"] = int(_OWN_KILL_STATS.get("accepts") or 0) + 1
         log.debug("banner own_kill ok sec=%s reason=%s", hit.sec, reason)
     except Exception as exc:
@@ -1531,14 +1548,17 @@ def bounds_from_banner(
     post = banner_post_sec()
     banner = float(banner_sec)
     file_dur = float(file_dur)
+    tier = int(banner_tier or 0)
 
     # Hard rule: stop shortly after the kill banner (last kill of this moment).
     end = min(file_dur, banner + post)
-    if fight_start is not None and fight_end is not None and float(fight_end) > float(fight_start):
-        # Keep pre-fight setup from sustain, but never follow fight_end into a run.
-        start = max(0.0, min(float(fight_start), banner - lead))
-    else:
-        start = max(0.0, banner - lead)
+    # Lead window only — fight_start may TRIM idle preroll, never extend earlier
+    # (old min(fight_start, banner-lead) pulled 18s heads of jogging).
+    start = max(0.0, banner - lead)
+    if fight_start is not None:
+        fs = float(fight_start)
+        if start < fs < banner - 1.0:
+            start = fs
 
     if banner < start:
         start = max(0.0, banner - lead)
@@ -1546,14 +1566,18 @@ def bounds_from_banner(
         end = min(file_dur, banner + max(post, 2.0))
 
     dur = end - start
-    need = max(min_d, ideal_clip_min_sec() if os.environ.get("MLBB_BANNER_IDEAL_MIN", "1") == "1" else min_d)
+    need = max(
+        min_d,
+        ideal_clip_min_sec(tier) if os.environ.get("MLBB_BANNER_IDEAL_MIN", "1") == "1" else min_d,
+    )
+    earliest = max(0.0, banner - lead)
 
     # Prefer longer pre-roll over longer post — never grow past banner+post
-    # unless the file literally starts at the banner (can't pull start left).
+    # and never start earlier than banner-lead.
     if dur < need:
-        start = max(0.0, end - need)
+        start = max(earliest, end - need)
         if banner < start:
-            start = max(0.0, banner - lead)
+            start = earliest
         dur = end - start
     if dur < min_d:
         # Only stretch end when we cannot get min_d from pre-roll (early-file banner).
@@ -1562,37 +1586,38 @@ def bounds_from_banner(
             end = min(file_dur, end + deficit)
             dur = end - start
         else:
-            start = max(0.0, end - min_d)
+            start = max(earliest, end - min_d)
             if banner < start:
-                start = max(0.0, banner - lead)
-                # Keep hard post cap when pre-roll is available.
+                start = earliest
                 end = min(file_dur, max(end, banner + post))
             dur = end - start
 
     if dur > hard_max:
-        start = max(0.0, end - hard_max)
+        start = max(earliest, end - hard_max)
         if banner < start:
-            start = max(0.0, banner - lead)
+            start = earliest
             end = min(file_dur, start + hard_max)
         dur = end - start
     elif dur > max_d:
-        start = max(0.0, end - max_d)
+        start = max(earliest, end - max_d)
         if banner < start:
-            start = max(0.0, banner - lead)
+            start = earliest
             end = min(file_dur, start + max_d)
         dur = end - start
 
-    # Banner must not sit in the last ~40% — pull start earlier, keep post short.
-    banner_rel_max = float(os.environ.get("MLBB_BANNER_MAX_REL_POS", "0.58"))
-    banner_rel = (banner - start) / max(dur, 1e-6)
-    if dur >= 10.0 and banner_rel > banner_rel_max:
-        pre = max(lead, min_d * 0.55)
-        start = max(0.0, banner - pre)
-        end = min(file_dur, banner + post)
-        dur = end - start
-        if dur < min_d and start <= 0.05:
-            end = min(file_dur, start + min_d)
+    # With hard post-cut the kill sits near the end on purpose — do NOT pull
+    # start earlier to "center" the banner (that recreated long idle heads).
+    if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") != "1":
+        banner_rel_max = float(os.environ.get("MLBB_BANNER_MAX_REL_POS", "0.58"))
+        banner_rel = (banner - start) / max(dur, 1e-6)
+        if dur >= 10.0 and banner_rel > banner_rel_max:
+            pre = max(lead, min_d * 0.55)
+            start = max(0.0, banner - pre)
+            end = min(file_dur, banner + post)
             dur = end - start
+            if dur < min_d and start <= 0.05:
+                end = min(file_dur, start + min_d)
+                dur = end - start
 
     # Final guarantee: unless early-file forced a min stretch, end ≤ banner+post.
     hard_end = min(file_dur, banner + post)

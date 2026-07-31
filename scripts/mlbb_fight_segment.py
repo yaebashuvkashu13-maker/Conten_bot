@@ -92,8 +92,16 @@ def banner_post_sec() -> float:
     return _fight_post_sec()
 
 
-def ideal_clip_min_sec() -> float:
-    return _lead_sec() + _fight_min_sec() + _fight_post_sec()
+def ideal_clip_min_sec(banner_tier: int | None = None) -> float:
+    """Minimum clip length — keep singles compact; streak banners keep longer pre-roll."""
+    tier = int(banner_tier or 0)
+    lead = banner_lead_sec(tier) if tier > 0 else _lead_sec()
+    post = _fight_post_sec()
+    # Tier 1–2: do not pad to lead+fight_min+post (~22s) — that created 18s idle heads
+    # before a single kill (AJxzNqHrlyo_294).
+    if tier <= 2:
+        return float(os.environ.get("MLBB_SINGLE_IDEAL_MIN_SEC", str(lead + post + 1.0)))
+    return lead + _fight_min_sec() + post
 
 
 _CACHE: dict[str, dict] = {}
