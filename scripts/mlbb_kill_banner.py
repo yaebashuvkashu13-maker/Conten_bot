@@ -70,6 +70,22 @@ _COORDINATION_RE = re.compile(
     re.I,
 )
 
+# Objective announces that must always veto (even inside noisy OCR).
+_STRONG_COORDINATION_RE = re.compile(
+    r"(?:"
+    r"lord\s+spawned|turtle\s+spawned|lord\s+has\s+appeared|turtle\s+has\s+appeared|"
+    r"el\s+lord\s+ha\s+aparecido|take\s+turtle|gather(?:\s+at|\s+near|\s+up)?|"
+    r"лорд\s+появил|черепаха\s+появил|к\s+лорду|к\s+черепах|соберитесь"
+    r")",
+    re.I,
+)
+
+# HUD OCR soup: clocks, ping ms, hero codes — stray "Retreat" here is not a real chat banner.
+_HUD_OCR_SOUP_RE = re.compile(
+    r"(?:\d+\s*ms\b|\b\d{1,2}[:.]\d{2}\b|\bT\d{3,}|\bX\d{2,}|\bBOnon\b)",
+    re.I,
+)
+
 _KILL_STREAK_HINT_RE = re.compile(
     r"(?:"
     r"savage|maniac|triple|double|legendary|rampage|shutdown|first\s+blood|"
@@ -286,10 +302,18 @@ def is_coordination_banner_text(text: str) -> bool:
     blob = str(text or "")
     if not blob:
         return False
+    if _KILL_STREAK_HINT_RE.search(blob):
+        return False
+    # Lord/Turtle / clear Gather — always veto (AJ2 / 2Ww5).
+    if _STRONG_COORDINATION_RE.search(blob):
+        return True
     if not _COORDINATION_RE.search(blob):
         return False
-    # Coordination-only HUD: no kill streak phrase.
-    return not _KILL_STREAK_HINT_RE.search(blob)
+    # Y3In5vMdlak: "05.03 T61118 X62 20 Retreat Vitality Cry" is HUD soup,
+    # not a retreat quick-chat banner over a kill.
+    if _HUD_OCR_SOUP_RE.search(blob) and len(blob) > 28:
+        return False
+    return True
 
 
 # Presend neighbor OCR must not hang for minutes (RapidOCR on wrong frames).

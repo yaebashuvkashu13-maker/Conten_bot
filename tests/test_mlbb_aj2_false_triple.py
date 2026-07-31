@@ -39,6 +39,7 @@ def test_finalize_rejects_ref_when_live_is_turtle(monkeypatch) -> None:
 
 def test_bounds_post_default_short() -> None:
     os.environ["MLBB_BANNER_POST_SEC"] = "1.5"
+    os.environ["MLBB_DOUBLE_BANNER_POST_SEC"] = "1.5"
     os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "8"
     os.environ["MLBB_BANNER_IDEAL_MIN"] = "1"
     os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
@@ -48,3 +49,15 @@ def test_bounds_post_default_short() -> None:
     start, end, dur = bounds_from_banner(433.0, 834.0, banner_tier=2)
     assert end == 434.5
     assert end - 433.0 <= 1.6
+
+
+def test_bounds_double_post_covers_combo() -> None:
+    os.environ["MLBB_BANNER_POST_SEC"] = "1.5"
+    os.environ.pop("MLBB_DOUBLE_BANNER_POST_SEC", None)
+    os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "8"
+    os.environ["MLBB_BANNER_IDEAL_MIN"] = "0"
+    os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
+    from mlbb_kill_banner import bounds_from_banner
+
+    _s, end, _d = bounds_from_banner(433.0, 834.0, banner_tier=2)
+    assert end >= 437.0

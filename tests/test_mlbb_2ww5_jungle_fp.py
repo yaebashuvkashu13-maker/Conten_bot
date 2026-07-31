@@ -16,6 +16,11 @@ def test_lord_spawned_is_coordination() -> None:
     assert is_coordination_banner_text("2909:5115 Lord Spawned")
     assert is_coordination_banner_text("El Lord ha Aparecido")
     assert not is_coordination_banner_text("DOUBLE KILL")
+    # HUD OCR soup with a stray Retreat token must not veto a real kill.
+    assert not is_coordination_banner_text(
+        "05.03 T61118 X62 20 Retreat Vitality Cry"
+    )
+    assert is_coordination_banner_text("Retreat")
 
 
 def test_presend_rejects_ocr_double_without_live_streak(monkeypatch) -> None:
