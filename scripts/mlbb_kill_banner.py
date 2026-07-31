@@ -61,8 +61,11 @@ _COORDINATION_RE = re.compile(
     r"initiate|on\s+my\s+way|request\s+backup|clear\s+lane|start\s+a\s+revolt|"
     r"assemble|hold\s+on|wait\s+for\s+me|follow\s+me|split\s+push|"
     r"destroy\s+turret|take\s+turtle|lord|turtle)\b"
+    r"|lord\s+spawned|turtle\s+spawned|lord\s+has\s+appeared|turtle\s+has\s+appeared|"
+    r"el\s+lord\s+ha\s+aparecido|eso\s+fue\s+incre"
     r"|соберитесь|собраться|в\s+атаку|отступайте|отступить|защищайте|"
-    r"на\s+меня|держите\s+линию|подкреплен|к\s+лорду|к\s+черепах|черепаха"
+    r"на\s+меня|держите\s+линию|подкреплен|к\s+лорду|к\s+черепах|черепаха|"
+    r"лорд\s+появил|черепаха\s+появил"
     r")",
     re.I,
 )

@@ -1982,34 +1982,45 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     _live_overlay_text,
                     is_coordination_banner_text,
                     is_enemy_kill_text,
+                    classify_banner_text,
                 )
 
                 fr = _read_frame_at(vod, banner_sec)
                 if fr is not None:
                     live = _live_overlay_text(fr)
+                    # Objective announce can peak 1–2s off the stored banner_sec
+                    # (2Ww5h0ffYtY_270: Lord Spawned @283, stored double @284).
+                    if not (live and is_coordination_banner_text(live)):
+                        for off in (-1.0, 1.0, -2.0, 2.0):
+                            fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
+                            if fr_n is None:
+                                continue
+                            near = _live_overlay_text(fr_n)
+                            if near and is_coordination_banner_text(near):
+                                live = near
+                                break
                     if live and is_coordination_banner_text(live):
                         return False, f"live_coordination:{live[:40]}", report
                     if live and is_enemy_kill_text(live):
                         return False, f"live_enemy:{live[:40]}", report
-                    # Merge discover label/text into OCR blob. Live RapidOCR often
-                    # only reads player names — that falsely re-armed not_kill/no_banner
-                    # and blocked every send after a successful discover hit.
-                    label_streak = {
-                        "double": "DOUBLE KILL",
-                        "triple": "TRIPLE KILL",
-                        "maniac": "MANIAC",
-                        "ruthless": "MANIAC",
-                        "savage": "SAVAGE",
-                        "legendary": "LEGENDARY",
-                        "single": "HAS BEEN SLAIN",
-                    }.get(str(label or "").lower(), "")
+                    # OCR doubles/triples: require LIVE streak text. Discover
+                    # tesseract garbage + injected "DOUBLE KILL" shipped jungle
+                    # farm as 2Ww5h0ffYtY_270.
+                    src_l = str(src or "").lower()
+                    if (
+                        (src_l.startswith("ocr") or not src_l)
+                        and int(tier_i or 0) >= 2
+                        and os.environ.get("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1") == "1"
+                    ):
+                        live_hit = classify_banner_text(live) if live else None
+                        if live_hit is None or int(live_hit.tier or 0) < 2:
+                            return False, f"ocr_multi_no_live_streak:{(live or '')[:40]}", report
+                    # Use live OCR + stored banner_text only — never invent
+                    # DOUBLE KILL from the discover label alone.
                     ocr_blob = " ".join(
                         x
                         for x in (
                             live,
-                            str(label or ""),
-                            label_streak,
-                            str(row.get("kill_banner") or ""),
                             str(row.get("banner_text") or row.get("kill_banner_text") or ""),
                         )
                         if x
@@ -3731,7 +3742,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.17",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.19",
+        "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
@@ -3869,6 +3881,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
+        "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
