@@ -23,6 +23,12 @@ from pathlib import Path
 MLBB_TITLE_RE = re.compile(r"mobile legends|mlbb|bang bang|мобайл легенд", re.I)
 LIVE_TITLE_RE = re.compile(r"🔴|\bLIVE\b|playoffs day|knockout stage|grand finals", re.I)
 INBOX = Path("/root/data/mlbb/youtube_nightly/inbox")
+PARK_DEAD = Path(
+    os.environ.get(
+        "MLBB_VOD_PARK_DEAD",
+        str(INBOX.parent / "park_dead"),
+    )
+)
 HOLD_QUOTA = Path(
     os.environ.get(
         "MLBB_VOD_HOLD_QUOTA",
@@ -653,36 +659,54 @@ def _title_promise_revive_ok(title: str) -> bool:
     return False
 
 
+def _parked_youtube_ids() -> set[str]:
+    """YouTube ids already parked as dead/junk — never re-download."""
+    if not PARK_DEAD.exists():
+        return set()
+    out: set[str] = set()
+    for path in PARK_DEAD.glob("yt_*.mp4"):
+        vid = vod_youtube_id(path)
+        if vid:
+            out.add(vid)
+    return out
+
+
 def _discovery_effective_used(used: set[str]) -> set[str]:
     """
     When discovery starves, allow re-download of VODs that previously zero-sent.
     Permanent used_youtube_ids (484+) was blocking almost every fresh search hit.
+
+    Never unblock park_dead — those were parked as junk / banner-dead and
+    re-downloading them burned ~2h of quota time (2Ww5/AJxz/UT9x).
     """
+    parked = _parked_youtube_ids()
+    effective = set(used) | parked
     if os.environ.get("MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND", "1") != "1":
-        return used
+        return effective if effective else used
     need = max(3, int(os.environ.get("MLBB_VOD_DISCOVERY_REUSE_AFTER_MISS", "3")))
     starve = _discovery_starvation_level()
     state = _load_state()
     zero_send = {str(v) for v in (state.get("zero_send_youtube_ids") or []) if v}
-    effective = set(used)
     if starve >= need and zero_send:
-        freed = effective & zero_send
+        freed = (effective & zero_send) - parked
         if freed:
             effective -= freed
             log.info(
-                "discovery reuse: unblocked %s zero-send ids (starve=%s)",
+                "discovery reuse: unblocked %s zero-send ids (starve=%s parked_blocked=%s)",
                 len(freed),
                 starve,
+                len(parked),
             )
     cap = max(120, int(os.environ.get("MLBB_USED_YOUTUBE_IDS_CAP", "220")))
     if len(effective) > cap:
-        # Drop excess IDs that are not in the live inbox registry.
+        # Drop excess IDs that are not in the live inbox registry / park_dead.
         registry_ids = {
             str(r.get("id") or "")
             for r in (state.get("vods") or [])
             if Path(str(r.get("path") or "")).exists()
         }
-        trimmable = [vid for vid in sorted(effective) if vid and vid not in registry_ids]
+        keep = registry_ids | parked
+        trimmable = [vid for vid in sorted(effective) if vid and vid not in keep]
         drop_n = len(effective) - cap
         for vid in trimmable[:drop_n]:
             effective.discard(vid)
@@ -694,6 +718,58 @@ def _discovery_effective_used(used: set[str]) -> set[str]:
                 len(effective),
             )
     return effective if effective else used
+
+
+def _should_prefetch_download(registry: list[dict]) -> bool:
+    """
+    Prefetch the next VOD only when inbox is nearly empty.
+
+    Always-on background download filled inbox with 10+ files (incl. re-parked
+    junk) while each scan still burned ~5 min on banner-miss — 2h silence.
+    """
+    if os.environ.get("MLBB_VOD_PREFETCH", "1") != "1":
+        return False
+    pickable = _inbox_pickable_count(registry)
+    if pickable > 1:
+        return False
+    max_inbox = max(1, int(os.environ.get("MLBB_VOD_INBOX_MAX", "3")))
+    inbox_n = sum(1 for p in INBOX.glob("yt_*.mp4") if p.stat().st_size > 1_000_000)
+    if inbox_n >= max_inbox:
+        return False
+    return True
+
+
+def _repark_known_dead_inbox(*, limit: int = 20) -> int:
+    """Move inbox copies of park_dead ids back to park (stop re-scanning junk)."""
+    parked = _parked_youtube_ids()
+    if not parked:
+        return 0
+    PARK_DEAD.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for path in list(INBOX.glob("yt_*.mp4")):
+        if moved >= limit:
+            break
+        vid = vod_youtube_id(path)
+        if not vid or vid not in parked:
+            continue
+        dest = PARK_DEAD / path.name
+        try:
+            if dest.exists():
+                path.unlink(missing_ok=True)
+            else:
+                path.rename(dest)
+            info = INBOX / f"{path.stem}.info.json"
+            if info.exists():
+                info_dest = PARK_DEAD / info.name
+                if info_dest.exists():
+                    info.unlink(missing_ok=True)
+                else:
+                    info.rename(info_dest)
+            moved += 1
+            log.info("re-parked inbox junk vod=%s", path.name)
+        except OSError as exc:
+            log.warning("re-park failed %s: %s", path.name, exc)
+    return moved
 
 
 def _prune_dead_registry(registry: list[dict]) -> int:
@@ -992,6 +1068,9 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
             continue
         if vid in used:
             skipped["already_used"] = skipped.get("already_used", 0) + 1
+            continue
+        if vid in _parked_youtube_ids():
+            skipped["park_dead"] = skipped.get("park_dead", 0) + 1
             continue
         if not passes_mlbb_game_title(title):
             skipped["not_mlbb"] = skipped.get("not_mlbb", 0) + 1
@@ -3126,7 +3205,7 @@ def _process_vod_segments(
         telegram_soften_notice,
     )
 
-    if auto_download:
+    if auto_download and _should_prefetch_download(registry):
         downloader.start_if_idle(registry)
     sent_total = 0
     max_per_vod = int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "0"))
@@ -3427,7 +3506,7 @@ def _process_vod_segments(
                 sent = load_feed_sent()
                 blocked_ids = labeled_set | sent
                 used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
-                if auto_download:
+                if auto_download and _should_prefetch_download(registry):
                     downloader.start_if_idle(registry)
                 if entry is not None:
                     record_vod_scan(
@@ -3683,7 +3762,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_SEND_ALL_BANNERS": "1",
         "MLBB_VOD_MAX_PER_VOD": "2",
         "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
-        "MLBB_DISCOVER_SHIP_ON_FIRST": "0",
+        "MLBB_DISCOVER_SHIP_ON_FIRST": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "20",
         "MLBB_VOD_SEGMENT_GAP_SEC": "40",
         "MLBB_VOD_INTERVAL_GAP_SEC": "10",
@@ -3741,9 +3820,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "240",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "32",
-        "MLBB_KILL_BANNER_DISCOVER_STEP": "1.5",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "90",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "20",
+        "MLBB_KILL_BANNER_DISCOVER_STEP": "2.0",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
         "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.70",
@@ -3759,12 +3838,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
-        "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "0",
+        "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
         "MLBB_KILL_BANNER_QUICK_AFTER": "6",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.45",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "8",
         # Dense only after miss streak when fight-first is on.
         "MLBB_VOD_BANNER_DENSE_SEC": "0",
@@ -3780,19 +3859,25 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Bounded discover OCR only — not presend (presend hangs on tesseract).
         "MLBB_KILL_DISCOVER_ALLOW_OCR": "1",
         "MLBB_TESSERACT_TIMEOUT_SEC": "4",
+        # Peak RapidOCR only (not dense) — Tesseract is blind on YT gold glyphs.
+        "MLBB_BANNER_DISCOVER_RAPID_PEAKS": "1",
+        "MLBB_BANNER_DISCOVER_RAPID": "0",
         # OCR on spike probes hung for minutes (OQx); ref-first is enough for quota speed.
         "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "0",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
         "MLBB_KILL_BANNER_OCR_WIDE": "0",
-        "MLBB_DISCOVER_OCR_CALL_BUDGET": "10",
+        "MLBB_DISCOVER_OCR_CALL_BUDGET": "12",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
         "INTELLICLIP_STAGE1": "0",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
         # Cooldowns: do not sit idle 30–45 min after a miss when quota is open.
-        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "120",
-        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "180",
-        "MLBB_VOD_SCAN_COOLDOWN_SEC": "300",
+        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "60",
+        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "90",
+        "MLBB_VOD_SCAN_COOLDOWN_SEC": "120",
+        # Do not fill inbox while scanning — finish pickable first.
+        "MLBB_VOD_PREFETCH": "1",
+        "MLBB_VOD_INBOX_MAX": "3",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.80",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.10",
@@ -3906,6 +3991,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS",
         "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY",
         "MLBB_VOD_BANNER_DENSE_SEC",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
         "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS",
@@ -3919,6 +4006,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_SCAN_SKIP_OCR",
         "MLBB_KILL_DISCOVER_ALLOW_OCR",
         "MLBB_TESSERACT_TIMEOUT_SEC",
+        "MLBB_BANNER_DISCOVER_RAPID_PEAKS",
+        "MLBB_BANNER_DISCOVER_RAPID",
         "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY",
         "MLBB_KILL_BANNER_OCR_WIDE",
@@ -3929,6 +4018,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_PRESEND_COOLDOWN_SEC",
         "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC",
         "MLBB_VOD_SCAN_COOLDOWN_SEC",
+        "MLBB_VOD_PREFETCH",
+        "MLBB_VOD_INBOX_MAX",
         "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():
@@ -4044,6 +4135,9 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     promoted = _promote_hold_quota_to_inbox()
     if promoted:
         log.info("promoted %s vod(s) from hold_quota", promoted)
+    reparked = _repark_known_dead_inbox()
+    if reparked:
+        log.info("re-parked %s known-dead inbox vod(s)", reparked)
 
     registry = _ensure_registry(env)
     if promoted:

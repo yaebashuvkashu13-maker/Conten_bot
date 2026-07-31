@@ -388,8 +388,17 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     # Never during dense discover: each RapidOCR subprocess reloads the model
     # (~2s) and turns a 240s budget into a multi-hour crawl.
     use_rapid = os.environ.get("MLBB_BANNER_RAPID_OCR", "1") == "1"
-    if _discover_active() and os.environ.get("MLBB_BANNER_DISCOVER_RAPID", "0") != "1":
-        use_rapid = False
+    if _discover_active():
+        phase = os.environ.get("MLBB_DISCOVER_PHASE", "peak")
+        if os.environ.get("MLBB_BANNER_DISCOVER_RAPID", "0") == "1":
+            pass  # Rapid on all discover probes (ops override)
+        elif (
+            os.environ.get("MLBB_BANNER_DISCOVER_RAPID_PEAKS", "1") == "1"
+            and phase != "dense"
+        ):
+            pass  # Rapid on fight-first / peak probes only
+        else:
+            use_rapid = False
     if use_rapid:
         try:
             from mlbb_banner_ocr import read_banner_text
@@ -1132,6 +1141,7 @@ def _discover_vod_kill_banners_inner(
     # Quota path: one fresh own-kill is enough to ship; extra OCR only burns the day.
     if os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST", "0") == "1":
         want = 1
+    os.environ["MLBB_DISCOVER_PHASE"] = "peak"
     log.info(
         "banner discover %s: start dense=%s fight_first=%s max_probes=%s max_sec=%.0f "
         "peak_budget=%.0fs need_tier=%s want=%s",
@@ -1420,6 +1430,7 @@ def _discover_vod_kill_banners_inner(
             want,
         )
     elif dense and probes < max_probes and time.monotonic() < deadline:
+        os.environ["MLBB_DISCOVER_PHASE"] = "dense"
         t0 = _discover_scan_start(vod, duration)
         if peak_hints:
             hint_floor = max(
