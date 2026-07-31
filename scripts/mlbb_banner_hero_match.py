@@ -245,8 +245,7 @@ def validate_own_kill_frame(
         if neg is not None:
             _score, reason, _path = neg
             reason_l = str(reason or "").lower()
-            # Only enemy/coordination-style neg refs. Generic not_kill/no_banner
-            # refs false-positive on real streak skins (LEGENDARY / HAS SLAIN).
+            # Enemy/coordination always veto.
             if any(
                 k in reason_l
                 for k in (
@@ -259,6 +258,23 @@ def validate_own_kill_frame(
                 )
             ):
                 return False, f"neg_ref:{reason}"
+            # not_kill/no_banner: veto when strong AND live OCR has no streak phrase.
+            # Ignored entirely before → 3lO0AHqEfxs_38 shipped jungle farm as "triple".
+            if (
+                ("not_kill" in reason_l or "no_banner" in reason_l)
+                and float(_score)
+                >= float(os.environ.get("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.48"))
+            ):
+                has_streak = False
+                if ocr_text:
+                    try:
+                        from mlbb_kill_banner import _KILL_STREAK_HINT_RE
+
+                        has_streak = bool(_KILL_STREAK_HINT_RE.search(str(ocr_text)))
+                    except Exception:
+                        has_streak = False
+                if not has_streak:
+                    return False, f"neg_ref:{reason}"
     except Exception:
         pass
 

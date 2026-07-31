@@ -524,7 +524,11 @@ def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> 
             "MLBB_BANNER_ALLOW_VOD_CROP_REF", "0"
         ) != "1":
             pos = None
-        elif neg is not None and float(neg[0]) >= float(score) - 0.02:
+        elif neg is not None and float(neg[0]) >= float(score) - float(
+            os.environ.get("MLBB_BANNER_NEG_POS_MARGIN", "0.06")
+        ):
+            # Close neg (not_kill/enemy) beats a weak pos — 3lO0 farm FP was
+            # pos=0.51 vs not_kill=0.49 with the old 0.02 margin.
             pos = None
         else:
             # Structural bar: junk FP on WTJrJ was ~0.55 hist-edge on every frame.
@@ -532,13 +536,13 @@ def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> 
             if _discover_active():
                 min_live = min(
                     min_live,
-                    float(os.environ.get("MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM", "0.38")),
+                    float(os.environ.get("MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM", "0.55")),
                 )
             reason_l = str(reason or "").lower()
             if "own_kill" in reason_l or "not_enemy" in reason_l:
                 own_min = float(os.environ.get("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "0.68"))
                 if _discover_active():
-                    own_min = min(own_min, float(os.environ.get("MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM", "0.42")))
+                    own_min = min(own_min, float(os.environ.get("MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM", "0.55")))
                 min_live = max(min_live, own_min)
             if float(score) < min_live:
                 pos = None
@@ -569,7 +573,7 @@ def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> 
         return None
     wiki_min = float(os.environ.get("MLBB_BANNER_WIKI_MIN_SIM", "0.55"))
     if _discover_active():
-        wiki_min = min(wiki_min, float(os.environ.get("MLBB_BANNER_DISCOVER_WIKI_MIN_SIM", "0.38")))
+        wiki_min = min(wiki_min, float(os.environ.get("MLBB_BANNER_DISCOVER_WIKI_MIN_SIM", "0.50")))
     if float(score) < wiki_min:
         return None
     return KillBannerHit(
