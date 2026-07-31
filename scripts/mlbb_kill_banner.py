@@ -382,7 +382,12 @@ def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
         _ocr_budget_consume()
 
     # Prefer RapidOCR — Tesseract rarely reads YT gold banner glyphs.
-    if os.environ.get("MLBB_BANNER_RAPID_OCR", "1") == "1":
+    # Never during dense discover: each RapidOCR subprocess reloads the model
+    # (~2s) and turns a 240s budget into a multi-hour crawl.
+    use_rapid = os.environ.get("MLBB_BANNER_RAPID_OCR", "1") == "1"
+    if _discover_active() and os.environ.get("MLBB_BANNER_DISCOVER_RAPID", "0") != "1":
+        use_rapid = False
+    if use_rapid:
         try:
             from mlbb_banner_ocr import read_banner_text
 
