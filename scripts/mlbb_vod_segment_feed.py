@@ -1991,8 +1991,31 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         return False, f"live_coordination:{live[:40]}", report
                     if live and is_enemy_kill_text(live):
                         return False, f"live_enemy:{live[:40]}", report
+                    # Merge discover label/text into OCR blob. Live RapidOCR often
+                    # only reads player names — that falsely re-armed not_kill/no_banner
+                    # and blocked every send after a successful discover hit.
+                    label_streak = {
+                        "double": "DOUBLE KILL",
+                        "triple": "TRIPLE KILL",
+                        "maniac": "MANIAC",
+                        "ruthless": "MANIAC",
+                        "savage": "SAVAGE",
+                        "legendary": "LEGENDARY",
+                        "single": "HAS BEEN SLAIN",
+                    }.get(str(label or "").lower(), "")
+                    ocr_blob = " ".join(
+                        x
+                        for x in (
+                            live,
+                            str(label or ""),
+                            label_streak,
+                            str(row.get("kill_banner") or ""),
+                            str(row.get("banner_text") or row.get("kill_banner_text") or ""),
+                        )
+                        if x
+                    )
                     ok_own, own_reason = validate_own_kill_frame(
-                        fr, vod=vod, ocr_text=live
+                        fr, vod=vod, ocr_text=ocr_blob
                     )
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
