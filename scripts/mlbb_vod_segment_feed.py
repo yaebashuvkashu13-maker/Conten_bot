@@ -3636,6 +3636,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_ALLOW_OCR_SINGLE_SEND": "0",
         "MLBB_PRESEND_MAX_POST_RUN_FRAC": "0.40",
         "MLBB_BANNER_LIVE_OVERLAY_OCR": "1",
+        # Read banner text (RapidOCR+fuzzy). Ref vision alone is not enough.
+        "MLBB_BANNER_RAPID_OCR": "1",
+        "MLBB_BANNER_REF_REQUIRE_OCR": "1",
+        "MLBB_BANNER_OCR_FUZZY_MIN": "0.72",
         # Discover ref floor was 0.35 → jungle farm matched as triple (3lO0).
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.55",
         "MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM": "0.55",
@@ -3776,6 +3780,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_SEND_MIN_TIER",
         "MLBB_PRESEND_MAX_POST_RUN_FRAC",
         "MLBB_BANNER_LIVE_OVERLAY_OCR",
+        "MLBB_BANNER_RAPID_OCR",
+        "MLBB_BANNER_REF_REQUIRE_OCR",
+        "MLBB_BANNER_OCR_FUZZY_MIN",
         "MLBB_PRESEND_MAX_RUN_FRAC",
         "MLBB_KILL_BANNER_QUICK_AFTER",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC",

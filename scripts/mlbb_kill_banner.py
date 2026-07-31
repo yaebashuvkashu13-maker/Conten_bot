@@ -291,10 +291,11 @@ def is_coordination_banner_text(text: str) -> bool:
 
 def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
     """
-    Cheap live OCR for coordination/enemy vetoes.
+    Live OCR for coordination/enemy vetoes and ref confirmation.
 
     Ref-bank hits carry canned text ("TRIPLE KILL") which hides live overlays
     like Take Turtle / Gather — AJ2o2jHhNfE_414 shipped a false triple that way.
+    Prefer RapidOCR (Tesseract is blind on YT gold glyphs).
     """
     if frame is None:
         return ""
@@ -305,7 +306,14 @@ def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
         saved = int(_OCR_CALL_BUDGET.get("left", -1))
         _OCR_CALL_BUDGET["left"] = -1
         try:
-            text = _ocr_banner_zones(frame, deep=False)
+            try:
+                from mlbb_banner_ocr import read_banner_text
+
+                text = read_banner_text(frame, prefer_rapid=True)
+            except Exception:
+                text = ""
+            if not text:
+                text = _ocr_banner_zones(frame, deep=False)
         finally:
             _OCR_CALL_BUDGET["left"] = saved
         return " ".join(str(text or "").split())[:max_chars]
@@ -327,9 +335,24 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
         if pat.search(blob) and tier > best_tier:
             best_tier = tier
             best_label = label
-    if best_tier <= 0:
+    if best_tier > 0:
+        return KillBannerHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:120])
+    # OCR garbage (SAWAGE, DOUBLKILL, USTENE) — fuzzy map to known labels.
+    try:
+        from mlbb_banner_ocr import fuzzy_match_banner_label
+
+        fuzzy = fuzzy_match_banner_label(blob)
+    except Exception:
+        fuzzy = None
+    if fuzzy is None:
         return None
-    return KillBannerHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:120])
+    _score, canon, tier, label = fuzzy
+    return KillBannerHit(
+        sec=0.0,
+        tier=int(tier),
+        label=str(label),
+        text=f"{blob[:80]}~{canon}"[:120],
+    )
 
 
 def _announce_color_score(frame) -> float:
@@ -352,16 +375,30 @@ def _announce_color_score(frame) -> float:
 def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
     import cv2
 
-    try:
-        import pytesseract
-    except ImportError:
-        return ""
-
     # Discover hang guard: stop after N zone-OCR calls per VOD pass.
     if _discover_active() and not _ocr_budget_ok():
         return ""
     if _discover_active():
         _ocr_budget_consume()
+
+    # Prefer RapidOCR — Tesseract rarely reads YT gold banner glyphs.
+    if os.environ.get("MLBB_BANNER_RAPID_OCR", "1") == "1":
+        try:
+            from mlbb_banner_ocr import read_banner_text
+
+            rapid_text = read_banner_text(frame, prefer_rapid=True)
+            if rapid_text and (
+                classify_banner_text(rapid_text) is not None
+                or sum(ch.isalpha() for ch in rapid_text) >= 6
+            ):
+                return rapid_text
+        except Exception as exc:
+            log.debug("rapid banner OCR failed: %s", exc)
+
+    try:
+        import pytesseract
+    except ImportError:
+        return ""
 
     # Normalize to a stable canvas, then upscale OCR crops — Tesseract is often
     # blind on raw 480p banner text (gold outline / small glyphs).
@@ -650,6 +687,36 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
                 live[:60],
             )
             return None
+        # Ref-bank vision alone ships farm/turtle FX as TRIPLE. When live OCR
+        # reads the HUD, require a streak phrase — readable non-kills are vetoed.
+        src = str(getattr(hit, "source", "") or "").lower()
+        if src.startswith("ref") and os.environ.get("MLBB_BANNER_REF_REQUIRE_OCR", "1") == "1":
+            live_hit = classify_banner_text(live) if live else None
+            if live_hit is not None and int(live_hit.tier or 0) >= 1:
+                # Prefer live OCR label when it disagrees with canned ref text.
+                if int(live_hit.tier) != int(hit.tier or 0) or str(live_hit.label) != str(hit.label):
+                    hit = KillBannerHit(
+                        sec=hit.sec,
+                        tier=int(live_hit.tier),
+                        label=str(live_hit.label),
+                        text=str(live_hit.text or live)[:120],
+                        source="ref+ocr",
+                    )
+                    ocr_text = " ".join(x for x in (str(hit.text or ""), live) if x).strip()
+            else:
+                letters = sum(ch.isalpha() for ch in (live or ""))
+                min_letters = int(os.environ.get("MLBB_BANNER_REF_OCR_MIN_LETTERS", "6"))
+                # OCR silence → keep existing ref gates. Readable HUD without a
+                # streak phrase (farm names, turtle chat) → drop the canned ref.
+                if letters >= min_letters:
+                    _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
+                    log.info(
+                        "banner own_kill reject sec=%s tier=%s reason=ref_no_ocr_streak:%s",
+                        hit.sec,
+                        hit.tier,
+                        (live or "")[:60],
+                    )
+                    return None
         ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
         if not ok:
             _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
