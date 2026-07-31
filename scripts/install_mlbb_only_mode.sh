@@ -153,6 +153,7 @@ install -m 755 \
   "$REPO/scripts/pipeline_watchdog.sh" \
   "$REPO/scripts/pubg_mlbb_pipeline.py" \
   "$REPO/scripts/daily_ops_cron.sh" \
+  "$REPO/scripts/daily_ops_stats.py" \
   "$REPO/scripts/daily_morning_plan.py" \
   "$REPO/scripts/daily_evening_report.py" \
   "$BIN/" 2>/dev/null || true

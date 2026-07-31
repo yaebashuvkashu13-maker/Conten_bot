@@ -43,6 +43,58 @@ def _pkill(*patterns: str) -> None:
         subprocess.run(["pkill", "-f", pat], check=False)
 
 
+def _vod_feed_running() -> bool:
+    patterns = (
+        "mlbb_vod_segment_feed.sh",
+        "daily_cycle_runner.py",
+        "shooter_vod_segment_feed.py",
+        "mlbb_vod_segment_feed.py",
+    )
+    for pat in patterns:
+        proc = subprocess.run(
+            ["pgrep", "-f", pat],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if (proc.stdout or "").strip():
+            return True
+    return False
+
+
+def ensure_vod_supervisor() -> bool:
+    """Start VOD feed supervisor if nothing is running. Returns True if started."""
+    if _vod_feed_running():
+        return False
+    wrapper = Path("/usr/local/bin/mlbb_vod_segment_feed.sh")
+    log_path = Path("/root/data/mlbb/vod_only_supervisor.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = log_path.open("a", encoding="utf-8")
+    if wrapper.exists():
+        subprocess.Popen(
+            [str(wrapper)],
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        return True
+    subprocess.Popen(
+        [
+            "flock",
+            "-n",
+            "/tmp/mlbb_vod_segment_feed.lock",
+            "python3",
+            "-u",
+            "/usr/local/bin/mlbb_vod_segment_feed.py",
+        ],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        env={**os.environ, "PYTHONPATH": "/usr/local/bin"},
+    )
+    return True
+
+
 def activate_shorts_mode() -> str:
     """Stop VOD feeds; enable Shorts calibration for all games."""
     _pkill(
@@ -83,10 +135,13 @@ def activate_vod_mode() -> str:
             "DAILY_GAME_CYCLE_ENABLED": "1",
         }
     )
+    started = ensure_vod_supervisor()
+    extra = "\nVOD-супервизор запущен." if started else "\nVOD-супервизор уже работает."
     return (
         "✅ Режим VOD-нарезки включён.\n"
         "Shorts-калибровка отключена.\n"
         "Команды: /mlbb_vod, дневной цикл MLBB→PUBG→Standoff."
+        f"{extra}"
     )
 
 

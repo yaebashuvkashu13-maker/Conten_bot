@@ -38,6 +38,7 @@ install_scripts() {
     gameplay_gate.py \
     smart_video_editor.py \
     publish_ready_montage.py \
+    daily_ops_stats.py \
     daily_morning_plan.py \
     daily_evening_report.py \
     daily_ops_cron.sh \

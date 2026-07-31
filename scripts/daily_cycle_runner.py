@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,8 +38,52 @@ def _notify_switch(token: str, chat_id: str, game: str) -> None:
     )
 
 
+# Launcher (/usr/local/bin/mlbb_vod_segment_feed.sh) exports quality/runtime
+# knobs after sourcing .video_bot.env. Do not let the env file win on reload —
+# that reset MLBB_VOD_AUTO_DOWNLOAD=0 and starved the feed of fresh VODs.
+_LAUNCHER_PRESERVE_KEYS = (
+    "MLBB_VOD_AUTO_DOWNLOAD",
+    "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY",
+    "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
+    "MLBB_BANNER_OWN_HUD_MIN_SIM",
+    "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
+    "MLBB_BANNER_NEG_POS_MARGIN",
+    "MLBB_BANNER_NEG_NOT_KILL_MIN",
+    "MLBB_BANNER_RAPID_OCR",
+    "MLBB_BANNER_LIVE_OVERLAY_OCR",
+    "MLBB_BANNER_DISCOVER_RAPID_PEAKS",
+    "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
+    "MLBB_DISCOVER_SHIP_ON_FIRST",
+    "MLBB_VOD_PREFETCH",
+    "MLBB_VOD_INBOX_MAX",
+    "MLBB_VOD_RELIABLE",
+    "MLBB_VOD_KEEP_BANNER_MISS",
+    "MLBB_VOD_REUSE_PEAK_POOL",
+    "VOD_POOL_TTL_SEC",
+    "MLBB_PRESEND_OWN_KILL_SINGLE",
+    "MLBB_PRESEND_LIVE_OCR_BUDGET",
+)
+
+
+def _scrub_mlbb_only_env_for_shooter(env: dict[str, str]) -> None:
+    """Launcher exports MLBB CLIP-off; shooters must score with CLIP."""
+    env["HIGHLIGHT_CLIP_DISABLED"] = "0"
+    os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
+    # Do not inherit MLBB banner OCR hang knobs into shooter highlight.
+    for key in (
+        "MLBB_BANNER_SKIP_CLIP_SCORE",
+        "MLBB_STAGE1_SKIP_CLIP_RANK",
+        "MLBB_STAGE1_SKIP_INTELLICLIP",
+    ):
+        env.pop(key, None)
+        os.environ.pop(key, None)
+
+
 def _load_runtime_env() -> dict[str, str]:
-    env = {**os.environ, **load_env(ENV_PATH)}
+    preserved = {k: os.environ[k] for k in _LAUNCHER_PRESERVE_KEYS if k in os.environ}
+    env = {**os.environ, **load_env(ENV_PATH), **preserved}
     os.environ.update(env)
     return env
 
@@ -56,11 +101,32 @@ def main() -> int:
     chat_id = env.get("TG_CHAT_ID", "").strip()
 
     if game is None:
-        log.info("all daily quotas done — idle")
-        if token and chat_id:
+        log.info("all daily quotas done — idle / post-quota montages")
+        from daily_game_cycle import mark_notified, was_notified
+
+        notify_key = f"quotas_done_{status_summary()['day']}"
+        if token and chat_id and not was_notified(notify_key):
             from mlbb_vod_segment_feed import send_message
 
-            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.")
+            send_message(
+                token,
+                chat_id,
+                "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены.\n"
+                "Дальше: по 1 склейке на игру (без повторов пиков/VOD).",
+            )
+            mark_notified(notify_key)
+        # After quotas: 1 montage per game (spread across runner ticks).
+        try:
+            from post_quota_montages import post_quota_enabled, run_once
+
+            if post_quota_enabled():
+                result = run_once(token=token, chat_id=chat_id, max_games=1)
+                log.info("post_quota_montages: %s", result)
+                # When locked / all done, avoid tight loop burn — feed.sh also sleeps.
+                if result.get("reason") in {"locked", "all_done", "disabled"}:
+                    time.sleep(float(os.environ.get("POST_QUOTA_IDLE_SEC", "20")))
+        except Exception:
+            log.exception("post_quota_montages failed")
         return 0
 
     notify_key = f"active_{game}_{status_summary()['day']}"
@@ -79,6 +145,23 @@ def main() -> int:
     else:
         script = SCRIPTS / "shooter_vod_segment_feed.py"
         env["VOD_SEGMENT_GAME"] = game
+        _scrub_mlbb_only_env_for_shooter(env)
+
+    # Future switch: when quotas are stable, ship only montages (not singles).
+    # Do NOT clear MLBB_VOD_RELIABLE — reliable already enables montage and
+    # turning it off re-opens CLIP/OCR/presend hang paths.
+    try:
+        from post_quota_montages import montage_only_mode
+
+        if montage_only_mode():
+            env["MLBB_VOD_MONTAGE"] = "1"
+            env["MLBB_SKIP_MONTAGE"] = "0"
+            env["SHOOTER_VOD_MONTAGE"] = "1"
+            env[f"{game.upper()}_VOD_MONTAGE"] = "1"
+            env["MLBB_PRESEND_REJECT_RUN"] = "1"
+            log.info("MONTAGE_ONLY_MODE active for game=%s (reliable kept)", game)
+    except Exception:
+        pass
 
     proc = subprocess.run(
         [sys.executable, "-u", str(script)] + ([] if game == "mlbb" else [game]),
