@@ -93,6 +93,7 @@ class FightSegmentBoundsTest(unittest.TestCase):
         """Tier≥3 must not let fight_start collapse streak preroll."""
         os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "14"
         os.environ["MLBB_BANNER_POST_SEC"] = "3"
+        os.environ["MLBB_TRIPLE_BANNER_POST_SEC"] = "3"
         os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
         os.environ["MLBB_BANNER_IDEAL_MIN"] = "0"
         os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
@@ -107,6 +108,33 @@ class FightSegmentBoundsTest(unittest.TestCase):
         )
         self.assertGreaterEqual(100.0 - start, 12.0)
         self.assertEqual(end, 103.0)
+
+    def test_double_post_covers_second_kill(self) -> None:
+        """UGu-style: flat 1.5s post chopped the 2nd kill; doubles need ~4s."""
+        os.environ["MLBB_BANNER_POST_SEC"] = "1.5"
+        os.environ.pop("MLBB_DOUBLE_BANNER_POST_SEC", None)
+        os.environ.pop("MLBB_STREAK_BANNER_POST_SEC", None)
+        from mlbb_fight_segment import banner_post_sec
+
+        self.assertAlmostEqual(banner_post_sec(1), 1.5)
+        self.assertGreaterEqual(banner_post_sec(2), 4.0)
+        self.assertGreaterEqual(banner_post_sec(5), 5.0)
+
+        os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "8"
+        os.environ["MLBB_BANNER_IDEAL_MIN"] = "0"
+        os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
+        os.environ["MLBB_FIGHT_MIN_SEC"] = "7"
+        from mlbb_kill_banner import bounds_from_banner
+
+        # Peak/banner at 310, second kill ~312.5 → need end >= 314.
+        _start, end, _dur = bounds_from_banner(
+            310.0,
+            480.0,
+            fight_start=280.0,
+            fight_end=320.0,
+            banner_tier=5,
+        )
+        self.assertGreaterEqual(end, 315.0)
 
 
 if __name__ == "__main__":

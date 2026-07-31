@@ -1660,15 +1660,22 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             if str(meta.get("anchor") or "") != "motion" or os.environ.get(
                 "MLBB_VOD_TRIM_MOTION_ANCHOR", "0"
             ) == "1":
-                end = trim_idle_run_end(vod, start, end, banner_sec=banner_sec)
-                # Hard cut ~3s after kill banner (banner = last kill of this moment).
+                end = trim_idle_run_end(
+                    vod,
+                    start,
+                    end,
+                    banner_sec=banner_sec,
+                    banner_tier=int(meta.get("banner_tier") or meta.get("kill_banner_tier") or 0)
+                    or None,
+                )
+                # Hard cut after kill banner (tier-aware — doubles need ~4s for 2nd kill).
                 post = float(os.environ.get("MLBB_BANNER_POST_SEC", "3"))
                 if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1" and banner_sec is not None:
                     try:
                         from mlbb_fight_segment import banner_post_sec, banner_lead_sec
 
-                        post = banner_post_sec()
                         tier_i = int(meta.get("banner_tier") or meta.get("kill_banner_tier") or 0)
+                        post = banner_post_sec(tier_i or None)
                         lead_cap = banner_lead_sec(tier_i or 1)
                         start = max(start, float(banner_sec) - lead_cap)
                     except Exception:
@@ -2116,7 +2123,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             from mlbb_fight_segment import banner_lead_sec, banner_post_sec
 
             lead_cap = banner_lead_sec(tier_i or 1)
-            post_cap = banner_post_sec()
+            post_cap = banner_post_sec(tier_i or None)
             if cut_start < banner_sec - lead_cap - 0.5:
                 return (
                     False,
@@ -3009,6 +3016,46 @@ def _send_segment_batch(
                 skipped.append(f"{sid}:render_fail")
                 continue
         presend_ok, presend_reason, presend_report = _validate_before_send(vod, row, out)
+        # Neighbor OCR found the real flash after the cut point — re-cut once so
+        # the shipped file includes the 2nd kill (UGu peak 310 vs banner 312).
+        off = float((presend_report or {}).get("own_kill_banner_off") or 0)
+        if (
+            presend_ok
+            and abs(off) >= 0.5
+            and os.environ.get("MLBB_RERENDER_ON_BANNER_OFF", "1") == "1"
+            and not row.get("_banner_off_rerendered")
+        ):
+            try:
+                new_banner = float(row.get("banner_sec") or row.get("peak_start") or 0)
+                clip = dict(row.get("clip") or {})
+                clip["banner_sec"] = new_banner
+                clip["peak_start"] = new_banner
+                if row.get("kill_banner_tier") is not None:
+                    clip["kill_banner_tier"] = row.get("kill_banner_tier")
+                if row.get("kill_banner"):
+                    clip["kill_banner"] = row.get("kill_banner")
+                row["clip"] = _normalize_clip(clip, vod)
+                row["start"] = float(row["clip"].get("start", row["start"]))
+                row["peak_start"] = float(row["clip"].get("peak_start", new_banner))
+                row["banner_sec"] = float(row["clip"].get("banner_sec", new_banner))
+                row["fight_dur"] = float(row["clip"].get("input_duration") or 0)
+                row["_banner_off_rerendered"] = True
+                # Keep segment_id stable for feedback buttons.
+                if not render_single_segment(vod, row["clip"], out):
+                    skipped.append(f"{sid}:rerender_fail")
+                    continue
+                log.info(
+                    "re-rendered %s after banner_off=%+.1f new_banner=%.1f end≈%.1f",
+                    sid,
+                    off,
+                    new_banner,
+                    float(row["start"]) + float(row.get("fight_dur") or 0),
+                )
+                presend_ok, presend_reason, presend_report = _validate_before_send(
+                    vod, row, out
+                )
+            except Exception as exc:
+                log.warning("banner_off re-render failed %s: %s", sid, exc)
         if not presend_ok:
             log.warning("presend REJECT %s reason=%s report=%s", sid, presend_reason, presend_report)
             skipped.append(f"{sid}:{presend_reason}")
@@ -3936,9 +3983,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_RUN_MIN_SKILL": "0.008",
         "MLBB_PRESEND_RUN_MIN_MINI": "0.008",
         "MLBB_PRESEND_FIGHT_HUD_MIN": "0.008",
-        "MLBB_BANNER_POST_SEC": "1.5",
-        "MLBB_FIGHT_POST_SEC": "1.5",
+        "MLBB_BANNER_POST_SEC": "2.0",
+        "MLBB_FIGHT_POST_SEC": "2.0",
+        "MLBB_DOUBLE_BANNER_POST_SEC": "4.0",
+        "MLBB_TRIPLE_BANNER_POST_SEC": "5.0",
+        "MLBB_STREAK_BANNER_POST_SEC": "5.5",
         "MLBB_BANNER_HARD_POST_CUT": "1",
+        "MLBB_RERENDER_ON_BANNER_OFF": "1",
         "MLBB_KILL_BANNER_LEAD_SEC": "8",
         "MLBB_VOD_LEAD_SEC": "8",
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
@@ -4102,6 +4153,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_HARD_POST_CUT",
         "MLBB_BANNER_POST_SEC",
         "MLBB_FIGHT_POST_SEC",
+        "MLBB_DOUBLE_BANNER_POST_SEC",
+        "MLBB_TRIPLE_BANNER_POST_SEC",
+        "MLBB_STREAK_BANNER_POST_SEC",
+        "MLBB_RERENDER_ON_BANNER_OFF",
         "MLBB_KILL_BANNER_LEAD_SEC",
         "MLBB_VOD_LEAD_SEC",
         "MLBB_OCR_SINGLE_REQUIRE_HUD",

@@ -1748,8 +1748,9 @@ def bounds_from_banner(
     """
     Clip bounds anchored on kill banner.
 
-    End is hard-capped at last_kill_banner + MLBB_BANNER_POST_SEC (default 3s)
-    so post-fight lane jogging is not kept. Extra length comes from pre-roll only.
+    End is hard-capped at last_kill_banner + tier-aware post (singles ~2s,
+    doubles ~4s, streaks ~5.5s) so mid-combo kills are not chopped while
+    post-fight lane jogging is still cut.
     """
     from mlbb_fight_segment import (
         _fight_min_sec,
@@ -1764,10 +1765,10 @@ def bounds_from_banner(
     max_d = _fight_max_sec()
     hard_max = _fight_hard_max_sec()
     lead = banner_lead_sec(banner_tier)
-    post = banner_post_sec()
+    tier = int(banner_tier or 0)
+    post = banner_post_sec(tier)
     banner = float(banner_sec)
     file_dur = float(file_dur)
-    tier = int(banner_tier or 0)
 
     # Hard rule: stop shortly after the kill banner (last kill of this moment).
     end = min(file_dur, banner + post)

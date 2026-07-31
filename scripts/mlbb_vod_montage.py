@@ -14,11 +14,11 @@ from typing import Iterator
 log = logging.getLogger("mlbb_vod_montage")
 
 
-def _banner_post_sec() -> float:
+def _banner_post_sec(banner_tier: int | None = None) -> float:
     try:
         from mlbb_fight_segment import banner_post_sec
 
-        return float(banner_post_sec())
+        return float(banner_post_sec(banner_tier))
     except Exception:
         return float(os.environ.get("MLBB_BANNER_POST_SEC", "3"))
 
@@ -129,6 +129,7 @@ def trim_idle_run_end(
     end: float,
     *,
     banner_sec: float | None = None,
+    banner_tier: int | None = None,
 ) -> float:
     """
     Cut post-fight running: after banner/peak, if combat energy dies while
@@ -179,7 +180,7 @@ def trim_idle_run_end(
     motion_thr = max(motion_ref * 0.85, float(np.percentile(motion[start_idx : end_idx + 1], 50)))
     quiet_need = max(2, int(os.environ.get("MLBB_VOD_RUN_QUIET_BINS", "2")))
     try:
-        min_post = _banner_post_sec()
+        min_post = _banner_post_sec(banner_tier)
     except Exception:
         min_post = float(os.environ.get("MLBB_BANNER_POST_SEC", "3"))
 
@@ -211,9 +212,9 @@ def trim_idle_run_end(
         new_end = end - max_save
         new_end = max(new_end, anchor + min_post)
         new_end = min(new_end, end)
-    # Absolute cap: stop ~3s after the kill banner (no lane jog after last kill).
+    # Absolute cap: stop after the kill banner (tier-aware post — keep combo kills).
     if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1":
-        post = _banner_post_sec()
+        post = _banner_post_sec(banner_tier)
         hard = anchor + post
         if new_end > hard:
             new_end = min(new_end, hard, end)
@@ -239,16 +240,19 @@ def apply_run_trim_to_clip(clip: dict, vod: Path) -> dict:
         return clip
     end = start + dur
     banner = float(clip.get("peak_start", clip.get("banner_sec", start + dur * 0.4)) or start)
-    new_end = trim_idle_run_end(vod, start, end, banner_sec=banner)
+    tier = int(clip.get("kill_banner_tier") or clip.get("banner_tier") or 0)
+    new_end = trim_idle_run_end(
+        vod, start, end, banner_sec=banner, banner_tier=tier or None
+    )
     # Always hard-cap after kill banner, even if run-trim heuristics found nothing.
     if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1":
-        post = _banner_post_sec()
+        post = _banner_post_sec(tier or None)
         new_end = min(new_end, banner + post, end)
         new_end = max(new_end, banner + min(1.5, post))
     new_dur = max(float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")), new_end - start)
     # If min duration would re-introduce run, prefer shorter clip over run tail.
     if os.environ.get("MLBB_BANNER_HARD_POST_CUT", "1") == "1":
-        post = _banner_post_sec()
+        post = _banner_post_sec(tier or None)
         hard_dur = max(4.0, (banner + post) - start)
         new_dur = min(new_dur, hard_dur) if hard_dur >= 4.0 else new_dur
     if abs(new_dur - dur) < 0.3:

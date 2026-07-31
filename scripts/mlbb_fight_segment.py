@@ -77,26 +77,52 @@ def banner_lead_sec(banner_tier: int | None = None) -> float:
     return base
 
 
-def _fight_post_sec() -> float:
-    """Seconds to keep after the last kill banner — short to avoid post-fight running."""
-    return float(
+def _fight_post_sec(banner_tier: int | None = None) -> float:
+    """
+    Seconds to keep after the kill banner.
+
+    Singles stay short (avoid post-fight jog). Multi-kills need a longer tail so
+    the clip does not end mid-combo (UGu-LYZ-GLY_270 cut ~1s before the 2nd kill
+    with a flat 1.5s post).
+    """
+    base = float(
         os.environ.get(
             "MLBB_BANNER_POST_SEC",
-            os.environ.get("MLBB_FIGHT_POST_SEC", "1.5"),
+            os.environ.get("MLBB_FIGHT_POST_SEC", "2.0"),
         )
     )
+    tier = int(banner_tier or 0)
+
+    def _tier_post(env_key: str, default: float) -> float:
+        raw = (os.environ.get(env_key) or "").strip()
+        if raw:
+            try:
+                return max(base, float(raw))
+            except ValueError:
+                pass
+        return max(base, default)
+
+    if tier >= 4:
+        # Maniac / savage / legendary — reaction + possible late flash.
+        return _tier_post("MLBB_STREAK_BANNER_POST_SEC", 5.5)
+    if tier >= 3:
+        return _tier_post("MLBB_TRIPLE_BANNER_POST_SEC", 5.0)
+    if tier >= 2:
+        # Double: second kill often lands 2–4s after the first flash.
+        return _tier_post("MLBB_DOUBLE_BANNER_POST_SEC", 4.0)
+    return max(1.0, base)
 
 
-def banner_post_sec() -> float:
+def banner_post_sec(banner_tier: int | None = None) -> float:
     """Public alias: cut highlight this many seconds after the kill banner."""
-    return _fight_post_sec()
+    return _fight_post_sec(banner_tier)
 
 
 def ideal_clip_min_sec(banner_tier: int | None = None) -> float:
     """Minimum clip length — keep singles compact; streak banners keep longer pre-roll."""
     tier = int(banner_tier or 0)
     lead = banner_lead_sec(tier) if tier > 0 else _lead_sec()
-    post = _fight_post_sec()
+    post = _fight_post_sec(tier)
     # Tier 1–2: do not pad to lead+fight_min+post (~22s) — that created 18s idle heads
     # before a single kill (AJxzNqHrlyo_294).
     if tier <= 2:
