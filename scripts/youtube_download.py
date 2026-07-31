@@ -63,6 +63,90 @@ def normalize_youtube_url(url: str) -> str:
     return raw
 
 
+def prefer_ytsearch_engine(env: dict[str, str] | None = None) -> bool:
+    """
+    Prefer ytsearchN: over youtube.com/results?…&sp=…
+    The results URL is frequently HTTP 403 on datacenter IPs; ytsearch is more stable.
+    """
+    env = env or {}
+    return (env.get("YOUTUBE_SEARCH_PREFER_YTSEARCH") or "1").strip() == "1"
+
+
+def ytsearch_target(query: str, limit: int = 20) -> str:
+    from urllib.parse import unquote_plus
+
+    q = unquote_plus((query or "").strip().replace("+", " ")).strip()
+    return f"ytsearch{max(1, int(limit))}:{q}"
+
+
+def query_from_search_target(target: str) -> str:
+    from urllib.parse import unquote_plus
+
+    t = (target or "").strip()
+    if not t:
+        return ""
+    if t.startswith("ytsearch"):
+        if ":" not in t:
+            return ""
+        return unquote_plus(t.split(":", 1)[1].replace("+", " ")).strip()
+    if "youtube.com/results" in t:
+        vals = parse_qs(urlparse(t).query).get("search_query") or []
+        return unquote_plus(vals[0]).strip() if vals else ""
+    return t
+
+
+def youtube_results_target(query: str, *, sp: str = "") -> str:
+    from urllib.parse import quote_plus
+
+    url = f"https://www.youtube.com/results?search_query={quote_plus(query.strip())}"
+    sp = (sp or "").strip()
+    if sp:
+        url += f"&sp={sp}"
+    return url
+
+
+def build_search_targets(
+    query: str,
+    *,
+    limit: int = 20,
+    env: dict[str, str] | None = None,
+    sp: str = "",
+) -> list[str]:
+    """
+    Ordered search targets for one query.
+    Default: ytsearch first, then optional results URL (for freshness/duration sp).
+    """
+    env = env or {}
+    q = (query or "").strip()
+    if not q:
+        return []
+    yt = ytsearch_target(q, limit)
+    results = youtube_results_target(q, sp=sp) if sp else ""
+    if prefer_ytsearch_engine(env):
+        out = [yt]
+        if results and (env.get("YOUTUBE_SEARCH_ALSO_RESULTS") or "0").strip() == "1":
+            out.append(results)
+        return out
+    if results:
+        return [results, yt]
+    return [yt]
+
+
+def fallback_search_targets(failed_target: str, *, limit: int = 20) -> list[str]:
+    """Alternate targets after a failed search (typically results→ytsearch)."""
+    q = query_from_search_target(failed_target)
+    if not q:
+        return []
+    alts: list[str] = []
+    yt = ytsearch_target(q, limit)
+    if failed_target.startswith("http") and yt != failed_target:
+        alts.append(yt)
+    elif failed_target.startswith("ytsearch"):
+        # Last resort: bare results page without sp filters.
+        alts.append(youtube_results_target(q, sp=""))
+    return alts
+
+
 def is_youtube_shorts_url(url: str) -> bool:
     return "/shorts/" in urlparse(url).path.lower()
 

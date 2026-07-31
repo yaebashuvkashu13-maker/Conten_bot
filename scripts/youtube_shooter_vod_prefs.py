@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import re
-from urllib.parse import quote_plus
 
 from youtube_game_prefs import has_metro_royale
 from youtube_mlbb_vod_prefs import (
@@ -34,21 +33,31 @@ BAD_TITLE_RE = re.compile(
     r"reaction|trailer|cinematic|aim\s*trainer|training\s*mode|"
     r"highlight|highlights|хайлайт|tips\s+and\s+tricks|tips\s*&\s*tricks|"
     r"guide|обзор|trick|совет|"
-    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден",
+    r"\bstream\b|стрим|🔴|\bLIVE\b|босс|boss\s*drop|что\s+падает|сопровожден|"
+    r"glitch|эксплойт|баг\b|exploring|exploration|сезон\s+(ид[её]т|coming)|"
+    r"season\s+\d+\s+is\s+coming|coming\s+soon|update\s+preview|"
+    r"loot\s*tour|туннел|tunnel\s+glitch|walkthrough|прохожден|"
+    r"\bedit\b|edits\b|amv\b|music\s*video|recap\b|"
+    r"tips?\b|trick|фишк|гайд|explained|beginners?|как\s+правильно|как\s+играть",
+    re.I,
+)
+
+FIGHT_TITLE_RE = re.compile(
+    r"fight|бое[йв]|перестрел|штурм|clutch|ranked\s+match|full\s+match|"
+    r"squad\s+fight|геймплей|gameplay|катк[аи]|рейд|pvp|перестрелк|"
+    r"файт|штурмов",
     re.I,
 )
 
 PUBG_CORE_QUERIES = (
-    "PUBG Mobile Metro Royale gameplay ranked",
-    "PUBG Mobile Metro Royale full match",
-    "PUBG Mobile Metro Royale squad fight ranked",
+    "PUBG Mobile Metro Royale gameplay ranked fight",
+    "PUBG Mobile Metro Royale full match squad fight",
     "PUBG Mobile Metro Royale TPP ranked replay",
-    "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл стрим",
-    "PUBG Mobile Metro Royale стрим полный",
-    "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг стрим русский",
+    "метро рояль пабг мобайл ранкед матч перестрелка",
+    "метро рояль пабг мобайл полный матч файт",
+    "метро рояль пабг штурм катка",
+    "пабг мобайл метро рояль геймплей бой",
+    "метро рояль пабг стрим русский файт",
 )
 
 STANDOFF_CORE_QUERIES = (
@@ -72,8 +81,15 @@ STANDOFF_ANGLE_QUERIES = (
 )
 
 
-def _queries_for(game: str) -> tuple[str, ...]:
+def _queries_for(game: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     g = game.strip().lower()
+    env = env or {}
+    env_key = "STANDOFF_VOD_SEARCH_QUERIES" if g == "standoff" else "PUBG_VOD_SEARCH_QUERIES"
+    raw = (env.get(env_key) or os.environ.get(env_key) or "").strip()
+    if raw:
+        custom = tuple(q.strip() for q in raw.split(",") if q.strip())
+        if custom:
+            return custom
     if g == "standoff":
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
     return PUBG_CORE_QUERIES + PUBG_ANGLE_QUERIES
@@ -116,27 +132,57 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
     ranked = rank_discovery_candidates(game, candidates)
     if not ranked:
         return None
+
+    def _dur(row: dict) -> float:
+        try:
+            return float(row.get("duration") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Prefer 6–18 min VODs — long Metro streams waste hours downloading for one clip.
+    prefer_max = float(os.environ.get("SHOOTER_VOD_PREFER_MAX_SEC", "1080"))
+    prefer_min = float(os.environ.get("SHOOTER_VOD_PREFER_MIN_SEC", "360"))
+
+    def _short_first(rows: list[dict]) -> list[dict]:
+        known_ok = [r for r in rows if prefer_min <= _dur(r) <= prefer_max]
+        if known_ok:
+            return sorted(known_ok, key=_dur)
+        known_any = [r for r in rows if prefer_min <= _dur(r) <= float(os.environ.get("SHOOTER_VOD_MAX_SEC", "1200"))]
+        if known_any:
+            return sorted(known_any, key=_dur)
+        # Unknown duration last — must be probed before download.
+        unknown = [r for r in rows if _dur(r) <= 0]
+        return unknown + rows
+
+    def _fight_first(rows: list[dict]) -> list[dict]:
+        fights = [r for r in rows if FIGHT_TITLE_RE.search(str(r.get("title") or ""))]
+        return (fights or []) + [r for r in rows if r not in fights]
+
     if game.strip().lower() == "pubg":
         from pubg_metro_royale_gate import title_metro_hint
         from youtube_game_prefs import russian_score
 
-        for cand in ranked[:12]:
+        pool = _fight_first(_short_first(ranked[:20]))
+        for cand in pool[:12]:
             title = str(cand.get("title") or "")
             if title_metro_hint(title) and russian_score(cand) >= 0.06:
                 return cand
-        for cand in ranked[:12]:
+        for cand in pool[:12]:
             if title_metro_hint(str(cand.get("title") or "")):
                 return cand
-        for cand in ranked[:8]:
+        for cand in pool[:8]:
             if russian_score(cand) >= 0.12:
                 return cand
-    return ranked[0]
+        return pool[0]
+    return _fight_first(_short_first(ranked))[0]
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
     """Rotate shooter search queries (same batch/delay pattern as MLBB)."""
+    from youtube_download import build_search_targets
+
     env = env or {}
-    queries = list(_queries_for(game))
+    queries = list(_queries_for(game, env))
     batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
     delay = float(env.get("MLBB_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
     limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "20")))
@@ -146,26 +192,22 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
     picked: list[str] = []
     for i in range(batch):
         picked.append(queries[(offset + i) % len(queries)])
-    sp = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
-    freshness = (
-        YOUTUBE_FRESHNESS_SP_THIS_MONTH
-        if env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
-        else ""
-    )
-    duration_sp = YOUTUBE_DURATION_SP_4_TO_20 if sp else ""
-    search_urls = []
+    sp = ""
+    if env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1":
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+    elif env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1":
+        sp = YOUTUBE_FRESHNESS_SP_THIS_MONTH
+    search_urls: list[str] = []
+    search_attempts: list[list[str]] = []
     for q in picked:
-        url = f"ytsearch{limit}:{quote_plus(q)}"
-        if duration_sp or freshness:
-            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}"
-            if duration_sp:
-                url += f"&sp={duration_sp}"
-            elif freshness:
-                url += f"&sp={freshness}"
-        search_urls.append(url)
+        targets = build_search_targets(q, limit=limit, env=env, sp=sp)
+        search_attempts.append(targets)
+        if targets:
+            search_urls.append(targets[0])
     return {
         "queries": picked,
         "urls": search_urls,
+        "attempts": search_attempts,
         "batch": batch,
         "delay": delay,
         "limit": limit,
