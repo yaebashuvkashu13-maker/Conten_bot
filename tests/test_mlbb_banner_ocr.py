@@ -45,13 +45,35 @@ def test_classify_banner_text_fuzzy_garbage() -> None:
     assert hit.tier == 5
 
 
+def test_finalize_allows_ref_when_live_is_player_names(monkeypatch) -> None:
+    """HUD chrome (names) must not veto a ref hit — that starved all sends."""
+    import mlbb_kill_banner as kb
+
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
+    monkeypatch.setenv("MLBB_BANNER_REF_REQUIRE_OCR", "1")
+    monkeypatch.setenv("MLBB_BANNER_REF_REQUIRE_OCR_STRICT", "0")
+    hit = kb.KillBannerHit(sec=58.0, tier=3, label="triple", text="TRIPLE KILL", source="ref")
+
+    with (
+        patch.object(kb, "_live_overlay_text", return_value="SUUSO CarterMejor CindyTom"),
+        patch(
+            "mlbb_banner_hero_match.validate_own_kill_frame",
+            return_value=(True, "hud_killer_ok"),
+        ),
+    ):
+        out = kb._finalize_banner_hit(object(), hit, vod=None)
+        assert out is not None
+        assert out.tier == 3
+
+
 def test_finalize_rejects_ref_when_live_is_farm_names(monkeypatch) -> None:
-    """3lO0-style: canned TRIPLE ref + live OCR of player names → drop."""
+    """Strict mode still drops canned TRIPLE when live OCR has no streak."""
     import mlbb_kill_banner as kb
 
     monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
     monkeypatch.setenv("MLBB_BANNER_LIVE_OVERLAY_OCR", "1")
     monkeypatch.setenv("MLBB_BANNER_REF_REQUIRE_OCR", "1")
+    monkeypatch.setenv("MLBB_BANNER_REF_REQUIRE_OCR_STRICT", "1")
     hit = kb.KillBannerHit(sec=58.0, tier=3, label="triple", text="TRIPLE KILL", source="ref")
 
     with (

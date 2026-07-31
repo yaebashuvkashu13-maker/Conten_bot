@@ -692,13 +692,14 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
                 live[:60],
             )
             return None
-        # Ref-bank vision alone ships farm/turtle FX as TRIPLE. When live OCR
-        # reads the HUD, require a streak phrase — readable non-kills are vetoed.
+        # Ref-bank vision alone ships farm/turtle FX as TRIPLE. Live OCR can
+        # upgrade/correct the canned label when it reads a streak phrase.
+        # Do NOT reject on HUD chrome (player names): RapidOCR almost always
+        # reads names in the banner zone, which starved all sends.
         src = str(getattr(hit, "source", "") or "").lower()
         if src.startswith("ref") and os.environ.get("MLBB_BANNER_REF_REQUIRE_OCR", "1") == "1":
             live_hit = classify_banner_text(live) if live else None
             if live_hit is not None and int(live_hit.tier or 0) >= 1:
-                # Prefer live OCR label when it disagrees with canned ref text.
                 if int(live_hit.tier) != int(hit.tier or 0) or str(live_hit.label) != str(hit.label):
                     hit = KillBannerHit(
                         sec=hit.sec,
@@ -708,11 +709,9 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
                         source="ref+ocr",
                     )
                     ocr_text = " ".join(x for x in (str(hit.text or ""), live) if x).strip()
-            else:
+            elif os.environ.get("MLBB_BANNER_REF_REQUIRE_OCR_STRICT", "0") == "1":
                 letters = sum(ch.isalpha() for ch in (live or ""))
                 min_letters = int(os.environ.get("MLBB_BANNER_REF_OCR_MIN_LETTERS", "6"))
-                # OCR silence → keep existing ref gates. Readable HUD without a
-                # streak phrase (farm names, turtle chat) → drop the canned ref.
                 if letters >= min_letters:
                     _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
                     log.info(
