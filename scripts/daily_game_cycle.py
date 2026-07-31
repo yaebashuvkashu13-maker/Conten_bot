@@ -38,14 +38,15 @@ def enabled() -> bool:
 
 def quota_for(game: str) -> int:
     game = game.strip().lower()
-    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
-    env_key = f"DAILY_{game.upper()}_QUOTA"
-    fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
-    raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
+    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 5, "wot": 5}
+    # DAILY_GAME_* is canonical; DAILY_* kept for backward compatibility.
+    primary = f"DAILY_GAME_{game.upper()}_QUOTA"
+    legacy = f"DAILY_{game.upper()}_QUOTA"
+    raw = os.environ.get(primary, os.environ.get(legacy, str(defaults.get(game, 5))))
     try:
         return max(0, int(raw))
     except ValueError:
-        return defaults.get(game, 10)
+        return defaults.get(game, 5)
 
 
 def load_state() -> dict:
@@ -99,8 +100,11 @@ def quota_remaining(game: str) -> int:
 
 
 def record_send(game: str, count: int = 1) -> None:
-    reset_if_new_day()
     game = game.strip().lower()
+    # Post-quota / ignore-quota sends must not inflate the daily single-clip counters.
+    if ignore_daily_quota(game):
+        return
+    reset_if_new_day()
     if game not in GAME_ORDER:
         return
     state = load_state()
@@ -109,20 +113,201 @@ def record_send(game: str, count: int = 1) -> None:
     save_state(state)
 
 
+def record_discovery_miss(game: str) -> int:
+    """
+    Count consecutive discovery misses for a game.
+    Returns the new miss streak for that game today.
+    """
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return 0
+    state = load_state()
+    misses = state.setdefault("discovery_misses", {})
+    # Reset other games' streaks so only the stuck game accumulates.
+    for g in list(misses.keys()):
+        if g != game:
+            misses[g] = 0
+    misses[game] = int(misses.get(game, 0)) + 1
+    state["discovery_misses"] = misses
+    save_state(state)
+    return int(misses[game])
+
+
+def clear_discovery_miss(game: str | None = None) -> None:
+    reset_if_new_day()
+    state = load_state()
+    misses = state.setdefault("discovery_misses", {})
+    if game is None:
+        state["discovery_misses"] = {g: 0 for g in GAME_ORDER}
+    else:
+        misses[game.strip().lower()] = 0
+    save_state(state)
+
+
+def skip_game_quota(game: str, *, reason: str = "discovery_miss") -> None:
+    """Mark game quota as filled for today so the cycle advances."""
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return
+    state = load_state()
+    sends = state.setdefault("sends", {})
+    need = quota_for(game)
+    sends[game] = max(int(sends.get(game, 0)), need)
+    skipped = state.setdefault("skipped", {})
+    skipped[game] = {"reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    # Clear miss streak after skip.
+    misses = state.setdefault("discovery_misses", {})
+    misses[game] = 0
+    save_state(state)
+
+
+def discovery_miss_skip_after() -> int:
+    return max(1, int(os.environ.get("DAILY_GAME_DISCOVERY_MISS_SKIP", "3")))
+
+
+def _other_games_have_quota(game: str) -> bool:
+    game = game.strip().lower()
+    for g in GAME_ORDER:
+        if g == game:
+            continue
+        if quota_remaining(g) > 0:
+            return True
+    return False
+
+
+def maybe_skip_on_discovery_miss(game: str) -> bool:
+    """
+    After N consecutive discovery misses, skip this game's remaining quota.
+    Never skips the last game that still has quota (avoids idle-until-midnight).
+    Returns True if the game was skipped.
+    """
+    if not enabled():
+        return False
+    if os.environ.get("DAILY_GAME_SKIP_ON_DISCOVERY_MISS", "1") != "1":
+        return False
+    streak = record_discovery_miss(game)
+    need = discovery_miss_skip_after()
+    if streak < need:
+        return False
+    # Flaky YouTube 403 must not zero out the only remaining game.
+    if not _other_games_have_quota(game):
+        return False
+    skip_game_quota(game, reason=f"discovery_miss_x{streak}")
+    return True
+
+
+def catchup_games() -> tuple[str, ...]:
+    """Games eligible for one end-of-day catch-up after discovery_miss skip."""
+    raw = os.environ.get("DAILY_GAME_CATCHUP_GAMES", "mlbb").strip()
+    if not raw or raw in ("0", "none", "off"):
+        return ()
+    allowed = set(GAME_ORDER)
+    out: list[str] = []
+    for part in raw.split(","):
+        g = part.strip().lower()
+        if g in allowed and g not in out:
+            out.append(g)
+    return tuple(out)
+
+
+def maybe_catchup_skipped_games() -> list[str]:
+    """
+    Once per day, after every game has filled its quota, reopen games that were
+    skipped due to discovery_miss (default: mlbb only).
+
+    Keeps WoT (or any still-active game) running — catch-up only triggers when
+    the cycle would otherwise idle.
+    """
+    if not enabled():
+        return []
+    if os.environ.get("DAILY_GAME_CATCHUP_ON_SKIP", "1") != "1":
+        return []
+    candidates = catchup_games()
+    if not candidates:
+        return []
+
+    state = load_state()
+    if bool(state.get("catchup_done")):
+        return []
+
+    sends = state.get("sends") or {}
+    all_done = all(int(sends.get(g, 0) or 0) >= quota_for(g) for g in GAME_ORDER)
+    if not all_done:
+        return []
+
+    skipped = state.get("skipped") or {}
+    reopen: list[str] = []
+    for g in candidates:
+        meta = skipped.get(g)
+        if not isinstance(meta, dict):
+            continue
+        reason = str(meta.get("reason") or "")
+        if reason.startswith("discovery_miss"):
+            reopen.append(g)
+
+    state["catchup_done"] = True
+    if not reopen:
+        save_state(state)
+        return []
+
+    sends = state.setdefault("sends", {})
+    skipped_map = state.setdefault("skipped", {})
+    misses = state.setdefault("discovery_misses", {})
+    for g in reopen:
+        sends[g] = 0
+        skipped_map.pop(g, None)
+        misses[g] = 0
+    state["catchup_games"] = reopen
+    state["catchup_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_state(state)
+    return reopen
+
+
 def active_game() -> str | None:
     """Next game that still has daily quota. None if all quotas met."""
     reset_if_new_day()
     for game in GAME_ORDER:
         if quota_remaining(game) > 0:
             return game
+    # All quotas look filled — reopen discovery_miss skips once (e.g. MLBB after WoT).
+    if maybe_catchup_skipped_games():
+        for game in GAME_ORDER:
+            if quota_remaining(game) > 0:
+                return game
     return None
+
+
+def ignore_daily_quota(game: str = "") -> bool:
+    """Post-quota montages / one-off rescans must not be blocked by filled quotas."""
+    if os.environ.get("POST_QUOTA_MONTAGE_PASS", "0") == "1":
+        return True
+    if os.environ.get("VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    g = (game or "").strip().lower()
+    if g and os.environ.get(f"{g.upper()}_VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    if g == "mlbb" and os.environ.get("MLBB_VOD_IGNORE_DAILY_QUOTA", "0") == "1":
+        return True
+    return False
+
+
+def montage_only_mode() -> bool:
+    """
+    Future mode: when daily quotas are stably filled, ship only montages.
+    Off by default — enable with MONTAGE_ONLY_MODE=1 after quotas are reliable.
+    """
+    return os.environ.get("MONTAGE_ONLY_MODE", "0") == "1"
 
 
 def can_send_for_game(game: str, count: int = 1) -> tuple[bool, str]:
     if not enabled():
         return True, "cycle_disabled"
-    reset_if_new_day()
     game = game.strip().lower()
+    if ignore_daily_quota(game):
+        return True, "ignore_daily_quota"
+    reset_if_new_day()
     active = active_game()
     if active is None:
         return False, "all_quotas_done"
@@ -139,15 +324,24 @@ def profile_for_game(game: str) -> str:
 
 def status_summary() -> dict:
     reset_if_new_day()
+    # Resolve active (may trigger one-shot discovery_miss catch-up).
+    active = active_game()
     state = load_state()
     sends = {g: int(state.get("sends", {}).get(g, 0)) for g in GAME_ORDER}
     quotas = {g: quota_for(g) for g in GAME_ORDER}
     return {
         "day": state.get("day"),
-        "active_game": active_game(),
+        "active_game": active,
         "sends": sends,
         "quotas": quotas,
         "remaining": {g: max(0, quotas[g] - sends[g]) for g in GAME_ORDER},
+        "catchup_done": bool(state.get("catchup_done")),
+        "catchup_games": list(state.get("catchup_games") or []),
+        "skipped": {
+            g: (state.get("skipped") or {}).get(g)
+            for g in GAME_ORDER
+            if (state.get("skipped") or {}).get(g)
+        },
     }
 
 

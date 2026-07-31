@@ -37,7 +37,10 @@ fi
 
 export OVERNIGHT_GAMES_CONFIG="${OVERNIGHT_GAMES_CONFIG:-/root/content_bot_ml/config/overnight_games.yaml}"
 export OVERNIGHT_DEADLINE_HOUR_MSK="${OVERNIGHT_DEADLINE_HOUR_MSK:-8}"
-export SMART_LONG_ANALYSIS_MAX_FPS="${SMART_LONG_ANALYSIS_MAX_FPS:-0.25}"
+# Keep overnight denser than the old 0.25 fps throttle; respect SMART_ANALYSIS_DETAIL=max.
+export SMART_ANALYSIS_DETAIL="${SMART_ANALYSIS_DETAIL:-max}"
+export SMART_LONG_ANALYSIS_MAX_FPS="${SMART_LONG_ANALYSIS_MAX_FPS:-2.0}"
+export SMART_LONG_SAMPLE_FPS="${SMART_LONG_SAMPLE_FPS:-2.0}"
 export PYTHONPATH="/root/content_bot_ml/scripts:/root/content_bot_ml:${PYTHONPATH:-}"
 
 python3 /usr/local/bin/overnight_youtube_batch.py

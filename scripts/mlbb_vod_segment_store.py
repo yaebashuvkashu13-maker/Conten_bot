@@ -333,6 +333,17 @@ def apply_owner_label(
         note=reason,
         source="vod_segment",
     )
+    try:
+        from mlbb_vod_yield_memory import record_feedback
+
+        record_feedback(
+            youtube_id=str(vid or ""),
+            is_good=bool(is_good),
+            title=str(row.get("title") or row.get("vod") or ""),
+            reason=str(reason or ""),
+        )
+    except Exception:
+        pass
     return True, label_name
 
 

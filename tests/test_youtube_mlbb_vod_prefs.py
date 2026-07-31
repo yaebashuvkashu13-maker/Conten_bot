@@ -47,6 +47,18 @@ def test_rejects_skin_showcase_titles() -> None:
 def test_rejects_guide_listicle_titles() -> None:
     assert not passes_mlbb_vod_filters(_meta("BEST SOLO CARRY Heroes For Every Role | Season 41 ~ Mobile Legends"))
     assert not passes_mlbb_game_title("BEST SOLO CARRY Heroes For Every Role | Season 41")
+    assert not passes_mlbb_vod_filters(
+        _meta("TOP 5 BEST Junglers for Season 41 Easy Rank Push Heroes | Mobile Legends MLBB")
+    )
+    assert not passes_mlbb_game_title(
+        "TOP 5 BEST Junglers for Season 41 Easy Rank Push Heroes | Mobile Legends MLBB"
+    )
+    assert not passes_mlbb_vod_filters(
+        _meta("Most Picked EXP Lane Heroes Above Mythical Immortal | MLBB Season 41")
+    )
+    assert not passes_mlbb_vod_filters(
+        _meta("Don't use RUBY until you watch this video! New RUBY Short Guide | MLBB")
+    )
 
 
 def test_accepts_ranked_match_titles() -> None:
@@ -64,7 +76,7 @@ def test_accepts_implicit_mlbb_ranked_titles() -> None:
 def test_build_queries_returns_twenty() -> None:
     queries = build_vod_search_queries(season=41)
     assert len(queries) == 20
-    assert queries[0] == "MLBB mythic ranked full match gameplay"
+    assert "savage" in queries[0].lower() or "maniac" in queries[0].lower()
     assert any("masha" in q for q in queries)
     assert any("placement" in q for q in queries)
     assert all("minute" not in q.lower() for q in queries)
@@ -90,12 +102,17 @@ def test_discovery_search_cycle_rotates_modes() -> None:
 
 
 def test_upload_freshness_filter() -> None:
+    from unittest.mock import patch
+
+    from youtube_mlbb_vod_prefs import passes_upload_freshness, upload_age_days
+
     now = datetime(2026, 6, 21, tzinfo=timezone.utc)
     fresh = _meta("MLBB Mythic Ranked", upload_date="20260619")
     stale = _meta("MLBB Mythic Ranked", upload_date="20260101")
     assert upload_age_days("20260619", now=now) == 2
-    assert passes_upload_freshness(fresh, max_age_days=21)
-    assert not passes_upload_freshness(stale, max_age_days=21)
+    with patch("youtube_mlbb_vod_prefs.upload_age_days", side_effect=lambda d, **kw: 2 if d == "20260619" else 200):
+        assert passes_upload_freshness(fresh, max_age_days=21)
+        assert not passes_upload_freshness(stale, max_age_days=21)
 
 
 def test_rank_prefers_fresh_upload() -> None:
@@ -124,6 +141,12 @@ def test_build_queries_includes_combat_angle() -> None:
     lowered = [q.lower() for q in queries]
     assert any("double kill" in q for q in lowered)
     assert any("savage" in q or "maniac" in q for q in lowered)
+
+
+def test_build_queries_combat_first() -> None:
+    queries = build_vod_search_queries(season=41, limit=12)
+    assert "savage" in queries[0].lower() or "maniac" in queries[0].lower()
+    assert not any("roam mythic" in q.lower() for q in queries[:8])
 
 
 def test_fresh_search_uses_month_sp_not_duration_sp() -> None:

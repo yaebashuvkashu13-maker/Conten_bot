@@ -40,6 +40,23 @@ MIN_WEAPON_EDGE_ANY = float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", "0.025
 FRAMES_REQUIRED = int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", "3"))
 
 
+def live_combat_pann_min() -> float:
+    """Soften/reliable update PUBG_COMBAT_PANN_MIN after import — read live."""
+    return float(os.environ.get("PUBG_COMBAT_PANN_MIN", str(PANN_ABSOLUTE_MIN)))
+
+
+def live_combat_frames_required() -> int:
+    return int(os.environ.get("PUBG_COMBAT_FRAMES_REQUIRED", str(FRAMES_REQUIRED)))
+
+
+def live_combat_min_hit_flash() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_HIT_FLASH", str(MIN_HIT_FLASH_ANY)))
+
+
+def live_combat_min_weapon_edge() -> float:
+    return float(os.environ.get("PUBG_COMBAT_MIN_WEAPON_EDGE", str(MIN_WEAPON_EDGE_ANY)))
+
+
 def _norm_profile(profile: str) -> str:
     p = profile.strip().lower()
     return "standoff" if p == "standoff" else "pubg" if p == "pubg" else p
@@ -62,8 +79,20 @@ def pubg_combat_visual_strict(
     best_flash = 0.0
     best_weapon = 0.0
 
+    try:
+        from smart_video_editor import ffprobe_duration
+
+        vod_dur = float(ffprobe_duration(video_path) or 0.0)
+    except Exception:
+        vod_dur = 0.0
+
     for label, t in segment_frame_times(start_sec, duration_sec):
-        frame = _read_frame_at(video_path, t)
+        read_t = t
+        if vod_dur > 1.0:
+            read_t = min(t, max(0.0, vod_dur - 0.08))
+        frame = _read_frame_at(video_path, read_t)
+        if frame is None and read_t > 0.2:
+            frame = _read_frame_at(video_path, max(0.0, read_t - 0.25))
         if frame is None:
             frames_out.append({"label": label, "pass": False, "reason": "frame_missing"})
             continue
@@ -87,7 +116,13 @@ def pubg_combat_visual_strict(
             }
         )
 
-    need = FRAMES_REQUIRED
+    need = live_combat_frames_required()
+    # EOF seeks often miss the literal end frame — do not fail a fight for that alone.
+    end_missing = any(
+        f.get("label") == "end" and f.get("reason") == "frame_missing" for f in frames_out
+    )
+    if end_missing and passed >= max(2, need - 1):
+        need = min(need, passed)
     if passed < need:
         bad = [f"{f['label']}:{f.get('reason', '?')}" for f in frames_out if not f.get("pass")]
         return False, f"visual_frames={passed}/{need}:{','.join(bad[:3])}", {
@@ -96,7 +131,7 @@ def pubg_combat_visual_strict(
             "frames": frames_out,
         }
 
-    if best_flash < MIN_HIT_FLASH_ANY and best_weapon < MIN_WEAPON_EDGE_ANY:
+    if best_flash < live_combat_min_hit_flash() and best_weapon < live_combat_min_weapon_edge():
         return False, (
             f"no_combat_signal flash={best_flash:.4f} weapon={best_weapon:.4f}"
         ), {
@@ -377,8 +412,9 @@ def pubg_passes_combat_gate(
     out: dict[str, Any] = {"start": round(start_sec, 3), "duration": round(duration_sec, 3)}
 
     from highlight_scorer import (
-        PANN_GUN_INFERENCE_FLOOR,
         calibrated_pann_gun_min,
+        live_pann_gun_min,
+        live_pann_inference_floor,
         score_panns_audio,
     )
 
@@ -399,11 +435,15 @@ def pubg_passes_combat_gate(
     if not shoot_ok:
         return False, shoot_reason, out
 
-    floor = max(PANN_GUN_INFERENCE_FLOOR, panns_thr, PANN_ABSOLUTE_MIN)
+    # Soften/reliable lower env bars after import — never keep frozen 0.22/0.18 floors.
+    live_gun = live_pann_gun_min()
+    live_inf = live_pann_inference_floor()
+    live_abs = live_combat_pann_min()
+    required = max(min(live_inf, live_gun), min(float(panns_thr), live_gun), min(live_abs, live_gun))
     out["panns_gun_max"] = round(panns_gun, 4)
-    out["panns_gun_threshold"] = round(floor, 4)
-    if panns_gun < floor:
-        return False, f"panns_gun_low={panns_gun:.3f}:floor{floor:.3f}", out
+    out["panns_gun_threshold"] = round(required, 4)
+    if panns_gun < required:
+        return False, f"panns_gun_low={panns_gun:.3f}:floor{required:.3f}", out
 
     vis_ok, vis_reason, vis_row = pubg_combat_visual_strict(
         video_path, start_sec, duration_sec, profile
@@ -416,12 +456,18 @@ def pubg_passes_combat_gate(
     crop = tuple(shoot_row["crop_box"]) if shoot_row.get("crop_box") else None
     if crop is not None:
         crop = tuple(int(v) for v in crop)
-    if segment_looks_like_pubg_loot_or_walk(
-        video_path,
-        start_sec,
-        duration_sec,
-        crop_box=crop,
-        gunfire_density=gun_density,
+    panns_trusted = panns_gun >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    # Strong PANNs gun often has near-zero energy-density metric on Metro VODs —
+    # do not treat that as loot/walk.
+    if (
+        not panns_trusted
+        and segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop,
+            gunfire_density=gun_density,
+        )
     ):
         return False, f"loot_walk=density{gun_density:.3f}", out
 
@@ -471,6 +517,47 @@ def pubg_passes_combat_gate(
         out["pov_engagement"] = pov_row
         if not pov_ok:
             return False, pov_reason, out
+
+        # Precision: require ≥2 independent combat signals (not audio-only).
+        if os.environ.get("PUBG_COMBAT_MULTI_SIGNAL", "1") == "1":
+            signals = 0
+            kf = float(out.get("killfeed_density") or 0)
+            if kf >= float(os.environ.get("PUBG_KILLFEED_BONUS_MIN", "0.30")) or ocr_hits >= 1:
+                signals += 1
+                out["signal_killfeed"] = True
+            if panns_gun >= required * 1.15:
+                signals += 1
+                out["signal_panns_strong"] = True
+            quarters = int(shoot_row.get("gunfire_quarters_active") or shoot_row.get("active_quarters") or 0)
+            clusters = int(shoot_row.get("gunfire_clusters") or shoot_row.get("burst_clusters") or 0)
+            burst = float(shoot_row.get("burst_ratio") or 0)
+            if (
+                (quarters >= int(os.environ.get("PUBG_PVP_MIN_ACTIVE_QUARTERS", "1")) and clusters >= 1)
+                or burst >= 4.8
+                or gun_density >= float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055")) * 1.2
+            ):
+                signals += 1
+                out["signal_gun_shape"] = True
+            pov_m = float(pov_row.get("center_motion") or center_motion or 0)
+            if pov_m >= float(os.environ.get("PUBG_POV_MIN_CENTER_MOTION", "0.020")):
+                signals += 1
+                out["signal_pov_motion"] = True
+            vis = out.get("combat_visual") or {}
+            if float(vis.get("best_hit_flash") or vis.get("hit_flash_max") or 0) >= float(
+                os.environ.get("VISUAL_PUBG_MIN_HIT_FLASH", "0.001")
+            ) or float(vis.get("best_weapon_edge") or vis.get("weapon_edge_max") or 0) >= float(
+                os.environ.get("VISUAL_PUBG_MIN_WEAPON_EDGE", "0.012")
+            ):
+                signals += 1
+                out["signal_visual_hit"] = True
+            need = max(2, int(os.environ.get("PUBG_COMBAT_MIN_SIGNALS", "2")))
+            # Strong PANNs already proved gun audio — one more corroborating signal is enough.
+            if panns_trusted:
+                need = max(1, need - 1)
+            out["combat_signals"] = signals
+            out["combat_signals_need"] = need
+            if signals < need:
+                return False, f"combat_signals_low={signals}:need>={need}", out
 
     out["pass"] = True
     return True, f"combat_ok=gun{panns_gun:.3f}:burst{shoot_row.get('burst_ratio')}", out
