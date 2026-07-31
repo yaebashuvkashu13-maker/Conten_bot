@@ -779,7 +779,7 @@ def _unexhaust_inbox_paths(registry: list[dict]) -> int:
 
 
 def _inbox_pickable_count(registry: list[dict]) -> int:
-    """Non-exhausted inbox mp4s the picker can actually take."""
+    """Non-exhausted / non-yield-dead inbox mp4s the picker can actually take."""
     exhausted = {
         str(row.get("id") or "")
         for row in registry
@@ -795,6 +795,14 @@ def _inbox_pickable_count(registry: list[dict]) -> int:
         vid = vod_youtube_id(path)
         if vid and vid in exhausted:
             continue
+        if vid:
+            try:
+                from mlbb_vod_yield_memory import should_skip_inbox_pick
+
+                if should_skip_inbox_pick(vid):
+                    continue
+            except Exception:
+                pass
         n += 1
     return n
 
@@ -3647,6 +3655,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_PRESEND_REJECT_NOTIFY": "0",
         # One zero attempt is enough — yield-dead VODs must not loop for hours.
         "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
+        # .video_bot.env keeps AUTO_DOWNLOAD=0; daily_cycle_runner used to clobber
+        # launcher exports → empty/exhausted inbox spun mute for hours.
+        "MLBB_VOD_AUTO_DOWNLOAD": "1",
+        "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY": "1",
         # Keep on disk: deleting own-kill VODs after CLIP-off false-empty was catastrophic.
         "MLBB_VOD_DELETE_EXHAUSTED": "0",
         "MLBB_VOD_KEEP_BANNER_MISS": "0",
@@ -3802,6 +3814,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_BANNER_HARD_PREFILTER",
         "MLBB_VOD_BANNER_SKIP_ON_MISS",
         "MLBB_VOD_MAX_ZERO_ATTEMPTS",
+        "MLBB_VOD_AUTO_DOWNLOAD",
+        "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY",
         "MLBB_VOD_DELETE_EXHAUSTED",
         "MLBB_VOD_KEEP_BANNER_MISS",
         "MLBB_VOD_MONTAGE",

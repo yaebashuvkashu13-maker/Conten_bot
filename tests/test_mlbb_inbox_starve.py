@@ -29,6 +29,28 @@ def test_inbox_pickable_skips_exhausted(tmp_path, monkeypatch) -> None:
     assert feed._inbox_pickable_count(registry) == 0
 
 
+def test_inbox_pickable_skips_yield_dead(tmp_path, monkeypatch) -> None:
+    import mlbb_vod_segment_feed as feed
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    monkeypatch.setattr(feed, "INBOX", inbox)
+    dead = inbox / "yt_YIELDdeadvod.mp4"
+    dead.write_bytes(b"x" * 2_000_000)
+    registry = [{"id": "YIELDdeadvod", "path": str(dead), "exhausted": False}]
+
+    with patch(
+        "mlbb_vod_yield_memory.should_skip_inbox_pick",
+        return_value=True,
+    ):
+        assert feed._inbox_pickable_count(registry) == 0
+    with patch(
+        "mlbb_vod_yield_memory.should_skip_inbox_pick",
+        return_value=False,
+    ):
+        assert feed._inbox_pickable_count(registry) == 1
+
+
 def test_force_revive_ignores_starvation(monkeypatch) -> None:
     import mlbb_vod_segment_feed as feed
 

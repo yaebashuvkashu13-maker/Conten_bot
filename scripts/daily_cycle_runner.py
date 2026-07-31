@@ -38,8 +38,26 @@ def _notify_switch(token: str, chat_id: str, game: str) -> None:
     )
 
 
+# Launcher (/usr/local/bin/mlbb_vod_segment_feed.sh) exports quality/runtime
+# knobs after sourcing .video_bot.env. Do not let the env file win on reload —
+# that reset MLBB_VOD_AUTO_DOWNLOAD=0 and starved the feed of fresh VODs.
+_LAUNCHER_PRESERVE_KEYS = (
+    "MLBB_VOD_AUTO_DOWNLOAD",
+    "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY",
+    "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
+    "MLBB_BANNER_OWN_HUD_MIN_SIM",
+    "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
+    "MLBB_BANNER_NEG_POS_MARGIN",
+    "MLBB_BANNER_NEG_NOT_KILL_MIN",
+    "MLBB_BANNER_RAPID_OCR",
+    "MLBB_BANNER_LIVE_OVERLAY_OCR",
+    "MLBB_VOD_RELIABLE",
+)
+
+
 def _load_runtime_env() -> dict[str, str]:
-    env = {**os.environ, **load_env(ENV_PATH)}
+    preserved = {k: os.environ[k] for k in _LAUNCHER_PRESERVE_KEYS if k in os.environ}
+    env = {**os.environ, **load_env(ENV_PATH), **preserved}
     os.environ.update(env)
     return env
 
