@@ -48,12 +48,62 @@ def test_presend_rejects_ocr_double_without_live_streak(monkeypatch) -> None:
             "mlbb_kill_banner._live_overlay_text",
             return_value="2909:5315 jungle farm names only",
         ),
-        patch("mlbb_banner_hero_match.validate_own_kill_frame") as mock_own,
+        patch(
+            "mlbb_banner_hero_match.validate_own_kill_frame",
+            return_value=(True, "hud_killer_ok:0.50"),
+        ) as mock_own,
     ):
         ok, reason, _report = feed._validate_before_send(Path("x.mp4"), row, Path("y.mp4"))
         assert ok is False
         assert "ocr_multi_no_live_streak" in reason
-        mock_own.assert_not_called()
+        mock_own.assert_called()
+
+
+def test_presend_allows_ref_multi_when_hud_ok_even_if_live_ocr_blind(monkeypatch) -> None:
+    """UGu: empty/ref source + own HUD must not die on clock OCR garbage."""
+    import numpy as np
+    import pytest
+
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_RECHECK", "1")
+    monkeypatch.setenv("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1")
+    monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "0")
+    monkeypatch.setenv("MLBB_KILL_BANNER_LEAD_SEC", "12")
+    monkeypatch.setenv("MLBB_BANNER_POST_SEC", "1.5")
+
+    import mlbb_vod_segment_feed as feed
+
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    for src in ("ref", ""):
+        row = {
+            "segment_id": "UGu-LYZ-GLY_270",
+            "start": 302.0,
+            "peak_start": 310.0,
+            "banner_sec": 310.0,
+            "duration": 10.0,
+            "kill_banner_tier": 5,
+            "kill_banner": "savage",
+            "banner_source": src,
+        }
+        with (
+            patch.object(feed, "_detect_render_freeze", return_value=(True, "ok", [])),
+            patch("gameplay_gate._read_frame_at", return_value=frame),
+            patch(
+                "mlbb_kill_banner._live_overlay_text",
+                return_value="36ms 28 15:49 26 13 19.22 X1415",
+            ),
+            patch(
+                "mlbb_banner_hero_match.validate_own_kill_frame",
+                return_value=(True, "hud_killer_ok:0.42"),
+            ),
+            # If we reach this helper, ocr_multi_no_live_streak did not fire.
+            patch(
+                "mlbb_kill_banner.ocr_weak_needs_hud",
+                side_effect=RuntimeError("past_ocr_multi_gate"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="past_ocr_multi_gate"):
+                feed._validate_before_send(Path("x.mp4"), row, Path("y.mp4"))
 
 
 def test_presend_rejects_near_lord_spawn(monkeypatch) -> None:

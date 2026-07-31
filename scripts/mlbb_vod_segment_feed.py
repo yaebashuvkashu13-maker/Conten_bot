@@ -2090,18 +2090,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         return False, f"live_coordination:{live[:40]}", report
                     if live and is_enemy_kill_text(live):
                         return False, f"live_enemy:{live[:40]}", report
-                    # OCR doubles/triples: require LIVE streak text. Discover
-                    # tesseract garbage + injected "DOUBLE KILL" shipped jungle
-                    # farm as 2Ww5h0ffYtY_270.
-                    src_l = str(src or "").lower()
-                    if (
-                        (src_l.startswith("ocr") or not src_l)
-                        and int(tier_i or 0) >= 2
-                        and os.environ.get("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1") == "1"
-                    ):
-                        live_hit = classify_banner_text(live) if live else None
-                        if live_hit is None or int(live_hit.tier or 0) < 2:
-                            return False, f"ocr_multi_no_live_streak:{(live or '')[:40]}", report
                     # Use live OCR + stored banner_text only — never invent
                     # DOUBLE KILL from the discover label alone.
                     ocr_blob = " ".join(
@@ -2118,6 +2106,19 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
+                    # OCR-invented doubles need live streak text (2Ww5 jungle FP).
+                    # Empty/ref sources already matched a banner image — do NOT
+                    # treat missing src as OCR (that blocked UGu MANIAC when live
+                    # OCR read the HUD clock instead of streak text).
+                    src_l = str(src or "").lower()
+                    if (
+                        src_l.startswith("ocr")
+                        and int(tier_i or 0) >= 2
+                        and os.environ.get("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1") == "1"
+                    ):
+                        live_hit = classify_banner_text(live) if live else None
+                        if live_hit is None or int(live_hit.tier or 0) < 2:
+                            return False, f"ocr_multi_no_live_streak:{(live or '')[:40]}", report
                     if ocr_weak_needs_hud(src or "ocr", tier_i, str(own_reason)):
                         return False, f"ocr_single_no_hud:{own_reason}", report
             except Exception as exc:
