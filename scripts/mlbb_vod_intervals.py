@@ -30,7 +30,34 @@ def segment_interval(row: dict) -> tuple[float, float]:
 
 
 def interval_gap_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_INTERVAL_GAP_SEC", "3"))
+    # Keep adjacent fight slices from shipping as "two different moments".
+    return float(os.environ.get("MLBB_VOD_INTERVAL_GAP_SEC", "12"))
+
+
+def banner_dedup_sec() -> float:
+    return float(os.environ.get("MLBB_VOD_BANNER_DEDUP_SEC", "25"))
+
+
+def fight_anchor_sec(row: dict) -> float:
+    """Prefer kill-banner time, then peak, then clip start."""
+    for key in ("banner_sec", "peak_start", "start"):
+        raw = row.get(key)
+        if raw is None and key == "peak_start":
+            clip = row.get("clip") or {}
+            raw = clip.get("peak_start") or clip.get("banner_sec")
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if val >= 0:
+            return val
+    return float(row.get("start") or 0)
+
+
+def same_fight_anchor(a: dict, b: dict, *, window: float | None = None) -> bool:
+    """True when two rows share the same kill/fight moment."""
+    win = banner_dedup_sec() if window is None else float(window)
+    return abs(fight_anchor_sec(a) - fight_anchor_sec(b)) < win
 
 
 def intervals_overlap(

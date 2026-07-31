@@ -64,6 +64,121 @@ def test_shooter_rule_delegates_to_combat_gate() -> None:
     assert reason2 == "no_shots"
 
 
+def test_accept_combat_ok_relaxes_hook_never_raises(monkeypatch) -> None:
+    from highlight_scorer import _accept_highlight_candidate
+
+    monkeypatch.setenv("VIRAL_SEGMENT_HOOK_MIN", "0.14")
+    # Misconfigured high combat min must not tighten the bar past segment min.
+    monkeypatch.setenv("VIRAL_COMBAT_HOOK_MIN", "0.20")
+    m = HighlightMetrics(
+        start=204.4,
+        duration=10,
+        profile="pubg",
+        audio_pass=True,
+        visual_pass=True,
+        rule_pass=True,
+        hook_score=0.095,
+        clip_score=0.227,
+        panns_gun_max=0.538,
+        pass_reason="combat_ok=gun0.538:burst3.628",
+    )
+    assert _accept_highlight_candidate(Path("x.mp4"), 204.4, m, "pubg") is True
+
+    m_low_panns = HighlightMetrics(
+        start=10.0,
+        duration=10,
+        profile="pubg",
+        audio_pass=True,
+        visual_pass=True,
+        rule_pass=True,
+        hook_score=0.095,
+        clip_score=0.10,
+        panns_gun_max=0.10,
+        pass_reason="ok",
+    )
+    assert _accept_highlight_candidate(Path("x.mp4"), 10.0, m_low_panns, "pubg") is False
+
+
+def test_live_pann_min_respects_soften_env(monkeypatch) -> None:
+    from highlight_scorer import audio_passes_shooter, live_pann_gun_min
+
+    monkeypatch.setenv("HIGHLIGHT_PANN_GUN_MIN", "0.12")
+    assert live_pann_gun_min() == pytest.approx(0.12)
+    ok, reason = audio_passes_shooter(
+        {"panns_gun_max": 0.176, "panns_speech": 0.1, "panns_music": 0.1},
+        gun_min=0.25,
+    )
+    assert ok is True
+    assert "panns_gun_ok" in reason
+
+
+def test_single_fast_probe_seed_does_not_replace_stage1(monkeypatch) -> None:
+    """One fast-probe hit must merge into stage1, not early-return with 1 window."""
+    from highlight_scorer import stage1_candidates
+
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "204.0")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_MIN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_ONE", "0")
+    monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
+    monkeypatch.setenv("HIGHLIGHT_MAX_STAGE1", "16")
+    monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+
+    analysis = {
+        "window_seconds": 2.0,
+        "duration": 400.0,
+        "bins": 200,
+        "center_motion": np.linspace(0.01, 0.08, 200),
+        "gunfire": np.zeros(200, dtype=np.float32),
+        "audio": np.linspace(0.01, 0.05, 200),
+        "scene": np.zeros(200, dtype=np.float32),
+    }
+    # Two spaced gun clusters so action peaks + grid can contribute.
+    analysis["gunfire"][60] = 0.9   # t=120s
+    analysis["gunfire"][100] = 0.85  # t=200s
+    analysis["gunfire"][140] = 0.8   # t=280s
+
+    with patch("highlight_scorer._heatmap_stage0_starts", return_value=[]):
+        with patch("highlight_scorer.soft_anchor_enabled", return_value=False):
+            with patch("highlight_scorer.owner_anchors_enabled", return_value=False):
+                with patch(
+                    "vod_analysis_cache.analyze_video_cached",
+                    return_value=analysis,
+                ):
+                    with patch(
+                        "highlight_scorer._filter_bad_label_starts",
+                        side_effect=lambda _v, _p, starts: starts,
+                    ):
+                        out = stage1_candidates(Path("yt_fake.mp4"), "pubg")
+    assert 204.0 in out
+    assert len(out) >= 2
+
+
+def test_one_gun_seed_uses_seed_fast_without_analyze(monkeypatch) -> None:
+    from highlight_scorer import stage1_candidates
+
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "180.0")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_STAGE1", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SEED_FAST_ONE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
+    monkeypatch.setenv("HIGHLIGHT_MAX_STAGE1", "16")
+
+    with patch("highlight_scorer._heatmap_stage0_starts", return_value=[]):
+        with patch("highlight_scorer.soft_anchor_enabled", return_value=False):
+            with patch("highlight_scorer.owner_anchors_enabled", return_value=False):
+                with patch("vod_analysis_cache.analyze_video_cached") as analyze:
+                    with patch(
+                        "highlight_scorer._filter_bad_label_starts",
+                        side_effect=lambda _v, _p, starts: starts,
+                    ):
+                        out = stage1_candidates(Path("yt_fake.mp4"), "pubg")
+    analyze.assert_not_called()
+    assert 180.0 in out
+    assert len(out) >= 5
+
+
 def test_shooter_rule_requires_video_path() -> None:
     m = HighlightMetrics(
         start=0,

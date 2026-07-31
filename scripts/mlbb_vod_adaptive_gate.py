@@ -10,40 +10,77 @@ from typing import Iterator
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: productive fallback — motion peaks, banner checked at presend only.
+# Level 1: after silence — keep kill-banner required (owner: no empty running).
+# Only widen OCR windows and slightly relax clip score.
 SOFTEN_L1: dict[str, str] = {
-    "MLBB_VOD_BANNER_PREFILTER": "0",
-    "MLBB_VOD_BANNER_DISCOVER": "0",
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
+    "MLBB_KILL_BANNER_MIN_TIER": "double",
+    "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
+    "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
+    "MLBB_KILL_BANNER_REQUIRED": "1",
     "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
-    "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
+    "MLBB_VOD_BANNER_DISCOVER": "1",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "0",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
-    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
+    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.42",
     "SMART_UNIFORM_MIN_HUD_RATE": "0.55",
-    "MLBB_PRESEND_MIN_MOTION": "0.014",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.06",
-    "VIRAL_MLBB_HOOK_MIN": "0.04",
-    "MLBB_KILL_BANNER_QUICK_BEFORE": "12",
-    "MLBB_KILL_BANNER_QUICK_AFTER": "8",
-}
-
-# Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
-SOFTEN_L2: dict[str, str] = {
-    **SOFTEN_L1,
-    "MLBB_PRESEND_MIN_MOTION": "0.012",
-    "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
-    "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
-    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
-    "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
+    "MLBB_PRESEND_MIN_MOTION": "0.016",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.10",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
+    "VIRAL_MLBB_HOOK_MIN": "0.08",
+    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.18",
+    "MLBB_RULE_COMBAT_MIN": "0.82",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
-    "MLBB_KILL_BANNER_SCAN_BEFORE": "24",
+    "MLBB_VOD_SEND_ONE": "0",
+    "MLBB_VOD_SEND_ALL_BANNERS": "1",
+}
+
+# Soften must not disable daily montages (owner wants glued highlights).
+SOFTEN_L2: dict[str, str] = {
+    **SOFTEN_L1,
+    # Singles via soften caused false "KILL" OCR spam — keep double unless explicitly allowed.
+    "MLBB_KILL_BANNER_MIN_TIER": "double",
+    "MLBB_KILL_BANNER_REQUIRED": "1",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "0",
+    # Do not re-enable hung presend OCR or disable multi-banner under soften.
+    "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_PRESEND_MIN_MOTION": "0.016",
+    "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.012",
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.10",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.12",
+    "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
+    "MLBB_KILL_BANNER_QUICK_BEFORE": "20",
+    "MLBB_KILL_BANNER_QUICK_AFTER": "12",
+    "MLBB_KILL_BANNER_SCAN_BEFORE": "28",
     "MLBB_KILL_BANNER_SCAN_AFTER": "14",
     "MLBB_VOD_RESERVED_SENT_ONLY": "1",
     "MLBB_VOD_SOFT_SEGMENT_GAP_SEC": "28",
+    # Keep hard miss skip — teamfight fallback ships ally junk.
+    "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
+    "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
+    "MLBB_RULE_COMBAT_MIN": "0.82",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.42",
+    "MLBB_MOTION_PEAK_MAX": "4",
+    # Keep montages on under soften (do not flip back to singles flood).
+    "MLBB_VOD_MONTAGE": "1",
+    "MLBB_SKIP_MONTAGE": "0",
+    "MLBB_VOD_SEND_ONE": "0",
+    "MLBB_VOD_SEND_ALL_BANNERS": "1",
+    "MLBB_VOD_MAX_PER_VOD": "2",
+}
+
+# Level 3: long silence — still banner-required; slightly lower bars only.
+SOFTEN_L3: dict[str, str] = {
+    **SOFTEN_L2,
+    "MLBB_VOD_MIN_CLIP_SCORE": "0.09",
+    "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.11",
+    "MLBB_PRESEND_MIN_MOTION": "0.015",
+    "MLBB_RULE_COMBAT_MIN": "0.80",
+    "MLBB_TEAMFIGHT_MIN_SCORE": "0.40",
+    "VIRAL_MLBB_HOOK_MIN": "0.08",
+    "VIRAL_MLBB_CLIP_HOOK_MIN": "0.16",
 }
 
 
@@ -59,22 +96,34 @@ def streak_threshold() -> int:
     return max(1, int(os.environ.get("MLBB_VOD_ZERO_STREAK_SOFTEN", str(DEFAULT_STREAK_THRESHOLD))))
 
 
+def overrides_for_level(level: int) -> dict[str, str]:
+    if level <= 0:
+        return {}
+    if level >= 3:
+        out = dict(SOFTEN_L3)
+    elif level >= 2:
+        out = dict(SOFTEN_L2)
+    else:
+        out = dict(SOFTEN_L1)
+    # Opt-in only: allow single kill banners under soften (default off — OCR FPs).
+    if (
+        level >= 2
+        and os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
+    ):
+        out["MLBB_KILL_BANNER_MIN_TIER"] = "single"
+    return out
+
+
 def soften_level(streak: int) -> int:
-    """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    """0=strict, 1=soft, 2=wider OCR, 3=more lenient — always banner-required."""
     need = streak_threshold()
     if streak < need:
         return 0
     if streak >= need + 3:
+        return 3
+    if streak >= need + 1:
         return 2
     return 1
-
-
-def overrides_for_level(level: int) -> dict[str, str]:
-    if level <= 0:
-        return {}
-    if level >= 2:
-        return dict(SOFTEN_L2)
-    return dict(SOFTEN_L1)
 
 
 def trailing_zero_streak(results: list[dict]) -> int:
@@ -158,7 +207,7 @@ def adaptive_env(streak: int) -> Iterator[int]:
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"Режу teamfight по motion; kill-banner — бонус, не обязателен."
+        f"Kill-banner обязателен; мягче только OCR-окна и score."
     )
 
 

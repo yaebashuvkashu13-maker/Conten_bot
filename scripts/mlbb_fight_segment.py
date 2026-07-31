@@ -14,11 +14,11 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "55"))
+    return float(os.environ.get("MLBB_FIGHT_MAX_SEC", "60"))
 
 
 def _fight_hard_max_sec() -> float:
-    return float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "65"))
+    return float(os.environ.get("MLBB_FIGHT_HARD_MAX_SEC", "75"))
 
 
 def _sustain_quiet_bins() -> int:
@@ -30,7 +30,78 @@ def _extend_bins(max_d: float, win: float) -> int:
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    """Default pre-roll before peak/banner (prefer kill-banner lead, not short 2–4s)."""
+    return float(
+        os.environ.get(
+            "MLBB_VOD_LEAD_SEC",
+            os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", "12"),
+        )
+    )
+
+
+def banner_lead_sec(banner_tier: int | None = None) -> float:
+    """Pre-roll before kill banner — double/triple/maniac/savage need prior kills visible."""
+    base = float(
+        os.environ.get(
+            "MLBB_KILL_BANNER_LEAD_SEC",
+            os.environ.get("MLBB_VOD_LEAD_SEC", "12"),
+        )
+    )
+    # Explicit BANNER_PRE_SEC only if >= base (never shrink lead for doubles).
+    pre_raw = (os.environ.get("MLBB_BANNER_PRE_SEC") or "").strip()
+    if pre_raw:
+        try:
+            base = max(base, float(pre_raw))
+        except ValueError:
+            pass
+    tier = int(banner_tier or 0)
+
+    def _tier_lead(env_key: str, default_extra: float) -> float:
+        # Never allow tier-specific overrides to shrink below the global lead.
+        raw = (os.environ.get(env_key) or "").strip()
+        if raw:
+            try:
+                return max(base, float(raw))
+            except ValueError:
+                pass
+        return base + default_extra
+
+    if tier >= 5:
+        # Savage: full streak (kills 1→5). 22s often lands on the triple.
+        return _tier_lead("MLBB_SAVAGE_BANNER_LEAD_SEC", 24.0)
+    if tier >= 4:
+        # Maniac: prior kills before the 4th banner, not mid-combo.
+        return _tier_lead("MLBB_MANIAC_BANNER_LEAD_SEC", 12.0)
+    if tier >= 3:
+        return _tier_lead("MLBB_TRIPLE_BANNER_LEAD_SEC", 6.0)
+    return base
+
+
+def _fight_post_sec() -> float:
+    """Seconds to keep after the last kill banner — short to avoid post-fight running."""
+    return float(
+        os.environ.get(
+            "MLBB_BANNER_POST_SEC",
+            os.environ.get("MLBB_FIGHT_POST_SEC", "3"),
+        )
+    )
+
+
+def banner_post_sec() -> float:
+    """Public alias: cut highlight this many seconds after the kill banner."""
+    return _fight_post_sec()
+
+
+def ideal_clip_min_sec(banner_tier: int | None = None) -> float:
+    """Minimum clip length — keep singles compact; streak banners keep longer pre-roll."""
+    tier = int(banner_tier or 0)
+    lead = banner_lead_sec(tier) if tier > 0 else _lead_sec()
+    post = _fight_post_sec()
+    # Tier 1–2: do not pad to lead+fight_min+post (~22s) — that created 18s idle heads
+    # before a single kill (AJxzNqHrlyo_294).
+    if tier <= 2:
+        return float(os.environ.get("MLBB_SINGLE_IDEAL_MIN_SEC", str(lead + post + 1.0)))
+    return lead + _fight_min_sec() + post
 
 
 _CACHE: dict[str, dict] = {}
