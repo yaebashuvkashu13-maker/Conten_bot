@@ -1839,6 +1839,9 @@ def discover_highlight_candidates(
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     banner_hit_count = 0
     banner_anchor_starts: list[float] = []
+    # Must exist for all profiles — nested _nearest_banner closes over it.
+    # Leaving it unbound crashed PUBG (NameError free variable 'banners').
+    banners: list = []
     if profile == "mobile_legends":
         use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
@@ -1846,7 +1849,6 @@ def discover_highlight_candidates(
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
 
             start_set = set(starts)
-            banners: list = []
             if use_discover:
                 from mlbb_vod_title import title_min_banner_tier, vod_title_blob
 

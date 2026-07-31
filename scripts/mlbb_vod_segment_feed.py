@@ -2759,8 +2759,16 @@ def _collect_scan_segments_inner(
             skip_counts["near_skipped"] += 1
             continue
         if peak < min_peak:
-            skip_counts["below_min_peak"] += 1
-            continue
+            # Kill-banner windows: cut start is banner-lead and often < MIN_PEAK,
+            # but the flash itself is a real fight (Y3In5vMdlak starved as below_min_peak).
+            has_banner = (
+                int(clip.get("kill_banner_tier") or 0) > 0
+                or bool(clip.get("kill_banner"))
+                or str(clip.get("anchor") or "") == "kill_banner"
+            )
+            if not has_banner or peak_anchor < min_peak:
+                skip_counts["below_min_peak"] += 1
+                continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
             skip_counts["banner_reject"] += 1
@@ -4036,7 +4044,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.19",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.17",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
