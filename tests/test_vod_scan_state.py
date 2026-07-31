@@ -126,6 +126,7 @@ def test_record_vod_scan() -> None:
 
 def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_POOL_TTL_SEC", "3600")
+    monkeypatch.setenv("MLBB_VOD_REUSE_PEAK_POOL", "1")
     entry = {
         "last_pool_at": time.time(),
         "last_pool_peaks": [
@@ -141,5 +142,6 @@ def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_pool_cache_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_POOL_TTL_SEC", "60")
+    monkeypatch.setenv("MLBB_VOD_REUSE_PEAK_POOL", "1")
     entry = {"last_pool_at": time.time() - 120, "last_pool_peaks": [{"peak_sec": 1.0, "score": 0, "blocked_reason": ""}]}
     assert pool_cache_valid(entry) is False

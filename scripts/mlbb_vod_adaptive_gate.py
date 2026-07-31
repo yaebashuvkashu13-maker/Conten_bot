@@ -111,6 +111,20 @@ def overrides_for_level(level: int) -> dict[str, str]:
         and os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
     ):
         out["MLBB_KILL_BANNER_MIN_TIER"] = "single"
+    # Fight-first: do not explode quick scan windows under soften (burns probe budget).
+    if os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1":
+        out["MLBB_KILL_BANNER_QUICK_BEFORE"] = os.environ.get(
+            "MLBB_FIGHT_FIRST_SOFTEN_QUICK_BEFORE", "4"
+        )
+        out["MLBB_KILL_BANNER_QUICK_AFTER"] = os.environ.get(
+            "MLBB_FIGHT_FIRST_SOFTEN_QUICK_AFTER", "8"
+        )
+        out["MLBB_KILL_BANNER_SCAN_BEFORE"] = os.environ.get(
+            "MLBB_FIGHT_FIRST_SOFTEN_SCAN_BEFORE", "8"
+        )
+        out["MLBB_KILL_BANNER_SCAN_AFTER"] = os.environ.get(
+            "MLBB_FIGHT_FIRST_SOFTEN_SCAN_AFTER", "10"
+        )
     return out
 
 

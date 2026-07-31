@@ -292,7 +292,30 @@ def is_coordination_banner_text(text: str) -> bool:
     return not _KILL_STREAK_HINT_RE.search(blob)
 
 
-def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
+# Presend neighbor OCR must not hang for minutes (RapidOCR on wrong frames).
+_PRESEND_LIVE_OCR_LEFT: dict[str, int] = {"left": -1}
+
+
+def _presend_live_ocr_budget_reset() -> None:
+    _PRESEND_LIVE_OCR_LEFT["left"] = max(
+        0, int(os.environ.get("MLBB_PRESEND_LIVE_OCR_BUDGET", "3") or "3")
+    )
+
+
+def _presend_live_ocr_budget_ok() -> bool:
+    left = int(_PRESEND_LIVE_OCR_LEFT.get("left", -1))
+    return left < 0 or left > 0
+
+
+def _presend_live_ocr_budget_consume() -> None:
+    left = int(_PRESEND_LIVE_OCR_LEFT.get("left", -1))
+    if left > 0:
+        _PRESEND_LIVE_OCR_LEFT["left"] = left - 1
+
+
+def _live_overlay_text(
+    frame, *, max_chars: int = 160, consume_presend_budget: bool = False
+) -> str:
     """
     Live OCR for coordination/enemy vetoes and ref confirmation.
 
@@ -304,10 +327,20 @@ def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
         return ""
     if os.environ.get("MLBB_BANNER_LIVE_OVERLAY_OCR", "1") != "1":
         return ""
+    if consume_presend_budget:
+        if not _presend_live_ocr_budget_ok():
+            return ""
+        _presend_live_ocr_budget_consume()
     try:
         # Do not consume discover OCR budget — this is a safety veto, not a hunt.
         saved = int(_OCR_CALL_BUDGET.get("left", -1))
         _OCR_CALL_BUDGET["left"] = -1
+        # Cap RapidOCR wall during presend neighbor search (default discover is 20s).
+        saved_to = os.environ.get("MLBB_RAPID_OCR_TIMEOUT_SEC")
+        if consume_presend_budget:
+            os.environ["MLBB_RAPID_OCR_TIMEOUT_SEC"] = str(
+                max(3, int(os.environ.get("MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC", "8") or "8"))
+            )
         try:
             try:
                 from mlbb_banner_ocr import read_banner_text
@@ -319,6 +352,11 @@ def _live_overlay_text(frame, *, max_chars: int = 160) -> str:
                 text = _ocr_banner_zones(frame, deep=False)
         finally:
             _OCR_CALL_BUDGET["left"] = saved
+            if consume_presend_budget:
+                if saved_to is None:
+                    os.environ.pop("MLBB_RAPID_OCR_TIMEOUT_SEC", None)
+                else:
+                    os.environ["MLBB_RAPID_OCR_TIMEOUT_SEC"] = saved_to
         return " ".join(str(text or "").split())[:max_chars]
     except Exception:
         return ""
@@ -1396,9 +1434,12 @@ def _discover_vod_kill_banners_inner(
             kill_rich = False
         if kill_rich and os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE", "1") == "1":
             # Cap remaining wall so spike cannot recreate the 8-minute dead burn.
-            remain = max(45.0, float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", "90")))
+            remain = max(20.0, float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", "45")))
             deadline = time.monotonic() + remain
-            max_probes = min(max_probes, probes + max(6, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", "12"))))
+            max_probes = min(
+                max_probes,
+                probes + max(4, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", "8"))),
+            )
             log.info(
                 "banner discover %s: fight-first miss on kill-rich title — short spike "
                 "remain=%.0fs max_probes=%s",

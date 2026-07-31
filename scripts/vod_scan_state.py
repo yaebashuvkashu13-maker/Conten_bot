@@ -161,10 +161,24 @@ def scan_zero_detail(entry: dict[str, Any] | None) -> str:
 
 
 def pool_ttl_sec() -> int:
-    return max(60, int(os.environ.get("VOD_POOL_TTL_SEC", str(6 * 3600))))
+    # Short TTL — stale 6h pools reused wrong peaks (UGu 310 vs LEGENDARY @312).
+    return max(60, int(os.environ.get("VOD_POOL_TTL_SEC", "900")))
+
+
+def invalidate_pool_cache(entry: dict[str, Any] | None, *, reason: str = "") -> None:
+    """Drop cached peak pool so the next pass rediscovers banners."""
+    if not entry:
+        return
+    entry["last_pool_peaks"] = []
+    entry["last_pool_at"] = 0
+    entry["last_banner_hits"] = 0
+    if reason:
+        entry["pool_invalidated"] = str(reason)[:120]
 
 
 def pool_cache_valid(entry: dict[str, Any] | None) -> bool:
+    if os.environ.get("MLBB_VOD_REUSE_PEAK_POOL", "1") != "1":
+        return False
     if not entry:
         return False
     raw = entry.get("last_pool_peaks")
@@ -180,15 +194,27 @@ def normalize_pool_peak_rows(raw: list[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in raw:
         if isinstance(item, dict):
-            rows.append(
-                {
-                    "peak_sec": round(float(item.get("peak_sec", item.get("start", 0))), 1),
-                    "score": round(float(item.get("score", 0)), 4),
-                    "blocked_reason": str(item.get("blocked_reason") or ""),
-                    "kill_banner_tier": int(item.get("kill_banner_tier") or 0),
-                    "kill_banner": str(item.get("kill_banner") or ""),
-                }
-            )
+            row: dict[str, Any] = {
+                "peak_sec": round(float(item.get("peak_sec", item.get("start", 0))), 1),
+                "score": round(float(item.get("score", 0)), 4),
+                "blocked_reason": str(item.get("blocked_reason") or ""),
+                "kill_banner_tier": int(item.get("kill_banner_tier") or 0),
+                "kill_banner": str(item.get("kill_banner") or ""),
+            }
+            # Must survive cache round-trip — dropping these caused UGu
+            # neg_ref:no_banner (motion peak 310, banner flash 312).
+            if item.get("banner_sec") is not None:
+                try:
+                    row["banner_sec"] = round(float(item.get("banner_sec")), 1)
+                except (TypeError, ValueError):
+                    pass
+            if item.get("banner_source"):
+                row["banner_source"] = str(item.get("banner_source") or "")
+            if item.get("kill_banner_text") or item.get("banner_text"):
+                row["kill_banner_text"] = str(
+                    item.get("kill_banner_text") or item.get("banner_text") or ""
+                )
+            rows.append(row)
         else:
             rows.append(
                 {
@@ -214,22 +240,27 @@ def minimal_pool_from_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
         if row.get("blocked_reason"):
             continue
         peak = float(row["peak_sec"])
+        banner_sec = float(row["banner_sec"]) if row.get("banner_sec") is not None else peak
+        # Prefer banner flash as peak_start when it differs from motion peak.
+        peak_start = banner_sec if abs(banner_sec - peak) >= 0.5 else peak
         clip: dict[str, Any] = {
-            "start": peak,
-            "peak_start": peak,
+            "start": peak_start,
+            "peak_start": peak_start,
             "score": float(row.get("score") or 0),
             "highlight_metrics": {"rule_pass": True, "pass_reason": "cached_pool"},
         }
         tier = int(row.get("kill_banner_tier") or 0)
         label = str(row.get("kill_banner") or "")
-        banner_sec = row.get("banner_sec")
         if tier > 0:
             clip["kill_banner_tier"] = tier
             clip["kill_banner"] = label or "double"
             clip["anchor"] = "kill_banner"
-            clip["banner_sec"] = float(banner_sec) if banner_sec is not None else peak
+            clip["banner_sec"] = banner_sec
             if row.get("banner_source"):
                 clip["banner_source"] = str(row["banner_source"])
+            if row.get("kill_banner_text"):
+                clip["banner_text"] = str(row["kill_banner_text"])
+                clip["kill_banner_text"] = str(row["kill_banner_text"])
         pool.append(clip)
     return pool
 
@@ -267,6 +298,9 @@ def record_vod_scan(
             src = clip.get("banner_source") or clip.get("kill_banner_source")
             if src:
                 row_detail["banner_source"] = str(src)
+            txt = clip.get("kill_banner_text") or clip.get("banner_text")
+            if txt:
+                row_detail["kill_banner_text"] = str(txt)[:120]
             detail.append(row_detail)
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()

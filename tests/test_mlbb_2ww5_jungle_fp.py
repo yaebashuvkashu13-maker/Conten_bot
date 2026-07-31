@@ -136,7 +136,7 @@ def test_presend_rejects_near_lord_spawn(monkeypatch) -> None:
 
     calls = {"n": 0}
 
-    def live_side_effect(_fr):
+    def live_side_effect(_fr, *args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             return "2909:5315 farm junk"

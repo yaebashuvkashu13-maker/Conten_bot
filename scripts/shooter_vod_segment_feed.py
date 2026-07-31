@@ -114,6 +114,8 @@ def _apply_reliable_runtime(game: str) -> None:
     }
     if game == "pubg":
         defaults["PUBG_VOD_MONTAGE"] = "0"
+    # Shared launcher exports HIGHLIGHT_CLIP_DISABLED=1 for MLBB — shooters need CLIP.
+    defaults["HIGHLIGHT_CLIP_DISABLED"] = "0"
     force_keys = {
         "SHOOTER_VOD_ADAPTIVE_NOTIFY",
         "SHOOTER_VOD_EXHAUST_NOTIFY",
@@ -131,6 +133,7 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_MAX_SEC",
         "SHOOTER_VOD_MIN_SEC",
         "PUBG_PANNS_TRUST_MIN",
+        "HIGHLIGHT_CLIP_DISABLED",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
@@ -1501,9 +1504,11 @@ def main() -> int:
     _apply_reliable_runtime(game)
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
-        os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
     else:
         os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+        # Still need CLIP for shooter highlight scoring when exemplars are off.
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
     lock = _feed_lock(game)
     if lock is None:
         return 0

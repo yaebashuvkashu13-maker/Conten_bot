@@ -63,6 +63,12 @@ def montage_single_row_ok(row: dict) -> bool:
         return False
     if tier >= 2:
         return True
+    # HUD-confirmed own-kill singles (wb0) — ship when montage is thin.
+    own = str(row.get("own_kill_recheck") or row.get("own_kill_reason") or "")
+    if own.startswith("hud_killer_ok") and os.environ.get(
+        "MLBB_PRESEND_OWN_KILL_SINGLE", "1"
+    ) == "1":
+        return True
     src = _row_banner_source(row)
     label = str(row.get("kill_banner") or "").lower()
     allow_ocr = (

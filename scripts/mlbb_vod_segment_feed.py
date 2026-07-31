@@ -883,6 +883,58 @@ def _inbox_pickable_count(registry: list[dict]) -> int:
     return n
 
 
+def _prune_exhausted_inbox(registry: list[dict], *, limit: int = 20) -> int:
+    """
+    Move excess exhausted inbox VODs to hold_quota so pickable slots stay free.
+
+    Keeps at most MLBB_VOD_INBOX_EXHAUSTED_MAX exhausted files in inbox.
+    """
+    max_keep = max(0, int(os.environ.get("MLBB_VOD_INBOX_EXHAUSTED_MAX", "1")))
+    exhausted_ids = {
+        str(row.get("id") or "")
+        for row in registry
+        if row.get("exhausted") and row.get("id")
+    }
+    if not exhausted_ids:
+        return 0
+    candidates: list[Path] = []
+    for path in INBOX.glob("yt_*.mp4"):
+        try:
+            if path.stat().st_size < 1_000_000:
+                continue
+        except OSError:
+            continue
+        vid = vod_youtube_id(path)
+        if not vid or vid not in exhausted_ids:
+            continue
+        candidates.append(path)
+    if len(candidates) <= max_keep:
+        return 0
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    to_move = candidates[max_keep:][:limit]
+    HOLD_QUOTA.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for path in to_move:
+        dest = HOLD_QUOTA / path.name
+        try:
+            if dest.exists():
+                path.unlink(missing_ok=True)
+            else:
+                path.rename(dest)
+            info = INBOX / f"{path.stem}.info.json"
+            if info.exists():
+                info_dest = HOLD_QUOTA / info.name
+                if info_dest.exists():
+                    info.unlink(missing_ok=True)
+                else:
+                    info.rename(info_dest)
+            moved += 1
+            log.info("pruned exhausted inbox→hold vod=%s", path.name)
+        except OSError as exc:
+            log.warning("prune exhausted failed %s: %s", path.name, exc)
+    return moved
+
+
 def _revive_exhausted_inbox_candidates(
     registry: list[dict],
     *,
@@ -898,6 +950,9 @@ def _revive_exhausted_inbox_candidates(
     """
     if os.environ.get("MLBB_VOD_REVIVE_TITLE", "1") != "1":
         return 0
+    # Force-revive used to reopen every exhausted inbox copy forever.
+    if force and os.environ.get("MLBB_VOD_FORCE_REVIVE", "1") != "1":
+        return 0
     if not force:
         if _discovery_starvation_level() < max(
             2, int(os.environ.get("MLBB_VOD_REVIVE_AFTER_MISS", "2"))
@@ -906,13 +961,22 @@ def _revive_exhausted_inbox_candidates(
     revived = 0
     revive_max = int(os.environ.get("MLBB_VOD_REVIVE_MAX", "1"))
     if force:
-        revive_max = max(revive_max, int(os.environ.get("MLBB_VOD_REVIVE_MAX_FORCE", "2")))
+        revive_max = max(revive_max, int(os.environ.get("MLBB_VOD_REVIVE_MAX_FORCE", "1")))
     for row in registry:
         if revived >= limit:
             break
         if not row.get("exhausted"):
             continue
         if int(row.get("revive_count") or 0) >= revive_max:
+            continue
+        # Never revive permanently failed / junk reasons.
+        if str(row.get("reject_reason") or "") in {
+            "sent_ok",
+            "ally_trap",
+            "disliked",
+            "presend_banner_floor",
+            "zero_send_reliable",
+        }:
             continue
         path = Path(str(row.get("path") or ""))
         if not path.exists() or path.stat().st_size < 1_000_000:
@@ -928,6 +992,14 @@ def _revive_exhausted_inbox_candidates(
         row["revive_skip_fast_probe"] = True
         row["reject_reason"] = ""
         row["last_scan_blocked"] = False
+        # Stale pool caused wrong-peak rejections — rediscover.
+        try:
+            from vod_scan_state import invalidate_pool_cache
+
+            invalidate_pool_cache(row, reason="force_revive")
+        except Exception:
+            row["last_pool_at"] = 0
+            row["last_pool_peaks"] = []
         revived += 1
         log.info(
             "revive exhausted inbox id=%s title=%s reason=%s",
@@ -2067,14 +2139,16 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 from mlbb_kill_banner import (
                     ocr_weak_needs_hud,
                     _live_overlay_text,
+                    _presend_live_ocr_budget_reset,
                     is_coordination_banner_text,
                     is_enemy_kill_text,
                     classify_banner_text,
                 )
 
+                _presend_live_ocr_budget_reset()
                 fr = _read_frame_at(vod, banner_sec)
                 if fr is not None:
-                    live = _live_overlay_text(fr)
+                    live = _live_overlay_text(fr, consume_presend_budget=True)
                     # Objective announce can peak 1–2s off the stored banner_sec
                     # (2Ww5h0ffYtY_270: Lord Spawned @283, stored double @284).
                     if not (live and is_coordination_banner_text(live)):
@@ -2082,7 +2156,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                             fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
                             if fr_n is None:
                                 continue
-                            near = _live_overlay_text(fr_n)
+                            near = _live_overlay_text(fr_n, consume_presend_budget=True)
                             if near and is_coordination_banner_text(near):
                                 live = near
                                 break
@@ -2104,16 +2178,26 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         fr, vod=vod, ocr_text=ocr_blob
                     )
                     # Discover peak can be 1–2s early (UGu LEGENDARY @312 stored @310
-                    # → neg_ref:no_banner on the wrong frame). Search neighbors.
+                    # → neg_ref:no_banner on the wrong frame). Cap neighbor OCR —
+                    # RapidOCR hangs for minutes on dense ± offsets.
                     if not ok_own and (
                         str(own_reason).startswith("neg_ref:no_banner")
                         or str(own_reason).startswith("neg_ref:not_kill")
                     ):
-                        for off in (1.0, 2.0, 1.5, -1.0, 2.5, -1.5):
+                        neighbor_offs = (1.0, 2.0)
+                        raw_offs = os.environ.get("MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS", "")
+                        if raw_offs.strip():
+                            try:
+                                neighbor_offs = tuple(
+                                    float(x) for x in raw_offs.split(",") if str(x).strip()
+                                )
+                            except ValueError:
+                                neighbor_offs = (1.0, 2.0)
+                        for off in neighbor_offs:
                             fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
                             if fr_n is None:
                                 continue
-                            live_n = _live_overlay_text(fr_n)
+                            live_n = _live_overlay_text(fr_n, consume_presend_budget=True)
                             if live_n and is_coordination_banner_text(live_n):
                                 continue
                             if live_n and is_enemy_kill_text(live_n):
@@ -2137,10 +2221,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 ok_own, own_reason = ok_n, reason_n
                                 live = live_n or live
                                 report["own_kill_banner_off"] = off
+                                # Prefer the flash frame for downstream cut math.
+                                row["banner_sec"] = float(banner_sec) + float(off)
                                 break
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
+                    row["own_kill_recheck"] = own_reason
                     # OCR-invented doubles need live streak text (2Ww5 jungle FP).
                     # Empty/ref sources already matched a banner image — do NOT
                     # treat missing src as OCR (that blocked UGu MANIAC when live
@@ -2173,8 +2260,23 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
             # Lone clip must meet floor; multi-single stitch is handled by montage picker.
             parts = int(row.get("montage_parts") or row.get("n_parts") or 1)
-            if tier_i < min_tier and not (montage_single and parts >= 2 and tier_i >= 1):
+            allow_own_single = (
+                hud_own
+                and tier_i >= 1
+                and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
+                and (
+                    montage_single
+                    or os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1"
+                )
+            )
+            if (
+                tier_i < min_tier
+                and not (montage_single and parts >= 2 and tier_i >= 1)
+                and not allow_own_single
+            ):
                 return False, f"kill_banner_tier_low={tier_i}:need>={min_tier}", report
+            if allow_own_single and tier_i < min_tier:
+                report["own_kill_single_send"] = True
         except Exception as exc:
             log.debug("send_min_tier gate skip: %s", exc)
 
@@ -3636,6 +3738,16 @@ def _process_vod_segments(
                 and entry.get("reject_reason") != "presend_banner_floor"
                 and os.environ.get("MLBB_VOD_KEEP_BANNER_MISS", "1") == "1"
             ):
+                # Wrong peak / stale pool: drop cache and keep file for rediscover.
+                reason = str(entry.get("reject_reason") or "")
+                if "no_banner" in reason or "own_kill_recheck" in reason:
+                    try:
+                        from vod_scan_state import invalidate_pool_cache
+
+                        invalidate_pool_cache(entry, reason=reason or "banner_miss")
+                    except Exception:
+                        entry["last_pool_at"] = 0
+                        entry["last_pool_peaks"] = []
                 entry["reject_reason"] = entry.get("reject_reason") or "banner_hits_no_send"
                 state = _load_state()
                 _sync_vod_entry_to_state(state, entry, vod)
@@ -3776,7 +3888,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY": "1",
         # Keep on disk: deleting own-kill VODs after CLIP-off false-empty was catastrophic.
         "MLBB_VOD_DELETE_EXHAUSTED": "0",
-        "MLBB_VOD_KEEP_BANNER_MISS": "0",
+        "MLBB_VOD_KEEP_BANNER_MISS": "1",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         # Banner-miss → teamfight/CLIP fallback ships ally junk. Skip the VOD.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
@@ -3831,6 +3943,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_LEAD_SEC": "8",
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
         "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
+        "MLBB_PRESEND_OWN_KILL_SINGLE": "1",
+        "MLBB_PRESEND_LIVE_OCR_BUDGET": "3",
+        "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
+        "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "1,2",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
         "MLBB_ALLOW_OCR_SINGLE_SEND": "0",
@@ -3875,6 +3991,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE": "1",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "45",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "8",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
@@ -3914,6 +4033,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Do not fill inbox while scanning — finish pickable first.
         "MLBB_VOD_PREFETCH": "1",
         "MLBB_VOD_INBOX_MAX": "3",
+        "MLBB_VOD_INBOX_EXHAUSTED_MAX": "1",
+        "MLBB_VOD_REUSE_PEAK_POOL": "0",
+        "VOD_POOL_TTL_SEC": "900",
         # Quality floor so OCR-blind soften cannot ship farming junk.
         "MLBB_RULE_COMBAT_MIN": "0.80",
         "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.10",
@@ -3984,6 +4106,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_LEAD_SEC",
         "MLBB_OCR_SINGLE_REQUIRE_HUD",
         "MLBB_PRESEND_OWN_KILL_RECHECK",
+        "MLBB_PRESEND_OWN_KILL_SINGLE",
+        "MLBB_PRESEND_LIVE_OCR_BUDGET",
+        "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC",
+        "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS",
         "MLBB_ALLOW_OCR_SINGLE_SEND",
         "MLBB_ADAPTIVE_ALLOW_SINGLE",
         "MLBB_BANNER_SEND_MIN_TIER",
@@ -4020,6 +4146,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS",
         "MLBB_KILL_BANNER_QUICK_BEFORE",
@@ -4056,6 +4185,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_SCAN_COOLDOWN_SEC",
         "MLBB_VOD_PREFETCH",
         "MLBB_VOD_INBOX_MAX",
+        "MLBB_VOD_INBOX_EXHAUSTED_MAX",
+        "MLBB_VOD_REUSE_PEAK_POOL",
+        "VOD_POOL_TTL_SEC",
         "MLBB_VOD_SKIP_TANK_SUPPORT",
     }
     for key, value in defaults.items():
@@ -4176,6 +4308,12 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         log.info("re-parked %s known-dead inbox vod(s)", reparked)
 
     registry = _ensure_registry(env)
+    pruned = _prune_exhausted_inbox(registry)
+    if pruned:
+        state = _load_state()
+        state["vods"] = registry
+        _save_state(state)
+        log.info("pruned %s exhausted inbox vod(s) to hold", pruned)
     if promoted:
         if _unexhaust_inbox_paths(registry):
             state = _load_state()
@@ -4211,6 +4349,23 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     notified_download = False
 
     while time.time() < deadline and vods_done < max_vods:
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            try:
+                from daily_game_cycle import active_game, can_send_for_game, reset_if_new_day
+
+                reset_if_new_day()
+                if active_game() != "mlbb":
+                    log.info(
+                        "daily cycle: active_game=%s mid-loop — stop mlbb feed",
+                        active_game(),
+                    )
+                    break
+                ok_mlbb, why = can_send_for_game("mlbb", 1)
+                if not ok_mlbb:
+                    log.info("daily cycle mlbb blocked mid-loop: %s — stop", why)
+                    break
+            except Exception as exc:
+                log.debug("mid-loop quota check skip: %s", exc)
         download_notify = (
             not notified_download
             and os.environ.get("MLBB_VOD_DOWNLOAD_NOTIFY", "1") == "1"

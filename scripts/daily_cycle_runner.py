@@ -59,7 +59,26 @@ _LAUNCHER_PRESERVE_KEYS = (
     "MLBB_VOD_PREFETCH",
     "MLBB_VOD_INBOX_MAX",
     "MLBB_VOD_RELIABLE",
+    "MLBB_VOD_KEEP_BANNER_MISS",
+    "MLBB_VOD_REUSE_PEAK_POOL",
+    "VOD_POOL_TTL_SEC",
+    "MLBB_PRESEND_OWN_KILL_SINGLE",
+    "MLBB_PRESEND_LIVE_OCR_BUDGET",
 )
+
+
+def _scrub_mlbb_only_env_for_shooter(env: dict[str, str]) -> None:
+    """Launcher exports MLBB CLIP-off; shooters must score with CLIP."""
+    env["HIGHLIGHT_CLIP_DISABLED"] = "0"
+    os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
+    # Do not inherit MLBB banner OCR hang knobs into shooter highlight.
+    for key in (
+        "MLBB_BANNER_SKIP_CLIP_SCORE",
+        "MLBB_STAGE1_SKIP_CLIP_RANK",
+        "MLBB_STAGE1_SKIP_INTELLICLIP",
+    ):
+        env.pop(key, None)
+        os.environ.pop(key, None)
 
 
 def _load_runtime_env() -> dict[str, str]:
@@ -126,6 +145,7 @@ def main() -> int:
     else:
         script = SCRIPTS / "shooter_vod_segment_feed.py"
         env["VOD_SEGMENT_GAME"] = game
+        _scrub_mlbb_only_env_for_shooter(env)
 
     # Future switch: when quotas are stable, ship only montages (not singles).
     # Do NOT clear MLBB_VOD_RELIABLE — reliable already enables montage and
