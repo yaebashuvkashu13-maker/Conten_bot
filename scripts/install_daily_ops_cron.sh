@@ -9,6 +9,7 @@ EVENING_MARK="# daily-ops-evening"
 MORNING="0 6 * * * /usr/local/bin/daily_ops_cron.sh morning >>/root/data/mlbb/daily_ops/cron.log 2>&1 $MORNING_MARK"
 EVENING="0 18 * * * /usr/local/bin/daily_ops_cron.sh evening >>/root/data/mlbb/daily_ops/cron.log 2>&1 $EVENING_MARK"
 
+install -m 755 "$REPO/scripts/daily_ops_stats.py" "$DEST/daily_ops_stats.py"
 install -m 755 "$REPO/scripts/daily_morning_plan.py" "$DEST/daily_morning_plan.py"
 install -m 755 "$REPO/scripts/daily_evening_report.py" "$DEST/daily_evening_report.py"
 install -m 755 "$REPO/scripts/daily_ops_cron.sh" "$DEST/daily_ops_cron.sh"

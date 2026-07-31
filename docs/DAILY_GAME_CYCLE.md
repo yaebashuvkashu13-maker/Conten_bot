@@ -6,14 +6,16 @@
 00:00 MSK ──► сброс счётчиков (Europe/Moscow)
          │
          ▼
-    MLBB (10 клипов/день) ──► PUBG Metro Royale (10) ──► Standoff 2 (10) ──► idle до 00:00 MSK
+    MLBB (5) ──► PUBG (5) ──► Standoff 2 (5) ──► Genshin (5) ──► WoT (5) ──► idle до 00:00 MSK
 ```
 
 | Этап | Скрипт | Квота (env) |
 |------|--------|-------------|
-| MLBB | `mlbb_vod_segment_feed.py` | `DAILY_MLBB_QUOTA=10` |
-| PUBG | `shooter_vod_segment_feed.py pubg` | `DAILY_PUBG_QUOTA=10` |
-| Standoff | `shooter_vod_segment_feed.py standoff` | `DAILY_STANDOFF_QUOTA=10` |
+| MLBB | `mlbb_vod_segment_feed.py` | `DAILY_GAME_MLBB_QUOTA=5` |
+| PUBG | `shooter_vod_segment_feed.py pubg` | `DAILY_GAME_PUBG_QUOTA=5` |
+| Standoff | `shooter_vod_segment_feed.py standoff` | `DAILY_GAME_STANDOFF_QUOTA=5` |
+| Genshin | `shooter_vod_segment_feed.py genshin` | `DAILY_GAME_GENSHIN_QUOTA=5` |
+| WoT | `shooter_vod_segment_feed.py wot` | `DAILY_GAME_WOT_QUOTA=5` |
 
 Диспетчер: `daily_cycle_runner.py` (вызывается из `mlbb_vod_segment_feed.sh`).
 

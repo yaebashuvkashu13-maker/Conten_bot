@@ -14,7 +14,25 @@ def _min_hit_flashes() -> int:
 
 
 def _min_impact_density() -> float:
-    return float(os.environ.get("WOT_BRAWL_MIN_IMPACT_DENSITY", "0.052"))
+    return float(
+        os.environ.get(
+            "WOT_BRAWL_MIN_IMPACT_DENSITY",
+            os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"),
+        )
+    )
+
+
+def _cruise_impact_cap(min_impact: float) -> float:
+    raw = os.environ.get(
+        "SMART_WOT_CRUISE_IMPACT_CAP",
+        os.environ.get("WOT_BRAWL_CRUISE_IMPACT_MAX", ""),
+    )
+    if str(raw).strip():
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return max(min_impact * 1.35, 0.050)
 
 
 def count_hit_flashes(
@@ -50,6 +68,12 @@ def validate_wot_brawl_segment(
     *,
     metrics: dict | None = None,
 ) -> tuple[bool, str, dict]:
+    """
+    WoT combat proof is hit flashes (shell impacts) and/or audio impact density.
+
+    Do NOT require PUBG-style gunfire density alone — tank fights often score low
+    on that heuristic while still having visible hit flashes / explosions.
+    """
     from strict_segment_gate import probe_segment
 
     base = dict(metrics or {})
@@ -67,10 +91,26 @@ def validate_wot_brawl_segment(
     }
     min_impact = _min_impact_density()
     min_flashes = _min_hit_flashes()
-    if flashes < min_flashes:
-        return False, f"wot_low_flashes={flashes}:need{min_flashes}", out
-    if impact < min_impact:
-        return False, f"wot_low_impact=density{impact:.3f}:need{min_impact:.3f}", out
-    if motion > 0.10 and impact < 0.05 and duration_sec > 5.0:
-        return False, f"wot_cruise=motion{motion:.3f}:impact{impact:.3f}", out
-    return True, f"wot_brawl_ok=flashes{flashes}:impact{impact:.3f}", out
+    cruise_cap = _cruise_impact_cap(min_impact)
+    strong_flash = float(os.environ.get("WOT_BRAWL_STRONG_FLASH", "0.012"))
+
+    combat_ok = (
+        flashes >= min_flashes
+        or impact >= min_impact
+        or best_flash >= strong_flash
+    )
+    if combat_ok:
+        return True, f"wot_brawl_ok=flashes{flashes}:impact{impact:.3f}", out
+
+    # No combat proof: distinguish idle drive vs high-motion cruise.
+    if motion > 0.10 and impact < cruise_cap:
+        return (
+            False,
+            f"wot_cruise=motion{motion:.3f}:impact{impact:.3f}:flashes{flashes}",
+            out,
+        )
+    return (
+        False,
+        f"wot_no_combat=flashes{flashes}:impact{impact:.3f}:need_flash{min_flashes}/impact{min_impact:.3f}",
+        out,
+    )

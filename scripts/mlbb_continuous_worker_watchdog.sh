@@ -26,6 +26,30 @@ log() {
   echo "[$(date -Is)] $*" >> "$WLOG"
 }
 
+telegram_heartbeat_stale() {
+  local hb="/root/data/mlbb/telegram_bot_heartbeat.json"
+  local max_age="${TELEGRAM_BOT_HEARTBEAT_STALE_SEC:-1800}"
+  [[ -f "$hb" ]] || return 1
+  python3 - <<PY
+import json, sys, time
+from pathlib import Path
+max_age = int("${max_age}")
+try:
+    data = json.loads(Path("${hb}").read_text(encoding="utf-8"))
+    age = time.time() - float(data.get("ts") or 0)
+except Exception:
+    sys.exit(0)
+sys.exit(0 if age > max_age else 1)
+PY
+}
+
+restart_telegram_bot() {
+  log "restart telegram_upload_bot"
+  pkill -f "telegram_upload_bot.py" 2>/dev/null || true
+  sleep 1
+  nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+}
+
 if [[ -f /root/data/mlbb/OWNER_BATCH_RUNNING ]]; then
   log "owner batch lock — skip vod supervisor"
   exit 0
@@ -44,8 +68,10 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
     python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
   fi
   if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
-    log "restart telegram_upload_bot"
-    nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+    restart_telegram_bot
+  elif [[ -f "$TELEGRAM_BOT" ]] && pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1 && telegram_heartbeat_stale; then
+    log "telegram bot heartbeat stale — restart"
+    restart_telegram_bot
   fi
   VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
   if ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \
@@ -100,12 +126,17 @@ from datetime import datetime
 from pathlib import Path
 stale = int("${STALE_SEC}")
 pid = int("${pid}")
+# Grace period for a freshly started worker — avoid restart thrash.
 try:
-    worker_age = time.time() - os.stat(f"/proc/{pid}").st_mtime
-except OSError:
-    worker_age = stale + 1
-if worker_age < stale:
-    raise SystemExit(1)
+    stat = Path(f"/proc/{pid}/stat").read_text().split()
+    start_ticks = int(stat[21])
+    uptime = float(Path("/proc/uptime").read_text().split()[0])
+    hz = os.sysconf("SC_CLK_TCK")
+    process_age = uptime - start_ticks / hz
+    if process_age < 60:
+        raise SystemExit(1)
+except (OSError, ValueError, IndexError):
+    raise SystemExit(0)
 try:
     d = json.loads(Path("${STATE}").read_text(encoding="utf-8"))
     ts = datetime.strptime(d["updated_at"], "%Y-%m-%d %H:%M:%S").timestamp()
@@ -145,8 +176,10 @@ if [[ -f "$WATCHDOG_PY" ]]; then
 fi
 
 if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
-  log "restart telegram_upload_bot"
-  nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+  restart_telegram_bot
+elif [[ -f "$TELEGRAM_BOT" ]] && pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1 && telegram_heartbeat_stale; then
+  log "telegram bot heartbeat stale — restart"
+  restart_telegram_bot
 fi
 
 pid="$(worker_pid || true)"
