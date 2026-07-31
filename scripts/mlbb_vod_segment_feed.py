@@ -2103,6 +2103,41 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     ok_own, own_reason = validate_own_kill_frame(
                         fr, vod=vod, ocr_text=ocr_blob
                     )
+                    # Discover peak can be 1–2s early (UGu LEGENDARY @312 stored @310
+                    # → neg_ref:no_banner on the wrong frame). Search neighbors.
+                    if not ok_own and (
+                        str(own_reason).startswith("neg_ref:no_banner")
+                        or str(own_reason).startswith("neg_ref:not_kill")
+                    ):
+                        for off in (1.0, 2.0, 1.5, -1.0, 2.5, -1.5):
+                            fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
+                            if fr_n is None:
+                                continue
+                            live_n = _live_overlay_text(fr_n)
+                            if live_n and is_coordination_banner_text(live_n):
+                                continue
+                            if live_n and is_enemy_kill_text(live_n):
+                                continue
+                            blob_n = " ".join(
+                                x
+                                for x in (
+                                    live_n,
+                                    str(
+                                        row.get("banner_text")
+                                        or row.get("kill_banner_text")
+                                        or ""
+                                    ),
+                                )
+                                if x
+                            )
+                            ok_n, reason_n = validate_own_kill_frame(
+                                fr_n, vod=vod, ocr_text=blob_n
+                            )
+                            if ok_n:
+                                ok_own, own_reason = ok_n, reason_n
+                                live = live_n or live
+                                report["own_kill_banner_off"] = off
+                                break
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
