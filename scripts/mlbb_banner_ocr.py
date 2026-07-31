@@ -4,6 +4,9 @@ Read MLBB kill-banner text (TRIPLE / MANIAC / SAVAGE / …).
 
 Tesseract is usually blind on YouTube gold outline glyphs. RapidOCR + fuzzy
 label matching recovers common OCR garbage (SAWAGE→SAVAGE, DOUBLKILL→DOUBLE).
+
+RapidOCR runs in an isolated .venv_ocr subprocess so its NumPy does not break
+the main feed (panns/numba).
 """
 
 from __future__ import annotations
@@ -12,10 +15,10 @@ import difflib
 import logging
 import os
 import re
-import sys
+import subprocess
+import tempfile
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger("mlbb_banner_ocr")
 
@@ -65,58 +68,48 @@ _OCR_ALIASES: dict[str, str] = {
     "KILLINGSPREE": "KILLINGSPREE",
 }
 
-_RAPID: Any | None = None
-_RAPID_TRIED = False
+_RAPID_WORKER = r"""
+import sys
+from pathlib import Path
+import cv2
+from rapidocr_onnxruntime import RapidOCR
+path = Path(sys.argv[1])
+img = cv2.imread(str(path))
+if img is None:
+    raise SystemExit(0)
+ocr = RapidOCR()
+result, _ = ocr(img)
+texts = [str(row[1]) for row in (result or []) if row and len(row) > 1]
+print(" ".join(texts))
+"""
 
 
 def _letters(s: str) -> str:
     return re.sub(r"[^A-Z]", "", str(s or "").upper())
 
 
-def _inject_rapid_site_packages() -> None:
-    """Allow system python to import RapidOCR from the OCR venv."""
-    env = os.environ.get("MLBB_RAPID_OCR_SITE", "").strip()
-    cands: list[Path] = []
-    if env:
-        cands.append(Path(env))
+def _rapid_python() -> Path | None:
+    env = os.environ.get("MLBB_RAPID_OCR_PYTHON", "").strip()
+    if env and Path(env).is_file():
+        return Path(env)
     repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
-    cands.extend(repo.glob(".venv_ocr/lib/python*/site-packages"))
-    cands.extend(Path("/root/content_bot_ml").glob(".venv_ocr/lib/python*/site-packages"))
-    for sp in cands:
-        if sp.is_dir() and str(sp) not in sys.path:
-            sys.path.insert(0, str(sp))
-            return
+    for cand in (
+        repo / ".venv_ocr" / "bin" / "python",
+        Path("/root/content_bot_ml/.venv_ocr/bin/python"),
+    ):
+        if cand.is_file():
+            return cand
+    return None
 
 
+@lru_cache(maxsize=1)
 def rapid_ocr_available() -> bool:
     if os.environ.get("MLBB_BANNER_RAPID_OCR", "1") != "1":
         return False
     eng = os.environ.get("MLBB_BANNER_OCR_ENGINE", "auto").strip().lower()
     if eng in {"tess", "tesseract", "off", "0"}:
         return False
-    try:
-        return _rapid_engine() is not None
-    except Exception:
-        return False
-
-
-def _rapid_engine():
-    global _RAPID, _RAPID_TRIED
-    if _RAPID is not None:
-        return _RAPID
-    if _RAPID_TRIED:
-        return None
-    _RAPID_TRIED = True
-    try:
-        _inject_rapid_site_packages()
-        from rapidocr_onnxruntime import RapidOCR
-
-        _RAPID = RapidOCR()
-        return _RAPID
-    except Exception as exc:
-        log.info("RapidOCR unavailable: %s", exc)
-        _RAPID = None
-        return None
+    return _rapid_python() is not None
 
 
 def fuzzy_match_banner_label(
@@ -141,7 +134,6 @@ def fuzzy_match_banner_label(
     if len(blob) < 4:
         return None
 
-    # Alias rewrite on whole blob and tokens.
     tokens = [_letters(t) for t in re.findall(r"[A-Za-z0-9]{3,}", raw)]
     tokens = [t for t in tokens if len(t) >= 3]
     for tok in list(tokens):
@@ -193,7 +185,6 @@ def extract_banner_text_zone(frame):
     zone = frame[y0:y1, x0:x1]
     if zone.size == 0:
         return None
-    # Prefer readable height for stylized gold glyphs.
     target_h = max(72, int(os.environ.get("MLBB_BANNER_OCR_TARGET_H", "96")))
     if zone.shape[0] < target_h:
         scale = target_h / float(zone.shape[0])
@@ -221,17 +212,48 @@ def _ocr_variants(zone) -> list[tuple[str, object]]:
     return variants
 
 
+def _rapid_read_image(img) -> str:
+    """OCR one BGR image via isolated venv python (no NumPy pollution)."""
+    import cv2
+
+    py = _rapid_python()
+    if py is None or img is None:
+        return ""
+    timeout = max(5, int(os.environ.get("MLBB_RAPID_OCR_TIMEOUT_SEC", "20") or "20"))
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        if not cv2.imwrite(tmp, img):
+            return ""
+        proc = subprocess.run(
+            [str(py), "-c", _RAPID_WORKER, tmp],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if proc.returncode != 0:
+            log.debug("rapid OCR worker rc=%s err=%s", proc.returncode, (proc.stderr or "")[:200])
+            return ""
+        return " ".join((proc.stdout or "").split())
+    except Exception as exc:
+        log.debug("rapid OCR worker failed: %s", exc)
+        return ""
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def _rapid_read_zone(zone) -> str:
-    engine = _rapid_engine()
-    if engine is None or zone is None:
+    if zone is None:
         return ""
     texts: list[str] = []
     for _name, img in _ocr_variants(zone):
-        try:
-            result, _ = engine(img)
-        except Exception:
-            continue
-        chunk = " ".join(str(row[1]) for row in (result or []) if row and len(row) > 1)
+        chunk = _rapid_read_image(img)
         if chunk:
             texts.append(chunk)
             if fuzzy_match_banner_label(chunk) is not None:
@@ -289,11 +311,5 @@ def read_banner_text(frame, *, prefer_rapid: bool = True) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
-@lru_cache(maxsize=1)
-def _engine_probe_cached() -> bool:
-    return rapid_ocr_available()
-
-
 def ocr_engine_ready() -> bool:
-    """True when RapidOCR (or forced tess) can actually read banners."""
-    return _engine_probe_cached()
+    return rapid_ocr_available()
