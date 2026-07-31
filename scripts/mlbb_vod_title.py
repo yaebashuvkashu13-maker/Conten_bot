@@ -143,15 +143,15 @@ def title_min_banner_tier(blob: str) -> int:
     return 0
 
 
-_KILL_COUNT_RE = re.compile(r"\b(\d{1,2})\s*kills?\b", re.I)
+# "16 kills", "11-Kill", "11Kill Super Carry" — hyphen/no-space titles are common.
+_KILL_COUNT_RE = re.compile(r"\b(\d{1,2})[\s\-]*kills?\b", re.I)
 _KDA_RE = re.compile(r"\b(\d{1,2})\s*/\s*\d{1,2}\s*/\s*\d{1,2}\b")
 
 
 def title_kill_count(blob: str) -> int:
-    """Best-effort kill count from title ('16 kills' or '20/1/20' KDA)."""
+    """Best-effort kill count from title ('16 kills', '11-Kill', or '20/1/20' KDA)."""
     best = 0
-    m = _KILL_COUNT_RE.search(blob or "")
-    if m:
+    for m in _KILL_COUNT_RE.finditer(blob or ""):
         try:
             best = max(best, int(m.group(1)))
         except (TypeError, ValueError):

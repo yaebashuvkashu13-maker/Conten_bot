@@ -2191,7 +2191,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         str(own_reason).startswith("neg_ref:no_banner")
                         or str(own_reason).startswith("neg_ref:not_kill")
                     ):
-                        neighbor_offs = (1.0, 2.0)
+                        # Peak can land 1–2s early OR late vs the flash frame.
+                        neighbor_offs = (-1.0, 1.0, 2.0)
                         raw_offs = os.environ.get("MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS", "")
                         if raw_offs.strip():
                             try:
@@ -2199,7 +2200,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                     float(x) for x in raw_offs.split(",") if str(x).strip()
                                 )
                             except ValueError:
-                                neighbor_offs = (1.0, 2.0)
+                                neighbor_offs = (-1.0, 1.0, 2.0)
                         for off in neighbor_offs:
                             fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
                             if fr_n is None:
@@ -3549,13 +3550,29 @@ def _process_vod_segments(
             blocked_ids = labeled_set | sent
             index_segments = load_index().get("segments", [])
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
-            # Already-sent peaks must not satisfy discover want=1 early-stop.
-            if used_peaks:
-                os.environ["MLBB_BANNER_DISCOVER_EXCLUDE_SECS"] = ",".join(
-                    str(int(round(float(p)))) for p in used_peaks[:24]
-                )
-            else:
-                os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
+
+            def _sync_discover_exclude() -> None:
+                # Sent + presend-rejected peaks must not satisfy want=1 early-stop
+                # (Y3In rediscovered the same failing 419 forever).
+                merged: list[float] = []
+                for p in list(used_peaks or []) + list(skip_peaks or []):
+                    try:
+                        merged.append(float(p))
+                    except (TypeError, ValueError):
+                        continue
+                if merged:
+                    # Dedupe near-duplicates for a compact env payload.
+                    uniq: list[float] = []
+                    for p in sorted(merged):
+                        if not uniq or abs(p - uniq[-1]) > 1.0:
+                            uniq.append(p)
+                    os.environ["MLBB_BANNER_DISCOVER_EXCLUDE_SECS"] = ",".join(
+                        str(int(round(p))) for p in uniq[:32]
+                    )
+                else:
+                    os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
+
+            _sync_discover_exclude()
 
             cached_blocked = False
             if entry and entry.get("last_pool_peaks"):
@@ -3668,6 +3685,20 @@ def _process_vod_segments(
                                 max_tries,
                                 vod.name,
                             )
+                            # Drop stale pool so rediscover can hunt other fights
+                            # under the updated exclude list (not the same hit).
+                            pool_cache = None
+                            if entry is not None:
+                                try:
+                                    from vod_scan_state import invalidate_pool_cache
+
+                                    invalidate_pool_cache(
+                                        entry, reason="presend_reject_retry"
+                                    )
+                                except Exception:
+                                    entry["last_pool_at"] = 0
+                                    entry["last_pool_peaks"] = []
+                            _sync_discover_exclude()
                             continue
                         log.warning(
                             "batch presend rejected all — stop vod=%s permanent=%s",
@@ -4005,7 +4036,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_OWN_KILL_SINGLE": "1",
         "MLBB_PRESEND_LIVE_OCR_BUDGET": "3",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
-        "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "1,2",
+        "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "-1,1,2",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
         "MLBB_BANNER_OCR_WEAK_SINGLE": "0",
         "MLBB_ALLOW_OCR_SINGLE_SEND": "0",

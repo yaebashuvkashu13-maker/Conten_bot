@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from mlbb_vod_title import (  # noqa: E402
+    title_kill_count,
     title_min_banner_tier,
     title_promises_kill_streak,
     title_scan_start_sec,
@@ -44,6 +45,13 @@ def test_title_scan_start_early_for_savage() -> None:
 
 def test_title_promises_kill_streak_on_high_kills() -> None:
     assert title_promises_kill_streak("21 kills mvp gameplay")
+
+
+def test_title_kill_count_hyphenated() -> None:
+    # Cv7Ul8t6j6s-style titles: "Hyper 11-Kill Super Carry"
+    assert title_kill_count("Paquito Hyper 11-Kill Super Carry vs Harley") == 11
+    assert title_kill_count("25 Kills!! Legendary Paquito") == 25
+    assert title_promises_kill_streak("Paquito Hyper 11-Kill Super Carry")
 
 
 def test_vod_title_blob_from_env(monkeypatch, tmp_path: Path) -> None:

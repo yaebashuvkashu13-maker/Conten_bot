@@ -1435,9 +1435,9 @@ def _discover_vod_kill_banners_inner(
             need,
         )
 
-    # Throughput: if fight peaks found zero banners, do not burn the remaining
-    # wall on sparse ref/OCR spikes — unless the title promises many kills
-    # (then keep a short spike; historically these VODs still have banners).
+    # Throughput: if fight peaks found zero banners, do not burn the full remaining
+    # wall on sparse ref/OCR — but NEVER return empty without a short spike.
+    # Abort-to-empty starved Aug1 (Cv7 "11-Kill" + _lz95): 2 slow probes → 0 hits → hard skip.
     if (
         fight_first
         and not hits
@@ -1453,21 +1453,29 @@ def _discover_vod_kill_banners_inner(
             from mlbb_vod_title import title_kill_count, title_promises_kill_streak, vod_title_blob
 
             blob = str(vod_title_blob(vod) or vod.stem).lower()
-            kill_rich = title_promises_kill_streak(blob) or title_kill_count(blob) >= 10
+            # 8+ kills (incl. "11-Kill") or streak words → slightly longer spike.
+            kill_rich = title_promises_kill_streak(blob) or title_kill_count(blob) >= 8
         except Exception:
             kill_rich = False
-        if kill_rich and os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE", "1") == "1":
+        if os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE", "1") == "1":
             # Cap remaining wall so spike cannot recreate the 8-minute dead burn.
-            remain = max(20.0, float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", "45")))
+            default_sec = "45" if kill_rich else "30"
+            default_probes = "8" if kill_rich else "6"
+            remain = max(
+                20.0,
+                float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", default_sec)),
+            )
             deadline = time.monotonic() + remain
             max_probes = min(
                 max_probes,
-                probes + max(4, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", "8"))),
+                probes
+                + max(4, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", default_probes))),
             )
             log.info(
-                "banner discover %s: fight-first miss on kill-rich title — short spike "
-                "remain=%.0fs max_probes=%s",
+                "banner discover %s: fight-first miss — short spike "
+                "kill_rich=%s remain=%.0fs max_probes=%s",
                 vod.name,
+                int(kill_rich),
                 remain,
                 max_probes,
             )
