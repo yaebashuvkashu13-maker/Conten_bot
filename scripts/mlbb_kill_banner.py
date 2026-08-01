@@ -1471,13 +1471,27 @@ def _discover_vod_kill_banners_inner(
                 probes
                 + max(4, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", default_probes))),
             )
+            # Ref-only spikes often miss YT gold glyphs; allow a few OCR spikes
+            # on miss (esp. kill-rich titles) so we do not hard-skip the VOD.
+            if int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0") or "0") <= 0:
+                ocr_n = "4" if kill_rich else "2"
+                os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = os.environ.get(
+                    "MLBB_FIGHT_FIRST_MISS_OCR_SPIKES", ocr_n
+                )
+            if kill_rich and os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") != "1":
+                # Title kill-count may have been missed earlier; dense catches flashes.
+                if os.environ.get("MLBB_FIGHT_FIRST_MISS_DENSE", "1") == "1":
+                    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
+                    dense = True
             log.info(
                 "banner discover %s: fight-first miss — short spike "
-                "kill_rich=%s remain=%.0fs max_probes=%s",
+                "kill_rich=%s remain=%.0fs max_probes=%s ocr_spikes=%s dense=%s",
                 vod.name,
                 int(kill_rich),
                 remain,
                 max_probes,
+                os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0"),
+                int(bool(dense)),
             )
         else:
             hits.sort(key=lambda h: h.sec)

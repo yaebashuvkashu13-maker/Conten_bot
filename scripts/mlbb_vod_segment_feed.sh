@@ -132,7 +132,8 @@ export MLBB_KILL_BANNER_DISCOVER_TARGET=2
 export MLBB_DISCOVER_SHIP_ON_FIRST=1
 export MLBB_BANNER_SKIP_CLIP_SCORE=1
 export MLBB_KILL_DISCOVER_ALLOW_OCR=1
-export MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES=0
+# 0 historically starved miss→spike (ref-only). Allow a few OCR spikes on miss path.
+export MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES=3
 export MLBB_VOD_PROMOTE_HOLD=1
 export MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY=1
 # AUTO_DOWNLOAD=1 — do not leave inbox starved on exhausted/yield-dead files.
