@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 def test_neg_not_kill_rejects_without_streak(monkeypatch) -> None:
     monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
-    monkeypatch.setenv("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.48")
+    monkeypatch.setenv("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.35")
     from mlbb_banner_hero_match import validate_own_kill_frame
 
     with patch(
         "mlbb_banner_ref_match.match_negative_banner_reference",
-        return_value=(0.49, "not_kill", "/x.png"),
+        return_value=(0.40, "not_kill", "/x.png"),
     ):
         ok, reason = validate_own_kill_frame(object(), ocr_text="random ui junk")
         assert ok is False
@@ -29,14 +29,14 @@ def test_neg_not_kill_allows_real_streak_ocr(monkeypatch) -> None:
     import numpy as np
 
     monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
-    monkeypatch.setenv("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.48")
+    monkeypatch.setenv("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.35")
     from mlbb_banner_hero_match import validate_own_kill_frame
 
     frame = np.zeros((270, 480, 3), dtype=np.uint8)
     with (
         patch(
             "mlbb_banner_ref_match.match_negative_banner_reference",
-            return_value=(0.49, "not_kill", "/x.png"),
+            return_value=(0.40, "not_kill", "/x.png"),
         ),
         patch("mlbb_banner_hero_match.extract_killer_portrait_patch", return_value=None),
         patch("mlbb_banner_hero_match.extract_hud_hero_portrait_patch", return_value=None),

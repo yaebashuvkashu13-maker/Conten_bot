@@ -47,12 +47,51 @@ def test_audit_rejects_ally_and_accepts_own_legendary() -> None:
     ally, own = _need_audit("TXr_485.1.jpg", "TXr_565.5.jpg")
     os.environ["MLBB_BANNER_OWN_KILL_REQUIRED"] = "1"
     os.environ["MLBB_BANNER_OWN_HUD_MIN_SIM"] = "0.22"
+    os.environ["MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE"] = "1"
     ok_ally, reason_ally = validate_own_kill_frame(cv2.imread(str(ally)))
-    ok_own, reason_own = validate_own_kill_frame(cv2.imread(str(own)))
+    ok_own, reason_own = validate_own_kill_frame(
+        cv2.imread(str(own)), ocr_text="LEGENDARY"
+    )
     assert ok_ally is False, reason_ally
-    assert "hud_killer_mismatch" in reason_ally or "unverifiable" in reason_ally
+    assert "hud_killer_mismatch" in reason_ally or "unverifiable" in reason_ally or "evidence" in reason_ally
     assert ok_own is True, reason_own
     assert reason_own.startswith("hud_killer_ok")
+
+
+def test_hud_alone_rejects_without_kill_evidence(monkeypatch) -> None:
+    """OZLs Aug1: strong HUD on empty banner ROI must not count as own-kill."""
+    import numpy as np
+
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
+    monkeypatch.setenv("MLBB_BANNER_OWN_HUD_MIN_SIM", "0.17")
+    monkeypatch.setenv("MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE", "1")
+    monkeypatch.setenv("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.35")
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    patch_img = np.ones((48, 48, 3), dtype=np.uint8) * 40
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "mlbb_banner_ref_match.match_negative_banner_reference",
+            return_value=(0.40, "no_banner", "/x.png"),
+        ),
+        patch(
+            "mlbb_banner_hero_match.extract_killer_portrait_patch",
+            return_value=patch_img,
+        ),
+        patch(
+            "mlbb_banner_hero_match.extract_hud_hero_portrait_patch",
+            return_value=patch_img,
+        ),
+        patch("mlbb_banner_hero_match.patch_pair_score", return_value=0.55),
+        patch(
+            "mlbb_banner_ref_match.match_positive_owner_reference",
+            return_value=None,
+        ),
+    ):
+        ok, reason = validate_own_kill_frame(frame, ocr_text="04:11 gold $467")
+        assert ok is False
+        assert "no_banner" in reason or "evidence" in reason
 
 
 def test_audit_rejects_rqu2_foreign_first_blood() -> None:

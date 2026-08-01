@@ -2247,6 +2247,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     if not ok_own:
                         return False, f"own_kill_recheck:{own_reason}", report
                     row["own_kill_recheck"] = own_reason
+                    if live:
+                        report["live_overlay"] = str(live)[:120]
                     # OCR-invented doubles need live streak text (2Ww5 jungle FP).
                     # Empty/ref sources already matched a banner image — do NOT
                     # treat missing src as OCR (that blocked UGu MANIAC when live
@@ -2260,8 +2262,23 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         live_hit = classify_banner_text(live) if live else None
                         if live_hit is None or int(live_hit.tier or 0) < 2:
                             return False, f"ocr_multi_no_live_streak:{(live or '')[:40]}", report
+                        report["live_streak_tier"] = int(live_hit.tier or 0)
                     if ocr_weak_needs_hud(src or "ocr", tier_i, str(own_reason)):
                         return False, f"ocr_single_no_hud:{own_reason}", report
+                    # Tier-1 / OCR singles: HUD alone shipped OZLs jungle + walk
+                    # clips; require live streak text on the banner frame.
+                    if (
+                        int(tier_i or 0) <= 1
+                        and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_LIVE", "1") == "1"
+                    ):
+                        live_hit = classify_banner_text(live) if live else None
+                        if live_hit is None or int(live_hit.tier or 0) < 1:
+                            return (
+                                False,
+                                f"single_no_live_streak:{(live or '')[:40]}",
+                                report,
+                            )
+                        report["live_streak_tier"] = int(live_hit.tier or 0)
             except Exception as exc:
                 log.warning("own_kill recheck failed: %s", exc)
                 return False, f"own_kill_recheck_error:{exc}", report
@@ -2273,15 +2290,37 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         # Always enforce send floor — BANNER_PRESEND=0 used to skip this and ship
         # lone singles / false streak labels.
         try:
-            from mlbb_kill_banner import send_min_tier
+            from mlbb_kill_banner import send_min_tier, classify_banner_text
 
             min_tier = send_min_tier()
             montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
             # Lone clip must meet floor; multi-single stitch is handled by montage picker.
             parts = int(row.get("montage_parts") or row.get("n_parts") or 1)
+            # HAS SLAIN / OCR single must not bypass SEND_MIN=double unless live
+            # OCR shows double+ (Aug1: three tier-1 jog clips with no real multi).
+            live_tier = int(report.get("live_streak_tier") or 0)
+            if live_tier <= 0:
+                live_blob = str(
+                    report.get("live_overlay")
+                    or row.get("banner_text")
+                    or row.get("kill_banner_text")
+                    or ""
+                )
+                try:
+                    lh = classify_banner_text(live_blob) if live_blob else None
+                    live_tier = int(lh.tier or 0) if lh else 0
+                except Exception:
+                    live_tier = 0
+            hud_score = 0.0
+            try:
+                hud_score = float(str(report.get("own_kill_recheck") or "").split(":")[-1])
+            except ValueError:
+                hud_score = 0.0
+            single_hud_min = float(os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN", "0.28"))
             allow_own_single = (
                 hud_own
-                and tier_i >= 1
+                and live_tier >= max(2, min_tier)
+                and hud_score >= single_hud_min
                 and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
                 and (
                     montage_single
@@ -4098,8 +4137,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.17",
+        # 0.17 shipped OZLs/Zy8 empty-frame HUD matches; require clearer portrait lock.
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.28",
+        "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE": "1",
+        "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
+        "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.28",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
@@ -4259,7 +4303,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
+        "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
+        "MLBB_OCR_SINGLE_REQUIRE_LIVE",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS",

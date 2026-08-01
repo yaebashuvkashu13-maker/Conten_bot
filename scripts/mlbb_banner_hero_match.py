@@ -258,12 +258,13 @@ def validate_own_kill_frame(
                 )
             ):
                 return False, f"neg_ref:{reason}"
-            # not_kill/no_banner: veto when strong AND live OCR has no streak phrase.
-            # Ignored entirely before → 3lO0AHqEfxs_38 shipped jungle farm as "triple".
+            # not_kill/no_banner: veto when live OCR has no streak phrase.
+            # Floor 0.35 (was 0.48): OZLs Aug1 HUD-matched empty jungle while
+            # neg_ref:no_banner scored ~0.40 and still shipped.
             if (
                 ("not_kill" in reason_l or "no_banner" in reason_l)
                 and float(_score)
-                >= float(os.environ.get("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.48"))
+                >= float(os.environ.get("MLBB_BANNER_NEG_NOT_KILL_MIN", "0.35"))
             ):
                 has_streak = False
                 if ocr_text:
@@ -284,12 +285,39 @@ def validate_own_kill_frame(
     except Exception:
         pass
 
+    def _ocr_has_kill_streak(text: str) -> bool:
+        if not text:
+            return False
+        try:
+            from mlbb_kill_banner import _KILL_STREAK_HINT_RE, classify_banner_text
+
+            if _KILL_STREAK_HINT_RE.search(str(text)):
+                return True
+            hit = classify_banner_text(str(text))
+            return hit is not None and int(hit.tier or 0) >= 1
+        except Exception:
+            return False
+
     killer = extract_killer_portrait_patch(frame)
     hud = extract_hud_hero_portrait_patch(frame)
     if killer is not None and hud is not None:
         hud_score = patch_pair_score(killer, hud)
         min_hud = float(os.environ.get("MLBB_BANNER_OWN_HUD_MIN_SIM", "0.22"))
         if hud_score >= min_hud:
+            # HUD portrait match alone is not a kill — OZLs/Zy8 mid frames
+            # matched HUD on empty banner ROI and shipped jog clips.
+            if os.environ.get("MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE", "1") == "1":
+                has_streak = _ocr_has_kill_streak(str(ocr_text or ""))
+                has_pos = False
+                if not has_streak:
+                    try:
+                        from mlbb_banner_ref_match import match_positive_owner_reference
+
+                        has_pos = match_positive_owner_reference(frame) is not None
+                    except Exception:
+                        has_pos = False
+                if not has_streak and not has_pos:
+                    return False, f"hud_no_kill_evidence:{hud_score:.3f}"
             return True, f"hud_killer_ok:{hud_score:.3f}"
         # Usable HUD that does not match killer → ally/enemy kill banner.
         return False, f"hud_killer_mismatch:{hud_score:.3f}"
