@@ -71,9 +71,18 @@ def montage_single_row_ok(row: dict) -> bool:
         return True
     src = _row_banner_source(row)
     label = str(row.get("kill_banner") or "").lower()
+    # Discover already enforced own-kill when OWN_KILL_REQUIRED; do not discard
+    # the sole OCR banner at collect (HUD recheck still runs at presend).
+    # Aug1: Zy8/6qq5/8ixh found bannered=1 then finished with eligible=0.
+    own_kill_ocr_ok = (
+        os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "0") == "1"
+        and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
+        and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1"
+    )
     allow_ocr = (
         os.environ.get("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0") == "1"
         or os.environ.get("MLBB_ADAPTIVE_ALLOW_SINGLE", "0") == "1"
+        or own_kill_ocr_ok
     )
     if src.startswith("ocr") or label in {"single_weak", "color", "announce"}:
         if not allow_ocr:

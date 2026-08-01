@@ -1485,6 +1485,21 @@ def _discover_vod_kill_banners_inner(
                 os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = os.environ.get(
                     "MLBB_FIGHT_FIRST_MISS_OCR_SPIKES", ocr_n
                 )
+            # Peak-phase OCR often burns the whole discover budget (default 10),
+            # then miss OCR spikes log ocr_spikes=N but execute 0 (UEr0/MUk6/9wsA).
+            miss_ocr = max(
+                1,
+                int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", ocr_n) or ocr_n),
+            )
+            left = int(_OCR_CALL_BUDGET.get("left", -1))
+            if 0 <= left < miss_ocr:
+                _OCR_CALL_BUDGET["left"] = miss_ocr
+                log.info(
+                    "banner discover %s: ocr budget refresh left=%s→%s for miss spike",
+                    vod.name,
+                    left,
+                    miss_ocr,
+                )
             log.info(
                 "banner discover %s: fight-first miss — short spike "
                 "kill_rich=%s remain=%.0fs max_probes=%s ocr_spikes=%s",

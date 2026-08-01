@@ -114,11 +114,40 @@ def test_pick_montage_rejects_ocr_singles(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1")
     monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "1")
+    # Without own-kill reliable path, OCR singles stay blocked.
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "0")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0")
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "0")
     rows = [
         {"start": 100, "peak_start": 110, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ocr", "fight_dur": 12},
         {"start": 300, "peak_start": 310, "kill_banner_tier": 1, "kill_banner": "single", "banner_source": "ref", "fight_dur": 14},
     ]
     assert len(montage_eligible_rows(rows)) == 1
+
+
+def test_montage_allows_ocr_single_when_own_kill_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collect must not discard discover-validated OCR own-kill singles (Zy8 Aug1)."""
+    from mlbb_vod_montage import montage_eligible_rows, montage_single_row_ok
+
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_SINGLES", "1")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0")
+    monkeypatch.setenv("MLBB_ADAPTIVE_ALLOW_SINGLE", "0")
+    monkeypatch.setenv("MLBB_BANNER_OWN_KILL_REQUIRED", "1")
+    monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_SINGLE", "1")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1")
+    monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
+    row = {
+        "start": 100,
+        "peak_start": 110,
+        "kill_banner_tier": 1,
+        "kill_banner": "single",
+        "banner_source": "ocr",
+        "fight_dur": 12,
+    }
+    assert montage_single_row_ok(row) is True
+    assert len(montage_eligible_rows([row])) == 1
 
 
 def test_shippable_bannered_rows_filters_singles(monkeypatch: pytest.MonkeyPatch) -> None:
