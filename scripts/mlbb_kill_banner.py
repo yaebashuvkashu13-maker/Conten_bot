@@ -1441,7 +1441,6 @@ def _discover_vod_kill_banners_inner(
     if (
         fight_first
         and not hits
-        and not dense
         and (
             probes >= max(2, int(os.environ.get("MLBB_FIGHT_FIRST_MISS_MIN_PROBES", "3")))
             or time.monotonic() >= peak_deadline
@@ -1459,39 +1458,36 @@ def _discover_vod_kill_banners_inner(
             kill_rich = False
         if os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE", "1") == "1":
             # Cap remaining wall so spike cannot recreate the 8-minute dead burn.
-            default_sec = "45" if kill_rich else "30"
-            default_probes = "8" if kill_rich else "6"
+            # Do NOT flip dense=True here: dense runs before spike and returns
+            # early (fX76 scanned t=3..19 only, skipped OCR spike entirely).
+            default_sec = "90" if kill_rich else "45"
+            default_probes = "12" if kill_rich else "8"
             remain = max(
                 20.0,
                 float(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC", default_sec)),
             )
-            deadline = time.monotonic() + remain
-            max_probes = min(
+            # Raise overall ceiling so spike actually gets the remain window.
+            deadline = max(deadline, time.monotonic() + remain)
+            max_probes = max(
                 max_probes,
                 probes
                 + max(4, int(os.environ.get("MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES", default_probes))),
             )
-            # Ref-only spikes often miss YT gold glyphs; allow a few OCR spikes
-            # on miss (esp. kill-rich titles) so we do not hard-skip the VOD.
-            if int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0") or "0") <= 0:
-                ocr_n = "4" if kill_rich else "2"
+            # Ref-only spikes often miss YT gold glyphs; allow OCR spikes on miss.
+            ocr_n = "6" if kill_rich else "3"
+            cur_ocr = int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0") or "0")
+            if cur_ocr < int(ocr_n):
                 os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = os.environ.get(
                     "MLBB_FIGHT_FIRST_MISS_OCR_SPIKES", ocr_n
                 )
-            if kill_rich and os.environ.get("MLBB_VOD_BANNER_DENSE_SEC", "0") != "1":
-                # Title kill-count may have been missed earlier; dense catches flashes.
-                if os.environ.get("MLBB_FIGHT_FIRST_MISS_DENSE", "1") == "1":
-                    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "1"
-                    dense = True
             log.info(
                 "banner discover %s: fight-first miss — short spike "
-                "kill_rich=%s remain=%.0fs max_probes=%s ocr_spikes=%s dense=%s",
+                "kill_rich=%s remain=%.0fs max_probes=%s ocr_spikes=%s",
                 vod.name,
                 int(kill_rich),
                 remain,
                 max_probes,
                 os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0"),
-                int(bool(dense)),
             )
         else:
             hits.sort(key=lambda h: h.sec)
@@ -1525,7 +1521,17 @@ def _discover_vod_kill_banners_inner(
                 min(float(p) for p in peak_hints)
                 - float(os.environ.get("MLBB_KILL_BANNER_DISCOVER_HINT_PAD", "10")),
             )
-            if hint_floor < t0:
+            if not hits:
+                # Peak-phase already missed — jump dense to fight region, not draft @3s.
+                if hint_floor > t0:
+                    log.info(
+                        "banner discover %s: dense jump to fights %.0fs (was %.0fs)",
+                        vod.name,
+                        hint_floor,
+                        t0,
+                    )
+                    t0 = hint_floor
+            elif hint_floor < t0:
                 log.info(
                     "banner discover %s: dense hint floor %.0fs (was %.0fs)",
                     vod.name,
@@ -1640,7 +1646,14 @@ def _discover_vod_kill_banners_inner(
             ref_n,
             ocr_n,
         )
-        return hits
+        # Empty dense must not skip spike — that starved Aug1 kill-rich VODs.
+        if hits:
+            return hits
+        log.info(
+            "banner discover %s: dense miss — continue to spike hits=0 probes=%s",
+            vod.name,
+            probes,
+        )
 
     force_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") == "1"
     # Bounded spike sweep when peaks-only is thin — finds banners motion peaks miss
