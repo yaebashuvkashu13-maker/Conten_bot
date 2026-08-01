@@ -2300,12 +2300,21 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             log.debug("send_min_tier gate skip: %s", exc)
 
         # Post-banner jog: reject if the tail after the kill is mostly running.
+        # Skip for verified own-kill + short hard-cut tails (Y3In: post_run=1.0 on
+        # a ~2s banner post blocked hud_killer_ok:0.28 — false jog reject).
         try:
             from mlbb_vod_montage import clip_run_fraction
 
             clip_end = cut_start + dur
             post_lo = float(banner_sec) + 0.4
-            if clip_end > post_lo + 0.8:
+            post_span = clip_end - post_lo
+            short_post = post_span <= float(
+                os.environ.get("MLBB_PRESEND_POST_RUN_MIN_SPAN", "3.0")
+            )
+            skip_own = hud_own and os.environ.get(
+                "MLBB_PRESEND_SKIP_POST_RUN_ON_OWN", "1"
+            ) == "1"
+            if clip_end > post_lo + 0.8 and not short_post and not skip_own:
                 post_run = clip_run_fraction(
                     vod, post_lo, clip_end, banner_sec=float(banner_sec)
                 )
@@ -2313,6 +2322,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 max_post = float(os.environ.get("MLBB_PRESEND_MAX_POST_RUN_FRAC", "0.40"))
                 if post_run > max_post:
                     return False, f"post_run_frac={post_run:.2f}>{max_post:.2f}", report
+            elif short_post or skip_own:
+                report["post_run_skipped"] = "short_post" if short_post else "own_kill"
         except Exception as exc:
             log.debug("post_run gate skip: %s", exc)
 
