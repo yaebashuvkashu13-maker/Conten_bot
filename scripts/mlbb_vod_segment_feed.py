@@ -2156,14 +2156,33 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 fr = _read_frame_at(vod, banner_sec)
                 if fr is not None:
                     live = _live_overlay_text(fr, consume_presend_budget=True)
+                    # If primary frame already has a streak phrase, do NOT burn the
+                    # OCR budget hunting coordination on neighbors (Y3In: budget
+                    # emptied before own-kill neighbor offs → false no_banner).
+                    has_streak_live = False
+                    if live:
+                        try:
+                            from mlbb_kill_banner import _KILL_STREAK_HINT_RE
+
+                            has_streak_live = bool(_KILL_STREAK_HINT_RE.search(live))
+                        except Exception:
+                            has_streak_live = False
+                        if not has_streak_live:
+                            live_hit = classify_banner_text(live)
+                            has_streak_live = (
+                                live_hit is not None and int(live_hit.tier or 0) >= 1
+                            )
                     # Objective announce can peak 1–2s off the stored banner_sec
                     # (2Ww5h0ffYtY_270: Lord Spawned @283, stored double @284).
-                    if not (live and is_coordination_banner_text(live)):
+                    if not has_streak_live and not (
+                        live and is_coordination_banner_text(live)
+                    ):
                         for off in (-1.0, 1.0, -2.0, 2.0):
                             fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
                             if fr_n is None:
                                 continue
-                            near = _live_overlay_text(fr_n, consume_presend_budget=True)
+                            # Safety veto only — do not consume own-kill OCR budget.
+                            near = _live_overlay_text(fr_n, consume_presend_budget=False)
                             if near and is_coordination_banner_text(near):
                                 live = near
                                 break
@@ -2173,14 +2192,17 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         return False, f"live_enemy:{live[:40]}", report
                     # Use live OCR + stored banner_text only — never invent
                     # DOUBLE KILL from the discover label alone.
-                    ocr_blob = " ".join(
-                        x
-                        for x in (
-                            live,
-                            str(row.get("banner_text") or row.get("kill_banner_text") or ""),
-                        )
-                        if x
+                    stored_txt = str(
+                        row.get("banner_text")
+                        or row.get("kill_banner_text")
+                        or row.get("kill_banner")
+                        or ""
                     )
+                    if isinstance(row.get("kill_banner"), dict):
+                        stored_txt = str(
+                            (row.get("kill_banner") or {}).get("label") or stored_txt
+                        )
+                    ocr_blob = " ".join(x for x in (live, stored_txt) if x)
                     ok_own, own_reason = validate_own_kill_frame(
                         fr, vod=vod, ocr_text=ocr_blob
                     )
@@ -2210,18 +2232,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 continue
                             if live_n and is_enemy_kill_text(live_n):
                                 continue
-                            blob_n = " ".join(
-                                x
-                                for x in (
-                                    live_n,
-                                    str(
-                                        row.get("banner_text")
-                                        or row.get("kill_banner_text")
-                                        or ""
-                                    ),
-                                )
-                                if x
-                            )
+                            blob_n = " ".join(x for x in (live_n, stored_txt) if x)
                             ok_n, reason_n = validate_own_kill_frame(
                                 fr_n, vod=vod, ocr_text=blob_n
                             )
@@ -4034,7 +4045,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
         "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
         "MLBB_PRESEND_OWN_KILL_SINGLE": "1",
-        "MLBB_PRESEND_LIVE_OCR_BUDGET": "3",
+        "MLBB_PRESEND_LIVE_OCR_BUDGET": "6",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
         "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "-1,1,2",
         "MLBB_BANNER_REJECT_OCR_SINGLE": "1",
