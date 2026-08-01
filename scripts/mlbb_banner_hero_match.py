@@ -268,9 +268,15 @@ def validate_own_kill_frame(
                 has_streak = False
                 if ocr_text:
                     try:
-                        from mlbb_kill_banner import _KILL_STREAK_HINT_RE
+                        from mlbb_kill_banner import (
+                            _KILL_STREAK_HINT_RE,
+                            classify_banner_text,
+                        )
 
                         has_streak = bool(_KILL_STREAK_HINT_RE.search(str(ocr_text)))
+                        if not has_streak:
+                            live_hit = classify_banner_text(str(ocr_text))
+                            has_streak = live_hit is not None and int(live_hit.tier or 0) >= 1
                     except Exception:
                         has_streak = False
                 if not has_streak:

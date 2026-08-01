@@ -89,6 +89,9 @@ _HUD_OCR_SOUP_RE = re.compile(
 _KILL_STREAK_HINT_RE = re.compile(
     r"(?:"
     r"savage|maniac|triple|double|legendary|rampage|shutdown|first\s+blood|"
+    # Y3In5vMdlak: RapidOCR reads UNSTOPPABLE; without it neg_ref:no_banner
+    # vetoed real own-kill frames at presend.
+    r"unstoppable|dominating|godlike|unstopable|"
     r"has\s+slain|been\s+slain|killing\s+spree|убийств|саваж|маньяк|тройн|двойн"
     r")",
     re.I,
@@ -102,6 +105,8 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
     (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
     (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill", re.I), 2, "double"),
+    (re.compile(r"unstoppable|unstopable|dominating", re.I), 2, "double"),
+    (re.compile(r"godlike", re.I), 3, "triple"),
     # Strong singles only — weak "kill" alone is handled as single_weak needing color.
     (
         re.compile(
