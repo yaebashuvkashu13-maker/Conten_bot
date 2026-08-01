@@ -1732,15 +1732,29 @@ def _discover_vod_kill_banners_inner(
                 if hits:
                     known.add(round(hits[-1].sec / 4.0))
 
+        # Reserve OCR slots — ref pass used to burn max_probes=20 and leave ocr=0
+        # (Cv7/nFf2 Aug1: ocr_spikes=6 logged but never executed).
+        ocr_spikes = max(
+            0,
+            int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0")),
+        )
+        ref_probe_ceiling = max_probes
+        if ocr_spikes > 0 and len(hits) < want:
+            ref_probe_ceiling = max(probes + 4, max_probes - ocr_spikes)
+        saved_max = max_probes
+        max_probes = min(max_probes, ref_probe_ceiling)
         _run_spike_pass(allow_ocr=False, label="ref", stop_at=want, quick=True)
+        max_probes = max(saved_max, probes + ocr_spikes)
         if len(hits) < want and probes < max_probes and time.monotonic() < deadline:
-            # OCR fallback on remaining budget — off by default (tesseract hangs).
-            ocr_spikes = max(
-                0,
-                int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES", "0")),
-            )
             if ocr_spikes > 0 and _ocr_budget_ok():
                 idxs = idxs[:ocr_spikes]
+                log.info(
+                    "banner discover %s: ocr spike pass n=%s probes=%s/%s",
+                    vod.name,
+                    ocr_spikes,
+                    probes,
+                    max_probes,
+                )
                 _run_spike_pass(allow_ocr=True, label="ocr", stop_at=want, quick=True)
 
     hits.sort(key=lambda h: h.sec)

@@ -4056,7 +4056,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Discover: fight-first spends budget on fight peaks; abort fast on miss.
         "MLBB_KILL_BANNER_DISCOVER_PROBE_AFTER": "4.0",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "0",
-        "MLBB_VOD_TITLE_DENSE_AUTO": "0",
+        # Kill-count / streak titles need dense after peak miss (11-Kill / 25 kills).
+        "MLBB_VOD_TITLE_DENSE_AUTO": "1",
         # Discover: collect single+ anchors; montage ships ref singles.
         # Find several banners so an already-sent kill does not exhaust a 20-kill VOD.
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
@@ -4107,8 +4108,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Peak RapidOCR only (not dense) — Tesseract is blind on YT gold glyphs.
         "MLBB_BANNER_DISCOVER_RAPID_PEAKS": "1",
         "MLBB_BANNER_DISCOVER_RAPID": "0",
-        # OCR on spike probes hung for minutes (OQx); ref-first is enough for quota speed.
-        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "0",
+        # Miss→spike needs a few OCR probes; 0 left Aug1 ref-blind (setdefault only).
+        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "3",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
         "MLBB_KILL_BANNER_OCR_WIDE": "0",
         "MLBB_DISCOVER_OCR_CALL_BUDGET": "12",
