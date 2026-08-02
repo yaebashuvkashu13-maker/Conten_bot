@@ -66,7 +66,7 @@ def _read_json(path: Path, default):
 
 
 def _quota_for(game: str) -> int:
-    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 5, "wot": 5}
+    defaults = {"mlbb": 5, "pubg": 3, "standoff": 3, "genshin": 5, "wot": 3}
     primary = f"DAILY_GAME_{game.upper()}_QUOTA"
     legacy = f"DAILY_{game.upper()}_QUOTA"
     raw = os.environ.get(primary, os.environ.get(legacy, str(defaults.get(game, 5))))

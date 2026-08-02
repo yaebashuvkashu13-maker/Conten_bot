@@ -1794,11 +1794,13 @@ def _montage_keeps_collecting(profile: str) -> bool:
     p = normalize_profile(profile)
     if p == "mobile_legends" and os.environ.get("MLBB_VOD_MONTAGE", "0") == "1":
         return True
-    if p in {"pubg", "standoff"} and os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
+    if p in {"pubg", "standoff", "wot"} and os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
         return True
     if p == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "0") == "1":
         return True
     if p == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "0") == "1":
+        return True
+    if p == "wot" and os.environ.get("WOT_VOD_MONTAGE", "0") == "1":
         return True
     return False
 
@@ -1806,13 +1808,13 @@ def _montage_keeps_collecting(profile: str) -> bool:
 def _shooter_score_stop_n(profile: str, limit: int) -> int:
     """Stop scoring once we have enough combat peaks for montage / send."""
     p = normalize_profile(profile)
-    if p not in SHOOTER_PROFILES:
+    if p not in SHOOTER_PROFILES and p != "wot":
         return limit
     raw = (os.environ.get("SHOOTER_VOD_SCORE_STOP") or "").strip()
     if raw:
         return max(1, min(limit, int(raw)))
     if _montage_keeps_collecting(profile):
-        max_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "4")))
+        max_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
         # Need a small surplus so pick_montage_rows can space peaks.
         return max(1, min(limit, max_clips * 2))
     if os.environ.get("SHOOTER_VOD_SEND_ONE", "1") == "1":

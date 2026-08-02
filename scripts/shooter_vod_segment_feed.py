@@ -77,7 +77,7 @@ def _reliable_mode(game: str = "") -> bool:
 
 
 def _apply_reliable_runtime(game: str) -> None:
-    """Mute owner noise + prefer singles + hard exhaust. Idempotent per process."""
+    """Mute owner noise + hard exhaust. PUBG/Standoff/WoT → 3-clip montages."""
     if not _reliable_mode(game):
         return
     defaults = {
@@ -87,7 +87,6 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY": "0",
         "SHOOTER_VOD_DOWNLOAD_NOTIFY": "0",
         "SHOOTER_VOD_METRO_REJECT_NOTIFY": "0",
-        "SHOOTER_VOD_MONTAGE": "0",
         "SHOOTER_VOD_SEND_ONE": "1",
         "SHOOTER_VOD_MAX_ZERO_ATTEMPTS": "1",
         "SHOOTER_VOD_PRESEND_EXHAUST_AFTER": "1",
@@ -112,8 +111,14 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_PREFER_MIN_SEC": "420",
         "SHOOTER_VOD_PREFER_MAX_SEC": "1080",
     }
-    if game == "pubg":
-        defaults["PUBG_VOD_MONTAGE"] = "0"
+    # Quota path: glue 3 fights → 1 video; no lone singles (genshin stays singles).
+    if game in {"pubg", "standoff", "wot"}:
+        defaults["SHOOTER_VOD_MONTAGE"] = "1"
+        defaults["SHOOTER_VOD_MONTAGE_ONLY"] = "1"
+        defaults["SHOOTER_VOD_MONTAGE_MIN_CLIPS"] = "3"
+        defaults["SHOOTER_VOD_MONTAGE_MAX_CLIPS"] = "3"
+        defaults[f"{game.upper()}_VOD_MONTAGE"] = "1"
+        defaults[f"{game.upper()}_VOD_MONTAGE_ONLY"] = "1"
     # Shared launcher exports HIGHLIGHT_CLIP_DISABLED=1 for MLBB — shooters need CLIP.
     defaults["HIGHLIGHT_CLIP_DISABLED"] = "0"
     force_keys = {
@@ -122,7 +127,15 @@ def _apply_reliable_runtime(game: str) -> None:
         "SHOOTER_VOD_DISCOVERY_MISS_NOTIFY",
         "SHOOTER_VOD_METRO_REJECT_NOTIFY",
         "SHOOTER_VOD_MONTAGE",
+        "SHOOTER_VOD_MONTAGE_ONLY",
+        "SHOOTER_VOD_MONTAGE_MIN_CLIPS",
+        "SHOOTER_VOD_MONTAGE_MAX_CLIPS",
         "PUBG_VOD_MONTAGE",
+        "PUBG_VOD_MONTAGE_ONLY",
+        "STANDOFF_VOD_MONTAGE",
+        "STANDOFF_VOD_MONTAGE_ONLY",
+        "WOT_VOD_MONTAGE",
+        "WOT_VOD_MONTAGE_ONLY",
         "SHOOTER_VOD_MAX_ZERO_ATTEMPTS",
         "HIGHLIGHT_PANN_FIXED",
         "HIGHLIGHT_PANN_GUN_MIN",
@@ -498,12 +511,22 @@ def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> boo
 
 
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
-    from shooter_vod_montage import montage_enabled, pick_montage_rows
+    from shooter_vod_montage import montage_enabled, montage_min_clips, montage_only, pick_montage_rows
 
-    if montage_enabled(game) and len(to_send) >= 2:
+    if montage_enabled(game):
         picked = pick_montage_rows(to_send)
-        if len(picked) >= 2:
+        need = montage_min_clips()
+        if len(picked) >= need:
             return _send_montage_batch(game, token, chat_id, vod, picked, sig)
+        if montage_only(game):
+            log.info(
+                "montage shortfall game=%s vod=%s have=%s need=%s — skip singles",
+                game,
+                vod.name,
+                len(picked),
+                need,
+            )
+            return 0
 
     ok_cycle, cycle_reason = can_send_for_game(game, 1)
     if not ok_cycle:
@@ -613,7 +636,7 @@ def _send_montage_batch(
     to_send: list[dict],
     sig: str,
 ) -> int:
-    """One Telegram video = xfade of 2–4 fight windows from the same VOD."""
+    """One Telegram video = xfade of N fight windows from the same VOD (default 3)."""
     import tempfile
 
     from shooter_vod_montage import (
@@ -680,12 +703,22 @@ def _send_montage_batch(
             gated_parts.append(part)
             gated_durs.append(dur)
         if len(gated_rows) < 2:
-            log.warning("montage aborted — fewer than 2 parts (%s); fallback single", len(gated_rows))
-            if gated_rows:
-                # Temporarily disable montage to avoid recursion.
+            from shooter_vod_montage import montage_min_clips, montage_only
+
+            need = montage_min_clips()
+            log.warning(
+                "montage aborted — parts=%s need=%s vod=%s",
+                len(gated_rows),
+                need,
+                vod.name,
+            )
+            if gated_rows and not montage_only(game):
+                # Temporarily disable montage to avoid recursion (legacy single fallback).
                 old = os.environ.get("SHOOTER_VOD_MONTAGE")
                 old_g = os.environ.get(f"{game.upper()}_VOD_MONTAGE")
+                old_only = os.environ.get("SHOOTER_VOD_MONTAGE_ONLY")
                 os.environ["SHOOTER_VOD_MONTAGE"] = "0"
+                os.environ["SHOOTER_VOD_MONTAGE_ONLY"] = "0"
                 if old_g is not None:
                     os.environ[f"{game.upper()}_VOD_MONTAGE"] = "0"
                 try:
@@ -695,6 +728,10 @@ def _send_montage_batch(
                         os.environ.pop("SHOOTER_VOD_MONTAGE", None)
                     else:
                         os.environ["SHOOTER_VOD_MONTAGE"] = old
+                    if old_only is None:
+                        os.environ.pop("SHOOTER_VOD_MONTAGE_ONLY", None)
+                    else:
+                        os.environ["SHOOTER_VOD_MONTAGE_ONLY"] = old_only
                     if old_g is None:
                         os.environ.pop(f"{game.upper()}_VOD_MONTAGE", None)
                     else:
@@ -820,6 +857,7 @@ def _scan_vod(
         montage_collect_env,
         montage_enabled,
         montage_max_clips,
+        montage_only,
         pick_montage_rows,
     )
 
@@ -999,6 +1037,16 @@ def _scan_vod(
                     [int(float(r.get("peak_start", r["start"]))) for r in picked],
                 )
                 batch = picked
+            elif montage_only(game):
+                log.info(
+                    "montage pick empty game=%s vod=%s candidates=%s — skip singles",
+                    game,
+                    vod.name,
+                    len(rows),
+                )
+                if entry is not None:
+                    record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool)
+                return 0
             else:
                 batch = rows[:1]
         else:

@@ -26,16 +26,29 @@ def test_montage_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHOOTER_VOD_MONTAGE", raising=False)
     monkeypatch.delenv("PUBG_VOD_MONTAGE", raising=False)
     monkeypatch.delenv("STANDOFF_VOD_MONTAGE", raising=False)
-    assert montage_enabled("pubg") is False
-    # Standoff montage is on by default.
+    monkeypatch.delenv("WOT_VOD_MONTAGE", raising=False)
+    # Defaults: PUBG/Standoff/WoT montage ON.
+    assert montage_enabled("pubg") is True
     assert montage_enabled("standoff") is True
+    assert montage_enabled("wot") is True
+    monkeypatch.setenv("PUBG_VOD_MONTAGE", "0")
+    assert montage_enabled("pubg") is False
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "1")
     assert montage_enabled("pubg") is True
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "0")
-    monkeypatch.setenv("PUBG_VOD_MONTAGE", "1")
-    assert montage_enabled("pubg") is True
     monkeypatch.setenv("STANDOFF_VOD_MONTAGE", "0")
     assert montage_enabled("standoff") is False
+
+
+def test_montage_only_blocks_singles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_montage import montage_only
+
+    monkeypatch.delenv("SHOOTER_VOD_MONTAGE_ONLY", raising=False)
+    monkeypatch.delenv("PUBG_VOD_MONTAGE_ONLY", raising=False)
+    assert montage_only("pubg") is True
+    assert montage_only("genshin") is False
+    monkeypatch.setenv("PUBG_VOD_MONTAGE_ONLY", "0")
+    assert montage_only("pubg") is False
 
 
 def test_montage_collect_env_softens_clip_score(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,6 +74,20 @@ def test_pick_montage_rows_gap(monkeypatch: pytest.MonkeyPatch) -> None:
     peaks = [float(r["peak_start"]) for r in picked]
     for a, b in zip(peaks, peaks[1:]):
         assert b - a >= 50
+
+
+def test_pick_montage_rows_requires_three(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_GAP_SEC", "50")
+    rows = [
+        {"start": 100, "peak_start": 110, "score": 0.4, "fight_dur": 8},
+        {"start": 300, "peak_start": 310, "score": 0.35, "fight_dur": 9},
+    ]
+    assert pick_montage_rows(rows) == []
+    rows.append({"start": 500, "peak_start": 510, "score": 0.3, "fight_dur": 7})
+    picked = pick_montage_rows(rows)
+    assert len(picked) == 3
 
 
 def test_build_montage_id() -> None:

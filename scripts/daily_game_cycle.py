@@ -38,7 +38,8 @@ def enabled() -> bool:
 
 def quota_for(game: str) -> int:
     game = game.strip().lower()
-    defaults = {"mlbb": 5, "pubg": 5, "standoff": 5, "genshin": 5, "wot": 5}
+    # PUBG/Standoff/WoT: 3 glued montages (3 clips each). MLBB/Genshin stay 5.
+    defaults = {"mlbb": 5, "pubg": 3, "standoff": 3, "genshin": 5, "wot": 3}
     # DAILY_GAME_* is canonical; DAILY_* kept for backward compatibility.
     primary = f"DAILY_GAME_{game.upper()}_QUOTA"
     legacy = f"DAILY_{game.upper()}_QUOTA"

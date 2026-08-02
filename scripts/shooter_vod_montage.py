@@ -14,26 +14,39 @@ log = logging.getLogger("shooter_vod_montage")
 
 
 def montage_enabled(game: str = "") -> bool:
-    """Enable via SHOOTER_VOD_MONTAGE=1, or game-specific PUBG/STANDOFF flags.
+    """Enable via SHOOTER_VOD_MONTAGE=1, or game-specific flags.
 
-    Standoff defaults ON — merge several fights into one video.
+    PUBG / Standoff / WoT default ON — daily quota ships 3×3-clip montages.
     """
     if os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
         return True
     g = (game or "").strip().lower()
-    if g == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "0") == "1":
+    if g == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "1") == "1":
         return True
     if g == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "1") == "1":
+        return True
+    if g == "wot" and os.environ.get("WOT_VOD_MONTAGE", "1") == "1":
         return True
     return False
 
 
+def montage_only(game: str = "") -> bool:
+    """No single-clip fallback — ship only glued fights (PUBG/Standoff/WoT)."""
+    g = (game or "").strip().lower()
+    if os.environ.get("SHOOTER_VOD_MONTAGE_ONLY", "0") == "1":
+        return True
+    if g in {"pubg", "standoff", "wot"}:
+        return os.environ.get(f"{g.upper()}_VOD_MONTAGE_ONLY", "1") == "1"
+    return False
+
+
 def montage_min_clips() -> int:
-    return max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "2")))
+    # Daily shooter quota: exactly 3 fights glued into one Telegram video.
+    return max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
 
 
 def montage_max_clips() -> int:
-    return max(montage_min_clips(), int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "4")))
+    return max(montage_min_clips(), int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
 
 
 def montage_gap_sec() -> float:

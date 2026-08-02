@@ -130,9 +130,11 @@ def _run_shooter(game: str, env: dict[str, str]) -> dict:
         "SHOOTER_VOD_RELIABLE": "0",
         "SHOOTER_VOD_MONTAGE": "1",
         f"{game.upper()}_VOD_MONTAGE": "1",
+        f"{game.upper()}_VOD_MONTAGE_ONLY": "1",
+        "SHOOTER_VOD_MONTAGE_ONLY": "1",
         "SHOOTER_VOD_SEND_ONE": "1",
-        "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "2",
-        "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "4",
+        "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "3",
+        "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "3",
         "MONTAGE_PREFER_FRESH_VOD": "1",
         "MONTAGE_ALLOW_VOD_REUSE": "0",
         # Keep cycle env readable but don't gate sends.

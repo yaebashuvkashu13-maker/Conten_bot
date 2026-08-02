@@ -66,6 +66,16 @@ _LAUNCHER_PRESERVE_KEYS = (
     "MLBB_PRESEND_BANNER_CONTEXT",
     "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER",
     "MLBB_PRESEND_LIVE_OCR_BUDGET",
+    "SHOOTER_VOD_MONTAGE",
+    "SHOOTER_VOD_MONTAGE_ONLY",
+    "SHOOTER_VOD_MONTAGE_MIN_CLIPS",
+    "SHOOTER_VOD_MONTAGE_MAX_CLIPS",
+    "PUBG_VOD_MONTAGE",
+    "STANDOFF_VOD_MONTAGE",
+    "WOT_VOD_MONTAGE",
+    "DAILY_GAME_PUBG_QUOTA",
+    "DAILY_GAME_STANDOFF_QUOTA",
+    "DAILY_GAME_WOT_QUOTA",
 )
 
 
@@ -149,9 +159,7 @@ def main() -> int:
         env["VOD_SEGMENT_GAME"] = game
         _scrub_mlbb_only_env_for_shooter(env)
 
-    # Future switch: when quotas are stable, ship only montages (not singles).
-    # Do NOT clear MLBB_VOD_RELIABLE — reliable already enables montage and
-    # turning it off re-opens CLIP/OCR/presend hang paths.
+    # Future: MONTAGE_ONLY_MODE for MLBB. PUBG/Standoff/WoT always ship 3×3 montages.
     try:
         from post_quota_montages import montage_only_mode
 
@@ -164,6 +172,15 @@ def main() -> int:
             log.info("MONTAGE_ONLY_MODE active for game=%s (reliable kept)", game)
     except Exception:
         pass
+
+    if game in {"pubg", "standoff", "wot"}:
+        env["SHOOTER_VOD_MONTAGE"] = "1"
+        env["SHOOTER_VOD_MONTAGE_ONLY"] = "1"
+        env["SHOOTER_VOD_MONTAGE_MIN_CLIPS"] = "3"
+        env["SHOOTER_VOD_MONTAGE_MAX_CLIPS"] = "3"
+        env[f"{game.upper()}_VOD_MONTAGE"] = "1"
+        env[f"{game.upper()}_VOD_MONTAGE_ONLY"] = "1"
+        log.info("shooter triple-montage quota game=%s (3 clips × 3 sends)", game)
 
     proc = subprocess.run(
         [sys.executable, "-u", str(script)] + ([] if game == "mlbb" else [game]),
