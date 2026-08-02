@@ -191,8 +191,14 @@ def split_for_telegram(
     *,
     parts: int = 2,
     max_bytes: int = TELEGRAM_MAX_BYTES,
+    allow_reencode: bool = True,
 ) -> list[Path]:
-    """Return HQ part files, each under max_bytes when possible."""
+    """Return HQ part files, each under max_bytes when possible.
+
+    When allow_reencode=False, only stream-copy slices are kept. If any slice
+    still exceeds max_bytes, return [] so the caller can retry with more parts
+    instead of crushing quality with a CRF fallback.
+    """
     if not path.exists():
         return []
     if path.stat().st_size <= max_bytes:
@@ -223,6 +229,9 @@ def split_for_telegram(
         if copied and part_path.stat().st_size <= max_bytes:
             out_paths.append(part_path)
             continue
+
+        if not allow_reencode:
+            return []
 
         encoded = False
         for crf in crf_steps:
@@ -286,6 +295,13 @@ def send_document_file(
     return ok
 
 
+def _hq_split_part_count(size_bytes: int, *, max_bytes: int = TELEGRAM_DOCUMENT_MAX_BYTES) -> int:
+    """Enough time-slices that stream-copy parts stay under the Bot API document cap."""
+    target = max(1_000_000, min(TARGET_PART_BYTES, int(max_bytes * 0.92)))
+    # +15% headroom: keyframe-aligned -c copy chunks are uneven.
+    return max(2, int((size_bytes * 1.15 + target - 1) // target))
+
+
 def send_hq_files(
     token: str,
     chat_id: str,
@@ -309,8 +325,37 @@ def send_hq_files(
             force_file=True,
         )
 
-    parts = split_for_telegram(path, parts=2, max_bytes=TELEGRAM_DOCUMENT_MAX_BYTES)
+    # Do not hardcode parts=2: a ~200MB/4min montage needs ~5 slices so -c copy
+    # stays under 50MB. With only 2 parts ffmpeg falls back to CRF re-encode
+    # and the chat gets potato quality again.
+    n_parts = _hq_split_part_count(path.stat().st_size)
+    parts: list[Path] = []
+    for attempt in range(n_parts, n_parts + 5):
+        parts = split_for_telegram(
+            path,
+            parts=attempt,
+            max_bytes=TELEGRAM_DOCUMENT_MAX_BYTES,
+            allow_reencode=False,
+        )
+        if parts and all(p.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES for p in parts):
+            break
+        parts = []
     if not parts:
+        # Last resort: allow mild CRF so delivery still works.
+        parts = split_for_telegram(
+            path,
+            parts=n_parts + 2,
+            max_bytes=TELEGRAM_DOCUMENT_MAX_BYTES,
+            allow_reencode=True,
+        )
+    if not parts:
+        return False
+    oversized = [p for p in parts if p.stat().st_size > TELEGRAM_DOCUMENT_MAX_BYTES]
+    if oversized:
+        print(
+            f"send_hq_files: {len(oversized)}/{len(parts)} parts still >50MB after split",
+            file=sys.stderr,
+        )
         return False
     sent_any = False
     for pi, part in enumerate(parts, start=1):
