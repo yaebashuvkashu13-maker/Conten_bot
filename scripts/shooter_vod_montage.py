@@ -54,8 +54,9 @@ def montage_gap_sec() -> float:
 
 
 def montage_target_sec() -> tuple[float, float]:
-    lo = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_SEC", "22"))
-    hi = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "48"))
+    lo = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_SEC", "28"))
+    # 3×~18s fights with xfade need headroom above the old 48s cap.
+    hi = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "70"))
     return lo, hi
 
 
@@ -153,22 +154,27 @@ def trim_idle_run_end(
     mot_ref = float(np.median(fight_mot)) if fight_mot.size else float(motion.mean())
     gun_thr = max(gun_ref * 0.45, float(np.percentile(gunfire[start_idx : end_idx + 1], 25)))
     mot_thr = max(mot_ref * 0.85, float(np.percentile(motion[start_idx : end_idx + 1], 50)))
-    quiet_need = max(2, int(os.environ.get("SHOOTER_VOD_RUN_QUIET_BINS", "2")))
-    min_post = float(os.environ.get("SHOOTER_VOD_FIGHT_POST_SEC", "2.5"))
+    # 3 bins: a 1–2s reload/peek lull must not end the fight (6iOn peak60).
+    quiet_need = max(3, int(os.environ.get("SHOOTER_VOD_RUN_QUIET_BINS", "3")))
+    min_post = float(os.environ.get("SHOOTER_VOD_FIGHT_POST_SEC", "4.0"))
+    lookahead = max(0, int(os.environ.get("SHOOTER_VOD_TRIM_LOOKAHEAD_BINS", "5")))
 
     quiet = 0
     cut_idx = end_idx
     for idx in range(anchor_idx + 1, end_idx + 1):
         low_gun = gunfire[idx] < gun_thr * 0.90
         high_motion = motion[idx] >= mot_thr * 0.88
-        if low_gun and high_motion:
+        if low_gun:
             quiet += 1
             if quiet >= quiet_need:
-                cut_idx = max(anchor_idx + 1, idx - quiet_need + 1)
-                break
-        elif low_gun and not high_motion:
-            quiet += 1
-            if quiet >= quiet_need:
+                # Peek ahead — gun often resumes after a short cover pause.
+                resumes = False
+                if lookahead > 0:
+                    hi = min(end_idx, idx + lookahead)
+                    resumes = bool(np.any(gunfire[idx : hi + 1] >= gun_thr * 0.90))
+                if resumes:
+                    quiet = 0
+                    continue
                 cut_idx = max(anchor_idx + 1, idx - quiet_need + 1)
                 break
         else:
@@ -188,6 +194,79 @@ def trim_idle_run_end(
     return round(new_end, 2)
 
 
+def extend_end_while_gunfire(
+    vod: Path,
+    start: float,
+    end: float,
+    *,
+    peak_sec: float | None = None,
+    max_end: float | None = None,
+) -> float:
+    """Grow the clip tail while gunfire stays hot (finish the fight, not the peak)."""
+    if os.environ.get("SHOOTER_VOD_EXTEND_HOT", "1") != "1":
+        return end
+    try:
+        import numpy as np
+        from vod_analysis_cache import analyze_video_cached
+    except Exception:
+        return end
+    try:
+        analysis = analyze_video_cached(vod)
+    except Exception:
+        return end
+    win = float(analysis.get("window_seconds") or 1.0)
+    file_dur = float(analysis.get("duration") or 0.0)
+    gun = analysis.get("gunfire")
+    if gun is None:
+        gun = analysis.get("audio")
+    gunfire = np.asarray(gun, dtype=np.float32)
+    if gunfire.size < 4 or win <= 0:
+        return end
+    lo = max(end, float(peak_sec or start))
+    hi = float(max_end if max_end is not None else end)
+    hi = min(hi, file_dur if file_dur > 0 else hi)
+    if hi <= lo + 0.4:
+        return end
+    i0 = max(0, int(round(lo / win)))
+    i1 = min(gunfire.size - 1, int(round(hi / win)))
+    thr = max(
+        float(np.percentile(gunfire[max(0, i0 - 8) : i1 + 1], 40)),
+        0.04,
+    )
+    last_hot = i0
+    cold = 0
+    cold_need = max(2, int(os.environ.get("SHOOTER_VOD_EXTEND_COLD_BINS", "3")))
+    for idx in range(i0, i1 + 1):
+        if gunfire[idx] >= thr * 0.85:
+            last_hot = idx
+            cold = 0
+        else:
+            cold += 1
+            if cold >= cold_need and idx > i0 + 1:
+                break
+    new_end = min(hi, (last_hot + 1) * win + 0.35)
+    new_end = max(end, new_end)
+    if new_end > end + 0.4:
+        log.info(
+            "extend hot gunfire vod=%s %.1f→%.1f (+%.1fs)",
+            vod.name,
+            end,
+            new_end,
+            new_end - end,
+        )
+    return round(new_end, 2)
+
+
+def montage_part_max_sec(game: str = "pubg") -> float:
+    """Hard cap per glued fight — long enough to finish a spray, not a whole raid."""
+    if game == "standoff":
+        return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "16"))
+    if game == "wot":
+        return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "20"))
+    # 6iOn peak60: 15s canvas cut mid-spray; ~22s covers the exchange.
+    return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "22"))
+
+
 def apply_run_trim_to_clip(clip: dict, vod: Path, *, game: str = "pubg") -> dict:
     start = float(clip.get("start") or 0)
     dur = float(clip.get("input_duration") or clip.get("output_duration") or 0)
@@ -196,12 +275,21 @@ def apply_run_trim_to_clip(clip: dict, vod: Path, *, game: str = "pubg") -> dict
             dur = float(os.environ.get("SMART_STANDOFF_CLIP_MAX_SEC", "9.0"))
         else:
             dur = float(os.environ.get("SMART_PUBG_CLIP_MAX_SEC", "9.5"))
-    end = start + dur
     peak = float(clip.get("peak_start", start + dur * 0.4))
+    # Montage/pubg: allow a longer canvas so mid-fight peaks are not hard-capped.
+    part_max = montage_part_max_sec(game)
+    if montage_enabled(game) or os.environ.get("SHOOTER_VOD_EXTEND_HOT", "1") == "1":
+        dur = max(dur, min(part_max, float(os.environ.get("HIGHLIGHT_WINDOW_SEC", "15"))))
+        dur = max(dur, min(part_max, float(os.environ.get("SMART_PUBG_CLIP_MAX_SEC", "12"))))
+    end = start + min(dur, part_max)
+    # Grow through continuous gunfire first, then trim only true post-fight jog.
+    end = extend_end_while_gunfire(
+        vod, start, end, peak_sec=peak, max_end=start + part_max
+    )
     new_end = trim_idle_run_end(vod, start, end, peak_sec=peak)
     min_dur = float(os.environ.get("SMART_PUBG_CLIP_MIN_SEC", "6.0"))
     new_dur = max(min_dur, new_end - start)
-    if abs(new_dur - dur) < 0.25:
+    if abs(new_dur - float(clip.get("input_duration") or clip.get("output_duration") or 0)) < 0.25:
         return clip
     out = dict(clip)
     out["input_duration"] = round(new_dur, 2)

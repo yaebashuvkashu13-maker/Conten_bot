@@ -103,6 +103,7 @@ def test_vod_richness_prefers_rich_pool() -> None:
 def test_trim_idle_run_end_cuts_sprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_TRIM_RUN", "1")
     monkeypatch.setenv("SHOOTER_VOD_RUN_QUIET_BINS", "2")
+    monkeypatch.setenv("SHOOTER_VOD_TRIM_LOOKAHEAD_BINS", "0")
     monkeypatch.setenv("SHOOTER_VOD_FIGHT_POST_SEC", "2")
     vod = tmp_path / "yt_pubg.mp4"
     vod.write_bytes(b"x")
@@ -121,6 +122,58 @@ def test_trim_idle_run_end_cuts_sprint(tmp_path: Path, monkeypatch: pytest.Monke
         new_end = trim_idle_run_end(vod, 0.0, 20.0, peak_sec=7.0)
     assert new_end < 20.0
     assert new_end >= 7.0 + 2.0
+
+
+def test_trim_keeps_fight_through_short_lull(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Brief gun silence mid-exchange must not end the clip (6iOnKrBEoSw_m60)."""
+    from shooter_vod_montage import trim_idle_run_end
+
+    monkeypatch.setenv("SHOOTER_VOD_TRIM_RUN", "1")
+    monkeypatch.setenv("SHOOTER_VOD_RUN_QUIET_BINS", "3")
+    monkeypatch.setenv("SHOOTER_VOD_TRIM_LOOKAHEAD_BINS", "5")
+    monkeypatch.setenv("SHOOTER_VOD_FIGHT_POST_SEC", "2")
+    vod = tmp_path / "yt_pubg.mp4"
+    vod.write_bytes(b"x")
+    # Peak ~7; lull 10–12; gun resumes 13–18 (same shape as 6iOn 60→70→82).
+    gunfire = np.array(
+        [0.8] * 10 + [0.0, 0.0, 0.0] + [0.7] * 7 + [0.05] * 5, dtype=np.float32
+    )
+    motion = np.array([0.2] * 10 + [0.9] * 3 + [0.3] * 7 + [0.9] * 5, dtype=np.float32)
+    analysis = {
+        "window_seconds": 1.0,
+        "duration": float(len(gunfire)),
+        "bins": len(gunfire),
+        "center_motion": motion,
+        "gunfire": gunfire,
+        "audio": gunfire,
+        "motion": motion,
+    }
+    with patch("vod_analysis_cache.analyze_video_cached", return_value=analysis):
+        new_end = trim_idle_run_end(vod, 0.0, 25.0, peak_sec=7.0)
+    assert new_end >= 18.0
+
+
+def test_extend_end_while_gunfire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_montage import extend_end_while_gunfire
+
+    monkeypatch.setenv("SHOOTER_VOD_EXTEND_HOT", "1")
+    vod = tmp_path / "yt_pubg.mp4"
+    vod.write_bytes(b"x")
+    gunfire = np.array([0.1] * 10 + [0.6] * 10 + [0.02] * 5, dtype=np.float32)
+    analysis = {
+        "window_seconds": 1.0,
+        "duration": 25.0,
+        "bins": 25,
+        "gunfire": gunfire,
+        "audio": gunfire,
+    }
+    with patch("vod_analysis_cache.analyze_video_cached", return_value=analysis):
+        new_end = extend_end_while_gunfire(
+            vod, 5.0, 12.0, peak_sec=10.0, max_end=22.0
+        )
+    assert new_end >= 18.0
 
 
 def test_montage_keeps_collecting_profile(monkeypatch: pytest.MonkeyPatch) -> None:
