@@ -2561,6 +2561,15 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             )
             report["run_fraction"] = round(run_frac, 3)
             max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.55"))
+            # Evidenced own-kill singles (live HAS SLAIN) often include a short
+            # approach jog; 0.45 was rejecting real kills at exactly 0.455 (9DGA).
+            if report.get("own_kill_single_send") or str(
+                report.get("own_kill_recheck") or ""
+            ).startswith("hud_killer_ok"):
+                max_run = max(
+                    max_run,
+                    float(os.environ.get("MLBB_PRESEND_OWN_KILL_MAX_RUN_FRAC", "0.60")),
+                )
             if run_frac > max_run:
                 return False, f"clip_run_frac={run_frac:.2f}>{max_run:.2f}", report
         except Exception as exc:
@@ -4118,7 +4127,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_REF_ROOT": "/root/content_bot_ml/data/mlbb_kill_banners",
         "CONTENT_BOT_REPO": "/root/content_bot_ml",
         "MLBB_PRESEND_REJECT_RUN": "1",
-        "MLBB_PRESEND_MAX_RUN_FRAC": "0.45",
+        "MLBB_PRESEND_MAX_RUN_FRAC": "0.55",
         "MLBB_PRESEND_RUN_TRUST_OWN_KILL": "1",
         "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
         "MLBB_PRESEND_BANNER_CONTEXT": "0",
