@@ -2335,8 +2335,8 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             montage_single = os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0") == "1"
             # Lone clip must meet floor; multi-single stitch is handled by montage picker.
             parts = int(row.get("montage_parts") or row.get("n_parts") or 1)
-            # HAS SLAIN / OCR single must not bypass SEND_MIN=double unless live
-            # OCR shows double+ (Aug1: three tier-1 jog clips with no real multi).
+            # Never let HAS SLAIN jog bypass SEND_MIN=double (9DGA Aug2 trash).
+            # Optional bypass only when live OCR already shows double+ (tier>=2).
             live_tier = int(report.get("live_streak_tier") or 0)
             if live_tier <= 0:
                 live_blob = str(
@@ -2355,17 +2355,17 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 hud_score = float(str(report.get("own_kill_recheck") or "").split(":")[-1])
             except ValueError:
                 hud_score = 0.0
-            # Real live HAS SLAIN + strong HUD may bypass SEND_MIN=double.
-            # Still blocked: empty-frame HUD (OZLs) and weak HUD (Zy8 0.19).
+            # Default OFF: singles were the junk valve. If re-enabled, still demand
+            # live double+ — HAS SLAIN alone never ships.
             single_hud_min = float(os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN", "0.35"))
             allow_own_single = (
                 hud_own
-                and live_tier >= 1
+                and live_tier >= 2
                 and hud_score >= single_hud_min
-                and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
+                and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "0") == "1"
                 and (
                     montage_single
-                    or os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1"
+                    or os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "0") == "1"
                 )
             )
             if (
@@ -2561,11 +2561,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             )
             report["run_fraction"] = round(run_frac, 3)
             max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.55"))
-            # Evidenced own-kill singles (live HAS SLAIN) often include a short
-            # approach jog; 0.45 was rejecting real kills at exactly 0.455 (9DGA).
-            if report.get("own_kill_single_send") or str(
-                report.get("own_kill_recheck") or ""
-            ).startswith("hud_killer_ok"):
+            # Multi-kill / HUD-trusted OCR doubles may include a short rotate;
+            # do not loosen for HAS SLAIN singles (that shipped 9DGA jog trash).
+            if (
+                report.get("ocr_multi_trust_hud")
+                or int(report.get("live_streak_tier") or 0) >= 2
+                or int(row.get("kill_banner_tier") or 0) >= 2
+            ):
                 max_run = max(
                     max_run,
                     float(os.environ.get("MLBB_PRESEND_OWN_KILL_MAX_RUN_FRAC", "0.60")),
@@ -4095,11 +4097,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_SKIP_MONTAGE": "0",
         "MLBB_VOD_MONTAGE_MIN_CLIPS": "1",
         "MLBB_VOD_MONTAGE_MAX_CLIPS": "4",
-        "MLBB_VOD_MONTAGE_MIN_TIER": "single",
-        "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
-        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "1",
+        # Double+ only — HAS SLAIN singles were the jog-trash path (9DGA).
+        "MLBB_VOD_MONTAGE_MIN_TIER": "double",
+        "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "0",
+        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "0",
         "MLBB_VOD_MONTAGE_GAP_SEC": "40",
-        "MLBB_PRESEND_MONTAGE_SINGLE": "1",
+        "MLBB_PRESEND_MONTAGE_SINGLE": "0",
         "MLBB_ADAPTIVE_ALLOW_SINGLE": "0",
         "MLBB_BANNER_SEND_MIN_TIER": "double",
         "MLBB_VOD_SEND_ONE": "0",
@@ -4109,6 +4112,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
         "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
+        # One fresh double+ is enough; discover merge_tier=2 so HAS SLAIN ≠ stop.
         "MLBB_DISCOVER_SHIP_ON_FIRST": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "20",
         "MLBB_VOD_SEGMENT_GAP_SEC": "40",
@@ -4130,7 +4134,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_MAX_RUN_FRAC": "0.55",
         "MLBB_PRESEND_RUN_TRUST_OWN_KILL": "1",
         "MLBB_PRESEND_REQUIRE_FIGHT_HUD": "1",
-        "MLBB_PRESEND_BANNER_CONTEXT": "0",
+        # Combat around banner — lane jog with HAS SLAIN must die here.
+        "MLBB_PRESEND_BANNER_CONTEXT": "1",
         "MLBB_PRESEND_RUN_MOTION_MIN": "0.025",
         "MLBB_PRESEND_RUN_MIN_SKILL": "0.008",
         "MLBB_PRESEND_RUN_MIN_MINI": "0.008",
@@ -4146,7 +4151,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_LEAD_SEC": "8",
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
         "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
-        "MLBB_PRESEND_OWN_KILL_SINGLE": "1",
+        "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
         "MLBB_PRESEND_LIVE_OCR_BUDGET": "6",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
         "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "-1,1,2",
@@ -4171,10 +4176,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "0",
         # Kill-count / streak titles need dense after peak miss (11-Kill / 25 kills).
         "MLBB_VOD_TITLE_DENSE_AUTO": "1",
-        # Discover: collect single+ anchors; montage ships ref singles.
+        # Discover double+ — stop-on-first HAS SLAIN burned VODs then shipped jog.
         # Find several banners so an already-sent kill does not exhaust a 20-kill VOD.
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
+        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "2",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
         "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "180",
         "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "20",
@@ -4321,6 +4326,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_HUD",
         "MLBB_PRESEND_OWN_KILL_RECHECK",
         "MLBB_PRESEND_OWN_KILL_SINGLE",
+        "MLBB_PRESEND_BANNER_CONTEXT",
         "MLBB_PRESEND_LIVE_OCR_BUDGET",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC",
         "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS",

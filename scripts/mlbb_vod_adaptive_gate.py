@@ -14,7 +14,8 @@ DEFAULT_STREAK_THRESHOLD = 3
 # Only widen OCR windows and slightly relax clip score.
 SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_MIN_TIER": "double",
-    "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
+    # Keep double+ discover — soften must not reopen HAS SLAIN jog path.
+    "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "2",
     "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
     "MLBB_KILL_BANNER_REQUIRED": "1",
     "MLBB_VOD_BANNER_PRESEND": "0",

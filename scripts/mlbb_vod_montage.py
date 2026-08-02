@@ -63,10 +63,10 @@ def montage_single_row_ok(row: dict) -> bool:
         return False
     if tier >= 2:
         return True
-    # HUD-confirmed own-kill singles (wb0) — ship when montage is thin.
+    # HUD-confirmed own-kill singles — OFF by default (HAS SLAIN jog trash).
     own = str(row.get("own_kill_recheck") or row.get("own_kill_reason") or "")
     if own.startswith("hud_killer_ok") and os.environ.get(
-        "MLBB_PRESEND_OWN_KILL_SINGLE", "1"
+        "MLBB_PRESEND_OWN_KILL_SINGLE", "0"
     ) == "1":
         return True
     src = _row_banner_source(row)
@@ -76,8 +76,8 @@ def montage_single_row_ok(row: dict) -> bool:
     # Aug1: Zy8/6qq5/8ixh found bannered=1 then finished with eligible=0.
     own_kill_ocr_ok = (
         os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "0") == "1"
-        and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
-        and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1"
+        and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "0") == "1"
+        and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "0") == "1"
     )
     allow_ocr = (
         os.environ.get("MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE", "0") == "1"

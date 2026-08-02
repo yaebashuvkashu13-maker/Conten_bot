@@ -77,7 +77,10 @@ def test_presend_live_ocr_budget_caps_calls(monkeypatch: pytest.MonkeyPatch) -> 
         assert _live_overlay_text(object(), consume_presend_budget=True) == ""
 
 
-def test_own_kill_single_passes_send_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_has_slain_single_blocked_even_with_own_kill_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HAS SLAIN jog must not bypass SEND_MIN=double (9DGA Aug2)."""
     from mlbb_vod_segment_feed import _validate_before_send
 
     monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
@@ -85,6 +88,7 @@ def test_own_kill_single_passes_send_floor(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_SINGLE", "1")
     monkeypatch.setenv("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1")
     monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_OCR_SINGLE_REQUIRE_LIVE", "1")
     monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND", "0")
     monkeypatch.setenv("MLBB_PRESEND_REJECT_RUN", "0")
     monkeypatch.setenv("MLBB_PRESEND_REQUIRE_FIGHT_HUD", "0")
@@ -112,7 +116,76 @@ def test_own_kill_single_passes_send_floor(monkeypatch: pytest.MonkeyPatch) -> N
     ), patch(
         "gameplay_gate._read_frame_at", return_value=object()
     ), patch(
-        "mlbb_kill_banner._live_overlay_text", return_value=""
+        "mlbb_kill_banner._live_overlay_text", return_value="HAS SLAIN"
+    ), patch(
+        "mlbb_kill_banner._presend_live_ocr_budget_reset"
+    ), patch(
+        "mlbb_banner_hero_match.validate_own_kill_frame",
+        return_value=(True, "hud_killer_ok:0.42"),
+    ), patch(
+        "mlbb_vod_montage.clip_run_fraction", return_value=0.0
+    ), patch(
+        "mlbb_vod_segment_feed._vod_crop_box", return_value=None
+    ), patch(
+        "gameplay_gate.score_segment_combat", return_value=(0.05, 0.02, 0.02, "")
+    ), patch(
+        "gameplay_gate.segment_looks_like_draft_or_queue", return_value=False
+    ), patch(
+        "gameplay_gate.segment_uniform_gameplay_ok", return_value=(True, "ok")
+    ), patch(
+        "visual_action_check.extract_and_check_segment",
+        return_value={"visual_pass": True, "fail_reason": ""},
+    ), patch(
+        "mlbb_vod_segment_feed._presend_min_motion", return_value=0.0
+    ), patch(
+        "mlbb_vod_segment_feed._presend_min_minimap_delta", return_value=0.0
+    ):
+        ok, reason, report = _validate_before_send(Path("/tmp/vod.mp4"), row, rendered)
+    assert ok is False
+    assert "kill_banner_tier_low" in reason
+    assert report.get("own_kill_single_send") is not True
+
+
+def test_live_double_own_kill_may_bypass_when_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only live double+ may use OWN_KILL_SINGLE bypass — never HAS SLAIN alone."""
+    from mlbb_vod_segment_feed import _validate_before_send
+
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_RECHECK", "1")
+    monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_SINGLE", "1")
+    monkeypatch.setenv("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1")
+    monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_OCR_SINGLE_REQUIRE_LIVE", "1")
+    monkeypatch.setenv("MLBB_VOD_BANNER_PRESEND", "0")
+    monkeypatch.setenv("MLBB_PRESEND_REJECT_RUN", "0")
+    monkeypatch.setenv("MLBB_PRESEND_REQUIRE_FIGHT_HUD", "0")
+    monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "1")
+    monkeypatch.setenv("MLBB_PRESEND_MAX_POST_RUN_FRAC", "1.0")
+    monkeypatch.setenv("MLBB_PRESEND_BANNER_CONTEXT", "0")
+    monkeypatch.setenv("MLBB_VOD_PRESEND_SKIP_VISUAL_ON_BANNER", "1")
+
+    row = {
+        "start": 100.0,
+        "peak_start": 100.0,
+        "banner_sec": 100.0,
+        "kill_banner_tier": 1,
+        "kill_banner": "single",
+        "banner_source": "ref",
+        "anchor": "kill_banner",
+        "segment_id": "dbl_100",
+    }
+    rendered = Path("/tmp/fake_dbl.mp4")
+
+    with patch(
+        "mlbb_vod_segment_feed._detect_render_freeze", return_value=(True, "", [])
+    ), patch(
+        "mlbb_vod_segment_feed._segment_duration", return_value=2.0
+    ), patch(
+        "gameplay_gate._read_frame_at", return_value=object()
+    ), patch(
+        "mlbb_kill_banner._live_overlay_text", return_value="DOUBLE KILL"
     ), patch(
         "mlbb_kill_banner._presend_live_ocr_budget_reset"
     ), patch(

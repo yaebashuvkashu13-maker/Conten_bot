@@ -180,8 +180,8 @@ def ocr_weak_needs_hud(source: str, tier: int, own_reason: str) -> bool:
 
 
 def _discover_merge_min_tier() -> int:
-    """Discover collects single+ anchors; send/presend still enforces double+."""
-    return max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "1")))
+    """Discover hunts double+; singles were the HAS-SLAIN jog junk path."""
+    return max(1, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_MERGE_TIER", "2")))
 
 
 def _collect_min_tier() -> int:
