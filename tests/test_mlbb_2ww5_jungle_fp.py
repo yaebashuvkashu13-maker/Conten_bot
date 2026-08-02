@@ -29,6 +29,7 @@ def test_presend_rejects_ocr_double_without_live_streak(monkeypatch) -> None:
     monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
     monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_RECHECK", "1")
     monkeypatch.setenv("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1")
+    monkeypatch.setenv("MLBB_OCR_MULTI_TRUST_HUD_MIN", "0.40")
     monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "0")
     monkeypatch.setenv("MLBB_KILL_BANNER_LEAD_SEC", "12")
     monkeypatch.setenv("MLBB_BANNER_POST_SEC", "1.5")
@@ -62,6 +63,61 @@ def test_presend_rejects_ocr_double_without_live_streak(monkeypatch) -> None:
         assert ok is False
         assert "ocr_multi_no_live_streak" in reason
         mock_own.assert_called()
+
+
+def test_presend_trusts_ocr_multi_when_hud_strong_and_live_blind(monkeypatch) -> None:
+    """8pbq: savage + hud=0.61 + clock soup must not die on blind gold OCR."""
+    import numpy as np
+
+    monkeypatch.setenv("MLBB_VOD_KILL_BANNER", "1")
+    monkeypatch.setenv("MLBB_PRESEND_OWN_KILL_RECHECK", "1")
+    monkeypatch.setenv("MLBB_OCR_DOUBLE_REQUIRE_LIVE", "1")
+    monkeypatch.setenv("MLBB_OCR_MULTI_TRUST_HUD_MIN", "0.40")
+    monkeypatch.setenv("MLBB_BANNER_REJECT_OCR_SINGLE", "0")
+    monkeypatch.setenv("MLBB_BANNER_SEND_MIN_TIER", "double")
+    monkeypatch.setenv("MLBB_KILL_BANNER_LEAD_SEC", "12")
+    monkeypatch.setenv("MLBB_BANNER_POST_SEC", "1.5")
+
+    import mlbb_vod_segment_feed as feed
+
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    row = {
+        "segment_id": "8pbqKzd9Xzc_543",
+        "start": 560.0,
+        "peak_start": 582.0,
+        "banner_sec": 582.0,
+        "duration": 14.0,
+        "kill_banner_tier": 5,
+        "kill_banner": "savage",
+        "banner_source": "ocr",
+    }
+    with (
+        patch.object(feed, "_detect_render_freeze", return_value=(True, "ok", [])),
+        patch("gameplay_gate._read_frame_at", return_value=frame),
+        patch(
+            "mlbb_kill_banner._live_overlay_text",
+            return_value="24ms 14 09:10 10 14 101425 X314 619/4070",
+        ),
+        patch(
+            "mlbb_banner_hero_match.validate_own_kill_frame",
+            return_value=(True, "hud_killer_ok:0.610"),
+        ),
+        patch(
+            "mlbb_kill_banner.ocr_weak_needs_hud",
+            side_effect=RuntimeError("past_ocr_multi_gate"),
+        ),
+    ):
+        ok, reason, report = feed._validate_before_send(Path("x.mp4"), row, Path("y.mp4"))
+        assert "ocr_multi_no_live_streak" not in reason
+        assert "past_ocr_multi_gate" in reason
+        assert report.get("ocr_multi_trust_hud") is True
+
+
+def test_take_lord_is_strong_coordination() -> None:
+    from mlbb_kill_banner import is_coordination_banner_text
+
+    assert is_coordination_banner_text("Take Lord Instant Kill")
+    assert is_coordination_banner_text("21 12:58 Take Lord Instant Kill")
 
 
 def test_presend_allows_ref_multi_when_hud_ok_even_if_live_ocr_blind(monkeypatch) -> None:

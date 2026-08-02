@@ -2261,12 +2261,51 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     ):
                         live_hit = classify_banner_text(live) if live else None
                         if live_hit is None or int(live_hit.tier or 0) < 2:
-                            return False, f"ocr_multi_no_live_streak:{(live or '')[:40]}", report
-                        report["live_streak_tier"] = int(live_hit.tier or 0)
+                            # YT gold glyphs are often OCR-blind (8pbq savage Aug2:
+                            # hud=0.61, live=clock soup → false ocr_multi reject).
+                            # Trust strong HUD only when overlay is empty/HUD-soup —
+                            # not when live text is non-streak content (2Ww5 jungle).
+                            hud_sc = 0.0
+                            try:
+                                hud_sc = float(str(own_reason).split(":")[-1])
+                            except ValueError:
+                                hud_sc = 0.0
+                            trust_min = float(
+                                os.environ.get("MLBB_OCR_MULTI_TRUST_HUD_MIN", "0.40")
+                            )
+                            live_s = str(live or "").strip()
+                            soup = False
+                            try:
+                                from mlbb_kill_banner import _HUD_OCR_SOUP_RE
+
+                                soup = bool(_HUD_OCR_SOUP_RE.search(live_s))
+                            except Exception:
+                                soup = False
+                            blind = (not live_s) or soup or len(live_s) < 10
+                            if (
+                                str(own_reason).startswith("hud_killer_ok")
+                                and hud_sc >= trust_min
+                                and blind
+                            ):
+                                report["ocr_multi_trust_hud"] = True
+                                report["live_streak_tier"] = int(tier_i or 0)
+                                log.info(
+                                    "ocr multi trust HUD=%.3f tier=%s live_blind vod_seg=%s",
+                                    hud_sc,
+                                    tier_i,
+                                    row.get("segment_id"),
+                                )
+                            else:
+                                return (
+                                    False,
+                                    f"ocr_multi_no_live_streak:{(live or '')[:40]}",
+                                    report,
+                                )
+                        else:
+                            report["live_streak_tier"] = int(live_hit.tier or 0)
                     if ocr_weak_needs_hud(src or "ocr", tier_i, str(own_reason)):
                         return False, f"ocr_single_no_hud:{own_reason}", report
-                    # Tier-1 / OCR singles: HUD alone shipped OZLs jungle + walk
-                    # clips; require live streak text on the banner frame.
+                    # Tier-1: require live HAS SLAIN (or streak); HUD-only OZLs blocked.
                     if (
                         int(tier_i or 0) <= 1
                         and os.environ.get("MLBB_OCR_SINGLE_REQUIRE_LIVE", "1") == "1"
@@ -2316,10 +2355,12 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 hud_score = float(str(report.get("own_kill_recheck") or "").split(":")[-1])
             except ValueError:
                 hud_score = 0.0
-            single_hud_min = float(os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN", "0.28"))
+            # Real live HAS SLAIN + strong HUD may bypass SEND_MIN=double.
+            # Still blocked: empty-frame HUD (OZLs) and weak HUD (Zy8 0.19).
+            single_hud_min = float(os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN", "0.35"))
             allow_own_single = (
                 hud_own
-                and live_tier >= max(2, min_tier)
+                and live_tier >= 1
                 and hud_score >= single_hud_min
                 and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "1") == "1"
                 and (
@@ -4028,7 +4069,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_DOWNLOAD_NOTIFY": "0",
         "MLBB_VOD_PRESEND_REJECT_NOTIFY": "0",
         # One zero attempt is enough — yield-dead VODs must not loop for hours.
-        "MLBB_VOD_MAX_ZERO_ATTEMPTS": "1",
+        "MLBB_VOD_MAX_ZERO_ATTEMPTS": "2",
         # .video_bot.env keeps AUTO_DOWNLOAD=0; daily_cycle_runner used to clobber
         # launcher exports → empty/exhausted inbox spun mute for hours.
         "MLBB_VOD_AUTO_DOWNLOAD": "1",
@@ -4056,6 +4097,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Collect multiple own-kills per VOD when discover finds them (quota speed).
         "MLBB_VOD_SEND_ALL_BANNERS": "1",
         "MLBB_VOD_MAX_PER_VOD": "2",
+        "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
         "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
         "MLBB_DISCOVER_SHIP_ON_FIRST": "1",
         "MLBB_VOD_MIN_PEAK_SEC": "20",
@@ -4143,7 +4186,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
-        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.28",
+        "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
@@ -4306,6 +4350,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE",
+        "MLBB_OCR_MULTI_TRUST_HUD_MIN",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",

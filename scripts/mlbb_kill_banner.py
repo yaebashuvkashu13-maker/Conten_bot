@@ -74,7 +74,8 @@ _COORDINATION_RE = re.compile(
 _STRONG_COORDINATION_RE = re.compile(
     r"(?:"
     r"lord\s+spawned|turtle\s+spawned|lord\s+has\s+appeared|turtle\s+has\s+appeared|"
-    r"el\s+lord\s+ha\s+aparecido|take\s+turtle|gather(?:\s+at|\s+near|\s+up)?|"
+    r"el\s+lord\s+ha\s+aparecido|take\s+turtle|take\s+lord|instant\s+kill|"
+    r"gather(?:\s+at|\s+near|\s+up)?|"
     r"лорд\s+появил|черепаха\s+появил|к\s+лорду|к\s+черепах|соберитесь"
     r")",
     re.I,
@@ -92,7 +93,8 @@ _KILL_STREAK_HINT_RE = re.compile(
     # Y3In5vMdlak: RapidOCR reads UNSTOPPABLE; without it neg_ref:no_banner
     # vetoed real own-kill frames at presend.
     r"unstoppable|dominating|godlike|unstopable|"
-    r"has\s+slain|been\s+slain|killing\s+spree|убийств|саваж|маньяк|тройн|двойн"
+    # RapidOCR often glues HAS SLAIN → HASSLAIN.
+    r"has\s*slain|been\s*slain|killing\s+spree|убийств|саваж|маньяк|тройн|двойн"
     r")",
     re.I,
 )
@@ -110,7 +112,7 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     # Strong singles only — weak "kill" alone is handled as single_weak needing color.
     (
         re.compile(
-            r"has\s+slain|been\s+slain|killing\s+spree|first\s+blood|"
+            r"has\s*slain|been\s*slain|killing\s+spree|first\s+blood|"
             r"shutdown|rampage|"
             r"убил|убийств|первая\s+кровь|серия\s+убий",
             re.I,
