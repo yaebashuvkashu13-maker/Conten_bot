@@ -50,17 +50,17 @@ def expand_boss_fight_window(
 
     peak = max(0.0, float(peak_sec))
     step = max(0.5, _fenv("GENSHIN_BOSS_FIGHT_BAR_STEP_SEC", 2.0))
-    keep = max(0.02, _fenv("GENSHIN_BOSS_FIGHT_BAR_KEEP", 0.10))
+    keep = max(0.02, _fenv("GENSHIN_BOSS_FIGHT_BAR_KEEP", 0.22))
     min_sec = max(8.0, _fenv("GENSHIN_BOSS_FIGHT_MIN_SEC", 28.0))
     max_sec = max(min_sec, _fenv("GENSHIN_BOSS_FIGHT_MAX_SEC", 100.0))
     hard_max = max(max_sec, _fenv("GENSHIN_BOSS_FIGHT_HARD_MAX_SEC", 140.0))
-    lead = max(0.0, _fenv("GENSHIN_VOD_LEAD_SEC", 3.0))
+    lead = max(0.0, _fenv("GENSHIN_VOD_LEAD_SEC", 2.0))
     post = max(0.0, _fenv("GENSHIN_BOSS_FIGHT_POST_SEC", 10.0))
-    # How far before the peak we may walk (blocks cutscene / prior fight).
-    max_back = max(12.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_BACK_SEC", 45.0))
+    # How far before the peak we may walk (blocks cutscene / prior fight / flight).
+    max_back = max(8.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_BACK_SEC", 22.0))
     # How far after the peak we may walk (blocks post-fight UI false bars).
     max_forward = max(8.0, _fenv("GENSHIN_BOSS_FIGHT_MAX_FORWARD_SEC", 40.0))
-    tolerate = max(0, _ienv("GENSHIN_BOSS_FIGHT_GAP_TOLERATE", 3))
+    tolerate = max(0, _ienv("GENSHIN_BOSS_FIGHT_GAP_TOLERATE", 1))
     prefer_start = os.environ.get("GENSHIN_BOSS_FIGHT_PREFER_START", "0") == "1"
     enabled = os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1"
     if not enabled:
@@ -100,6 +100,29 @@ def expand_boss_fight_window(
 
         # Never keep an onset older than max_back before the peak.
         onset = max(onset, peak - max_back)
+
+        # Snap forward through no-bar flight/preamble inside the walked window.
+        # Weak/false onset from red environments used to keep ~45s of gliding.
+        snap_need = max(1, _ienv("GENSHIN_BOSS_FIGHT_SNAP_HITS", 2))
+        snap_t = onset
+        hits = 0
+        first_hit: float | None = None
+        while snap_t < peak - lead:
+            bar = _bar_at_cap(video_path, snap_t, cap)
+            if bar >= keep:
+                hits += 1
+                if first_hit is None:
+                    first_hit = snap_t
+                if hits >= snap_need:
+                    onset = float(first_hit)
+                    break
+            else:
+                hits = 0
+                first_hit = None
+            snap_t += step
+        else:
+            # No sustained bar before peak — start close to the climax.
+            onset = max(onset, peak - min(lead + 4.0, max_back * 0.5))
 
         # Walk forward for fight end — capped so false bars don't stretch forever.
         end = min(vod_duration, peak + post)

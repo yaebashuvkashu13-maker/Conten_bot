@@ -458,11 +458,24 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
 
 def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     profile = _profile(game)
-    start = float(row.get("peak_start", row.get("start", 0)))
+    # Genshin: score from clip start (not peak). Peak-only checks missed the
+    # long no-bar flight preamble glued before the fight (-bOe0LLR5m8).
+    if game == "genshin":
+        start = float(row.get("start", row.get("peak_start", 0)))
+    else:
+        start = float(row.get("peak_start", row.get("start", 0)))
     dur = _ffprobe_duration(rendered)
     if dur <= 0:
         dur = float(row.get("duration", 15))
-    return _validate_shooter_window(game, vod, start, dur, profile=profile)
+    ok, reason, metrics = _validate_shooter_window(game, vod, start, dur, profile=profile)
+    if ok and game == "genshin" and rendered.is_file():
+        from genshin_boss_segment import validate_genshin_clip_head
+
+        head_ok, head_reason, head_metrics = validate_genshin_clip_head(rendered, 0.0)
+        metrics.update(head_metrics)
+        if not head_ok:
+            return False, head_reason, metrics
+    return ok, reason, metrics
 
 
 def _validate_shooter_window(
@@ -553,11 +566,13 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             pass
         peak = float(row.get("peak_start", row.get("start", 0)))
         plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
-        # Gate on the fight body (after lead-in). Full-fight clips start earlier than the peak.
+        # Gate from clip start — flight/preamble has no boss HP bar.
         if game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1":
-            lead_pad = float(os.environ.get("GENSHIN_VOD_LEAD_SEC", "5"))
-            validate_t0 = float(row.get("start", peak)) + lead_pad
-            validate_dur = min(20.0, max(8.0, plan_dur - lead_pad))
+            validate_t0 = float(row.get("start", peak))
+            validate_dur = min(
+                12.0,
+                max(6.0, float(os.environ.get("GENSHIN_BAR_HEAD_SEC", "8"))),
+            )
         elif game == "wot":
             # Score the combat core around the peak — long post-fight drive dilutes
             # impact/flash metrics and falsely trips cruise_no_action.
@@ -673,13 +688,23 @@ def _send_montage_batch(
             peak = float(row.get("peak_start", row.get("start", 0)))
             plan_dur = float(clip.get("input_duration") or row.get("duration") or 15)
             if game == "wot":
+                validate_t0 = peak
                 validate_dur = min(
                     14.0,
                     max(8.0, float(os.environ.get("WOT_PRESEND_VALIDATE_SEC", "12"))),
                 )
+            elif game == "genshin":
+                validate_t0 = float(row.get("start", peak))
+                validate_dur = min(
+                    12.0,
+                    max(6.0, float(os.environ.get("GENSHIN_BAR_HEAD_SEC", "8"))),
+                )
             else:
+                validate_t0 = peak
                 validate_dur = plan_dur
-            pre_ok, pre_reason, _pre = _validate_shooter_window(game, vod, peak, validate_dur)
+            pre_ok, pre_reason, _pre = _validate_shooter_window(
+                game, vod, validate_t0, validate_dur
+            )
             if not pre_ok:
                 log.warning(
                     "montage part PRE-REJECT (skip encode) %s: %s",

@@ -975,7 +975,12 @@ def segment_looks_like_pubg_loot_or_walk(
 
 
 def _genshin_boss_bar_score(frame: np.ndarray) -> float:
-    """Boss HP bar at top center — red/orange horizontal strip (0..1)."""
+    """Boss HP bar at top center — thin red/orange horizontal strip (0..1).
+
+    Red traversal domains (Natlan gliding / crimson fog) used to paint the whole
+    top ROI and score 1.0 with no boss bar present (-bOe0LLR5m8 flight head).
+    A real boss HP bar is a *thin* band with darker chrome above/below.
+    """
     small = cv2.resize(frame, (320, 180))
     top = small[0 : int(180 * 0.13), int(320 * 0.12) : int(320 * 0.88)]
     if top.size == 0:
@@ -985,12 +990,38 @@ def _genshin_boss_bar_score(frame: np.ndarray) -> float:
     red_b = cv2.inRange(hsv, (168, 70, 70), (180, 255, 255))
     orange = cv2.inRange(hsv, (8, 90, 90), (32, 255, 255))
     mask = red_a | red_b | orange
-    fill = float(np.count_nonzero(mask)) / float(mask.size)
     row_signal = mask.mean(axis=1) / 255.0
-    strong_rows = int(np.sum(row_signal > 0.10))
-    col_signal = mask.mean(axis=0) / 255.0
-    wide_bar = float(np.sum(col_signal > 0.08)) / max(len(col_signal), 1)
-    return min(1.0, fill * 4.2 + strong_rows * 0.06 + wide_bar * 0.35)
+    if row_signal.size < 3:
+        return 0.0
+
+    band_h = 3
+    best_i = 0
+    best_band = 0.0
+    for i in range(0, int(row_signal.size) - band_h + 1):
+        band = float(row_signal[i : i + band_h].mean())
+        if band > best_band:
+            best_band = band
+            best_i = i
+
+    outside = np.concatenate(
+        [row_signal[:best_i], row_signal[best_i + band_h :]]
+    )
+    outside_mean = float(outside.mean()) if outside.size else 0.0
+    # Environment wash: every row is red — not a thin HP strip.
+    if outside_mean > 0.16 and best_band < outside_mean * 1.85:
+        return float(min(0.08, best_band * 0.12))
+
+    band_mask = mask[best_i : best_i + band_h, :]
+    col_signal = band_mask.mean(axis=0) / 255.0
+    wide_bar = float(np.sum(col_signal > 0.12)) / max(len(col_signal), 1)
+    fill_band = float(np.count_nonzero(band_mask)) / float(max(band_mask.size, 1))
+    if wide_bar < 0.22 or best_band < 0.12:
+        return float(min(0.12, best_band * wide_bar))
+
+    score = best_band * 0.55 + wide_bar * 0.40 + fill_band * 0.25
+    if outside_mean < 0.08:
+        score += 0.12
+    return float(min(1.0, score))
 
 
 def score_genshin_boss_likelihood(
