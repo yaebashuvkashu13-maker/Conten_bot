@@ -1,0 +1,557 @@
+#!/usr/bin/env python3
+"""MLBB same-VOD highlight montages (10–30 min sources).
+
+One VOD → 3–4 kill-banner moments (singles OK) → one xfade montage.
+Minimizes idle run via banner windows + anti-run trim.
+Does not mix peaks across VODs. Outside daily quota by default.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+log = logging.getLogger("mlbb_same_vod_montage")
+
+
+def _load_env(path: Path) -> dict[str, str]:
+    from smart_video_editor import load_env
+
+    env = load_env(path)
+    for k, v in env.items():
+        os.environ.setdefault(k, v)
+    return env
+
+
+def _ffprobe_duration(path: Path) -> float:
+    from smart_video_editor import ffprobe_duration
+
+    return float(ffprobe_duration(path) or 0.0)
+
+
+def _prepare_montage_env() -> None:
+    # Prefer mid-length ranked VODs; singles allowed inside montages.
+    os.environ["MLBB_VOD_MONTAGE"] = "1"
+    os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = "3"
+    os.environ["MLBB_VOD_MONTAGE_MAX_CLIPS"] = "4"
+    # Mid VODs need tighter spacing than long streams.
+    os.environ["MLBB_VOD_MONTAGE_GAP_SEC"] = "18"
+    os.environ["MLBB_VOD_MONTAGE_MIN_SEC"] = "32"
+    os.environ["MLBB_VOD_MONTAGE_MAX_SEC"] = "75"
+    os.environ["MLBB_VOD_MONTAGE_MIN_TIER"] = "single"
+    os.environ["MLBB_VOD_MONTAGE_ALLOW_OCR_SINGLE"] = "1"
+    os.environ["MLBB_ADAPTIVE_ALLOW_SINGLE"] = "1"
+    # Quality: only ship banners where killer (LEFT) matches played HUD.
+    os.environ["MLBB_BANNER_OWN_KILL_REQUIRED"] = "1"
+    os.environ["MLBB_BANNER_HERO_MATCH"] = "1"
+    os.environ["MLBB_BANNER_OWN_HUD_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_OWN_HUD_MIN_SIM", "0.22"
+    )
+    os.environ["MLBB_BANNER_FIGHT_FIRST"] = "1"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS"] = "3,5,8"
+    os.environ["MLBB_KILL_BANNER_QUICK_BEFORE"] = "2"
+    os.environ["MLBB_KILL_BANNER_QUICK_AFTER"] = "8"
+    os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "0"
+    os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "single"
+    os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
+    os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    os.environ["MLBB_VOD_MOTION_ANCHOR_OK"] = "0"
+    os.environ["MLBB_VOD_TRIM_RUN"] = "1"
+    # Spike-first discover then dense fallback — always cover early game.
+    os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+    os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "0"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_STEP"] = "1.5"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_PROBES"] = "400"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MAX_SEC"] = "480"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MERGE_TIER"] = "1"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_TITLE_CAP"] = "1"
+    os.environ["MLBB_VOD_MIN_PEAK_SEC"] = "45"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_TARGET"] = "3"
+    os.environ["MLBB_VOD_MONTAGE_MIN_CLIPS"] = "2"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_MIN_HITS"] = "2"
+    os.environ["MLBB_KILL_BANNER_DENSE_HIT_GAP"] = "22"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_CAP"] = "64"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES"] = "32"
+    os.environ["MLBB_KILL_BANNER_DISCOVER_SPIKE_PCT"] = "55"
+    os.environ["MLBB_SAVAGE_DENSE_FALLBACK"] = "1"
+    # Soft gates: owner OCR is weak on YT compressions — but keep ref match.
+    os.environ["MLBB_BANNER_OWNER_GATE"] = "0"
+    os.environ["MLBB_BANNER_SEND_STRICT"] = "0"
+    os.environ["MLBB_BANNER_REF_MATCH"] = "1"
+    os.environ["MLBB_BANNER_POS_LIVE_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_POS_LIVE_MIN_SIM", "0.50"
+    )
+    os.environ["MLBB_BANNER_POS_SAVAGE_MIN_SIM"] = os.environ.get(
+        "MLBB_BANNER_POS_SAVAGE_MIN_SIM", "0.48"
+    )
+    os.environ["MLBB_BANNER_REF_COLOR_MUL"] = "0.90"
+    # Anti-run: reject lane-jog windows even if a kill banner OCR fires.
+    os.environ["MLBB_PRESEND_REJECT_RUN"] = "1"
+    os.environ["MLBB_PRESEND_REQUIRE_FIGHT_HUD"] = "1"
+    os.environ["MLBB_PRESEND_BANNER_CONTEXT"] = "1"
+    os.environ["MLBB_MONTAGE_COMBAT_GATE"] = "1"
+    os.environ["MLBB_PRESEND_MIN_MOTION"] = os.environ.get("MLBB_PRESEND_MIN_MOTION", "0.020")
+    os.environ["MLBB_PRESEND_MIN_MINIMAP_DELTA"] = os.environ.get(
+        "MLBB_PRESEND_MIN_MINIMAP_DELTA", "0.013"
+    )
+    os.environ["MLBB_PRESEND_RUN_MOTION_MIN"] = "0.024"
+    os.environ["MLBB_PRESEND_RUN_MIN_SKILL"] = "0.010"
+    os.environ["MLBB_PRESEND_RUN_MIN_MINI"] = "0.010"
+    os.environ["MLBB_PRESEND_FIGHT_HUD_MIN"] = "0.009"
+    os.environ["MLBB_PRESEND_MAX_RUN_FRAC"] = "0.38"
+    # Cut ~3s after last kill banner — no post-fight jog.
+    os.environ["MLBB_BANNER_POST_SEC"] = "3"
+    os.environ["MLBB_FIGHT_POST_SEC"] = "3"
+    os.environ["MLBB_BANNER_HARD_POST_CUT"] = "1"
+    # Do not burn daily cycle quota on montages.
+    os.environ["DAILY_GAME_CYCLE_ENABLED"] = "0"
+    os.environ["MLBB_VOD_IGNORE_DAILY_QUOTA"] = "1"
+    os.environ.setdefault("MONTAGE_PREFER_FRESH_VOD", "1")
+    os.environ.setdefault("MONTAGE_ALLOW_VOD_REUSE", "0")
+
+
+def _inbox_vods(inbox: Path, *, min_sec: float, max_sec: float) -> list[Path]:
+    rows: list[tuple[float, Path]] = []
+    for p in sorted(inbox.glob("yt_*.mp4")):
+        dur = _ffprobe_duration(p)
+        if min_sec <= dur <= max_sec:
+            rows.append((dur, p))
+    rows.sort(key=lambda x: x[0])  # shorter first — faster discover
+    return [p for _, p in rows]
+
+
+def _vod_id(path: Path) -> str:
+    name = path.stem
+    return name[3:] if name.startswith("yt_") else name
+
+
+def _hit_to_row(vod: Path, hit, file_dur: float) -> dict | None:
+    from mlbb_fight_segment import banner_lead_sec
+    from mlbb_kill_banner import bounds_from_banner
+    from mlbb_vod_montage import apply_run_trim_to_clip
+    from mlbb_vod_segment_store import segment_id
+
+    tier = int(getattr(hit, "tier", 0) or 0)
+    if tier < 1:
+        return None
+    peak = float(hit.sec)
+    start, end, dur = bounds_from_banner(peak, file_dur, banner_tier=tier)
+    # Floor: always keep some pre-roll before banner (streak context).
+    lead = banner_lead_sec(tier)
+    start = min(start, max(0.0, peak - lead))
+    dur = max(dur, end - start)
+    clip = {
+        "start": float(start),
+        "peak_start": peak,
+        "banner_sec": peak,
+        "input_duration": float(dur),
+        "output_duration": float(dur),
+        "anchor": "kill_banner",
+        "kill_banner": str(getattr(hit, "label", "") or f"tier{tier}"),
+        "kill_banner_tier": tier,
+        "source": str(getattr(hit, "source", "") or ""),
+    }
+    clip = apply_run_trim_to_clip(clip, vod)
+    fight_dur = float(clip.get("input_duration") or dur)
+    return {
+        "segment_id": segment_id(vod, float(clip["start"])),
+        "start": float(clip["start"]),
+        "peak_start": peak,
+        "fight_dur": fight_dur,
+        "score": float(tier),
+        "clip_score": float(tier),
+        "kill_banner": clip["kill_banner"],
+        "kill_banner_tier": tier,
+        "anchor": "kill_banner",
+        "clip": clip,
+    }
+
+
+# Optional time hints (seconds) from prior successful scans — verified near-peak.
+_SEED_PEAKS: dict[str, list[float]] = {
+    "deK4Mjt6cjc": [8.0, 106.0, 206.0, 301.0, 413.0, 516.0, 621.0],
+    "FFNfHF2DPyI": [291.0, 583.0],
+    "NwfAgipU9_E": [],
+    "zzJugySyscM": [],
+}
+
+
+def _analysis_spike_times(vod: Path, *, top_n: int = 16) -> list[float]:
+    """Combat-ish timestamps from analysis cache (audio/motion), spaced."""
+    try:
+        import numpy as np
+        from vod_analysis_cache import analyze_video_cached
+
+        a = analyze_video_cached(vod)
+        win = float(a.get("window_seconds") or 1.0)
+        audio = np.asarray(a.get("audio") or [], dtype=np.float32)
+        motion = np.asarray(a.get("center_motion") or a.get("motion") or [], dtype=np.float32)
+        if audio.size < 8:
+            return []
+        n = int(min(int(audio.size), int(motion.size))) if motion.size else int(audio.size)
+        score = audio[:n].copy()
+        if int(getattr(motion, "size", 0) or 0) > 0:
+            m = motion[:n]
+            score = score * 0.55 + m * 0.45
+        # Skip intro / outro edges.
+        lo = max(1, int(8 / win))
+        hi = max(lo + 1, n - int(5 / win))
+        score[:lo] = 0.0
+        if hi < n:
+            score[hi:] = 0.0
+        order = np.argsort(score)[::-1]
+        out: list[float] = []
+        gap = 25.0
+        for idx in order.tolist():
+            if float(score[int(idx)]) <= 1e-6:
+                break
+            t = float(int(idx)) * win
+            if any(abs(t - x) < gap for x in out):
+                continue
+            out.append(t)
+            if len(out) >= top_n:
+                break
+        return out
+    except Exception as exc:
+        log.warning("spike times fail %s: %s", vod.name, exc)
+        return []
+
+
+def _discover_rows(vod: Path) -> list[dict]:
+    from mlbb_kill_banner import discover_vod_kill_banners, find_banner_near_peak
+    from mlbb_vod_montage import clip_run_fraction
+    from montage_dedup import filter_rows_exclude_used
+
+    file_dur = _ffprobe_duration(vod)
+    vid = _vod_id(vod)
+    t0 = time.monotonic()
+    hits = list(discover_vod_kill_banners(vod, min_tier=1) or [])
+    # Augment with seeded + analysis spikes → local banner confirm.
+    hints = list(_SEED_PEAKS.get(vid) or [])
+    hints.extend(_analysis_spike_times(vod, top_n=14))
+    seen = {round(float(h.sec), 0) for h in hits}
+    for t in hints:
+        if any(abs(float(t) - s) < 12 for s in seen):
+            continue
+        try:
+            h = find_banner_near_peak(vod, float(t), quick=True)
+        except Exception:
+            h = None
+        if h is None or int(getattr(h, "tier", 0) or 0) < 1:
+            continue
+        hits.append(h)
+        seen.add(round(float(h.sec), 0))
+    log.info(
+        "discover vod=%s hits=%s elapsed=%.0fs",
+        vod.name,
+        len(hits),
+        time.monotonic() - t0,
+    )
+    rows: list[dict] = []
+    max_run = float(os.environ.get("MLBB_PRESEND_MAX_RUN_FRAC", "0.38"))
+    for h in sorted(hits, key=lambda x: (-int(x.tier), float(x.sec))):
+        row = _hit_to_row(vod, h, file_dur)
+        if not row:
+            continue
+        # Drop run-heavy windows before montage pick (banner OCR alone is not enough).
+        if os.environ.get("MLBB_MONTAGE_COMBAT_GATE", "1") == "1":
+            start = float(row["start"])
+            end = start + float(row.get("fight_dur") or 0)
+            frac = clip_run_fraction(
+                vod, start, end, banner_sec=float(row.get("peak_start") or start)
+            )
+            row["run_fraction"] = round(frac, 3)
+            if frac > max_run:
+                log.info(
+                    "drop run-heavy peak=%.0f frac=%.2f vod=%s",
+                    float(row.get("peak_start") or 0),
+                    frac,
+                    vod.name,
+                )
+                continue
+        rows.append(row)
+    # Never reuse peaks already shipped in prior montages (same maniac spam).
+    before = len(rows)
+    rows = filter_rows_exclude_used("mlbb", vid, rows)
+    if len(rows) < before:
+        log.info(
+            "dedup dropped %s already-used peaks vod=%s",
+            before - len(rows),
+            vid,
+        )
+    return rows
+
+
+def _build_and_send_one(
+    vod: Path,
+    *,
+    token: str,
+    chat_id: str,
+    out_dir: Path,
+) -> dict:
+    from mlbb_vod_montage import (
+        build_montage_id,
+        cleanup_temps,
+        concat_rendered_parts,
+        pick_montage_rows,
+    )
+    from mlbb_vod_segment_feed import render_single_segment, _validate_before_send
+    from mlbb_telegram_video import (
+        TELEGRAM_MAX_BYTES,
+        compress_for_inline_video,
+        send_document_file,
+        send_video_file,
+    )
+    from mlbb_vod_segment_store import inline_keyboard_markup, upsert_segment, mark_feed_sent
+    from smart_video_editor import ffprobe_duration
+
+    vid = _vod_id(vod)
+    rows = _discover_rows(vod)
+    picked = pick_montage_rows(rows)
+    from mlbb_vod_montage import montage_min_clips
+
+    need = max(2, montage_min_clips())
+    report: dict = {
+        "vod_id": vid,
+        "vod": str(vod),
+        "hits": len(rows),
+        "picked": [],
+        "ok": False,
+    }
+    if len(picked) < need:
+        report["error"] = f"need>={need} bannered parts, got {len(picked)}"
+        log.warning("%s %s", vid, report["error"])
+        return report
+
+    mid = build_montage_id(vid, picked)
+    out = out_dir / f"seg_{mid}.mp4"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    temps: list[Path] = []
+    parts: list[Path] = []
+    durs: list[float] = []
+    gated: list[dict] = []
+    try:
+        import tempfile
+
+        for i, row in enumerate(picked):
+            part = Path(tempfile.mkstemp(suffix=f".m{i}.mp4")[1])
+            temps.append(part)
+            if not render_single_segment(vod, row["clip"], part):
+                log.warning("render fail %s part=%s", mid, i)
+                continue
+            ok, reason, _ = _validate_before_send(vod, row, part)
+            if not ok:
+                log.warning("gate reject %s part=%s: %s", mid, i, reason)
+                continue
+            dur = float(row.get("fight_dur") or row["clip"].get("input_duration") or 0)
+            if dur < 1:
+                dur = float(ffprobe_duration(part) or 0)
+            gated.append(row)
+            parts.append(part)
+            durs.append(dur)
+        if len(gated) < need:
+            report["error"] = f"gated_parts={len(gated)} (<{need})"
+            return report
+        # Cap at 4 after gates.
+        gated, parts, durs = gated[:4], parts[:4], durs[:4]
+        if not concat_rendered_parts(parts, durs, out):
+            report["error"] = "concat_fail"
+            return report
+        seg_dur = float(ffprobe_duration(out) or 0)
+        banners = [
+            f"{str(r.get('kill_banner') or 'KILL').upper()}@{int(float(r.get('peak_start') or 0))}"
+            for r in gated
+        ]
+        caption = (
+            f"MLBB склейка #{mid}\n"
+            f"🎯 {' · '.join(banners)}\n"
+            f"{vid} | {len(gated)} куска с одного VOD | {seg_dur:.0f}с\n"
+            f"10–30м источник · anti-run trim · singles ok\n"
+            f"👍 Ок / 👎 Не ок"
+        )
+        markup = inline_keyboard_markup(mid)
+        deliver, is_temp = compress_for_inline_video(out, max_bytes=TELEGRAM_MAX_BYTES)
+        try:
+            if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+                sent = bool(
+                    send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
+                )
+            else:
+                sent = bool(
+                    send_document_file(token, chat_id, deliver, caption, reply_markup=markup)
+                )
+        finally:
+            if is_temp:
+                deliver.unlink(missing_ok=True)
+        report["picked"] = [
+            {
+                "peak": r.get("peak_start"),
+                "tier": r.get("kill_banner_tier"),
+                "label": r.get("kill_banner"),
+                "dur": r.get("fight_dur"),
+            }
+            for r in gated
+        ]
+        report["montage_id"] = mid
+        report["duration"] = seg_dur
+        report["ok"] = bool(sent)
+        report["path"] = str(out)
+        if sent:
+            upsert_segment(
+                {
+                    "segment_id": mid,
+                    "path": str(out),
+                    "vod": str(vod),
+                    "vod_id": vid,
+                    "start": gated[0]["start"],
+                    "duration": seg_dur,
+                    "peak_start": gated[0].get("peak_start"),
+                    "score": max(float(r.get("score") or 0) for r in gated),
+                    "montage_parts": [r["segment_id"] for r in gated],
+                    "note": "same_vod_montage_10_30m",
+                    "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            mark_feed_sent([r["segment_id"] for r in gated] + [mid])
+            try:
+                from daily_game_cycle import _today_key
+                from montage_dedup import mark_montage_sent
+
+                peaks = [float(r.get("peak_start") or 0) for r in gated]
+                mark_montage_sent(
+                    "mlbb",
+                    day=_today_key(),
+                    vod_id=vid,
+                    peaks=peaks,
+                    montage_id=mid,
+                )
+            except Exception as exc:
+                log.warning("montage_dedup mark fail: %s", exc)
+        return report
+    finally:
+        cleanup_temps(temps)
+
+
+def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--count", type=int, default=3, help="How many montages to send")
+    ap.add_argument("--min-sec", type=float, default=600.0, help="Min VOD duration (10m)")
+    ap.add_argument("--max-sec", type=float, default=1800.0, help="Max VOD duration (30m)")
+    ap.add_argument(
+        "--inbox",
+        type=Path,
+        default=Path("/root/data/mlbb/youtube_nightly/inbox"),
+    )
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("/root/datasets/mlbb/vod_segments"),
+    )
+    ap.add_argument(
+        "--env",
+        type=Path,
+        default=Path("/root/.video_bot.env"),
+    )
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--ids", nargs="*", help="Optional explicit youtube ids")
+    args = ap.parse_args()
+
+    env = _load_env(args.env)
+    _prepare_montage_env()
+    token = env.get("TG_BOT_TOKEN", "").strip()
+    chat = (env.get("TG_CHAT_ID") or env.get("MLBB_CHAT_ID") or "").strip()
+    if not args.dry_run and (not token or not chat):
+        log.error("TG token/chat missing")
+        return 2
+
+    if args.ids:
+        vods = []
+        for vid in args.ids:
+            p = args.inbox / f"yt_{vid}.mp4"
+            if p.exists():
+                vods.append(p)
+            else:
+                log.warning("missing vod %s", p)
+    else:
+        vods = _inbox_vods(args.inbox, min_sec=args.min_sec, max_sec=args.max_sec)
+    # Prefer VODs never used for a montage; never farm the same maniac across cuts.
+    if os.environ.get("MONTAGE_PREFER_FRESH_VOD", "1") == "1":
+        from montage_dedup import prefer_fresh_vods
+
+        fresh = prefer_fresh_vods("mlbb", vods, vod_id_fn=_vod_id)
+        if fresh:
+            log.info(
+                "fresh VODs=%s / candidates=%s (skipping already-montaged)",
+                len(fresh),
+                len(vods),
+            )
+            vods = fresh
+        else:
+            log.warning("no fresh VODs left for montage (allow_reuse=%s)", os.environ.get("MONTAGE_ALLOW_VOD_REUSE", "0"))
+            if os.environ.get("MONTAGE_ALLOW_VOD_REUSE", "0") != "1":
+                print(json.dumps({"sent": 0, "want": args.count, "error": "no_fresh_vod"}))
+                return 1
+    log.info("candidate vods=%s (%.0f–%.0fs)", len(vods), args.min_sec, args.max_sec)
+    if not vods:
+        log.error("no VODs in duration window")
+        return 1
+
+    reports: list[dict] = []
+    sent = 0
+    # One montage = one VOD. Never stitch a second montage from the same file
+    # in this run (avoids repeating the best maniac peak across cuts).
+    used_this_run: set[str] = set()
+    for vod in vods:
+        if sent >= args.count:
+            break
+        vid = _vod_id(vod)
+        if vid in used_this_run:
+            continue
+        log.info("=== montage from %s (%.0fs) ===", vod.name, _ffprobe_duration(vod))
+        if args.dry_run:
+            rows = _discover_rows(vod)
+            from mlbb_vod_montage import pick_montage_rows
+
+            picked = pick_montage_rows(rows)
+            reports.append(
+                {
+                    "vod_id": vid,
+                    "hits": len(rows),
+                    "picked": len(picked),
+                    "peaks": [r.get("peak_start") for r in picked],
+                    "dry_run": True,
+                }
+            )
+            if len(picked) >= 3:
+                sent += 1
+                used_this_run.add(vid)
+            continue
+        rep = _build_and_send_one(vod, token=token, chat_id=chat, out_dir=args.out_dir)
+        reports.append(rep)
+        used_this_run.add(vid)
+        if rep.get("ok"):
+            sent += 1
+            log.info("sent montage %s parts=%s", rep.get("montage_id"), len(rep.get("picked") or []))
+        else:
+            log.warning("skip vod=%s err=%s", rep.get("vod_id"), rep.get("error"))
+
+    out_json = Path("/root/data/mlbb/savage_rescan/same_vod_montage_report.json")
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("DONE sent=%s/%s report=%s", sent, args.count, out_json)
+    print(json.dumps({"sent": sent, "want": args.count, "reports": reports}, ensure_ascii=False))
+    return 0 if sent >= args.count else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

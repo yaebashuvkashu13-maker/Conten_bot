@@ -108,3 +108,46 @@ def test_combat_gate_rejects_bot_farm_for_pubg() -> None:
     assert ok is False
     assert "bot_farm" in reason
     assert "bot_farm" in row
+
+
+def test_combat_gate_requires_multi_signal(monkeypatch) -> None:
+    monkeypatch.setenv("PUBG_COMBAT_MULTI_SIGNAL", "1")
+    monkeypatch.setenv("PUBG_COMBAT_MIN_SIGNALS", "2")
+    with patch(
+        "pubg_combat_gate.pubg_rejects_bot_farm",
+        return_value=(False, "", {}),
+    ), patch(
+        "pubg_combat_gate.pubg_pov_engagement_ok",
+        return_value=(True, "pov_engagement_ok", {"center_motion": 0.01}),
+    ), patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(0.0, {}),
+    ), patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={"panns_gun_max": 0.22},
+    ), patch(
+        "highlight_scorer.calibrated_pann_gun_min",
+        return_value=0.22,
+    ), patch(
+        "pubg_combat_gate.pubg_passes_shooting_gate",
+        return_value=(
+            True,
+            "strict_gun",
+            {
+                "gunfire_density": 0.05,
+                "burst_ratio": 4.0,
+                "crop_box": None,
+                "center_motion": 0.01,
+            },
+        ),
+    ), patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(True, "combat_visual_strict", {"best_hit_flash": 0.0, "best_weapon_edge": 0.0}),
+    ), patch(
+        "pubg_combat_gate.segment_looks_like_pubg_loot_or_walk",
+        return_value=False,
+    ):
+        ok, reason, row = pubg_passes_combat_gate(Path("x.mp4"), 100.0, 10.0, "pubg")
+    assert ok is False
+    assert "combat_signals_low" in reason
+    assert int(row.get("combat_signals") or 0) < 2

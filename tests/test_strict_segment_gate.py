@@ -59,6 +59,72 @@ def test_genshin_extra_reject_pass() -> None:
     assert bad is False
 
 
+def test_wot_extra_reject_allows_flashes_with_low_gunfire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from strict_segment_gate import _wot_extra_reject
+
+    monkeypatch.setenv("SMART_WOT_MIN_IMPACT_DENSITY", "0.052")
+    monkeypatch.setenv("WOT_BRAWL_MIN_IMPACT_DENSITY", "0.052")
+    monkeypatch.setenv("WOT_BRAWL_MIN_HIT_FLASHES", "1")
+    monkeypatch.setenv("SMART_WOT_CRUISE_IMPACT_CAP", "0.050")
+    # Typical false cruise: high motion, weak PUBG-gunfire density, but hit flashes present.
+    bad, reason = _wot_extra_reject(
+        {
+            "impact_density": 0.008,
+            "center_motion": 0.177,
+            "hit_flash_count": 2,
+            "best_hit_flash": 0.02,
+            "burst_ratio": 1.5,
+        }
+    )
+    assert bad is False, reason
+
+
+def test_wot_brawl_passes_on_flashes(monkeypatch: pytest.MonkeyPatch, fake_video: Path) -> None:
+    monkeypatch.setenv("WOT_BRAWL_MIN_HIT_FLASHES", "1")
+    monkeypatch.setenv("WOT_BRAWL_MIN_IMPACT_DENSITY", "0.052")
+    probe = {
+        "start": 100.0,
+        "duration": 12.0,
+        "profile": "wot",
+        "impact_density": 0.008,
+        "gunfire_density": 0.008,
+        "burst_ratio": 1.2,
+        "center_motion": 0.177,
+        "audio_rms": 0.02,
+    }
+    with patch("strict_segment_gate.probe_segment", return_value=probe), patch(
+        "wot_brawl_segment.count_hit_flashes", return_value=(2, 0.03)
+    ):
+        ok, reason, metrics = passes_strict_gate(fake_video, 100.0, 12.0, "wot")
+    assert ok is True, reason
+    assert "wot_brawl_ok" in reason
+    assert metrics.get("hit_flash_count") == 2
+
+
+def test_wot_brawl_rejects_true_cruise(monkeypatch: pytest.MonkeyPatch, fake_video: Path) -> None:
+    monkeypatch.setenv("WOT_BRAWL_MIN_HIT_FLASHES", "1")
+    monkeypatch.setenv("WOT_BRAWL_MIN_IMPACT_DENSITY", "0.012")
+    monkeypatch.setenv("SMART_WOT_CRUISE_IMPACT_CAP", "0.020")
+    probe = {
+        "start": 100.0,
+        "duration": 12.0,
+        "profile": "wot",
+        "impact_density": 0.002,
+        "gunfire_density": 0.002,
+        "burst_ratio": 1.0,
+        "center_motion": 0.18,
+        "audio_rms": 0.01,
+    }
+    with patch("strict_segment_gate.probe_segment", return_value=probe), patch(
+        "wot_brawl_segment.count_hit_flashes", return_value=(0, 0.001)
+    ):
+        ok, reason, _metrics = passes_strict_gate(fake_video, 100.0, 12.0, "wot")
+    assert ok is False
+    assert "wot_cruise" in reason or "wot_no_combat" in reason
+
+
 def test_acceptance_table_all_pass_flag() -> None:
     rows = [
         {"profile": "standoff", "start": 10.0, "pass": True, "gate_reason": "ok",
