@@ -27,14 +27,18 @@ def test_montage_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PUBG_VOD_MONTAGE", raising=False)
     monkeypatch.delenv("STANDOFF_VOD_MONTAGE", raising=False)
     monkeypatch.delenv("WOT_VOD_MONTAGE", raising=False)
-    # Defaults: PUBG/Standoff/WoT montage ON.
+    monkeypatch.delenv("GENSHIN_VOD_MONTAGE", raising=False)
+    # Defaults: PUBG/Standoff/WoT montage ON; Genshin stays singles.
     assert montage_enabled("pubg") is True
     assert montage_enabled("standoff") is True
     assert montage_enabled("wot") is True
+    assert montage_enabled("genshin") is False
     monkeypatch.setenv("PUBG_VOD_MONTAGE", "0")
     assert montage_enabled("pubg") is False
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "1")
     assert montage_enabled("pubg") is True
+    # Global flag must not glue Genshin boss fights.
+    assert montage_enabled("genshin") is False
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "0")
     monkeypatch.setenv("STANDOFF_VOD_MONTAGE", "0")
     assert montage_enabled("standoff") is False
@@ -45,9 +49,13 @@ def test_montage_only_blocks_singles(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.delenv("SHOOTER_VOD_MONTAGE_ONLY", raising=False)
     monkeypatch.delenv("PUBG_VOD_MONTAGE_ONLY", raising=False)
+    monkeypatch.delenv("GENSHIN_VOD_MONTAGE_ONLY", raising=False)
     assert montage_only("pubg") is True
     assert montage_only("genshin") is False
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_ONLY", "1")
+    assert montage_only("genshin") is False
     monkeypatch.setenv("PUBG_VOD_MONTAGE_ONLY", "0")
+    monkeypatch.delenv("SHOOTER_VOD_MONTAGE_ONLY", raising=False)
     assert montage_only("pubg") is False
 
 

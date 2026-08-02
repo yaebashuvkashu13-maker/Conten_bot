@@ -42,12 +42,16 @@ def compress_for_inline_video(
     tmp = Path(tmp_name)
     duration = max(1.0, probe_duration(path))
     target_bits = int(max_bytes * 8 * 0.90)
-    audio_k = int(os.environ.get("MLBB_TG_AUDIO_K", "64"))
+    audio_k = int(os.environ.get("MLBB_TG_AUDIO_K", "96"))
     audio_bps = audio_k * 1000
     video_bps = max(180_000, int(target_bits / duration) - audio_bps)
+    # Refuse potato encodes (long montages → ~0.5Mbps). Caller should HQ-split.
+    min_v_bps = int(os.environ.get("MLBB_TG_MIN_VIDEO_BPS", "1200000"))
+    if video_bps < min_v_bps and os.environ.get("MLBB_TG_ALLOW_POTATO", "0") != "1":
+        return path, False
 
-    heights = [int(x) for x in os.environ.get("MLBB_TG_SCALE_HEIGHTS", "720,540,480,360").split(",") if x.strip()]
-    crf_steps = [x.strip() for x in os.environ.get("MLBB_TG_CRF_STEPS", "26,28,30,32,34,36,38").split(",") if x.strip()]
+    heights = [int(x) for x in os.environ.get("MLBB_TG_SCALE_HEIGHTS", "720,540").split(",") if x.strip()]
+    crf_steps = [x.strip() for x in os.environ.get("MLBB_TG_CRF_STEPS", "23,26,28,30").split(",") if x.strip()]
 
     for height in heights:
         scale = f"scale=-2:{height}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"

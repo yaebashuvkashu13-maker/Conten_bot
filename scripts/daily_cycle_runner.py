@@ -181,6 +181,11 @@ def main() -> int:
         env[f"{game.upper()}_VOD_MONTAGE"] = "1"
         env[f"{game.upper()}_VOD_MONTAGE_ONLY"] = "1"
         log.info("shooter triple-montage quota game=%s (3 clips × 3 sends)", game)
+    elif game == "genshin":
+        # Boss fights stay single clips — global SHOOTER_VOD_MONTAGE must not glue them.
+        env["GENSHIN_VOD_MONTAGE"] = "0"
+        env["GENSHIN_VOD_MONTAGE_ONLY"] = "0"
+        env["VOD_SEND_HQ_FILE"] = "1"
 
     proc = subprocess.run(
         [sys.executable, "-u", str(script)] + ([] if game == "mlbb" else [game]),

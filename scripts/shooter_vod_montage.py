@@ -14,28 +14,29 @@ log = logging.getLogger("shooter_vod_montage")
 
 
 def montage_enabled(game: str = "") -> bool:
-    """Enable via SHOOTER_VOD_MONTAGE=1, or game-specific flags.
+    """Enable montage for PUBG / Standoff / WoT (not Genshin boss singles).
 
-    PUBG / Standoff / WoT default ON — daily quota ships 3×3-clip montages.
+    Global SHOOTER_VOD_MONTAGE=1 must not glue Genshin full-boss fights into
+    4-minute potato Telegram uploads (-bOe0LLR5m8).
     """
-    if os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
-        return True
     g = (game or "").strip().lower()
-    if g == "pubg" and os.environ.get("PUBG_VOD_MONTAGE", "1") == "1":
-        return True
-    if g == "standoff" and os.environ.get("STANDOFF_VOD_MONTAGE", "1") == "1":
-        return True
-    if g == "wot" and os.environ.get("WOT_VOD_MONTAGE", "1") == "1":
-        return True
-    return False
+    if g == "genshin":
+        return os.environ.get("GENSHIN_VOD_MONTAGE", "0") == "1"
+    if g in {"pubg", "standoff", "wot"}:
+        if os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1":
+            return True
+        return os.environ.get(f"{g.upper()}_VOD_MONTAGE", "1") == "1"
+    return os.environ.get("SHOOTER_VOD_MONTAGE", "0") == "1"
 
 
 def montage_only(game: str = "") -> bool:
     """No single-clip fallback — ship only glued fights (PUBG/Standoff/WoT)."""
     g = (game or "").strip().lower()
-    if os.environ.get("SHOOTER_VOD_MONTAGE_ONLY", "0") == "1":
-        return True
+    if g == "genshin":
+        return os.environ.get("GENSHIN_VOD_MONTAGE_ONLY", "0") == "1"
     if g in {"pubg", "standoff", "wot"}:
+        if os.environ.get("SHOOTER_VOD_MONTAGE_ONLY", "0") == "1":
+            return True
         return os.environ.get(f"{g.upper()}_VOD_MONTAGE_ONLY", "1") == "1"
     return False
 

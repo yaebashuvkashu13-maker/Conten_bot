@@ -1425,56 +1425,68 @@ def send_video(
     markup = reply_markup or inline_keyboard_markup(seg_id)
     deliver = path
     is_temp = False
-    if path.stat().st_size > TELEGRAM_MAX_BYTES:
-        deliver, is_temp = compress_for_inline_video(path, max_bytes=TELEGRAM_MAX_BYTES)
-        if is_temp:
-            log.info(
-                "telegram compress seg=%s %s -> %s bytes",
-                seg_id,
-                path.stat().st_size,
-                deliver.stat().st_size,
-            )
+    # Prefer HQ file/split. Crushing 200MB/4min montages into 20MB sendVideo
+    # made -bOe0LLR5m8 look pixelated (~0.5Mbps).
+    prefer_hq = os.environ.get(
+        "VOD_SEND_HQ_FILE",
+        os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1"),
+    ) == "1"
+    src_bytes = path.stat().st_size
 
     try:
         sent = False
-        send_as_file = os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1") == "1"
-        if send_as_file and path.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
-            fname = f"{game.upper()}_{seg_id}.mp4"
+        fname = f"{game.upper()}_{seg_id}.mp4"
+        if prefer_hq or src_bytes > TELEGRAM_MAX_BYTES:
+            hq_cap = f"{caption}\n📁 файл (без пережатия Telegram)"
+            if src_bytes > TELEGRAM_DOCUMENT_MAX_BYTES:
+                log.info(
+                    "telegram HQ split seg=%s bytes=%s (>50MB document cap)",
+                    seg_id,
+                    src_bytes,
+                )
             sent = send_hq_files(
                 token,
                 chat_id,
                 path,
-                f"{caption}\n📁 файл (без пережатия Telegram)",
+                hq_cap,
                 reply_markup=markup,
                 filename=fname,
             )
-        elif deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
-            sent = send_video_file(token, chat_id, deliver, caption, reply_markup=markup)
-        elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
-            log.warning(
-                "telegram sendVideo too large seg=%s bytes=%s — sendDocument fallback",
-                seg_id,
-                deliver.stat().st_size,
-            )
-            sent = send_document_file(
-                token,
-                chat_id,
-                deliver,
-                f"{caption}\n(файл — документ, >20MB inline)",
-                reply_markup=markup,
-            )
-        else:
-            log.warning("telegram too large seg=%s bytes=%s", seg_id, deliver.stat().st_size)
+        if not sent and src_bytes <= TELEGRAM_MAX_BYTES:
+            sent = send_video_file(token, chat_id, path, caption, reply_markup=markup)
+        if not sent and src_bytes > TELEGRAM_MAX_BYTES:
+            # Last resort only — never the default for long montages.
+            deliver, is_temp = compress_for_inline_video(path, max_bytes=TELEGRAM_MAX_BYTES)
+            if is_temp:
+                log.warning(
+                    "telegram compress fallback seg=%s %s -> %s bytes",
+                    seg_id,
+                    src_bytes,
+                    deliver.stat().st_size,
+                )
+            if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
+                sent = send_video_file(
+                    token, chat_id, deliver, caption, reply_markup=markup
+                )
+            elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
+                sent = send_document_file(
+                    token,
+                    chat_id,
+                    deliver,
+                    f"{caption}\n(файл — документ)",
+                    reply_markup=markup,
+                )
+        if not sent:
+            log.warning("telegram send failed seg=%s bytes=%s", seg_id, src_bytes)
             return False
 
-        if sent:
-            if record_learning:
-                record_send(1)
-            if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
-                from daily_game_cycle import record_send as cycle_record_send
+        if record_learning:
+            record_send(1)
+        if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
+            from daily_game_cycle import record_send as cycle_record_send
 
-                cycle_record_send(game, 1)
-        return sent
+            cycle_record_send(game, 1)
+        return True
     finally:
         if is_temp:
             deliver.unlink(missing_ok=True)
