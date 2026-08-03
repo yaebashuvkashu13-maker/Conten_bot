@@ -3513,6 +3513,12 @@ def _send_segment_batch(
                 "source_banner_missing",
                 "banner_reject",
                 "no_streak_banner",
+                # Lone HAS-SLAIN / draft — do not rediscover the same VOD for hours.
+                "solo_needs_live_multi",
+                "live_single_below_floor",
+                "banner_too_early",
+                "draft_or_pick_screen",
+                "kill_banner_tier_low",
             )
         )
         for s in skipped
@@ -4176,20 +4182,39 @@ def _process_vod_segments(
             # Keep when pool still has montage-eligible banners (double+ or ref singles).
             from mlbb_vod_montage import montage_single_row_ok
 
-            shippable_hits = 0
+            # Keep only if we can still ship under policy:
+            # ≥1 double+ (solo live-multi) OR ≥2 montage-ok singles (stitch).
+            # One lone HAS-SLAIN must NOT pin the inbox for hours (UGu/Y3In).
+            double_hits = 0
+            single_hits = 0
             for row in entry.get("last_pool_peaks") or []:
                 if not isinstance(row, dict):
                     continue
                 tier = int(row.get("kill_banner_tier") or 0)
-                if tier >= 2 or montage_single_row_ok(row):
-                    shippable_hits += 1
+                if tier >= 2:
+                    double_hits += 1
+                elif montage_single_row_ok(row):
+                    single_hits += 1
+            shippable_hits = double_hits + single_hits
+            can_retry = double_hits >= 1 or single_hits >= 2
+            reject_now = str(entry.get("reject_reason") or "")
+            sticky_reject = any(
+                k in reject_now
+                for k in (
+                    "solo_needs_live_multi",
+                    "live_single_below_floor",
+                    "presend_banner_floor",
+                    "banner_too_early",
+                    "draft_or_pick",
+                )
+            )
             if (
-                shippable_hits > 0
-                and entry.get("reject_reason") != "presend_banner_floor"
+                can_retry
+                and not sticky_reject
                 and os.environ.get("MLBB_VOD_KEEP_BANNER_MISS", "1") == "1"
             ):
                 # Wrong peak / stale pool: drop cache and keep file for rediscover.
-                reason = str(entry.get("reject_reason") or "")
+                reason = reject_now
                 if "no_banner" in reason or "own_kill_recheck" in reason:
                     try:
                         from vod_scan_state import invalidate_pool_cache
@@ -4203,8 +4228,9 @@ def _process_vod_segments(
                 _sync_vod_entry_to_state(state, entry, vod)
                 _save_state(state)
                 log.info(
-                    "reliable zero but shippable banners=%s — keep vod=%s",
-                    shippable_hits,
+                    "reliable zero but retryable banners double=%s single=%s — keep vod=%s",
+                    double_hits,
+                    single_hits,
                     vod.name,
                 )
             else:
@@ -4364,7 +4390,9 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MAX_PER_VOD": "4",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
-        "MLBB_KILL_BANNER_DISCOVER_TARGET": "3",
+        # Match montage min (2). Hunting a 3rd hit on every VOD burned ~1–3 min.
+        "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
+        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
         # Need several fights for montage — do not stop at first hit.
         "MLBB_DISCOVER_SHIP_ON_FIRST": "0",
         "MLBB_VOD_MIN_PEAK_SEC": "90",
@@ -4430,13 +4458,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_FULL_RETRY": "0",
         # Kill-count / streak titles need dense after peak miss (11-Kill / 25 kills).
         "MLBB_VOD_TITLE_DENSE_AUTO": "1",
-        # Discover double+ — stop-on-first HAS SLAIN burned VODs then shipped jog.
-        # Find several banners so an already-sent kill does not exhaust a 20-kill VOD.
-        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "2",
+        # Collect singles for montage (MERGE=1); solo still needs live double+.
+        # TARGET/MIN=2 matches montage floor — hunting a 3rd hit burned minutes/VOD.
+        "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
+        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "180",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "20",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "120",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "24",
         "MLBB_KILL_BANNER_DISCOVER_STEP": "2.0",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
@@ -4460,20 +4488,22 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_REJECT_LIVE_SINGLE": "1",
         "MLBB_PRESEND_MIN_BANNER_SEC": "90",
         "MLBB_VOD_MIN_PEAK_SEC": "90",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "36",
-        # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
+        # Fight-first: fewer peaks, short miss-spike, then move on.
         "MLBB_BANNER_FIGHT_FIRST": "1",
-        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
+        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "5",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
         "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE": "1",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "90",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "12",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "30",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "6",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
-        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
+        "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "4",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
-        "MLBB_KILL_BANNER_QUICK_AFTER": "6",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "8",
+        "MLBB_KILL_BANNER_QUICK_AFTER": "5",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.40",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "5",
+        # Soft-anchor pad 90s wiped fight peaks near disliked clips.
+        "HIGHLIGHT_OWNER_BAD_PAD_SEC": "30",
+        "HIGHLIGHT_SOFT_BAD_PAD_SEC": "30",
         # Dense only after miss streak when fight-first is on.
         "MLBB_VOD_BANNER_DENSE_SEC": "0",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
@@ -4491,19 +4521,19 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Peak RapidOCR only (not dense) — Tesseract is blind on YT gold glyphs.
         "MLBB_BANNER_DISCOVER_RAPID_PEAKS": "1",
         "MLBB_BANNER_DISCOVER_RAPID": "0",
-        # Miss→spike needs a few OCR probes; 0 left Aug1 ref-blind (setdefault only).
-        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "3",
+        # Miss→spike needs a few OCR probes; keep small to exit barren VODs fast.
+        "MLBB_KILL_BANNER_DISCOVER_OCR_SPIKES": "2",
         "MLBB_KILL_BANNER_FORCE_OCR_EVERY": "0",
         "MLBB_KILL_BANNER_OCR_WIDE": "0",
-        "MLBB_DISCOVER_OCR_CALL_BUDGET": "12",
+        "MLBB_DISCOVER_OCR_CALL_BUDGET": "8",
         "MLBB_STAGE1_SKIP_CLIP_RANK": "1",
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
         "INTELLICLIP_STAGE1": "0",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
-        # Cooldowns: do not sit idle 30–45 min after a miss when quota is open.
-        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "60",
-        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "90",
-        "MLBB_VOD_SCAN_COOLDOWN_SEC": "120",
+        # Cooldowns: do not sit idle after a miss when quota is open.
+        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "45",
+        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "45",
+        "MLBB_VOD_SCAN_COOLDOWN_SEC": "60",
         # Do not fill inbox while scanning — finish pickable first.
         "MLBB_VOD_PREFETCH": "1",
         "MLBB_VOD_INBOX_MAX": "3",
@@ -4662,6 +4692,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "HIGHLIGHT_USE_OWNER_ANCHORS",
         "HIGHLIGHT_CLIP_DISABLED",
         "HIGHLIGHT_MLBB_BANNER_CLIP_MIN",
+        "HIGHLIGHT_OWNER_BAD_PAD_SEC",
+        "HIGHLIGHT_SOFT_BAD_PAD_SEC",
         "MLBB_BANNER_SKIP_CLIP_SCORE",
         "MLBB_KILL_SCAN_SKIP_OCR",
         "MLBB_KILL_DISCOVER_ALLOW_OCR",

@@ -114,6 +114,8 @@ def montage_collect_env() -> Iterator[None]:
             "MLBB_VOD_MONTAGE_MIN_TIER",
             "single",
         ),
+        # Discover merge may already be 1; keep singles eligible in collect too.
+        "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_REQUIRED": "1",
         "MLBB_VOD_MOTION_ANCHOR_OK": "0",
         "MLBB_VOD_BANNER_DISCOVER": os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1"),
