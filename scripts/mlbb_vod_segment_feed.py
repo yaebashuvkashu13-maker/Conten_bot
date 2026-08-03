@@ -2370,16 +2370,33 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 soup = bool(_HUD_OCR_SOUP_RE.search(live_s))
                             except Exception:
                                 soup = False
+                            # Digit/scoreboard OCR without streak words = blind too
+                            # (-kOfd 08:16: "26 20 12 26.25 X803..." rejected despite
+                            # killer_icon_ok:paquito:0.45).
+                            if not soup and live_s:
+                                try:
+                                    from mlbb_kill_banner import _KILL_STREAK_HINT_RE
+
+                                    has_streak_words = bool(
+                                        _KILL_STREAK_HINT_RE.search(live_s)
+                                    )
+                                except Exception:
+                                    has_streak_words = False
+                                if not has_streak_words:
+                                    digits = sum(ch.isdigit() for ch in live_s)
+                                    letters = sum(ch.isalpha() for ch in live_s)
+                                    if digits >= 6 and digits >= letters:
+                                        soup = True
                             blind = (not live_s) or soup or len(live_s) < 10
-                            if (
-                                str(own_reason).startswith("hud_killer_ok")
-                                and hud_sc >= trust_min
-                                and blind
-                            ):
+                            own_ok = str(own_reason).startswith(
+                                ("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")
+                            )
+                            if own_ok and hud_sc >= trust_min and blind:
                                 report["ocr_multi_trust_hud"] = True
                                 report["live_streak_tier"] = int(tier_i or 0)
                                 log.info(
-                                    "ocr multi trust HUD=%.3f tier=%s live_blind vod_seg=%s",
+                                    "ocr multi trust own=%s=%.3f tier=%s live_blind vod_seg=%s",
+                                    str(own_reason).split(":")[0],
                                     hud_sc,
                                     tier_i,
                                     row.get("segment_id"),
@@ -2410,7 +2427,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             except Exception as exc:
                 log.warning("own_kill recheck failed: %s", exc)
                 return False, f"own_kill_recheck_error:{exc}", report
-        hud_own = str(report.get("own_kill_recheck") or "").startswith("hud_killer_ok")
+        hud_own = str(report.get("own_kill_recheck") or "").startswith(
+            ("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")
+        )
         ocr_rej = _reject_ocr_single_send(src, label, tier_i, hud_own=hud_own)
         if ocr_rej:
             return False, ocr_rej, report
