@@ -264,8 +264,9 @@ def montage_part_max_sec(game: str = "pubg") -> float:
         return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "16"))
     if game == "wot":
         return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "20"))
-    # 6iOn peak60: 15s canvas cut mid-spray; ~22s covers the exchange.
-    return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "22"))
+    # 6iOn peak60: 15s canvas cut mid-spray; ~28s covers the exchange (user:
+    # l5Y37 first piece was too short at 22s).
+    return float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
 
 
 def apply_run_trim_to_clip(clip: dict, vod: Path, *, game: str = "pubg") -> dict:
