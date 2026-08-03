@@ -133,10 +133,10 @@ export MLBB_BANNER_POS_LIVE_MIN_SIM=0.58
 export MLBB_BANNER_OWNER_GATE=0
 export MLBB_BANNER_SEND_STRICT=0
 # Faster miss exit: 120s + short spike beats 180s full burn on barren VODs.
-export MLBB_KILL_BANNER_DISCOVER_MAX_SEC=120
+export MLBB_KILL_BANNER_DISCOVER_MAX_SEC=150
 export MLBB_KILL_BANNER_DISCOVER_TITLE_CAP=1
 export MLBB_KILL_BANNER_DISCOVER_STEP=2
-export MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=24
+export MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=30
 
 # MLBB daily montages: 2–4 fights → one Telegram video (singles only inside stitch)
 export MLBB_VOD_MONTAGE=1

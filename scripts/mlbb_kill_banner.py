@@ -1210,6 +1210,9 @@ def _discover_vod_kill_banners_inner(
     # Quota path: one fresh own-kill is enough to ship; extra OCR only burns the day.
     if os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST", "0") == "1":
         want = 1
+    # Prefer stopping on first double+ (solo ship) while still hunting 2+ when
+    # only singles are found (montage). Prevents 6h barren loops at want=2.
+    ship_first_double = os.environ.get("MLBB_DISCOVER_SHIP_ON_FIRST_DOUBLE", "1") == "1"
     os.environ["MLBB_DISCOVER_PHASE"] = "peak"
     log.info(
         "banner discover %s: start dense=%s fight_first=%s max_probes=%s max_sec=%.0f "
@@ -1251,6 +1254,7 @@ def _discover_vod_kill_banners_inner(
         return False
 
     def _merge_hit(hit: KillBannerHit) -> None:
+        nonlocal want
         if hit.tier < need or not _banner_hit_source_ok(hit.source):
             return
         # Already-sent moments must not satisfy want=1 early-stop — keep scanning.
@@ -1267,6 +1271,16 @@ def _discover_vod_kill_banners_inner(
                 hits[-1] = hit
         else:
             hits.append(hit)
+        # One own-kill double+ is enough to stop early and solo-ship (live OCR
+        # still gates). Keep want>=2 only while all hits are singles (montage).
+        if ship_first_double and any(int(h.tier or 0) >= 2 for h in hits):
+            if want > 1:
+                log.info(
+                    "banner discover %s: double+ hit — ship-on-first-double want %s→1",
+                    vod.name,
+                    want,
+                )
+            want = 1
 
     def _budget_ok(*, peak_phase: bool = False) -> bool:
         limit = peak_deadline if peak_phase else deadline
