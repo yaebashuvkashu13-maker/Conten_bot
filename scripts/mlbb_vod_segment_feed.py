@@ -1425,22 +1425,32 @@ def send_video(
     markup = reply_markup or inline_keyboard_markup(seg_id)
     deliver = path
     is_temp = False
-    # Prefer HQ file/split. Crushing 200MB/4min montages into 20MB sendVideo
-    # made -bOe0LLR5m8 look pixelated (~0.5Mbps).
-    prefer_hq = os.environ.get(
+    # Policy: sendVideo whenever the file fits the Bot API inline limit (~20MB).
+    # HQ document/split only for oversized clips — never crush long montages into
+    # potato sendVideo (-bOe0LLR5m8), and never force a 9MB double out as a file.
+    prefer_hq_when_oversize = os.environ.get(
         "VOD_SEND_HQ_FILE",
         os.environ.get("VOD_CALIBRATION_SEND_AS_FILE", "1"),
     ) == "1"
+    force_file_always = os.environ.get("VOD_SEND_FILE_ALWAYS", "0") == "1"
     src_bytes = path.stat().st_size
 
     try:
         sent = False
         fname = f"{game.upper()}_{seg_id}.mp4"
-        if prefer_hq or src_bytes > TELEGRAM_MAX_BYTES:
+        if force_file_always or (
+            prefer_hq_when_oversize and src_bytes > TELEGRAM_MAX_BYTES
+        ):
             hq_cap = f"{caption}\n📁 файл (без пережатия Telegram)"
             if src_bytes > TELEGRAM_DOCUMENT_MAX_BYTES:
                 log.info(
                     "telegram HQ split seg=%s bytes=%s (>50MB document cap)",
+                    seg_id,
+                    src_bytes,
+                )
+            else:
+                log.info(
+                    "telegram HQ file seg=%s bytes=%s (>20MB video cap)",
                     seg_id,
                     src_bytes,
                 )
@@ -1455,26 +1465,28 @@ def send_video(
         if not sent and src_bytes <= TELEGRAM_MAX_BYTES:
             sent = send_video_file(token, chat_id, path, caption, reply_markup=markup)
         if not sent and src_bytes > TELEGRAM_MAX_BYTES:
-            # Last resort only — never the default for long montages.
+            # Last resort compress only if it still yields a real inline video.
+            # Potato encodes are refused inside compress_for_inline_video unless
+            # MLBB_TG_ALLOW_POTATO=1 — then fall through to HQ document/split.
             deliver, is_temp = compress_for_inline_video(path, max_bytes=TELEGRAM_MAX_BYTES)
-            if is_temp:
+            if is_temp and deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
                 log.warning(
                     "telegram compress fallback seg=%s %s -> %s bytes",
                     seg_id,
                     src_bytes,
                     deliver.stat().st_size,
                 )
-            if deliver.stat().st_size <= TELEGRAM_MAX_BYTES:
                 sent = send_video_file(
                     token, chat_id, deliver, caption, reply_markup=markup
                 )
-            elif deliver.stat().st_size <= TELEGRAM_DOCUMENT_MAX_BYTES:
-                sent = send_document_file(
+            if not sent:
+                sent = send_hq_files(
                     token,
                     chat_id,
-                    deliver,
-                    f"{caption}\n(файл — документ)",
+                    path,
+                    f"{caption}\n📁 файл (без пережатия Telegram)",
                     reply_markup=markup,
+                    filename=fname,
                 )
         if not sent:
             log.warning("telegram send failed seg=%s bytes=%s", seg_id, src_bytes)
@@ -4405,6 +4417,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_HUD",
         "MLBB_PRESEND_OWN_KILL_RECHECK",
         "MLBB_PRESEND_OWN_KILL_SINGLE",
+        "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS",
         "MLBB_PRESEND_BANNER_CONTEXT",
         "MLBB_PRESEND_LIVE_OCR_BUDGET",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC",

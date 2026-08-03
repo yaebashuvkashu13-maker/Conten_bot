@@ -185,6 +185,7 @@ def main() -> int:
         # Boss fights stay single clips — global SHOOTER_VOD_MONTAGE must not glue them.
         env["GENSHIN_VOD_MONTAGE"] = "0"
         env["GENSHIN_VOD_MONTAGE_ONLY"] = "0"
+        # Oversized clips → HQ document; under ~20MB still sendVideo.
         env["VOD_SEND_HQ_FILE"] = "1"
 
     proc = subprocess.run(
