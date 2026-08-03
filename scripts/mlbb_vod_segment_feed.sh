@@ -138,23 +138,24 @@ export MLBB_KILL_BANNER_DISCOVER_TITLE_CAP=1
 export MLBB_KILL_BANNER_DISCOVER_STEP=2
 export MLBB_KILL_BANNER_DISCOVER_MAX_PROBES=36
 
-# MLBB daily montages: 3–4 double+ fights → one Telegram video
-
-# MLBB daily montages: 3-4 double+ fights -> one Telegram video
+# MLBB daily montages: 2–4 fights → one Telegram video (singles only inside stitch)
 export MLBB_VOD_MONTAGE=1
 export MLBB_SKIP_MONTAGE=0
 export MLBB_VOD_MONTAGE_MIN_TIER=single
-export MLBB_VOD_MONTAGE_MIN_CLIPS=1
+export MLBB_VOD_MONTAGE_MIN_CLIPS=2
 export MLBB_VOD_MONTAGE_MAX_CLIPS=4
+export MLBB_VOD_MONTAGE_ALLOW_SINGLES=1
+export MLBB_VOD_MONTAGE_SINGLE_FALLBACK=1
+export MLBB_SOLO_REQUIRE_LIVE_MULTI=1
 export MLBB_VOD_SEND_ALL_BANNERS=1
-export MLBB_VOD_MAX_PER_VOD=2
+export MLBB_VOD_MAX_PER_VOD=4
 
 # Runtime knobs (must be BEFORE the loop — trailing exports never ran)
 export MLBB_FIGHT_FIRST_ABORT_ON_MISS=1
 export MLBB_VOD_TITLE_DENSE_AUTO=1
-export MLBB_KILL_BANNER_DISCOVER_MIN_HITS=1
-export MLBB_KILL_BANNER_DISCOVER_TARGET=2
-export MLBB_DISCOVER_SHIP_ON_FIRST=1
+export MLBB_KILL_BANNER_DISCOVER_MIN_HITS=2
+export MLBB_KILL_BANNER_DISCOVER_TARGET=3
+export MLBB_DISCOVER_SHIP_ON_FIRST=0
 export MLBB_BANNER_SKIP_CLIP_SCORE=1
 export MLBB_KILL_DISCOVER_ALLOW_OCR=1
 # 0 historically starved miss→spike (ref-only). Allow a few OCR spikes on miss path.

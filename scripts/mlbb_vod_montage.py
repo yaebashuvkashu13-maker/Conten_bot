@@ -30,8 +30,8 @@ def montage_enabled() -> bool:
 
 
 def montage_min_clips() -> int:
-    # Reliable quota path ships 1 own-kill moment; do not force a 2-clip floor.
-    return max(1, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "3")))
+    # A "montage" is always ≥2 pieces; solo double+ uses the non-montage path.
+    return max(2, int(os.environ.get("MLBB_VOD_MONTAGE_MIN_CLIPS", "2")))
 
 
 def montage_max_clips() -> int:
@@ -57,17 +57,17 @@ def _row_banner_source(row: dict) -> str:
 
 
 def montage_single_row_ok(row: dict) -> bool:
-    """Single OK for montage: prefer ref; OCR singles only when explicitly allowed."""
+    """Single OK for montage: prefer ref/HUD own-kill; OCR singles only when allowed."""
     tier = int(row.get("kill_banner_tier") or 0)
     if tier < 1:
         return False
     if tier >= 2:
         return True
-    # HUD-confirmed own-kill singles — OFF by default (HAS SLAIN jog trash).
+    if not montage_allow_singles():
+        return False
+    # HUD/icon-confirmed own-kill singles — montage only (solo blocked elsewhere).
     own = str(row.get("own_kill_recheck") or row.get("own_kill_reason") or "")
-    if own.startswith("hud_killer_ok") and os.environ.get(
-        "MLBB_PRESEND_OWN_KILL_SINGLE", "0"
-    ) == "1":
+    if own.startswith(("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")):
         return True
     src = _row_banner_source(row)
     label = str(row.get("kill_banner") or "").lower()
@@ -76,7 +76,6 @@ def montage_single_row_ok(row: dict) -> bool:
     # Aug1: Zy8/6qq5/8ixh found bannered=1 then finished with eligible=0.
     own_kill_ocr_ok = (
         os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "0") == "1"
-        and os.environ.get("MLBB_PRESEND_OWN_KILL_SINGLE", "0") == "1"
         and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "0") == "1"
     )
     allow_ocr = (

@@ -2550,12 +2550,28 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             if (
                 min_tier >= 2
                 and live_tier == 1
-                and not allow_own_single
+                and parts < 2
+                and not montage_single
                 and os.environ.get("MLBB_PRESEND_REJECT_LIVE_SINGLE", "1") == "1"
             ):
                 return (
                     False,
                     f"live_single_below_floor={live_tier}:need>={min_tier}",
+                    report,
+                )
+            # Lone clip must prove double+ on live OCR. OCR-blind "ref double" shipped
+            # UGu-LYZ-GLY_304 as a solo HAS-SLAIN fight — singles only belong in a
+            # multi-part montage (parts>=2 / PRESEND_MONTAGE_SINGLE).
+            if (
+                parts < 2
+                and not montage_single
+                and min_tier >= 2
+                and live_tier < min_tier
+                and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") == "1"
+            ):
+                return (
+                    False,
+                    f"solo_needs_live_multi={live_tier}:need>={min_tier}",
                     report,
                 )
             if allow_own_single and tier_i < min_tier:
@@ -3208,8 +3224,14 @@ def _collect_scan_segments_inner(
             deduped = picked
         else:
             eligible = montage_eligible_rows(deduped)
-            if eligible and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1":
-                max_per = max(montage_max_clips(), int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+            from mlbb_vod_montage import montage_min_clips, shippable_bannered_rows
+
+            need_n = max(2, montage_min_clips())
+            max_per = max(montage_max_clips(), int(os.environ.get("MLBB_VOD_MAX_PER_VOD", "5") or "5"))
+            if (
+                len(eligible) >= need_n
+                and os.environ.get("MLBB_VOD_MONTAGE_SINGLE_FALLBACK", "1") == "1"
+            ):
                 deduped = eligible[:max_per]
                 log.info(
                     "montage eligible fallback vod=%s n=%s peaks=%s tiers=%s",
@@ -3219,13 +3241,28 @@ def _collect_scan_segments_inner(
                     [int(r.get("kill_banner_tier") or 0) for r in deduped],
                 )
             else:
-                log.info(
-                    "montage no eligible fallback vod=%s bannered=%s eligible=%s — skip send",
-                    vod.name,
-                    len(bannered_rows(deduped)),
-                    len(eligible),
-                )
-                deduped = []
+                # Not enough clips to stitch: only pass double+ for solo live-multi
+                # gate. Lone HAS-SLAIN / single must never leave collect as solo.
+                doubles = shippable_bannered_rows(deduped) or [
+                    r for r in eligible if int(r.get("kill_banner_tier") or 0) >= 2
+                ]
+                if doubles:
+                    deduped = doubles[:max_per]
+                    log.info(
+                        "montage thin — pass %s double+ for solo live-multi vod=%s peaks=%s",
+                        len(deduped),
+                        vod.name,
+                        [int(float(r.get("peak_start", r["start"]))) for r in deduped],
+                    )
+                else:
+                    log.info(
+                        "montage no eligible fallback vod=%s bannered=%s eligible=%s need>=%s — skip send",
+                        vod.name,
+                        len(bannered_rows(deduped)),
+                        len(eligible),
+                        need_n,
+                    )
+                    deduped = []
     elif batch_cap > 0:
         deduped = deduped[:batch_cap]
     if len(out) > len(deduped):
@@ -3261,7 +3298,20 @@ def _send_segment_batch(
             log.info("send montage n=%s", len(to_send))
         else:
             montage_on = False
-            log.info("montage pick thin — fall back to singles n=%s", len(to_send))
+            # Do not solo-spam HAS-SLAIN leftovers; only double+ may try solo
+            # (still needs live OCR multi via MLBB_SOLO_REQUIRE_LIVE_MULTI).
+            if os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") == "1":
+                to_send = [
+                    r for r in to_send if int(r.get("kill_banner_tier") or 0) >= 2
+                ]
+                log.info(
+                    "montage pick thin — solo double+ only n=%s",
+                    len(to_send),
+                )
+            else:
+                log.info("montage pick thin — fall back to singles n=%s", len(to_send))
+            if not to_send:
+                return 0, 0, 0, False
 
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
     send_all_banners = os.environ.get("MLBB_VOD_SEND_ALL_BANNERS", "1") == "1"
@@ -3518,7 +3568,14 @@ def _send_montage_batch(
             gated_durs.append(dur)
         if len(gated_rows) < 2:
             log.warning("montage aborted — fewer than 2 parts passed gate (%s)", len(gated_rows))
-            if gated_rows:
+            # Solo fallback only for a proven double+ part; never ship a lone single.
+            if (
+                gated_rows
+                and int(gated_rows[0].get("kill_banner_tier") or 0) >= 2
+                and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") == "1"
+            ):
+                return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
+            if gated_rows and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") != "1":
                 return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
             return 0, len(skipped), 0
 
@@ -4286,29 +4343,31 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Banner-miss → teamfight/CLIP fallback ships ally junk. Skip the VOD.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
         "MLBB_VOD_BANNER_SKIP_ON_MISS": "1",
-        # Reliable = own-kill banner clips; ship 1 strong moment if montage thin.
+        # Reliable = own-kill banner clips; solo only with live double+;
+        # HAS SLAIN / unproven singles only inside a 2–4 clip montage.
         "MLBB_VOD_MONTAGE": "1",
         "MLBB_SKIP_MONTAGE": "0",
-        "MLBB_VOD_MONTAGE_MIN_CLIPS": "1",
+        "MLBB_VOD_MONTAGE_MIN_CLIPS": "2",
         "MLBB_VOD_MONTAGE_MAX_CLIPS": "4",
-        # Double+ only — HAS SLAIN singles were the jog-trash path (9DGA).
-        "MLBB_VOD_MONTAGE_MIN_TIER": "double",
-        "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "0",
-        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "0",
+        # Collect singles for stitching; solo send still requires live double+.
+        "MLBB_VOD_MONTAGE_MIN_TIER": "single",
+        "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
+        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK": "1",
         "MLBB_VOD_MONTAGE_GAP_SEC": "40",
         "MLBB_PRESEND_MONTAGE_SINGLE": "0",
         "MLBB_ADAPTIVE_ALLOW_SINGLE": "0",
         "MLBB_BANNER_SEND_MIN_TIER": "double",
+        "MLBB_SOLO_REQUIRE_LIVE_MULTI": "1",
         "MLBB_VOD_SEND_ONE": "0",
         # Collect multiple own-kills per VOD when discover finds them (quota speed).
         "MLBB_VOD_SEND_ALL_BANNERS": "1",
-        "MLBB_VOD_MAX_PER_VOD": "2",
+        "MLBB_VOD_MAX_PER_VOD": "4",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
-        "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
-        # One fresh double+ is enough; discover merge_tier=2 so HAS SLAIN ≠ stop.
-        "MLBB_DISCOVER_SHIP_ON_FIRST": "1",
-        "MLBB_VOD_MIN_PEAK_SEC": "20",
+        "MLBB_KILL_BANNER_DISCOVER_TARGET": "3",
+        # Need several fights for montage — do not stop at first hit.
+        "MLBB_DISCOVER_SHIP_ON_FIRST": "0",
+        "MLBB_VOD_MIN_PEAK_SEC": "90",
         "MLBB_VOD_SEGMENT_GAP_SEC": "40",
         "MLBB_VOD_INTERVAL_GAP_SEC": "10",
         "MLBB_VOD_BANNER_DEDUP_SEC": "20",
@@ -4571,8 +4630,14 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN",
         "MLBB_PRESEND_REJECT_LIVE_SINGLE",
         "MLBB_PRESEND_MIN_BANNER_SEC",
+        "MLBB_SOLO_REQUIRE_LIVE_MULTI",
         "MLBB_VOD_MIN_PEAK_SEC",
         "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
+        "MLBB_VOD_MONTAGE_MIN_CLIPS",
+        "MLBB_VOD_MONTAGE_ALLOW_SINGLES",
+        "MLBB_VOD_MONTAGE_SINGLE_FALLBACK",
+        "MLBB_DISCOVER_SHIP_ON_FIRST",
+        "MLBB_KILL_BANNER_DISCOVER_TARGET",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
