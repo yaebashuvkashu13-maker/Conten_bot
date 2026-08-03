@@ -2257,7 +2257,72 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 break
                     report["own_kill_recheck"] = own_reason
                     if not ok_own:
-                        return False, f"own_kill_recheck:{own_reason}", report
+                        reason_s = str(own_reason)
+                        # HUD portrait miss: also try neighbor frames (timing), then
+                        # for tier>=2 trust discover own-kill — overnight -kOfd double
+                        # was encoded then killed by hud_killer_mismatch:0.062.
+                        if reason_s.startswith("hud_killer_mismatch") and int(tier_i or 0) >= 2:
+                            for off in (-1.0, 1.0, 2.0, -2.0):
+                                fr_n = _read_frame_at(vod, max(0.0, banner_sec + off))
+                                if fr_n is None:
+                                    continue
+                                live_n = _live_overlay_text(
+                                    fr_n, consume_presend_budget=True
+                                )
+                                if live_n and is_coordination_banner_text(live_n):
+                                    continue
+                                if live_n and is_enemy_kill_text(live_n):
+                                    continue
+                                blob_n = " ".join(x for x in (live_n, stored_txt) if x)
+                                ok_n, reason_n = validate_own_kill_frame(
+                                    fr_n, vod=vod, ocr_text=blob_n
+                                )
+                                if ok_n:
+                                    ok_own, own_reason = ok_n, reason_n
+                                    live = live_n or live
+                                    report["own_kill_banner_off"] = off
+                                    row["banner_sec"] = float(banner_sec) + float(off)
+                                    report["own_kill_recheck"] = own_reason
+                                    break
+                        if (
+                            not ok_own
+                            and reason_s.startswith("hud_killer_mismatch")
+                            and int(tier_i or 0) >= 2
+                            and os.environ.get("MLBB_PRESEND_MULTI_ALLOW_HUD_MISS", "1")
+                            == "1"
+                        ):
+                            live_hit = classify_banner_text(live) if live else None
+                            stored_hit = (
+                                classify_banner_text(stored_txt) if stored_txt else None
+                            )
+                            src_l = str(src or "").lower()
+                            # Discover already required own-kill for ref/OCR multi.
+                            streak_ok = (
+                                (live_hit is not None and int(live_hit.tier or 0) >= 2)
+                                or (
+                                    stored_hit is not None
+                                    and int(stored_hit.tier or 0) >= 2
+                                )
+                                or src_l.startswith("ref")
+                                or (
+                                    not src_l.startswith("ocr")
+                                    and not src_l.startswith("color")
+                                    and int(tier_i or 0) >= 2
+                                )
+                            )
+                            if streak_ok:
+                                ok_own = True
+                                own_reason = f"multi_hud_miss_trust:{reason_s}"
+                                report["own_kill_recheck"] = own_reason
+                                report["multi_trust_hud_miss"] = True
+                                log.info(
+                                    "presend multi trust HUD-miss tier=%s src=%s seg=%s",
+                                    tier_i,
+                                    src,
+                                    row.get("segment_id"),
+                                )
+                        if not ok_own:
+                            return False, f"own_kill_recheck:{own_reason}", report
                     row["own_kill_recheck"] = own_reason
                     if live:
                         report["live_overlay"] = str(live)[:120]
@@ -2892,7 +2957,8 @@ def _collect_scan_segments_inner(
                 or bool(clip.get("kill_banner"))
                 or str(clip.get("anchor") or "") == "kill_banner"
             )
-            if not has_banner or peak_anchor < min_peak:
+            banner_min = float(os.environ.get("MLBB_VOD_BANNER_MIN_PEAK_SEC", "8"))
+            if not has_banner or peak_anchor < banner_min:
                 skip_counts["below_min_peak"] += 1
                 continue
         lead_clip = _normalize_clip(clip, vod)
@@ -4164,6 +4230,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
         "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
         "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
+        "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "1",
         "MLBB_PRESEND_LIVE_OCR_BUDGET": "6",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
         "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "-1,1,2",
