@@ -180,6 +180,9 @@ def main() -> int:
         t0 = time.time()
         try:
             hits = discover_vod_kill_banners(vod)
+        except FileNotFoundError:
+            print("missing vod (moved/pruned)", vod, flush=True)
+            continue
         except Exception as exc:
             print("discover fail", exc, flush=True)
             continue
