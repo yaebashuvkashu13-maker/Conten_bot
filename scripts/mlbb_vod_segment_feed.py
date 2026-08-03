@@ -2381,19 +2381,21 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                             own_ok = str(own_reason).startswith(
                                 ("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")
                             )
-                            # Strong own-kill + no live streak phrase: trust discover
-                            # tier. YT gold DOUBLE glyphs are OCR-blind; live often
-                            # returns scoreboard soup ("26 20…X803") or junk English
-                            # ("Rookies DESTROYED") — still not a real counter-signal.
+                            # Own-kill already passed its gate; live OCR is soup/blind
+                            # with no streak phrase. Do NOT re-raise a higher HUD floor
+                            # here — -kOfd Aug3 failed as hud_killer_ok:0.288 (<0.40)
+                            # while RapidOCR read "24-23 X8 Rookies DESTROYED".
+                            # TRUST_OWN_KILL trusts any passed own-kill on blind live;
+                            # otherwise keep the strong-HUD (>= trust_min) path.
+                            trust_own = (
+                                os.environ.get("MLBB_OCR_MULTI_TRUST_OWN_KILL", "1")
+                                == "1"
+                            )
                             if (
                                 own_ok
-                                and hud_sc >= trust_min
                                 and not has_streak_words
-                                and (
-                                    blind
-                                    or os.environ.get("MLBB_OCR_MULTI_TRUST_OWN_KILL", "1")
-                                    == "1"
-                                )
+                                and blind
+                                and (trust_own or hud_sc >= trust_min)
                             ):
                                 report["ocr_multi_trust_hud"] = True
                                 report["live_streak_tier"] = int(tier_i or 0)
@@ -4480,6 +4482,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
+        "MLBB_OCR_MULTI_TRUST_OWN_KILL",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN",
