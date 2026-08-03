@@ -83,7 +83,7 @@ _STRONG_COORDINATION_RE = re.compile(
 
 # HUD OCR soup: clocks, ping ms, hero codes — stray "Retreat" here is not a real chat banner.
 _HUD_OCR_SOUP_RE = re.compile(
-    r"(?:\d+\s*ms\b|\b\d{1,2}[:.]\d{2}\b|\bT\d{3,}|\bX\d{2,}|\bBOnon\b)",
+    r"(?:\d+\s*ms\b|\b\d{1,2}[:.]\d{2}\b|\bT\d{3,}|\bX\d{1,}|\bBOnon\b|\b\d{1,2}\s*-\s*\d{1,2}\b)",
     re.I,
 )
 

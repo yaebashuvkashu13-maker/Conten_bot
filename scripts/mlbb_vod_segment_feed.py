@@ -2363,42 +2363,46 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 os.environ.get("MLBB_OCR_MULTI_TRUST_HUD_MIN", "0.40")
                             )
                             live_s = str(live or "").strip()
-                            soup = False
                             try:
-                                from mlbb_kill_banner import _HUD_OCR_SOUP_RE
+                                from mlbb_kill_banner import _HUD_OCR_SOUP_RE, _KILL_STREAK_HINT_RE
 
                                 soup = bool(_HUD_OCR_SOUP_RE.search(live_s))
+                                has_streak_words = bool(_KILL_STREAK_HINT_RE.search(live_s))
                             except Exception:
                                 soup = False
-                            # Digit/scoreboard OCR without streak words = blind too
-                            # (-kOfd 08:16: "26 20 12 26.25 X803..." rejected despite
-                            # killer_icon_ok:paquito:0.45).
-                            if not soup and live_s:
-                                try:
-                                    from mlbb_kill_banner import _KILL_STREAK_HINT_RE
-
-                                    has_streak_words = bool(
-                                        _KILL_STREAK_HINT_RE.search(live_s)
-                                    )
-                                except Exception:
-                                    has_streak_words = False
-                                if not has_streak_words:
-                                    digits = sum(ch.isdigit() for ch in live_s)
-                                    letters = sum(ch.isalpha() for ch in live_s)
-                                    if digits >= 6 and digits >= letters:
-                                        soup = True
+                                has_streak_words = False
+                            # Scoreboard / HUD glyph soup (incl. short X8 / digit spam).
+                            if not soup and live_s and not has_streak_words:
+                                digits = sum(ch.isdigit() for ch in live_s)
+                                letters = sum(ch.isalpha() for ch in live_s)
+                                if digits >= 4 and digits >= max(3, letters // 2):
+                                    soup = True
                             blind = (not live_s) or soup or len(live_s) < 10
                             own_ok = str(own_reason).startswith(
                                 ("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")
                             )
-                            if own_ok and hud_sc >= trust_min and blind:
+                            # Strong own-kill + no live streak phrase: trust discover
+                            # tier. YT gold DOUBLE glyphs are OCR-blind; live often
+                            # returns scoreboard soup ("26 20…X803") or junk English
+                            # ("Rookies DESTROYED") — still not a real counter-signal.
+                            if (
+                                own_ok
+                                and hud_sc >= trust_min
+                                and not has_streak_words
+                                and (
+                                    blind
+                                    or os.environ.get("MLBB_OCR_MULTI_TRUST_OWN_KILL", "1")
+                                    == "1"
+                                )
+                            ):
                                 report["ocr_multi_trust_hud"] = True
                                 report["live_streak_tier"] = int(tier_i or 0)
                                 log.info(
-                                    "ocr multi trust own=%s=%.3f tier=%s live_blind vod_seg=%s",
+                                    "ocr multi trust own=%s=%.3f tier=%s live_blind=%s vod_seg=%s",
                                     str(own_reason).split(":")[0],
                                     hud_sc,
                                     tier_i,
+                                    blind,
                                     row.get("segment_id"),
                                 )
                             else:
