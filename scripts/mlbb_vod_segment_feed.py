@@ -4313,6 +4313,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE": "1",
         "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
+        "MLBB_OCR_MULTI_TRUST_OWN_KILL": "1",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
