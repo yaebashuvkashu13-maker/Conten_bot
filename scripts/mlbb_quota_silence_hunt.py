@@ -36,19 +36,27 @@ def _load_env() -> None:
 def _hunt_knobs() -> None:
     os.environ.update(
         {
-            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "180",
-            "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "36",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "200",
+            "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "40",
             "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
             "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "1",
             "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
             "MLBB_DISCOVER_SHIP_ON_FIRST": "0",
             "MLBB_DISCOVER_SHIP_ON_FIRST_DOUBLE": "1",
             "MLBB_BANNER_FIGHT_FIRST": "1",
-            "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
-            "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "8",
+            "MLBB_BANNER_FIGHT_FIRST_PEAKS": "10",
+            "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.60",
+            "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "10",
             "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "50",
             "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "10",
+            # Dense 1Hz burn is why the hunt sat 3min/VOD with 0 hits.
+            "MLBB_VOD_TITLE_DENSE_AUTO": "0",
+            "MLBB_VOD_BANNER_DENSE_SEC": "0",
+            "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
             "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
+            # Afternoon rejects were hud 0.18–0.27 on real doubles; live OCR still gates solo.
+            "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.20",
+            "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.22",
             "MLBB_BANNER_SEND_MIN_TIER": "double",
             "MLBB_SOLO_REQUIRE_LIVE_MULTI": "1",
             "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
@@ -56,6 +64,9 @@ def _hunt_knobs() -> None:
             "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
             "MLBB_VOD_MONTAGE_MIN_CLIPS": "2",
             "MLBB_PRESEND_MIN_BANNER_SEC": "90",
+            "SMART_ANALYSIS_DETAIL": "fast",
+            "SMART_SAMPLE_FPS": "2.0",
+            "HIGHLIGHT_CLIP_DISABLED": "1",
         }
     )
 
@@ -66,14 +77,22 @@ def _candidate_vods() -> list[Path]:
     prefer = [
         inbox / "yt__lz95HxoFTs.mp4",
         inbox / "yt_alkBeqMnCT4.mp4",
+        inbox / "yt_B9L4ETvZwMo.mp4",
     ]
-    out: list[Path] = [p for p in prefer if p.exists() and p.stat().st_size > 50_000_000]
+    skip = {"-kOfd_sctHY", "UGu-LYZ-GLY", "Y3In5vMdlak"}  # already shipped / draft trash
+    out: list[Path] = []
+    for p in prefer:
+        if p.exists() and p.stat().st_size > 50_000_000:
+            out.append(p)
     for p in sorted(root.rglob("yt_*.mp4"), key=lambda x: -x.stat().st_mtime):
         if ".part" in p.name or p.stat().st_size < 80_000_000:
             continue
+        vid = p.stem.replace("yt_", "")
+        if vid in skip:
+            continue
         if p not in out:
             out.append(p)
-        if len(out) >= 5:
+        if len(out) >= 6:
             break
     return out
 

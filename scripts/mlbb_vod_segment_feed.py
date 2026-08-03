@@ -4477,14 +4477,14 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
         # 0.17 shipped OZLs/Zy8 empty-frame HUD matches; require clearer portrait lock.
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.28",
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.20",
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE": "1",
         "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_OWN_KILL": "1",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
-        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.22",
         "MLBB_PRESEND_REJECT_LIVE_SINGLE": "1",
         "MLBB_PRESEND_MIN_BANNER_SEC": "90",
         "MLBB_VOD_MIN_PEAK_SEC": "90",
@@ -4502,13 +4502,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "7",
         "MLBB_DISCOVER_SHIP_ON_FIRST_DOUBLE": "1",
-        # Soft-anchor pad 90s wiped fight peaks near disliked clips.
-        "HIGHLIGHT_OWNER_BAD_PAD_SEC": "30",
-        "HIGHLIGHT_SOFT_BAD_PAD_SEC": "30",
-        # Dense only after miss streak when fight-first is on.
+        # Dense auto burned afternoon on 1Hz scans with 0 hits — peaks first.
+        "MLBB_VOD_TITLE_DENSE_AUTO": "0",
         "MLBB_VOD_BANNER_DENSE_SEC": "0",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
-        "MLBB_VOD_DISCOVER_DENSE_AFTER_MISS": "2",
         # Live learning = yield memory (👍/👎 + own-kill), not CLIP exemplar mp4s.
         "MLBB_VOD_YIELD_MEMORY_ENABLED": "1",
         "MLBB_VOD_OWNER_EXEMPLARS": "0",
