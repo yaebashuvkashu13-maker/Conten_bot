@@ -1385,6 +1385,46 @@ def bootstrap_exemplar_segments() -> list[dict]:
     return rows
 
 
+def _audit_sent_segment_ids(limit: int = 4000) -> set[str]:
+    """Segment ids previously force-sent / unblocked (mlbb_vod_sent.jsonl)."""
+    path = Path(
+        os.environ.get(
+            "MLBB_VOD_SENT_AUDIT",
+            str(Path(os.environ.get("MLBB_DATA_DIR", "/root/data/mlbb")) / "mlbb_vod_sent.jsonl"),
+        )
+    )
+    out: set[str] = set()
+    if not path.is_file():
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return out
+    for line in lines[-max(1, int(limit)) :]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        sid = str(row.get("segment") or row.get("segment_id") or "").strip()
+        if sid:
+            out.add(sid)
+    return out
+
+
+def _segment_already_delivered(seg_id: str) -> bool:
+    sid = str(seg_id or "").strip()
+    if not sid:
+        return False
+    if sid in load_feed_sent():
+        return True
+    if sid in _audit_sent_segment_ids():
+        return True
+    return False
+
+
 def send_video(
     token: str,
     chat_id: str,
@@ -1407,6 +1447,16 @@ def send_video(
     )
 
     game = (cycle_game or os.environ.get("VOD_SEGMENT_GAME") or "mlbb").strip().lower()
+
+    # Hard dedupe: overnight/OCR unstick force-sends used send_video() directly and
+    # skipped mark_feed_sent, so #-kOfd_sctHY_578 shipped 3x on Aug3. Block repeats
+    # unless MLBB_FORCE_RESEND=1 (explicit owner resend tools only).
+    if (
+        os.environ.get("MLBB_FORCE_RESEND", "0") != "1"
+        and _segment_already_delivered(seg_id)
+    ):
+        log.warning("send blocked seg=%s already_delivered", seg_id)
+        return False
 
     if os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1":
         from daily_game_cycle import can_send_for_game, record_send as cycle_record_send
@@ -1491,6 +1541,13 @@ def send_video(
         if not sent:
             log.warning("telegram send failed seg=%s bytes=%s", seg_id, src_bytes)
             return False
+
+        # Always record feed_sent — force/unstick paths previously skipped this and
+        # rediscovered the same clip after quota burns.
+        try:
+            mark_feed_sent([str(seg_id)])
+        except Exception as exc:
+            log.warning("mark_feed_sent failed seg=%s: %s", seg_id, exc)
 
         if record_learning:
             record_send(1)
