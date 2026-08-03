@@ -2357,7 +2357,7 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                             not ok_own
                             and reason_s.startswith("hud_killer_mismatch")
                             and int(tier_i or 0) >= 2
-                            and os.environ.get("MLBB_PRESEND_MULTI_ALLOW_HUD_MISS", "1")
+                            and os.environ.get("MLBB_PRESEND_MULTI_ALLOW_HUD_MISS", "0")
                             == "1"
                         ):
                             live_hit = classify_banner_text(live) if live else None
@@ -2438,16 +2438,32 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                             own_ok = str(own_reason).startswith(
                                 ("hud_killer_ok", "killer_icon_ok", "multi_hud_miss_trust")
                             )
-                            # Own-kill already passed its gate; live OCR is soup/blind
-                            # with no streak phrase. Do NOT re-raise a higher HUD floor
-                            # here — -kOfd Aug3 failed as hud_killer_ok:0.288 (<0.40)
-                            # while RapidOCR read "24-23 X8 Rookies DESTROYED".
-                            # TRUST_OWN_KILL trusts any passed own-kill on blind live;
-                            # otherwise keep the strong-HUD (>= trust_min) path.
+                            # Own-kill passed + live OCR soup/blind with no streak.
+                            # NEVER copy discover tier into live_streak_tier — that
+                            # shipped B9L4 as a "double" with no kill (hud=0.366,
+                            # blind soup, trust_own=1 → solo_needs_live_multi never
+                            # fired). Solo clips require real live DOUBLE+ text.
+                            parts_n = int(
+                                row.get("montage_parts") or row.get("n_parts") or 1
+                            )
+                            montage_part = (
+                                os.environ.get("MLBB_PRESEND_MONTAGE_SINGLE", "0")
+                                == "1"
+                                or parts_n >= 2
+                            )
                             trust_own = (
-                                os.environ.get("MLBB_OCR_MULTI_TRUST_OWN_KILL", "1")
+                                os.environ.get("MLBB_OCR_MULTI_TRUST_OWN_KILL", "0")
                                 == "1"
                             )
+                            # Solo: hard reject OCR-invented multi without live streak.
+                            if not montage_part:
+                                return (
+                                    False,
+                                    f"ocr_multi_no_live_streak:{(live or '')[:40]}",
+                                    report,
+                                )
+                            # Montage parts only: strong HUD (or explicit trust) may
+                            # pass the invent-double gate — still no fake live tier.
                             if (
                                 own_ok
                                 and not has_streak_words
@@ -2455,9 +2471,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                                 and (trust_own or hud_sc >= trust_min)
                             ):
                                 report["ocr_multi_trust_hud"] = True
-                                report["live_streak_tier"] = int(tier_i or 0)
                                 log.info(
-                                    "ocr multi trust own=%s=%.3f tier=%s live_blind=%s vod_seg=%s",
+                                    "ocr multi trust montage own=%s=%.3f tier=%s "
+                                    "live_blind=%s vod_seg=%s (no fake live_tier)",
                                     str(own_reason).split(":")[0],
                                     hud_sc,
                                     tier_i,
@@ -4211,7 +4227,7 @@ def _process_vod_segments(
             if (
                 can_retry
                 and not sticky_reject
-                and os.environ.get("MLBB_VOD_KEEP_BANNER_MISS", "1") == "1"
+                and os.environ.get("MLBB_VOD_KEEP_BANNER_MISS", "0") == "1"
             ):
                 # Wrong peak / stale pool: drop cache and keep file for rediscover.
                 reason = reject_now
@@ -4364,7 +4380,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY": "1",
         # Keep on disk: deleting own-kill VODs after CLIP-off false-empty was catastrophic.
         "MLBB_VOD_DELETE_EXHAUSTED": "0",
-        "MLBB_VOD_KEEP_BANNER_MISS": "1",
+        # Do not KEEP-rediscover for hours — finish barren VODs and move on.
+        "MLBB_VOD_KEEP_BANNER_MISS": "0",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         # Banner-miss → teamfight/CLIP fallback ships ally junk. Skip the VOD.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
@@ -4433,7 +4450,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_HUD": "1",
         "MLBB_PRESEND_OWN_KILL_RECHECK": "1",
         "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
-        "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "1",
+        # HUD miss + discover label alone shipped empty-kill solos (B9L4).
+        "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "0",
         "MLBB_PRESEND_LIVE_OCR_BUDGET": "6",
         "MLBB_PRESEND_RAPID_OCR_TIMEOUT_SEC": "8",
         "MLBB_PRESEND_OWN_KILL_NEIGHBOR_OFFS": "-1,1,2",
@@ -4463,8 +4481,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "150",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "30",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "120",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "24",
         "MLBB_KILL_BANNER_DISCOVER_STEP": "2.0",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
@@ -4476,15 +4494,16 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        # 0.17 shipped OZLs/Zy8 empty-frame HUD matches; require clearer portrait lock.
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.20",
+        # 0.20 shipped weak HUD + blind OCR as fake doubles (B9L4 hud=0.366).
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.35",
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE": "1",
         "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
-        "MLBB_OCR_MULTI_TRUST_OWN_KILL": "1",
+        # Off: never invent live_streak_tier from discover on blind OCR (solo).
+        "MLBB_OCR_MULTI_TRUST_OWN_KILL": "0",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
-        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.22",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
         "MLBB_PRESEND_REJECT_LIVE_SINGLE": "1",
         "MLBB_PRESEND_MIN_BANNER_SEC": "90",
         "MLBB_VOD_MIN_PEAK_SEC": "90",
@@ -4493,8 +4512,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "7",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
         "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE": "1",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "45",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "8",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "30",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "6",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
@@ -4528,10 +4547,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_STAGE1_SKIP_INTELLICLIP": "1",
         "INTELLICLIP_STAGE1": "0",
         "MLBB_VOD_SKIP_TANK_SUPPORT": "1",
-        # Cooldowns: do not sit idle after a miss when quota is open.
-        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "45",
-        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "45",
-        "MLBB_VOD_SCAN_COOLDOWN_SEC": "60",
+        # Short cooldowns — quota open means keep scanning, not idle.
+        "MLBB_VOD_PRESEND_COOLDOWN_SEC": "10",
+        "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "10",
+        "MLBB_VOD_SCAN_COOLDOWN_SEC": "15",
         # Do not fill inbox while scanning — finish pickable first.
         "MLBB_VOD_PREFETCH": "1",
         "MLBB_VOD_INBOX_MAX": "3",

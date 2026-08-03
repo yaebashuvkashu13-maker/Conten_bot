@@ -245,4 +245,9 @@ def test_reliable_keep_banner_miss_default(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("MLBB_VOD_KEEP_BANNER_MISS", raising=False)
     monkeypatch.setenv("MLBB_VOD_RELIABLE", "1")
     _apply_mlbb_reliable_runtime()
-    assert os.environ["MLBB_VOD_KEEP_BANNER_MISS"] == "1"
+    # Precision/speed: no KEEP rediscover loops on barren VODs.
+    assert os.environ["MLBB_VOD_KEEP_BANNER_MISS"] == "0"
+    assert os.environ["MLBB_OCR_MULTI_TRUST_OWN_KILL"] == "0"
+    assert os.environ["MLBB_PRESEND_MULTI_ALLOW_HUD_MISS"] == "0"
+    assert float(os.environ["MLBB_BANNER_OWN_HUD_MIN_SIM"]) >= 0.35
+    assert int(os.environ["MLBB_VOD_PRESEND_COOLDOWN_SEC"]) <= 15
