@@ -2545,12 +2545,34 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 and not allow_own_single
             ):
                 return False, f"kill_banner_tier_low={tier_i}:need>={min_tier}", report
+            # Ref may be labeled double while live OCR clearly reads HAS SLAIN only
+            # (8pbq_439 Aug3) — that is a single; do not ship under SEND_MIN=double.
+            if (
+                min_tier >= 2
+                and live_tier == 1
+                and not allow_own_single
+                and os.environ.get("MLBB_PRESEND_REJECT_LIVE_SINGLE", "1") == "1"
+            ):
+                return (
+                    False,
+                    f"live_single_below_floor={live_tier}:need>={min_tier}",
+                    report,
+                )
             if allow_own_single and tier_i < min_tier:
                 report["own_kill_single_send"] = True
         except Exception as exc:
             log.debug("send_min_tier gate skip: %s", exc)
 
-        # Post-banner jog: reject if the tail after the kill is mostly running.
+        # Early-game / draft trash (Y3In @9s TeamPick) — mid-fight only.
+        try:
+            min_banner = float(os.environ.get("MLBB_PRESEND_MIN_BANNER_SEC", "90") or "90")
+            if float(banner_sec) < min_banner:
+                return False, f"banner_too_early={banner_sec:.0f}<{min_banner:.0f}", report
+            live_l = str(report.get("live_overlay") or "").lower()
+            if any(w in live_l for w in ("teampick", "alllanes", "draft pick", "ban pick")):
+                return False, f"draft_or_pick_screen:{(report.get('live_overlay') or '')[:40]}", report
+        except Exception as exc:
+            log.debug("early/draft gate skip: %s", exc)
         # Skip for verified own-kill + short hard-cut tails (Y3In: post_run=1.0 on
         # a ~2s banner post blocked hud_killer_ok:0.28 — false jog reject).
         try:
@@ -4376,6 +4398,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
+        "MLBB_PRESEND_REJECT_LIVE_SINGLE": "1",
+        "MLBB_PRESEND_MIN_BANNER_SEC": "90",
+        "MLBB_VOD_MIN_PEAK_SEC": "90",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "36",
         # Fight-first: fewer peaks, abort on miss, shorter post-peak offsets.
         "MLBB_BANNER_FIGHT_FIRST": "1",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
@@ -4543,6 +4569,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_SINGLE_REQUIRE_LIVE",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN",
+        "MLBB_PRESEND_REJECT_LIVE_SINGLE",
+        "MLBB_PRESEND_MIN_BANNER_SEC",
+        "MLBB_VOD_MIN_PEAK_SEC",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES",
         "MLBB_BANNER_FIGHT_FIRST",
         "MLBB_BANNER_FIGHT_FIRST_PEAKS",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS",
