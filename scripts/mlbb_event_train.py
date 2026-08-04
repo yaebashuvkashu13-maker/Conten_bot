@@ -86,7 +86,7 @@ def _pipeline():
             C=0.7,
             class_weight="balanced",
             max_iter=2500,
-            solver="liblinear",
+            solver="lbfgs",
             random_state=17,
         ),
     )
