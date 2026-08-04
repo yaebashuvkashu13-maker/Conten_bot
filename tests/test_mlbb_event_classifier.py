@@ -20,8 +20,18 @@ from mlbb_event_classifier import (  # noqa: E402
     classify_event,
     classify_event_text,
     extract_visual_features,
+    predict_visual_event,
     temporal_consensus,
 )
+
+
+class _FakeModel:
+    def __init__(self, classes, probabilities):
+        self.classes_ = np.asarray(classes)
+        self._probabilities = np.asarray(probabilities, dtype=float)
+
+    def predict_proba(self, _features):
+        return self._probabilities.reshape(1, -1)
 
 
 def test_text_rules_accept_only_own_streaks() -> None:
@@ -76,6 +86,25 @@ def test_visual_recovery_requires_tier_and_high_confidence() -> None:
     )
     with patch("mlbb_event_classifier.predict_visual_event", return_value=weak):
         assert classify_event("", frame).kind == OTHER
+
+
+def test_artifact_own_threshold_prioritizes_precision() -> None:
+    frame = np.zeros((48, 160, 3), dtype=np.uint8)
+    artifact = {
+        "event_model": _FakeModel(
+            [COMMAND, OTHER, OWN_STREAK],
+            [0.2, 0.1, 0.7],
+        ),
+        "tier_model": _FakeModel(["2", "3", "5"], [0.05, 0.9, 0.05]),
+        "own_threshold": 0.8,
+    }
+    assert predict_visual_event(frame, artifact=artifact).kind == COMMAND
+    artifact["event_model"] = _FakeModel(
+        [COMMAND, OTHER, OWN_STREAK],
+        [0.05, 0.04, 0.91],
+    )
+    own = predict_visual_event(frame, artifact=artifact)
+    assert (own.kind, own.tier) == (OWN_STREAK, 3)
 
 
 def test_temporal_consensus_requires_two_model_frames() -> None:

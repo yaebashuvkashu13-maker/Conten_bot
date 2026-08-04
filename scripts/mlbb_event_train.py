@@ -124,7 +124,34 @@ def train(root: Path, output: Path, *, min_per_class: int = 5) -> dict:
     event_model = _pipeline()
     y = np.asarray(labels)
     event_model.fit(features[train_idx], y[train_idx])
-    predictions = event_model.predict(features[test_idx])
+    probabilities = event_model.predict_proba(features[test_idx])
+    classes = np.asarray(event_model.classes_, dtype=str)
+    own_index = int(np.flatnonzero(classes == OWN_STREAK)[0])
+    non_own_indices = np.flatnonzero(classes != OWN_STREAK)
+
+    from sklearn.metrics import precision_recall_fscore_support
+
+    selected: tuple[float, float, float, np.ndarray] | None = None
+    for threshold in np.arange(0.50, 0.951, 0.025):
+        predictions = []
+        for row in probabilities:
+            if float(row[own_index]) >= float(threshold):
+                predictions.append(OWN_STREAK)
+            else:
+                best = int(non_own_indices[np.argmax(row[non_own_indices])])
+                predictions.append(str(classes[best]))
+        predicted = np.asarray(predictions)
+        precision, recall, _, _ = precision_recall_fscore_support(
+            y[test_idx] == OWN_STREAK,
+            predicted == OWN_STREAK,
+            average="binary",
+            zero_division=0,
+        )
+        if precision >= 0.80 and (selected is None or recall > selected[2]):
+            selected = (float(threshold), float(precision), float(recall), predicted)
+    if selected is None:
+        raise RuntimeError("no own-streak probability threshold reaches precision >= 0.80")
+    own_threshold, own_precision, own_recall, predictions = selected
 
     from sklearn.metrics import classification_report, confusion_matrix
 
@@ -135,9 +162,6 @@ def train(root: Path, output: Path, *, min_per_class: int = 5) -> dict:
         output_dict=True,
         zero_division=0,
     )
-    own_precision = float(report[OWN_STREAK]["precision"])
-    own_recall = float(report[OWN_STREAK]["recall"])
-
     tier_indices = [index for index, path in enumerate(paths) if path in tier_map]
     if len(tier_indices) < 15 or len({tier_map[paths[index]] for index in tier_indices}) < 3:
         raise RuntimeError("insufficient tier-labeled double/triple/savage samples")
@@ -151,12 +175,14 @@ def train(root: Path, output: Path, *, min_per_class: int = 5) -> dict:
         "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "event_model": event_model,
         "tier_model": tier_model,
+        "own_threshold": round(own_threshold, 4),
         "class_counts": dict(Counter(labels)),
         "tier_counts": dict(Counter(tier_map[path] for path in paths if path in tier_map)),
         "holdout": {
             "size": int(len(test_idx)),
             "own_precision": round(own_precision, 4),
             "own_recall": round(own_recall, 4),
+            "own_threshold": round(own_threshold, 4),
             "report": report,
             "confusion_matrix": confusion_matrix(
                 y[test_idx], predictions, labels=sorted(expected)
@@ -164,7 +190,7 @@ def train(root: Path, output: Path, *, min_per_class: int = 5) -> dict:
             "labels": sorted(expected),
         },
     }
-    if own_precision < 0.70 or own_recall < 0.55:
+    if own_precision < 0.80 or own_recall < 0.45:
         raise RuntimeError(
             f"unsafe holdout own precision/recall: {own_precision:.3f}/{own_recall:.3f}"
         )

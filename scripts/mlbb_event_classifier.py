@@ -194,7 +194,24 @@ def predict_visual_event(frame: np.ndarray, *, artifact: dict | None = None) -> 
     if not artifact:
         return None
     features = extract_visual_features(frame)
-    kind, confidence = _predict_proba(artifact["event_model"], features)
+    event_model = artifact["event_model"]
+    probabilities = np.asarray(
+        event_model.predict_proba(features.reshape(1, -1))[0],
+        dtype=float,
+    )
+    classes = np.asarray(event_model.classes_, dtype=str)
+    own_matches = np.flatnonzero(classes == OWN_STREAK)
+    own_index = int(own_matches[0]) if own_matches.size else -1
+    own_probability = float(probabilities[own_index]) if own_index >= 0 else 0.0
+    own_threshold = float(artifact.get("own_threshold") or 0.5)
+    if own_index >= 0 and own_probability >= own_threshold:
+        kind, confidence = OWN_STREAK, own_probability
+    else:
+        candidates = [
+            index for index, label in enumerate(classes) if label != OWN_STREAK
+        ]
+        index = max(candidates, key=lambda item: float(probabilities[item]))
+        kind, confidence = str(classes[index]), float(probabilities[index])
     tier = 0
     tier_confidence = 0.0
     label = kind
