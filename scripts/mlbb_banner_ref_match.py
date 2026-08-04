@@ -508,8 +508,14 @@ def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> 
     color = float(_announce_color_score(frame))
     ref_mul = float(os.environ.get("MLBB_BANNER_REF_COLOR_MUL", "1.25"))
     if _discover_active():
-        ref_mul = min(ref_mul, float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.75")))
+        ref_mul = min(ref_mul, float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.40")))
     need_color = float(_color_min_score()) * ref_mul
+    # Same YT-gold floor as _classify_frame — 8pbq@579 color=0.012 was blocked by 0.016.
+    if _discover_active():
+        need_color = min(
+            need_color,
+            float(os.environ.get("MLBB_BANNER_DISCOVER_COLOR_GATE_MAX", "0.010")),
+        )
     if color < need_color:
         return None
 
@@ -524,13 +530,30 @@ def classify_banner_reference(sec: float, frame, *, vod: Path | None = None) -> 
             "MLBB_BANNER_ALLOW_VOD_CROP_REF", "0"
         ) != "1":
             pos = None
-        elif neg is not None and float(neg[0]) >= float(score) - float(
-            os.environ.get("MLBB_BANNER_NEG_POS_MARGIN", "0.06")
-        ):
-            # Close neg (not_kill/enemy) beats a weak pos — 3lO0 farm FP was
-            # pos=0.51 vs not_kill=0.49 with the old 0.02 margin.
-            pos = None
-        else:
+        elif neg is not None:
+            neg_score = float(neg[0])
+            pos_score = float(score)
+            reason_l = str(reason or "").lower()
+            # Discover: YT gold often ties pos≈neg (8pbq@579 pos=0.611 vs
+            # no_banner=0.614). Old margin=0.06 nullified every real double.
+            # Labeled streak pos only loses if neg clearly beats it.
+            if _discover_active() and any(
+                k in reason_l
+                for k in ("double", "triple", "savage", "maniac", "legendary")
+            ):
+                beat = float(os.environ.get("MLBB_BANNER_DISCOVER_NEG_BEAT_POS", "0.02"))
+                if neg_score >= pos_score + beat:
+                    pos = None
+            else:
+                margin = float(os.environ.get("MLBB_BANNER_NEG_POS_MARGIN", "0.06"))
+                if _discover_active():
+                    margin = float(
+                        os.environ.get("MLBB_BANNER_DISCOVER_NEG_POS_MARGIN", "0.0")
+                    )
+                if neg_score >= pos_score - margin:
+                    # Close neg (not_kill/enemy) beats a weak pos — 3lO0 farm FP.
+                    pos = None
+        if pos is not None:
             # Structural bar: junk FP on WTJrJ was ~0.55 hist-edge on every frame.
             min_live = float(os.environ.get("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.62"))
             if _discover_active():

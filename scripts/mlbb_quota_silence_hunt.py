@@ -54,19 +54,29 @@ def _hunt_knobs() -> None:
             "MLBB_VOD_BANNER_DENSE_SEC": "0",
             "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
             "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
-            # Discover softer than send; solo still gated by live DOUBLE+.
-            "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.25",
-            "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.20",
-            "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.30",
+            # Discover soft so hunt finds candidates; solo still needs live DOUBLE+.
+            "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
+            "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.17",
+            "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.28",
             "MLBB_OCR_MULTI_TRUST_OWN_KILL": "0",
             "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "0",
             "MLBB_BANNER_SEND_MIN_TIER": "double",
             "MLBB_SOLO_REQUIRE_LIVE_MULTI": "1",
+            # Gold-blind OCR: strong labeled ref (hud≥0.50 + tier≥2) may solo-ship.
+            "MLBB_SOLO_ALLOW_STRONG_REF": "1",
+            "MLBB_SOLO_STRONG_REF_HUD_MIN": "0.50",
             "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
             "MLBB_VOD_MONTAGE": "1",
             "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
             "MLBB_VOD_MONTAGE_MIN_CLIPS": "2",
             "MLBB_PRESEND_MIN_BANNER_SEC": "90",
+            # Starvation hunt: do not skip near already-sent peaks on mined VODs.
+            "MLBB_BANNER_DISCOVER_EXCLUDE_SECS": "",
+            "MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC": "3",
+            "MLBB_DISCOVER_ALLOW_NEAR_SENT": "1",
+            # YT gold banners score ~0.01–0.03; old 0.031 gate → hits=0 overnight.
+            "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.35",
+            "MLBB_BANNER_DISCOVER_COLOR_GATE_MAX": "0.010",
             "SMART_ANALYSIS_DETAIL": "fast",
             "SMART_SAMPLE_FPS": "2.0",
             "HIGHLIGHT_CLIP_DISABLED": "1",
@@ -78,11 +88,16 @@ def _candidate_vods() -> list[Path]:
     inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
     root = Path("/root/data/mlbb/youtube_nightly")
     prefer = [
-        inbox / "yt__lz95HxoFTs.mp4",
-        inbox / "yt_alkBeqMnCT4.mp4",
-        inbox / "yt_B9L4ETvZwMo.mp4",
+        inbox / "yt_8pbqKzd9Xzc.mp4",
+        inbox / "yt_BM1CjA5jPLk.mp4",
+        inbox / "yt_5BAG79_pu7w.mp4",
+        inbox / "yt_nFf2MUWL7io.mp4",
+        inbox / "yt_EGM-y0c2WIQ.mp4",
+        inbox / "yt_TdZrmr_QHKg.mp4",
+        inbox / "yt_O4CEirbntYY.mp4",
     ]
-    skip = {"-kOfd_sctHY", "UGu-LYZ-GLY", "Y3In5vMdlak"}  # already shipped / draft trash
+    # Draft trash / already-duplicated singles — not the whole kill-rich pool.
+    skip = {"UGu-LYZ-GLY", "Y3In5vMdlak", "B9L4ETvZwMo"}
     out: list[Path] = []
     for p in prefer:
         if p.exists() and p.stat().st_size > 50_000_000:
@@ -95,7 +110,7 @@ def _candidate_vods() -> list[Path]:
             continue
         if p not in out:
             out.append(p)
-        if len(out) >= 6:
+        if len(out) >= 8:
             break
     return out
 
@@ -208,6 +223,11 @@ def main() -> int:
         doubles = [h for h in hits if int(getattr(h, "tier", 0) or 0) >= 2 and float(h.sec) >= 90]
         singles = [h for h in hits if int(getattr(h, "tier", 0) or 0) == 1 and float(h.sec) >= 90]
         candidates: list[tuple[str, list]] = []
+        # Prefer 2–3 double+ montage when available (OCR-blind solos often fail live gate).
+        if len(doubles) >= 2:
+            candidates.append(
+                ("montage_doubles", sorted(doubles, key=lambda x: x.sec)[:3])
+            )
         if doubles:
             candidates.append(("solo_double", doubles[:1]))
         if len(singles) >= 2:
@@ -230,7 +250,7 @@ def main() -> int:
                     print("render fail", row["segment_id"], flush=True)
                     continue
                 ok, reason, report = _validate_before_send(vod, row, out)
-                live_tier = int((report or {}).get("live_tier") or 0)
+                live_tier = int((report or {}).get("live_streak_tier") or 0)
                 print(
                     "validate",
                     ok,
@@ -238,13 +258,14 @@ def main() -> int:
                     {
                         "own": (report or {}).get("own_kill_recheck"),
                         "live_tier": live_tier,
+                        "strong_ref": (report or {}).get("solo_strong_ref"),
                         "live": str((report or {}).get("live_overlay") or "")[:80],
                     },
                     flush=True,
                 )
                 if not ok:
                     continue
-                if live_tier < 2:
+                if live_tier < 2 and not (report or {}).get("solo_strong_ref"):
                     print("skip live_tier", live_tier, flush=True)
                     continue
                 banner = str(row.get("kill_banner") or "").upper()
@@ -274,17 +295,18 @@ def main() -> int:
                                 "kind": "mlbb_quota_hunt",
                                 "game": "mlbb",
                                 "live_tier": live_tier,
-                                "note": "close 4/5 after 6h silence",
+                                "note": "anti-silence hunt",
                             },
                             ensure_ascii=False,
                         )
                         + "\n"
                     )
-                print("SENT", row["segment_id"], "quota", status_summary(), flush=True)
+                print("SENT", row["segment_id"], flush=True)
                 sent_ok = True
                 break
-
-            # montage singles
+            if not kind.startswith("montage") or len(rows) < 2:
+                continue
+            # montage_doubles / montage_singles — render, gate, concat, send
             temps: list[Path] = []
             durs: list[float] = []
             gated: list[dict] = []

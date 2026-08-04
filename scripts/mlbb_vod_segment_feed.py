@@ -2578,6 +2578,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             # Lone clip must prove double+ on live OCR. OCR-blind "ref double" shipped
             # UGu-LYZ-GLY_304 as a solo HAS-SLAIN fight — singles only belong in a
             # multi-part montage (parts>=2 / PRESEND_MONTAGE_SINGLE).
+            # Starvation exception: strong owner-ref multi + clear HUD (≥0.50) may
+            # ship when live OCR is gold-blind (8pbq DESTROYED soup). B9L4 was
+            # hud=0.366 — still blocked here.
             if (
                 parts < 2
                 and not montage_single
@@ -2585,11 +2588,29 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 and live_tier < min_tier
                 and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") == "1"
             ):
-                return (
-                    False,
-                    f"solo_needs_live_multi={live_tier}:need>={min_tier}",
-                    report,
+                strong_ref_solo = (
+                    os.environ.get("MLBB_SOLO_ALLOW_STRONG_REF", "1") == "1"
+                    and hud_own
+                    and hud_score
+                    >= float(os.environ.get("MLBB_SOLO_STRONG_REF_HUD_MIN", "0.50"))
+                    and int(tier_i or 0) >= 2
+                    and str(src or "").lower().startswith("ref")
                 )
+                if strong_ref_solo:
+                    report["solo_strong_ref"] = True
+                    log.info(
+                        "solo strong-ref allow hud=%.3f tier=%s src=%s seg=%s",
+                        hud_score,
+                        tier_i,
+                        src,
+                        row.get("segment_id"),
+                    )
+                else:
+                    return (
+                        False,
+                        f"solo_needs_live_multi={live_tier}:need>={min_tier}",
+                        report,
+                    )
             if allow_own_single and tier_i < min_tier:
                 report["own_kill_single_send"] = True
         except Exception as exc:
@@ -3940,6 +3961,24 @@ def _process_vod_segments(
             def _sync_discover_exclude() -> None:
                 # Sent + presend-rejected peaks must not satisfy want=1 early-stop
                 # (Y3In rediscovered the same failing 419 forever).
+                # Starvation exception: when daily MLBB quota is still open and we
+                # have zero sends, allow rediscover near prior peaks — otherwise
+                # mined VODs burn 150s with hits=0 (Aug4 overnight mute).
+                starve = False
+                try:
+                    from daily_game_cycle import status_summary
+
+                    st = status_summary() or {}
+                    starve = int((st.get("sends") or {}).get("mlbb") or 0) <= 0
+                except Exception:
+                    starve = os.environ.get("MLBB_DISCOVER_ALLOW_NEAR_SENT", "0") == "1"
+                if starve or os.environ.get("MLBB_DISCOVER_ALLOW_NEAR_SENT", "0") == "1":
+                    os.environ.pop("MLBB_BANNER_DISCOVER_EXCLUDE_SECS", None)
+                    os.environ["MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC"] = os.environ.get(
+                        "MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC", "3"
+                    )
+                    log.info("discover exclude cleared — mlbb starvation rediscover")
+                    return
                 merged: list[float] = []
                 for p in list(used_peaks or []) + list(skip_peaks or []):
                     try:
@@ -4486,11 +4525,13 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_STEP": "2.0",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
-        "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.70",
+        "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.35",
+        # Absolute discover color ceiling — YT gold often scores ~0.01–0.03.
+        "MLBB_BANNER_DISCOVER_COLOR_GATE_MAX": "0.010",
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM": "0.55",
         "MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM": "0.55",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM": "0.50",
-        "MLBB_KILL_BANNER_DENSE_COLOR_MUL": "0.40",
+        "MLBB_KILL_BANNER_DENSE_COLOR_MUL": "0.30",
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
@@ -4662,6 +4703,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_STEP",
         "MLBB_VOD_DISCOVER_ALWAYS_DENSE",
         "MLBB_BANNER_DISCOVER_REF_COLOR_MUL",
+        "MLBB_BANNER_DISCOVER_COLOR_GATE_MAX",
         "MLBB_BANNER_DISCOVER_POS_LIVE_MIN_SIM",
         "MLBB_BANNER_DISCOVER_OWN_KILL_MIN_SIM",
         "MLBB_BANNER_DISCOVER_WIKI_MIN_SIM",

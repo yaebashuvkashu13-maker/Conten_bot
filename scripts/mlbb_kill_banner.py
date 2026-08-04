@@ -645,9 +645,17 @@ def _classify_frame(
     if _discover_active():
         ref_mul = min(
             ref_mul,
-            float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.75")),
+            float(os.environ.get("MLBB_BANNER_DISCOVER_REF_COLOR_MUL", "0.40")),
         )
     ref_color_gate = _color_min_score() * ref_mul
+    # YT gold banners often score 0.01–0.03 (8pbq@579 color=0.012). A 0.031 gate
+    # blocked ALL ref matches overnight → hits=0 for hours. Discover uses a low
+    # absolute ceiling; own-kill finalize still rejects ally/farm.
+    if _discover_active():
+        ref_color_gate = min(
+            ref_color_gate,
+            float(os.environ.get("MLBB_BANNER_DISCOVER_COLOR_GATE_MAX", "0.010")),
+        )
     if os.environ.get("MLBB_BANNER_REF_BEFORE_OCR", "1") == "1" and color >= ref_color_gate:
         try:
             from mlbb_banner_ref_match import classify_banner_reference

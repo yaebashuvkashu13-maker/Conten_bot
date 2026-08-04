@@ -261,6 +261,9 @@ def validate_own_kill_frame(
             # not_kill/no_banner: veto when live OCR has no streak phrase.
             # Floor 0.35 (was 0.48): OZLs Aug1 HUD-matched empty jungle while
             # neg_ref:no_banner scored ~0.40 and still shipped.
+            # Exception: strong labeled owner pos (double/triple/…) already proved
+            # the banner visually — YT gold OCR is blind and no_banner ties pos
+            # (8pbq@579 pos=0.611 vs no_banner=0.614) which starved overnight.
             if (
                 ("not_kill" in reason_l or "no_banner" in reason_l)
                 and float(_score)
@@ -280,7 +283,33 @@ def validate_own_kill_frame(
                             has_streak = live_hit is not None and int(live_hit.tier or 0) >= 1
                     except Exception:
                         has_streak = False
+                strong_pos = False
                 if not has_streak:
+                    try:
+                        from mlbb_banner_ref_match import match_positive_owner_reference
+
+                        pos = match_positive_owner_reference(frame)
+                        if pos is not None:
+                            ps, pr, _pp = pos
+                            pr_l = str(pr or "").lower()
+                            if float(ps) >= float(
+                                os.environ.get("MLBB_BANNER_POS_LIVE_MIN_SIM", "0.55")
+                            ) and any(
+                                k in pr_l
+                                for k in (
+                                    "double",
+                                    "triple",
+                                    "savage",
+                                    "maniac",
+                                    "legendary",
+                                )
+                            ):
+                                # Only trust pos over no_banner if it wins or ties closely.
+                                if float(ps) + 0.01 >= float(_score):
+                                    strong_pos = True
+                    except Exception:
+                        strong_pos = False
+                if not has_streak and not strong_pos:
                     return False, f"neg_ref:{reason}"
     except Exception:
         pass
