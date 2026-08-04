@@ -95,7 +95,6 @@ def _candidate_vods() -> list[Path]:
     inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
     root = Path("/root/data/mlbb/youtube_nightly")
     prefer = [
-        inbox / "yt_-kOfd_sctHY.mp4",
         inbox / "yt_8pbqKzd9Xzc.mp4",
         inbox / "yt_BM1CjA5jPLk.mp4",
         inbox / "yt_Cv7Ul8t6j6s.mp4",
@@ -108,8 +107,14 @@ def _candidate_vods() -> list[Path]:
         inbox / "yt_TdZrmr_QHKg.mp4",
         inbox / "yt_O4CEirbntYY.mp4",
     ]
-    # Draft trash / already-duplicated singles / barren crash-loop VOD.
-    skip = {"UGu-LYZ-GLY", "Y3In5vMdlak", "B9L4ETvZwMo", "8LNjsK7IzCY"}
+    # Draft trash / already-duplicated singles / barren crash-loop / depleted.
+    skip = {
+        "UGu-LYZ-GLY",
+        "Y3In5vMdlak",
+        "B9L4ETvZwMo",
+        "8LNjsK7IzCY",
+        "-kOfd_sctHY",  # overnight peak already mined; ally_trap rediscover
+    }
     skip_dirs = {"hold_barren", "hold_quota", "park_dead", "exhausted", "hold"}
     out: list[Path] = []
     for p in prefer:

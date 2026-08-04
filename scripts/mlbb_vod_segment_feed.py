@@ -2725,6 +2725,18 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                         row.get("segment_id"),
                     )
                 else:
+                    log.info(
+                        "solo strong-ref deny hud=%.3f need>=%.2f tier=%s src=%s "
+                        "label=%s allow_double=%s ref_blob=%s seg=%s",
+                        hud_score,
+                        strong_hud_min,
+                        tier_i,
+                        src,
+                        label_l,
+                        int(allow_double_ref),
+                        ref_blob[:60],
+                        row.get("segment_id"),
+                    )
                     return (
                         False,
                         f"solo_needs_live_multi={live_tier}:need>={min_tier}",
