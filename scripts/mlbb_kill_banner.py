@@ -500,6 +500,12 @@ def _banner_flash_score(frame) -> float:
     color = _announce_color_score(frame)
     if color < 0.004:
         return color
+    # Full-zone gold wash (endcard / replay) scores ~0.5–1.0 and steals rank
+    # from real thin announce bands (~0.01–0.08). Demote floods for ranking only.
+    if color >= 0.45:
+        color *= 0.22
+    elif color >= 0.20:
+        color *= 0.55
     try:
         struct = _banner_structure_score(frame)
     except Exception:
