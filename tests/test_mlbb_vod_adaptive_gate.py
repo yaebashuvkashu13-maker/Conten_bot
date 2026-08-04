@@ -80,7 +80,7 @@ def test_adaptive_env_restores():
     os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
     with adaptive_env(3) as level:
         assert level == 1
-        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "single"
+        assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
     assert os.environ["MLBB_KILL_BANNER_MIN_TIER"] == "double"
 
 

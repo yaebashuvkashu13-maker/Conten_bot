@@ -67,6 +67,16 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
         patch("mlbb_vod_segment_feed.labeled_ids", return_value={}),
         patch("mlbb_vod_segment_feed.load_feed_sent", return_value=set()),
         patch("mlbb_vod_segment_feed._used_intervals_for_vod", return_value=[]),
+        patch(
+            "mlbb_vod_segment_feed.validate_clips_before_preview",
+            return_value=(
+                True,
+                "ok",
+                [],
+                [{"rule_pass": True, "pass_reason": "mlbb_fight_ok", "clip_score": 0.3}],
+                [{"visual_pass": True}],
+            ),
+        ),
     ):
         first, cached = _collect_scan_segments(vod, "sig", {}, set(), 12)
         assert len(first) == 1

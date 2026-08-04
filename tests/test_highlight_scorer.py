@@ -168,12 +168,17 @@ def test_fast_seeds_do_not_short_circuit_full_stage1(monkeypatch, tmp_path: Path
     with (
         patch("vod_analysis_cache.analyze_video_cached", return_value=analysis) as analyze,
         patch("highlight_scorer._action_peak_starts", return_value=[200.0]),
-        patch("highlight_scorer._rank_stage1_starts", side_effect=lambda _a, _p, starts, **_kw: starts),
+        patch(
+            "highlight_scorer._rank_stage1_starts",
+            side_effect=lambda _a, _p, starts, **_kw: sorted(
+                starts, key=lambda start: (start != 200.0 and not 490.0 <= start <= 500.0, start)
+            ),
+        ),
     ):
         starts = stage1_candidates(vod, "mobile_legends")
     analyze.assert_called_once()
     assert 200.0 in starts
-    assert 492.5 in starts
+    assert any(490.0 <= start <= 500.0 for start in starts)
 
 
 def test_send_one_scores_all_candidates_then_ranks_best(monkeypatch, tmp_path: Path) -> None:

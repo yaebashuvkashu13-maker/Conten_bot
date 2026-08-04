@@ -52,6 +52,7 @@ from vod_scan_state import (
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     should_mark_vod_exhausted,
@@ -259,6 +260,26 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
                 registry.append(new_entry)
                 known.add(vid)
                 known_paths.add(str(p))
+
+    # Retry transient metadata failures.  Dedicated-inbox files remain
+    # available meanwhile, but are removed if metadata later proves they are
+    # not MLBB gameplay.
+    pending_rows = [row for row in registry if row.get("metadata_pending")]
+    if pending_rows:
+        from nightly_youtube_montage import fetch_video_meta
+        from youtube_mlbb_vod_prefs import passes_mlbb_game_title
+
+        for row in pending_rows:
+            meta = fetch_video_meta(str(row.get("id") or ""), env)
+            if not meta:
+                continue
+            title = str(meta.get("title") or row.get("title") or "")
+            row["title"] = title
+            row["uploader"] = str(meta.get("uploader") or meta.get("channel") or "")
+            row.pop("metadata_pending", None)
+            if LONG_VOD_TITLE_RE.search(title) or not passes_mlbb_game_title(title):
+                row["exhausted"] = True
+                row["reject_reason"] = "metadata_not_mlbb"
 
     state["vods"] = registry
     state["used_youtube_ids"] = sorted(set(used) | {r.get("id", "") for r in registry if r.get("id")})
@@ -1911,7 +1932,7 @@ def _process_vod_segments(
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
 
             cached_blocked = False
-            if entry and entry.get("last_pool_peaks"):
+            if entry and entry.get("last_pool_peaks") and pool_cache_valid(entry):
                 cached = peak_values_from_entry(entry)
                 if pool_peaks_fully_blocked(
                     cached,
