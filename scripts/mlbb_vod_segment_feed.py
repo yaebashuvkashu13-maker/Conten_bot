@@ -35,6 +35,26 @@ HOLD_QUOTA = Path(
         str(INBOX.parent / "hold_quota"),
     )
 )
+HOLD_BARREN = Path(
+    os.environ.get(
+        "MLBB_VOD_HOLD_BARREN",
+        str(INBOX.parent / "hold_barren"),
+    )
+)
+
+# Presend rejects that will not improve on re-render / rediscover of the same peaks.
+_STICKY_PRESEND_KEYS = (
+    "banner_missing_min_tier",
+    "source_banner_missing",
+    "banner_reject",
+    "no_streak_banner",
+    "solo_needs_live_multi",
+    "live_single_below_floor",
+    "banner_too_early",
+    "draft_or_pick_screen",
+    "kill_banner_tier_low",
+    "presend_banner_floor",
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -510,6 +530,33 @@ def _mark_vod_exhausted(vod: Path) -> None:
     _save_state(state)
 
 
+def _move_vod_aside(vod: Path, dest_dir: Path, *, reason: str) -> Path | None:
+    """Move an inbox VOD out of the pick path (keep disk, stop re-scan loops)."""
+    if not vod.exists():
+        return None
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / vod.name
+        if dest.exists() and dest.resolve() != vod.resolve():
+            dest = dest_dir / f"{vod.stem}_{int(time.time())}{vod.suffix}"
+        if dest.resolve() == vod.resolve():
+            return dest
+        vod.rename(dest)
+        info = vod.with_suffix(vod.suffix + ".info.json")
+        if not info.exists():
+            info = vod.parent / f"{vod.stem}.info.json"
+        if info.exists():
+            try:
+                info.rename(dest_dir / info.name)
+            except OSError:
+                pass
+        log.info("moved vod=%s → %s reason=%s", vod.name, dest_dir.name, reason)
+        return dest
+    except OSError as exc:
+        log.warning("move vod aside failed %s: %s", vod.name, exc)
+        return None
+
+
 def _hard_finish_mlbb_vod(
     state: dict,
     vod: Path,
@@ -519,7 +566,7 @@ def _hard_finish_mlbb_vod(
     entry: dict | None = None,
     delete_file: bool | None = None,
 ) -> None:
-    """Exhaust + optionally delete so junk guides do not clog the inbox."""
+    """Exhaust + optionally delete/move so junk guides do not clog the inbox."""
     if entry is None:
         entry = {"id": vid, "path": str(vod), "exhausted": True}
     entry["exhausted"] = True
@@ -539,12 +586,34 @@ def _hard_finish_mlbb_vod(
                 log.info("deleted exhausted vod=%s reason=%s", vod.name, reason)
         except OSError as exc:
             log.warning("delete exhausted failed %s: %s", vod.name, exc)
+    elif (
+        _mlbb_reliable_mode()
+        and os.environ.get("MLBB_VOD_HOLD_BARREN_ON_ZERO", "1") == "1"
+        and reason
+        in {
+            "zero_send_reliable",
+            "no_combat_peaks",
+            "zero_send",
+            "presend_banner_floor",
+            "banner_hits_no_send",
+            "montage_gate_fail",
+            "solo_needs_live_multi",
+        }
+        and "inbox" in str(vod.parent).lower()
+    ):
+        moved = _move_vod_aside(vod, HOLD_BARREN, reason=reason)
+        if moved is not None:
+            entry["path"] = str(moved)
+            _sync_vod_entry_to_state(state, entry, moved)
+            _save_state(state)
     if vid and reason in {
         "zero_send_reliable",
         "no_combat_peaks",
         "zero_send",
         "presend_banner_floor",
         "banner_hits_no_send",
+        "montage_gate_fail",
+        "solo_needs_live_multi",
     }:
         zs = {str(x) for x in (state.get("zero_send_youtube_ids") or []) if x}
         zs.add(vid)
@@ -842,8 +911,18 @@ def _unexhaust_inbox_paths(registry: list[dict]) -> int:
         if not row.get("exhausted"):
             continue
         reason = str(row.get("reject_reason") or "")
-        # Do not revive permanently sent_ok / ally junk — only starve/miss leftovers.
-        if reason in {"sent_ok", "ally_trap", "disliked"}:
+        # Do not revive permanently sent_ok / ally junk / barren gate fails.
+        if reason in {
+            "sent_ok",
+            "ally_trap",
+            "disliked",
+            "presend_banner_floor",
+            "zero_send_reliable",
+            "montage_gate_fail",
+            "solo_needs_live_multi",
+            "no_combat_peaks",
+            "banner_hits_no_send",
+        }:
             continue
         row["exhausted"] = False
         row["reject_reason"] = ""
@@ -976,13 +1055,20 @@ def _revive_exhausted_inbox_candidates(
             "disliked",
             "presend_banner_floor",
             "zero_send_reliable",
+            "montage_gate_fail",
+            "solo_needs_live_multi",
+            "no_combat_peaks",
+            "banner_hits_no_send",
         }:
             continue
         path = Path(str(row.get("path") or ""))
         if not path.exists() or path.stat().st_size < 1_000_000:
             continue
-        # Only revive files still sitting in inbox (not park_dead).
-        if "park_dead" in str(path):
+        # Do not revive files already parked in hold_barren / park_dead.
+        if any(part in str(path) for part in ("hold_barren", "park_dead", "hold_quota")):
+            continue
+        # Only revive files still sitting in inbox.
+        if "inbox" not in str(path):
             continue
         title = str(row.get("title") or path.stem)
         if not _title_promise_revive_ok(title):
@@ -3328,6 +3414,11 @@ def _collect_scan_segments_inner(
     return deduped, pool
 
 
+def _skip_is_sticky(skip: str) -> bool:
+    s = str(skip or "")
+    return any(key in s for key in _STICKY_PRESEND_KEYS)
+
+
 def _send_segment_batch(
     token: str,
     chat_id: str,
@@ -3412,8 +3503,8 @@ def _send_segment_batch(
         return 0, 0, 0, False
 
     if montage_on:
-        n, sk, bl = _send_montage_batch(token, chat_id, vod, to_send, sig)
-        return n, sk, bl, False
+        n, sk, bl, permanent = _send_montage_batch(token, chat_id, vod, to_send, sig)
+        return n, sk, bl, permanent
 
     if not send_one:
         if len(to_send) > cap_left:
@@ -3557,24 +3648,7 @@ def _send_segment_batch(
             )
     if sent_ids:
         mark_feed_sent(sent_ids)
-    permanent = bool(skipped) and all(
-        any(
-            key in s
-            for key in (
-                "banner_missing_min_tier",
-                "source_banner_missing",
-                "banner_reject",
-                "no_streak_banner",
-                # Lone HAS-SLAIN / draft — do not rediscover the same VOD for hours.
-                "solo_needs_live_multi",
-                "live_single_below_floor",
-                "banner_too_early",
-                "draft_or_pick_screen",
-                "kill_banner_tier_low",
-            )
-        )
-        for s in skipped
-    )
+    permanent = bool(skipped) and all(_skip_is_sticky(s) for s in skipped)
     return len(sent_ids), len(skipped), send_blocked, permanent
 
 
@@ -3584,8 +3658,12 @@ def _send_montage_batch(
     vod: Path,
     to_send: list[dict],
     sig: str,
-) -> tuple[int, int, int]:
-    """One Telegram video = xfade of 2–4 fight windows from the same VOD."""
+) -> tuple[int, int, int, bool]:
+    """One Telegram video = xfade of 2–4 fight windows from the same VOD.
+
+    Returns (sent, skipped, send_blocked, permanent_reject) — same contract as
+    `_send_segment_batch`. Solo fallback must not return a 3-tuple (crash loop).
+    """
     from mlbb_vod_montage import build_montage_id, cleanup_temps, concat_rendered_parts
     from smart_video_editor import ffprobe_duration as _probe_part_dur
 
@@ -3625,7 +3703,12 @@ def _send_montage_batch(
             gated_parts.append(part)
             gated_durs.append(dur)
         if len(gated_rows) < 2:
-            log.warning("montage aborted — fewer than 2 parts passed gate (%s)", len(gated_rows))
+            sticky = bool(skipped) and all(_skip_is_sticky(s) for s in skipped)
+            log.warning(
+                "montage aborted — fewer than 2 parts passed gate (%s) skips=%s",
+                len(gated_rows),
+                "; ".join(skipped[:6]) or "-",
+            )
             # Solo fallback only for a proven double+ part; never ship a lone single.
             if (
                 gated_rows
@@ -3635,7 +3718,9 @@ def _send_montage_batch(
                 return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
             if gated_rows and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") != "1":
                 return _send_single_fallback(token, chat_id, vod, gated_rows[0], sig)
-            return 0, len(skipped), 0
+            # No shippable montage and no solo path — treat sticky gate fails as permanent
+            # so the VOD is finished instead of crash-restart looping for hours.
+            return 0, len(skipped), 0, sticky or (len(gated_rows) == 0 and bool(skipped))
 
         # Keep VOD chronology even if a middle part was dropped by the gate.
         order = sorted(
@@ -3650,7 +3735,7 @@ def _send_montage_batch(
 
         if not concat_rendered_parts(gated_parts, gated_durs, out):
             skipped.append("concat_fail")
-            return 0, len(skipped), 0
+            return 0, len(skipped), 0, False
 
         banners = []
         for row in gated_rows:
@@ -3668,7 +3753,7 @@ def _send_montage_batch(
         )
         if not send_video(token, chat_id, out, caption, seg_id=mid):
             send_message(token, chat_id, f"{caption}\n(файл не отправился)")
-            return 0, len(skipped), 1
+            return 0, len(skipped), 1, False
         upsert_segment(
             {
                 "segment_id": mid,
@@ -3706,7 +3791,7 @@ def _send_montage_batch(
         except Exception as exc:
             log.warning("montage_dedup mark fail: %s", exc)
         log.info("montage sent id=%s parts=%s dur=%.0f", mid, len(gated_rows), seg_dur)
-        return 1, len(skipped), 0
+        return 1, len(skipped), 0, False
     finally:
         cleanup_temps(temps)
 
@@ -3717,7 +3802,7 @@ def _send_single_fallback(
     vod: Path,
     row: dict,
     sig: str,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, bool]:
     """Send one clip when montage collapsed to a single gated part."""
     old = os.environ.get("MLBB_VOD_MONTAGE")
     os.environ["MLBB_VOD_MONTAGE"] = "0"
@@ -4147,7 +4232,10 @@ def _process_vod_segments(
                         )
                         if entry is not None:
                             if permanent:
-                                entry["reject_reason"] = entry.get("reject_reason") or "presend_banner_floor"
+                                entry["reject_reason"] = (
+                                    entry.get("reject_reason")
+                                    or "presend_banner_floor"
+                                )
                             record_vod_scan(
                                 entry,
                                 sent=sent_total,
@@ -4156,8 +4244,16 @@ def _process_vod_segments(
                                 pool=pool_cache,
                             )
                         break
-                    log.warning("batch had candidates but none sent — stop vod=%s", vod.name)
+                    log.warning(
+                        "batch had candidates but none sent — stop vod=%s permanent=%s",
+                        vod.name,
+                        int(permanent),
+                    )
                     if entry is not None:
+                        if permanent:
+                            entry["reject_reason"] = (
+                                entry.get("reject_reason") or "montage_gate_fail"
+                            )
                         record_vod_scan(
                             entry,
                             sent=sent_total,
@@ -4276,6 +4372,7 @@ def _process_vod_segments(
                     "presend_banner_floor",
                     "banner_too_early",
                     "draft_or_pick",
+                    "montage_gate_fail",
                 )
             )
             if (

@@ -107,13 +107,16 @@ def _candidate_vods() -> list[Path]:
         inbox / "yt_O4CEirbntYY.mp4",
     ]
     # Draft trash / already-duplicated singles — not the whole kill-rich pool.
-    skip = {"UGu-LYZ-GLY", "Y3In5vMdlak", "B9L4ETvZwMo"}
+    skip = {"UGu-LYZ-GLY", "Y3In5vMdlak", "B9L4ETvZwMo", "8LNjsK7IzCY"}
+    skip_dirs = {"hold_barren", "hold_quota", "park_dead", "exhausted", "hold"}
     out: list[Path] = []
     for p in prefer:
         if p.exists() and p.stat().st_size > 50_000_000:
             out.append(p)
     for p in sorted(root.rglob("yt_*.mp4"), key=lambda x: -x.stat().st_mtime):
         if ".part" in p.name or p.stat().st_size < 80_000_000:
+            continue
+        if any(part in skip_dirs for part in p.parts):
             continue
         vid = p.stem.replace("yt_", "")
         if vid in skip:
