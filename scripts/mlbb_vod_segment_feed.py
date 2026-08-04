@@ -2588,13 +2588,28 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                 and live_tier < min_tier
                 and os.environ.get("MLBB_SOLO_REQUIRE_LIVE_MULTI", "1") == "1"
             ):
+                # Ambiguous owner folder double_triple matched HAS-SLAIN chrome as
+                # multi (8pbq_581). Strong-ref only for dedicated high-streak labels
+                # (triple+) — never ambiguous doubles from the mixed bank.
+                clip_meta = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+                ref_blob = str(
+                    report.get("banner_ref_text")
+                    or row.get("kill_banner_text")
+                    or row.get("banner_text")
+                    or clip_meta.get("banner_text")
+                    or clip_meta.get("kill_banner_text")
+                    or ""
+                ).lower()
+                label_l = str(label or "").lower()
                 strong_ref_solo = (
                     os.environ.get("MLBB_SOLO_ALLOW_STRONG_REF", "1") == "1"
                     and hud_own
                     and hud_score
                     >= float(os.environ.get("MLBB_SOLO_STRONG_REF_HUD_MIN", "0.50"))
-                    and int(tier_i or 0) >= 2
+                    and int(tier_i or 0) >= 3
                     and str(src or "").lower().startswith("ref")
+                    and "double_triple" not in ref_blob
+                    and label_l in {"triple", "maniac", "savage", "legendary"}
                 )
                 if strong_ref_solo:
                     report["solo_strong_ref"] = True

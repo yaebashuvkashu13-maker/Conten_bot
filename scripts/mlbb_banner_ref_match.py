@@ -270,11 +270,16 @@ def _load_negative_ref_rows() -> tuple[tuple[str, str, str], ...]:
 
 
 def _tier_from_owner_reason(reason: str) -> int:
-    r = str(reason or "").lower()
+    r = str(reason or "").lower().replace("-", "_")
     if "savage" in r:
         return 5
     if "maniac" in r or "legendary" in r:
         return 4
+    # Mixed owner folder "double_triple" contains BOTH substrings. Checking
+    # "triple" first inflated every HAS-SLAIN chrome match to caption TRIPLE
+    # (8pbqKzd9Xzc_581: OCR=HAS SLAIN, ref path=aVPvD_* from double_triple).
+    if "double_triple" in r:
+        return 2
     if "triple" in r:
         return 3
     if "double" in r:

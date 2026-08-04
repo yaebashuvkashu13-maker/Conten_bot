@@ -21,7 +21,8 @@ from mlbb_banner_ref_match import (  # noqa: E402
 
 def test_tier_from_owner_reason() -> None:
     assert _tier_from_owner_reason("savage_tier") == 5
-    assert _tier_from_owner_reason("double_triple") == 3
+    # Mixed folder must NOT inflate to TRIPLE (substring "triple" trap).
+    assert _tier_from_owner_reason("double_triple") == 2
     assert _tier_from_owner_reason("triple") == 3
     assert _tier_from_owner_reason("double") == 2
     assert _tier_from_owner_reason("own_kill_good") == 2

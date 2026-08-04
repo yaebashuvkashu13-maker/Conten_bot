@@ -914,6 +914,33 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
         src = str(getattr(hit, "source", "") or "").lower()
         if src.startswith("ref") and os.environ.get("MLBB_BANNER_REF_REQUIRE_OCR", "1") == "1":
             live_hit = classify_banner_text(live) if live else None
+            # Explicit HAS SLAIN without multi words — never keep canned TRIPLE/DOUBLE
+            # from chrome-similar double_triple refs (8pbq_581).
+            live_l = str(live or "").lower()
+            has_slain = (
+                "has slain" in live_l
+                or "hasslain" in live_l.replace(" ", "")
+                or "been slain" in live_l
+            )
+            multi_word = any(
+                w in live_l
+                for w in (
+                    "double kill",
+                    "triple kill",
+                    "maniac",
+                    "savage",
+                    "unstoppable",
+                    "legendary",
+                )
+            )
+            if has_slain and not multi_word:
+                live_hit = KillBannerHit(
+                    sec=hit.sec,
+                    tier=1,
+                    label="single",
+                    text=str(live or "")[:120],
+                    source="ref+ocr",
+                )
             if live_hit is not None and int(live_hit.tier or 0) >= 1:
                 if int(live_hit.tier) != int(hit.tier or 0) or str(live_hit.label) != str(hit.label):
                     hit = KillBannerHit(
@@ -936,6 +963,19 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
                         (live or "")[:60],
                     )
                     return None
+            # Ambiguous double_triple chrome without live multi proof → keep floor
+            # at double only (already mapped), but never ship as proven multi via
+            # OCR-blind strong-ref. Mark for send gates.
+            if "double_triple" in str(hit.text or "").lower() and (
+                live_hit is None or int(getattr(live_hit, "tier", 0) or 0) < 2
+            ):
+                hit = KillBannerHit(
+                    sec=hit.sec,
+                    tier=min(int(hit.tier or 2), 2),
+                    label="double" if int(hit.tier or 0) >= 2 else str(hit.label),
+                    text=str(hit.text or "")[:120],
+                    source=str(getattr(hit, "source", "ref") or "ref"),
+                )
         prev_phase = os.environ.get("MLBB_BANNER_OWN_KILL_PHASE")
         os.environ["MLBB_BANNER_OWN_KILL_PHASE"] = "discover"
         try:
