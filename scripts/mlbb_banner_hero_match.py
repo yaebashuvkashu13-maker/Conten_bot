@@ -302,7 +302,13 @@ def validate_own_kill_frame(
     hud = extract_hud_hero_portrait_patch(frame)
     if killer is not None and hud is not None:
         hud_score = patch_pair_score(killer, hud)
+        # Discover uses a softer floor so candidates reach montage/presend;
+        # solo send still gated by live DOUBLE+ (no fake live_streak_tier).
         min_hud = float(os.environ.get("MLBB_BANNER_OWN_HUD_MIN_SIM", "0.22"))
+        if os.environ.get("MLBB_BANNER_OWN_KILL_PHASE", "") == "discover":
+            min_hud = float(
+                os.environ.get("MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM", "0.20")
+            )
         if hud_score >= min_hud:
             # HUD portrait match alone is not a kill — OZLs/Zy8 mid frames
             # matched HUD on empty banner ROI and shipped jog clips.

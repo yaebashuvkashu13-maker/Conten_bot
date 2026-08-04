@@ -14,8 +14,9 @@ DEFAULT_STREAK_THRESHOLD = 3
 # Only widen OCR windows and slightly relax clip score.
 SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_MIN_TIER": "double",
-    # Keep double+ discover — soften must not reopen HAS SLAIN jog path.
-    "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "2",
+    # Collect singles for ≥2 montage; solo still needs live DOUBLE+.
+    # MERGE=2 under long silence starved the pipeline (0 hits / hours).
+    "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
     "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
     "MLBB_KILL_BANNER_REQUIRED": "1",
     "MLBB_VOD_BANNER_PRESEND": "0",
@@ -36,6 +37,11 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
     "MLBB_VOD_SEND_ONE": "0",
     "MLBB_VOD_SEND_ALL_BANNERS": "1",
+    # Soften discover HUD so candidates reach montage (presend still precise).
+    "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.18",
+    "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.25",
+    "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
+    "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
 }
 
 # Soften must not disable daily montages (owner wants glued highlights).
@@ -69,7 +75,12 @@ SOFTEN_L2: dict[str, str] = {
     "MLBB_SKIP_MONTAGE": "0",
     "MLBB_VOD_SEND_ONE": "0",
     "MLBB_VOD_SEND_ALL_BANNERS": "1",
-    "MLBB_VOD_MAX_PER_VOD": "2",
+    "MLBB_VOD_MAX_PER_VOD": "4",
+    "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.17",
+    "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "150",
+    "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "36",
+    "MLBB_BANNER_FIGHT_FIRST_PEAKS": "10",
 }
 
 # Level 3: long silence — still banner-required; slightly lower bars only.

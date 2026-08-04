@@ -748,6 +748,21 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
     if os.environ.get("MLBB_BANNER_OWN_KILL_REQUIRED", "1") != "1":
         _OWN_KILL_STATS["accepts"] = int(_OWN_KILL_STATS.get("accepts") or 0) + 1
         return hit
+    # Draft / early-game (Y3In TeamPick @9s) must never enter the send pool.
+    try:
+        min_banner = float(os.environ.get("MLBB_PRESEND_MIN_BANNER_SEC", "90") or "90")
+        if float(hit.sec) < min_banner:
+            _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
+            log.info(
+                "banner own_kill reject sec=%s tier=%s reason=banner_too_early=%.0f<%.0f",
+                hit.sec,
+                hit.tier,
+                float(hit.sec),
+                min_banner,
+            )
+            return None
+    except Exception:
+        pass
     try:
         from mlbb_banner_hero_match import validate_own_kill_frame
 
@@ -802,7 +817,15 @@ def _finalize_banner_hit(frame, hit: KillBannerHit, *, vod: Path | None = None) 
                         (live or "")[:60],
                     )
                     return None
-        ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
+        prev_phase = os.environ.get("MLBB_BANNER_OWN_KILL_PHASE")
+        os.environ["MLBB_BANNER_OWN_KILL_PHASE"] = "discover"
+        try:
+            ok, reason = validate_own_kill_frame(frame, vod=vod, ocr_text=ocr_text)
+        finally:
+            if prev_phase is None:
+                os.environ.pop("MLBB_BANNER_OWN_KILL_PHASE", None)
+            else:
+                os.environ["MLBB_BANNER_OWN_KILL_PHASE"] = prev_phase
         if not ok:
             _OWN_KILL_STATS["rejects"] = int(_OWN_KILL_STATS.get("rejects") or 0) + 1
             log.info("banner own_kill reject sec=%s tier=%s reason=%s", hit.sec, hit.tier, reason)

@@ -54,9 +54,10 @@ def _hunt_knobs() -> None:
             "MLBB_VOD_BANNER_DENSE_SEC": "0",
             "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
             "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
-            # Match precision floor — weak HUD + blind OCR shipped B9L4 no-kill.
-            "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.35",
-            "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
+            # Discover softer than send; solo still gated by live DOUBLE+.
+            "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.25",
+            "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.20",
+            "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.30",
             "MLBB_OCR_MULTI_TRUST_OWN_KILL": "0",
             "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "0",
             "MLBB_BANNER_SEND_MIN_TIER": "double",

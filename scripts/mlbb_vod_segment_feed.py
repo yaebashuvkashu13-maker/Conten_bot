@@ -4380,8 +4380,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_AUTO_DOWNLOAD_ON_EMPTY": "1",
         # Keep on disk: deleting own-kill VODs after CLIP-off false-empty was catastrophic.
         "MLBB_VOD_DELETE_EXHAUSTED": "0",
-        # Do not KEEP-rediscover for hours — finish barren VODs and move on.
-        "MLBB_VOD_KEEP_BANNER_MISS": "0",
+        # Keep only when pool still has shippable banners; else finish and move on.
+        "MLBB_VOD_KEEP_BANNER_MISS": "1",
         # Hard banner prefilter deletes whole VODs → endless ⚠️ spam.
         # Banner-miss → teamfight/CLIP fallback ships ally junk. Skip the VOD.
         "MLBB_VOD_BANNER_HARD_PREFILTER": "1",
@@ -4481,8 +4481,8 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
         "MLBB_KILL_BANNER_DISCOVER_MERGE_TIER": "1",
         "MLBB_KILL_BANNER_DISCOVER_TITLE_CAP": "1",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "120",
-        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "24",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_SEC": "150",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "32",
         "MLBB_KILL_BANNER_DISCOVER_STEP": "2.0",
         "MLBB_USED_YOUTUBE_IDS_CAP": "220",
         "MLBB_VOD_DISCOVERY_REUSE_ZERO_SEND": "1",
@@ -4494,8 +4494,10 @@ def _apply_mlbb_reliable_runtime() -> None:
         # Own-kill: HUD portrait vs banner killer (LEFT). Skins covered by HUD match.
         "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
         "MLBB_BANNER_HERO_MATCH": "1",
-        # 0.20 shipped weak HUD + blind OCR as fake doubles (B9L4 hud=0.366).
-        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.35",
+        # 0.35 starved discover overnight (hits=0 every VOD). Discover uses
+        # DISCOVER_OWN_HUD_MIN; send/presend keeps a clearer portrait lock.
+        "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.25",
+        "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.20",
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE": "1",
         "MLBB_BANNER_NEG_NOT_KILL_MIN": "0.35",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE": "1",
@@ -4503,23 +4505,23 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_OCR_MULTI_TRUST_OWN_KILL": "0",
         "MLBB_OCR_SINGLE_REQUIRE_LIVE": "1",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
-        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
+        "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.30",
         "MLBB_PRESEND_REJECT_LIVE_SINGLE": "1",
         "MLBB_PRESEND_MIN_BANNER_SEC": "90",
         "MLBB_VOD_MIN_PEAK_SEC": "90",
         # Fight-first: enough peaks to find a double; stop early on first double+.
         "MLBB_BANNER_FIGHT_FIRST": "1",
-        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "7",
+        "MLBB_BANNER_FIGHT_FIRST_PEAKS": "8",
         "MLBB_FIGHT_FIRST_ABORT_ON_MISS": "1",
         "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE": "1",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "30",
-        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "6",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "40",
+        "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "8",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK": "1",
         "MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS": "3,6",
         "MLBB_KILL_BANNER_QUICK_BEFORE": "2",
         "MLBB_KILL_BANNER_QUICK_AFTER": "5",
         "MLBB_KILL_BANNER_DISCOVER_PEAK_BUDGET_FRAC": "0.55",
-        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "7",
+        "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "8",
         "MLBB_DISCOVER_SHIP_ON_FIRST_DOUBLE": "1",
         # Dense auto burned afternoon on 1Hz scans with 0 hits — peaks first.
         "MLBB_VOD_TITLE_DENSE_AUTO": "0",
@@ -4551,6 +4553,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_PRESEND_COOLDOWN_SEC": "10",
         "MLBB_VOD_ZERO_SEND_COOLDOWN_SEC": "10",
         "MLBB_VOD_SCAN_COOLDOWN_SEC": "15",
+        "MLBB_KILL_BANNER_DISCOVER_MAX_PROBES": "32",
         # Do not fill inbox while scanning — finish pickable first.
         "MLBB_VOD_PREFETCH": "1",
         "MLBB_VOD_INBOX_MAX": "3",
@@ -4669,6 +4672,7 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_BANNER_OWN_KILL_REQUIRED",
         "MLBB_BANNER_HERO_MATCH",
         "MLBB_BANNER_OWN_HUD_MIN_SIM",
+        "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM",
         "MLBB_OWN_KILL_HUD_REQUIRE_EVIDENCE",
         "MLBB_OCR_DOUBLE_REQUIRE_LIVE",
         "MLBB_OCR_MULTI_TRUST_OWN_KILL",
