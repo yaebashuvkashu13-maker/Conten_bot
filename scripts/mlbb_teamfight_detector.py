@@ -232,6 +232,19 @@ def fight_first_peaks(
         ]
         soft.sort(key=lambda row: (-row[0], row[1]))
         return [t for _, t in soft[:cap]]
+    # Time-bucket coverage: global top-N alone clusters mid-game and misses early/late
+    # doubles. Take the best peak per ~90s bucket, then fill with global score order.
+    bucket = float(os.environ.get("MLBB_FIGHT_FIRST_BUCKET_SEC", "90") or "0")
+    if bucket > 0 and len(scored) > 1:
+        best_by_bucket: dict[int, tuple[float, float]] = {}
+        for sc, t in scored:
+            b = int(float(t) // bucket)
+            prev = best_by_bucket.get(b)
+            if prev is None or sc > prev[0]:
+                best_by_bucket[b] = (sc, t)
+        bucket_picks = [t for _, t in sorted(best_by_bucket.values(), key=lambda row: -row[0])]
+        global_picks = [t for _, t in scored]
+        return list(dict.fromkeys([*bucket_picks, *global_picks]))[:cap]
     return [t for _, t in scored[:cap]]
 
 

@@ -428,6 +428,7 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
 
 
 def _announce_color_score(frame) -> float:
+    """Gold/white pixel ratio in upper banner band (gate-compatible)."""
     import cv2
     import numpy as np
 
@@ -442,6 +443,110 @@ def _announce_color_score(frame) -> float:
     combined = cv2.bitwise_or(gold, white)
     ratio = float(np.count_nonzero(combined)) / float(combined.size)
     return min(1.0, ratio * 11.0)
+
+
+def _banner_structure_score(frame) -> float:
+    """
+    Structure prior for kill-announce flash (not a send gate).
+
+    Real banners are a centered horizontal gold/white band with gold+white
+    adjacency — farming HUD gold is more diffuse / edge-heavy. Used only to
+    rank which decoded frames deserve ref/OCR, not to accept kills alone.
+    """
+    import cv2
+    import numpy as np
+
+    small = cv2.resize(frame, (320, 180))
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    h, w = small.shape[:2]
+    y0, y1 = int(h * 0.02), int(h * 0.30)
+    x0, x1 = int(w * 0.15), int(w * 0.85)
+    zone = hsv[y0:y1, x0:x1]
+    if zone.size == 0:
+        return 0.0
+    gold = cv2.inRange(zone, np.array([8, 100, 140]), np.array([40, 255, 255]))
+    white = cv2.inRange(zone, np.array([0, 0, 210]), np.array([180, 50, 255]))
+    combined = cv2.bitwise_or(gold, white)
+    area = float(combined.size)
+    if area <= 0:
+        return 0.0
+    ratio = float(np.count_nonzero(combined)) / area
+    # Horizontal band: mass concentrated in mid rows of the upper ROI.
+    row_mass = np.count_nonzero(combined, axis=1).astype(np.float32)
+    if float(row_mass.max()) <= 0:
+        return min(1.0, ratio * 8.0)
+    row_peak = float(row_mass.max() / max(combined.shape[1], 1))
+    # Centrality: mass near horizontal center of the band.
+    col_mass = np.count_nonzero(combined, axis=0).astype(np.float32)
+    xs = np.arange(col_mass.size, dtype=np.float32)
+    total = float(col_mass.sum()) + 1e-6
+    cx = float((xs * col_mass).sum() / total)
+    center = 0.5 * float(col_mass.size - 1)
+    centrality = 1.0 - min(1.0, abs(cx - center) / max(center, 1.0))
+    # Gold touching white (outline + fill) — typical announce look.
+    dil = cv2.dilate(gold, np.ones((3, 3), np.uint8), iterations=1)
+    adj = float(np.count_nonzero(cv2.bitwise_and(dil, white))) / area
+    score = (
+        min(1.0, ratio * 10.0) * 0.45
+        + min(1.0, row_peak * 1.8) * 0.25
+        + centrality * 0.15
+        + min(1.0, adj * 18.0) * 0.15
+    )
+    return float(min(1.0, score))
+
+
+def _banner_flash_score(frame) -> float:
+    """Rank frames for classification: color × structure (discover ranking only)."""
+    color = _announce_color_score(frame)
+    if color < 0.004:
+        return color
+    try:
+        struct = _banner_structure_score(frame)
+    except Exception:
+        struct = 0.0
+    return float(min(1.0, color * 0.55 + struct * 0.45))
+
+
+def _rank_fight_candidate_secs(
+    frames: list[tuple[float, object]],
+    *,
+    focus_sec: float | None = None,
+    max_classify: int = 6,
+) -> list[float]:
+    """
+    Pick the most banner-like frames from a dense fight decode.
+
+    Prefers temporal local maxima (flash in → flash out) so steady gold HUD
+    loses to a real announce blink without lowering accept thresholds.
+    """
+    if not frames:
+        return []
+    scored: list[tuple[float, float]] = []
+    for sec, frame in frames:
+        scored.append((float(sec), _banner_flash_score(frame)))
+    scored.sort(key=lambda row: row[0])
+    # Temporal local-max boost vs neighbors (±1 sample).
+    boosted: list[tuple[float, float]] = []
+    for i, (sec, sc) in enumerate(scored):
+        left = scored[i - 1][1] if i > 0 else 0.0
+        right = scored[i + 1][1] if i + 1 < len(scored) else 0.0
+        local = sc >= left - 1e-6 and sc >= right - 1e-6 and sc > 0.008
+        boost = 1.25 if local else 1.0
+        boosted.append((sec, sc * boost))
+    boosted.sort(key=lambda row: row[1], reverse=True)
+    floor = max(0.006, _color_min_score() * 0.12)
+    picks: list[float] = []
+    for sec, sc in boosted:
+        if sc < floor and picks:
+            break
+        picks.append(sec)
+        if len(picks) >= max_classify:
+            break
+    if focus_sec is not None and frames:
+        nearest = min(frames, key=lambda row: abs(row[0] - focus_sec))[0]
+        if nearest not in picks:
+            picks.insert(0, nearest)
+    return picks[: max_classify + 1]
 
 
 def _ocr_banner_zones(frame, *, deep: bool = False) -> str:
@@ -872,6 +977,11 @@ def _candidate_secs(
 ) -> list[float]:
     if not frames:
         return []
+    # Prefer structure-aware flash ranking when enabled (default on).
+    if os.environ.get("MLBB_BANNER_FLASH_RANK", "1") == "1":
+        return _rank_fight_candidate_secs(
+            frames, focus_sec=focus_sec, max_classify=max_ocr
+        )
     scored: list[tuple[float, float]] = []
     for sec, frame in frames:
         scored.append((sec, _announce_color_score(frame)))
@@ -904,6 +1014,7 @@ def scan_window(
     if quick:
         deep = False
         span = max(0.0, t1 - t0)
+        # Default ~8 frames; fight-dense path uses find_banner_near_peak instead.
         sample_count = max(4, min(8, int(span / 0.4) + 1))
         frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
         if not frames:
@@ -934,6 +1045,65 @@ def scan_window(
     return hits
 
 
+def _fight_dense_scan_enabled() -> bool:
+    return os.environ.get("MLBB_BANNER_FIGHT_DENSE_SCAN", "1") == "1"
+
+
+def scan_fight_window_dense(
+    vod: Path,
+    peak_sec: float,
+    *,
+    allow_ocr: bool = True,
+) -> list[KillBannerHit]:
+    """
+    One ffmpeg decode covering the whole post-fight banner window at high fps.
+
+    Replaces separate base/+3/+6 quick probes that each decoded ~8 frames and
+    still missed ~1s gold flashes. Ranking is structure+temporal; accept gates
+    stay in `_classify_frame` / `_finalize_banner_hit` / send path.
+    """
+    before = float(os.environ.get("MLBB_KILL_BANNER_FIGHT_BEFORE", "1.5"))
+    after = float(os.environ.get("MLBB_KILL_BANNER_FIGHT_AFTER", "12"))
+    fps = max(2.0, float(os.environ.get("MLBB_KILL_BANNER_FIGHT_FPS", "4")))
+    t0 = max(0.0, float(peak_sec) - before)
+    t1 = float(peak_sec) + after
+    span = max(0.5, t1 - t0)
+    max_frames = max(12, int(os.environ.get("MLBB_KILL_BANNER_FIGHT_MAX_FRAMES", "48")))
+    sample_count = max(8, min(max_frames, int(span * fps) + 1))
+    frames = _ffmpeg_sample_frames(vod, t0, t1, sample_count)
+    if not frames:
+        # Fallback: slightly wider quick window.
+        return scan_window(
+            vod,
+            t0,
+            t1,
+            focus_sec=peak_sec + 3.0,
+            quick=True,
+            allow_ocr=allow_ocr,
+        )
+    max_classify = max(
+        3, int(os.environ.get("MLBB_KILL_BANNER_FIGHT_MAX_CLASSIFY", "6"))
+    )
+    focus = float(peak_sec) + 3.0
+    picks = _rank_fight_candidate_secs(
+        frames, focus_sec=focus, max_classify=max_classify
+    )
+    frame_map = {sec: frame for sec, frame in frames}
+    hits: list[KillBannerHit] = []
+    for sec in picks:
+        frame = frame_map.get(sec)
+        if frame is None:
+            continue
+        hit = _classify_frame(sec, frame, deep=False, allow_ocr=allow_ocr, vod=vod)
+        if hit is not None:
+            hits.append(hit)
+            # First accepted own-kill banner is enough for this fight window.
+            if _banner_hit_source_ok(hit.source):
+                break
+    hits.sort(key=lambda h: (-h.tier, 0 if _banner_hit_source_ok(h.source) else 1, h.sec))
+    return hits
+
+
 def find_banner_near_peak(
     vod: Path,
     peak_sec: float,
@@ -943,7 +1113,9 @@ def find_banner_near_peak(
     min_tier: int | None = None,
 ) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
-    if quick:
+    if quick and _fight_dense_scan_enabled():
+        hits = scan_fight_window_dense(vod, peak_sec, allow_ocr=allow_ocr)
+    elif quick:
         fight_first = os.environ.get("MLBB_BANNER_FIGHT_FIRST", "1") == "1"
         # Fight-first: look mostly AFTER the fight spike (banner confirms the kill).
         default_before = "2" if fight_first else "10"
@@ -1297,9 +1469,19 @@ def _discover_vod_kill_banners_inner(
                 hit.tier,
             )
             return
-        if hits and hit.sec - hits[-1].sec < 6.0:
-            if hit.tier > hits[-1].tier:
-                hits[-1] = hit
+        # Absolute nearest-hit merge — peak order is intensity-ranked, not time order.
+        # Signed `hit.sec - hits[-1].sec` previously collapsed distant earlier hits.
+        dedupe = float(os.environ.get("MLBB_BANNER_DISCOVER_HIT_DEDUP_SEC", "6") or "6")
+        best_i = -1
+        best_gap = None
+        for i, prev in enumerate(hits):
+            gap = abs(float(hit.sec) - float(prev.sec))
+            if gap < dedupe and (best_gap is None or gap < best_gap):
+                best_i = i
+                best_gap = gap
+        if best_i >= 0:
+            if hit.tier > hits[best_i].tier:
+                hits[best_i] = hit
         else:
             hits.append(hit)
         # One own-kill double+ is enough to stop early and solo-ship (live OCR
@@ -1393,8 +1575,14 @@ def _discover_vod_kill_banners_inner(
     missed_peaks: list[float] = []
     ocr_missed: list[float] = []
     # Kill banners flash AFTER the fight spike — fight-first probes post-peak harder.
+    # Dense fight scan already covers peak-1.5..peak+12 at 4fps in ONE decode, so
+    # separate +3/+6 offset probes only waste ffmpeg and OCR budget.
     post_offsets = [0.0]
-    if os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK", "1") == "1":
+    use_dense_fight = _fight_dense_scan_enabled()
+    if (
+        not use_dense_fight
+        and os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK", "1") == "1"
+    ):
         default_offs = "3,5,8" if fight_first else "2,4"
         raw_offs = os.environ.get("MLBB_KILL_BANNER_DISCOVER_POST_PEAK_OFFSETS", default_offs)
         for part in raw_offs.split(","):
@@ -1416,6 +1604,15 @@ def _discover_vod_kill_banners_inner(
             )
         ),
     )
+    if use_dense_fight:
+        log.info(
+            "banner discover %s: fight-dense scan on (fps=%s window=-%s/+%s max_frames=%s)",
+            vod.name,
+            os.environ.get("MLBB_KILL_BANNER_FIGHT_FPS", "4"),
+            os.environ.get("MLBB_KILL_BANNER_FIGHT_BEFORE", "1.5"),
+            os.environ.get("MLBB_KILL_BANNER_FIGHT_AFTER", "12"),
+            os.environ.get("MLBB_KILL_BANNER_FIGHT_MAX_FRAMES", "48"),
+        )
     for peak_i, base_peak in enumerate(list(dict.fromkeys(peak_hints))[:peak_limit]):
         base_hit = False
         offsets = post_offsets if peak_i < post_peak_max else [0.0]
