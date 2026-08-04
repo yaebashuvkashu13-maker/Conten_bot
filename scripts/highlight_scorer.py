@@ -251,7 +251,7 @@ def _filter_bad_label_starts(
 
 
 def _mlbb_skip_intro_sec() -> float:
-    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "300"))
+    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "90"))
 
 
 def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> list[float]:
@@ -1361,9 +1361,7 @@ def stage1_candidates(video_path: Path, profile: str) -> list[float]:
                     starts.add(round(s, 1))
             except ValueError:
                 pass
-        out = sorted(starts)[:max_stage1]
-        log.info("highlight seed-debug %s: %s windows", video_path.name, len(out))
-        return out
+        log.info("highlight fast seeds %s: %s seed/heatmap windows", video_path.name, len(starts))
 
     skip_intelliclip = profile in SHOOTER_PROFILES and os.environ.get(
         "SHOOTER_VOD_SKIP_INTELLICLIP", "1"
@@ -1479,10 +1477,12 @@ def _pann_probe_limit(profile: str) -> int:
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
-    max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
+    # PANNs is a gunfire model.  It is not a meaningful prefilter for MOBAs,
+    # and its probe cap must never silently truncate MLBB action candidates.
     if profile not in SHOOTER_PROFILES:
         return starts
+    max_pann = _pann_probe_limit(profile)
+    starts = starts[:max_pann]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1698,8 +1698,6 @@ def discover_highlight_candidates(
                 for start in pending
             }
             for fut in as_completed(futures):
-                if len(verified) >= limit:
-                    break
                 try:
                     row = fut.result()
                 except Exception as exc:
@@ -1708,43 +1706,26 @@ def discover_highlight_candidates(
                 if row is None:
                     continue
                 start, metrics = row
-                if _consume(start, metrics) and len(verified) >= limit:
-                    break
-                if (
-                    verified
-                    and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                    and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-                ):
-                    log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
-                    break
+                _consume(start, metrics)
     else:
         for start in pending:
-            if len(verified) >= limit:
-                break
             row = _evaluate_highlight_start(video_path, start, profile)
             if row is None:
                 continue
             start, metrics = row
-            if _consume(start, metrics) and len(verified) >= limit:
-                break
-            if (
-                verified
-                and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-                and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
-            ):
-                log.info(
-                    "vod send_one: stop after first highlight pass start=%.1f",
-                    verified[-1]["start"],
-                )
-                break
+            _consume(start, metrics)
 
     verified.sort(
         key=lambda c: (
             (c.get("highlight_metrics") or {}).get("viral_score", 0),
             c.get("score", 0),
+            (c.get("highlight_metrics") or {}).get("clip_score", 0),
+            (c.get("highlight_metrics") or {}).get("hook_score", 0),
+            -float(c.get("start", 0)),
         ),
         reverse=True,
     )
+    verified = verified[:limit]
     log.info("highlight pool %s: %s passed", video_path.name, len(verified))
     return verified
 

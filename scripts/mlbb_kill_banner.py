@@ -86,13 +86,13 @@ def _banner_required() -> bool:
 
 def _motion_anchor_ok() -> bool:
     """Motion fight bounds are acceptable without a verified kill-banner anchor."""
+    # Required means required.  Do not let deployment flags silently turn a
+    # strict banner gate into a motion-only gate.
+    if _banner_required():
+        return False
     if os.environ.get("MLBB_VOD_MOTION_ANCHOR_OK", "0") == "1":
         return True
-    if not _banner_required():
-        return True
-    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
-        return True
-    return False
+    return True
 
 
 def _scan_step() -> float:

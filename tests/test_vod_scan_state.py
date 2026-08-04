@@ -16,6 +16,7 @@ from vod_scan_state import (  # noqa: E402
     minimal_pool_from_entry,
     pool_cache_valid,
     pool_peaks_fully_blocked,
+    pool_config_fingerprint,
     record_vod_scan,
     scan_zero_detail,
     should_mark_vod_exhausted,
@@ -105,3 +106,28 @@ def test_pool_cache_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_POOL_TTL_SEC", "60")
     entry = {"last_pool_at": time.time() - 120, "last_pool_peaks": [{"peak_sec": 1.0, "score": 0, "blocked_reason": ""}]}
     assert pool_cache_valid(entry) is False
+
+
+def test_pool_cache_invalidates_when_effective_config_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_POOL_TTL_SEC", "3600")
+    monkeypatch.setenv("MLBB_VOD_MIN_CLIP_SCORE", "0.08")
+    entry = {
+        "last_pool_at": time.time(),
+        "last_pool_config": pool_config_fingerprint(),
+        "last_pool_peaks": [{"peak_sec": 100.0, "score": 0.8, "blocked_reason": ""}],
+    }
+    assert pool_cache_valid(entry) is True
+    monkeypatch.setenv("MLBB_VOD_MIN_CLIP_SCORE", "0.12")
+    assert pool_cache_valid(entry) is False
+
+
+def test_record_scan_preserves_rejected_peak_reason() -> None:
+    entry = {
+        "last_pool_peaks": [
+            {"peak_sec": 100.0, "score": 0.8, "blocked_reason": "presend"}
+        ]
+    }
+    pool = [{"start": 100.0, "score": 0.8}, {"start": 200.0, "score": 0.7}]
+    record_vod_scan(entry, sent=0, pool_peaks=[100.0, 200.0], blocked=False, pool=pool)
+    minimal = minimal_pool_from_entry(entry)
+    assert [row["start"] for row in minimal] == [200.0]

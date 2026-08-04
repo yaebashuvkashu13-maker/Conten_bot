@@ -25,31 +25,33 @@ def test_trailing_zero_streak():
     assert trailing_zero_streak([{"sent": 0}, {"sent": 2}]) == 0
 
 
-def test_soften_after_three_zeros():
-    os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "3"
+def test_soften_after_four_zeros():
+    os.environ["MLBB_VOD_ZERO_STREAK_SOFTEN"] = "4"
     assert soften_level(0) == 0
-    assert soften_level(2) == 0
-    assert soften_level(3) == 1
-    assert soften_level(5) == 1
-    assert soften_level(6) == 2
+    assert soften_level(3) == 0
+    assert soften_level(4) == 1
+    assert soften_level(6) == 1
+    assert soften_level(7) == 2
 
 
-def test_soft_overrides_disable_banner_prefilter():
+def test_soft_overrides_keep_banner_proof():
     ov = overrides_for_level(1)
     assert ov["MLBB_VOD_BANNER_PREFILTER"] == "0"
-    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
-    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "0"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "double"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
 
 
-def test_l1_skips_presend_banner_and_motion_anchor():
+def test_l1_keeps_presend_banner_and_disables_motion_anchor():
     ov = overrides_for_level(1)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
-    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "1"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_VOD_MOTION_ANCHOR_OK"] == "0"
 
 
-def test_l2_skips_presend_banner():
+def test_l2_allows_only_ocr_confirmed_single():
     ov = overrides_for_level(2)
-    assert ov["MLBB_VOD_BANNER_PRESEND"] == "0"
+    assert ov["MLBB_VOD_BANNER_PRESEND"] == "1"
+    assert ov["MLBB_KILL_BANNER_REQUIRED"] == "1"
+    assert ov["MLBB_KILL_BANNER_MIN_TIER"] == "single"
 
 
 def test_l2_lenient_uniform_for_presend_tail():

@@ -153,7 +153,7 @@ def test_discover_banners_handles_numpy_motion() -> None:
     assert rel <= 0.68
 
 
-def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:
+def test_required_banner_cannot_be_bypassed_by_motion_anchor() -> None:
     import mlbb_kill_banner as kb
     from unittest.mock import patch
 
@@ -177,10 +177,7 @@ def test_resolve_fight_bounds_motion_when_motion_anchor_ok() -> None:
             patch("mlbb_fight_segment.detect_fight_bounds", return_value=(90.0, 118.0, 28.0)),
         ):
             out = kb.resolve_fight_bounds(vod, 100.0, 600.0)
-        assert out is not None
-        start, end, dur, meta = out
-        assert meta["anchor"] == "motion"
-        assert dur >= 8.0
+        assert out is None
     finally:
         for key, val in old.items():
             if val is None:

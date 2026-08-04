@@ -82,3 +82,46 @@ def test_collect_scan_skips_rejected_peaks(tmp_path: Path):
             vod, "sig", {}, set(), 12, pool=cached, skip_peaks={384.0, 582.0}
         )
         assert third == []
+
+
+def test_variable_length_clip_is_revalidated_even_when_cached(tmp_path: Path):
+    from mlbb_vod_segment_feed import _collect_scan_segments
+
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"x")
+    pool = [
+        {
+            "start": 100.0,
+            "input_duration": 15.0,
+            "score": 0.9,
+            "highlight_metrics": {
+                "rule_pass": True,
+                "pass_reason": "cached_pool",
+                "clip_score": 0.3,
+            },
+        }
+    ]
+    normalized = {
+        "start": 92.0,
+        "peak_start": 100.0,
+        "input_duration": 28.0,
+        "output_duration": 28.0,
+        "source_path": str(vod),
+        "source_index": 0,
+        "speed": 1.0,
+        "anchor": "kill_banner",
+    }
+    os.environ["MLBB_VOD_MIN_PEAK_SEC"] = "0"
+    os.environ["MLBB_VOD_SKIP_REVALIDATE"] = "1"
+    os.environ["MLBB_KILL_BANNER_REQUIRED"] = "0"
+    with (
+        patch("mlbb_vod_segment_feed._normalize_clip", return_value=normalized),
+        patch("mlbb_vod_segment_feed._used_intervals_for_vod", return_value=[]),
+        patch(
+            "mlbb_vod_segment_feed.validate_clips_before_preview",
+            return_value=(False, "final_window_bad", [], [], []),
+        ) as validate,
+    ):
+        out, _ = _collect_scan_segments(vod, "sig", {}, set(), 12, pool=pool)
+    assert out == []
+    validate.assert_called_once()
