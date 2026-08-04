@@ -105,7 +105,7 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"maniac|маньяк", re.I), 4, "maniac"),
     (re.compile(r"ruthless|беспощад|безжалост", re.I), 4, "ruthless"),
     (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
-    (re.compile(r"ultra\s*kill", re.I), 3, "triple"),
+    (re.compile(r"ultra\s*kill|mega\s*kill", re.I), 3, "triple"),
     (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble|2\s*x\s*kill", re.I), 2, "double"),
     (re.compile(r"unstoppable|unstopable|dominating", re.I), 2, "double"),
     (re.compile(r"godlike", re.I), 3, "triple"),
@@ -124,7 +124,7 @@ _STREAK_PATTERNS: list[tuple[re.Pattern[str], int, str]] = [
 ]
 
 _SINGLE_STRONG_RE = re.compile(
-    r"has\s+slain|been\s+slain|killing\s+spree|first\s+blood|shutdown|rampage|"
+    r"has\s*slain|been\s*slain|killing\s+spree|first\s+blood|shutdown|rampage|"
     r"убил|убийств|первая\s+кровь|серия\s+убий",
     re.I,
 )
