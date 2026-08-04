@@ -168,7 +168,7 @@ def main() -> int:
     _load_env()
     _hunt_knobs()
 
-    from daily_game_cycle import record_send, status_summary
+    from daily_game_cycle import status_summary
     from mlbb_kill_banner import discover_vod_kill_banners
     from mlbb_vod_montage import build_montage_id, concat_rendered_parts
     from mlbb_vod_segment_feed import (
@@ -281,10 +281,7 @@ def main() -> int:
                     print("send_video failed", flush=True)
                     continue
                 mark_feed_sent([row["segment_id"]])
-                try:
-                    record_send("mlbb")
-                except Exception as exc:
-                    print("record_send", exc, flush=True)
+                # send_video already cycle_record_send — do not double-count.
                 with open("/root/data/mlbb/mlbb_vod_sent.jsonl", "a", encoding="utf-8") as fh:
                     fh.write(
                         json.dumps(
@@ -353,10 +350,7 @@ def main() -> int:
                 print("send montage failed", flush=True)
                 continue
             mark_feed_sent([r["segment_id"] for r in gated] + [mid])
-            try:
-                record_send("mlbb")
-            except Exception as exc:
-                print("record_send", exc, flush=True)
+            # send_video already cycle_record_send — do not double-count.
             with open("/root/data/mlbb/mlbb_vod_sent.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(
                     json.dumps(
