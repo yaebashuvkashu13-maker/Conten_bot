@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Emergency hunt: find live double+ or ≥2-single montage and send to close quota.
+"""Anti-silence hunt: live double+ or ≥2-clip montage until daily MLBB quota closes.
 
-Quality floors stay on — no solo HAS-SLAIN, no already-delivered IDs.
+Loops while remaining>0. Quality floors stay on — no solo HAS-SLAIN junk.
 """
 from __future__ import annotations
 
@@ -50,7 +50,6 @@ def _hunt_knobs() -> None:
             "MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS": "12",
             "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_SEC": "50",
             "MLBB_FIGHT_FIRST_KILL_RICH_SPIKE_PROBES": "10",
-            # One 4fps decode per fight — do not burn budget on +3/+6 offset probes.
             "MLBB_BANNER_FIGHT_DENSE_SCAN": "1",
             "MLBB_BANNER_FLASH_RANK": "1",
             "MLBB_KILL_BANNER_FIGHT_FPS": "4",
@@ -59,12 +58,10 @@ def _hunt_knobs() -> None:
             "MLBB_KILL_BANNER_FIGHT_MAX_FRAMES": "48",
             "MLBB_KILL_BANNER_FIGHT_MAX_CLASSIFY": "6",
             "MLBB_DISCOVER_OCR_CALL_BUDGET": "12",
-            # Dense 1Hz burn is why the hunt sat 3min/VOD with 0 hits.
             "MLBB_VOD_TITLE_DENSE_AUTO": "0",
             "MLBB_VOD_BANNER_DENSE_SEC": "0",
             "MLBB_VOD_DISCOVER_ALWAYS_DENSE": "0",
             "MLBB_BANNER_OWN_KILL_REQUIRED": "1",
-            # Discover soft so hunt finds candidates; solo still needs live DOUBLE+.
             "MLBB_BANNER_OWN_HUD_MIN_SIM": "0.22",
             "MLBB_BANNER_DISCOVER_OWN_HUD_MIN_SIM": "0.17",
             "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.28",
@@ -72,19 +69,19 @@ def _hunt_knobs() -> None:
             "MLBB_PRESEND_MULTI_ALLOW_HUD_MISS": "0",
             "MLBB_BANNER_SEND_MIN_TIER": "double",
             "MLBB_SOLO_REQUIRE_LIVE_MULTI": "1",
-            # Gold-blind OCR: strong labeled ref (hud≥0.50 + tier≥2) may solo-ship.
+            # Gold-blind OCR: strong labeled ref may solo-ship (double under silence).
             "MLBB_SOLO_ALLOW_STRONG_REF": "1",
             "MLBB_SOLO_STRONG_REF_HUD_MIN": "0.50",
+            "MLBB_SOLO_STRONG_REF_DOUBLE": "1",
+            "MLBB_SOLO_STRONG_REF_DOUBLE_HUD_MIN": "0.55",
             "MLBB_PRESEND_OWN_KILL_SINGLE": "0",
             "MLBB_VOD_MONTAGE": "1",
             "MLBB_VOD_MONTAGE_ALLOW_SINGLES": "1",
             "MLBB_VOD_MONTAGE_MIN_CLIPS": "2",
             "MLBB_PRESEND_MIN_BANNER_SEC": "90",
-            # Starvation hunt: do not skip near already-sent peaks on mined VODs.
             "MLBB_BANNER_DISCOVER_EXCLUDE_SECS": "",
             "MLBB_BANNER_DISCOVER_EXCLUDE_GAP_SEC": "3",
             "MLBB_DISCOVER_ALLOW_NEAR_SENT": "1",
-            # YT gold banners score ~0.01–0.03; old 0.031 gate → hits=0 overnight.
             "MLBB_BANNER_DISCOVER_REF_COLOR_MUL": "0.35",
             "MLBB_BANNER_DISCOVER_COLOR_GATE_MAX": "0.010",
             "SMART_ANALYSIS_DETAIL": "fast",
@@ -98,33 +95,50 @@ def _candidate_vods() -> list[Path]:
     inbox = Path("/root/data/mlbb/youtube_nightly/inbox")
     root = Path("/root/data/mlbb/youtube_nightly")
     prefer = [
+        inbox / "yt_-kOfd_sctHY.mp4",
         inbox / "yt_8pbqKzd9Xzc.mp4",
         inbox / "yt_BM1CjA5jPLk.mp4",
+        inbox / "yt_Cv7Ul8t6j6s.mp4",
+        inbox / "yt_MzIiYgWelYM.mp4",
+        inbox / "yt_ezW8Vn4pNbw.mp4",
+        inbox / "yt_-y1tsLsKrn4.mp4",
         inbox / "yt_5BAG79_pu7w.mp4",
         inbox / "yt_nFf2MUWL7io.mp4",
         inbox / "yt_EGM-y0c2WIQ.mp4",
         inbox / "yt_TdZrmr_QHKg.mp4",
         inbox / "yt_O4CEirbntYY.mp4",
     ]
-    # Draft trash / already-duplicated singles — not the whole kill-rich pool.
+    # Draft trash / already-duplicated singles / barren crash-loop VOD.
     skip = {"UGu-LYZ-GLY", "Y3In5vMdlak", "B9L4ETvZwMo", "8LNjsK7IzCY"}
     skip_dirs = {"hold_barren", "hold_quota", "park_dead", "exhausted", "hold"}
     out: list[Path] = []
     for p in prefer:
         if p.exists() and p.stat().st_size > 50_000_000:
             out.append(p)
-    for p in sorted(root.rglob("yt_*.mp4"), key=lambda x: -x.stat().st_mtime):
+    for p in sorted(inbox.glob("yt_*.mp4"), key=lambda x: -x.stat().st_mtime):
         if ".part" in p.name or p.stat().st_size < 80_000_000:
-            continue
-        if any(part in skip_dirs for part in p.parts):
             continue
         vid = p.stem.replace("yt_", "")
         if vid in skip:
             continue
         if p not in out:
             out.append(p)
-        if len(out) >= 8:
+        if len(out) >= 10:
             break
+    # Only fall back to non-barren dirs under youtube_nightly.
+    if len(out) < 6:
+        for p in sorted(root.rglob("yt_*.mp4"), key=lambda x: -x.stat().st_mtime):
+            if ".part" in p.name or p.stat().st_size < 80_000_000:
+                continue
+            if any(part in skip_dirs for part in p.parts):
+                continue
+            vid = p.stem.replace("yt_", "")
+            if vid in skip:
+                continue
+            if p not in out:
+                out.append(p)
+            if len(out) >= 10:
+                break
     return out
 
 
@@ -181,10 +195,18 @@ def _hit_to_row(vod: Path, hit, *, normalize_clip, youtube_id) -> dict:
     }
 
 
-def main() -> int:
-    _load_env()
-    _hunt_knobs()
+def _mlbb_remaining() -> int:
+    try:
+        from daily_game_cycle import status_summary
 
+        rem = (status_summary() or {}).get("remaining") or {}
+        return int(rem.get("mlbb") or 0)
+    except Exception:
+        return 0
+
+
+def _hunt_once() -> bool:
+    """Return True if at least one clip was sent."""
     from daily_game_cycle import status_summary
     from mlbb_kill_banner import discover_vod_kill_banners
     from mlbb_vod_montage import build_montage_id, concat_rendered_parts
@@ -197,20 +219,22 @@ def main() -> int:
         send_video,
         vod_youtube_id,
     )
-    from smart_video_editor import ffprobe_duration as probe_dur
 
     token = os.environ.get("TG_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TG_CHAT_ID", "").strip()
     print("tg", bool(token), bool(chat_id), "quota", status_summary(), flush=True)
     if not token or not chat_id:
         print("missing TG creds", flush=True)
-        return 2
+        return False
 
     vods = _candidate_vods()
     print("vods", [v.name for v in vods], flush=True)
     sent_ok = False
 
     for vod in vods:
+        if _mlbb_remaining() <= 0:
+            print("quota full — stop hunt pass", flush=True)
+            break
         print(f"\n==== DISCOVER {vod.name} size={vod.stat().st_size}", flush=True)
         t0 = time.time()
         try:
@@ -240,7 +264,6 @@ def main() -> int:
         doubles = [h for h in hits if int(getattr(h, "tier", 0) or 0) >= 2 and float(h.sec) >= 90]
         singles = [h for h in hits if int(getattr(h, "tier", 0) or 0) == 1 and float(h.sec) >= 90]
         candidates: list[tuple[str, list]] = []
-        # Prefer 2–3 double+ montage when available (OCR-blind solos often fail live gate).
         if len(doubles) >= 2:
             candidates.append(
                 ("montage_doubles", sorted(doubles, key=lambda x: x.sec)[:3])
@@ -298,7 +321,6 @@ def main() -> int:
                     print("send_video failed", flush=True)
                     continue
                 mark_feed_sent([row["segment_id"]])
-                # send_video already cycle_record_send — do not double-count.
                 with open("/root/data/mlbb/mlbb_vod_sent.jsonl", "a", encoding="utf-8") as fh:
                     fh.write(
                         json.dumps(
@@ -320,7 +342,6 @@ def main() -> int:
                 break
             if not kind.startswith("montage") or len(rows) < 2:
                 continue
-            # montage_doubles / montage_singles — render, gate, concat, send
             temps: list[Path] = []
             durs: list[float] = []
             gated: list[dict] = []
@@ -367,7 +388,6 @@ def main() -> int:
                 print("send montage failed", flush=True)
                 continue
             mark_feed_sent([r["segment_id"] for r in gated] + [mid])
-            # send_video already cycle_record_send — do not double-count.
             with open("/root/data/mlbb/mlbb_vod_sent.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(
                     json.dumps(
@@ -377,7 +397,7 @@ def main() -> int:
                             "segment": mid,
                             "kind": "mlbb_quota_hunt_montage",
                             "game": "mlbb",
-                            "note": "close 4/5 after 6h silence",
+                            "note": "anti-silence continuous hunt",
                         },
                         ensure_ascii=False,
                     )
@@ -389,8 +409,50 @@ def main() -> int:
         if sent_ok:
             break
 
-    print("DONE sent_ok", sent_ok, "quota", status_summary(), flush=True)
-    return 0 if sent_ok else 1
+    print("PASS done sent_ok", sent_ok, "quota", status_summary(), flush=True)
+    return sent_ok
+
+
+def main() -> int:
+    _load_env()
+    _hunt_knobs()
+
+    poll = max(20, int(os.environ.get("MLBB_HUNT_POLL_SEC", "45")))
+    silence = max(60, int(os.environ.get("MLBB_HUNT_SILENCE_SEC", "480")))
+    # After a successful send, wait this long before next pass (tempo).
+    after_send = max(30, int(os.environ.get("MLBB_HUNT_AFTER_SEND_SEC", "90")))
+    # One-shot mode for tests / manual: MLBB_HUNT_ONCE=1
+    once = os.environ.get("MLBB_HUNT_ONCE", "0") == "1"
+
+    passes = 0
+    while True:
+        rem = _mlbb_remaining()
+        if rem <= 0:
+            print("mlbb remaining=0 — hunt idle exit", flush=True)
+            return 0
+        print(
+            f"\n##### HUNT PASS {passes + 1} remaining={rem} silence_gate={silence}s",
+            flush=True,
+        )
+        # Mark silence mode so solo strong-ref doubles may ship when OCR is gold-blind.
+        os.environ["MLBB_SOLO_STRONG_REF_DOUBLE"] = "1"
+        os.environ["MLBB_VOD_DISCOVER_MISS_STREAK"] = str(
+            max(3, int(os.environ.get("MLBB_VOD_DISCOVER_MISS_STREAK", "0") or 0))
+        )
+        sent = _hunt_once()
+        passes += 1
+        if once:
+            return 0 if sent else 1
+        if sent:
+            rem = _mlbb_remaining()
+            if rem <= 0:
+                print("quota closed after send — exit", flush=True)
+                return 0
+            print(f"sent ok — sleep {after_send}s before next pass", flush=True)
+            time.sleep(after_send)
+            continue
+        print(f"no send this pass — sleep {poll}s", flush=True)
+        time.sleep(poll)
 
 
 if __name__ == "__main__":

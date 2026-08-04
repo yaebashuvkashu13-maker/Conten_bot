@@ -2687,15 +2687,33 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
                     or ""
                 ).lower()
                 label_l = str(label or "").lower()
+                # Default: triple+ only (B9L4 was a weak-HUD "double"). Under long
+                # silence / adaptive soften, allow a clear ref DOUBLE with hud≥0.55.
+                allow_double_ref = (
+                    os.environ.get("MLBB_SOLO_STRONG_REF_DOUBLE", "0") == "1"
+                    or int(os.environ.get("MLBB_VOD_ADAPTIVE_LEVEL", "0") or 0) >= 2
+                    or int(os.environ.get("MLBB_VOD_DISCOVER_MISS_STREAK", "0") or 0)
+                    >= int(os.environ.get("MLBB_SOLO_STRONG_REF_AFTER_MISS", "3"))
+                )
+                strong_labels = {"triple", "maniac", "savage", "legendary"}
+                if allow_double_ref:
+                    strong_labels = strong_labels | {"double"}
+                strong_hud_min = float(
+                    os.environ.get("MLBB_SOLO_STRONG_REF_HUD_MIN", "0.50")
+                )
+                if allow_double_ref and label_l == "double":
+                    strong_hud_min = max(
+                        strong_hud_min,
+                        float(os.environ.get("MLBB_SOLO_STRONG_REF_DOUBLE_HUD_MIN", "0.55")),
+                    )
                 strong_ref_solo = (
                     os.environ.get("MLBB_SOLO_ALLOW_STRONG_REF", "1") == "1"
                     and hud_own
-                    and hud_score
-                    >= float(os.environ.get("MLBB_SOLO_STRONG_REF_HUD_MIN", "0.50"))
-                    and int(tier_i or 0) >= 3
+                    and hud_score >= strong_hud_min
+                    and int(tier_i or 0) >= (2 if allow_double_ref else 3)
                     and str(src or "").lower().startswith("ref")
                     and "double_triple" not in ref_blob
-                    and label_l in {"triple", "maniac", "savage", "legendary"}
+                    and label_l in strong_labels
                 )
                 if strong_ref_solo:
                     report["solo_strong_ref"] = True
@@ -4558,6 +4576,12 @@ def _apply_mlbb_reliable_runtime() -> None:
         "MLBB_VOD_MAX_PER_VOD": "4",
         "MLBB_OCR_MULTI_TRUST_HUD_MIN": "0.40",
         "MLBB_PRESEND_OWN_KILL_SINGLE_HUD_MIN": "0.35",
+        # Gold-blind OCR under silence: clear owner-ref DOUBLE (hud≥0.55) may solo.
+        "MLBB_SOLO_ALLOW_STRONG_REF": "1",
+        "MLBB_SOLO_STRONG_REF_HUD_MIN": "0.50",
+        "MLBB_SOLO_STRONG_REF_DOUBLE": "1",
+        "MLBB_SOLO_STRONG_REF_DOUBLE_HUD_MIN": "0.55",
+        "MLBB_SOLO_STRONG_REF_AFTER_MISS": "3",
         # Match montage min (2). Hunting a 3rd hit on every VOD burned ~1–3 min.
         "MLBB_KILL_BANNER_DISCOVER_TARGET": "2",
         "MLBB_KILL_BANNER_DISCOVER_MIN_HITS": "2",
