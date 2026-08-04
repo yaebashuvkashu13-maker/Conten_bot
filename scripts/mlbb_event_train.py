@@ -16,6 +16,7 @@ from mlbb_event_classifier import (
     COMMAND,
     ENEMY_STREAK,
     FEATURE_VERSION,
+    OBJECTIVE,
     OTHER,
     OWN_STREAK,
     extract_visual_features,
@@ -50,6 +51,7 @@ def discover_samples(root: Path) -> tuple[list[Path], list[str], list[str], dict
     add("vod_crops/savage/*.png", OWN_STREAK, tier=5)
     add("owner_cal/negative/enemy_kill/*.png", ENEMY_STREAK)
     add("owner_cal/negative/coordination/*.png", COMMAND)
+    add("owner_cal/negative/objective/*.png", OBJECTIVE)
     for folder in ("no_banner", "not_kill", "wrong_hero", "not_gameplay"):
         add(f"owner_cal/negative/{folder}/*.png", OTHER)
     add("vod_crops/unknown/*.png", OTHER)
@@ -109,7 +111,7 @@ def train(root: Path, output: Path, *, min_per_class: int = 5) -> dict:
     paths, labels, groups, tier_map = discover_samples(root)
     counts = Counter(labels)
     missing = {label: count for label, count in counts.items() if count < min_per_class}
-    expected = {OWN_STREAK, ENEMY_STREAK, COMMAND, OTHER}
+    expected = {OWN_STREAK, ENEMY_STREAK, COMMAND, OBJECTIVE, OTHER}
     if set(counts) != expected or missing:
         raise RuntimeError(f"insufficient classes counts={dict(counts)} minimum={min_per_class}")
 
