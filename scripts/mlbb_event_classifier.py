@@ -190,6 +190,8 @@ def _predict_proba(model, features: np.ndarray) -> tuple[str, float]:
 
 
 def predict_visual_event(frame: np.ndarray, *, artifact: dict | None = None) -> EventDecision | None:
+    if os.environ.get("MLBB_EVENT_CLASSIFIER", "1") != "1":
+        return None
     artifact = artifact if artifact is not None else _load_model_artifact()
     if not artifact:
         return None
