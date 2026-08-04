@@ -434,11 +434,14 @@ def main() -> int:
             f"\n##### HUNT PASS {passes + 1} remaining={rem} silence_gate={silence}s",
             flush=True,
         )
-        # Mark silence mode so solo strong-ref doubles may ship when OCR is gold-blind.
+        # Strong-ref DOUBLE solos when live OCR is gold-blind (hud≥0.55).
         os.environ["MLBB_SOLO_STRONG_REF_DOUBLE"] = "1"
-        os.environ["MLBB_VOD_DISCOVER_MISS_STREAK"] = str(
-            max(3, int(os.environ.get("MLBB_VOD_DISCOVER_MISS_STREAK", "0") or 0))
-        )
+        # Do NOT bump DISCOVER_MISS_STREAK here — that forces dense_1hz and
+        # burns the whole 200s budget with 0 hits (-kOfd Aug4).
+        os.environ.pop("MLBB_VOD_DISCOVER_MISS_STREAK", None)
+        os.environ["MLBB_VOD_BANNER_DENSE_SEC"] = "0"
+        os.environ["MLBB_VOD_DISCOVER_ALWAYS_DENSE"] = "0"
+        os.environ["MLBB_VOD_TITLE_DENSE_AUTO"] = "0"
         sent = _hunt_once()
         passes += 1
         if once:
