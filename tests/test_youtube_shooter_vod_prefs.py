@@ -25,11 +25,42 @@ def test_standoff_title_ok() -> None:
 
 
 def test_discovery_rotates_queries() -> None:
-    a = vod_discovery_search_cycle(0, "pubg", {})
-    b = vod_discovery_search_cycle(1, "pubg", {})
+    a = vod_discovery_search_cycle(0, "pubg", {"YOUTUBE_SEARCH_PREFER_YTSEARCH": "1"})
+    b = vod_discovery_search_cycle(1, "pubg", {"YOUTUBE_SEARCH_PREFER_YTSEARCH": "1"})
     assert a["queries"] != b["queries"]
     assert len(a["queries"]) >= 1
+    assert str(a["urls"][0]).startswith("ytsearch")
 
+
+def test_discovery_uses_env_queries(monkeypatch) -> None:
+    env = {
+        "PUBG_VOD_SEARCH_QUERIES": "метро роял пабг снайпер,метро роял пабг эвакуация",
+        "YOUTUBE_SEARCH_PREFER_YTSEARCH": "1",
+        "MLBB_VOD_SEARCH_BATCH": "2",
+    }
+    got = vod_discovery_search_cycle(0, "pubg", env)
+    assert got["queries"] == [
+        "метро роял пабг снайпер",
+        "метро роял пабг эвакуация",
+    ]
+    assert all(str(u).startswith("ytsearch") for u in got["urls"])
+
+
+def test_build_search_targets_prefers_ytsearch() -> None:
+    from youtube_download import build_search_targets, fallback_search_targets
+
+    targets = build_search_targets(
+        "PUBG Mobile Metro Royale fight",
+        limit=10,
+        env={"YOUTUBE_SEARCH_PREFER_YTSEARCH": "1"},
+        sp="EgQQARgB",
+    )
+    assert targets[0].startswith("ytsearch10:")
+    alts = fallback_search_targets(
+        "https://www.youtube.com/results?search_query=PUBG+Mobile&sp=EgQQARgB",
+        limit=10,
+    )
+    assert alts and alts[0].startswith("ytsearch10:")
 
 def test_pubg_ru_stream_title_ok() -> None:
     assert title_ok("pubg", "Пабг мобайл метро рояль стрим полный матч")

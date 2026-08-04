@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import re
-from urllib.parse import quote_plus
 
 from youtube_mlbb_vod_prefs import (
     YOUTUBE_DURATION_SP_4_TO_20,
@@ -54,8 +53,15 @@ WOT_ANGLE_QUERIES = (
 )
 
 
-def _queries_for(game: str) -> tuple[str, ...]:
+def _queries_for(game: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     g = game.strip().lower()
+    env = env or {}
+    env_key = "WOT_VOD_SEARCH_QUERIES" if g == "wot" else "GENSHIN_VOD_SEARCH_QUERIES"
+    raw = (env.get(env_key) or os.environ.get(env_key) or "").strip()
+    if raw:
+        custom = tuple(q.strip() for q in raw.split(",") if q.strip())
+        if custom:
+            return custom
     if g == "wot":
         return WOT_CORE_QUERIES + WOT_ANGLE_QUERIES
     return GENSHIN_CORE_QUERIES + GENSHIN_ANGLE_QUERIES
@@ -78,8 +84,10 @@ def title_ok(game: str, title: str) -> bool:
 
 
 def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None = None) -> dict[str, object]:
+    from youtube_download import build_search_targets
+
     env = env or {}
-    queries = list(_queries_for(game))
+    queries = list(_queries_for(game, env))
     batch = int(env.get("EXTENDED_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "3")))
     delay = float(env.get("EXTENDED_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
     limit = int(env.get("EXTENDED_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "20")))
@@ -87,26 +95,22 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
         return {"queries": [], "batch": batch, "delay": delay, "limit": limit, "sp": ""}
     offset = (cycle * batch) % len(queries)
     picked = [queries[(offset + i) % len(queries)] for i in range(batch)]
-    sp = env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1"
-    freshness = (
-        YOUTUBE_FRESHNESS_SP_THIS_MONTH
-        if env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1"
-        else ""
-    )
-    duration_sp = YOUTUBE_DURATION_SP_4_TO_20 if sp else ""
-    search_urls = []
+    sp = ""
+    if env.get("MLBB_VOD_YOUTUBE_DURATION_FILTER", "1") == "1":
+        sp = YOUTUBE_DURATION_SP_4_TO_20
+    elif env.get("MLBB_VOD_SEARCH_FRESH", "1") == "1":
+        sp = YOUTUBE_FRESHNESS_SP_THIS_MONTH
+    search_urls: list[str] = []
+    search_attempts: list[list[str]] = []
     for q in picked:
-        url = f"ytsearch{limit}:{quote_plus(q)}"
-        if duration_sp or freshness:
-            url = f"https://www.youtube.com/results?search_query={quote_plus(q)}"
-            if duration_sp:
-                url += f"&sp={duration_sp}"
-            elif freshness:
-                url += f"&sp={freshness}"
-        search_urls.append(url)
+        targets = build_search_targets(q, limit=limit, env=env, sp=sp)
+        search_attempts.append(targets)
+        if targets:
+            search_urls.append(targets[0])
     return {
         "queries": picked,
         "urls": search_urls,
+        "attempts": search_attempts,
         "batch": batch,
         "delay": delay,
         "limit": limit,

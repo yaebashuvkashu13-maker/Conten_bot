@@ -38,27 +38,36 @@ GENSHIN_SOFTEN_L3: dict[str, str] = {
     "PUBG_RELAX_OWNER_HEURISTICS": "1",
 }
 
+# Soften must LOWER barriers vs production defaults. Absolute "0.048" values used to
+# overwrite a looser env (e.g. 0.012) and accidentally harden the gate during a dry streak.
 WOT_SOFTEN_L1: dict[str, str] = {
     "VISUAL_MENU_OVERLAY_MAX": "0.58",
-    "SMART_WOT_MIN_IMPACT_DENSITY": "0.048",
-    "SMART_WOT_MIN_BURST_RATIO": "2.0",
-    "SMART_WOT_COMBAT_MIN": "0.14",
+    "SMART_WOT_MIN_IMPACT_DENSITY": "0.010",
+    "SMART_WOT_CRUISE_IMPACT_CAP": "0.025",
+    "WOT_BRAWL_CRUISE_IMPACT_MAX": "0.025",
+    "WOT_BRAWL_MIN_HIT_FLASHES": "1",
+    "SMART_WOT_MIN_BURST_RATIO": "1.6",
+    "SMART_WOT_COMBAT_MIN": "0.12",
     "PUBG_COMBAT_FRAMES_REQUIRED": "2",
 }
 
 WOT_SOFTEN_L2: dict[str, str] = {
     **WOT_SOFTEN_L1,
     "VISUAL_MENU_OVERLAY_MAX": "0.78",
-    "SMART_WOT_MIN_IMPACT_DENSITY": "0.042",
-    "SMART_WOT_MIN_BURST_RATIO": "1.7",
+    "SMART_WOT_MIN_IMPACT_DENSITY": "0.006",
+    "SMART_WOT_CRUISE_IMPACT_CAP": "0.015",
+    "WOT_BRAWL_CRUISE_IMPACT_MAX": "0.015",
+    "SMART_WOT_MIN_BURST_RATIO": "1.3",
     "PUBG_COMBAT_FRAMES_REQUIRED": "1",
     "VISUAL_PUBG_MIN_FRAMES_PASS": "1",
 }
 
 WOT_SOFTEN_L3: dict[str, str] = {
     **WOT_SOFTEN_L2,
-    "SMART_WOT_MIN_IMPACT_DENSITY": "0.036",
-    "SMART_WOT_MIN_BURST_RATIO": "1.4",
+    "SMART_WOT_MIN_IMPACT_DENSITY": "0.003",
+    "SMART_WOT_CRUISE_IMPACT_CAP": "0.008",
+    "WOT_BRAWL_CRUISE_IMPACT_MAX": "0.008",
+    "SMART_WOT_MIN_BURST_RATIO": "1.1",
     "PUBG_RELAX_OWNER_HEURISTICS": "1",
     "PUBG_REJECT_BOT_FARM": "0",
 }

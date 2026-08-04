@@ -55,7 +55,14 @@ def vod_fast_combat_check(
         return False, "fast_probe_no_duration", []
 
     skip = float(os.environ.get("MLBB_VOD_FAST_SKIP_INTRO", "300"))
+    # Highlight packs (~3–7 min) cannot skip a 5 min intro — scale down instead of hard-fail.
+    if dur < skip + 150:
+        skip = min(skip, max(20.0, dur * 0.12))
     offsets = _probe_offsets(dur, skip_intro=skip)
+    if not offsets and dur >= 90:
+        mid = max(15.0, min(dur * 0.4, dur - float(WINDOW_SEC) - 15.0))
+        if mid > 0 and mid + WINDOW_SEC < dur - 5:
+            offsets = [round(mid, 1)]
     if not offsets:
         return False, "fast_probe_too_short", []
 

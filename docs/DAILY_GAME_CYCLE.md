@@ -6,14 +6,16 @@
 00:00 MSK ──► сброс счётчиков (Europe/Moscow)
          │
          ▼
-    MLBB (10 клипов/день) ──► PUBG Metro Royale (10) ──► Standoff 2 (10) ──► idle до 00:00 MSK
+    MLBB (5) ──► PUBG (3 склейки×3) ──► Standoff (3×3) ──► Genshin (5) ──► WoT (3×3) ──► idle
 ```
 
-| Этап | Скрипт | Квота (env) |
-|------|--------|-------------|
-| MLBB | `mlbb_vod_segment_feed.py` | `DAILY_MLBB_QUOTA=10` |
-| PUBG | `shooter_vod_segment_feed.py pubg` | `DAILY_PUBG_QUOTA=10` |
-| Standoff | `shooter_vod_segment_feed.py standoff` | `DAILY_STANDOFF_QUOTA=10` |
+| Этап | Скрипт | Квота (env) | Формат |
+|------|--------|-------------|--------|
+| MLBB | `mlbb_vod_segment_feed.py` | `DAILY_GAME_MLBB_QUOTA=5` | double+ kill clips |
+| PUBG | `shooter_vod_segment_feed.py pubg` | `DAILY_GAME_PUBG_QUOTA=3` | **3 боя → 1 видео**, 3 склейки/день |
+| Standoff | `shooter_vod_segment_feed.py standoff` | `DAILY_GAME_STANDOFF_QUOTA=3` | то же |
+| Genshin | `shooter_vod_segment_feed.py genshin` | `DAILY_GAME_GENSHIN_QUOTA=5` | одиночные |
+| WoT | `shooter_vod_segment_feed.py wot` | `DAILY_GAME_WOT_QUOTA=3` | **3 боя → 1 видео**, 3 склейки/день |
 
 Диспетчер: `daily_cycle_runner.py` (вызывается из `mlbb_vod_segment_feed.sh`).
 
