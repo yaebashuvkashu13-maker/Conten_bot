@@ -377,17 +377,16 @@ def _ocr_variants(zone) -> list[tuple[str, object]]:
     mask = cv2.dilate(mask, np.ones((2, 2), np.uint8), iterations=1)
 
     if os.environ.get("MLBB_BANNER_OCR_GOLD_MASK", "1") == "1":
-        # mask_bw FIRST — raw upscale prefers KDA/clock digits over streak text.
+        # mask_bw first — best on gold HAS SLAIN; raw upscale prefers KDA digits.
         bw = np.full(big.shape[:2], 255, dtype=np.uint8)
         bw[mask > 0] = 0
         variants.append(("mask_bw", cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)))
         on_white = np.full_like(big, 255)
         on_white[mask > 0] = big[mask > 0]
         variants.append(("mask_whitebg", on_white))
-        v = hsv[:, :, 2]
-        _, vt = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        variants.append(("v_otsu", cv2.cvtColor(vt, cv2.COLOR_GRAY2BGR)))
 
+    # Always keep raw upscale — low-color banners (MEGA KIL @585 color=0.007)
+    # have almost no gold mask mass; masks alone return empty/junk.
     variants.append(("up", big))
     return variants
 
