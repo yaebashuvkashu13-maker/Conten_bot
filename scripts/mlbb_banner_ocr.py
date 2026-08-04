@@ -331,9 +331,9 @@ def extract_banner_text_zone(frame, *, tight: bool = False):
     if h < 40 or w < 80:
         return None
     if tight:
-        # Streak text is centered; wide crop only adds KDA/clock/minimap OCR noise.
-        y0, y1 = int(h * 0.04), int(h * 0.22)
-        x0, x1 = int(w * 0.20), int(w * 0.80)
+        # Centered streak band — tall enough to keep HAS SLAIN (8pbq@577).
+        y0, y1 = int(h * 0.03), int(h * 0.26)
+        x0, x1 = int(w * 0.18), int(w * 0.82)
     else:
         y0, y1 = int(h * 0.02), int(h * 0.30)
         x0, x1 = int(w * 0.10), int(w * 0.90)
@@ -364,11 +364,10 @@ def _ocr_variants(zone) -> list[tuple[str, object]]:
     if zone is None:
         return variants
 
-    # Upscale — Tesseract/Rapid need ~3x for thin gold outlines.
+    # Upscale — Rapid needs ~3x for thin gold outlines.
     h, w = zone.shape[:2]
     scale = max(2, int(os.environ.get("MLBB_BANNER_OCR_UPSCALE", "3") or "3"))
     big = cv2.resize(zone, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
-    variants.append(("up", big))
 
     hsv = cv2.cvtColor(big, cv2.COLOR_BGR2HSV)
     gold = cv2.inRange(hsv, np.array([5, 40, 100]), np.array([45, 255, 255]))
@@ -378,24 +377,18 @@ def _ocr_variants(zone) -> list[tuple[str, object]]:
     mask = cv2.dilate(mask, np.ones((2, 2), np.uint8), iterations=1)
 
     if os.environ.get("MLBB_BANNER_OCR_GOLD_MASK", "1") == "1":
-        # Black glyphs on white — best recall on HAS SLAIN (8pbq@577).
+        # mask_bw FIRST — raw upscale prefers KDA/clock digits over streak text.
         bw = np.full(big.shape[:2], 255, dtype=np.uint8)
         bw[mask > 0] = 0
         variants.append(("mask_bw", cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)))
-        # Gold kept on white background.
         on_white = np.full_like(big, 255)
         on_white[mask > 0] = big[mask > 0]
         variants.append(("mask_whitebg", on_white))
-        # V-channel otsu of the upscaled zone.
         v = hsv[:, :, 2]
         _, vt = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(("v_otsu", cv2.cvtColor(vt, cv2.COLOR_GRAY2BGR)))
-        gray = cv2.cvtColor(cv2.bitwise_and(big, big, mask=mask), cv2.COLOR_BGR2GRAY)
-        adapt = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5
-        )
-        variants.append(("adapt", cv2.cvtColor(adapt, cv2.COLOR_GRAY2BGR)))
 
+    variants.append(("up", big))
     return variants
 
 
@@ -493,7 +486,7 @@ def _rapid_read_zone(zone) -> str:
     if zone is None:
         return ""
     texts: list[str] = []
-    max_variants = max(1, int(os.environ.get("MLBB_BANNER_OCR_MAX_VARIANTS", "4") or "4"))
+    max_variants = max(1, int(os.environ.get("MLBB_BANNER_OCR_MAX_VARIANTS", "3") or "3"))
     for name, img in _ocr_variants(zone)[:max_variants]:
         chunk = _rapid_read_image(img)
         if chunk:
@@ -542,10 +535,10 @@ def _tesseract_read_zone(zone) -> str:
 def read_banner_text(frame, *, prefer_rapid: bool = True) -> str:
     """OCR the kill-banner HUD strip. Prefer RapidOCR; fall back to Tesseract."""
     parts: list[str] = []
-    # Tight center crop first — less KDA soup, more streak glyphs.
+    # Wide first (recovers HAS SLAIN), then tighter retry.
     zones = [
-        extract_banner_text_zone(frame, tight=True),
         extract_banner_text_zone(frame, tight=False),
+        extract_banner_text_zone(frame, tight=True),
     ]
     seen = set()
     for zone in zones:
