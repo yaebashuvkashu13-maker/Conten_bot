@@ -104,20 +104,21 @@ def _color_min_score() -> float:
 
 
 def classify_banner_text(text: str) -> KillBannerHit | None:
-    blob = " ".join(str(text or "").split())
-    if not blob:
+    from mlbb_event_classifier import OWN_STREAK, classify_event_text
+
+    decision = classify_event_text(text)
+    if decision.kind != OWN_STREAK or decision.tier <= 0:
         return None
-    if _ENEMY_STREAK_RE.search(blob):
-        return None
-    best_tier = 0
-    best_label = ""
-    for pat, tier, label in _STREAK_PATTERNS:
-        if pat.search(blob) and tier > best_tier:
-            best_tier = tier
-            best_label = label
-    if best_tier <= 0:
-        return None
-    return KillBannerHit(sec=0.0, tier=best_tier, label=best_label, text=blob[:120])
+    return KillBannerHit(
+        sec=0.0,
+        tier=decision.tier,
+        label=decision.label,
+        text=decision.text[:120],
+    )
+
+
+def _trusted_banner_source(source: str) -> bool:
+    return source in {"ocr", "event_model"}
 
 
 def _announce_color_score(frame) -> float:
@@ -253,30 +254,33 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
-    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
-    if classified is not None:
+    from mlbb_event_classifier import OWN_STREAK, classify_event
+
+    decision = classify_event(_ocr_banner_zones(frame, deep=deep), frame)
+    if decision.kind == OWN_STREAK and decision.tier > 0:
         return KillBannerHit(
             sec=round(sec, 2),
-            tier=classified.tier,
-            label=classified.label,
-            text=classified.text,
-            source="ocr",
+            tier=decision.tier,
+            label=decision.label,
+            text=decision.text,
+            source="event_model" if decision.source == "event_model" else "ocr",
         )
+    if decision.confidence >= 0.72:
+        return None
     color = _announce_color_score(frame)
     if color >= _color_min_score():
         deep_text = _ocr_banner_zones(frame, deep=True)
-        if _ENEMY_STREAK_RE.search(deep_text):
-            return None
-        if classify_banner_text(deep_text) is not None:
-            classified = classify_banner_text(deep_text)
-            assert classified is not None
+        decision = classify_event(deep_text, frame)
+        if decision.kind == OWN_STREAK and decision.tier > 0:
             return KillBannerHit(
                 sec=round(sec, 2),
-                tier=classified.tier,
-                label=classified.label,
-                text=classified.text,
-                source="ocr",
+                tier=decision.tier,
+                label=decision.label,
+                text=decision.text,
+                source="event_model" if decision.source == "event_model" else "ocr",
             )
+        if decision.confidence >= 0.72:
+            return None
         if not _color_only_allowed():
             return None
         return KillBannerHit(
@@ -352,9 +356,34 @@ def scan_window(
     if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
-            if hit is not None and hit.source == "ocr":
+            if hit is not None and _trusted_banner_source(hit.source):
                 hits.append(hit)
                 break
+    if not any(hit.source == "ocr" for hit in hits) and frames:
+        from mlbb_event_classifier import OWN_STREAK, classify_event, temporal_consensus
+
+        decisions = [(sec, classify_event("", frame)) for sec, frame in frames]
+        consensus = temporal_consensus(decisions)
+        if consensus is not None and consensus.kind == OWN_STREAK and consensus.tier >= _min_tier():
+            model_secs = [
+                sec
+                for sec, decision in decisions
+                if decision.kind == OWN_STREAK and decision.tier == consensus.tier
+            ]
+            hit_sec = min(model_secs, key=lambda value: abs(value - (focus_sec or value)))
+            hits = [hit for hit in hits if hit.source != "event_model"]
+            hits.append(
+                KillBannerHit(
+                    sec=round(hit_sec, 2),
+                    tier=consensus.tier,
+                    label=consensus.label,
+                    text=(
+                        f"event_model conf={consensus.confidence:.3f} "
+                        f"tier_conf={consensus.tier_confidence:.3f}"
+                    ),
+                    source="event_model",
+                )
+            )
     hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
     return hits
 
@@ -373,7 +402,7 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
         return None
     min_tier = _min_tier()
     for hit in hits:
-        if hit.tier >= min_tier and hit.source == "ocr":
+        if hit.tier >= min_tier and _trusted_banner_source(hit.source):
             return hit
     if not _banner_required():
         for hit in hits:
@@ -422,7 +451,7 @@ def discover_vod_kill_banners(
     probes = 0
 
     def _merge_hit(hit: KillBannerHit) -> None:
-        if hit.tier < need or hit.source != "ocr":
+        if hit.tier < need or not _trusted_banner_source(hit.source):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier:
@@ -518,7 +547,7 @@ def filter_peaks_with_ocr_banner(
     qualified = [
         h
         for h in (known_banners or [])
-        if h.tier >= need and h.source == "ocr"
+        if h.tier >= need and _trusted_banner_source(h.source)
     ]
     if qualified:
         kept: list[float] = []
@@ -532,7 +561,7 @@ def filter_peaks_with_ocr_banner(
     ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
     for peak in peaks[: max(1, ocr_cap)]:
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit and hit.source == "ocr" and hit.tier >= need:
+        if hit and _trusted_banner_source(hit.source) and hit.tier >= need:
             kept.append(peak)
     return kept
 
@@ -684,7 +713,7 @@ def verify_banner_on_source(
     need = min_tier if min_tier is not None else _min_tier()
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
+        if hit.tier >= need and _trusted_banner_source(hit.source):
             return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"
@@ -719,7 +748,7 @@ def verify_rendered_clip(
 
     hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
+        if hit.tier >= need and _trusted_banner_source(hit.source):
             return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
     if _color_only_allowed():
         for hit in hits:
