@@ -51,6 +51,7 @@ def discover_samples(root: Path) -> tuple[list[Path], list[str], list[str], dict
     add("vod_crops/savage/*.png", OWN_STREAK, tier=5)
     add("owner_cal/negative/enemy_kill/*.png", ENEMY_STREAK)
     add("owner_cal/negative/coordination/*.png", COMMAND)
+    add("owner_cal/negative/command/*.png", COMMAND)
     add("owner_cal/negative/objective/*.png", OBJECTIVE)
     for folder in ("no_banner", "not_kill", "wrong_hero", "not_gameplay"):
         add(f"owner_cal/negative/{folder}/*.png", OTHER)
