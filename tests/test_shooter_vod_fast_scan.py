@@ -69,3 +69,37 @@ def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
     assert ok is True
     assert reason == "fast_probe_disabled"
     assert peaks == []
+
+
+def test_short_vod_gets_dense_offsets(monkeypatch) -> None:
+    from shooter_vod_fast_scan import _probe_offsets
+
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE_MAX", "8")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE_STEP_SHORT", "90")
+    # ~10 min VOD must not return empty (old skip+90 gate).
+    offs = _probe_offsets(600.0, skip_intro=120.0)
+    assert len(offs) >= 3
+    assert offs[0] <= 60.0 + 1e-6
+
+
+def test_strong_single_hit_passes(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PROBE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_MIN_HITS", "2")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_STRONG_PANN", "0.40")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_PANN_MIN", "0.14")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"")
+    seen: list[float] = []
+
+    def _panns(_path, t, _w):
+        seen.append(t)
+        # Only the first probe is a strong gun hit.
+        return {"panns_gun_max": 0.55 if len(seen) == 1 else 0.05}
+
+    sve = _mock_smart_video_editor(700.0)
+    with patch.dict(sys.modules, {"smart_video_editor": sve}):
+        with patch("shooter_vod_fast_scan.score_panns_audio", side_effect=_panns):
+            ok, reason, peaks = vod_fast_combat_check(vod, "pubg")
+    assert ok is True
+    assert "strong_1" in reason
+    assert len(peaks) == 1

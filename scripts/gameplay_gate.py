@@ -975,7 +975,12 @@ def segment_looks_like_pubg_loot_or_walk(
 
 
 def _genshin_boss_bar_score(frame: np.ndarray) -> float:
-    """Boss HP bar at top center — red/orange horizontal strip (0..1)."""
+    """Boss HP bar at top center — thin red/orange horizontal strip (0..1).
+
+    Red traversal domains (Natlan gliding / crimson fog) used to paint the whole
+    top ROI and score 1.0 with no boss bar present (-bOe0LLR5m8 flight head).
+    A real boss HP bar is a *thin* band with darker chrome above/below.
+    """
     small = cv2.resize(frame, (320, 180))
     top = small[0 : int(180 * 0.13), int(320 * 0.12) : int(320 * 0.88)]
     if top.size == 0:
@@ -985,12 +990,38 @@ def _genshin_boss_bar_score(frame: np.ndarray) -> float:
     red_b = cv2.inRange(hsv, (168, 70, 70), (180, 255, 255))
     orange = cv2.inRange(hsv, (8, 90, 90), (32, 255, 255))
     mask = red_a | red_b | orange
-    fill = float(np.count_nonzero(mask)) / float(mask.size)
     row_signal = mask.mean(axis=1) / 255.0
-    strong_rows = int(np.sum(row_signal > 0.10))
-    col_signal = mask.mean(axis=0) / 255.0
-    wide_bar = float(np.sum(col_signal > 0.08)) / max(len(col_signal), 1)
-    return min(1.0, fill * 4.2 + strong_rows * 0.06 + wide_bar * 0.35)
+    if row_signal.size < 3:
+        return 0.0
+
+    band_h = 3
+    best_i = 0
+    best_band = 0.0
+    for i in range(0, int(row_signal.size) - band_h + 1):
+        band = float(row_signal[i : i + band_h].mean())
+        if band > best_band:
+            best_band = band
+            best_i = i
+
+    outside = np.concatenate(
+        [row_signal[:best_i], row_signal[best_i + band_h :]]
+    )
+    outside_mean = float(outside.mean()) if outside.size else 0.0
+    # Environment wash: every row is red — not a thin HP strip.
+    if outside_mean > 0.16 and best_band < outside_mean * 1.85:
+        return float(min(0.08, best_band * 0.12))
+
+    band_mask = mask[best_i : best_i + band_h, :]
+    col_signal = band_mask.mean(axis=0) / 255.0
+    wide_bar = float(np.sum(col_signal > 0.12)) / max(len(col_signal), 1)
+    fill_band = float(np.count_nonzero(band_mask)) / float(max(band_mask.size, 1))
+    if wide_bar < 0.22 or best_band < 0.12:
+        return float(min(0.12, best_band * wide_bar))
+
+    score = best_band * 0.55 + wide_bar * 0.40 + fill_band * 0.25
+    if outside_mean < 0.08:
+        score += 0.12
+    return float(min(1.0, score))
 
 
 def score_genshin_boss_likelihood(
@@ -1057,6 +1088,7 @@ def segment_is_valid_for_montage(
     min_gunfire: float | None = None,
     min_boss: float | None = None,
     crop_box: tuple[int, int, int, int] | None = None,
+    panns_gun_max: float = 0.0,
 ) -> tuple[bool, str]:
     if profile == "genshin" and os.environ.get("SMART_GENSHIN_REQUIRE_BOSS", "1") == "1":
         if crop_box is None:
@@ -1116,7 +1148,12 @@ def segment_is_valid_for_montage(
                 return False, f"cruise_no_action=motion{center_motion:.3f}"
         if impact_density < min_impact * 0.85 and center_motion < 0.020:
             return False, f"empty_drive=density{impact_density:.3f}"
-        if center_motion >= 0.10 and impact_density < max(min_impact * 1.35, 0.070):
+        cruise_cap_raw = os.environ.get("SMART_WOT_CRUISE_IMPACT_CAP", "").strip()
+        try:
+            cruise_cap = float(cruise_cap_raw) if cruise_cap_raw else max(min_impact * 1.35, 0.070)
+        except ValueError:
+            cruise_cap = max(min_impact * 1.35, 0.070)
+        if center_motion >= 0.10 and impact_density < cruise_cap:
             return False, f"cruise_no_action=motion{center_motion:.3f}:impact{impact_density:.3f}"
         return True, "brawl_ok"
     if profile in ("pubg", "standoff"):
@@ -1159,7 +1196,11 @@ def segment_is_valid_for_montage(
             ):
                 return False, "owner_bad_window"
             ok_owner, owner_reason = pubg_passes_owner_heuristics(
-                gunfire_density, burst_ratio, audio_rms, center_motion
+                gunfire_density,
+                burst_ratio,
+                audio_rms,
+                center_motion,
+                panns_gun_max=float(panns_gun_max or 0.0),
             )
             if not ok_owner:
                 return False, owner_reason
@@ -1180,8 +1221,10 @@ def segment_is_valid_for_montage(
                 if not ok_tt:
                     return False, tt_reason
             strict_gun = gunfire_density >= min_gun and burst_ratio >= min_burst
-            heuristic_gun = owner_reason in ("fight_audio", "light_combat", "sniper_hold") or owner_reason.startswith(
-                "relax_"
+            heuristic_gun = (
+                owner_reason in ("fight_audio", "light_combat", "sniper_hold")
+                or owner_reason.startswith("relax_")
+                or str(owner_reason).startswith("panns_")
             )
             if not strict_gun and not heuristic_gun:
                 if owner_reason == "sniper_hold" and center_motion >= 0.030:
@@ -1200,19 +1243,26 @@ def segment_is_valid_for_montage(
         if audio_rms < min_audio * 0.85 and gunfire_density < min_gun * 0.90:
             return False, f"silent_segment=rms{audio_rms:.4f}"
         min_center_motion = float(os.environ.get(f"{prefix}MIN_CENTER_MOTION", "0.018"))
+        panns_trusted = float(panns_gun_max or 0.0) >= float(
+            os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+        )
         if profile == "pubg":
             sniper_ok, _ = pubg_passes_owner_heuristics(
-                gunfire_density, burst_ratio, audio_rms, center_motion
+                gunfire_density,
+                burst_ratio,
+                audio_rms,
+                center_motion,
+                panns_gun_max=float(panns_gun_max or 0.0),
             )
             if sniper_ok and center_motion < min_center_motion:
                 min_center_motion = 0.010
-        if center_motion < min_center_motion:
+        if center_motion < min_center_motion and not panns_trusted:
             return False, f"no_aim_motion={center_motion:.3f}"
         default_max_text = "0.62" if profile == "pubg" else "0.14"
         max_text = float(os.environ.get(f"{prefix}MAX_CENTER_TEXT", default_max_text))
         if center_text > max_text and gunfire_density < min_gun * 0.90:
             return False, f"menu_overlay={center_text:.2f}"
-        if profile == "pubg":
+        if profile == "pubg" and not panns_trusted:
             run_hi = float(os.environ.get("SMART_PUBG_MAX_RUN_MOTION", "0.21"))
             if (
                 center_motion >= 0.09
@@ -1222,7 +1272,8 @@ def segment_is_valid_for_montage(
                 return False, f"run_no_fight=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
         loot_cap = min_gun * (0.85 if profile == "pubg" else 1.0)
         if (
-            segment_looks_like_pubg_loot_or_walk(
+            not panns_trusted
+            and segment_looks_like_pubg_loot_or_walk(
                 video_path,
                 start_sec,
                 duration_sec,

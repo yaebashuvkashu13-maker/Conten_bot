@@ -24,9 +24,14 @@ def _min_teamfight_score() -> float:
 
 def _motion_threshold(analysis: dict[str, Any]) -> float:
     motion = np.asarray(analysis.get("center_motion", []), dtype=np.float32)
+    abs_floor = float(
+        os.environ.get("MLBB_TEAMFIGHT_ABS_MOTION", os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+    )
     if motion.size < 4:
-        return 0.02
-    return max(0.018, float(np.percentile(motion, 55)) * 0.85)
+        return abs_floor
+    # Relative thr helps on loud VODs, but never below a real fight floor —
+    # otherwise a calm farming VOD normalizes to "everything is a fight".
+    return max(abs_floor, float(np.percentile(motion, 55)) * 0.85)
 
 
 def _sustain_bins(analysis: dict[str, Any], start: float, *, min_bins: int = 2) -> float:
@@ -133,7 +138,11 @@ def rank_starts_by_teamfight(
     video_path: Path | None = None,
     banner_tiers: dict[float, int] | None = None,
 ) -> list[float]:
-    """Re-rank stage-1 starts by combined teamfight score."""
+    """Re-rank stage-1 starts by combined teamfight score.
+
+    Never fall back to the full unfiltered list — that re-admitted farming /
+    recall junk after a banner miss.
+    """
     if not starts:
         return []
     tiers = banner_tiers or {}
@@ -148,4 +157,110 @@ def rank_starts_by_teamfight(
         )
         scored.append((sc, start))
     scored.sort(key=lambda row: row[0], reverse=True)
-    return [s for sc, s in scored if sc >= _min_teamfight_score() * 0.5] or [s for _, s in scored]
+    frac = float(os.environ.get("MLBB_TEAMFIGHT_RANK_FRAC", "0.75"))
+    min_keep = _min_teamfight_score() * max(0.35, min(1.0, frac))
+    kept = [s for sc, s in scored if sc >= min_keep]
+    if kept:
+        max_n = max(1, int(os.environ.get("MLBB_TEAMFIGHT_RANK_MAX", "8")))
+        return kept[:max_n]
+    floor = float(os.environ.get("MLBB_TEAMFIGHT_ABS_FLOOR", "0.30"))
+    if scored and scored[0][0] >= floor:
+        return [scored[0][1]]
+    return []
+
+
+def fight_first_peaks(
+    analysis: dict[str, Any],
+    starts: list[float] | None = None,
+    *,
+    limit: int | None = None,
+    min_score: float | None = None,
+) -> list[float]:
+    """
+    Cheap fight-first ranking: motion/audio bins only (no HUD decode).
+
+    Used to decide WHERE to look for kill banners — banner OCR runs after
+    a fight peak, not as a blind dense sweep of the whole VOD.
+    """
+    if starts is None:
+        starts = []
+    if not starts:
+        # Derive peaks from analysis motion when stage1 list is empty.
+        win = float(analysis.get("window_seconds", 2.0))
+        motion = np.asarray(analysis.get("center_motion", []), dtype=np.float32)
+        audio = np.asarray(analysis.get("audio", []), dtype=np.float32)
+        if motion.size == 0:
+            return []
+        combined = motion * 0.55 + (audio * 0.45 if audio.size == motion.size else 0.0)
+        order = np.argsort(combined)[::-1]
+        gap = float(os.environ.get("MLBB_FIGHT_FIRST_MIN_GAP_SEC", "18"))
+        skip = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "45"))
+        picked: list[float] = []
+        for idx in order:
+            t = float(idx) * win
+            if t < skip:
+                continue
+            if any(abs(t - s) < gap for s in picked):
+                continue
+            picked.append(round(t, 1))
+            if len(picked) >= int(os.environ.get("MLBB_BANNER_FIGHT_FIRST_POOL", "32")):
+                break
+        starts = picked
+    if not starts:
+        return []
+
+    floor = float(
+        min_score
+        if min_score is not None
+        else os.environ.get("MLBB_FIGHT_FIRST_MIN_SCORE", os.environ.get("MLBB_TEAMFIGHT_ABS_FLOOR", "0.28"))
+    )
+    cap = max(
+        1,
+        int(limit if limit is not None else os.environ.get("MLBB_BANNER_FIGHT_FIRST_PEAKS", "12")),
+    )
+    scored: list[tuple[float, float]] = []
+    for start in starts:
+        sc = float(score_teamfight_bins(analysis, float(start)))
+        if sc < floor:
+            continue
+        scored.append((sc, float(start)))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    if not scored:
+        # Keep strongest peaks even if under floor — still better than blind dense.
+        soft: list[tuple[float, float]] = [
+            (float(score_teamfight_bins(analysis, float(s))), float(s)) for s in starts
+        ]
+        soft.sort(key=lambda row: (-row[0], row[1]))
+        return [t for _, t in soft[:cap]]
+    # Time-bucket coverage: global top-N alone clusters mid-game and misses early/late
+    # doubles. Take the best peak per ~90s bucket, then fill with global score order.
+    bucket = float(os.environ.get("MLBB_FIGHT_FIRST_BUCKET_SEC", "90") or "0")
+    if bucket > 0 and len(scored) > 1:
+        best_by_bucket: dict[int, tuple[float, float]] = {}
+        for sc, t in scored:
+            b = int(float(t) // bucket)
+            prev = best_by_bucket.get(b)
+            if prev is None or sc > prev[0]:
+                best_by_bucket[b] = (sc, t)
+        bucket_picks = [t for _, t in sorted(best_by_bucket.values(), key=lambda row: -row[0])]
+        global_picks = [t for _, t in scored]
+        return list(dict.fromkeys([*bucket_picks, *global_picks]))[:cap]
+    return [t for _, t in scored[:cap]]
+
+
+def metrics_combat_score(
+    *,
+    center_motion: float,
+    minimap_delta: float,
+    skill_delta: float,
+) -> float:
+    """Cheap combat proxy from already-scored highlight metrics (0..1)."""
+    motion_min = float(os.environ.get("MLBB_FIGHT_MIN_MOTION", "0.038"))
+    mini_min = float(os.environ.get("MLBB_FIGHT_MIN_MINIMAP", "0.016"))
+    skill_min = float(os.environ.get("MLBB_FIGHT_MIN_SKILL", "0.014"))
+    return min(
+        1.0,
+        min(1.0, float(center_motion) / max(motion_min, 1e-6)) * 0.40
+        + min(1.0, float(minimap_delta) / max(mini_min, 1e-6)) * 0.35
+        + min(1.0, float(skill_delta) / max(skill_min, 1e-6)) * 0.25,
+    )
