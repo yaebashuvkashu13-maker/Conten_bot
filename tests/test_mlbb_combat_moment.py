@@ -90,22 +90,53 @@ def test_resolve_fight_bounds_combat_mode_skips_banner_requirement() -> None:
                 os.environ[key] = val
 
 
-def test_classify_frame_cyan_flash_counts_as_banner() -> None:
+def test_classify_frame_cyan_flash_alone_is_not_a_kill() -> None:
     import mlbb_kill_banner as kb
     import numpy as np
 
     frame = np.zeros((270, 480, 3), dtype=np.uint8)
     # Paint cyan/blue announce flash (HSV ~H103) in banner zone — BGR
     frame[10:70, 80:400] = (161, 128, 85)
-    old = {k: os.environ.get(k) for k in ("MLBB_BANNER_VISUAL_OK", "MLBB_KILL_BANNER_COLOR_ONLY", "MLBB_BANNER_REF_MATCH")}
+    keys = (
+        "MLBB_BANNER_VISUAL_OK",
+        "MLBB_KILL_BANNER_COLOR_ONLY",
+        "MLBB_BANNER_COLOR_AS_STREAK",
+        "MLBB_BANNER_REF_MATCH",
+    )
+    old = {k: os.environ.get(k) for k in keys}
     os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
-    os.environ["MLBB_KILL_BANNER_COLOR_ONLY"] = "1"
+    os.environ["MLBB_KILL_BANNER_COLOR_ONLY"] = "0"
+    os.environ["MLBB_BANNER_COLOR_AS_STREAK"] = "0"
+    os.environ["MLBB_BANNER_REF_MATCH"] = "0"
+    try:
+        with patch.object(kb, "_ocr_banner_zones", return_value=""):
+            hit = kb._classify_frame(42.0, frame, deep=True)
+        # Color alone must not invent double/triple — that shipped jog clips.
+        assert hit is None
+    finally:
+        for key, val in old.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
+
+
+def test_classify_frame_color_as_streak_opt_in() -> None:
+    import mlbb_kill_banner as kb
+    import numpy as np
+
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    frame[10:70, 80:400] = (161, 128, 85)
+    keys = ("MLBB_BANNER_VISUAL_OK", "MLBB_BANNER_COLOR_AS_STREAK", "MLBB_BANNER_REF_MATCH")
+    old = {k: os.environ.get(k) for k in keys}
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
+    os.environ["MLBB_BANNER_COLOR_AS_STREAK"] = "1"
     os.environ["MLBB_BANNER_REF_MATCH"] = "0"
     try:
         with patch.object(kb, "_ocr_banner_zones", return_value=""):
             hit = kb._classify_frame(42.0, frame, deep=True)
         assert hit is not None
-        assert hit.source in ("flash", "color")
+        assert hit.source == "flash"
         assert hit.tier >= 2
     finally:
         for key, val in old.items():

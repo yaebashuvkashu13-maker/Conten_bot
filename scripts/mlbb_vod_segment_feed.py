@@ -1304,6 +1304,19 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         return False, reason, report
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
+        # Never ship color-invented "double/triple" — cyan pixels ≠ kill streak.
+        src = str(row.get("banner_source") or row.get("source") or "").strip().lower()
+        if src in ("flash", "color") and os.environ.get("MLBB_BANNER_COLOR_AS_STREAK", "0") != "1":
+            return False, f"banner_source_not_shippable={src}", report
+        # Require real ≥double evidence on the row when present.
+        try:
+            tier_claim = int(row.get("kill_banner_tier") or 0)
+        except (TypeError, ValueError):
+            tier_claim = 0
+        label = str(row.get("kill_banner") or "").strip().lower()
+        if tier_claim >= 2 or label in ("double", "triple", "maniac", "savage", "legend"):
+            if src in ("flash", "color"):
+                return False, f"fake_streak_from_{src}", report
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "0") == "1"
         if presend_banner:
             from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier

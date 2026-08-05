@@ -264,9 +264,9 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
     """
     Human-like banner detect order:
-    1) OCR text (when readable)
+    1) OCR text (when readable) — only OCR/ref may ship as ≥double
     2) Visual reference match (wiki skins + owner kill photos)
-    3) Cyan/blue + white announce flash (color) as Double-tier anchor
+    3) Cyan flash is a probe hint only — never invent double/triple from color alone
     """
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
@@ -306,8 +306,9 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 text=classified.text,
                 source="ocr",
             )
-        if _visual_banner_ok():
-            # Gold flash in kill-announce zone = treat as streak banner (≥ double).
+        # Cyan/blue pixels alone are NOT a kill streak. Inventing double/triple
+        # from color_flash ships jog clips with zero kills — never do that by default.
+        if _color_as_streak_allowed():
             tier = 3 if color >= _color_min_score() * 1.6 else 2
             return KillBannerHit(
                 sec=round(sec, 2),
@@ -316,24 +317,22 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 text=f"color_flash={color:.3f}",
                 source="flash",
             )
-        if not _color_only_allowed():
-            return None
-        return KillBannerHit(
-            sec=round(sec, 2),
-            tier=2,
-            label="double",
-            text=f"color={color:.3f}",
-            source="color",
-        )
+        return None
     return None
 
 
 def _color_only_allowed() -> bool:
-    return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "1") == "1"
+    """Legacy: allow color-only hits in verify_rendered_clip. Default off."""
+    return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1"
+
+
+def _color_as_streak_allowed() -> bool:
+    """Opt-in only: treat cyan flash as fake double/triple. Default OFF."""
+    return os.environ.get("MLBB_BANNER_COLOR_AS_STREAK", "0") == "1"
 
 
 def _visual_banner_ok() -> bool:
-    """Accept non-OCR visual evidence (ref / cyan flash) as a real banner hit."""
+    """Accept non-OCR visual evidence (wiki/owner ref match) as a real banner hit."""
     return os.environ.get("MLBB_BANNER_VISUAL_OK", "1") == "1"
 
 
@@ -342,8 +341,12 @@ def _hit_qualifies(hit: KillBannerHit, *, min_tier: int) -> bool:
         return False
     if hit.source == "ocr":
         return True
-    if hit.source in ("ref", "flash", "color") and _visual_banner_ok():
+    # Ref match (wiki skin / owner kill photo) may count when visual ok.
+    if hit.source == "ref" and _visual_banner_ok():
         return True
+    # flash/color never ship as ≥double unless explicitly opted in.
+    if hit.source in ("flash", "color"):
+        return _color_as_streak_allowed() and _visual_banner_ok()
     return not _banner_required()
 
 
@@ -713,7 +716,7 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-banner anchor (OCR / visual ref / cyan flash) inside motion sustain.
+    Prefer kill-banner anchor (OCR / visual ref) inside motion sustain.
     Falls back to motion when banner missing and motion_anchor / combat mode allows it.
     """
     from mlbb_combat_moment import moment_anchor_mode
