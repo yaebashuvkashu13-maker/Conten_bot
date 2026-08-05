@@ -469,6 +469,10 @@ def _scan_vod(
                 vod_id=vid,
                 lead_sec=lead,
             )
+            # No sendable row left (gap/labels/score) — exhaust even if a peak
+            # is technically "available" but filtered out. Prevents inbox loops.
+            if not blocked:
+                blocked = True
             log.warning(
                 "all peaks blocked vod=%s pool=%s used_peaks=%s gap=%.0fs soften=%s blocked=%s",
                 vod.name,
