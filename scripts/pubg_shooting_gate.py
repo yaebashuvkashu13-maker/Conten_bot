@@ -17,32 +17,19 @@ from gameplay_gate import (
 MIN_GUNFIRE_DENSITY = 0.068
 MIN_BURST_RATIO = 5.2
 
-FORBIDDEN_REASONS = frozenset(
-    {
-        "run_no_fight",
-        "run_no_shots",
-        "run_fake_gun",
-        "loot_walk",
-        "run_loot",
-        "talk_menu",
-        "talk_low_gun",
-        "streamer_talk",
-        "no_shots",
-        "low_gunfire",
-        "silent_segment",
-        "owner_bad_window",
-    }
-)
-
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
+# Absolute floors even when soften/env try to lower them (quality floor).
+QUALITY_FLOOR_GUNFIRE = 0.055
+QUALITY_FLOOR_BURST = 4.8
 
 
 def _min_gunfire() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    return max(raw, QUALITY_FLOOR_GUNFIRE)
 
 
 def _min_burst() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    return max(raw, QUALITY_FLOOR_BURST)
 
 
 def reason_is_forbidden(reason: str) -> bool:

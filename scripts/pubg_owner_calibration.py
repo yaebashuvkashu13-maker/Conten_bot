@@ -165,10 +165,13 @@ def pubg_passes_owner_heuristics(
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
     panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    # Quality floor: never trust weak PANNs as "gunfire" (softened env used to drop this to 0.28).
+    panns_trust = max(panns_trust, float(os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40")))
     if panns_gun_max >= panns_trust:
         return True, f"panns_trust={panns_gun_max:.3f}"
+    # RELAX heuristics disabled unless explicitly forced AND quality-first is off.
     relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
-    if relax in ("1", "2"):
+    if relax in ("1", "2") and os.environ.get("SHOOTER_VOD_QUALITY_FIRST", "1") != "1":
         if panns_gun_max >= max(0.22, panns_trust - 0.08) and gunfire_density >= 0.020:
             return True, f"panns_audio=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}"
         if gunfire_density >= 0.040 and burst_ratio >= 3.5:
