@@ -1802,7 +1802,7 @@ def _try_ship_banner_seeds(
     blocked_ids: set,
 ) -> int:
     """
-    Ship clips anchored on already-verified OCR/ref ≥double peaks.
+    Ship clips anchored on already-verified visual-ref ≥double peaks.
     Skips heavy highlight scoring; still uses normalize + presend gates.
     """
     from mlbb_learning_first import can_send
@@ -1934,7 +1934,7 @@ def _process_vod_segments(
         log.info("fast-probe ok vod=%s reason=%s seeds=%s", vod.name, fast_reason, seed_peaks[:6])
 
         # Direct ship from real banner seeds — skip CLIP/PANNs thrash when we already
-        # have OCR/ref ≥double. Still runs normalize + presend quality gates.
+        # have visual-ref ≥double. Still runs normalize + presend quality gates.
         if (
             banner_seed_peaks
             and os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"

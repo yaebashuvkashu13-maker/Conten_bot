@@ -11,7 +11,7 @@ from highlight_scorer import WINDOW_SEC, normalize_profile
 
 
 def moment_anchor_mode() -> str:
-    """banner = visual/OCR kill banner first | combat = HUD+motion | motion = fight bounds only."""
+    """banner = visual kill-banner refs first | combat = HUD+motion | motion = fight bounds only."""
     return (os.environ.get("MLBB_MOMENT_ANCHOR") or "banner").strip().lower()
 
 

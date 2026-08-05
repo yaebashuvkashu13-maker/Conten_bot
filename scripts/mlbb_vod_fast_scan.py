@@ -27,7 +27,7 @@ def _banner_color_at(video_path: Path, t: float) -> float:
 
 def fast_banner_probe(video_path: Path) -> tuple[bool, str, list[float]]:
     """
-    Fast + correct preflight: find real ≥double (OCR/ref) without full-VOD analyze.
+    Fast + correct preflight: find real ≥double via visual ref (OCR optional).
     Returns seed peaks at banner seconds. Color alone never counts as success.
     """
     from mlbb_kill_banner import discover_vod_kill_banners_fast
@@ -50,7 +50,7 @@ def vod_fast_combat_check(
 ) -> tuple[bool, str, list[float]]:
     """
     Sparse preflight before full highlight scan.
-    Default (MLBB_FAST_PROBE_MODE=banner): real kill-banner OCR/ref first.
+    Default (MLBB_FAST_PROBE_MODE=banner): visual kill-banner ref match first.
     combat: HUD teamfight probes (slower — pulls full analyze).
     gun: legacy banner color + PANNs gunfire.
     """

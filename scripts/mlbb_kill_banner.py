@@ -261,27 +261,22 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
     return out
 
 
+def _ocr_ok() -> bool:
+    """OCR is blind on most VODs — off by default. Use wiki/owner refs instead."""
+    return os.environ.get("MLBB_BANNER_OCR_OK", "0") == "1"
+
+
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
     """
-    Human-like banner detect order:
-    1) OCR text (when readable) — only OCR/ref may ship as ≥double
-    2) Visual reference match (wiki skins + owner kill photos)
-    3) Cyan flash is a probe hint only — never invent double/triple from color alone
+    Useful banner detect order (OCR is NOT the ship gate):
+    1) Visual reference match (wiki skins + owner kill photos) — primary
+    2) OCR text only when MLBB_BANNER_OCR_OK=1 (default off — Tess is blind here)
+    3) Cyan flash is a probe tip only — never invent double/triple from color alone
     """
-    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
-    if classified is not None:
-        return KillBannerHit(
-            sec=round(sec, 2),
-            tier=classified.tier,
-            label=classified.label,
-            text=classified.text,
-            source="ocr",
-        )
-
     color = _announce_color_score(frame)
     color_gate = _color_min_score() * (0.55 if deep else 0.75)
 
-    # Visual bank FIRST when zone looks like an announce — humans recognize shape/color, not OCR.
+    # Visual bank first — humans recognize banner shape/skin, not Tesseract noise.
     if color >= color_gate or deep:
         try:
             from mlbb_banner_ref_match import classify_banner_reference
@@ -292,13 +287,9 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
         except Exception:
             pass
 
-    if color >= _color_min_score():
-        deep_text = _ocr_banner_zones(frame, deep=True)
-        if _ENEMY_STREAK_RE.search(deep_text):
-            return None
-        if classify_banner_text(deep_text) is not None:
-            classified = classify_banner_text(deep_text)
-            assert classified is not None
+    if _ocr_ok() and (color >= color_gate or deep):
+        classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
+        if classified is not None:
             return KillBannerHit(
                 sec=round(sec, 2),
                 tier=classified.tier,
@@ -306,6 +297,21 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 text=classified.text,
                 source="ocr",
             )
+
+    if color >= _color_min_score():
+        if _ocr_ok():
+            deep_text = _ocr_banner_zones(frame, deep=True)
+            if _ENEMY_STREAK_RE.search(deep_text):
+                return None
+            classified = classify_banner_text(deep_text)
+            if classified is not None:
+                return KillBannerHit(
+                    sec=round(sec, 2),
+                    tier=classified.tier,
+                    label=classified.label,
+                    text=classified.text,
+                    source="ocr",
+                )
         # Cyan/blue pixels alone are NOT a kill streak. Inventing double/triple
         # from color_flash ships jog clips with zero kills — never do that by default.
         if _color_as_streak_allowed():
@@ -332,23 +338,28 @@ def _color_as_streak_allowed() -> bool:
 
 
 def _visual_banner_ok() -> bool:
-    """Accept non-OCR visual evidence (wiki/owner ref match) as a real banner hit."""
+    """Accept wiki/owner visual ref match as a real banner hit (primary ship gate)."""
     return os.environ.get("MLBB_BANNER_VISUAL_OK", "1") == "1"
 
 
 def _hit_qualifies(hit: KillBannerHit, *, min_tier: int) -> bool:
     if hit.tier < min_tier:
         return False
-    if hit.source == "ocr":
-        return True
-    # Ref match (wiki skin / owner kill photo) may count when visual ok.
+    # Primary: visual ref (wiki + owner photos).
     if hit.source == "ref" and _visual_banner_ok():
         return True
+    # OCR only when explicitly enabled — default off (blind Tess).
+    if hit.source == "ocr":
+        return _ocr_ok()
     # flash/color never ship as ≥double unless explicitly opted in.
     if hit.source in ("flash", "color"):
         return _color_as_streak_allowed() and _visual_banner_ok()
     return not _banner_required()
 
+
+def _source_rank(source: str) -> int:
+    """Lower is better. Ref beats OCR; flash/color last."""
+    return {"ref": 0, "ocr": 1, "flash": 2, "color": 3}.get(str(source or ""), 9)
 
 def _candidate_secs(
     frames: list[tuple[float, object]],
@@ -385,7 +396,7 @@ def scan_window(
     deep: bool = False,
     quick: bool = False,
 ) -> list[KillBannerHit]:
-    """Scan [t0, t1] for kill-streak banners; color prefilter then OCR on candidates."""
+    """Scan [t0, t1] for kill-streak banners; cyan tip prefilter then ref (OCR optional)."""
     if quick:
         deep = False
         span = max(0.0, t1 - t0)
@@ -409,10 +420,10 @@ def scan_window(
     if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
-            if hit is not None and hit.source == "ocr":
+            if hit is not None and hit.source in ("ref", "ocr"):
                 hits.append(hit)
                 break
-    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
+    hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
     return hits
 
 
@@ -429,11 +440,11 @@ def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) ->
     if not hits:
         return None
     min_tier = _min_tier()
-    # Prefer OCR > ref > flash/color, then higher tier, then closer to peak.
+    # Prefer ref > OCR > flash/color, then higher tier, then closer to peak.
     ranked = sorted(
         hits,
         key=lambda h: (
-            0 if h.source == "ocr" else 1 if h.source == "ref" else 2,
+            _source_rank(h.source),
             -h.tier,
             abs(h.sec - peak_sec),
         ),
@@ -543,8 +554,8 @@ def discover_vod_kill_banners_fast(
     hint_peaks: list[float] | None = None,
 ) -> list[KillBannerHit]:
     """
-    Fast + correct discover: ffprobe duration grid → cyan tip rank → OCR/ref only.
-    Never invents double/triple from color. No full-VOD analyze_video.
+    Fast + correct discover: ffprobe grid → cyan tip rank → visual ref match.
+    OCR only if MLBB_BANNER_OCR_OK=1. Never invents double from color alone.
     """
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return []
@@ -591,7 +602,8 @@ def discover_vod_kill_banners_fast(
             continue
         if hits and abs(hit.sec - hits[-1].sec) < 6.0:
             if hit.tier > hits[-1].tier or (
-                hit.tier == hits[-1].tier and hit.source == "ocr" and hits[-1].source != "ocr"
+                hit.tier == hits[-1].tier
+                and _source_rank(hit.source) < _source_rank(hits[-1].source)
             ):
                 hits[-1] = hit
         else:
@@ -608,7 +620,7 @@ def discover_vod_kill_banners_fast(
         if ship_on_first and hits:
             break
 
-    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
+    hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
     log.info(
         "banner fast-discover %s: done probes=%s hits=%s elapsed=%.1fs",
         vod.name,
@@ -633,7 +645,7 @@ def discover_vod_kill_banners(
         return []
     if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
         return []
-    # Fast path first — correct (OCR/ref only) and skips multi-minute analyze.
+    # Fast path first — correct (visual ref primary) and skips multi-minute analyze.
     if os.environ.get("MLBB_BANNER_FAST_DISCOVER", "1") == "1":
         fast_hits = discover_vod_kill_banners_fast(
             vod, min_tier=min_tier, hint_peaks=hint_peaks
@@ -673,7 +685,8 @@ def discover_vod_kill_banners(
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier or (
-                hit.tier == hits[-1].tier and hit.source == "ocr" and hits[-1].source != "ocr"
+                hit.tier == hits[-1].tier
+                and _source_rank(hit.source) < _source_rank(hits[-1].source)
             ):
                 hits[-1] = hit
         else:
@@ -778,7 +791,7 @@ def filter_peaks_with_ocr_banner(
     max_probe: int | None = None,
     known_banners: list[KillBannerHit] | None = None,
 ) -> list[float]:
-    """Keep motion peaks that have an OCR-qualified kill banner nearby."""
+    """Keep motion peaks that have a qualifying kill banner nearby (ref primary)."""
     if os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") != "1":
         return peaks
     limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "16"))
@@ -788,7 +801,7 @@ def filter_peaks_with_ocr_banner(
     qualified = [
         h
         for h in (known_banners or [])
-        if h.tier >= need and h.source == "ocr"
+        if _hit_qualifies(h, min_tier=need)
     ]
     if qualified:
         kept: list[float] = []
@@ -799,10 +812,10 @@ def filter_peaks_with_ocr_banner(
                     break
         return kept
     kept: list[float] = []
-    ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
-    for peak in peaks[: max(1, ocr_cap)]:
+    probe_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
+    for peak in peaks[: max(1, probe_cap)]:
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit and hit.source == "ocr" and hit.tier >= need:
+        if hit and _hit_qualifies(hit, min_tier=need):
             kept.append(peak)
     return kept
 
@@ -867,7 +880,7 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-banner anchor (OCR / visual ref) inside motion sustain.
+    Prefer kill-banner anchor (visual ref; OCR only if enabled) inside motion sustain.
     Falls back to motion when banner missing and motion_anchor / combat mode allows it.
     """
     from mlbb_combat_moment import moment_anchor_mode
@@ -929,7 +942,7 @@ def verify_banner_on_source(
     *,
     min_tier: int | None = None,
 ) -> tuple[bool, str]:
-    """Presend: verify streak banner on source VOD (rendered mp4 OCR is unreliable)."""
+    """Presend: verify streak banner on source VOD via visual ref (OCR optional)."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
     need = min_tier if min_tier is not None else _min_tier()
@@ -949,7 +962,7 @@ def verify_rendered_clip(
     banner_sec: float | None = None,
     clip_start: float | None = None,
 ) -> tuple[bool, str]:
-    """Presend: streak banner must appear inside rendered mp4."""
+    """Presend: streak banner must appear inside rendered mp4 (ref primary)."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
     from smart_video_editor import ffprobe_duration
@@ -970,8 +983,8 @@ def verify_rendered_clip(
 
     hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
+        if _hit_qualifies(hit, min_tier=need):
+            return True, f"banner_ok:{hit.source}:{hit.label}@{hit.sec:.1f}s"
     if _color_only_allowed():
         for hit in hits:
             if hit.tier >= need:

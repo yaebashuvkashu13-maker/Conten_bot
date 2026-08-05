@@ -296,7 +296,9 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
     from unittest.mock import patch
 
     vod = Path("/tmp/fake_vod_deep.mp4")
-    hit = kb.KillBannerHit(sec=102.0, tier=2, label="double", text="DOUBLE KILL", source="ocr")
+    hit = kb.KillBannerHit(
+        sec=102.0, tier=2, label="double", text="ref=owner sim=0.55", source="ref"
+    )
     calls: list[bool] = []
 
     def fake_find(_vod, _peak, *, quick: bool = False):
@@ -311,6 +313,8 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
             "MLBB_KILL_BANNER_MIN_TIER",
             "MLBB_MOMENT_ANCHOR",
             "MLBB_BANNER_ENRICH_ONLY",
+            "MLBB_BANNER_VISUAL_OK",
+            "MLBB_BANNER_OCR_OK",
         )
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
@@ -318,6 +322,8 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
     os.environ["MLBB_MOMENT_ANCHOR"] = "banner"
     os.environ["MLBB_BANNER_ENRICH_ONLY"] = "0"
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
+    os.environ["MLBB_BANNER_OCR_OK"] = "0"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
     try:
         with (
@@ -328,6 +334,7 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
         assert calls == [True, False]
         assert out is not None
         assert out[3]["anchor"] == "kill_banner"
+        assert out[3]["banner_source"] == "ref"
     finally:
         for key, val in old.items():
             if val is None:

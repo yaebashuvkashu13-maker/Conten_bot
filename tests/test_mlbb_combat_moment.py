@@ -109,12 +109,14 @@ def test_classify_frame_cyan_flash_alone_is_not_a_kill() -> None:
         "MLBB_KILL_BANNER_COLOR_ONLY",
         "MLBB_BANNER_COLOR_AS_STREAK",
         "MLBB_BANNER_REF_MATCH",
+        "MLBB_BANNER_OCR_OK",
     )
     old = {k: os.environ.get(k) for k in keys}
     os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
     os.environ["MLBB_KILL_BANNER_COLOR_ONLY"] = "0"
     os.environ["MLBB_BANNER_COLOR_AS_STREAK"] = "0"
     os.environ["MLBB_BANNER_REF_MATCH"] = "0"
+    os.environ["MLBB_BANNER_OCR_OK"] = "0"
     try:
         with patch.object(kb, "_ocr_banner_zones", return_value=""):
             hit = kb._classify_frame(42.0, frame, deep=True)
@@ -134,11 +136,17 @@ def test_classify_frame_color_as_streak_opt_in() -> None:
 
     frame = np.zeros((270, 480, 3), dtype=np.uint8)
     frame[10:70, 80:400] = (161, 128, 85)
-    keys = ("MLBB_BANNER_VISUAL_OK", "MLBB_BANNER_COLOR_AS_STREAK", "MLBB_BANNER_REF_MATCH")
+    keys = (
+        "MLBB_BANNER_VISUAL_OK",
+        "MLBB_BANNER_COLOR_AS_STREAK",
+        "MLBB_BANNER_REF_MATCH",
+        "MLBB_BANNER_OCR_OK",
+    )
     old = {k: os.environ.get(k) for k in keys}
     os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
     os.environ["MLBB_BANNER_COLOR_AS_STREAK"] = "1"
     os.environ["MLBB_BANNER_REF_MATCH"] = "0"
+    os.environ["MLBB_BANNER_OCR_OK"] = "0"
     try:
         with patch.object(kb, "_ocr_banner_zones", return_value=""):
             hit = kb._classify_frame(42.0, frame, deep=True)
@@ -151,3 +159,49 @@ def test_classify_frame_color_as_streak_opt_in() -> None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = val
+
+
+def test_hit_qualifies_ref_primary_ocr_off_by_default() -> None:
+    import mlbb_kill_banner as kb
+
+    keys = ("MLBB_BANNER_VISUAL_OK", "MLBB_BANNER_OCR_OK", "MLBB_KILL_BANNER_REQUIRED")
+    old = {k: os.environ.get(k) for k in keys}
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
+    os.environ["MLBB_BANNER_OCR_OK"] = "0"
+    os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
+    try:
+        ref = kb.KillBannerHit(sec=10.0, tier=2, label="double", text="ref=owner", source="ref")
+        ocr = kb.KillBannerHit(sec=10.0, tier=2, label="double", text="DOUBLE KILL", source="ocr")
+        flash = kb.KillBannerHit(sec=10.0, tier=2, label="double", text="color", source="flash")
+        assert kb._hit_qualifies(ref, min_tier=2) is True
+        assert kb._hit_qualifies(ocr, min_tier=2) is False
+        assert kb._hit_qualifies(flash, min_tier=2) is False
+        os.environ["MLBB_BANNER_OCR_OK"] = "1"
+        assert kb._hit_qualifies(ocr, min_tier=2) is True
+    finally:
+        for key, val in old.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
+
+
+def test_classify_skips_ocr_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mlbb_kill_banner as kb
+    import numpy as np
+
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    frame[10:70, 80:400] = (161, 128, 85)
+    monkeypatch.setenv("MLBB_BANNER_OCR_OK", "0")
+    monkeypatch.setenv("MLBB_BANNER_REF_MATCH", "0")
+    monkeypatch.setenv("MLBB_BANNER_COLOR_AS_STREAK", "0")
+    ocr_calls: list[bool] = []
+
+    def _spy_ocr(frame, *, deep: bool = False):
+        ocr_calls.append(deep)
+        return "DOUBLE KILL"
+
+    with patch.object(kb, "_ocr_banner_zones", side_effect=_spy_ocr):
+        hit = kb._classify_frame(1.0, frame, deep=True)
+    assert hit is None
+    assert ocr_calls == []

@@ -24,13 +24,17 @@ python3 scripts/mlbb_banner_ref_ingest.py --all --vod-root /root/data/mlbb/youtu
 
 ## Detection
 
-When OCR fails but the top-center HUD patch matches a reference (`MLBB_BANNER_REF_MATCH=1`),
-`mlbb_kill_banner.py` accepts the hit as `source=ref`.
+Primary ship gate: top-center HUD patch matches a wiki/owner reference
+(`MLBB_BANNER_REF_MATCH=1`) → `source=ref`. OCR is opt-in only (`MLBB_BANNER_OCR_OK=0`
+by default — Tesseract is blind on most VOD banners).
 
 Env:
 - `MLBB_BANNER_REF_ROOT` — this directory
-- `MLBB_BANNER_REF_MATCH=1` — enable visual fallback
-- `MLBB_BANNER_REF_MIN_SIM=0.38` — histogram correlation threshold
+- `MLBB_BANNER_REF_MATCH=1` — enable visual match (primary)
+- `MLBB_BANNER_OWNER_REFS=1` — include owner kill photos
+- `MLBB_BANNER_REF_MIN_SIM=0.36` — wiki histogram correlation threshold
+- `MLBB_BANNER_OWNER_MIN_SIM=0.42` — owner photo threshold
+- `MLBB_BANNER_OCR_OK=0` — keep OCR off unless debugging
 
 ## Note on “all skins”
 
