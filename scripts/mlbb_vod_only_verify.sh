@@ -37,7 +37,7 @@ check_env MLBB_VOD_MOTION_ANCHOR_OK 0
 check_env MLBB_VOD_BANNER_DISCOVER 0
 check_env MLBB_VOD_BANNER_PREFILTER 0
 check_env MLBB_VOD_OWNER_EXEMPLARS 1
-check_env MLBB_VOD_SKIP_REVALIDATE 0
+check_env MLBB_VOD_SKIP_REVALIDATE 1
 check_env MLBB_VOD_ZERO_STREAK_SOFTEN 4
 check_env MLBB_FIGHT_MAX_SEC 28
 check_env MLBB_FIGHT_HARD_MAX_SEC 32
@@ -76,7 +76,7 @@ else
     'MLBB_FIGHT_MAX_SEC=28' \
     'MLBB_FIGHT_HARD_MAX_SEC=32' \
     'MLBB_FIGHT_TRIM_LONG=1' \
-    'MLBB_VOD_SKIP_REVALIDATE=0'; do
+    'MLBB_VOD_SKIP_REVALIDATE=1'; do
     grep -q "export ${expected}" /usr/local/bin/mlbb_vod_segment_feed.sh \
       || die "wrapper missing effective ${expected}"
   done

@@ -1622,7 +1622,11 @@ def _collect_scan_segments(
             and abs(start - original_start) < 0.1
             and abs(seg_dur - original_dur) < 0.1
         )
-        if skip_revalidate and already_scored and bounds_unchanged:
+        trusted_banner = (
+            int(lead_clip.get("kill_banner_tier") or 0) >= 2
+            and str(lead_clip.get("banner_source") or "") in {"ocr", "event_model"}
+        )
+        if skip_revalidate and already_scored and (bounds_unchanged or trusted_banner):
             ok, reason = True, str(hm.get("pass_reason") or "highlight_pass")
             metrics_rows = [hm]
             visual_rows = [{"visual_pass": hm.get("visual_pass", True)}]

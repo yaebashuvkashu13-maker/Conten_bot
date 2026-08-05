@@ -11,7 +11,7 @@ def test_production_env_keeps_strict_quality_and_wrapper_parity() -> None:
         "MLBB_VOD_BANNER_PRESEND=1",
         "MLBB_VOD_MOTION_ANCHOR_OK=0",
         "MLBB_VOD_ZERO_STREAK_SOFTEN=4",
-        "MLBB_VOD_SKIP_REVALIDATE=0",
+        "MLBB_VOD_SKIP_REVALIDATE=1",
         "MLBB_FIGHT_MAX_SEC=28",
         "MLBB_FIGHT_HARD_MAX_SEC=32",
         "MLBB_FIGHT_TRIM_LONG=1",
