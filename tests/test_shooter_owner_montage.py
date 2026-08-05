@@ -65,3 +65,30 @@ def test_soft_allow_still_blocks_owner_bad(tmp_path: Path) -> None:
     )
     assert ok is False
     assert reason == "owner_bad_window"
+
+
+def test_montage_soft_gate_without_owner_labels(tmp_path: Path, monkeypatch) -> None:
+    vod = tmp_path / "yt_FpMs48XOnq0.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_GATE", "1")
+    ok, reason = soft_allow_owner_montage_part(
+        "pubg",
+        vod,
+        230.0,
+        False,
+        "streamer_talk=rms0.0476:gun0.063",
+        montage_part=True,
+    )
+    assert ok is True
+    assert reason.startswith("montage_soft_gate=")
+    # Soft gate must not apply to non-montage singles.
+    ok2, reason2 = soft_allow_owner_montage_part(
+        "pubg",
+        vod,
+        230.0,
+        False,
+        "loot_walk=density0.021",
+        montage_part=False,
+    )
+    assert ok2 is False
+    assert reason2.startswith("loot_walk")

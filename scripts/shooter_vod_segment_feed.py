@@ -406,16 +406,19 @@ def _validate_shooter_presend(
         ok, reason, metrics = pubg_passes_shooting_gate(
             vod, start, dur, panns_gun_max=panns_gun
         )
-        ok, reason = soft_allow_owner_montage_part(game, vod, start, ok, reason)
+        ok, reason = soft_allow_owner_montage_part(
+            game, vod, start, ok, reason, montage_part=True
+        )
         if not ok:
             return False, reason, metrics
         return True, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
-    if montage_part:
-        ok, reason = soft_allow_owner_montage_part(game, vod, start, ok, reason)
+    ok, reason = soft_allow_owner_montage_part(
+        game, vod, start, ok, reason, montage_part=montage_part
+    )
     if not ok:
         return False, reason, metrics
-    return True, "shooter_combat_ok", metrics
+    return True, reason or "shooter_combat_ok", metrics
 
 
 def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:

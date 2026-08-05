@@ -233,17 +233,57 @@ def soft_allow_owner_montage_part(
     peak_sec: float,
     gate_ok: bool,
     gate_reason: str,
+    *,
+    montage_part: bool = False,
 ) -> tuple[bool, str]:
-    """Near owner-good: forgive noisy gates — still not the only pass path."""
-    if not owner_anchor_montage_enabled():
-        return gate_ok, gate_reason
-    if os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "1") != "1":
-        return gate_ok, gate_reason
-    if not peak_near_owner_good(game, vod, peak_sec):
-        return gate_ok, gate_reason
+    """Near owner-good: forgive noisy gates — still not the only pass path.
+
+    Also, when SHOOTER_VOD_MONTAGE_SOFT_GATE=1 (quota unstick), forgive the same
+    noisy reasons on montage parts so the bot does not stall for hours.
+    """
     if gate_ok:
-        return True, f"owner_hint+{gate_reason}"
+        if owner_anchor_montage_enabled() and peak_near_owner_good(game, vod, peak_sec):
+            return True, f"owner_hint+{gate_reason}"
+        return True, gate_reason
+
     hard = ("owner_bad_window", "metro_", "not_metro")
     if any(str(gate_reason).startswith(h) for h in hard):
         return False, gate_reason
-    return True, f"owner_hint_soft={gate_reason}"
+
+    if owner_anchor_montage_enabled() and os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "1") == "1":
+        if peak_near_owner_good(game, vod, peak_sec):
+            return True, f"owner_hint_soft={gate_reason}"
+
+    # Quota / long-VOD unstick: allow noisy audio gates on montage parts only.
+    if (
+        montage_part
+        and os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
+    ):
+        noisy = (
+            "loot_walk",
+            "loot_rummage",
+            "streamer_talk",
+            "talk_menu",
+            "talk_low_gun",
+            "run_fake_gun",
+            "run_no_fight",
+            "no_shots",
+            "weak_shots",
+            "run_loot",
+            "low_energy",
+            "quiet",
+            "ambient",
+            "music",
+            "vehicle",
+            "menu_ui",
+            "panns_no_gunshot",
+            "panns_speech_dominant",
+            "panns_music_dominant",
+            "panns_vehicle_dominant",
+            "panns_uncertain",
+        )
+        base = str(gate_reason).split("=", 1)[0].strip().lower()
+        reason_l = str(gate_reason).lower()
+        if base in noisy or any(n in reason_l for n in noisy):
+            return True, f"montage_soft_gate={gate_reason}"
+    return False, gate_reason
