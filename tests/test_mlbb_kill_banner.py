@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -123,9 +124,11 @@ def test_discover_banners_handles_numpy_motion() -> None:
     old = os.environ.get("MLBB_VOD_BANNER_DISCOVER")
     old_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL")
     old_fb = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE")
+    old_fast = os.environ.get("MLBB_BANNER_FAST_DISCOVER")
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
     os.environ["MLBB_VOD_BANNER_DISCOVER_FULL"] = "0"
     os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = "0"
+    os.environ["MLBB_BANNER_FAST_DISCOVER"] = "0"
     try:
         import mlbb_fight_segment as fight
 
@@ -158,6 +161,49 @@ def test_discover_banners_handles_numpy_motion() -> None:
             os.environ.pop("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE", None)
         else:
             os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = old_fb
+        if old_fast is None:
+            os.environ.pop("MLBB_BANNER_FAST_DISCOVER", None)
+        else:
+            os.environ["MLBB_BANNER_FAST_DISCOVER"] = old_fast
+
+
+def test_duration_grid_and_fast_discover_skips_analyze() -> None:
+    import mlbb_kill_banner as kb
+
+    peaks = kb._duration_grid_peaks(780.0, limit=8)
+    assert len(peaks) >= 4
+    assert peaks[0] >= 90.0
+
+    vod = Path("/tmp/fake_fast_vod.mp4")
+    calls = {"analysis": 0}
+
+    def boom_analysis(_vod: Path) -> dict:
+        calls["analysis"] += 1
+        raise AssertionError("fast discover must not call analyze_video")
+
+    old = {k: os.environ.get(k) for k in ("MLBB_VOD_BANNER_DISCOVER", "MLBB_BANNER_FAST_DISCOVER", "MLBB_BANNER_FAST_MAX_PROBES")}
+    os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    os.environ["MLBB_BANNER_FAST_DISCOVER"] = "1"
+    os.environ["MLBB_BANNER_FAST_MAX_PROBES"] = "4"
+    try:
+        import mlbb_fight_segment as fight
+        from smart_video_editor import ffprobe_duration as real_ff
+
+        orig_a = fight._analysis_for
+        fight._analysis_for = boom_analysis
+        with patch.object(kb, "find_banner_near_peak", return_value=None), patch(
+            "smart_video_editor.ffprobe_duration", return_value=600.0
+        ), patch.object(kb, "_color_tip_rank", side_effect=lambda _v, peaks: peaks):
+            hits = kb.discover_vod_kill_banners_fast(vod)
+        assert hits == []
+        assert calls["analysis"] == 0
+    finally:
+        fight._analysis_for = orig_a
+        for key, val in old.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
 
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"

@@ -488,6 +488,137 @@ def _motion_hint_peaks(analysis: dict, *, limit: int, duration: float) -> list[f
     return [round(t0 + (i + 0.5) * step, 2) for i in range(limit)]
 
 
+def _duration_grid_peaks(duration: float, *, limit: int) -> list[float]:
+    """Mid-game probe grid — no full-VOD analyze required."""
+    if duration <= 240:
+        t0 = 20.0
+    elif duration <= 480:
+        t0 = min(float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300")), 90.0)
+    else:
+        t0 = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "120"))
+        t0 = min(t0, 120.0)
+    t1 = max(t0 + 40.0, duration - 25.0)
+    if t1 <= t0 + 1.0:
+        return [round(duration * 0.45, 2)]
+    step = float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "28"))
+    peaks: list[float] = []
+    t = t0
+    while t < t1 and len(peaks) < limit * 3:
+        peaks.append(round(t, 2))
+        t += step
+    # Prefer denser mid-game samples if grid is sparse.
+    if len(peaks) < limit:
+        mid = t0 + (t1 - t0) * 0.45
+        for delta in (-90, -45, 0, 45, 90, 150):
+            p = round(mid + delta, 2)
+            if t0 <= p <= t1 and all(abs(p - x) > 12 for x in peaks):
+                peaks.append(p)
+            if len(peaks) >= limit:
+                break
+    return peaks[: max(limit, 1)]
+
+
+def _color_tip_rank(vod: Path, peaks: list[float]) -> list[float]:
+    """Cheap single-frame cyan tip sort — does NOT invent kill tiers."""
+    from gameplay_gate import _read_frame_at
+
+    scored: list[tuple[float, float]] = []
+    for t in peaks:
+        frame = _read_frame_at(vod, t)
+        color = float(_announce_color_score(frame)) if frame is not None else 0.0
+        scored.append((t, color))
+    scored.sort(key=lambda row: (-row[1], row[0]))
+    # Keep tips that look announce-ish first, but never drop all peaks.
+    gate = _color_min_score() * 0.5
+    tipped = [t for t, c in scored if c >= gate]
+    if len(tipped) >= 3:
+        return tipped
+    return [t for t, _ in scored]
+
+
+def discover_vod_kill_banners_fast(
+    vod: Path,
+    *,
+    min_tier: int | None = None,
+    hint_peaks: list[float] | None = None,
+) -> list[KillBannerHit]:
+    """
+    Fast + correct discover: ffprobe duration grid → cyan tip rank → OCR/ref only.
+    Never invents double/triple from color. No full-VOD analyze_video.
+    """
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return []
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
+        return []
+
+    from smart_video_editor import ffprobe_duration
+
+    duration = float(ffprobe_duration(vod) or 0.0)
+    if duration < 20.0:
+        return []
+    need = min_tier if min_tier is not None else _min_tier()
+    max_probes = max(4, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "10")))
+    max_sec = max(20.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "75")))
+    ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "1") == "1"
+    deadline = time.monotonic() + max_sec
+    hits: list[KillBannerHit] = []
+    probes = 0
+
+    peaks = [float(p) for p in (hint_peaks or []) if p is not None]
+    if not peaks:
+        peaks = _duration_grid_peaks(duration, limit=max_probes)
+    peaks = _color_tip_rank(vod, peaks)[: max_probes * 2]
+
+    log.info(
+        "banner fast-discover %s: peaks=%s budget=%.0fs need_tier>=%s",
+        vod.name,
+        [round(p, 1) for p in peaks[:12]],
+        max_sec,
+        need,
+    )
+
+    for peak in peaks:
+        if probes >= max_probes or time.monotonic() >= deadline:
+            break
+        probes += 1
+        hit = find_banner_near_peak(vod, peak, quick=True)
+        if hit is None:
+            continue
+        if not _hit_qualifies(hit, min_tier=need):
+            continue
+        # Safety: never accept flash/color here even if misconfigured.
+        if hit.source in ("flash", "color") and not _color_as_streak_allowed():
+            continue
+        if hits and abs(hit.sec - hits[-1].sec) < 6.0:
+            if hit.tier > hits[-1].tier or (
+                hit.tier == hits[-1].tier and hit.source == "ocr" and hits[-1].source != "ocr"
+            ):
+                hits[-1] = hit
+        else:
+            hits.append(hit)
+        log.info(
+            "banner fast-hit %s: @%.1fs tier=%s src=%s label=%s probes=%s",
+            vod.name,
+            hit.sec,
+            hit.tier,
+            hit.source,
+            hit.label,
+            probes,
+        )
+        if ship_on_first and hits:
+            break
+
+    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
+    log.info(
+        "banner fast-discover %s: done probes=%s hits=%s elapsed=%.1fs",
+        vod.name,
+        probes,
+        len(hits),
+        max_sec - max(0.0, deadline - time.monotonic()),
+    )
+    return hits
+
+
 def discover_vod_kill_banners(
     vod: Path,
     *,
@@ -495,13 +626,31 @@ def discover_vod_kill_banners(
     hint_peaks: list[float] | None = None,
 ) -> list[KillBannerHit]:
     """
-    Motion-gated sparse OCR scan for kill banners independent of motion peaks.
-    Capped by probe count and wall time — full-VOD deep OCR can stall for hours.
+    Kill-banner discover. Default: fast path (no full analyze).
+    Set MLBB_BANNER_FAST_DISCOVER=0 to force legacy motion-analyze discover.
     """
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return []
     if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
         return []
+    # Fast path first — correct (OCR/ref only) and skips multi-minute analyze.
+    if os.environ.get("MLBB_BANNER_FAST_DISCOVER", "1") == "1":
+        fast_hits = discover_vod_kill_banners_fast(
+            vod, min_tier=min_tier, hint_peaks=hint_peaks
+        )
+        if fast_hits:
+            return fast_hits
+        # Optional one deep retry on the best tip only when fast found nothing.
+        if os.environ.get("MLBB_BANNER_FAST_DEEP_RETRY", "1") == "1" and hint_peaks:
+            need = min_tier if min_tier is not None else _min_tier()
+            for peak in list(hint_peaks)[:2]:
+                hit = find_banner_near_peak(vod, float(peak), quick=False)
+                if hit is not None and _hit_qualifies(hit, min_tier=need):
+                    if hit.source in ("flash", "color") and not _color_as_streak_allowed():
+                        continue
+                    return [hit]
+        return []
+
     import numpy as np
 
     from mlbb_fight_segment import _analysis_for
@@ -519,6 +668,8 @@ def discover_vod_kill_banners(
 
     def _merge_hit(hit: KillBannerHit) -> None:
         if not _hit_qualifies(hit, min_tier=need):
+            return
+        if hit.source in ("flash", "color") and not _color_as_streak_allowed():
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
             if hit.tier > hits[-1].tier or (

@@ -1794,6 +1794,77 @@ def _resolve_next_vod(
     return None, None
 
 
+def _try_ship_banner_seeds(
+    token: str,
+    chat_id: str,
+    vod: Path,
+    seed_peaks: list[float],
+    blocked_ids: set,
+) -> int:
+    """
+    Ship clips anchored on already-verified OCR/ref ≥double peaks.
+    Skips heavy highlight scoring; still uses normalize + presend gates.
+    """
+    from mlbb_learning_first import can_send
+
+    sent_n = 0
+    send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
+    for peak in seed_peaks[:6]:
+        ok_batch, block_reason = can_send(1)
+        if not ok_batch:
+            log.warning("banner fast-ship blocked reason=%s", block_reason)
+            break
+        clip = {"start": float(peak), "peak_start": float(peak)}
+        lead_clip = _normalize_clip(clip, vod)
+        if lead_clip.get("banner_reject"):
+            log.info(
+                "banner fast-ship skip peak=%.1f reject=%s",
+                peak,
+                lead_clip.get("banner_reject"),
+            )
+            continue
+        src = str(lead_clip.get("banner_source") or "").lower()
+        if src in ("flash", "color"):
+            log.info("banner fast-ship skip peak=%.1f fake_source=%s", peak, src)
+            continue
+        tier = int(lead_clip.get("kill_banner_tier") or 0)
+        if tier < 2 and str(lead_clip.get("kill_banner") or "").lower() not in (
+            "double",
+            "triple",
+            "maniac",
+            "savage",
+            "legend",
+        ):
+            # Normalize without a real streak banner — do not ship.
+            log.info("banner fast-ship skip peak=%.1f no_streak_meta tier=%s", peak, tier)
+            continue
+        start = float(lead_clip["start"])
+        sid = segment_id(vod, start)
+        if sid in blocked_ids:
+            continue
+        row = {
+            "segment_id": sid,
+            "start": start,
+            "peak_start": float(lead_clip.get("peak_start", peak)),
+            "banner_sec": float(lead_clip.get("banner_sec", peak)),
+            "kill_banner": lead_clip.get("kill_banner"),
+            "kill_banner_tier": lead_clip.get("kill_banner_tier"),
+            "banner_source": lead_clip.get("banner_source"),
+            "clip": lead_clip,
+            "input_duration": lead_clip.get("input_duration"),
+            "fight_dur": lead_clip.get("input_duration"),
+            "pass_reason": "banner_fast_ship",
+        }
+        n, _preskip, _sblock = _send_segment_batch(token, chat_id, vod, [row], file_sha256(vod))
+        sent_n += n
+        if n > 0:
+            blocked_ids.add(sid)
+            log.info("banner fast-ship sent %s peak=%.1f tier=%s src=%s", sid, peak, tier, src)
+        if send_one and sent_n > 0:
+            break
+    return sent_n
+
+
 def _process_vod_segments(
     token: str,
     chat_id: str,
@@ -1834,6 +1905,7 @@ def _process_vod_segments(
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
     clear_fast_seeds = None
+    banner_seed_peaks: list[float] = []
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":
         from mlbb_vod_fast_scan import (
             apply_fast_probe_seeds,
@@ -1857,7 +1929,43 @@ def _process_vod_segments(
             if clear_fast_seeds:
                 clear_fast_seeds()
             return 0
+        banner_seed_peaks = list(seed_peaks or [])
         apply_fast_probe_seeds(seed_peaks)
+        log.info("fast-probe ok vod=%s reason=%s seeds=%s", vod.name, fast_reason, seed_peaks[:6])
+
+        # Direct ship from real banner seeds — skip CLIP/PANNs thrash when we already
+        # have OCR/ref ≥double. Still runs normalize + presend quality gates.
+        if (
+            banner_seed_peaks
+            and os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
+            and "banner_probe_" in str(fast_reason)
+        ):
+            sent_direct = _try_ship_banner_seeds(
+                token, chat_id, vod, banner_seed_peaks, labeled_set | sent
+            )
+            if sent_direct > 0:
+                sent_total += sent_direct
+                if entry is not None:
+                    record_vod_scan(
+                        entry,
+                        sent=sent_total,
+                        pool_peaks=banner_seed_peaks,
+                        blocked=False,
+                    )
+                state = _load_state()
+                if entry:
+                    _sync_vod_entry_to_state(state, entry, vod)
+                state["active_vod"] = vod.name
+                scanned = set(state.get("scanned_vods", []))
+                scanned.add(vod.name)
+                state["scanned_vods"] = sorted(scanned)
+                record_vod_outcome(state, vod_id=vid, sent=sent_total)
+                _save_state(state)
+                if clear_fast_seeds:
+                    clear_fast_seeds()
+                log.info("banner fast-ship done vod=%s sent=%s", vod.name, sent_direct)
+                return sent_total
+
 
     try:
         with adaptive_env(streak_in) as level:

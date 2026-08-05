@@ -25,7 +25,14 @@ from mlbb_combat_moment import (  # noqa: E402
 
 def test_moment_anchor_defaults_banner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MLBB_MOMENT_ANCHOR", raising=False)
+    monkeypatch.delenv("MLBB_BANNER_ENRICH_ONLY", raising=False)
     assert moment_anchor_mode() == "banner"
+    # Banner-first requires real streaks — enrich-only defaults OFF.
+    assert banner_enrich_only() is False
+    monkeypatch.setenv("MLBB_BANNER_ENRICH_ONLY", "1")
+    assert banner_enrich_only() is True
+    monkeypatch.setenv("MLBB_MOMENT_ANCHOR", "combat")
+    monkeypatch.delenv("MLBB_BANNER_ENRICH_ONLY", raising=False)
     assert banner_enrich_only() is True
 
 

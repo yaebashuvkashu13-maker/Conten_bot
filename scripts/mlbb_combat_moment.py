@@ -17,7 +17,9 @@ def moment_anchor_mode() -> str:
 
 def banner_enrich_only() -> bool:
     """When True, kill-banner OCR/color may decorate captions but never blocks a clip."""
-    return os.environ.get("MLBB_BANNER_ENRICH_ONLY", "1") == "1"
+    # Banner-first mode must require a real streak — enrich-only would ship junk fights.
+    default = "0" if moment_anchor_mode() == "banner" else "1"
+    return os.environ.get("MLBB_BANNER_ENRICH_ONLY", default) == "1"
 
 
 def combat_probe_min_score() -> float:
