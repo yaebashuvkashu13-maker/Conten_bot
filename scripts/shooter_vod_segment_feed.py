@@ -761,50 +761,68 @@ def _scan_vod(
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
     montage = _montage_enabled(game)
+    min_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
+    owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0)) if montage else []
+    owner_hints = [
+        c
+        for c in owner_hints_all
+        if not _peak_too_close(float(c.get("start", 0)), used_peaks, 12.0)
+    ]
+    vod_dur = _ffprobe_duration(vod)
+    long_vod = vod_dur >= float(os.environ.get("SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC", "1800"))
+    force_rediscover = os.environ.get("SHOOTER_VOD_FORCE_REDISCOVER", "0") == "1"
 
     if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
-        if pool_peaks_fully_blocked(
+        cached_blocked = pool_peaks_fully_blocked(
             cached,
             used_peaks=used_peaks,
             gap_sec=seg_gap,
             blocked_sids=blocked_ids,
             vod_id=vid,
             lead_sec=lead,
-        ):
-            log.info("skip highlight rescan — cached peaks blocked vod=%s peaks=%s", vod.name, cached[:4])
+        )
+        # No unused owner hints either — do not burn hours rediscovering a dead long VOD.
+        if cached_blocked and len(owner_hints) < min_clips:
+            log.info(
+                "skip highlight rescan — cached peaks blocked vod=%s peaks=%s owner_hints=%s",
+                vod.name,
+                cached[:4],
+                len(owner_hints),
+            )
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
-    # Normal pool first (cache / rediscover). Owner anchors are hints only.
+    # Normal pool: cache first. Full rediscover on long VODs is a known multi-hour hang —
+    # only do it when forced or the file is short enough.
     if entry and pool_cache_valid(entry):
         pool = minimal_pool_from_entry(entry)
         log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
+    elif long_vod and not force_rediscover:
+        pool = []
+        log.warning(
+            "skip full rediscover on long vod=%.0fs name=%s — use owner hints / download next",
+            vod_dur,
+            vod.name,
+        )
     else:
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
 
-    owner_hints: list[dict] = []
-    if montage:
-        owner_hints = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
-        owner_hints = [
-            c
-            for c in owner_hints
-            if not _peak_too_close(float(c.get("start", 0)), used_peaks, 12.0)
-        ]
-        if owner_hints:
-            pool = merge_owner_hints_into_pool(pool, owner_hints)
-            log.info(
-                "owner hints merged vod=%s hints=%s pool=%s",
-                vod.name,
-                len(owner_hints),
-                len(pool),
-            )
+    if montage and owner_hints:
+        pool = merge_owner_hints_into_pool(pool, owner_hints)
+        log.info(
+            "owner hints merged vod=%s hints=%s pool=%s",
+            vod.name,
+            len(owner_hints),
+            len(pool),
+        )
 
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
         if entry is not None:
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            # Empty pool on a long/exhausted VOD must exhaust so discovery can fetch the next.
+            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
         return 0
 
     probe_limit = int(os.environ.get("MLBB_VOD_PROBE_LIMIT", "24"))
