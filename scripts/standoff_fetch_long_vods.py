@@ -75,9 +75,19 @@ def main() -> int:
         candidates: list[dict] = []
         from youtube_download import run_ytdlp, ytdlp_cmd, ytdlp_extra_args
 
-        for url in params.get("urls", []):
+        # Prefer explicit long-match search — flat playlist often omits duration and
+        # then we waste time downloading 2–4min highlights.
+        search_urls = list(params.get("urls", []))
+        search_urls.insert(
+            0,
+            f"ytsearch{int(env.get('SHOOTER_VOD_SEARCH_LIMIT', '20'))}:"
+            "Standoff 2 ranked full match gameplay",
+        )
+        for url in search_urls:
             cmd = ytdlp_cmd(env) + [
                 "--flat-playlist",
+                "--match-filter",
+                f"duration > {int(MIN_DUR)}",
                 "--print",
                 "%(id)s|%(title)s|%(duration)s|%(uploader)s",
                 url,
@@ -100,7 +110,7 @@ def main() -> int:
                     dur = float(parts[2]) if len(parts) > 2 else 0.0
                 except ValueError:
                     dur = 0.0
-                if dur and dur < MIN_DUR:
+                if not dur or dur < MIN_DUR:
                     used.add(vid)
                     continue
                 candidates.append(
@@ -113,6 +123,8 @@ def main() -> int:
                     }
                 )
             time.sleep(float(params.get("delay", 4)))
+            if candidates:
+                break
 
         pick = pick_discovery_candidate(GAME, candidates)
         if not pick:
