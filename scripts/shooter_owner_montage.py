@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Owner-good fight anchors → shooter склейка without full-VOD rediscover.
+"""Owner-good fight anchors as *hints* for shooter склейки — not the only source.
 
-Mirrors the manual recovery path: seed montage parts from owner 👍 / labeled
-good fight times, soft-allow those windows at montage presend, prefer such VODs.
+Keep owner 👍 / brawl times in mind: boost those peaks in the pool and soft-allow
+noisy gates near them. Never replace normal rediscover / combat scan with
+owner-only selection.
 """
 
 from __future__ import annotations
@@ -94,7 +95,6 @@ def _peaks_from_feedback_labels(game: str, vod: Path) -> list[float]:
         if peak is None and sid.startswith(f"{vid}_"):
             tail = sid[len(vid) + 1 :]
             if tail.startswith("m") and "_" in tail:
-                # composite montage id — expand part peaks
                 try:
                     out.extend(float(x) for x in tail[1:].split("_") if x.replace(".", "", 1).isdigit())
                 except ValueError:
@@ -112,7 +112,7 @@ def _peaks_from_feedback_labels(game: str, vod: Path) -> list[float]:
 
 
 def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
-    """Deduped owner-good fight times for montage seeding."""
+    """Deduped owner-good fight times (hints only)."""
     if not owner_anchor_montage_enabled():
         return []
     profile = {
@@ -128,7 +128,6 @@ def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
         peaks.extend(_peaks_from_pubg_calibration(vod))
     peaks.extend(_peaks_from_highlight_labels(vod, profile))
     peaks.extend(_peaks_from_feedback_labels(game, vod))
-    # Dedup within 8s, keep chronological.
     peaks.sort()
     deduped: list[float] = []
     for t in peaks:
@@ -153,32 +152,61 @@ def owner_good_pool(
     lead_sec: float = 6.0,
     part_sec: float = 18.0,
 ) -> list[dict]:
-    """Minimal highlight-style pool rows from owner-good peaks (no rediscover)."""
+    """Hint rows from owner-good peaks (modest score — not exclusive top picks)."""
     peaks = owner_good_fight_peaks(game, vod)
     if not peaks:
         return []
+    hint_score = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_HINT_SCORE", "0.55"))
     pool: list[dict] = []
     for peak in peaks:
-        start = max(0.0, float(peak) - lead_sec)
         pool.append(
             {
                 "start": float(peak),
                 "peak_start": float(peak),
-                "score": 0.85,
+                "score": hint_score,
                 "input_duration": part_sec,
                 "output_duration": part_sec,
-                "highlight_metrics": {"clip_score": 0.85, "owner_anchor": True},
+                "highlight_metrics": {"clip_score": hint_score, "owner_anchor": True},
                 "owner_anchor": True,
-                "gate_reason": "owner_good_anchor",
+                "gate_reason": "owner_good_hint",
             }
         )
     log.info(
-        "owner-anchor pool game=%s vod=%s peaks=%s",
+        "owner-anchor hints game=%s vod=%s peaks=%s (merged into normal pool)",
         game,
         vod.name,
         [int(p) for p in peaks],
     )
     return pool
+
+
+def merge_owner_hints_into_pool(pool: list[dict], owner_hints: list[dict]) -> list[dict]:
+    """Boost / inject owner peaks into the normal candidate pool (dedupe by ~10s)."""
+    if not owner_hints:
+        return pool
+    boost = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.12"))
+    merged: list[dict] = [dict(c) for c in pool]
+    for hint in owner_hints:
+        peak = float(hint.get("start", hint.get("peak_start", 0)))
+        matched = False
+        for clip in merged:
+            cpeak = float(clip.get("start", clip.get("peak_start", 0)))
+            if abs(cpeak - peak) <= 10.0:
+                clip["score"] = float(clip.get("score", 0)) + boost
+                hm = dict(clip.get("highlight_metrics") or {})
+                hm["clip_score"] = float(hm.get("clip_score") or clip.get("score") or 0) + boost
+                hm["owner_anchor_hint"] = True
+                clip["highlight_metrics"] = hm
+                clip["owner_anchor"] = True
+                matched = True
+                break
+        if not matched:
+            merged.append(dict(hint))
+    merged.sort(
+        key=lambda c: (1 if c.get("owner_anchor") else 0, float(c.get("score", 0))),
+        reverse=True,
+    )
+    return merged
 
 
 def peak_near_owner_good(
@@ -206,7 +234,7 @@ def soft_allow_owner_montage_part(
     gate_ok: bool,
     gate_reason: str,
 ) -> tuple[bool, str]:
-    """If owner labeled this fight good, ship the montage part even when gate is noisy."""
+    """Near owner-good: forgive noisy gates — still not the only pass path."""
     if not owner_anchor_montage_enabled():
         return gate_ok, gate_reason
     if os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "1") != "1":
@@ -214,9 +242,8 @@ def soft_allow_owner_montage_part(
     if not peak_near_owner_good(game, vod, peak_sec):
         return gate_ok, gate_reason
     if gate_ok:
-        return True, f"owner_good+{gate_reason}"
-    # Still block hard owner-bad / metro mismatches upstream; gate noise is OK.
+        return True, f"owner_hint+{gate_reason}"
     hard = ("owner_bad_window", "metro_", "not_metro")
     if any(str(gate_reason).startswith(h) for h in hard):
         return False, gate_reason
-    return True, f"owner_good_soft={gate_reason}"
+    return True, f"owner_hint_soft={gate_reason}"

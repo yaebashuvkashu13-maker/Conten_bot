@@ -45,7 +45,7 @@ from shooter_vod_segment_store import (
     _paths,
 )
 from shooter_owner_montage import (
-    owner_good_fight_peaks,
+    merge_owner_hints_into_pool,
     owner_good_pool,
     soft_allow_owner_montage_part,
     vod_has_owner_montage_anchors,
@@ -761,10 +761,8 @@ def _scan_vod(
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
     montage = _montage_enabled(game)
-    owner_peaks = owner_good_fight_peaks(game, vod) if montage else []
-    owner_unused = [p for p in owner_peaks if not _peak_too_close(p, used_peaks, 12.0)]
 
-    if entry and entry.get("last_pool_peaks") and not owner_unused:
+    if entry and entry.get("last_pool_peaks"):
         cached = peak_values_from_entry(entry)
         if pool_peaks_fully_blocked(
             cached,
@@ -778,32 +776,30 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
-    owner_pool: list[dict] = []
-    if montage and owner_unused:
-        min_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
-        owner_pool = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
-        # Keep only unused anchors in the seed pool.
-        owner_pool = [
-            c
-            for c in owner_pool
-            if not _peak_too_close(float(c.get("start", 0)), used_peaks, 12.0)
-        ]
-        if len(owner_pool) >= min_clips:
-            log.info(
-                "owner-anchor montage path vod=%s anchors=%s (skip full rediscover)",
-                vod.name,
-                len(owner_pool),
-            )
-        else:
-            owner_pool = []
-
-    if owner_pool:
-        pool = owner_pool
-    elif entry and pool_cache_valid(entry):
+    # Normal pool first (cache / rediscover). Owner anchors are hints only.
+    if entry and pool_cache_valid(entry):
         pool = minimal_pool_from_entry(entry)
         log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
     else:
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+
+    owner_hints: list[dict] = []
+    if montage:
+        owner_hints = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
+        owner_hints = [
+            c
+            for c in owner_hints
+            if not _peak_too_close(float(c.get("start", 0)), used_peaks, 12.0)
+        ]
+        if owner_hints:
+            pool = merge_owner_hints_into_pool(pool, owner_hints)
+            log.info(
+                "owner hints merged vod=%s hints=%s pool=%s",
+                vod.name,
+                len(owner_hints),
+                len(pool),
+            )
+
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)
@@ -818,10 +814,6 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
-    if owner_pool:
-        # Owner anchors already carry a high seed score — don't drop them on exemplars floor.
-        owner_exemplars = False
-        min_clip = 0.0
     if montage:
         # Collect denser candidates; spacing for the final склейка is applied in _pick_montage_rows.
         cand_gap = min(seg_gap, float(os.environ.get("SHOOTER_VOD_MONTAGE_CANDIDATE_GAP_SEC", "12")))
@@ -845,7 +837,7 @@ def _scan_vod(
                 continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
-            if owner_exemplars and clip_score < min_clip:
+            if owner_exemplars and clip_score < min_clip and not clip.get("owner_anchor"):
                 continue
             start = max(0.0, peak - lead)
             sid = segment_id(vid, start)
@@ -949,19 +941,24 @@ def _scan_vod_with_adaptive(
     clear_fast_seeds = None
 
     if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
-        # Owner-anchor склейка does not need a full-file fast probe (was hanging on long VODs).
-        if vod_has_owner_montage_anchors(game, vod):
-            log.info("skip fast-probe — owner montage anchors present vod=%s", vod.name)
-        else:
-            from shooter_vod_fast_scan import (
-                apply_fast_probe_seeds,
-                clear_fast_probe_seeds,
-                vod_fast_combat_check,
-            )
+        from shooter_vod_fast_scan import (
+            apply_fast_probe_seeds,
+            clear_fast_probe_seeds,
+            vod_fast_combat_check,
+        )
 
-            clear_fast_seeds = clear_fast_probe_seeds
-            ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
-            if not ok_fast:
+        clear_fast_seeds = clear_fast_probe_seeds
+        ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
+        if not ok_fast:
+            # Owner hints alone must not keep a dead VOD alive — but if labels exist,
+            # still allow a scan pass (hints merged later). Soft-fail only when no hints.
+            if vod_has_owner_montage_anchors(game, vod):
+                log.info(
+                    "fast-probe weak vod=%s reason=%s — continue with owner hints in mind",
+                    vod.name,
+                    fast_reason,
+                )
+            else:
                 log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
                 _mark_vod_exhausted(
                     state,
@@ -973,6 +970,7 @@ def _scan_vod_with_adaptive(
                 if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                     send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
                 return 0
+        else:
             apply_fast_probe_seeds(seed_peaks)
 
     if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":

@@ -30,6 +30,17 @@ def test_n97c_brawl_anchors(tmp_path: Path) -> None:
     assert all(c.get("owner_anchor") for c in pool)
 
 
+def test_merge_owner_hints_boosts_nearby(tmp_path: Path) -> None:
+    from shooter_owner_montage import merge_owner_hints_into_pool
+
+    pool = [{"start": 1840.0, "score": 0.2, "highlight_metrics": {"clip_score": 0.2}}]
+    hints = [{"start": 1845.0, "score": 0.55, "owner_anchor": True, "highlight_metrics": {"clip_score": 0.55}}]
+    merged = merge_owner_hints_into_pool(pool, hints)
+    assert len(merged) == 1
+    assert merged[0]["owner_anchor"] is True
+    assert float(merged[0]["score"]) > 0.2
+
+
 def test_soft_allow_owner_near_anchor(tmp_path: Path) -> None:
     vod = tmp_path / "yt_n97cHIR9Qow.mp4"
     vod.write_bytes(b"x")
@@ -38,7 +49,7 @@ def test_soft_allow_owner_near_anchor(tmp_path: Path) -> None:
         "pubg", vod, 1845.0, False, "loot_walk=density0.04"
     )
     assert ok is True
-    assert reason.startswith("owner_good_soft=")
+    assert "owner_hint" in reason
     ok2, reason2 = soft_allow_owner_montage_part(
         "pubg", vod, 100.0, False, "loot_walk=density0.04"
     )
