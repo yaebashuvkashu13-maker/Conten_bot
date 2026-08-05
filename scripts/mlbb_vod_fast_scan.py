@@ -27,7 +27,7 @@ def _banner_color_at(video_path: Path, t: float) -> float:
 
 def fast_banner_probe(video_path: Path) -> tuple[bool, str, list[float]]:
     """
-    Fast + correct preflight: find real ≥double via visual ref (OCR optional).
+    Fast preflight: find real ≥double via visual ref match only.
     Returns seed peaks at banner seconds. Color alone never counts as success.
     """
     from mlbb_kill_banner import discover_vod_kill_banners_fast

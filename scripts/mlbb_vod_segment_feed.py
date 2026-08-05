@@ -1304,19 +1304,18 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
         return False, reason, report
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
-        # Never ship color-invented "double/triple" — cyan pixels ≠ kill streak.
+        # Ship rule: only visual ref (wiki/owner). OCR/flash/color never ship.
         src = str(row.get("banner_source") or row.get("source") or "").strip().lower()
-        if src in ("flash", "color") and os.environ.get("MLBB_BANNER_COLOR_AS_STREAK", "0") != "1":
-            return False, f"banner_source_not_shippable={src}", report
+        if src != "ref":
+            return False, f"banner_source_not_ref={src or 'missing'}", report
         # Require real ≥double evidence on the row when present.
         try:
             tier_claim = int(row.get("kill_banner_tier") or 0)
         except (TypeError, ValueError):
             tier_claim = 0
         label = str(row.get("kill_banner") or "").strip().lower()
-        if tier_claim >= 2 or label in ("double", "triple", "maniac", "savage", "legend"):
-            if src in ("flash", "color"):
-                return False, f"fake_streak_from_{src}", report
+        if tier_claim < 2 and label not in ("double", "triple", "maniac", "savage", "legend"):
+            return False, f"banner_tier_too_low={tier_claim}:{label or 'none'}", report
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "0") == "1"
         if presend_banner:
             from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier
@@ -1824,8 +1823,8 @@ def _try_ship_banner_seeds(
             )
             continue
         src = str(lead_clip.get("banner_source") or "").lower()
-        if src in ("flash", "color"):
-            log.info("banner fast-ship skip peak=%.1f fake_source=%s", peak, src)
+        if src != "ref":
+            log.info("banner fast-ship skip peak=%.1f need_ref got=%s", peak, src or "missing")
             continue
         tier = int(lead_clip.get("kill_banner_tier") or 0)
         if tier < 2 and str(lead_clip.get("kill_banner") or "").lower() not in (

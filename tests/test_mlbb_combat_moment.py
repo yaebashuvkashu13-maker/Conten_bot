@@ -161,14 +161,20 @@ def test_classify_frame_color_as_streak_opt_in() -> None:
                 os.environ[key] = val
 
 
-def test_hit_qualifies_ref_primary_ocr_off_by_default() -> None:
+def test_hit_qualifies_ref_only_never_ocr_or_flash() -> None:
     import mlbb_kill_banner as kb
 
-    keys = ("MLBB_BANNER_VISUAL_OK", "MLBB_BANNER_OCR_OK", "MLBB_KILL_BANNER_REQUIRED")
+    keys = (
+        "MLBB_BANNER_VISUAL_OK",
+        "MLBB_BANNER_OCR_OK",
+        "MLBB_KILL_BANNER_REQUIRED",
+        "MLBB_BANNER_COLOR_AS_STREAK",
+    )
     old = {k: os.environ.get(k) for k in keys}
     os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
-    os.environ["MLBB_BANNER_OCR_OK"] = "0"
+    os.environ["MLBB_BANNER_OCR_OK"] = "1"  # even if someone flips this, OCR must not ship
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
+    os.environ["MLBB_BANNER_COLOR_AS_STREAK"] = "1"
     try:
         ref = kb.KillBannerHit(sec=10.0, tier=2, label="double", text="ref=owner", source="ref")
         ocr = kb.KillBannerHit(sec=10.0, tier=2, label="double", text="DOUBLE KILL", source="ocr")
@@ -176,8 +182,6 @@ def test_hit_qualifies_ref_primary_ocr_off_by_default() -> None:
         assert kb._hit_qualifies(ref, min_tier=2) is True
         assert kb._hit_qualifies(ocr, min_tier=2) is False
         assert kb._hit_qualifies(flash, min_tier=2) is False
-        os.environ["MLBB_BANNER_OCR_OK"] = "1"
-        assert kb._hit_qualifies(ocr, min_tier=2) is True
     finally:
         for key, val in old.items():
             if val is None:
@@ -186,13 +190,12 @@ def test_hit_qualifies_ref_primary_ocr_off_by_default() -> None:
                 os.environ[key] = val
 
 
-def test_classify_skips_ocr_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_classify_never_calls_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
     import mlbb_kill_banner as kb
     import numpy as np
 
     frame = np.zeros((270, 480, 3), dtype=np.uint8)
     frame[10:70, 80:400] = (161, 128, 85)
-    monkeypatch.setenv("MLBB_BANNER_OCR_OK", "0")
     monkeypatch.setenv("MLBB_BANNER_REF_MATCH", "0")
     monkeypatch.setenv("MLBB_BANNER_COLOR_AS_STREAK", "0")
     ocr_calls: list[bool] = []
