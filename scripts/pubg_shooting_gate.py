@@ -21,6 +21,25 @@ MIN_BURST_RATIO = 5.2
 QUALITY_FLOOR_GUNFIRE = 0.055
 QUALITY_FLOOR_BURST = 4.8
 
+FORBIDDEN_REASONS = frozenset(
+    {
+        "run_no_fight",
+        "run_no_shots",
+        "run_fake_gun",
+        "loot_walk",
+        "run_loot",
+        "talk_menu",
+        "talk_low_gun",
+        "streamer_talk",
+        "no_shots",
+        "low_gunfire",
+        "silent_segment",
+        "owner_bad_window",
+    }
+)
+
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
+
 
 def _min_gunfire() -> float:
     raw = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
