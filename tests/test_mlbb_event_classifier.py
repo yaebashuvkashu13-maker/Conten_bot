@@ -50,6 +50,12 @@ def test_text_rules_block_objectives_and_commands() -> None:
         assert classify_event_text(text).kind == COMMAND
 
 
+def test_explicit_multi_kill_beats_overlaid_command_but_not_enemy() -> None:
+    own = classify_event_text("Retreat ... TRIPLE KILL")
+    assert (own.kind, own.tier) == (OWN_STREAK, 3)
+    assert classify_event_text("Enemy Triple Kill Retreat").kind == ENEMY_STREAK
+
+
 def test_visual_features_have_stable_shape() -> None:
     crop = np.zeros((48, 160, 3), dtype=np.uint8)
     full = np.zeros((270, 480, 3), dtype=np.uint8)

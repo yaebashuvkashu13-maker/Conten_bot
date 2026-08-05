@@ -68,14 +68,14 @@ def classify_event_text(text: str) -> EventDecision:
         return EventDecision(OTHER, 0.0, text="")
     if _OBJECTIVE_RE.search(blob):
         return EventDecision(OBJECTIVE, 1.0, label="objective", text=blob)
-    if _COMMAND_RE.search(blob):
-        return EventDecision(COMMAND, 1.0, label="command", text=blob)
     if _ENEMY_RE.search(blob):
         return EventDecision(ENEMY_STREAK, 1.0, label="enemy", text=blob)
     if _ALLY_RE.search(blob):
         return EventDecision(ALLY_STREAK, 1.0, label="ally", text=blob)
     for pattern, tier, label in _TIER_PATTERNS:
         if pattern.search(blob):
+            if tier <= 1 and _COMMAND_RE.search(blob):
+                return EventDecision(COMMAND, 1.0, label="command", text=blob)
             return EventDecision(
                 OWN_STREAK,
                 1.0,
@@ -85,6 +85,8 @@ def classify_event_text(text: str) -> EventDecision:
                 source="ocr_rules",
                 tier_confidence=1.0,
             )
+    if _COMMAND_RE.search(blob):
+        return EventDecision(COMMAND, 1.0, label="command", text=blob)
     return EventDecision(OTHER, 0.25, text=blob)
 
 
