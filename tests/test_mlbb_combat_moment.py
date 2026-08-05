@@ -90,13 +90,13 @@ def test_resolve_fight_bounds_combat_mode_skips_banner_requirement() -> None:
                 os.environ[key] = val
 
 
-def test_classify_frame_gold_flash_counts_as_banner() -> None:
+def test_classify_frame_cyan_flash_counts_as_banner() -> None:
     import mlbb_kill_banner as kb
     import numpy as np
 
     frame = np.zeros((270, 480, 3), dtype=np.uint8)
-    # Paint gold HSV-ish BGR in banner zone
-    frame[10:70, 80:400] = (40, 180, 220)
+    # Paint cyan/blue announce flash (HSV ~H103) in banner zone — BGR
+    frame[10:70, 80:400] = (161, 128, 85)
     old = {k: os.environ.get(k) for k in ("MLBB_BANNER_VISUAL_OK", "MLBB_KILL_BANNER_COLOR_ONLY", "MLBB_BANNER_REF_MATCH")}
     os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
     os.environ["MLBB_KILL_BANNER_COLOR_ONLY"] = "1"

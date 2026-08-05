@@ -121,6 +121,11 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
 
 
 def _announce_color_score(frame) -> float:
+    """Score MLBB kill-announce flash in the top-center HUD zone.
+
+    Real banners are bluish/cyan (HSV H≈95–115 on owner/wiki samples), not gold.
+    White text glow is secondary evidence.
+    """
     import cv2
     import numpy as np
 
@@ -130,10 +135,14 @@ def _announce_color_score(frame) -> float:
     zone = hsv[int(h * 0.02) : int(h * 0.30), int(w * 0.15) : int(w * 0.85)]
     if zone.size == 0:
         return 0.0
-    gold = cv2.inRange(zone, np.array([8, 100, 140]), np.array([40, 255, 255]))
+    # OpenCV H is 0–179. Owner kill photos median ~H103/S121/V161; wiki classic ~H107.
+    cyan = cv2.inRange(zone, np.array([75, 55, 95]), np.array([130, 255, 255]))
     white = cv2.inRange(zone, np.array([0, 0, 210]), np.array([180, 50, 255]))
-    combined = cv2.bitwise_or(gold, white)
-    ratio = float(np.count_nonzero(combined)) / float(combined.size)
+    n = float(cyan.size)
+    cyan_ratio = float(np.count_nonzero(cyan)) / n
+    white_ratio = float(np.count_nonzero(white)) / n
+    # Cyan dominates; white text glow is secondary so plain bright UI does not dominate.
+    ratio = cyan_ratio + 0.45 * white_ratio
     return min(1.0, ratio * 11.0)
 
 
@@ -257,7 +266,7 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
     Human-like banner detect order:
     1) OCR text (when readable)
     2) Visual reference match (wiki skins + owner kill photos)
-    3) Gold/white announce flash (color) as Double-tier anchor
+    3) Cyan/blue + white announce flash (color) as Double-tier anchor
     """
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
@@ -324,7 +333,7 @@ def _color_only_allowed() -> bool:
 
 
 def _visual_banner_ok() -> bool:
-    """Accept non-OCR visual evidence (ref / gold flash) as a real banner hit."""
+    """Accept non-OCR visual evidence (ref / cyan flash) as a real banner hit."""
     return os.environ.get("MLBB_BANNER_VISUAL_OK", "1") == "1"
 
 
@@ -649,7 +658,7 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-banner anchor (OCR / visual ref / gold flash) inside motion sustain.
+    Prefer kill-banner anchor (OCR / visual ref / cyan flash) inside motion sustain.
     Falls back to motion when banner missing and motion_anchor / combat mode allows it.
     """
     from mlbb_combat_moment import moment_anchor_mode
