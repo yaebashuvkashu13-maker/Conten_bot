@@ -160,6 +160,99 @@ def _vod_registry_entry(state: dict, vod: Path) -> dict | None:
     return None
 
 
+def _vod_registry_entries(state: dict, vod: Path) -> list[dict]:
+    vod_path = str(vod)
+    vid = vod_youtube_id(vod)
+    return [
+        entry
+        for entry in state.get("vods", [])
+        if entry.get("path") == vod_path or entry.get("id") == vid
+    ]
+
+
+def _mark_vod_exhausted(
+    state: dict,
+    vod: Path,
+    *,
+    reason: str,
+    delete_file: bool = False,
+) -> dict:
+    """Mark every duplicate registry row exhausted; optionally delete the mp4."""
+    rows = _vod_registry_entries(state, vod)
+    if not rows:
+        row = {
+            "id": vod_youtube_id(vod),
+            "path": str(vod),
+            "title": "",
+            "exhausted": True,
+            "reject_reason": reason,
+        }
+        state.setdefault("vods", []).append(row)
+        rows = [row]
+    for entry in rows:
+        entry["exhausted"] = True
+        entry["reject_reason"] = reason
+        entry["path"] = str(vod)
+        record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
+    if delete_file:
+        try:
+            if vod.exists():
+                vod.unlink()
+                log.info("deleted exhausted vod=%s reason=%s", vod.name, reason)
+        except OSError as exc:
+            log.warning("delete exhausted vod failed %s: %s", vod.name, exc)
+    return rows[0]
+
+
+def _upsert_vod_registry(
+    state: dict,
+    *,
+    vid: str,
+    path: str,
+    title: str = "",
+    exhausted: bool = False,
+    reject_reason: str = "",
+) -> dict:
+    """One row per youtube id/path — never append duplicates."""
+    registry = state.setdefault("vods", [])
+    matches = [
+        row
+        for row in registry
+        if row.get("id") == vid or row.get("path") == path
+    ]
+    if matches:
+        primary = matches[0]
+        primary["id"] = vid
+        primary["path"] = path
+        if title:
+            primary["title"] = title
+        if exhausted:
+            primary["exhausted"] = True
+        if reject_reason:
+            primary["reject_reason"] = reject_reason
+        # Collapse duplicates into the primary row.
+        for extra in matches[1:]:
+            if extra.get("exhausted"):
+                primary["exhausted"] = True
+            if extra.get("reject_reason") and not primary.get("reject_reason"):
+                primary["reject_reason"] = extra.get("reject_reason")
+            try:
+                registry.remove(extra)
+            except ValueError:
+                pass
+        return primary
+    row = {
+        "id": vid,
+        "path": path,
+        "title": title,
+        "exhausted": exhausted,
+    }
+    if reject_reason:
+        row["reject_reason"] = reject_reason
+    registry.append(row)
+    return row
+
+
 def _vod_title(state: dict, vod: Path) -> str:
     entry = _vod_registry_entry(state, vod)
     return str((entry or {}).get("title") or "")
@@ -554,16 +647,12 @@ def _scan_vod_with_adaptive(
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
         if not ok_fast:
             log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = _vod_registry_entry(state, vod) or {
-                    "id": vid,
-                    "path": str(vod),
-                    "title": title,
-                    "exhausted": False,
-                }
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+            _mark_vod_exhausted(
+                state,
+                vod,
+                reason=fast_reason,
+                delete_file=os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1",
+            )
             _save_state(game, state)
             if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                 send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
@@ -688,31 +777,40 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox.mkdir(parents=True, exist_ok=True)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
-        entry = next((r for r in registry if r.get("path") == str(mp4)), None)
-        if entry and entry.get("exhausted"):
+        entries = _vod_registry_entries(state, mp4)
+        if any(r.get("exhausted") for r in entries):
+            # Collapse duplicate rows so the next cycle stays clean.
+            _mark_vod_exhausted(
+                state,
+                mp4,
+                reason=str(entries[0].get("reject_reason") or "exhausted"),
+                delete_file=os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1",
+            )
             continue
+        entry = entries[0] if entries else None
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
         if entry is None:
-            entry = {
-                "id": vod_youtube_id(mp4),
-                "path": str(mp4),
-                "title": "",
-                "exhausted": False,
-            }
-            registry.append(entry)
+            entry = _upsert_vod_registry(
+                state,
+                vid=vod_youtube_id(mp4),
+                path=str(mp4),
+                title="",
+                exhausted=False,
+            )
         if game == "pubg":
             streak_in = _adaptive_gate(game).streak_from_state(state)
             title = str(entry.get("title") or "")
             ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
-                entry["reject_reason"] = metro_reason
                 if _pubg_metro_should_exhaust(title, streak_in):
-                    entry["exhausted"] = True
+                    _mark_vod_exhausted(state, mp4, reason=metro_reason, delete_file=True)
+                else:
+                    entry["reject_reason"] = metro_reason
                 _save_state(game, state)
                 continue
         n = _scan_vod_with_adaptive(game, token, chat_id, mp4, env, state)
@@ -720,16 +818,18 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if n == 0:
             entry = _vod_registry_entry(state, mp4) or entry
             if entry and not entry.get("exhausted") and should_mark_vod_exhausted(entry):
-                if not entry.get("last_pool_peaks"):
-                    entry.setdefault("reject_reason", "no_combat_peaks")
-                else:
-                    entry.setdefault("reject_reason", "all_peaks_blocked")
-                entry["exhausted"] = True
-                log.info(
-                    "exhausted vod=%s reason=%s",
-                    mp4.name,
-                    entry.get("reject_reason"),
+                reason = (
+                    "no_combat_peaks"
+                    if not entry.get("last_pool_peaks")
+                    else "all_peaks_blocked"
                 )
+                _mark_vod_exhausted(
+                    state,
+                    mp4,
+                    reason=reason,
+                    delete_file=os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1",
+                )
+                log.info("exhausted vod=%s reason=%s", mp4.name, reason)
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0
@@ -769,39 +869,40 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         )
         if not ok_metro:
             log.warning("metro reject vod=%s title=%s reason=%s", pick.get("id"), pick.get("title", ""), metro_reason)
-            if os.environ.get("SHOOTER_VOD_METRO_REJECT_NOTIFY", "1") == "1":
+            if os.environ.get("SHOOTER_VOD_METRO_REJECT_NOTIFY", "0") == "1":
                 send_message(
                     token,
                     chat_id,
                     f"⏭ Пропускаю VOD — не Metro Royale: {pick.get('title', pick.get('id'))[:80]}\n{metro_reason}",
                 )
             exhausted = _pubg_metro_should_exhaust(str(pick.get("title") or ""), streak_dl)
-            registry.append(
-                {
-                    "id": pick["id"],
-                    "path": str(vod),
-                    "title": pick.get("title", ""),
-                    "exhausted": exhausted,
-                    "reject_reason": metro_reason,
-                }
+            _upsert_vod_registry(
+                state,
+                vid=pick["id"],
+                path=str(vod),
+                title=str(pick.get("title") or ""),
+                exhausted=exhausted,
+                reject_reason=metro_reason,
             )
             used.add(pick["id"])
-            state["vods"] = registry
             state["used_youtube_ids"] = sorted(used)
             _save_state(game, state)
+            if exhausted and os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1":
+                try:
+                    Path(vod).unlink(missing_ok=True)
+                except OSError:
+                    pass
             print(f"pipeline done sent=0 vods=1 game={game} metro_reject=1")
             return 0
 
-    registry.append(
-        {
-            "id": pick["id"],
-            "path": str(vod),
-            "title": pick.get("title", ""),
-            "exhausted": False,
-        }
+    _upsert_vod_registry(
+        state,
+        vid=pick["id"],
+        path=str(vod),
+        title=str(pick.get("title") or ""),
+        exhausted=False,
     )
     used.add(pick["id"])
-    state["vods"] = registry
     state["used_youtube_ids"] = sorted(used)
     _save_state(game, state)
 
