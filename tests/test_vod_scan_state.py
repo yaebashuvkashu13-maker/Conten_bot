@@ -100,6 +100,14 @@ def test_record_vod_scan() -> None:
     assert entry["last_pool_peaks"][0]["peak_sec"] == 124.0
 
 
+def test_record_vod_scan_empty_pool_marks_exhaustable() -> None:
+    """Empty candidate pool must write last_pool_peaks=[] so VOD can exhaust."""
+    entry: dict = {"exhausted": False}
+    record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
+    assert entry["last_pool_peaks"] == []
+    assert should_mark_vod_exhausted(entry) is True
+
+
 def test_pool_cache_valid_and_minimal_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_POOL_TTL_SEC", "3600")
     entry = {

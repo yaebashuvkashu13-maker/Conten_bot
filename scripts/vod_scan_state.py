@@ -205,10 +205,12 @@ def record_vod_scan(
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
-    elif pool_peaks:
+    else:
+        # Empty list must be written — falsy `elif pool_peaks:` skipped [] and
+        # left last_pool_peaks unset, so dead VODs never exhausted (PUBG spam loop).
         entry["last_pool_peaks"] = [
-            {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
-            for p in pool_peaks[:24]
+            {"peak_sec": round(float(p), 1), "score": 0.0, "blocked_reason": ""}
+            for p in list(pool_peaks or [])[:24]
         ]
         entry["last_pool_at"] = time.time()
     if analysis_cache_key:
