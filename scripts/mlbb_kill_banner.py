@@ -528,9 +528,11 @@ def discover_vod_kill_banners_fast(
     if duration < 20.0:
         return []
     need = min_tier if min_tier is not None else _min_tier()
-    max_probes = max(4, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "10")))
-    max_sec = max(20.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "75")))
-    ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "1") == "1"
+    # Wider mid-match grid by default — early-only 10/75s left quota stuck at 3/5.
+    max_probes = max(4, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "20")))
+    max_sec = max(20.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "150")))
+    # Collect multiple doubles so SEND_ONE can still pick an unsent peak.
+    ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "0") == "1"
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
