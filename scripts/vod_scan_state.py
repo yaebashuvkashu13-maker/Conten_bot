@@ -15,17 +15,30 @@ def scan_cooldown_sec(game: str = "") -> int:
     if g == "mlbb":
         raw = os.environ.get(
             "MLBB_VOD_SCAN_COOLDOWN_SEC",
-            os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200"),
+            os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "1800"),
         )
         return max(60, int(raw))
-    return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200")))
+    return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "1800")))
+
+
+def blocked_rescan_cooldown_sec(game: str, entry: dict[str, Any]) -> int:
+    """Shorter retry when peaks exist but were gap-blocked — avoids 2h idle."""
+    base = scan_cooldown_sec(game)
+    if not entry.get("last_scan_blocked"):
+        return base
+    peaks = entry.get("last_pool_peaks") or []
+    reason = str(entry.get("reject_reason") or "").strip()
+    if peaks and not reason:
+        short = int(os.environ.get("VOD_GAP_BLOCK_COOLDOWN_SEC", "900"))
+        return min(base, max(60, short))
+    return base
 
 
 def strict_peak_tries(game: str = "") -> int:
     """Presend peak attempts per run at strict (L0) — walk pool without exhausting VOD."""
     g = (game or "").strip().lower()
     if g == "mlbb":
-        return max(1, int(os.environ.get("MLBB_VOD_STRICT_PEAK_TRIES", "2")))
+        return max(1, int(os.environ.get("MLBB_VOD_STRICT_PEAK_TRIES", "4")))
     return max(1, int(os.environ.get("SHOOTER_VOD_STRICT_PEAK_TRIES", "2")))
 
 
@@ -84,7 +97,7 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if int(entry.get("last_scan_sent") or 0) > 0:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    if age < blocked_rescan_cooldown_sec(game, entry) and entry.get("last_scan_blocked"):
         return True
     return False
 

@@ -81,7 +81,7 @@ def _min_tier() -> int:
 
 
 def _banner_required() -> bool:
-    return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+    return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "0") == "1"
 
 
 def _motion_anchor_ok() -> bool:
@@ -90,7 +90,7 @@ def _motion_anchor_ok() -> bool:
         return True
     if not _banner_required():
         return True
-    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
+    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "0") != "1":
         return True
     return False
 

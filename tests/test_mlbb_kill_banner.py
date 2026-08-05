@@ -200,8 +200,8 @@ def test_resolve_fight_bounds_strict_requires_banner() -> None:
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
+    os.environ["MLBB_VOD_BANNER_PRESEND"] = "1"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
-    os.environ.pop("MLBB_VOD_BANNER_PRESEND", None)
     try:
         with (
             patch.object(kb, "find_banner_near_peak", return_value=None),

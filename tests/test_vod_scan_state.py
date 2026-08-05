@@ -40,7 +40,7 @@ def test_scan_zero_detail() -> None:
 
 
 def test_strict_peak_tries_defaults() -> None:
-    assert strict_peak_tries("mlbb") >= 2
+    assert strict_peak_tries("mlbb") >= 4
     assert strict_peak_tries("pubg") >= 2
 
 
@@ -77,6 +77,20 @@ def test_scan_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     assert should_skip_vod_rescan(entry) is True
     entry2 = {"last_scan_at": time.time() - 7200, "last_scan_sent": 0, "last_scan_blocked": True}
     assert should_skip_vod_rescan(entry2) is False
+
+
+def test_gap_block_shorter_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_scan_state import blocked_rescan_cooldown_sec
+
+    monkeypatch.setenv("MLBB_VOD_SCAN_COOLDOWN_SEC", "3600")
+    monkeypatch.setenv("VOD_GAP_BLOCK_COOLDOWN_SEC", "600")
+    entry = {
+        "last_scan_blocked": True,
+        "last_pool_peaks": [{"peak_sec": 120.0, "score": 0.5, "blocked_reason": ""}],
+    }
+    assert blocked_rescan_cooldown_sec("mlbb", entry) == 600
+    entry_exhaust = {**entry, "reject_reason": "no_combat"}
+    assert blocked_rescan_cooldown_sec("mlbb", entry_exhaust) == 3600
 
 
 def test_record_vod_scan() -> None:
