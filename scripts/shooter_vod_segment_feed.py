@@ -741,7 +741,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     candidates = _discover_candidates(game, env, used)
     if not candidates:
-        send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
+        if os.environ.get("SHOOTER_VOD_DISCOVERY_MISS_NOTIFY", "0") == "1":
+            send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0
 
@@ -752,7 +753,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         pick = pick_discovery_candidate(game, candidates)
     if pick is None:
         pick = candidates[0]
-    send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
+    if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
+        send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
     vod = _download_vod(game, pick, env)
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
