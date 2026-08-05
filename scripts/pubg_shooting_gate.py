@@ -33,7 +33,7 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
 
 
 def _min_gunfire() -> float:
@@ -49,6 +49,15 @@ def reason_is_forbidden(reason: str) -> bool:
     if base in FORBIDDEN_REASONS:
         return True
     return any(fragment in reason for fragment in FORBIDDEN_REASONS)
+
+
+def owner_reason_counts_as_audio(reason: str) -> bool:
+    """Pass reasons from pubg_passes_owner_heuristics (incl. panns_trust=…)."""
+    base = reason.split("=", 1)[0].split(":")[0]
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    # panns_trust / panns_audio / relax_* / tiktok_* are explicit pass tokens.
+    return base.startswith(("panns_", "relax_", "tiktok_"))
 
 
 def pubg_probe_segment(
@@ -127,9 +136,11 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # ok_owner already means heuristics passed; do not drop panns_trust just because
+    # the reason string is not exactly fight_audio/light_combat (that blocked montages).
+    heuristic_audio = bool(ok_owner) and owner_reason_counts_as_audio(owner_reason)
 
-    if owner_reason == "sniper_hold":
+    if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
             return False, f"sniper_hold_no_motion=motion{motion:.3f}:gun{gun:.3f}", metrics
         if gun < min_gun * 0.90:

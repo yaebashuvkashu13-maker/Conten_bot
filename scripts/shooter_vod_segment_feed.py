@@ -357,7 +357,14 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
         return None
 
 
-def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
+def _validate_shooter_presend(
+    game: str,
+    vod: Path,
+    row: dict,
+    rendered: Path,
+    *,
+    montage_part: bool = False,
+) -> tuple[bool, str, dict]:
     profile = _profile(game)
     start = float(row.get("peak_start", row.get("start", 0)))
     dur = _ffprobe_duration(rendered)
@@ -381,6 +388,21 @@ def _validate_shooter_presend(game: str, vod: Path, row: dict, rendered: Path) -
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
+    # Montage parts: shooting/PANNs gate is enough — full combat visual on every
+    # 22s slice was rejecting valid gunfire windows (panns_trust then dropped).
+    shooting_only = montage_part and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
+    if shooting_only and game in ("pubg", "standoff"):
+        from highlight_scorer import score_panns_audio
+        from pubg_shooting_gate import pubg_passes_shooting_gate
+
+        panns = score_panns_audio(vod, start, dur)
+        panns_gun = float(panns.get("panns_gun_max", 0) or 0)
+        ok, reason, metrics = pubg_passes_shooting_gate(
+            vod, start, dur, panns_gun_max=panns_gun
+        )
+        if not ok:
+            return False, reason, metrics
+        return True, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     if not ok:
         return False, reason, metrics
@@ -519,7 +541,9 @@ def _send_montage(
                 log.warning("montage part render fail idx=%s sid=%s", idx, row.get("segment_id"))
                 continue
             # Presend on source window (not full-VOD analyze).
-            ok, reason, _report = _validate_shooter_presend(game, vod, work_row, part)
+            ok, reason, _report = _validate_shooter_presend(
+                game, vod, work_row, part, montage_part=True
+            )
             if not ok:
                 log.warning("montage part REJECT %s: %s", row.get("segment_id"), reason)
                 part.unlink(missing_ok=True)

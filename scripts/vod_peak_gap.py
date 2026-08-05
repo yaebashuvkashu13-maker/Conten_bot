@@ -62,10 +62,23 @@ def used_peak_times_shooter(
                     peaks.append(float(extra))
                 except (TypeError, ValueError):
                     pass
+            # Legacy index rows store part sids instead of float peaks.
+            for part_sid in row.get("montage_parts") or []:
+                try:
+                    part_sid = str(part_sid)
+                    if part_sid.startswith(f"{vod_id}_"):
+                        peaks.append(float(part_sid[len(vod_id) + 1 :].rsplit("_", 1)[-1]))
+                except ValueError:
+                    pass
             continue
         tail = sid[len(vod_id) + 1 :]
         # Ignore composite montage ids like m90_152_330 — parts are tracked separately.
         if tail.startswith("m") and "_" in tail:
+            # Still recover peaks embedded in the id when index row is missing.
+            try:
+                peaks.extend(float(x) for x in tail[1:].split("_") if x.replace(".", "", 1).isdigit())
+            except ValueError:
+                pass
             continue
         try:
             peaks.append(float(tail.rsplit("_", 1)[-1]))
