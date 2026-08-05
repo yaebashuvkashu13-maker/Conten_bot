@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -306,3 +308,119 @@ def temporal_consensus(
         if len(cluster) >= min_model_frames:
             return max(cluster, key=lambda item: (item.confidence, item.tier_confidence))
     return None
+
+
+def cluster_own_decisions(
+    rows: Iterable[tuple[float, EventDecision]],
+    *,
+    max_gap_sec: float = 1.0,
+    min_frames: int = 2,
+) -> list[tuple[float, EventDecision]]:
+    """Collapse consecutive own-streak frame predictions into event anchors."""
+    events: list[tuple[float, EventDecision]] = []
+    cluster: list[tuple[float, EventDecision]] = []
+
+    def flush() -> None:
+        if len(cluster) < min_frames:
+            return
+        tiers = [decision.tier for _, decision in cluster]
+        tier = max(set(tiers), key=tiers.count)
+        matching = [row for row in cluster if row[1].tier == tier]
+        if len(matching) >= min_frames:
+            events.append(
+                max(
+                    matching,
+                    key=lambda row: (
+                        row[1].confidence,
+                        row[1].tier_confidence,
+                    ),
+                )
+            )
+
+    for sec, decision in sorted(rows, key=lambda row: row[0]):
+        if decision.kind != OWN_STREAK or decision.tier < 2:
+            flush()
+            cluster = []
+            continue
+        if cluster and sec - cluster[-1][0] > max_gap_sec:
+            flush()
+            cluster = []
+        cluster.append((sec, decision))
+    flush()
+    return events
+
+
+def scan_video_own_events(
+    video_path: Path,
+    duration: float,
+    *,
+    fps: float = 2.0,
+    chunk_sec: float = 300.0,
+    max_wall_sec: float = 90.0,
+    max_events: int = 4,
+) -> list[tuple[float, EventDecision]]:
+    """Cheap full-VOD visual sweep, independent of imperfect motion peaks."""
+    artifact = _load_model_artifact()
+    if not artifact or duration <= 1:
+        return []
+    fps = min(4.0, max(1.5, float(fps)))
+    chunk_sec = min(600.0, max(60.0, float(chunk_sec)))
+    deadline = time.monotonic() + max(10.0, float(max_wall_sec))
+    all_rows: list[tuple[float, EventDecision]] = []
+    start = 0.0
+    frame_bytes = 160 * 48 * 3
+    while start < duration and time.monotonic() < deadline:
+        span = min(chunk_sec, duration - start)
+        expected = max(1, int(span * fps))
+        vf = (
+            "crop=iw*0.7:ih*0.28:iw*0.15:ih*0.02,"
+            f"scale=160:48,fps={fps:.3f}"
+        )
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{start:.3f}",
+            "-i",
+            str(video_path),
+            "-t",
+            f"{span:.3f}",
+            "-vf",
+            vf,
+            "-frames:v",
+            str(expected),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-",
+        ]
+        remaining = max(5.0, deadline - time.monotonic())
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                check=False,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            break
+        raw = proc.stdout if proc.returncode == 0 else b""
+        count = len(raw) // frame_bytes
+        for index in range(count):
+            offset = index * frame_bytes
+            frame = np.frombuffer(
+                raw[offset : offset + frame_bytes],
+                dtype=np.uint8,
+            ).reshape((48, 160, 3))
+            decision = predict_visual_event(frame, artifact=artifact)
+            if decision is not None:
+                sec = start + (index + 0.5) / fps
+                all_rows.append((sec, decision))
+        events = cluster_own_decisions(all_rows)
+        if len(events) >= max_events:
+            return events[:max_events]
+        start += span
+    return cluster_own_decisions(all_rows)[:max_events]

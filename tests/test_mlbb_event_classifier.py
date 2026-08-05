@@ -19,6 +19,7 @@ from mlbb_event_classifier import (  # noqa: E402
     EventDecision,
     classify_event,
     classify_event_text,
+    cluster_own_decisions,
     confident_non_own_event,
     extract_visual_features,
     predict_visual_event,
@@ -144,3 +145,20 @@ def test_explicit_ocr_hit_needs_only_one_frame() -> None:
         tier_confidence=1.0,
     )
     assert temporal_consensus([(10.0, hit)]) == hit
+
+
+def test_full_vod_cluster_rejects_single_frame_noise() -> None:
+    hit = EventDecision(
+        OWN_STREAK,
+        0.95,
+        tier=3,
+        label="triple",
+        source="event_model",
+        tier_confidence=0.9,
+    )
+    assert cluster_own_decisions([(10.0, hit)]) == []
+    events = cluster_own_decisions(
+        [(10.0, hit), (10.5, hit), (20.0, hit), (22.0, hit)]
+    )
+    assert len(events) == 1
+    assert events[0][1].tier == 3
