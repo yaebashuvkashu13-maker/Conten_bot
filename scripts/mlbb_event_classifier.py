@@ -232,6 +232,15 @@ def predict_visual_event(frame: np.ndarray, *, artifact: dict | None = None) -> 
     )
 
 
+def confident_non_own_event(frame: np.ndarray) -> EventDecision | None:
+    """Cheap pre-OCR veto for visually unambiguous non-own announcements."""
+    decision = predict_visual_event(frame)
+    if decision is None or decision.kind == OWN_STREAK:
+        return None
+    minimum = float(os.environ.get("MLBB_EVENT_FAST_BLOCK_MIN_CONF", "0.95"))
+    return decision if decision.confidence >= minimum else None
+
+
 def classify_event(text: str, frame: np.ndarray | None = None) -> EventDecision:
     """Fuse hard OCR rules with visual evidence; blocked rules always win."""
     rule = classify_event_text(text)

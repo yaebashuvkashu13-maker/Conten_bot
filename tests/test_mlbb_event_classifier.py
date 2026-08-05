@@ -19,6 +19,7 @@ from mlbb_event_classifier import (  # noqa: E402
     EventDecision,
     classify_event,
     classify_event_text,
+    confident_non_own_event,
     extract_visual_features,
     predict_visual_event,
     temporal_consensus,
@@ -105,6 +106,19 @@ def test_artifact_own_threshold_prioritizes_precision() -> None:
     )
     own = predict_visual_event(frame, artifact=artifact)
     assert (own.kind, own.tier) == (OWN_STREAK, 3)
+
+
+def test_fast_non_own_veto_requires_very_high_confidence(monkeypatch) -> None:
+    frame = np.zeros((48, 160, 3), dtype=np.uint8)
+    monkeypatch.setenv("MLBB_EVENT_FAST_BLOCK_MIN_CONF", "0.95")
+    with patch(
+        "mlbb_event_classifier.predict_visual_event",
+        return_value=EventDecision(OTHER, 0.94, source="event_model"),
+    ):
+        assert confident_non_own_event(frame) is None
+    blocked = EventDecision(OBJECTIVE, 0.99, source="event_model")
+    with patch("mlbb_event_classifier.predict_visual_event", return_value=blocked):
+        assert confident_non_own_event(frame) == blocked
 
 
 def test_temporal_consensus_requires_two_model_frames() -> None:

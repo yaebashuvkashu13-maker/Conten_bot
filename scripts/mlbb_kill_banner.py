@@ -254,8 +254,10 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
-    from mlbb_event_classifier import OWN_STREAK, classify_event
+    from mlbb_event_classifier import OWN_STREAK, classify_event, confident_non_own_event
 
+    if confident_non_own_event(frame) is not None:
+        return None
     decision = classify_event(_ocr_banner_zones(frame, deep=deep), frame)
     if decision.kind == OWN_STREAK and decision.tier > 0:
         return KillBannerHit(
