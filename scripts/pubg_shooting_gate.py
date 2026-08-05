@@ -171,7 +171,9 @@ def pubg_passes_shooting_gate(
         crop_box=crop,
         gunfire_density=gun,
     ):
-        return False, f"loot_walk=density{gun:.3f}", metrics
+        # Strong PANNs gunfire + audible density: don't call it loot.
+        if not (panns_gun_max >= 0.40 and gun >= min_gun * 0.85):
+            return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
         video_path,
@@ -184,9 +186,17 @@ def pubg_passes_shooting_gate(
     metrics["gate_reason"] = gate_reason
 
     if reason_is_forbidden(gate_reason):
-        return False, gate_reason, metrics
+        base = str(gate_reason).split("=", 1)[0]
+        # Visual "run_no_fight/run_fake_gun" must not override clear gunfire evidence —
+        # Standoff fights are high-motion and were zero-sending for hours.
+        if base in {"run_no_fight", "run_fake_gun", "run_no_shots"} and (
+            strict_audio or (heuristic_audio and gun >= min_gun * 0.85)
+        ):
+            metrics["visual_override"] = gate_reason
+        else:
+            return False, gate_reason, metrics
 
-    if not gate_ok:
+    if not gate_ok and not metrics.get("visual_override"):
         return False, gate_reason, metrics
 
     pass_reason = (
@@ -194,6 +204,8 @@ def pubg_passes_shooting_gate(
         if strict_audio
         else f"{owner_reason}=gun{gun:.3f}:burst{burst:.2f}"
     )
+    if metrics.get("visual_override"):
+        pass_reason = f"{pass_reason}+override:{metrics['visual_override'].split('=')[0]}"
     return True, pass_reason, metrics
 
 
