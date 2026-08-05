@@ -196,11 +196,19 @@ def test_resolve_fight_bounds_strict_requires_banner() -> None:
     vod = Path("/tmp/fake_vod_strict.mp4")
     old = {
         k: os.environ.get(k)
-        for k in ("MLBB_VOD_KILL_BANNER", "MLBB_KILL_BANNER_REQUIRED", "MLBB_VOD_MOTION_ANCHOR_OK")
+        for k in (
+            "MLBB_VOD_KILL_BANNER",
+            "MLBB_KILL_BANNER_REQUIRED",
+            "MLBB_VOD_MOTION_ANCHOR_OK",
+            "MLBB_MOMENT_ANCHOR",
+            "MLBB_BANNER_ENRICH_ONLY",
+        )
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_VOD_BANNER_PRESEND"] = "1"
+    os.environ["MLBB_MOMENT_ANCHOR"] = "banner"
+    os.environ["MLBB_BANNER_ENRICH_ONLY"] = "0"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
     try:
         with (
@@ -230,11 +238,19 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
 
     old = {
         k: os.environ.get(k)
-        for k in ("MLBB_VOD_KILL_BANNER", "MLBB_KILL_BANNER_REQUIRED", "MLBB_KILL_BANNER_MIN_TIER")
+        for k in (
+            "MLBB_VOD_KILL_BANNER",
+            "MLBB_KILL_BANNER_REQUIRED",
+            "MLBB_KILL_BANNER_MIN_TIER",
+            "MLBB_MOMENT_ANCHOR",
+            "MLBB_BANNER_ENRICH_ONLY",
+        )
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
+    os.environ["MLBB_MOMENT_ANCHOR"] = "banner"
+    os.environ["MLBB_BANNER_ENRICH_ONLY"] = "0"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
     try:
         with (

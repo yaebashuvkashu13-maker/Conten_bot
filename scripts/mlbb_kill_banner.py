@@ -597,9 +597,10 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-streak banner anchor inside motion sustain window.
-    Returns None only when banner is mandatory and no qualifying streak is found.
+    Anchor clip bounds on sustained teamfight motion.
+    Banner OCR is optional enrichment (MLBB_MOMENT_ANCHOR=combat) or mandatory (banner).
     """
+    from mlbb_combat_moment import banner_enrich_only, enrich_banner_meta, moment_anchor_mode
     from mlbb_fight_segment import detect_fight_bounds
 
     fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak_sec)
@@ -610,6 +611,11 @@ def resolve_fight_bounds(
         "fight_end": fight_end,
         "fight_dur": fight_dur,
     }
+
+    mode = moment_anchor_mode()
+    if mode == "combat" or (mode != "banner" and banner_enrich_only()):
+        meta = enrich_banner_meta(vod, peak_sec, motion_meta)
+        return fight_start, fight_end, fight_dur, meta
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return fight_start, fight_end, fight_dur, motion_meta

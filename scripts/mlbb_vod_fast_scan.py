@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MLBB VOD fast preflight — sparse banner color + PANNs combat probes."""
+"""MLBB VOD fast preflight — combat HUD probes (default) or legacy color+PANNs."""
 
 from __future__ import annotations
 
@@ -10,20 +10,9 @@ from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
-    dur = max(0.0, float(duration))
-    if dur < skip_intro + 120:
-        return []
-    offsets: list[float] = []
-    for delta in (0, 180, 420, 780, 1200, 1800):
-        t = skip_intro + delta
-        if t + WINDOW_SEC < dur - 60:
-            offsets.append(round(t, 1))
-    mid = skip_intro + max(0.0, (dur - skip_intro) * 0.45)
-    if mid + WINDOW_SEC < dur - 60 and all(abs(mid - x) > 90 for x in offsets):
-        offsets.append(round(mid, 1))
-    return sorted(set(offsets))[
-        : int(os.environ.get("MLBB_VOD_FAST_PROBE_MAX", "6"))
-    ]
+    from mlbb_combat_moment import probe_offsets
+
+    return probe_offsets(duration, skip_intro=skip_intro)
 
 
 def _banner_color_at(video_path: Path, t: float) -> float:
@@ -41,12 +30,19 @@ def vod_fast_combat_check(
     profile: str = "mobile_legends",
 ) -> tuple[bool, str, list[float]]:
     """
-    Six sparse probes: kill-banner color zone + PANNs combat.
-    Returns (ok, reason, seed_peak_starts).
+    Sparse preflight before full highlight scan.
+    Default (MLBB_FAST_PROBE_MODE=combat): HUD teamfight probes.
+    Legacy (gun): banner color + PANNs gunfire.
     """
     profile = normalize_profile(profile)
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") != "1":
         return True, "fast_probe_disabled", []
+
+    mode = (os.environ.get("MLBB_FAST_PROBE_MODE") or "combat").strip().lower()
+    if mode == "combat":
+        from mlbb_combat_moment import fast_combat_probe
+
+        return fast_combat_probe(video_path, profile)
 
     from smart_video_editor import ffprobe_duration
 

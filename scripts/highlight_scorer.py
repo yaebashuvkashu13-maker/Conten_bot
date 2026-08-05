@@ -1068,6 +1068,12 @@ def rule_gate(
             return False, f"hud_low=mini{metrics.minimap_delta:.3f}:skill{metrics.skill_delta:.3f}"
         if metrics.clip_score <= 0.03:
             return False, f"clip_low={metrics.clip_score:.3f}"
+        if os.environ.get("MLBB_COMBAT_GATE", "1") == "1" and video_path is not None:
+            from mlbb_combat_moment import passes_combat_gate, score_combat_moment
+
+            combat, _detail = score_combat_moment(video_path, start_sec, duration_sec=duration_sec)
+            if not passes_combat_gate(combat):
+                return False, f"combat_low={combat:.3f}"
         return True, "mlbb_fight_ok"
 
     if profile == "wot":

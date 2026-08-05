@@ -853,9 +853,10 @@ def _normalize_clip(clip: dict, vod: Path) -> dict:
             file_dur = _ffprobe_duration(vod)
         resolved = resolve_fight_bounds(vod, peak, file_dur)
         if resolved is None:
+            from mlbb_combat_moment import moment_anchor_mode
             from mlbb_kill_banner import _motion_anchor_ok
 
-            if _motion_anchor_ok():
+            if moment_anchor_mode() == "combat" or _motion_anchor_ok():
                 fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak)
                 min_fight = float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7"))
                 if fight_dur >= min_fight:
