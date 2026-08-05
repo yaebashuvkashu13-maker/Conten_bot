@@ -10,17 +10,23 @@ from pathlib import Path
 LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
-# n97cHIR9Qow — owner review 2026-06-06
+# n97cHIR9Qow — owner review 2026-06-06; 2026-08-05 owner: today's склейки from
+# 1845/2150/2470 were trash (run/fake gun) → flipped to bad.
 DEFAULT_LABELS: dict[str, list[dict]] = {
     "n97cHIR9Qow": [
-        {"tc": "30:45", "time_sec": 1845.0, "label": "good"},
-        {"tc": "33:25", "time_sec": 2005.0, "label": "good"},
+        {"tc": "30:45", "time_sec": 1845.0, "label": "bad", "note": "owner_reject_2026-08-05"},
+        {"tc": "33:25", "time_sec": 2005.0, "label": "bad", "note": "sniper_hold"},
         {"tc": "35:05", "time_sec": 2105.0, "label": "bad"},
-        {"tc": "35:50", "time_sec": 2150.0, "label": "good"},
+        {"tc": "35:50", "time_sec": 2150.0, "label": "bad", "note": "owner_reject_2026-08-05"},
         {"tc": "36:55", "time_sec": 2215.0, "label": "bad"},
         {"tc": "38:07", "time_sec": 2287.0, "label": "bad"},
-        {"tc": "41:10", "time_sec": 2470.0, "label": "good"},
+        {"tc": "41:10", "time_sec": 2470.0, "label": "bad", "note": "owner_reject_2026-08-05"},
         {"tc": "42:01", "time_sec": 2521.0, "label": "bad"},
+    ],
+    "FpMs48XOnq0": [
+        {"tc": "03:50", "time_sec": 230.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+        {"tc": "05:00", "time_sec": 300.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+        {"tc": "07:55", "time_sec": 475.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
     ],
 }
 
@@ -48,6 +54,18 @@ def load_owner_labels() -> dict[str, list[dict]]:
                 if key not in seen:
                     merged[vid].append(row)
                     seen.add(key)
+    # Same timestamp: bad wins over good (owner reject after earlier good mark).
+    for vid, rows in merged.items():
+        by_t: dict[float, dict] = {}
+        for row in rows:
+            try:
+                t = float(row["time_sec"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            prev = by_t.get(t)
+            if prev is None or str(row.get("label")) == "bad":
+                by_t[t] = row
+        merged[vid] = list(by_t.values())
     return merged
 
 

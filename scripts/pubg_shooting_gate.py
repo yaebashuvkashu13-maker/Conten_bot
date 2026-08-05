@@ -26,6 +26,7 @@ FORBIDDEN_REASONS = frozenset(
         "run_loot",
         "talk_menu",
         "talk_low_gun",
+        "streamer_talk",
         "no_shots",
         "low_gunfire",
         "silent_segment",

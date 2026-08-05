@@ -406,15 +406,23 @@ def _validate_shooter_presend(
         ok, reason, metrics = pubg_passes_shooting_gate(
             vod, start, dur, panns_gun_max=panns_gun
         )
+        metrics = dict(metrics or {})
+        metrics["panns_gun_max"] = panns_gun
         ok, reason = soft_allow_owner_montage_part(
-            game, vod, start, ok, reason, montage_part=True
+            game, vod, start, ok, reason, montage_part=True, metrics=metrics
         )
         if not ok:
             return False, reason, metrics
         return True, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     ok, reason = soft_allow_owner_montage_part(
-        game, vod, start, ok, reason, montage_part=montage_part
+        game,
+        vod,
+        start,
+        ok,
+        reason,
+        montage_part=montage_part,
+        metrics=metrics if isinstance(metrics, dict) else None,
     )
     if not ok:
         return False, reason, metrics
