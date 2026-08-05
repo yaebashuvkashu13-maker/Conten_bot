@@ -596,6 +596,9 @@ def _send_montage(
                     "sig": sig,
                     "montage_id": montage_id,
                     "montage_parts": len(accepted_rows),
+                    "montage_peaks": [
+                        float(r.get("peak_start", r["start"])) for r in accepted_rows
+                    ],
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 },
             )
@@ -757,6 +760,19 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
+    montage = _montage_enabled(game)
+    if montage:
+        # Collect denser candidates; spacing for the final склейка is applied in _pick_montage_rows.
+        cand_gap = min(seg_gap, float(os.environ.get("SHOOTER_VOD_MONTAGE_CANDIDATE_GAP_SEC", "12")))
+        min_clip = float(
+            os.environ.get(
+                "SHOOTER_VOD_MONTAGE_MIN_CLIP_SCORE",
+                str(min(min_clip, 0.01)),
+            )
+        )
+        probe_limit = max(probe_limit, 32)
+    else:
+        cand_gap = seg_gap
 
     while peak_tries < max_tries:
         rows: list[dict] = []
@@ -764,7 +780,7 @@ def _scan_vod(
             peak = float(clip.get("start", 0))
             if any(abs(peak - s) <= 4.0 for s in skip_peaks):
                 continue
-            if _peak_too_close(peak, used_peaks, seg_gap):
+            if _peak_too_close(peak, used_peaks, cand_gap):
                 continue
             hm = clip.get("highlight_metrics") or {}
             clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
@@ -787,7 +803,7 @@ def _scan_vod(
             blocked = pool_peaks_fully_blocked(
                 pool_peaks,
                 used_peaks=used_peaks,
-                gap_sec=seg_gap,
+                gap_sec=cand_gap,
                 blocked_sids=blocked_ids,
                 vod_id=vid,
                 lead_sec=lead,
@@ -801,7 +817,7 @@ def _scan_vod(
                 vod.name,
                 len(pool),
                 used_peaks,
-                seg_gap,
+                cand_gap,
                 soften_level,
                 blocked,
             )
@@ -810,7 +826,7 @@ def _scan_vod(
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         # Montage path needs several spaced peaks; singles take the top one.
-        batch = rows if _montage_enabled(game) else rows[:1]
+        batch = rows if montage else rows[:1]
         n = _send_batch(game, token, chat_id, vod, batch, sig)
         if n > 0:
             if entry is not None:

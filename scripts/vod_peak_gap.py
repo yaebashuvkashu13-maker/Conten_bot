@@ -47,7 +47,7 @@ def used_peak_times_shooter(
     sent_set: set[str],
     index_segments: list[dict],
 ) -> list[float]:
-    """Peak times from sent shooter segments (PUBG / Standoff)."""
+    """Peak times from sent shooter segments (PUBG / Standoff / WoT)."""
     index = {str(s.get("segment_id")): s for s in index_segments}
     peaks: list[float] = []
     for sid in sent_set:
@@ -56,9 +56,19 @@ def used_peak_times_shooter(
         row = index.get(sid)
         if row and row.get("peak_start") is not None:
             peaks.append(float(row["peak_start"]))
+            # Montages may list all part peaks.
+            for extra in row.get("montage_peaks") or []:
+                try:
+                    peaks.append(float(extra))
+                except (TypeError, ValueError):
+                    pass
+            continue
+        tail = sid[len(vod_id) + 1 :]
+        # Ignore composite montage ids like m90_152_330 — parts are tracked separately.
+        if tail.startswith("m") and "_" in tail:
             continue
         try:
-            peaks.append(float(sid.rsplit("_", 1)[1]))
+            peaks.append(float(tail.rsplit("_", 1)[-1]))
         except ValueError:
             continue
     return peaks
