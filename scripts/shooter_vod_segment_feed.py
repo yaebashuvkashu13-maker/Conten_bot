@@ -44,6 +44,12 @@ from shooter_vod_segment_store import (
     vod_youtube_id,
     _paths,
 )
+from shooter_owner_montage import (
+    owner_good_fight_peaks,
+    owner_good_pool,
+    soft_allow_owner_montage_part,
+    vod_has_owner_montage_anchors,
+)
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
 from vod_scan_state import (
@@ -400,10 +406,13 @@ def _validate_shooter_presend(
         ok, reason, metrics = pubg_passes_shooting_gate(
             vod, start, dur, panns_gun_max=panns_gun
         )
+        ok, reason = soft_allow_owner_montage_part(game, vod, start, ok, reason)
         if not ok:
             return False, reason, metrics
         return True, reason, metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
+    if montage_part:
+        ok, reason = soft_allow_owner_montage_part(game, vod, start, ok, reason)
     if not ok:
         return False, reason, metrics
     return True, "shooter_combat_ok", metrics
@@ -715,19 +724,20 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     return sent
 
 
-def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
-    """Unscanned VODs first; Metro + Russian titles before others."""
+def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> tuple:
+    """Unscanned VODs first; owner-anchor VODs before others; Metro + Russian next."""
     from pubg_metro_royale_gate import title_metro_hint
     from youtube_game_prefs import russian_score
 
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
     scanned = float((entry or {}).get("last_scan_at") or 0)
     title = str((entry or {}).get("title") or "")
+    owner_prio = 0 if vod_has_owner_montage_anchors(game, mp4) else 1
     metro_prio = 0 if title_metro_hint(title) else 1
     ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
     ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
     fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
-    return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
+    return (1 if scanned else 0, owner_prio, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 
 
 def _scan_vod(
@@ -750,8 +760,11 @@ def _scan_vod(
     index_segments = load_index(game).get("segments", [])
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
+    montage = _montage_enabled(game)
+    owner_peaks = owner_good_fight_peaks(game, vod) if montage else []
+    owner_unused = [p for p in owner_peaks if not _peak_too_close(p, used_peaks, 12.0)]
 
-    if entry and entry.get("last_pool_peaks"):
+    if entry and entry.get("last_pool_peaks") and not owner_unused:
         cached = peak_values_from_entry(entry)
         if pool_peaks_fully_blocked(
             cached,
@@ -765,7 +778,28 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
-    if entry and pool_cache_valid(entry):
+    owner_pool: list[dict] = []
+    if montage and owner_unused:
+        min_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+        owner_pool = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
+        # Keep only unused anchors in the seed pool.
+        owner_pool = [
+            c
+            for c in owner_pool
+            if not _peak_too_close(float(c.get("start", 0)), used_peaks, 12.0)
+        ]
+        if len(owner_pool) >= min_clips:
+            log.info(
+                "owner-anchor montage path vod=%s anchors=%s (skip full rediscover)",
+                vod.name,
+                len(owner_pool),
+            )
+        else:
+            owner_pool = []
+
+    if owner_pool:
+        pool = owner_pool
+    elif entry and pool_cache_valid(entry):
         pool = minimal_pool_from_entry(entry)
         log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
     else:
@@ -784,7 +818,10 @@ def _scan_vod(
     max_tries = max_peak_tries(soften_level, game=game, soft_max_fn=gate.soft_max_peak_tries)
     min_clip = float(os.environ.get("SHOOTER_VOD_MIN_CLIP_SCORE", "0.03"))
     owner_exemplars = os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1"
-    montage = _montage_enabled(game)
+    if owner_pool:
+        # Owner anchors already carry a high seed score — don't drop them on exemplars floor.
+        owner_exemplars = False
+        min_clip = 0.0
     if montage:
         # Collect denser candidates; spacing for the final склейка is applied in _pick_montage_rows.
         cand_gap = min(seg_gap, float(os.environ.get("SHOOTER_VOD_MONTAGE_CANDIDATE_GAP_SEC", "12")))
@@ -912,27 +949,31 @@ def _scan_vod_with_adaptive(
     clear_fast_seeds = None
 
     if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
-        from shooter_vod_fast_scan import (
-            apply_fast_probe_seeds,
-            clear_fast_probe_seeds,
-            vod_fast_combat_check,
-        )
-
-        clear_fast_seeds = clear_fast_probe_seeds
-        ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
-        if not ok_fast:
-            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            _mark_vod_exhausted(
-                state,
-                vod,
-                reason=fast_reason,
-                delete_file=os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1",
+        # Owner-anchor склейка does not need a full-file fast probe (was hanging on long VODs).
+        if vod_has_owner_montage_anchors(game, vod):
+            log.info("skip fast-probe — owner montage anchors present vod=%s", vod.name)
+        else:
+            from shooter_vod_fast_scan import (
+                apply_fast_probe_seeds,
+                clear_fast_probe_seeds,
+                vod_fast_combat_check,
             )
-            _save_state(game, state)
-            if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
-                send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
-            return 0
-        apply_fast_probe_seeds(seed_peaks)
+
+            clear_fast_seeds = clear_fast_probe_seeds
+            ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
+            if not ok_fast:
+                log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
+                _mark_vod_exhausted(
+                    state,
+                    vod,
+                    reason=fast_reason,
+                    delete_file=os.environ.get("SHOOTER_VOD_DELETE_EXHAUSTED", "1") == "1",
+                )
+                _save_state(game, state)
+                if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
+                    send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
+                return 0
+            apply_fast_probe_seeds(seed_peaks)
 
     if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":
         from genshin_vod_fast_scan import (
@@ -1051,7 +1092,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
 
-    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry)):
+    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game)):
         entries = _vod_registry_entries(state, mp4)
         if any(r.get("exhausted") for r in entries):
             # Collapse duplicate rows so the next cycle stays clean.
