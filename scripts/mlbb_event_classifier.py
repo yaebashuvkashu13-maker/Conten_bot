@@ -96,9 +96,21 @@ def extract_banner_patch(frame: np.ndarray) -> np.ndarray:
     if image.shape[0] <= 64 and image.shape[1] <= 220:
         patch = image
     else:
-        small = cv2.resize(image, (480, 270), interpolation=cv2.INTER_AREA)
-        h, w = small.shape[:2]
-        patch = small[int(h * 0.02) : int(h * 0.30), int(w * 0.10) : int(w * 0.90)]
+        patch = None
+        try:
+            # Production references and training crops use this exact ROI.
+            from mlbb_banner_ref_match import extract_banner_zone_patch
+
+            patch = extract_banner_zone_patch(image)
+        except (ImportError, ValueError, cv2.error):
+            patch = None
+        if patch is None or np.asarray(patch).size == 0:
+            small = cv2.resize(image, (480, 270), interpolation=cv2.INTER_AREA)
+            h, w = small.shape[:2]
+            patch = small[
+                int(h * 0.02) : int(h * 0.30),
+                int(w * 0.10) : int(w * 0.90),
+            ]
     return cv2.resize(patch, (160, 48), interpolation=cv2.INTER_AREA)
 
 
