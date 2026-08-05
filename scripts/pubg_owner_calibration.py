@@ -182,16 +182,23 @@ def pubg_passes_owner_heuristics(
             return True, f"panns_relax_l4={panns_gun_max:.3f}"
     if audio_rms > 0.050 and gunfire_density < 0.015 and panns_gun_max < 0.25:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
-    if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
-        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if center_motion >= 0.075 and gunfire_density < 0.115 and panns_gun_max < 0.28:
-        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if gunfire_density < 0.040 and audio_rms > 0.036:
-        return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
+    # Real fights often have high camera motion — accept clear gunfire BEFORE
+    # the run_fake_gun heuristic (which previously blocked gun~0.05–0.11 fights).
     if gunfire_density >= 0.055:
         return True, "fight_audio"
     if center_motion < 0.022 and gunfire_density >= 0.028 and burst_ratio >= 5.5:
         return True, "sniper_hold"
     if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:
         return True, "light_combat"
+    if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
+        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    fake_gun_ceil = float(os.environ.get("PUBG_RUN_FAKE_GUN_MAX", "0.050"))
+    if (
+        center_motion >= 0.075
+        and gunfire_density < fake_gun_ceil
+        and panns_gun_max < 0.32
+    ):
+        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    if gunfire_density < 0.040 and audio_rms > 0.036:
+        return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     return False, f"below_owner_floor=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"
