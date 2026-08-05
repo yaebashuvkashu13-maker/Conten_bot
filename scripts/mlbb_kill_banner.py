@@ -451,6 +451,40 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
+def _motion_hint_peaks(analysis: dict, *, limit: int, duration: float) -> list[float]:
+    """Derive probe times from motion/audio when caller passes no hint_peaks."""
+    import numpy as np
+
+    win = float(analysis.get("window_seconds", 2.0) or 2.0)
+    if duration <= 240:
+        t0 = 15.0
+    elif duration <= 480:
+        t0 = min(float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300")), 90.0)
+    else:
+        t0 = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300"))
+
+    motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
+    audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
+    picked: list[float] = []
+    if motion.size >= 4:
+        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+        for bi in np.argsort(combined)[::-1]:
+            t = float(bi) * win + win * 0.5
+            if t < t0 or t > duration - 4.0:
+                continue
+            if any(abs(t - p) < 8.0 for p in picked):
+                continue
+            picked.append(round(t, 2))
+            if len(picked) >= limit:
+                return picked
+
+    t1 = max(t0 + 30.0, duration - 20.0)
+    if t1 <= t0 + 1.0:
+        return [round(duration * 0.5, 2)]
+    step = (t1 - t0) / max(limit, 1)
+    return [round(t0 + (i + 0.5) * step, 2) for i in range(limit)]
+
+
 def discover_vod_kill_banners(
     vod: Path,
     *,
@@ -502,9 +536,17 @@ def discover_vod_kill_banners(
                 return True
         return probes < max_probes and time.monotonic() < deadline
 
-    # Phase 1: narrow scan around stage1 motion peaks (fast).
+    # Phase 1: narrow scan around motion peaks (caller hints or auto-derived).
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
-    for peak in sorted(set(hint_peaks or []))[:peak_limit]:
+    peaks = [float(p) for p in (hint_peaks or []) if p is not None]
+    if not peaks:
+        peaks = _motion_hint_peaks(analysis, limit=peak_limit, duration=duration)
+        log.info(
+            "banner discover %s: auto hint peaks=%s",
+            vod.name,
+            [round(p, 1) for p in peaks[:peak_limit]],
+        )
+    for peak in sorted(set(peaks))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         probes += 1
@@ -513,7 +555,14 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
 
     # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
-    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+    # If peaks-only produced nothing, still do a short motion sweep so quota hunts
+    # are not stuck with probes=0 / hits=0 after a long analyze_video.
+    force_sparse = (
+        not hits
+        and probes > 0
+        and os.environ.get("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE", "1") == "1"
+    )
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1" and not force_sparse:
         hits.sort(key=lambda h: h.sec)
         log.info(
             "banner discover %s: peaks-only probes=%s hits=%s",
@@ -522,6 +571,12 @@ def discover_vod_kill_banners(
             len(hits),
         )
         return hits
+    if force_sparse:
+        log.info(
+            "banner discover %s: fallback sparse after empty peaks-only probes=%s",
+            vod.name,
+            probes,
+        )
 
     # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
     if probes < max_probes and time.monotonic() < deadline:

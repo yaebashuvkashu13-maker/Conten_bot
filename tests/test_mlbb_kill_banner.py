@@ -117,26 +117,47 @@ def test_discover_banners_handles_numpy_motion() -> None:
     def fake_scan_window(*_a, **_kw):
         return []
 
+    def fake_find_banner(*_a, **_kw):
+        return None
+
     old = os.environ.get("MLBB_VOD_BANNER_DISCOVER")
+    old_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL")
+    old_fb = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE")
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    os.environ["MLBB_VOD_BANNER_DISCOVER_FULL"] = "0"
+    os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = "0"
     try:
         import mlbb_fight_segment as fight
 
         orig = fight._analysis_for
         orig_scan = kb.scan_window
+        orig_find = kb.find_banner_near_peak
         fight._analysis_for = fake_analysis_for
         kb.scan_window = fake_scan_window
+        kb.find_banner_near_peak = fake_find_banner
         try:
             hits = kb.discover_vod_kill_banners(vod)
             assert hits == []
+            peaks = kb._motion_hint_peaks(fake_analysis, limit=4, duration=600.0)
+            assert len(peaks) == 4
+            assert all(p >= 90.0 for p in peaks)
         finally:
             fight._analysis_for = orig
             kb.scan_window = orig_scan
+            kb.find_banner_near_peak = orig_find
     finally:
         if old is None:
             os.environ.pop("MLBB_VOD_BANNER_DISCOVER", None)
         else:
             os.environ["MLBB_VOD_BANNER_DISCOVER"] = old
+        if old_full is None:
+            os.environ.pop("MLBB_VOD_BANNER_DISCOVER_FULL", None)
+        else:
+            os.environ["MLBB_VOD_BANNER_DISCOVER_FULL"] = old_full
+        if old_fb is None:
+            os.environ.pop("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE", None)
+        else:
+            os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = old_fb
 
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
