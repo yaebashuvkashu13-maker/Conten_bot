@@ -27,6 +27,7 @@ _TIER_PATTERNS: tuple[tuple[re.Pattern[str], int, str], ...] = (
     (re.compile(r"maniac|маньяк", re.I), 4, "maniac"),
     (re.compile(r"triple\s*kill|тройн.{0,12}убий", re.I), 3, "triple"),
     (re.compile(r"double\s*kill|двойн.{0,12}убий|ou?ble\s*kill|d0uble", re.I), 2, "double"),
+    (re.compile(r"monster\s*kill|мега\s*убий", re.I), 2, "monster_kill"),
     (re.compile(r"\bkill\b|убийств", re.I), 1, "single"),
 )
 _ENEMY_RE = re.compile(

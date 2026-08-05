@@ -41,6 +41,8 @@ def test_text_rules_accept_only_own_streaks() -> None:
     assert (own.kind, own.tier) == (OWN_STREAK, 3)
     assert classify_event_text("Enemy Triple Kill").kind == ENEMY_STREAK
     assert classify_event_text("Ally Maniac").kind == ALLY_STREAK
+    monster = classify_event_text("MONSTER KILL")
+    assert (monster.kind, monster.tier) == (OWN_STREAK, 2)
 
 
 def test_text_rules_block_objectives_and_commands() -> None:
