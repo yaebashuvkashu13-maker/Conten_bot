@@ -63,9 +63,25 @@ def save_json_state(path: Path, payload: dict[str, Any], *, retries: int = 3) ->
     for attempt in range(1, retries + 1):
         try:
             if path.exists():
-                shutil.copy2(path, backup)
-            tmp.write_text(text, encoding="utf-8")
+                try:
+                    current = json.loads(path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    current = None
+                if isinstance(current, dict):
+                    shutil.copy2(path, backup)
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, path)
+            try:
+                dir_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
             if not backup.exists():
                 shutil.copy2(path, backup)
             return

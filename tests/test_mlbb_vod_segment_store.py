@@ -12,8 +12,16 @@ from mlbb_vod_segment_store import (  # noqa: E402
     apply_owner_label,
     backfill_owner_labels_from_vod_segments,
     load_owner_labels_json,
+    segment_id,
     upsert_segment,
 )
+
+
+def test_segment_id_keeps_subsecond_precision() -> None:
+    vod = Path("/tmp/yt_abcdefghijk.mp4")
+    assert segment_id(vod, 100.4) == "abcdefghijk_100.4"
+    assert segment_id(vod, 100.6) == "abcdefghijk_100.6"
+    assert segment_id(vod, 100.0) == "abcdefghijk_100"
 
 
 def test_append_owner_label_json_dedupes(monkeypatch, tmp_path: Path) -> None:

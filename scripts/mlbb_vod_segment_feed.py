@@ -52,6 +52,7 @@ from vod_scan_state import (
     max_peak_tries,
     peak_values_from_entry,
     peaks_from_pool,
+    pool_cache_valid,
     pool_peaks_fully_blocked,
     record_vod_scan,
     should_mark_vod_exhausted,
@@ -81,11 +82,11 @@ def _vod_min_sec() -> float:
 
 
 def _vod_max_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_MAX_SEC", "1200"))
+    return float(os.environ.get("MLBB_VOD_MAX_SEC", "10800"))
 
 
 def _vod_target_dur_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "780"))
+    return float(os.environ.get("MLBB_VOD_TARGET_DUR_SEC", "1800"))
 
 
 def _vod_skip_long_sec() -> float:
@@ -94,7 +95,7 @@ def _vod_skip_long_sec() -> float:
 
 def _vod_min_peak_sec(vod: Path | None = None) -> float:
     """Skip laning/spawn — fights usually after ~5–7 min on full VODs."""
-    base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "420"))
+    base = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "90"))
     if vod is None:
         return base
     dur = _ffprobe_duration(vod)
@@ -243,14 +244,42 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
                 continue
             from nightly_youtube_montage import fetch_video_meta
 
-            meta = fetch_video_meta(vid, env) or {"title": p.stem, "id": vid}
+            fetched = fetch_video_meta(vid, env)
+            meta = fetched or {"title": p.stem, "id": vid}
             title = str(meta.get("title") or p.stem)
             if LONG_VOD_TITLE_RE.search(title):
                 continue
-            if vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
-                registry.append(_registry_entry(p, title=title))
+            if fetched is None or vid == "E4Dsp53yvv4" or MLBB_TITLE_RE.search(title):
+                new_entry = _registry_entry(
+                    p,
+                    title=title,
+                    uploader=str(meta.get("uploader") or meta.get("channel") or ""),
+                )
+                if fetched is None:
+                    new_entry["metadata_pending"] = True
+                registry.append(new_entry)
                 known.add(vid)
                 known_paths.add(str(p))
+
+    # Retry transient metadata failures.  Dedicated-inbox files remain
+    # available meanwhile, but are removed if metadata later proves they are
+    # not MLBB gameplay.
+    pending_rows = [row for row in registry if row.get("metadata_pending")]
+    if pending_rows:
+        from nightly_youtube_montage import fetch_video_meta
+        from youtube_mlbb_vod_prefs import passes_mlbb_game_title
+
+        for row in pending_rows:
+            meta = fetch_video_meta(str(row.get("id") or ""), env)
+            if not meta:
+                continue
+            title = str(meta.get("title") or row.get("title") or "")
+            row["title"] = title
+            row["uploader"] = str(meta.get("uploader") or meta.get("channel") or "")
+            row.pop("metadata_pending", None)
+            if LONG_VOD_TITLE_RE.search(title) or not passes_mlbb_game_title(title):
+                row["exhausted"] = True
+                row["reject_reason"] = "metadata_not_mlbb"
 
     state["vods"] = registry
     state["used_youtube_ids"] = sorted(set(used) | {r.get("id", "") for r in registry if r.get("id")})
@@ -382,7 +411,20 @@ def _ytdlp_download_lock(blocking: bool = True):
 
 def _zero_yield_uploaders() -> set[str]:
     state = _load_state()
-    return {str(u).casefold() for u in state.get("zero_yield_uploaders", []) if str(u).strip()}
+    now = time.time()
+    ttl = max(3600, int(os.environ.get("MLBB_ZERO_YIELD_UPLOADER_TTL_SEC", str(7 * 86400))))
+    threshold = max(2, int(os.environ.get("MLBB_ZERO_YIELD_UPLOADER_STRIKES", "2")))
+    blocked: set[str] = set()
+    for raw in state.get("zero_yield_uploaders", []):
+        # Legacy string entries had no timestamp and are treated as expired.
+        if not isinstance(raw, dict):
+            continue
+        uploader = str(raw.get("uploader") or "").casefold()
+        strikes = int(raw.get("strikes") or 0)
+        last_zero = float(raw.get("last_zero_at") or 0)
+        if uploader and strikes >= threshold and now - last_zero < ttl:
+            blocked.add(uploader)
+    return blocked
 
 
 def _record_zero_yield_uploader(meta: dict | None) -> None:
@@ -394,13 +436,40 @@ def _record_zero_yield_uploader(meta: dict | None) -> None:
     if not uploader:
         return
     state = _load_state()
-    blocked = {str(u).casefold() for u in state.get("zero_yield_uploaders", [])}
-    if uploader in blocked:
-        return
-    blocked.add(uploader)
-    state["zero_yield_uploaders"] = sorted(blocked)[-200:]
+    records = {
+        str(row.get("uploader") or "").casefold(): dict(row)
+        for row in state.get("zero_yield_uploaders", [])
+        if isinstance(row, dict) and row.get("uploader")
+    }
+    row = records.get(uploader, {"uploader": uploader, "strikes": 0})
+    row["strikes"] = int(row.get("strikes") or 0) + 1
+    row["last_zero_at"] = time.time()
+    records[uploader] = row
+    state["zero_yield_uploaders"] = sorted(
+        records.values(), key=lambda item: float(item.get("last_zero_at") or 0)
+    )[-200:]
     _save_state(state)
-    log.info("zero-yield uploader blocked: %s", uploader)
+    log.info("zero-yield uploader strike uploader=%s strikes=%s", uploader, row["strikes"])
+
+
+def _clear_zero_yield_uploader(meta: dict | None) -> None:
+    if not meta:
+        return
+    from youtube_mlbb_vod_prefs import normalize_uploader
+
+    uploader = normalize_uploader(meta)
+    if not uploader:
+        return
+    state = _load_state()
+    rows = [
+        row
+        for row in state.get("zero_yield_uploaders", [])
+        if not isinstance(row, dict)
+        or str(row.get("uploader") or "").casefold() != uploader
+    ]
+    if len(rows) != len(state.get("zero_yield_uploaders", [])):
+        state["zero_yield_uploaders"] = rows
+        _save_state(state)
 
 
 def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, throttled: bool = False) -> list[dict]:
@@ -1304,8 +1373,9 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") == "1":
         presend_banner = os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") == "1"
-        if presend_banner:
-            from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip, _min_tier
+        banner_required = os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+        if presend_banner or banner_required:
+            from mlbb_kill_banner import verify_banner_on_source, verify_rendered_clip
 
             banner_sec = float(row.get("banner_sec", peak_start)) if row.get("banner_sec") else peak_start
             banner_ok, banner_reason = verify_banner_on_source(vod, banner_sec)
@@ -1318,21 +1388,6 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
             report["kill_banner"] = banner_reason
             if not banner_ok:
                 return False, banner_reason, report
-            if os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1":
-                tier = row.get("kill_banner_tier")
-                if tier is None and row.get("kill_banner"):
-                    tier = (row.get("kill_banner") or {}).get("tier")
-                try:
-                    tier_i = int(tier) if tier is not None else 0
-                except (TypeError, ValueError):
-                    tier_i = 0
-                min_tier = _min_tier()
-                if tier_i < min_tier:
-                    return (
-                        False,
-                        f"kill_banner_tier_low={tier_i}:need>={min_tier}",
-                        report,
-                    )
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
@@ -1465,10 +1520,15 @@ def _dedupe_segments_by_gap(
 ) -> list[dict]:
     """Keep best clip per fight — no time overlap between highlight windows."""
 
-    def _rank_key(r: dict) -> tuple[float, float, float]:
+    def _rank_key(r: dict) -> tuple[float, float, float, float]:
         metrics = r.get("highlight_metrics") or {}
         clip_score = float(metrics.get("clip_score") or r.get("clip_score") or 0.0)
-        return (clip_score, float(r.get("score", 0)), float(r.get("hook_score", 0)))
+        return (
+            clip_score,
+            float(r.get("score", 0)),
+            float(r.get("hook_score", 0)),
+            -float(r.get("start", 0)),
+        )
 
     gap = _interval_gap_sec()
     ranked = sorted(rows, key=_rank_key, reverse=True)
@@ -1483,7 +1543,7 @@ def _dedupe_segments_by_gap(
             continue
         taken.append((start, end))
         chosen.append(row)
-    chosen.sort(key=lambda r: r["start"])
+    chosen.sort(key=_rank_key, reverse=True)
     return chosen
 
 
@@ -1533,6 +1593,7 @@ def _collect_scan_segments(
             continue
         lead_clip = _normalize_clip(clip, vod)
         if lead_clip.get("banner_reject"):
+            clip["blocked_reason"] = str(lead_clip.get("banner_reject"))
             log.info(
                 "skip peak=%.1f banner_reject=%s",
                 peak,
@@ -1542,6 +1603,7 @@ def _collect_scan_segments(
         start = float(lead_clip["start"])
         seg_dur = float(lead_clip.get("input_duration") or 0)
         if seg_dur < float(os.environ.get("MLBB_FIGHT_MIN_SEC", "7")):
+            clip["blocked_reason"] = "short_banner_clip"
             log.info("skip peak=%.1f short_banner_clip dur=%.1f", peak, seg_dur)
             continue
         end = start + float(lead_clip.get("input_duration") or _segment_duration({"start": start, "clip": lead_clip}))
@@ -1553,7 +1615,18 @@ def _collect_scan_segments(
         hm = clip.get("highlight_metrics") or {}
         skip_revalidate = os.environ.get("MLBB_VOD_SKIP_REVALIDATE", "1") == "1"
         already_scored = bool(hm.get("rule_pass")) or str(hm.get("pass_reason") or "").startswith("mlbb_fight")
-        if skip_revalidate and already_scored:
+        original_start = float(clip.get("start", peak))
+        original_dur = float(clip.get("input_duration") or 0)
+        bounds_unchanged = (
+            original_dur > 0
+            and abs(start - original_start) < 0.1
+            and abs(seg_dur - original_dur) < 0.1
+        )
+        trusted_banner = (
+            int(lead_clip.get("kill_banner_tier") or 0) >= 2
+            and str(lead_clip.get("banner_source") or "") in {"ocr", "event_model"}
+        )
+        if skip_revalidate and already_scored and (bounds_unchanged or trusted_banner):
             ok, reason = True, str(hm.get("pass_reason") or "highlight_pass")
             metrics_rows = [hm]
             visual_rows = [{"visual_pass": hm.get("visual_pass", True)}]
@@ -1562,6 +1635,7 @@ def _collect_scan_segments(
                 vod, PROFILE, [lead_clip]
             )
         if not ok:
+            clip["blocked_reason"] = f"gate:{reason}"
             log.info("skip %s gate=%s", sid, reason)
             continue
         metrics = (metrics_rows[0] if metrics_rows else {}) or clip.get("highlight_metrics") or {}
@@ -1569,6 +1643,7 @@ def _collect_scan_segments(
         clip_score = float(metrics.get("clip_score") or 0.0)
         min_clip = float(os.environ.get("MLBB_VOD_MIN_CLIP_SCORE", "0.05"))
         if clip_score < min_clip and os.environ.get("MLBB_VOD_OWNER_EXEMPLARS", "1") == "1":
+            clip["blocked_reason"] = "low_clip_score"
             log.info("skip %s low_clip_score=%.3f min=%.3f", sid, clip_score, min_clip)
             continue
         out.append(
@@ -1590,9 +1665,6 @@ def _collect_scan_segments(
                 "gate_reason": reason,
             }
         )
-        if os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1":
-            log.info("send_one: first validated segment %s — skip validating rest of pool", sid)
-            break
     deduped = _dedupe_segments_by_gap(out, min_gap=min_gap, reserved_intervals=reserved_intervals)
     batch_cap = int(os.environ.get("MLBB_VOD_BATCH_MAX", "0"))
     if batch_cap > 0:
@@ -1830,20 +1902,11 @@ def _process_vod_segments(
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, PROFILE)
         if not ok_fast:
-            log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
-            if entry is None:
-                entry = {"id": vid, "path": str(vod), "exhausted": False}
-            entry["reject_reason"] = fast_reason
-            entry["exhausted"] = True
-            record_vod_scan(entry, sent=0, pool_peaks=[], blocked=False)
-            state = _load_state()
-            if entry:
-                _sync_vod_entry_to_state(state, entry, vod)
-            _save_state(state)
-            if clear_fast_seeds:
-                clear_fast_seeds()
-            return 0
-        apply_fast_probe_seeds(seed_peaks)
+            # Sparse probes are only an optimization hint.  A miss cannot prove
+            # that a VOD has no fights, so always continue to the full scan.
+            log.info("fast-probe advisory miss vod=%s reason=%s — full scan", vod.name, fast_reason)
+        else:
+            apply_fast_probe_seeds(seed_peaks)
 
     try:
         with adaptive_env(streak_in) as level:
@@ -1873,7 +1936,7 @@ def _process_vod_segments(
             used_peaks = used_peaks_for_vod("mlbb", vid, sent, index_segments)
 
             cached_blocked = False
-            if entry and entry.get("last_pool_peaks"):
+            if entry and entry.get("last_pool_peaks") and pool_cache_valid(entry):
                 cached = peak_values_from_entry(entry)
                 if pool_peaks_fully_blocked(
                     cached,
@@ -1940,7 +2003,15 @@ def _process_vod_segments(
                         break
                     if to_send and preskip >= len(to_send):
                         for row in to_send:
-                            skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+                            rejected_peak = round(float(row.get("peak_start", row["start"])), 1)
+                            skip_peaks.add(rejected_peak)
+                            for candidate in pool_cache or []:
+                                candidate_peak = round(
+                                    float(candidate.get("start", candidate.get("peak_start", 0))),
+                                    1,
+                                )
+                                if abs(candidate_peak - rejected_peak) <= 0.1:
+                                    candidate["blocked_reason"] = "presend"
                         peak_tries += 1
                         if peak_tries < max_peak_attempts:
                             log.warning(
@@ -2021,6 +2092,7 @@ def _process_vod_segments(
     elif sent_total == 0 and send_quota_blocked:
         log.info("send quota blocked — keep vod=%s for next cycle", vod.name)
     else:
+        _clear_zero_yield_uploader(entry)
         log.info("sent=%s vod=%s (streak reset)", sent_total, vod.name)
         if active_level > 0 and os.environ.get("MLBB_VOD_ADAPTIVE_NOTIFY", "1") == "1":
             send_message(

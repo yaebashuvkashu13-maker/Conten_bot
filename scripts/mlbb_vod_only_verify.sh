@@ -30,11 +30,17 @@ check_env MLBB_VOD_NO_CROP 1
 check_env MLBB_VOD_LANDSCAPE 1
 check_env MLBB_VOD_VARIABLE_LENGTH 1
 check_env MLBB_VOD_SEND_ONE 1
+check_env MLBB_KILL_BANNER_REQUIRED 1
 check_env MLBB_KILL_BANNER_MIN_TIER double
-check_env MLBB_VOD_BANNER_PRESEND 0
+check_env MLBB_VOD_BANNER_PRESEND 1
+check_env MLBB_VOD_MOTION_ANCHOR_OK 0
 check_env MLBB_VOD_BANNER_DISCOVER 0
 check_env MLBB_VOD_BANNER_PREFILTER 0
 check_env MLBB_VOD_OWNER_EXEMPLARS 1
+check_env MLBB_VOD_SKIP_REVALIDATE 1
+check_env MLBB_VOD_ZERO_STREAK_SOFTEN 4
+check_env MLBB_FIGHT_MAX_SEC 28
+check_env MLBB_FIGHT_HARD_MAX_SEC 32
 
 forbidden=(
   mlbb_continuous_worker.py
@@ -65,6 +71,15 @@ fi
 
 if [[ ! -x /usr/local/bin/mlbb_vod_segment_feed.sh ]]; then
   die "missing /usr/local/bin/mlbb_vod_segment_feed.sh"
+else
+  for expected in \
+    'MLBB_FIGHT_MAX_SEC=28' \
+    'MLBB_FIGHT_HARD_MAX_SEC=32' \
+    'MLBB_FIGHT_TRIM_LONG=1' \
+    'MLBB_VOD_SKIP_REVALIDATE=1'; do
+    grep -q "export ${expected}" /usr/local/bin/mlbb_vod_segment_feed.sh \
+      || die "wrapper missing effective ${expected}"
+  done
 fi
 
 GOOD=$(find /root/content_bot_ml/data/highlight_exemplars/mobile_legends/good -name '*.mp4' 2>/dev/null | wc -l | tr -d ' ')

@@ -294,11 +294,16 @@ def upload_age_days(upload_date: str, *, now: datetime | None = None) -> int | N
     return max(0, (ref.date() - uploaded.date()).days)
 
 
-def passes_upload_freshness(meta: dict, *, max_age_days: int | None = None) -> bool:
+def passes_upload_freshness(
+    meta: dict,
+    *,
+    max_age_days: int | None = None,
+    now: datetime | None = None,
+) -> bool:
     limit = MLBB_VOD_DEFAULT_MAX_AGE_DAYS if max_age_days is None else max_age_days
     if limit <= 0:
         return True
-    age = upload_age_days(str(meta.get("upload_date") or ""))
+    age = upload_age_days(str(meta.get("upload_date") or ""), now=now)
     if age is None:
         return True
     return age <= limit

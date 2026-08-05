@@ -5,9 +5,33 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
+import json
 from typing import Any, Callable
 
 from vod_peak_gap import filter_blocked_peaks, peak_too_close, used_peak_times_shooter
+
+
+_POOL_CONFIG_KEYS = (
+    "HIGHLIGHT_WINDOW_SEC",
+    "HIGHLIGHT_MAX_STAGE1",
+    "HIGHLIGHT_ACTION_PEAK_LIMIT",
+    "INTELLICLIP_STAGE1",
+    "HIGHLIGHT_MLBB_SKIP_INTRO_SEC",
+    "MLBB_TEAMFIGHT_MIN_SCORE",
+    "MLBB_VOD_MIN_CLIP_SCORE",
+    "MLBB_KILL_BANNER_REQUIRED",
+    "MLBB_KILL_BANNER_MIN_TIER",
+    "MLBB_VOD_MOTION_ANCHOR_OK",
+    "MLBB_VOD_BANNER_PREFILTER",
+    "MLBB_VOD_BANNER_DISCOVER",
+    "MLBB_VOD_ADAPTIVE_LEVEL",
+)
+
+
+def pool_config_fingerprint() -> str:
+    payload = {key: os.environ.get(key, "") for key in _POOL_CONFIG_KEYS}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def scan_cooldown_sec(game: str = "") -> int:
@@ -119,6 +143,9 @@ def pool_cache_valid(entry: dict[str, Any] | None) -> bool:
     last = float(entry.get("last_pool_at") or entry.get("last_scan_at") or 0)
     if last <= 0:
         return False
+    saved_config = str(entry.get("last_pool_config") or "")
+    if saved_config and saved_config != pool_config_fingerprint():
+        return False
     return (time.time() - last) < pool_ttl_sec()
 
 
@@ -179,6 +206,11 @@ def record_vod_scan(
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
+    previous_reasons = {
+        round(float(row["peak_sec"]), 1): str(row.get("blocked_reason") or "")
+        for row in normalize_pool_peak_rows(entry.get("last_pool_peaks") or [])
+        if row.get("blocked_reason")
+    }
     if pool:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:
@@ -187,17 +219,21 @@ def record_vod_scan(
                 {
                     "peak_sec": peak,
                     "score": round(float(clip.get("score") or 0), 4),
-                    "blocked_reason": str(clip.get("blocked_reason") or ""),
+                    "blocked_reason": str(
+                        clip.get("blocked_reason") or previous_reasons.get(peak, "")
+                    ),
                 }
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
+        entry["last_pool_config"] = pool_config_fingerprint()
     elif pool_peaks:
         entry["last_pool_peaks"] = [
             {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
             for p in pool_peaks[:24]
         ]
         entry["last_pool_at"] = time.time()
+        entry["last_pool_config"] = pool_config_fingerprint()
     if analysis_cache_key:
         entry["last_analysis_cache_key"] = analysis_cache_key
 

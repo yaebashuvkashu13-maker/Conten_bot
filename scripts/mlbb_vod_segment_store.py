@@ -73,8 +73,11 @@ def _read_json(path: Path, default: dict | list) -> dict | list:
 
 
 def _write_json(path: Path, payload: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    if not isinstance(payload, dict):
+        raise TypeError("VOD segment stores must use a JSON object")
+    from vod_state_io import save_json_state
+
+    save_json_state(path, payload)
 
 
 def vod_youtube_id(path: Path) -> str:
@@ -89,7 +92,9 @@ def vod_youtube_id(path: Path) -> str:
 
 
 def segment_id(vod_path: Path, start: float) -> str:
-    return f"{vod_youtube_id(vod_path)}_{int(round(start))}"
+    rounded = round(float(start), 1)
+    token = str(int(rounded)) if rounded.is_integer() else f"{rounded:.1f}"
+    return f"{vod_youtube_id(vod_path)}_{token}"
 
 
 def load_index() -> dict:

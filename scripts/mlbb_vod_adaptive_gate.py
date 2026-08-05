@@ -10,14 +10,14 @@ from typing import Iterator
 # After N consecutive VODs with sent=0, next VOD runs with softer env overrides.
 DEFAULT_STREAK_THRESHOLD = 3
 
-# Level 1: productive fallback — motion peaks, banner checked at presend only.
+# Level 1: relax ranking/visual thresholds, never remove the quality proof.
 SOFTEN_L1: dict[str, str] = {
     "MLBB_VOD_BANNER_PREFILTER": "0",
     "MLBB_VOD_BANNER_DISCOVER": "0",
-    "MLBB_KILL_BANNER_MIN_TIER": "single",
-    "MLBB_KILL_BANNER_REQUIRED": "0",
-    "MLBB_VOD_BANNER_PRESEND": "0",
-    "MLBB_VOD_MOTION_ANCHOR_OK": "1",
+    "MLBB_KILL_BANNER_MIN_TIER": "double",
+    "MLBB_KILL_BANNER_REQUIRED": "1",
+    "MLBB_VOD_BANNER_PRESEND": "1",
+    "MLBB_VOD_MOTION_ANCHOR_OK": "0",
     "MLBB_VOD_BANNER_SKIP_ON_MISS": "0",
     "MLBB_VOD_LENIENT_UNIFORM": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.40",
@@ -29,14 +29,15 @@ SOFTEN_L1: dict[str, str] = {
     "MLBB_KILL_BANNER_QUICK_AFTER": "8",
 }
 
-# Level 2: motion-first clips; relaxed presend uniform + try next peak on reject.
+# Level 2: allow an OCR-confirmed single kill, but never motion-only filler.
 SOFTEN_L2: dict[str, str] = {
     **SOFTEN_L1,
+    "MLBB_KILL_BANNER_MIN_TIER": "single",
     "MLBB_PRESEND_MIN_MOTION": "0.012",
     "MLBB_PRESEND_MIN_MINIMAP_DELTA": "0.010",
     "MLBB_VOD_MIN_CLIP_SCORE": "0.05",
     "HIGHLIGHT_MLBB_AUTO_CLIP_MIN": "0.08",
-    "MLBB_VOD_BANNER_PRESEND": "0",
+    "MLBB_VOD_BANNER_PRESEND": "1",
     "MLBB_VOD_TAIL_MIN_HUD_RATE": "0.38",
     "MLBB_KILL_BANNER_QUICK_BEFORE": "16",
     "MLBB_KILL_BANNER_QUICK_AFTER": "10",
@@ -111,7 +112,7 @@ def soften_summary(level: int) -> str:
     ov = overrides_for_level(level)
     tier = ov.get("MLBB_KILL_BANNER_MIN_TIER", "?")
     pre = "off" if ov.get("MLBB_VOD_BANNER_PREFILTER") == "0" else "on"
-    anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "banner_required"
+    anchor = "motion_ok" if ov.get("MLBB_KILL_BANNER_REQUIRED") == "0" else "ocr_banner_required"
     return f"soft L{level} tier={tier} prefilter={pre} {anchor}"
 
 
@@ -158,7 +159,7 @@ def adaptive_env(streak: int) -> Iterator[int]:
 def telegram_soften_notice(streak: int, level: int) -> str:
     return (
         f"⚙️ Серия без клипов: {streak}. Включаю {soften_summary(level)}.\n"
-        f"Режу teamfight по motion; kill-banner — бонус, не обязателен."
+        f"Смягчаю ранжирование, но OCR kill-banner остаётся обязательным."
     )
 
 

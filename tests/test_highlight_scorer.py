@@ -20,6 +20,8 @@ from highlight_scorer import (  # noqa: E402
     rule_gate,
     score_panns_audio,
     stage1_candidates,
+    stage1_panns_prefilter,
+    discover_highlight_candidates,
 )
 
 
@@ -138,3 +140,75 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     starts = stage1_candidates(vod, "pubg")
     assert 510.0 not in starts
     assert not owner_anchors_enabled()
+
+
+def test_non_shooter_panns_prefilter_does_not_truncate(monkeypatch) -> None:
+    monkeypatch.setenv("HIGHLIGHT_MAX_PANN_PROBE", "5")
+    starts = [float(i * 10) for i in range(12)]
+    with patch("highlight_scorer.score_panns_audio") as score:
+        assert stage1_panns_prefilter(Path("vod.mp4"), starts, "mobile_legends") == starts
+    score.assert_not_called()
+
+
+def test_fast_seeds_do_not_short_circuit_full_stage1(monkeypatch, tmp_path: Path) -> None:
+    vod = tmp_path / "yt_testvid123.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("HIGHLIGHT_ALLOW_SEED_STARTS", "1")
+    monkeypatch.setenv("HIGHLIGHT_SEED_STARTS", "500")
+    monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+    monkeypatch.setenv("INTELLICLIP_STAGE1", "0")
+    monkeypatch.setenv("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "90")
+    analysis = {
+        "window_seconds": 2.0,
+        "duration": 700.0,
+        "center_motion": np.zeros(350, dtype=np.float32),
+        "gunfire": np.zeros(350, dtype=np.float32),
+        "audio": np.zeros(350, dtype=np.float32),
+    }
+    with (
+        patch("vod_analysis_cache.analyze_video_cached", return_value=analysis) as analyze,
+        patch("highlight_scorer._action_peak_starts", return_value=[200.0]),
+        patch(
+            "highlight_scorer._rank_stage1_starts",
+            side_effect=lambda _a, _p, starts, **_kw: sorted(
+                starts, key=lambda start: (start != 200.0 and not 490.0 <= start <= 500.0, start)
+            ),
+        ),
+    ):
+        starts = stage1_candidates(vod, "mobile_legends")
+    analyze.assert_called_once()
+    assert 200.0 in starts
+    assert any(490.0 <= start <= 500.0 for start in starts)
+
+
+def test_send_one_scores_all_candidates_then_ranks_best(monkeypatch, tmp_path: Path) -> None:
+    vod = tmp_path / "yt_testvid123.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("HIGHLIGHT_PARALLEL_WORKERS", "1")
+    monkeypatch.setenv("MLBB_VOD_SEND_ONE", "1")
+    monkeypatch.setenv("MLBB_VOD_ONLY", "1")
+    monkeypatch.setenv("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "0")
+    starts = [100.0, 200.0, 300.0]
+
+    def evaluate(_path, start, _profile):
+        metrics = HighlightMetrics(
+            start=start,
+            duration=15,
+            profile="mobile_legends",
+            rule_pass=True,
+            visual_pass=True,
+            clip_score=start / 1000,
+            hook_score=0.5,
+            viral_score=start / 1000,
+            pass_reason="mlbb_fight_ok",
+        )
+        return start, metrics
+
+    with (
+        patch("highlight_scorer.require_inference_ready", return_value=(True, "ok")),
+        patch("highlight_scorer.stage1_candidates", return_value=starts),
+        patch("highlight_scorer._evaluate_highlight_start", side_effect=evaluate) as scorer,
+    ):
+        out = discover_highlight_candidates(vod, "mobile_legends", limit=2)
+    assert scorer.call_count == 3
+    assert [row["start"] for row in out] == [300.0, 200.0]
