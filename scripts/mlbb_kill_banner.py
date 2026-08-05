@@ -253,6 +253,12 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
+    """
+    Human-like banner detect order:
+    1) OCR text (when readable)
+    2) Visual reference match (wiki skins + owner kill photos)
+    3) Gold/white announce flash (color) as Double-tier anchor
+    """
     classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
     if classified is not None:
         return KillBannerHit(
@@ -262,7 +268,21 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
             text=classified.text,
             source="ocr",
         )
+
     color = _announce_color_score(frame)
+    color_gate = _color_min_score() * (0.55 if deep else 0.75)
+
+    # Visual bank FIRST when zone looks like an announce — humans recognize shape/color, not OCR.
+    if color >= color_gate or deep:
+        try:
+            from mlbb_banner_ref_match import classify_banner_reference
+
+            ref_hit = classify_banner_reference(sec, frame)
+            if ref_hit is not None:
+                return ref_hit
+        except Exception:
+            pass
+
     if color >= _color_min_score():
         deep_text = _ocr_banner_zones(frame, deep=True)
         if _ENEMY_STREAK_RE.search(deep_text):
@@ -277,12 +297,22 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
                 text=classified.text,
                 source="ocr",
             )
+        if _visual_banner_ok():
+            # Gold flash in kill-announce zone = treat as streak banner (≥ double).
+            tier = 3 if color >= _color_min_score() * 1.6 else 2
+            return KillBannerHit(
+                sec=round(sec, 2),
+                tier=tier,
+                label="triple" if tier >= 3 else "double",
+                text=f"color_flash={color:.3f}",
+                source="flash",
+            )
         if not _color_only_allowed():
             return None
         return KillBannerHit(
             sec=round(sec, 2),
-            tier=3,
-            label="announce",
+            tier=2,
+            label="double",
             text=f"color={color:.3f}",
             source="color",
         )
@@ -290,7 +320,22 @@ def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit |
 
 
 def _color_only_allowed() -> bool:
-    return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1"
+    return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "1") == "1"
+
+
+def _visual_banner_ok() -> bool:
+    """Accept non-OCR visual evidence (ref / gold flash) as a real banner hit."""
+    return os.environ.get("MLBB_BANNER_VISUAL_OK", "1") == "1"
+
+
+def _hit_qualifies(hit: KillBannerHit, *, min_tier: int) -> bool:
+    if hit.tier < min_tier:
+        return False
+    if hit.source == "ocr":
+        return True
+    if hit.source in ("ref", "flash", "color") and _visual_banner_ok():
+        return True
+    return not _banner_required()
 
 
 def _candidate_secs(
@@ -362,23 +407,28 @@ def scan_window(
 def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     if quick:
-        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
-        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
+        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "12"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "8"))
         hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, quick=True)
     else:
-        before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
-        after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
-        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
+        before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "24"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "12"))
+        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, deep=True)
     if not hits:
         return None
     min_tier = _min_tier()
-    for hit in hits:
-        if hit.tier >= min_tier and hit.source == "ocr":
+    # Prefer OCR > ref > flash/color, then higher tier, then closer to peak.
+    ranked = sorted(
+        hits,
+        key=lambda h: (
+            0 if h.source == "ocr" else 1 if h.source == "ref" else 2,
+            -h.tier,
+            abs(h.sec - peak_sec),
+        ),
+    )
+    for hit in ranked:
+        if _hit_qualifies(hit, min_tier=min_tier):
             return hit
-    if not _banner_required():
-        for hit in hits:
-            if hit.tier >= min_tier:
-                return hit
     return None
 
 
@@ -422,10 +472,12 @@ def discover_vod_kill_banners(
     probes = 0
 
     def _merge_hit(hit: KillBannerHit) -> None:
-        if hit.tier < need or hit.source != "ocr":
+        if not _hit_qualifies(hit, min_tier=need):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
-            if hit.tier > hits[-1].tier:
+            if hit.tier > hits[-1].tier or (
+                hit.tier == hits[-1].tier and hit.source == "ocr" and hits[-1].source != "ocr"
+            ):
                 hits[-1] = hit
         else:
             hits.append(hit)
@@ -597,10 +649,10 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Anchor clip bounds on sustained teamfight motion.
-    Banner OCR is optional enrichment (MLBB_MOMENT_ANCHOR=combat) or mandatory (banner).
+    Prefer kill-banner anchor (OCR / visual ref / gold flash) inside motion sustain.
+    Falls back to motion when banner missing and motion_anchor / combat mode allows it.
     """
-    from mlbb_combat_moment import banner_enrich_only, enrich_banner_meta, moment_anchor_mode
+    from mlbb_combat_moment import moment_anchor_mode
     from mlbb_fight_segment import detect_fight_bounds
 
     fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak_sec)
@@ -612,11 +664,6 @@ def resolve_fight_bounds(
         "fight_dur": fight_dur,
     }
 
-    mode = moment_anchor_mode()
-    if mode == "combat" or (mode != "banner" and banner_enrich_only()):
-        meta = enrich_banner_meta(vod, peak_sec, motion_meta)
-        return fight_start, fight_end, fight_dur, meta
-
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return fight_start, fight_end, fight_dur, motion_meta
 
@@ -624,58 +671,38 @@ def resolve_fight_bounds(
     if hit is None:
         hit = find_banner_near_peak(vod, peak_sec, quick=False)
     min_tier = _min_tier()
+    mode = moment_anchor_mode()
 
-    if _motion_anchor_ok():
-        if hit is not None and hit.tier >= min_tier:
-            start, end, dur = bounds_from_banner(
-                hit.sec,
-                file_dur,
-                fight_start=fight_start,
-                fight_end=fight_end,
-            )
-            return (
-                start,
-                end,
-                dur,
-                {
-                    "anchor": "kill_banner",
-                    "banner_sec": hit.sec,
-                    "kill_banner": hit.label,
-                    "kill_banner_tier": hit.tier,
-                    "banner_text": hit.text,
-                    "banner_source": hit.source,
-                    "fight_start": fight_start,
-                    "fight_end": fight_end,
-                    "fight_dur": fight_dur,
-                },
-            )
+    if hit is not None and _hit_qualifies(hit, min_tier=min_tier):
+        start, end, dur = bounds_from_banner(
+            hit.sec,
+            file_dur,
+            fight_start=fight_start,
+            fight_end=fight_end,
+        )
+        return (
+            start,
+            end,
+            dur,
+            {
+                "anchor": "kill_banner",
+                "banner_sec": hit.sec,
+                "kill_banner": hit.label,
+                "kill_banner_tier": hit.tier,
+                "banner_text": hit.text,
+                "banner_source": hit.source,
+                "fight_start": fight_start,
+                "fight_end": fight_end,
+                "fight_dur": fight_dur,
+            },
+        )
+
+    # No banner: combat/motion modes keep the fight; strict banner mode rejects.
+    if mode in ("combat", "motion") or _motion_anchor_ok():
         return fight_start, fight_end, fight_dur, motion_meta
-
-    if hit is None or hit.tier < min_tier:
-        return None
-
-    start, end, dur = bounds_from_banner(
-        hit.sec,
-        file_dur,
-        fight_start=fight_start,
-        fight_end=fight_end,
-    )
-    return (
-        start,
-        end,
-        dur,
-        {
-            "anchor": "kill_banner",
-            "banner_sec": hit.sec,
-            "kill_banner": hit.label,
-            "kill_banner_tier": hit.tier,
-            "banner_text": hit.text,
-            "banner_source": hit.source,
-            "fight_start": fight_start,
-            "fight_end": fight_end,
-            "fight_dur": fight_dur,
-        },
-    )
+    if not _banner_required():
+        return fight_start, fight_end, fight_dur, motion_meta
+    return None
 
 
 def verify_banner_on_source(
@@ -690,8 +717,8 @@ def verify_banner_on_source(
     need = min_tier if min_tier is not None else _min_tier()
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
+        if _hit_qualifies(hit, min_tier=need):
+            return True, f"source_banner_ok:{hit.source}:{hit.label}@{hit.sec:.1f}s"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"
     return False, f"source_banner_missing_min_tier={need}"

@@ -11,8 +11,8 @@ from highlight_scorer import WINDOW_SEC, normalize_profile
 
 
 def moment_anchor_mode() -> str:
-    """combat = HUD+motion (default) | banner = legacy OCR anchor | motion = fight bounds only."""
-    return (os.environ.get("MLBB_MOMENT_ANCHOR") or "combat").strip().lower()
+    """banner = visual/OCR kill banner first | combat = HUD+motion | motion = fight bounds only."""
+    return (os.environ.get("MLBB_MOMENT_ANCHOR") or "banner").strip().lower()
 
 
 def banner_enrich_only() -> bool:

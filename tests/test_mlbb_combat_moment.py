@@ -23,9 +23,9 @@ from mlbb_combat_moment import (  # noqa: E402
 )
 
 
-def test_moment_anchor_defaults_combat(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_moment_anchor_defaults_banner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MLBB_MOMENT_ANCHOR", raising=False)
-    assert moment_anchor_mode() == "combat"
+    assert moment_anchor_mode() == "banner"
     assert banner_enrich_only() is True
 
 
@@ -69,19 +69,44 @@ def test_resolve_fight_bounds_combat_mode_skips_banner_requirement() -> None:
     import mlbb_kill_banner as kb
 
     vod = Path("/tmp/fake_combat_bounds.mp4")
-    old = {k: os.environ.get(k) for k in ("MLBB_MOMENT_ANCHOR", "MLBB_BANNER_ENRICH_ONLY", "MLBB_VOD_KILL_BANNER")}
+    old = {k: os.environ.get(k) for k in ("MLBB_MOMENT_ANCHOR", "MLBB_BANNER_ENRICH_ONLY", "MLBB_VOD_KILL_BANNER", "MLBB_BANNER_VISUAL_OK")}
     os.environ["MLBB_MOMENT_ANCHOR"] = "combat"
     os.environ["MLBB_BANNER_ENRICH_ONLY"] = "1"
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
     try:
         with (
             patch.object(kb, "find_banner_near_peak", return_value=None),
             patch("mlbb_fight_segment.detect_fight_bounds", return_value=(90.0, 118.0, 28.0)),
-            patch("mlbb_combat_moment.enrich_banner_meta", side_effect=lambda _v, _p, m: m),
         ):
             out = kb.resolve_fight_bounds(vod, 100.0, 600.0)
         assert out is not None
         assert out[3]["anchor"] == "motion"
+    finally:
+        for key, val in old.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
+
+
+def test_classify_frame_gold_flash_counts_as_banner() -> None:
+    import mlbb_kill_banner as kb
+    import numpy as np
+
+    frame = np.zeros((270, 480, 3), dtype=np.uint8)
+    # Paint gold HSV-ish BGR in banner zone
+    frame[10:70, 80:400] = (40, 180, 220)
+    old = {k: os.environ.get(k) for k in ("MLBB_BANNER_VISUAL_OK", "MLBB_KILL_BANNER_COLOR_ONLY", "MLBB_BANNER_REF_MATCH")}
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
+    os.environ["MLBB_KILL_BANNER_COLOR_ONLY"] = "1"
+    os.environ["MLBB_BANNER_REF_MATCH"] = "0"
+    try:
+        with patch.object(kb, "_ocr_banner_zones", return_value=""):
+            hit = kb._classify_frame(42.0, frame, deep=True)
+        assert hit is not None
+        assert hit.source in ("flash", "color")
+        assert hit.tier >= 2
     finally:
         for key, val in old.items():
             if val is None:

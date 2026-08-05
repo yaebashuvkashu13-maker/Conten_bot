@@ -251,7 +251,7 @@ def _filter_bad_label_starts(
 
 
 def _mlbb_skip_intro_sec() -> float:
-    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "300"))
+    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "120"))
 
 
 def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> list[float]:
@@ -1485,10 +1485,12 @@ def _pann_probe_limit(profile: str) -> int:
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
-    max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
+    # MOBA/Genshin/WoT: do NOT truncate stage1 by PANN probe limit — that limit is for
+    # expensive gun-audio scoring on shooters only.
     if profile not in SHOOTER_PROFILES:
         return starts
+    max_pann = _pann_probe_limit(profile)
+    starts = starts[:max_pann]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1612,7 +1614,7 @@ def discover_highlight_candidates(
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     if profile == "mobile_legends":
-        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
