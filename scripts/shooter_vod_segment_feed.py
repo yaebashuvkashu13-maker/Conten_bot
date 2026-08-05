@@ -363,6 +363,23 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
         return None
 
 
+def _row_window_start(row: dict) -> float:
+    """Use the rendered clip start — never peak_start alone (that misaligned gates)."""
+    clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+    for key in ("start",):
+        if clip.get(key) is not None:
+            try:
+                return float(clip[key])
+            except (TypeError, ValueError):
+                pass
+    if row.get("start") is not None:
+        try:
+            return float(row["start"])
+        except (TypeError, ValueError):
+            pass
+    return float(row.get("peak_start", 0) or 0)
+
+
 def _validate_shooter_presend(
     game: str,
     vod: Path,
@@ -372,10 +389,12 @@ def _validate_shooter_presend(
     montage_part: bool = False,
 ) -> tuple[bool, str, dict]:
     profile = _profile(game)
-    start = float(row.get("peak_start", row.get("start", 0)))
+    # Gate the same window that was rendered (peak-centered clip start), not peak_start.
+    start = _row_window_start(row)
     dur = _ffprobe_duration(rendered)
     if dur <= 0:
-        dur = float(row.get("duration", 15))
+        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+        dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
     if game == "pubg":
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
@@ -477,33 +496,37 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
 
 
 def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_sec: float) -> list[dict]:
-    """Greedy highest-score peaks spaced by montage gap."""
+    """Greedy highest-score peaks spaced by montage gap.
+
+    Returns up to max_clips * 3 candidates so rejected parts can be replaced
+    without failing the whole склейка.
+    """
+    pool_cap = max(max_clips * 3, min_clips + 3)
     picked: list[dict] = []
     for row in sorted(rows, key=lambda r: float(r.get("score", 0)), reverse=True):
         peak = float(row.get("peak_start", row.get("start", 0)))
         if any(abs(peak - float(p.get("peak_start", p.get("start", 0)))) < gap_sec for p in picked):
             continue
         picked.append(row)
-        if len(picked) >= max_clips:
+        if len(picked) >= pool_cap:
             break
     if len(picked) < min_clips:
         return []
-    picked.sort(key=lambda r: float(r.get("peak_start", r.get("start", 0))))
+    # Keep score order for try-order; chronological sort happens after accept.
     return picked
 
 
 def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
+    """Always peak-center montage parts so gunfire at the peak is inside the cut."""
     clip = dict(row.get("clip") or {})
-    start = float(row.get("start", clip.get("start", 0)))
-    peak = float(row.get("peak_start", clip.get("peak_start", start)))
-    dur = float(clip.get("input_duration") or clip.get("output_duration") or 0.0)
-    if dur < 8.0 or dur > part_max:
-        # Peak-centered window for montage parts.
-        half = min(part_max, 22.0) * 0.5
-        start = max(0.0, peak - half)
-        dur = min(part_max, max(12.0, half * 2.0))
+    start_hint = float(row.get("start", clip.get("start", 0)) or 0)
+    peak = float(row.get("peak_start", clip.get("peak_start", start_hint)) or start_hint)
+    half = min(part_max, float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", "22"))) * 0.5
+    start = max(0.0, peak - half)
+    dur = min(part_max, max(12.0, half * 2.0))
     file_dur = _ffprobe_duration(vod)
     if file_dur > 1.0 and start + dur > file_dur:
+        start = max(0.0, file_dur - dur)
         dur = max(8.0, file_dur - start)
     clip.update(
         {
@@ -586,6 +609,15 @@ def _send_montage(
                 min_clips,
             )
             return 0
+
+        # Chronological order for the склейка (candidates were score-ordered).
+        ordered = sorted(
+            zip(accepted_rows, segment_paths, durations),
+            key=lambda t: float(t[0].get("peak_start", t[0].get("start", 0))),
+        )
+        accepted_rows = [t[0] for t in ordered]
+        segment_paths = [t[1] for t in ordered]
+        durations = [t[2] for t in ordered]
 
         # Trim parts if xfade would exceed final max.
         while len(segment_paths) > min_clips:

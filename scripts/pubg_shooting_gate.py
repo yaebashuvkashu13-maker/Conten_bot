@@ -187,9 +187,9 @@ def pubg_passes_shooting_gate(
 
     if reason_is_forbidden(gate_reason):
         base = str(gate_reason).split("=", 1)[0]
-        # Visual "run_no_fight/run_fake_gun" must not override clear gunfire evidence —
+        # Visual run/loot/fake-gun must not override clear gunfire evidence —
         # Standoff fights are high-motion and were zero-sending for hours.
-        if base in {"run_no_fight", "run_fake_gun", "run_no_shots"} and (
+        if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"} and (
             strict_audio or (heuristic_audio and gun >= min_gun * 0.85)
         ):
             metrics["visual_override"] = gate_reason

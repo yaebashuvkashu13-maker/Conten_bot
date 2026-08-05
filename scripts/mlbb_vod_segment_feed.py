@@ -1387,11 +1387,13 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
 
 def _format_send_report(row: dict, check: dict) -> str:
-    peak = int(row.get("peak_start", row["start"]))
+    peak = int(row.get("peak_start", row.get("start", 0)))
+    score = float(row.get("score") or row.get("clip_score") or 0.0)
+    hook = float(row.get("hook_score") or 0.0)
     lines = [
-        f"score={row['score']:.4f} hook={row['hook_score']:.3f}",
-        f"gate={check.get('pass_reason', row.get('gate_reason', ''))}",
-        f"cut@{int(row['start'])}s peak@{peak}s",
+        f"score={score:.4f} hook={hook:.3f}",
+        f"gate={check.get('pass_reason', row.get('gate_reason', row.get('pass_reason', '')))}",
+        f"cut@{int(float(row.get('start', 0)))}s peak@{peak}s",
         (
             f"motion cut={check.get('cut_motion', 0):.3f} "
             f"peak={check.get('peak_motion', 0):.3f} "
@@ -1718,8 +1720,8 @@ def _send_segment_batch(
                 "duration": seg_dur,
                 "fight_dur": float(row.get("fight_dur") or seg_dur),
                 "peak_start": row.get("peak_start", row["start"]),
-                "score": row["score"],
-                "hook_score": row["hook_score"],
+                "score": float(row.get("score") or row.get("clip_score") or 0.0),
+                "hook_score": float(row.get("hook_score") or 0.0),
                 "clip_score": row.get("clip_score"),
                 "sig": sig,
                 "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1853,6 +1855,11 @@ def _try_ship_banner_seeds(
             "input_duration": lead_clip.get("input_duration"),
             "fight_dur": lead_clip.get("input_duration"),
             "pass_reason": "banner_fast_ship",
+            # Required by caption / segment index — banner path skips highlight scorer.
+            "score": float(lead_clip.get("score") or lead_clip.get("clip_score") or 0.55),
+            "hook_score": float(lead_clip.get("hook_score") or 0.40),
+            "clip_score": float(lead_clip.get("clip_score") or 0.55),
+            "gate_reason": "banner_fast_ship",
         }
         n, _preskip, _sblock = _send_segment_batch(token, chat_id, vod, [row], file_sha256(vod))
         sent_n += n
