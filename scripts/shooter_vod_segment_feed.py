@@ -1699,6 +1699,18 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
+    # If discovery is paused and we have nothing to scan this tick, stop immediately
+    # (do not fall into empty search / recycle loops that burn idle every 8s).
+    pause_until = float(state.get("discovery_pause_until") or 0)
+    if pause_until > time.time() and tried == 0:
+        log.warning(
+            "no scannable inbox + discovery paused — yield game=%s until=%.0f",
+            game,
+            pause_until,
+        )
+        print(f"pipeline done sent=0 vods=0 game={game} inbox_dead=1")
+        return 0
+
     # All inbox VODs exhausted — park them and discover a fresh VOD.
     # Old behavior skipped discovery entirely (inbox_dead=1), which left the
     # cycle spinning every idle tick with zero productive work.
@@ -1753,9 +1765,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             n = _scan_vod_with_adaptive(game, token, chat_id, recycled, env, state)
             print(f"pipeline done sent={n} vods=1 game={game} recycled=1")
             return 0
+        # Nothing to download and nothing to recycle — hard idle, signal cycle.
+        pause_until = float(state.get("discovery_pause_until") or 0)
+        dead = "inbox_dead=1" if pause_until > time.time() else "discovery_miss=1"
         if os.environ.get("SHOOTER_VOD_DISCOVERY_MISS_NOTIFY", "0") == "1":
             send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
-        print(f"pipeline done sent=0 vods=0 game={game}")
+        print(f"pipeline done sent=0 vods=0 game={game} {dead}")
         return 0
 
     pick = None
@@ -1835,14 +1850,16 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "3600")
     os.environ.setdefault("SHOOTER_VOD_MIN_SEC", "600")
     os.environ.setdefault("HIGHLIGHT_ALLOW_NO_CLIP", "1")
-    os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "1")
+    # Never re-enable CLIP via setdefault(…, "0") after this — paid hang.
+    os.environ["HIGHLIGHT_CLIP_DISABLED"] = os.environ.get("HIGHLIGHT_CLIP_DISABLED", "1") or "1"
+    if os.environ.get("HIGHLIGHT_CLIP_DISABLED") != "1":
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "1"
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
-        os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
     else:
         os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     lock = _feed_lock(game)

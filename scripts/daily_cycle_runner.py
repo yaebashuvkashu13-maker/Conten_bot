@@ -145,7 +145,13 @@ def main() -> int:
                 if "inbox_dead=1" in line:
                     thrash = True
                     break
+                if "discovery_miss=1" in line and f"game={game}" in line:
+                    thrash = True
+                    break
                 if "discovery paused" in line and "game=" + game in line:
+                    thrash = True
+                    break
+                if "no scannable inbox + discovery paused" in line:
                     thrash = True
                     break
     except OSError:
