@@ -1103,7 +1103,18 @@ def score_candidate_window(
 
     panns = score_panns_audio(video_path, start_sec, duration_sec)
     clip_score, frames = score_clip_exemplar(video_path, start_sec, duration_sec, profile)
-    if clip_score < 0:
+    # Sentinel hard-fail is exactly -1.0 with a clip_* reason. Histogram fallback
+    # can legitimately return negative similarity — do not treat it as CLIP death.
+    hard_clip_fail = (
+        clip_score <= -1.0
+        and frames
+        and (
+            str(frames[0].get("reason") or "") in ("clip_disabled",)
+            or str(frames[0].get("reason") or "").startswith("clip_unavailable")
+        )
+        and not any(f.get("fallback") == "hist" for f in frames)
+    )
+    if hard_clip_fail:
         m = HighlightMetrics(
             start=start_sec,
             duration=duration_sec,
@@ -1120,7 +1131,7 @@ def score_candidate_window(
         start=start_sec,
         duration=duration_sec,
         profile=profile,
-        clip_score=clip_score,
+        clip_score=max(0.0, float(clip_score)),
         ocr_text=ocr_text,
         ocr_hits=ocr_hits,
         center_motion=motion["center_motion"],
