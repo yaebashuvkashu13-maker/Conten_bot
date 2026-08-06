@@ -1914,24 +1914,21 @@ def _clip_from_banner_seed(vod: Path, peak: float) -> dict:
     label = "double"
     tier = 2
     src = "ref"
-    # Optional local reconfirm (small window only). Default on — cheap vs full analyze.
-    if os.environ.get("MLBB_BANNER_FAST_SHIP_REQUICK", "1") == "1":
+    # Optional local reconfirm. Default OFF — seed already came from
+    # discover_vod_kill_banners_fast (ref≥double); quick re-scan often misses
+    # the same frame and burned the whole seed list as requick_miss.
+    if os.environ.get("MLBB_BANNER_FAST_SHIP_REQUICK", "0") == "1":
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit is None:
-            return {
-                "start": float(peak),
-                "peak_start": float(peak),
-                "input_duration": 0.0,
-                "output_duration": 0.0,
-                "banner_reject": "requick_miss",
-                "source_path": str(vod),
-                "source_index": 0,
-                "speed": 1.0,
-            }
-        banner_sec = float(hit.sec)
-        label = str(hit.label or "double")
-        tier = int(hit.tier or 0)
-        src = str(hit.source or "").lower()
+        if hit is not None:
+            banner_sec = float(hit.sec)
+            label = str(hit.label or "double")
+            tier = int(hit.tier or 0)
+            src = str(hit.source or "").lower()
+        else:
+            log.info(
+                "banner fast-ship requick miss peak=%.1f — keep seed meta",
+                peak,
+            )
 
     min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
     fight_start = max(0.0, banner_sec - max(min_pre, 14.0))
