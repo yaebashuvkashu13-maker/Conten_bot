@@ -1146,7 +1146,7 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
     removed = 0
     for mp4 in list(inbox.glob("yt_*.mp4")):
         dur = _ffprobe_duration(mp4)
-        if dur >= min_sec and _vod_length_ok(dur):
+        if dur >= min_sec and _vod_length_ok(mp4, dur):
             continue
         dest = parked / mp4.name
         try:
