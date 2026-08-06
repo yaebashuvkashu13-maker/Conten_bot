@@ -1391,6 +1391,49 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
     return removed
 
 
+def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
+    """
+    When YouTube discovery is 403/empty, pull the longest parked VOD back into
+    inbox and clear exhausted so we keep shipping instead of paid idle.
+    """
+    if os.environ.get("SHOOTER_VOD_RECYCLE_PARKED", "1") != "1":
+        return None
+    parked = inbox.parent / "parked"
+    if not parked.is_dir():
+        return None
+    min_sec = _vod_min_sec()
+    candidates: list[tuple[float, Path]] = []
+    for mp4 in parked.glob("yt_*.mp4"):
+        dur = _ffprobe_duration(mp4)
+        if dur < min_sec or not _shooter_vod_length_ok(mp4, dur):
+            continue
+        candidates.append((dur, mp4))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: -t[0])
+    _dur, src = candidates[0]
+    dest = inbox / src.name
+    try:
+        if dest.exists():
+            dest.unlink()
+        src.rename(dest)
+    except OSError as exc:
+        log.warning("recycle parked fail %s: %s", src.name, exc)
+        return None
+    entry = _upsert_vod_registry(
+        state,
+        vid=vod_youtube_id(dest),
+        path=str(dest),
+        title="",
+        exhausted=False,
+        reject_reason="",
+    )
+    entry["exhausted"] = False
+    entry.pop("reject_reason", None)
+    log.info("recycled parked vod=%s dur=%.0fs → inbox (discovery empty/403)", dest.name, _dur)
+    return dest
+
+
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
     ok_cycle, reason = can_send_for_game(game, 1)
@@ -1531,6 +1574,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 
     candidates = _discover_candidates(game, env, used)
     if not candidates:
+        # YouTube 403 / empty search — recycle longest parked VOD that still has room.
+        recycled = _recycle_parked_vod(game, state, inbox)
+        if recycled is not None:
+            _save_state(game, state)
+            n = _scan_vod_with_adaptive(game, token, chat_id, recycled, env, state)
+            print(f"pipeline done sent={n} vods=1 game={game} recycled=1")
+            return 0
         if os.environ.get("SHOOTER_VOD_DISCOVERY_MISS_NOTIFY", "0") == "1":
             send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")
         print(f"pipeline done sent=0 vods=0 game={game}")
