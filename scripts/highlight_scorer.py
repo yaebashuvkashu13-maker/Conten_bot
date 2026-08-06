@@ -12,7 +12,8 @@ import logging
 import math
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -609,7 +610,7 @@ def _load_highlight_queries() -> dict:
 
 
 def score_text_query_clip(
-    video_path: Path, start_sec: float, duration_sec: float, profile: str
+    video_path: Path, start_sec: float, duration_sec: float, profile: str, *, force: bool = False
 ) -> float:
     """HL-CLIP style text-query scoring from config/highlight_queries.yaml."""
     profile = normalize_profile(profile)
@@ -619,7 +620,7 @@ def score_text_query_clip(
     if not good_q and not bad_q:
         return 0.0
 
-    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+    if not force and os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
         return 0.0
     try:
         import open_clip
@@ -744,13 +745,25 @@ def _text_bootstrap_embeddings(game: str) -> tuple[np.ndarray, np.ndarray]:
     return enc(good), enc(bad)
 
 
-def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float, profile: str) -> tuple[float, list[dict]]:
+def score_clip_exemplar(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str,
+    *,
+    force: bool = False,
+) -> tuple[float, list[dict]]:
+    """Score a window against good/bad exemplars.
+
+    force=True: run real CLIP even when HIGHLIGHT_CLIP_DISABLED=1.
+    Used for final shortlist ranking only — never for full-VOD discovery.
+    """
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
     profile = normalize_profile(profile)
     game = profile
-    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
-    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile, force=force)
+    if not force and os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
         # Shooters: skip CLIP and hist substitute (hist still burns CPU decoding frames).
         # Ranking uses panns + combat + visual (combat_authoritative when rule_pass).
         if profile in SHOOTER_PROFILES or os.environ.get("HIGHLIGHT_ALLOW_NO_CLIP", "1") == "1":
@@ -836,6 +849,132 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     else:
         clip_final = text_score if text_score else exemplar_score
     return clip_final, frame_rows
+
+
+def rank_shortlist_with_clip(
+    video_path: Path,
+    rows: list[dict],
+    profile: str,
+    *,
+    max_n: int | None = None,
+    timeout_sec: float | None = None,
+    min_score: float | None = None,
+    enabled: bool | None = None,
+) -> list[dict]:
+    """Fast+quality: CLIP-rank only the final shortlist (never full-VOD).
+
+    Discovery stays CLIP-off / PANNs-only. This scores ≤max_n windows under a
+    hard wall-clock budget. On timeout/failure, keeps original PANNs order.
+    """
+    if enabled is None:
+        enabled = os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1"
+    if not enabled or not rows:
+        return rows
+
+    try:
+        max_n = max(1, int(max_n if max_n is not None else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_MAX", "6")))
+    except ValueError:
+        max_n = 6
+    try:
+        timeout_sec = float(
+            timeout_sec
+            if timeout_sec is not None
+            else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_TIMEOUT_SEC", "60")
+        )
+    except ValueError:
+        timeout_sec = 60.0
+    try:
+        min_score = float(
+            min_score
+            if min_score is not None
+            else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_MIN", str(CLIP_MIN_SHOOTER))
+        )
+    except ValueError:
+        min_score = float(CLIP_MIN_SHOOTER)
+
+    profile = normalize_profile(profile)
+    core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
+    candidates = list(rows[:max_n])
+    scored: list[dict] = []
+    t0 = time.monotonic()
+
+    # Warm CLIP once in this thread so workers share a loaded model cache.
+    try:
+        _clip_bundle()
+    except Exception as exc:
+        log.warning("CLIP warm failed — keep PANNs order: %s", exc)
+        return rows
+
+    def _one(row: dict) -> dict:
+        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+        start = max(0.0, peak - core * 0.5)
+        dur = max(6.0, core)
+        clip_s, _frames = score_clip_exemplar(video_path, start, dur, profile, force=True)
+        out = dict(row)
+        hm = dict(out.get("highlight_metrics") or {})
+        hm["clip_score"] = round(float(clip_s), 4)
+        hm["clip_rank"] = True
+        out["highlight_metrics"] = hm
+        out["clip_score"] = float(clip_s)
+        # Blend: keep gun/panns signal, boost semantic match.
+        base = float(out.get("score") or 0.0)
+        out["score"] = max(base, float(clip_s)) + 0.35 * float(clip_s)
+        return out
+
+    workers = min(2, len(candidates))
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = {pool.submit(_one, row): row for row in candidates}
+            done, not_done = wait(futs, timeout=max(5.0, timeout_sec))
+            for fut in done:
+                try:
+                    scored.append(fut.result())
+                except Exception as exc:
+                    log.warning("CLIP shortlist score failed: %s", exc)
+            for fut in not_done:
+                fut.cancel()
+            if not_done:
+                log.warning(
+                    "CLIP shortlist timeout after %.1fs — scored=%s/%s keep rest by PANNs",
+                    time.monotonic() - t0,
+                    len(scored),
+                    len(candidates),
+                )
+                # Append unscored remainder in original order.
+                scored_ids = {id(r) for r in scored}
+                # Map back via segment_id
+                got = {str(r.get("segment_id") or ""): r for r in scored}
+                for row in candidates:
+                    sid = str(row.get("segment_id") or "")
+                    if sid not in got:
+                        scored.append(row)
+    except Exception as exc:
+        log.warning("CLIP shortlist aborted — keep PANNs order: %s", exc)
+        return rows
+
+    # Prefer windows that actually look like owner-good fights.
+    strong = [r for r in scored if float(r.get("clip_score") or 0.0) >= min_score]
+    weak = [r for r in scored if float(r.get("clip_score") or 0.0) < min_score]
+    strong.sort(key=lambda r: float(r.get("clip_score") or r.get("score") or 0), reverse=True)
+    weak.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+    if strong:
+        ordered = strong + weak
+        log.info(
+            "CLIP shortlist rank vod=%s strong=%s weak=%s top=%.3f budget=%.1fs",
+            video_path.name,
+            len(strong),
+            len(weak),
+            float(strong[0].get("clip_score") or 0),
+            time.monotonic() - t0,
+        )
+        # Append rows beyond max_n unchanged.
+        return ordered + list(rows[max_n:])
+    log.info(
+        "CLIP shortlist no strong windows vod=%s min=%.2f — keep PANNs order",
+        video_path.name,
+        min_score,
+    )
+    return scored + list(rows[max_n:]) if scored else rows
 
 
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:
@@ -1708,6 +1847,11 @@ def discover_highlight_candidates(
         log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
 
     verified: list[dict] = []
+    try:
+        score_budget = float(os.environ.get("HIGHLIGHT_SCORE_BUDGET_SEC", "120"))
+    except ValueError:
+        score_budget = 120.0
+    score_deadline = time.monotonic() + max(15.0, score_budget)
 
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
@@ -1738,8 +1882,17 @@ def discover_highlight_candidates(
             for fut in as_completed(futures):
                 if len(verified) >= limit:
                     break
+                if time.monotonic() >= score_deadline:
+                    log.warning(
+                        "highlight score budget %.0fs hit vod=%s verified=%s pending=%s — stop",
+                        score_budget,
+                        video_path.name,
+                        len(verified),
+                        len(pending),
+                    )
+                    break
                 try:
-                    row = fut.result()
+                    row = fut.result(timeout=max(1.0, score_deadline - time.monotonic()))
                 except Exception as exc:
                     log.warning("highlight parallel score failed start=%s: %s", futures[fut], exc)
                     continue
@@ -1762,6 +1915,10 @@ def discover_highlight_candidates(
                         video_path.name,
                     )
                     break
+            # Cancel leftovers so we do not keep burning CPU after budget/early-stop.
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
                 if (
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"

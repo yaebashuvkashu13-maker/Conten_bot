@@ -715,6 +715,14 @@ def _send_montage(
         )
         return 0
 
+    # Fast discovery (PANNs) + quality: CLIP ranks only this shortlist under a budget.
+    try:
+        from highlight_scorer import rank_shortlist_with_clip
+
+        picked = rank_shortlist_with_clip(vod, picked, _profile(game))
+    except Exception as exc:
+        log.warning("montage CLIP rank skipped: %s", exc)
+
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
     max_attempts = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES", "3")))
@@ -889,10 +897,35 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
     sent = 0
-    for row in to_send[:1]:
+    # Final CLIP quality gate on the single chosen clip (discovery stays CLIP-off).
+    to_send_ranked = list(to_send)
+    if os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
+        try:
+            from highlight_scorer import rank_shortlist_with_clip
+
+            to_send_ranked = rank_shortlist_with_clip(
+                vod, to_send[:6], _profile(game), max_n=min(6, len(to_send))
+            )
+        except Exception as exc:
+            log.warning("single CLIP rank skipped: %s", exc)
+            to_send_ranked = list(to_send)
+    for row in to_send_ranked[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
         if not render_single_segment(vod, row["clip"], out):
+            continue
+        # Soft reject: if CLIP scored this window and it is trash vs exemplars, skip.
+        clip_s = float(row.get("clip_score") or (row.get("highlight_metrics") or {}).get("clip_score") or 0)
+        try:
+            clip_min = float(os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_MIN", "0.08"))
+        except ValueError:
+            clip_min = 0.08
+        if (
+            os.environ.get("SHOOTER_VOD_SINGLE_CLIP_REJECT", "1") == "1"
+            and row.get("highlight_metrics", {}).get("clip_rank")
+            and clip_s < clip_min
+        ):
+            log.warning("presend CLIP REJECT %s: clip=%.3f < %.2f", sid, clip_s, clip_min)
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
         if not presend_ok:
