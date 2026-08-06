@@ -173,17 +173,18 @@ def pubg_passes_shooting_gate(
     ):
         # Strong PANNs gunfire: don't call continuous auto-fire "loot".
         # Spike-density alone under-counts sprays; require audible energy too.
+        # Floor must match owner trust (0.40) — 0.28 let ambient/UI SFX override.
         panns_floor = float(
             os.environ.get(
                 "PUBG_PANNS_LOOT_OVERRIDE_MIN",
-                os.environ.get("PUBG_PANNS_TRUST_MIN", "0.28"),
+                os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40"),
             )
         )
         panns_strong = panns_gun_max >= panns_floor
-        audible = gun >= min_gun * 0.45 or rms >= 0.028 or panns_gun_max >= 0.45
+        audible = gun >= min_gun * 0.85 or (rms >= 0.035 and gun >= min_gun * 0.55)
         if panns_strong and audible:
             metrics["panns_loot_override"] = True
-        elif not (panns_gun_max >= 0.40 and gun >= min_gun * 0.85):
+        elif not (panns_gun_max >= 0.45 and gun >= min_gun * 0.85):
             return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
@@ -199,12 +200,15 @@ def pubg_passes_shooting_gate(
     if reason_is_forbidden(gate_reason):
         base = str(gate_reason).split("=", 1)[0]
         # Visual run/loot/fake-gun must not override clear gunfire evidence —
-        # Standoff fights are high-motion and were zero-sending for hours.
-        panns_ok = panns_gun_max >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.28"))
+        # but weak PANNs (0.28) was shipping trash walk segments.
+        panns_floor = float(
+            os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", os.environ.get("PUBG_PANNS_TRUST_MIN", "0.40"))
+        )
+        panns_ok = panns_gun_max >= panns_floor
         if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"} and (
             strict_audio
             or (heuristic_audio and gun >= min_gun * 0.85)
-            or (panns_ok and (gun >= min_gun * 0.45 or rms >= 0.028 or panns_gun_max >= 0.45))
+            or (panns_ok and gun >= min_gun * 0.85)
         ):
             metrics["visual_override"] = gate_reason
         else:

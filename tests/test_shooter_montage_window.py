@@ -29,9 +29,12 @@ def test_row_window_start_falls_back_without_clip() -> None:
     assert _row_window_start({"peak_start": 50.0}) == 50.0
 
 
-def test_prepare_montage_clip_always_peak_centers(tmp_path: Path) -> None:
+def test_prepare_montage_clip_always_peak_centers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from shooter_vod_segment_feed import _prepare_montage_clip
 
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_PART_SEC", "14")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_CORE_PAD_SEC", "2")
     vod = tmp_path / "yt_abc.mp4"
     vod.write_bytes(b"x")
     row = {
@@ -42,8 +45,9 @@ def test_prepare_montage_clip_always_peak_centers(tmp_path: Path) -> None:
     with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=1000.0):
         clip = _prepare_montage_clip(row, vod, part_max=28.0)
     assert clip["peak_start"] == 200.0
-    assert clip["start"] == pytest.approx(189.0)  # 200 - 11
-    assert clip["input_duration"] == pytest.approx(22.0)
+    # Fight-core ship: 14s centered on peak (not 22s loot tails).
+    assert clip["start"] == pytest.approx(193.0)  # 200 - 7
+    assert clip["input_duration"] == pytest.approx(14.0)
 
 
 def test_pick_montage_rows_returns_replacement_pool() -> None:

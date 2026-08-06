@@ -33,6 +33,41 @@ def test_used_peak_times_prefers_peak_start() -> None:
     assert peaks == [116.0]
 
 
+def test_used_peak_times_montage_parts_int_does_not_crash() -> None:
+    """Broken writers stored montage_parts as int count — must not TypeError."""
+    peaks = used_peak_times_shooter(
+        "LVe3yun9Mk8",
+        {"LVe3yun9Mk8_100"},
+        [
+            {
+                "segment_id": "LVe3yun9Mk8_100",
+                "peak_start": 106.5,
+                "montage_parts": 3,  # bug shape that crashed VPS
+                "montage_peaks": [106.5, 180.5, 266.5],
+            }
+        ],
+    )
+    assert 106.5 in peaks
+    assert 180.5 in peaks
+    assert 266.5 in peaks
+
+
+def test_used_peak_times_montage_parts_list() -> None:
+    peaks = used_peak_times_shooter(
+        "abc12345678",
+        {"abc12345678_10"},
+        [
+            {
+                "segment_id": "abc12345678_10",
+                "peak_start": 15.0,
+                "montage_parts": ["abc12345678_10", "abc12345678_80"],
+            }
+        ],
+    )
+    assert 15.0 in peaks
+    assert 80.0 in peaks
+
+
 def test_segment_gap_softens_for_shooter_l2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHOOTER_VOD_SEGMENT_GAP_SEC", raising=False)
     monkeypatch.delenv("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", raising=False)

@@ -99,6 +99,11 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     age = time.time() - last
     if age < blocked_rescan_cooldown_sec(game, entry) and entry.get("last_scan_blocked"):
         return True
+    # Zero-send without blocked flag (gate reject / anti-hang) — still cool down
+    # so we don't re-dense-scan the same VOD every 8s idle tick.
+    zero_cd = int(os.environ.get("VOD_ZERO_SEND_COOLDOWN_SEC", "600"))
+    if age < max(60, zero_cd) and str(entry.get("reject_reason") or ""):
+        return True
     return False
 
 

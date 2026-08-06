@@ -131,15 +131,21 @@ def main() -> int:
 
     after = send_count(game)
     delta = max(0, after - before)
-    # Detect thrash from log tail (inbox_dead / sent=0 vods=0).
+    # Thrash = true idle loops only (inbox_dead / discovery pause), NOT every
+    # normal sent=0 vods=0 discovery miss — that force-skipped shooters in ~5min.
     try:
         log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
         if log_path.exists():
-            tail = log_path.read_text(errors="replace")[-4000:]
-            if "inbox_dead=1" in tail or "pipeline done sent=0 vods=0" in tail.splitlines()[-3:]:
-                thrash = True
-            for line in reversed(tail.splitlines()[-30:]):
-                if "inbox_dead=1" in line or "pipeline done sent=0 vods=0" in line:
+            tail = log_path.read_text(errors="replace")[-6000:]
+            for line in reversed(tail.splitlines()[-40:]):
+                if f"game={game}" not in line and f" {game}" not in line:
+                    # Prefer same-game lines; still allow inbox_dead without game tag.
+                    if "inbox_dead=1" not in line:
+                        continue
+                if "inbox_dead=1" in line:
+                    thrash = True
+                    break
+                if "discovery paused" in line and "game=" + game in line:
                     thrash = True
                     break
     except OSError:

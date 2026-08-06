@@ -62,14 +62,19 @@ def used_peak_times_shooter(
                     peaks.append(float(extra))
                 except (TypeError, ValueError):
                     pass
-            # Legacy index rows store part sids instead of float peaks.
-            for part_sid in row.get("montage_parts") or []:
-                try:
-                    part_sid = str(part_sid)
-                    if part_sid.startswith(f"{vod_id}_"):
-                        peaks.append(float(part_sid[len(vod_id) + 1 :].rsplit("_", 1)[-1]))
-                except ValueError:
-                    pass
+            # Legacy: part sids list. Broken writers stored an int part-count —
+            # never iterate that (TypeError crashed every post-send Standoff scan).
+            parts = row.get("montage_parts")
+            if isinstance(parts, (list, tuple)):
+                for part_sid in parts:
+                    try:
+                        part_sid = str(part_sid)
+                        if part_sid.startswith(f"{vod_id}_"):
+                            peaks.append(
+                                float(part_sid[len(vod_id) + 1 :].rsplit("_", 1)[-1])
+                            )
+                    except ValueError:
+                        pass
             continue
         tail = sid[len(vod_id) + 1 :]
         # Ignore composite montage ids like m90_152_330 — parts are tracked separately.

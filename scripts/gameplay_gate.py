@@ -954,9 +954,9 @@ def score_pubg_gunfire_audio(
     if hot_frac >= 0.22 and rms >= 0.030:
         density = max(density, min(0.20, hot_frac * 0.42))
     burst_ratio = peak / max(rms, 1e-6)
-    # Sustained spray has flatter envelope — keep burst above quality floor
-    # when audio is clearly hot, otherwise gates reject real fights as loot.
-    if hot_frac >= 0.25 and rms >= 0.035 and burst_ratio < 5.0:
+    # Sustained spray has flatter envelope — only bump burst when density already
+    # shows real hot energy. Blind max(..., 5.2) let ambient music/engine pass.
+    if hot_frac >= 0.35 and rms >= 0.040 and density >= 0.06 and burst_ratio < 5.0:
         burst_ratio = max(burst_ratio, 5.2)
     return density, burst_ratio, rms
 
