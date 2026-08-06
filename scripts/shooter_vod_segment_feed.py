@@ -24,7 +24,7 @@ from mlbb_vod_segment_feed import (
     _ffprobe_duration,
     _vod_length_ok,
     _vod_max_sec,
-    _vod_min_sec,
+    _vod_min_sec as _mlbb_vod_min_sec,
     _vod_target_dur_sec,
     render_single_segment,
     send_message,
@@ -69,6 +69,22 @@ from vod_game_registry import VOD_PIPELINE_REV
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
+
+
+def _vod_min_sec() -> float:
+    """Shooter/montage games need longer VODs than MLBB singles (~3 fights)."""
+    raw = os.environ.get("SHOOTER_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC")
+    if raw:
+        try:
+            base = float(raw)
+        except ValueError:
+            base = 300.0
+    else:
+        base = 300.0
+    if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
+        montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
+        return max(base, montage_floor)
+    return base
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
