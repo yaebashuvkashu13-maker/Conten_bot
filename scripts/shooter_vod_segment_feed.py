@@ -1152,13 +1152,18 @@ def _scan_vod_with_adaptive(
                     part_max,
                     float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", "22")),
                 )
+                sent_set = load_feed_sent(game)
+                used_peaks = _used_peak_times(game, vid, sent_set)
+                blocked_ids = labeled_ids(game) | sent_set
                 rows = []
                 for idx, peak in enumerate(dense_peaks):
                     # Peak is already a gunfire CENTER from dense+snap.
-                    # dense_peaks are strength-ordered — preserve that in score.
+                    # Skip peaks already shipped (gap) — don't thrash the same fights.
+                    if _peak_too_close(float(peak), used_peaks, gap_sec * 0.9):
+                        continue
                     start = max(0.0, float(peak) - part_sec * 0.5)
                     sid = segment_id(vid, start)
-                    if sid in labeled_ids(game) | load_feed_sent(game):
+                    if sid in blocked_ids:
                         continue
                     rows.append(
                         {
@@ -1200,38 +1205,33 @@ def _scan_vod_with_adaptive(
                         vod.name,
                         len(rows),
                     )
-                    if entry is not None:
-                        record_vod_scan(
-                            entry,
-                            sent=0,
-                            pool_peaks=dense_peaks,
-                            blocked=False,
-                        )
-                        entry["reject_reason"] = "fast_montage_presend_reject"
+                    # This VOD's remaining peaks won't make ×3 — free the inbox for discovery.
+                    _mark_vod_exhausted(
+                        state,
+                        vod,
+                        reason="fast_montage_presend_reject",
+                        delete_file=False,
+                    )
                     _save_state(game, state)
                     if clear_fast_seeds:
                         clear_fast_seeds()
                     return 0
                 log.warning(
-                    "fast-montage insufficient peaks vod=%s have=%s need=%s — skip highlight hang",
+                    "fast-montage insufficient unused peaks vod=%s have=%s need=%s used=%s — exhaust for discovery",
                     vod.name,
                     len(rows),
                     min_clips,
+                    len(used_peaks),
                 )
-                if entry is not None:
-                    record_vod_scan(
-                        entry,
-                        sent=0,
-                        pool_peaks=dense_peaks,
-                        blocked=False,
-                    )
-                    entry["reject_reason"] = (
-                        f"fast_montage_need_{min_clips}_have_{len(rows)}"
-                    )
+                _mark_vod_exhausted(
+                    state,
+                    vod,
+                    reason=f"fast_montage_need_{min_clips}_have_{len(rows)}",
+                    delete_file=False,
+                )
                 _save_state(game, state)
                 if clear_fast_seeds:
                     clear_fast_seeds()
-                # Montage-only: do not burn 15–30min on CLIP/hist highlight.
                 if _montage_only(game):
                     return 0
 
