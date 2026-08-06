@@ -1085,7 +1085,7 @@ def _scan_vod_with_adaptive(
     sent = 0
     clear_fast_seeds = None
 
-    if game in ("pubg", "standoff") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
+    if game in ("pubg", "standoff", "wot") and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1":
         from shooter_vod_fast_scan import (
             apply_fast_probe_seeds,
             clear_fast_probe_seeds,
@@ -1097,7 +1097,7 @@ def _scan_vod_with_adaptive(
         if not ok_fast:
             # Owner hints alone must not keep a dead VOD alive — but if labels exist,
             # still allow a scan pass (hints merged later). Soft-fail only when no hints.
-            if vod_has_owner_montage_anchors(game, vod):
+            if game != "wot" and vod_has_owner_montage_anchors(game, vod):
                 log.info(
                     "fast-probe weak vod=%s reason=%s — continue with owner hints in mind",
                     vod.name,
@@ -1117,15 +1117,15 @@ def _scan_vod_with_adaptive(
                 return 0
         else:
             apply_fast_probe_seeds(seed_peaks)
-            # Fast ×3 montage: dense PANNs peaks → presend gates → send.
-            # Skips 15–30 min CLIP/highlight thrash while keeping no-trash gates.
+            # Fast ×3 montage: dense gun peaks → snap → presend → send.
+            # NEVER fall into CLIP/highlight — that is the paid CPU hang.
             if (
                 _montage_enabled(game)
                 and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
             ):
                 from shooter_vod_fast_scan import discover_montage_gun_peaks
 
-                min_clips, _max_c, gap_sec, _part, _final = _montage_limits()
+                min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
                 dense_peaks, dense_reason = discover_montage_gun_peaks(
                     vod,
                     _profile(game),
@@ -1136,56 +1136,93 @@ def _scan_vod_with_adaptive(
                     "fast-montage probe vod=%s reason=%s peaks=%s",
                     vod.name,
                     dense_reason,
-                    dense_peaks[:6],
+                    dense_peaks[:8],
                 )
-                if len(dense_peaks) >= min_clips:
-                    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
-                    rows = []
-                    for peak in dense_peaks:
-                        start = max(0.0, float(peak) - lead)
-                        sid = segment_id(vid, start)
-                        if sid in labeled_ids(game) | load_feed_sent(game):
-                            continue
-                        rows.append(
-                            {
-                                "segment_id": sid,
+                part_sec = min(
+                    part_max,
+                    float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", "22")),
+                )
+                rows = []
+                for peak in dense_peaks:
+                    # Peak is already a gunfire CENTER from dense+snap.
+                    start = max(0.0, float(peak) - part_sec * 0.5)
+                    sid = segment_id(vid, start)
+                    if sid in labeled_ids(game) | load_feed_sent(game):
+                        continue
+                    rows.append(
+                        {
+                            "segment_id": sid,
+                            "start": start,
+                            "peak_start": float(peak),
+                            "score": 0.55,
+                            "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
-                                "score": 0.55,
-                                "clip": {
-                                    "start": start,
-                                    "peak_start": float(peak),
-                                    "input_duration": 22.0,
-                                    "output_duration": 22.0,
-                                },
-                            }
-                        )
-                    if len(rows) >= min_clips:
-                        n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
-                        if n_fast > 0:
-                            if entry is not None:
-                                record_vod_scan(
-                                    entry,
-                                    sent=n_fast,
-                                    pool_peaks=dense_peaks,
-                                    blocked=False,
-                                )
-                            _save_state(game, state)
-                            if clear_fast_seeds:
-                                clear_fast_seeds()
-                            log.info(
-                                "fast-montage SENT game=%s vod=%s n=%s peaks=%s",
-                                game,
-                                vod.name,
-                                n_fast,
-                                dense_peaks[:6],
+                                "input_duration": part_sec,
+                                "output_duration": part_sec,
+                            },
+                        }
+                    )
+                if len(rows) >= min_clips:
+                    n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
+                    if n_fast > 0:
+                        if entry is not None:
+                            record_vod_scan(
+                                entry,
+                                sent=n_fast,
+                                pool_peaks=dense_peaks,
+                                blocked=False,
                             )
-                            return n_fast
-                        log.warning(
-                            "fast-montage rejected by gates vod=%s peaks=%s — fall through highlight",
+                        _save_state(game, state)
+                        if clear_fast_seeds:
+                            clear_fast_seeds()
+                        log.info(
+                            "fast-montage SENT game=%s vod=%s n=%s peaks=%s",
+                            game,
                             vod.name,
-                            len(rows),
+                            n_fast,
+                            dense_peaks[:6],
                         )
+                        return n_fast
+                    log.warning(
+                        "fast-montage rejected by gates vod=%s peaks=%s — skip slow highlight hang",
+                        vod.name,
+                        len(rows),
+                    )
+                    if entry is not None:
+                        record_vod_scan(
+                            entry,
+                            sent=0,
+                            pool_peaks=dense_peaks,
+                            blocked=False,
+                        )
+                        entry["reject_reason"] = "fast_montage_presend_reject"
+                    _save_state(game, state)
+                    if clear_fast_seeds:
+                        clear_fast_seeds()
+                    return 0
+                log.warning(
+                    "fast-montage insufficient peaks vod=%s have=%s need=%s — skip highlight hang",
+                    vod.name,
+                    len(rows),
+                    min_clips,
+                )
+                if entry is not None:
+                    record_vod_scan(
+                        entry,
+                        sent=0,
+                        pool_peaks=dense_peaks,
+                        blocked=False,
+                    )
+                    entry["reject_reason"] = (
+                        f"fast_montage_need_{min_clips}_have_{len(rows)}"
+                    )
+                _save_state(game, state)
+                if clear_fast_seeds:
+                    clear_fast_seeds()
+                # Montage-only: do not burn 15–30min on CLIP/hist highlight.
+                if _montage_only(game):
+                    return 0
 
     if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":
         from genshin_vod_fast_scan import (
@@ -1212,7 +1249,15 @@ def _scan_vod_with_adaptive(
             return 0
         apply_genshin_seeds(seed_peaks)
 
-    if game == "wot" and os.environ.get("WOT_VOD_FAST_PROBE", "1") == "1":
+    # WoT covered by shooter fast-montage above when WOT_VOD_MONTAGE=1.
+    # Keep legacy impact probe only when montage fast-path is off.
+    if (
+        game == "wot"
+        and os.environ.get("WOT_VOD_FAST_PROBE", "1") == "1"
+        and not (
+            _montage_enabled(game) and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
+        )
+    ):
         from wot_vod_fast_scan import (
             apply_fast_probe_seeds as apply_wot_seeds,
             clear_fast_probe_seeds as clear_wot_seeds,
@@ -1236,6 +1281,27 @@ def _scan_vod_with_adaptive(
             _save_state(game, state)
             return 0
         apply_wot_seeds(seed_peaks)
+
+    # Hard anti-hang: montage-only shooters never enter CLIP/hist highlight.
+    # Fast-montage above is the only productive path; fallback burns paid CPU.
+    if (
+        game in ("pubg", "standoff", "wot")
+        and _montage_only(game)
+        and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1"
+        and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
+        and os.environ.get("SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK", "0") != "1"
+    ):
+        log.warning(
+            "montage-only anti-hang: skip highlight fallback game=%s vod=%s",
+            game,
+            vod.name,
+        )
+        if clear_fast_seeds is not None:
+            clear_fast_seeds()
+        if entry is not None and not entry.get("reject_reason"):
+            entry["reject_reason"] = "montage_fast_path_no_send"
+            _save_state(game, state)
+        return 0
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)

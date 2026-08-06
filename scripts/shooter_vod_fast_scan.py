@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cheap PUBG/Standoff VOD preflight + dense gun-peak discovery for montages."""
+"""Cheap PUBG/Standoff/WoT VOD preflight + dense gun-peak discovery for montages."""
 
 from __future__ import annotations
 
@@ -10,6 +10,19 @@ from pathlib import Path
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 log = logging.getLogger("shooter_vod_fast_scan")
+
+
+def _skip_intro_sec(profile: str) -> float:
+    profile = normalize_profile(profile)
+    if profile == "pubg":
+        return float(
+            os.environ.get(
+                "PUBG_METRO_VOD_SKIP_INTRO_SEC",
+                os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "120"),
+            )
+        )
+    # Standoff/WoT intros are shorter — Metro 120s skip wastes early fights.
+    return float(os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "60"))
 
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
@@ -32,8 +45,8 @@ def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
     dur = max(0.0, float(duration))
     if dur < skip_intro + 180:
         return _probe_offsets(dur, skip_intro=skip_intro)
-    step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "50"))
-    cap = max(8, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "28")))
+    step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40"))
+    cap = max(10, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")))
     out: list[float] = []
     t = skip_intro
     while t + WINDOW_SEC < dur - 40 and len(out) < cap:
@@ -60,12 +73,7 @@ def vod_fast_combat_check(
     if dur <= 0:
         return False, "fast_probe_no_duration", []
 
-    skip = float(
-        os.environ.get(
-            "PUBG_METRO_VOD_SKIP_INTRO_SEC",
-            os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "120"),
-        )
-    )
+    skip = _skip_intro_sec(profile)
     offsets = _probe_offsets(dur, skip_intro=skip)
     if not offsets:
         return False, "fast_probe_too_short", []
@@ -78,7 +86,8 @@ def vod_fast_combat_check(
         gmax = float(panns.get("panns_gun_max", 0))
         top_gun = max(top_gun, gmax)
         if gmax >= gun_min:
-            hits.append(t)
+            # Seed as window center — highlight/montage expect peak centers.
+            hits.append(round(t + WINDOW_SEC * 0.5, 1))
 
     if not hits:
         return (
@@ -89,6 +98,48 @@ def vod_fast_combat_check(
     return True, f"fast_panns_{len(hits)}/{len(offsets)} top={top_gun:.3f}", hits
 
 
+def snap_peak_to_gunfire(
+    video_path: Path,
+    approx_center: float,
+    *,
+    duration: float,
+    search_radius: float = 14.0,
+    step: float = 2.0,
+    sample_sec: float = 4.0,
+) -> tuple[float, float, float]:
+    """
+    Re-center a probe on the loudest local gunfire using the same density metric
+    as the shooting gate. Returns (center, gun_density, panns_gun_max).
+    """
+    from gameplay_gate import score_pubg_gunfire_audio
+
+    best_c = float(approx_center)
+    best_gun = -1.0
+    best_panns = 0.0
+    lo = max(8.0, float(approx_center) - float(search_radius))
+    hi = min(float(duration) - 8.0, float(approx_center) + float(search_radius))
+    t = lo
+    while t <= hi:
+        a = max(0.0, t - sample_sec * 0.5)
+        try:
+            gun, _burst, _rms = score_pubg_gunfire_audio(video_path, a, sample_sec)
+        except Exception:
+            gun = 0.0
+        try:
+            panns = score_panns_audio(video_path, a, sample_sec)
+            pmax = float(panns.get("panns_gun_max", 0) or 0)
+        except Exception:
+            pmax = 0.0
+        # Prefer real spike/sustained density; break ties with PANNs.
+        score = float(gun) * 2.0 + pmax
+        if score > best_gun * 2.0 + best_panns + 1e-9:
+            best_gun = float(gun)
+            best_panns = pmax
+            best_c = float(t)
+        t += float(step)
+    return round(best_c, 1), max(0.0, best_gun), best_panns
+
+
 def discover_montage_gun_peaks(
     video_path: Path,
     profile: str,
@@ -97,9 +148,9 @@ def discover_montage_gun_peaks(
     gap_sec: float = 55.0,
 ) -> tuple[list[float], str]:
     """
-    Dense PANNs scan → spaced gunfight peaks for ×3 montage without CLIP.
+    Dense PANNs scan → snap to gunfire density → spaced peaks for ×3 montage.
 
-    Typical cost: a few minutes on CPU for a 20–30 min VOD (not 15+ min CLIP).
+    Returns peak CENTERS (not probe starts). Typical cost: a few minutes on CPU.
     Quality still enforced later by shooting/combat/visual presend on each part.
     """
     profile = normalize_profile(profile)
@@ -109,51 +160,67 @@ def discover_montage_gun_peaks(
     if dur <= 0:
         return [], "dense_probe_no_duration"
 
-    skip = float(
-        os.environ.get(
-            "PUBG_METRO_VOD_SKIP_INTRO_SEC",
-            os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "120"),
-        )
-    )
+    skip = _skip_intro_sec(profile)
     gun_min = float(os.environ.get("SHOOTER_VOD_DENSE_PANN_MIN", "0.16"))
+    dens_min = float(os.environ.get("SHOOTER_VOD_DENSE_GUN_MIN", "0.045"))
     offsets = _dense_offsets(dur, skip_intro=skip)
     if not offsets:
         return [], "dense_probe_too_short"
 
-    scored: list[tuple[float, float]] = []
+    scored: list[tuple[float, float, float]] = []  # panns, center_hint, offset
     for t in offsets:
         panns = score_panns_audio(video_path, t, WINDOW_SEC)
         gmax = float(panns.get("panns_gun_max", 0))
         if gmax >= gun_min:
-            scored.append((gmax, t))
+            scored.append((gmax, t + WINDOW_SEC * 0.5, t))
 
     scored.sort(key=lambda x: -x[0])
-    picked: list[float] = []
-    for _gun, t in scored:
-        if any(abs(t - p) < gap_sec for p in picked):
+    # Snap each candidate onto local max gunfire before spacing.
+    snapped: list[tuple[float, float, float]] = []  # (center, gun_dens, panns)
+    for panns_g, center_hint, _off in scored:
+        center, gun_d, pmax = snap_peak_to_gunfire(
+            video_path, center_hint, duration=dur
+        )
+        panns_use = max(panns_g, pmax)
+        if gun_d < dens_min and panns_use < gun_min * 1.25:
             continue
-        picked.append(t)
-        if len(picked) >= max(min_clips, min_clips + 2):
+        snapped.append((center, gun_d, panns_use))
+
+    snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
+    pool_cap = max(min_clips * 4, min_clips + 6)
+    picked: list[float] = []
+    picked_meta: list[tuple[float, float]] = []
+    for center, gun_d, panns_g in snapped:
+        if any(abs(center - p) < gap_sec for p in picked):
+            continue
+        picked.append(center)
+        picked_meta.append((gun_d, panns_g))
+        if len(picked) >= pool_cap:
             break
 
-    # Retry with tighter gap if we are one short of montage.
+    # Retry with tighter gap if we are short of montage.
     if len(picked) < min_clips and gap_sec > 25:
         tight = max(22.0, gap_sec * 0.45)
         picked = []
-        for _gun, t in scored:
-            if any(abs(t - p) < tight for p in picked):
+        picked_meta = []
+        for center, gun_d, panns_g in snapped:
+            if any(abs(center - p) < tight for p in picked):
                 continue
-            picked.append(t)
+            picked.append(center)
+            picked_meta.append((gun_d, panns_g))
             if len(picked) >= min_clips:
                 break
         gap_sec = tight
 
     picked = sorted(picked)
+    top = snapped[0][2] if snapped else 0.0
     reason = (
-        f"dense_panns hits={len(scored)}/{len(offsets)} picked={len(picked)} "
-        f"gap={gap_sec:.0f} top={scored[0][0]:.3f}" if scored else f"dense_panns_0/{len(offsets)}"
+        f"dense_panns hits={len(scored)}/{len(offsets)} snapped={len(snapped)} "
+        f"picked={len(picked)} gap={gap_sec:.0f} top={top:.3f}"
+        if scored
+        else f"dense_panns_0/{len(offsets)}"
     )
-    log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:6])
+    log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
     return picked, reason
 
 

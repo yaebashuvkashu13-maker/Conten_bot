@@ -946,7 +946,18 @@ def score_pubg_gunfire_audio(
         if arr[idx] > floor and arr[idx] > arr[idx - 1] * 1.55:
             spikes += 1
     density = spikes / max(len(arr) - 1, 1)
+    # Continuous auto-fire (Standoff/PUBG spray) lifts the median so classic
+    # spike-density under-counts real gunfire. Credit sustained hot frames.
+    quiet = float(np.percentile(arr, 20))
+    hot_floor = max(quiet * 3.0, 0.018)
+    hot_frac = float(np.mean(arr >= hot_floor))
+    if hot_frac >= 0.22 and rms >= 0.030:
+        density = max(density, min(0.20, hot_frac * 0.42))
     burst_ratio = peak / max(rms, 1e-6)
+    # Sustained spray has flatter envelope — keep burst above quality floor
+    # when audio is clearly hot, otherwise gates reject real fights as loot.
+    if hot_frac >= 0.25 and rms >= 0.035 and burst_ratio < 5.0:
+        burst_ratio = max(burst_ratio, 5.2)
     return density, burst_ratio, rms
 
 

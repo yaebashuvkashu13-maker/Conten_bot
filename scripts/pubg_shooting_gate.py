@@ -171,8 +171,13 @@ def pubg_passes_shooting_gate(
         crop_box=crop,
         gunfire_density=gun,
     ):
-        # Strong PANNs gunfire + audible density: don't call it loot.
-        if not (panns_gun_max >= 0.40 and gun >= min_gun * 0.85):
+        # Strong PANNs gunfire: don't call continuous auto-fire "loot".
+        # Spike-density alone under-counts sprays; require audible energy too.
+        panns_strong = panns_gun_max >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        audible = gun >= min_gun * 0.55 or rms >= 0.035
+        if panns_strong and audible:
+            metrics["panns_loot_override"] = True
+        elif not (panns_gun_max >= 0.40 and gun >= min_gun * 0.85):
             return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
