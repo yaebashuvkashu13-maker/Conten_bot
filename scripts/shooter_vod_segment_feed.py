@@ -22,9 +22,6 @@ from daily_game_cycle import can_send_for_game, profile_for_game, record_send as
 from mlbb_vod_segment_feed import (
     VodPipelineDownloader,
     _ffprobe_duration,
-    _vod_length_ok,
-    _vod_max_sec,
-    _vod_min_sec as _mlbb_vod_min_sec,
     _vod_target_dur_sec,
     render_single_segment,
     send_message,
@@ -85,6 +82,21 @@ def _vod_min_sec() -> float:
         montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
         return max(base, montage_floor)
     return base
+
+
+def _vod_max_sec() -> float:
+    raw = os.environ.get("SHOOTER_VOD_MAX_SEC") or os.environ.get("MLBB_VOD_MAX_SEC", "3600")
+    try:
+        return float(raw)
+    except ValueError:
+        return 3600.0
+
+
+def _shooter_vod_length_ok(path: Path, dur: float | None = None) -> bool:
+    length = dur if dur is not None else _ffprobe_duration(path)
+    return _vod_min_sec() <= length <= _vod_max_sec()
+
+
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
@@ -366,7 +378,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 log.info("skip zero-duration (likely live) id=%s title=%s", vid, title[:40])
                 used.add(vid)
                 continue
-            if not _vod_length_ok(Path("x.mp4"), dur):
+            if not _shooter_vod_length_ok(Path("x.mp4"), dur):
                 continue
             out.append(
                 {
@@ -1215,7 +1227,7 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
     removed = 0
     for mp4 in list(inbox.glob("yt_*.mp4")):
         dur = _ffprobe_duration(mp4)
-        if dur >= min_sec and _vod_length_ok(mp4, dur):
+        if dur >= min_sec and _shooter_vod_length_ok(mp4, dur):
             continue
         dest = parked / mp4.name
         try:
