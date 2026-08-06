@@ -1887,6 +1887,83 @@ def _resolve_next_vod(
     return None, None
 
 
+def _clip_from_banner_seed(vod: Path, peak: float) -> dict:
+    """
+    Build a shippable clip from a fast-probe banner peak.
+
+    Must NOT call _normalize_clip / resolve_fight_bounds / analyze_video — that path
+    re-scans the whole VOD (minutes) after we already proved visual-ref ≥double.
+    Presend still enforces pre-banner fight motion + banner gates.
+    """
+    from mlbb_kill_banner import bounds_from_banner, find_banner_near_peak
+
+    file_dur = _ffprobe_duration(vod)
+    if file_dur <= 1.0:
+        return {
+            "start": float(peak),
+            "peak_start": float(peak),
+            "input_duration": 0.0,
+            "output_duration": 0.0,
+            "banner_reject": "no_duration",
+            "source_path": str(vod),
+            "source_index": 0,
+            "speed": 1.0,
+        }
+
+    banner_sec = float(peak)
+    label = "double"
+    tier = 2
+    src = "ref"
+    # Optional local reconfirm (small window only). Default on — cheap vs full analyze.
+    if os.environ.get("MLBB_BANNER_FAST_SHIP_REQUICK", "1") == "1":
+        hit = find_banner_near_peak(vod, peak, quick=True)
+        if hit is None:
+            return {
+                "start": float(peak),
+                "peak_start": float(peak),
+                "input_duration": 0.0,
+                "output_duration": 0.0,
+                "banner_reject": "requick_miss",
+                "source_path": str(vod),
+                "source_index": 0,
+                "speed": 1.0,
+            }
+        banner_sec = float(hit.sec)
+        label = str(hit.label or "double")
+        tier = int(hit.tier or 0)
+        src = str(hit.source or "").lower()
+
+    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
+    fight_start = max(0.0, banner_sec - max(min_pre, 14.0))
+    fight_end = min(file_dur, banner_sec + 4.0)
+    start, end, dur = bounds_from_banner(
+        banner_sec,
+        file_dur,
+        fight_start=fight_start,
+        fight_end=fight_end,
+    )
+    return {
+        "start": start,
+        "peak_start": banner_sec,
+        "banner_sec": banner_sec,
+        "fight_end": end,
+        "source_path": str(vod),
+        "source_index": 0,
+        "input_duration": dur,
+        "output_duration": dur,
+        "speed": 1.0,
+        "anchor": "kill_banner",
+        "kill_banner": label,
+        "kill_banner_tier": tier,
+        "banner_source": src,
+        "fight_start": fight_start,
+        "fight_dur": dur,
+        "score": 0.55,
+        "hook_score": 0.40,
+        "clip_score": 0.55,
+    }
+
+
 def _try_ship_banner_seeds(
     token: str,
     chat_id: str,
@@ -1896,19 +1973,27 @@ def _try_ship_banner_seeds(
 ) -> int:
     """
     Ship clips anchored on already-verified visual-ref ≥double peaks.
-    Skips heavy highlight scoring; still uses normalize + presend gates.
+    Skips heavy highlight scoring and full-VOD analyze; still uses presend gates.
     """
     from mlbb_learning_first import can_send
 
+    peaks = [float(p) for p in seed_peaks[:6]]
+    log.info("banner fast-ship begin vod=%s peaks=%s", vod.name, peaks)
     sent_n = 0
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
-    for peak in seed_peaks[:6]:
+    for peak in peaks:
         ok_batch, block_reason = can_send(1)
         if not ok_batch:
             log.warning("banner fast-ship blocked reason=%s", block_reason)
             break
-        clip = {"start": float(peak), "peak_start": float(peak)}
-        lead_clip = _normalize_clip(clip, vod)
+        t0 = time.monotonic()
+        lead_clip = _clip_from_banner_seed(vod, peak)
+        log.info(
+            "banner fast-ship clip peak=%.1f elapsed=%.1fs reject=%s",
+            peak,
+            time.monotonic() - t0,
+            lead_clip.get("banner_reject") or "-",
+        )
         if lead_clip.get("banner_reject"):
             log.info(
                 "banner fast-ship skip peak=%.1f reject=%s",
@@ -1928,7 +2013,6 @@ def _try_ship_banner_seeds(
             "savage",
             "legend",
         ):
-            # Normalize without a real streak banner — do not ship.
             log.info("banner fast-ship skip peak=%.1f no_streak_meta tier=%s", peak, tier)
             continue
         start = float(lead_clip["start"])
@@ -1944,6 +2028,7 @@ def _try_ship_banner_seeds(
             continue
         sid = segment_id(vod, start)
         if sid in blocked_ids:
+            log.info("banner fast-ship skip peak=%.1f already_blocked sid=%s", peak, sid)
             continue
         row = {
             "segment_id": sid,
@@ -1968,8 +2053,18 @@ def _try_ship_banner_seeds(
         if n > 0:
             blocked_ids.add(sid)
             log.info("banner fast-ship sent %s peak=%.1f tier=%s src=%s", sid, peak, tier, src)
+        else:
+            log.info(
+                "banner fast-ship no_send peak=%.1f sid=%s preskip=%s sblock=%s",
+                peak,
+                sid,
+                _preskip,
+                _sblock,
+            )
         if send_one and sent_n > 0:
             break
+    if sent_n <= 0:
+        log.warning("banner fast-ship empty vod=%s tried=%s", vod.name, len(peaks))
     return sent_n
 
 
@@ -2041,10 +2136,9 @@ def _process_vod_segments(
         apply_fast_probe_seeds(seed_peaks)
         log.info("fast-probe ok vod=%s reason=%s seeds=%s", vod.name, fast_reason, seed_peaks[:6])
 
-        # Direct ship from real banner seeds — skip CLIP/PANNs thrash when we already
-        # have visual-ref ≥double. Still runs normalize + fight-before-banner + presend.
-        # Quality-first used to block this entirely → 20min hang then 0 sends while
-        # verified doubles sat unused. Fight/presend gates keep tails out.
+        # Direct ship from real banner seeds — skip CLIP/PANNs and full-VOD analyze
+        # when we already have visual-ref ≥double. Presend still gates fight/idle tails.
+        # Quality-first used to block this → hang in analyze_video then 0 sends.
         fast_ship_ok = os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
         if banner_seed_peaks and fast_ship_ok and "banner_probe_" in str(fast_reason):
             sent_direct = _try_ship_banner_seeds(
