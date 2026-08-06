@@ -1484,8 +1484,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
-    # All inbox VODs exhausted (or none usable) — do not thrash YouTube discovery for hours.
-    if inbox_files and os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1") == "1":
+    # All inbox VODs exhausted — park them and discover a fresh VOD.
+    # Old behavior skipped discovery entirely (inbox_dead=1), which left the
+    # cycle spinning every idle tick with zero productive work.
+    if inbox_files:
         usable = False
         for mp4 in inbox_files:
             entries = _vod_registry_entries(state, mp4)
@@ -1494,9 +1496,33 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                     usable = True
                     break
         if not usable:
-            log.warning("inbox all exhausted — skip discovery hang game=%s count=%s", game, len(inbox_files))
-            print(f"pipeline done sent=0 vods=0 game={game} inbox_dead=1")
-            return 0
+            parked = inbox.parent / "parked"
+            parked.mkdir(parents=True, exist_ok=True)
+            for mp4 in list(inbox.glob("yt_*.mp4")):
+                entries = _vod_registry_entries(state, mp4)
+                if entries and any(r.get("exhausted") for r in entries):
+                    dest = parked / mp4.name
+                    try:
+                        if dest.exists():
+                            mp4.unlink(missing_ok=True)
+                        else:
+                            mp4.rename(dest)
+                        log.info("parked exhausted inbox vod=%s → discovery", mp4.name)
+                    except OSError as exc:
+                        log.warning("park exhausted fail %s: %s", mp4.name, exc)
+            # Still block discovery only when recently paused (403 / empty search).
+            pause_until = float(state.get("discovery_pause_until") or 0)
+            if pause_until > time.time() and os.environ.get(
+                "SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1"
+            ) == "1":
+                log.warning(
+                    "inbox exhausted + discovery paused — wait game=%s until=%.0f",
+                    game,
+                    pause_until,
+                )
+                print(f"pipeline done sent=0 vods=0 game={game} inbox_dead=1")
+                return 0
+            log.info("inbox exhausted parked — fall through discovery game=%s", game)
 
     if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":
         log.info("skip discovery — inbox exhausted game=%s", game)
