@@ -79,11 +79,21 @@ def test_reset_new_day(isolated_state: Path) -> None:
 
 def test_stall_skip_advances_to_next_game(isolated_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DAILY_GAME_STALL_ZERO_RUNS", "3")
+    monkeypatch.setenv("DAILY_GAME_STALL_MAX_SEC", "600")
     for _ in range(5):
         cycle.record_send("mlbb", 1)
     assert cycle.active_game() == "pubg"
-    for _ in range(3):
-        cycle.note_feed_iteration("pubg", 0)
+    # Normal one-VOD rejects must NOT stall immediately.
+    for _ in range(5):
+        cycle.note_feed_iteration("pubg", 0, thrash=False)
+    assert cycle.is_game_stalled("pubg") is False
+    # Thrash + age over limit → stall.
+    import time
+
+    state = cycle.load_state()
+    state["stall"]["pubg"]["since"] = time.time() - 700
+    state["stall"]["pubg"]["thrash_runs"] = 3
+    cycle.save_state(state)
     assert cycle.is_game_stalled("pubg") is True
     cycle.force_skip_game("pubg", reason="test")
     assert cycle.active_game() == "standoff"
@@ -93,8 +103,8 @@ def test_send_clears_stall(isolated_state: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("DAILY_GAME_STALL_ZERO_RUNS", "3")
     for _ in range(5):
         cycle.record_send("mlbb", 1)
-    cycle.note_feed_iteration("pubg", 0)
-    cycle.note_feed_iteration("pubg", 0)
+    cycle.note_feed_iteration("pubg", 0, thrash=True)
+    cycle.note_feed_iteration("pubg", 0, thrash=True)
     cycle.note_feed_iteration("pubg", 1)
     assert cycle.is_game_stalled("pubg") is False
     assert cycle.active_game() == "pubg"

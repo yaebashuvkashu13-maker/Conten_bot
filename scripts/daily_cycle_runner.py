@@ -116,11 +116,13 @@ def main() -> int:
     timeout = _run_timeout_sec()
     log.info("run game=%s timeout=%ss sends_before=%s", game, timeout, before)
     timed_out = False
+    thrash = False
     try:
         proc = subprocess.run(argv, env=env, check=False, timeout=timeout)
         rc = int(proc.returncode or 0)
     except subprocess.TimeoutExpired:
         timed_out = True
+        thrash = True
         log.error("TIMEOUT game=%s after %ss — kill hang", game, timeout)
         subprocess.run(["pkill", "-f", f"shooter_vod_segment_feed.py {game}"], check=False)
         subprocess.run(["pkill", "-f", "yt-dlp"], check=False)
@@ -129,22 +131,37 @@ def main() -> int:
 
     after = send_count(game)
     delta = max(0, after - before)
-    entry = note_feed_iteration(game, delta)
+    # Detect thrash from log tail (inbox_dead / sent=0 vods=0).
+    try:
+        log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+        if log_path.exists():
+            tail = log_path.read_text(errors="replace")[-4000:]
+            if "inbox_dead=1" in tail or "pipeline done sent=0 vods=0" in tail.splitlines()[-3:]:
+                thrash = True
+            for line in reversed(tail.splitlines()[-30:]):
+                if "inbox_dead=1" in line or "pipeline done sent=0 vods=0" in line:
+                    thrash = True
+                    break
+    except OSError:
+        pass
+
+    entry = note_feed_iteration(game, delta, thrash=thrash)
     log.info(
-        "done game=%s sent_delta=%s zero_runs=%s stalled=%s timed_out=%s",
+        "done game=%s sent_delta=%s zero_runs=%s thrash_runs=%s stalled=%s timed_out=%s",
         game,
         delta,
         entry.get("zero_runs"),
+        entry.get("thrash_runs"),
         is_game_stalled(game),
         timed_out,
     )
     if delta == 0 and is_game_stalled(game):
-        force_skip_game(game, reason=f"zero_send_stall runs={entry.get('zero_runs')} timeout={timed_out}")
+        force_skip_game(game, reason=f"stall thrash={entry.get('thrash_runs')} zero={entry.get('zero_runs')} timeout={timed_out}")
         nxt = active_game()
         _notify(
             token,
             chat_id,
-            f"⏭ Stall-skip {game.upper()}: {entry.get('zero_runs')} нулевых прогонов. "
+            f"⏭ Stall-skip {game.upper()}: нет прогресса. "
             f"Следующая: {nxt or 'нет (все done/stall)'}",
         )
     return rc

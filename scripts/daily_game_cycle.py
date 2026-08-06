@@ -125,25 +125,34 @@ def _stall_max_sec() -> float:
 
 
 def is_game_stalled(game: str) -> bool:
-    """True when a game produced zero sends for too many runs / too long — skip for today."""
+    """True when a game is force-skipped or stuck with no progress for the wall-clock budget.
+
+    Zero-run count alone must NOT skip: shooter feed processes one VOD per iteration,
+    so a healthy inbox of 10+ files would falsely stall after N rejects.
+    """
     game = game.strip().lower()
     state = load_state()
     entry = (state.get("stall") or {}).get(game) or {}
     if entry.get("force_skip"):
         return True
-    zero_runs = int(entry.get("zero_runs") or 0)
-    if zero_runs >= _stall_zero_runs_limit():
-        return True
     since = float(entry.get("since") or 0)
     if since > 0 and (time.time() - since) >= _stall_max_sec():
+        return True
+    # Fast thrash (inbox_dead / discovery hang): many quick zero runs + min age.
+    zero_runs = int(entry.get("zero_runs") or 0)
+    thrash = int(entry.get("thrash_runs") or 0)
+    if thrash >= _stall_zero_runs_limit() and since > 0 and (time.time() - since) >= min(300.0, _stall_max_sec() / 2):
+        return True
+    if zero_runs >= max(20, _stall_zero_runs_limit() * 4) and since > 0 and (time.time() - since) >= _stall_max_sec():
         return True
     return False
 
 
-def note_feed_iteration(game: str, sent_delta: int) -> dict:
+def note_feed_iteration(game: str, sent_delta: int, *, thrash: bool = False) -> dict:
     """
     Track zero-send streaks so the cycle can skip a stuck game (anti-hang).
-    Returns the stall entry after update.
+    thrash=True when feed returned immediately with inbox_dead / no candidates
+    (not a normal one-VOD reject).
     """
     reset_if_new_day()
     game = game.strip().lower()
@@ -151,14 +160,17 @@ def note_feed_iteration(game: str, sent_delta: int) -> dict:
         return {}
     state = load_state()
     stall = state.setdefault("stall", {})
-    entry = stall.setdefault(game, {"zero_runs": 0, "since": None, "force_skip": False})
+    entry = stall.setdefault(game, {"zero_runs": 0, "thrash_runs": 0, "since": None, "force_skip": False})
     if int(sent_delta) > 0:
         entry["zero_runs"] = 0
+        entry["thrash_runs"] = 0
         entry["since"] = None
         entry["force_skip"] = False
         entry["last_send_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     else:
         entry["zero_runs"] = int(entry.get("zero_runs") or 0) + 1
+        if thrash:
+            entry["thrash_runs"] = int(entry.get("thrash_runs") or 0) + 1
         if not entry.get("since"):
             entry["since"] = time.time()
         entry["last_zero_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
