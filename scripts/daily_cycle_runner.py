@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -16,8 +17,10 @@ from daily_game_cycle import (
     enabled,
     force_skip_game,
     is_game_stalled,
+    load_state,
     note_feed_iteration,
     reset_if_new_day,
+    save_state,
     send_count,
     status_summary,
 )
@@ -26,6 +29,34 @@ from youtube_download import load_env
 log = logging.getLogger("daily_cycle_runner")
 ENV_PATH = Path("/root/.video_bot.env")
 SCRIPTS = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml")) / "scripts"
+
+
+def _idle_stalled_sleep_sec() -> int:
+    """When all remaining games are stalled, do not spin every 8s and spam TG."""
+    try:
+        return max(60, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_SEC", "900")))
+    except ValueError:
+        return 900
+
+
+def _notify_once(token: str, chat_id: str, key: str, text: str) -> bool:
+    """Send Telegram notify at most once per day for this key (persisted in cycle state)."""
+    if not token or not chat_id or not key:
+        return False
+    state = load_state()
+    notified = state.setdefault("notified", {})
+    if notified.get(key):
+        return False
+    try:
+        from mlbb_vod_segment_feed import send_message
+
+        send_message(token, chat_id, text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("notify failed key=%s: %s", key, exc)
+        return False
+    notified[key] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_state(state)
+    return True
 
 
 def _notify(token: str, chat_id: str, text: str) -> None:
@@ -84,18 +115,27 @@ def main() -> int:
         rem = status_summary()["remaining"]
         if any(int(v) > 0 for v in rem.values()):
             log.warning("all remaining games stalled — idle rem=%s", rem)
-            _notify(
+            rem_key = ",".join(f"{k}:{rem.get(k, 0)}" for k in ("mlbb", "pubg", "standoff", "genshin", "wot"))
+            _notify_once(
                 token,
                 chat_id,
+                f"all_stalled:{rem_key}",
                 f"⚠️ Цикл: оставшиеся игры залипли (stall skip). "
-                f"Остаток квот: {rem}. Жду правки inbox/discovery или 00:00.",
+                f"Остаток квот: {rem}. Жду правки inbox/discovery или 00:00. "
+                f"(это сообщение один раз, не спам)",
             )
+            # Stop 8s busy-loop: sleep here so wrapper does not re-notify/re-log every tick.
+            time.sleep(_idle_stalled_sleep_sec())
         else:
             log.info("all daily quotas done — idle")
-            _notify(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.")
+            _notify_once(
+                token,
+                chat_id,
+                "quotas_done",
+                "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.",
+            )
+            time.sleep(_idle_stalled_sleep_sec())
         return 0
-
-    from daily_game_cycle import load_state, save_state
 
     state = load_state()
     if state.get("notified", {}).get("active_game") != game:
@@ -170,9 +210,10 @@ def main() -> int:
     if delta == 0 and is_game_stalled(game):
         force_skip_game(game, reason=f"stall thrash={entry.get('thrash_runs')} zero={entry.get('zero_runs')} timeout={timed_out}")
         nxt = active_game()
-        _notify(
+        _notify_once(
             token,
             chat_id,
+            f"stall_skip:{game}",
             f"⏭ Stall-skip {game.upper()}: нет прогресса. "
             f"Следующая: {nxt or 'нет (все done/stall)'}",
         )
