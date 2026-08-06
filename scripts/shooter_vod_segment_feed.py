@@ -525,7 +525,7 @@ def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_
     """Greedy highest-score peaks spaced by montage gap.
 
     Returns up to max_clips * 3 candidates so rejected parts can be replaced
-    without failing the whole склейка.
+    without failing the whole склейка. May return fewer than min_clips — caller decides.
     """
     pool_cap = max(max_clips * 3, min_clips + 3)
     picked: list[dict] = []
@@ -536,9 +536,6 @@ def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_
         picked.append(row)
         if len(picked) >= pool_cap:
             break
-    if len(picked) < min_clips:
-        return []
-    # Keep score order for try-order; chronological sort happens after accept.
     return picked
 
 
@@ -585,13 +582,21 @@ def _send_montage(
         return 0
 
     min_clips, max_clips, gap_sec, part_max, final_max = _montage_limits()
+    # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
     picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
     if len(picked) < min_clips:
+        tight = max(18.0, gap_sec * 0.45)
+        picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=tight)
+        if len(picked) >= min_clips:
+            log.info("montage tight-gap ok game=%s gap=%.0f→%.0f peaks=%s", game, gap_sec, tight, len(picked))
+            gap_sec = tight
+    if len(picked) < min_clips:
         log.warning(
-            "montage insufficient peaks game=%s have=%s need=%s",
+            "montage insufficient peaks game=%s have=%s need=%s rows=%s",
             game,
             len(picked),
             min_clips,
+            len(rows),
         )
         return 0
 
@@ -972,6 +977,23 @@ def _scan_vod(
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         # Montage path needs several spaced peaks; singles take the top one.
         batch = rows if montage else rows[:1]
+        if montage and len(batch) < min_clips:
+            log.warning(
+                "montage need more peaks have=%s need=%s vod=%s — next vod (no exhaust)",
+                len(batch),
+                min_clips,
+                vod.name,
+            )
+            if entry is not None:
+                record_vod_scan(
+                    entry,
+                    sent=0,
+                    pool_peaks=pool_peaks,
+                    blocked=False,
+                    pool=pool,
+                )
+                entry["reject_reason"] = f"montage_need_{min_clips}_have_{len(batch)}"
+            return 0
         n = _send_batch(game, token, chat_id, vod, batch, sig)
         if n > 0:
             if entry is not None:
