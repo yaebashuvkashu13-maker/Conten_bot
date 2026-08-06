@@ -1989,11 +1989,12 @@ def _process_vod_segments(
 
         # Direct ship from real banner seeds — skip CLIP/PANNs thrash when we already
         # have visual-ref ≥double. Still runs normalize + presend quality gates.
-        if (
-            banner_seed_peaks
-            and os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
-            and "banner_probe_" in str(fast_reason)
-        ):
+        # Quality-first: never fast-ship (owner: banner-only tails like 9-RWfDZfai4_73).
+        fast_ship_ok = (
+            os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
+            and os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") != "1"
+        )
+        if banner_seed_peaks and fast_ship_ok and "banner_probe_" in str(fast_reason):
             sent_direct = _try_ship_banner_seeds(
                 token, chat_id, vod, banner_seed_peaks, labeled_set | sent
             )
