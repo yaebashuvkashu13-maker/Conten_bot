@@ -751,7 +751,13 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     game = profile
     text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
-        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+        # Production shooters: CLIP on CPU can hang 15+ min per VOD. Fall back to
+        # histogram exemplars; gunfire/combat gates still enforce no-trash.
+        if (
+            os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1"
+            or profile in SHOOTER_PROFILES
+            or os.environ.get("HIGHLIGHT_ALLOW_NO_CLIP", "1") == "1"
+        ):
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
             )
