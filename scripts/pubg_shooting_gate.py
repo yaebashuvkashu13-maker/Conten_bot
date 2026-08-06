@@ -200,8 +200,11 @@ def pubg_passes_shooting_gate(
         base = str(gate_reason).split("=", 1)[0]
         # Visual run/loot/fake-gun must not override clear gunfire evidence —
         # Standoff fights are high-motion and were zero-sending for hours.
+        panns_ok = panns_gun_max >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.28"))
         if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"} and (
-            strict_audio or (heuristic_audio and gun >= min_gun * 0.85)
+            strict_audio
+            or (heuristic_audio and gun >= min_gun * 0.85)
+            or (panns_ok and (gun >= min_gun * 0.45 or rms >= 0.028 or panns_gun_max >= 0.45))
         ):
             metrics["visual_override"] = gate_reason
         else:
