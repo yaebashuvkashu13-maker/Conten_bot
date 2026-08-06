@@ -141,6 +141,8 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   VOD_ANALYSIS_USE_PROXY=1 VOD_POOL_TTL_SEC=21600 \
   MLBB_TEAMFIGHT_MIN_SCORE=0.45 GENSHIN_BOSS_BAR_MIN_RATIO=0.7 \
   DAILY_GAME_CYCLE_ENABLED=1 \
+  DAILY_GAME_STALL_ZERO_RUNS=4 DAILY_GAME_STALL_MAX_SEC=1200 DAILY_CYCLE_RUN_TIMEOUT_SEC=1800 \
+  SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD=1 \
   DAILY_GAME_MLBB_QUOTA=5 DAILY_GAME_PUBG_QUOTA=3 DAILY_GAME_STANDOFF_QUOTA=3 \
   DAILY_GAME_GENSHIN_QUOTA=5 DAILY_GAME_WOT_QUOTA=3 \
   MLBB_VOD_MAX_PER_VOD=5 MLBB_VOD_SOFT_MAX_PEAK_TRIES=12 MLBB_VOD_STRICT_PEAK_TRIES=4 \
@@ -229,6 +231,9 @@ install -m 755 \
   "$REPO/scripts/mlbb_continuous_worker_watchdog.sh" \
   "$REPO/scripts/mlbb_job_watchdog.py" \
   "$REPO/scripts/mlbb_vod_health_watchdog.sh" \
+  "$REPO/scripts/cycle_stall_watchdog.sh" \
+  "$REPO/scripts/daily_cycle_runner.py" \
+  "$REPO/scripts/daily_game_cycle.py" \
   "$REPO/scripts/mlbb_vod_only_verify.sh" \
   "$REPO/scripts/vps_apply_vod_only.sh" \
   "$REPO/scripts/mlbb_telegram_video.py" \

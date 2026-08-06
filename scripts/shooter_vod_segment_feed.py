@@ -316,26 +316,41 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
 
     out: list[dict] = []
     for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + ["--flat-playlist", "--print", "%(id)s|%(title)s|%(duration)s|%(uploader)s", url]
+        cmd = ytdlp_cmd(env) + [
+            "--flat-playlist",
+            "--print",
+            "%(id)s|%(title)s|%(duration)s|%(uploader)s|%(live_status)s",
+            url,
+        ]
         cmd += ytdlp_extra_args(env)
-        proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
+        proc = run_ytdlp(cmd, env, timeout=90, label=f"search-{game}")
         if proc.returncode != 0:
             log.warning("search failed %s: %s", url, (proc.stderr or "")[:200])
             continue
         for line in (proc.stdout or "").splitlines():
-            parts = line.split("|", 3)
+            parts = line.split("|", 4)
             if len(parts) < 2:
                 continue
             vid, title = parts[0][:11], parts[1]
             if vid in used or len(vid) != 11:
                 continue
+            live_status = (parts[4] if len(parts) > 4 else "").strip().lower()
+            if live_status in ("is_live", "is_upcoming"):
+                log.info("skip live/upcoming id=%s status=%s", vid, live_status)
+                used.add(vid)
+                continue
             if not title_ok_fn(game, title):
                 continue
             try:
-                dur = float(parts[2]) if len(parts) > 2 else 0.0
+                dur = float(parts[2]) if len(parts) > 2 and parts[2] not in ("NA", "None", "") else 0.0
             except ValueError:
                 dur = 0.0
-            if dur and not _vod_length_ok(Path("x.mp4"), dur):
+            # Live streams often report duration 0 / NA — never download those.
+            if dur <= 0:
+                log.info("skip zero-duration (likely live) id=%s title=%s", vid, title[:40])
+                used.add(vid)
+                continue
+            if not _vod_length_ok(Path("x.mp4"), dur):
                 continue
             out.append(
                 {
@@ -355,13 +370,24 @@ def _download_vod(game: str, pick: dict, env: dict[str, str]) -> Path | None:
 
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
+    # Hard reject known live / upcoming before yt-dlp hangs on HLS.
+    title = str(pick.get("title") or "").lower()
+    if "live event will begin" in title:
+        log.warning("skip live-title pick id=%s", pick.get("id"))
+        return None
     try:
         path = download_one(str(pick["url"]), inbox, env)
         return path
     except Exception as exc:
+        msg = str(exc)
         log.warning("download failed %s: %s", pick.get("id"), exc)
+        if "live event" in msg.lower() or "is live" in msg.lower():
+            state = _load_state(game)
+            used = set(state.get("used_youtube_ids", []))
+            used.add(str(pick.get("id") or ""))
+            state["used_youtube_ids"] = sorted(u for u in used if u)
+            _save_state(game, state)
         return None
-
 
 def _row_window_start(row: dict) -> float:
     """Use the rendered clip start — never peak_start alone (that misaligned gates)."""
@@ -1177,7 +1203,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     if purged:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
 
-    for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game)):
+    inbox_files = sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game))
+    for mp4 in inbox_files:
         entries = _vod_registry_entries(state, mp4)
         if any(r.get("exhausted") for r in entries):
             # Collapse duplicate rows so the next cycle stays clean.
@@ -1234,6 +1261,20 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         _save_state(game, state)
         print(f"pipeline done sent={n} vods=1 game={game}")
         return 0
+
+    # All inbox VODs exhausted (or none usable) — do not thrash YouTube discovery for hours.
+    # Stall tracker in daily_cycle_runner will skip the game after N zero runs.
+    if inbox_files and os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1") == "1":
+        usable = False
+        for mp4 in inbox_files:
+            entries = _vod_registry_entries(state, mp4)
+            if not entries or not any(r.get("exhausted") for r in entries):
+                usable = True
+                break
+        if not usable:
+            log.warning("inbox all exhausted — skip discovery hang game=%s count=%s", game, len(inbox_files))
+            print(f"pipeline done sent=0 vods=0 game={game} inbox_dead=1")
+            return 0
 
     if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":
         log.info("skip discovery — inbox exhausted game=%s", game)

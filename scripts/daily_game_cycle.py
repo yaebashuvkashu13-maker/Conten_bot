@@ -82,6 +82,7 @@ def reset_if_new_day() -> bool:
         "day": today,
         "sends": {g: 0 for g in GAME_ORDER},
         "notified": {},
+        "stall": {},
         "reset_from": state.get("day"),
     }
     save_state(state)
@@ -109,12 +110,92 @@ def record_send(game: str, count: int = 1) -> None:
     save_state(state)
 
 
+def _stall_zero_runs_limit() -> int:
+    try:
+        return max(2, int(os.environ.get("DAILY_GAME_STALL_ZERO_RUNS", "6")))
+    except ValueError:
+        return 6
+
+
+def _stall_max_sec() -> float:
+    try:
+        return max(300.0, float(os.environ.get("DAILY_GAME_STALL_MAX_SEC", "2700")))
+    except ValueError:
+        return 2700.0
+
+
+def is_game_stalled(game: str) -> bool:
+    """True when a game produced zero sends for too many runs / too long — skip for today."""
+    game = game.strip().lower()
+    state = load_state()
+    entry = (state.get("stall") or {}).get(game) or {}
+    if entry.get("force_skip"):
+        return True
+    zero_runs = int(entry.get("zero_runs") or 0)
+    if zero_runs >= _stall_zero_runs_limit():
+        return True
+    since = float(entry.get("since") or 0)
+    if since > 0 and (time.time() - since) >= _stall_max_sec():
+        return True
+    return False
+
+
+def note_feed_iteration(game: str, sent_delta: int) -> dict:
+    """
+    Track zero-send streaks so the cycle can skip a stuck game (anti-hang).
+    Returns the stall entry after update.
+    """
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return {}
+    state = load_state()
+    stall = state.setdefault("stall", {})
+    entry = stall.setdefault(game, {"zero_runs": 0, "since": None, "force_skip": False})
+    if int(sent_delta) > 0:
+        entry["zero_runs"] = 0
+        entry["since"] = None
+        entry["force_skip"] = False
+        entry["last_send_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        entry["zero_runs"] = int(entry.get("zero_runs") or 0) + 1
+        if not entry.get("since"):
+            entry["since"] = time.time()
+        entry["last_zero_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    stall[game] = entry
+    save_state(state)
+    return dict(entry)
+
+
+def force_skip_game(game: str, reason: str = "manual") -> None:
+    """Skip remaining quota for a game today (e.g. inbox dead + discovery broken)."""
+    reset_if_new_day()
+    game = game.strip().lower()
+    if game not in GAME_ORDER:
+        return
+    state = load_state()
+    stall = state.setdefault("stall", {})
+    entry = stall.setdefault(game, {"zero_runs": 0, "since": time.time(), "force_skip": False})
+    entry["force_skip"] = True
+    entry["skip_reason"] = reason[:160]
+    entry["skipped_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # Push zero_runs past limit so is_game_stalled stays true even if force_skip cleared.
+    entry["zero_runs"] = max(int(entry.get("zero_runs") or 0), _stall_zero_runs_limit())
+    if not entry.get("since"):
+        entry["since"] = time.time()
+    stall[game] = entry
+    save_state(state)
+
+
 def active_game() -> str | None:
-    """Next game that still has daily quota. None if all quotas met."""
+    """Next game that still has daily quota and is not stalled. None if all done/skipped."""
     reset_if_new_day()
     for game in GAME_ORDER:
-        if quota_remaining(game) > 0:
-            return game
+        if quota_remaining(game) <= 0:
+            continue
+        if is_game_stalled(game):
+            continue
+        return game
     return None
 
 
@@ -123,6 +204,8 @@ def can_send_for_game(game: str, count: int = 1) -> tuple[bool, str]:
         return True, "cycle_disabled"
     reset_if_new_day()
     game = game.strip().lower()
+    if is_game_stalled(game):
+        return False, f"{game}_stalled"
     active = active_game()
     if active is None:
         return False, "all_quotas_done"
