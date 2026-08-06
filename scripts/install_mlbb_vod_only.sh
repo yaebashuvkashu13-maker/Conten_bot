@@ -256,6 +256,7 @@ install -m 755 \
   "$REPO/scripts/mlbb_telegram_video.py" \
   "$REPO/scripts/mlbb_runtime_cleanup.py" \
   "$REPO/scripts/telegram_upload_bot.py" \
+  "$REPO/scripts/social_publish.py" \
   "$REPO/scripts/youtube_mlbb_vod_prefs.py" \
   "$REPO/scripts/nightly_youtube_montage.py" \
   "$REPO/scripts/youtube_download.py" \
@@ -284,7 +285,9 @@ export MLBB_VOD_OUT_HEIGHT=720
 export MLBB_VOD_VARIABLE_LENGTH=1
 export MLBB_VOD_OWNER_EXEMPLARS=1
 export HIGHLIGHT_USE_OWNER_ANCHORS=0
-export VOD_CALIBRATION_SEND_AS_FILE=1
+export VOD_CALIBRATION_SEND_AS_FILE=0
+export MLBB_VOD_AUTO_HQ_ON_YES=0
+export SHOOTER_VOD_AUTO_HQ_ON_YES=0
 export HIGHLIGHT_CLIP_DISABLED=1
 export HIGHLIGHT_ALLOW_NO_CLIP=1
 export HIGHLIGHT_HEATMAP=0
@@ -361,7 +364,10 @@ for kv in \
   SHOOTER_AUTHOR_KILL_GATE=1 \
   SHOOTER_REJECT_AUTHOR_DEATH=1 \
   SHOOTER_REQUIRE_AUTHOR_KILL=1 \
-  HIGHLIGHT_CLIP_DISABLED=1; do
+  HIGHLIGHT_CLIP_DISABLED=1 \
+  VOD_CALIBRATION_SEND_AS_FILE=0 \
+  MLBB_VOD_AUTO_HQ_ON_YES=0 \
+  SHOOTER_VOD_AUTO_HQ_ON_YES=0; do
   key="${kv%%=*}"
   val="${kv#*=}"
   if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
