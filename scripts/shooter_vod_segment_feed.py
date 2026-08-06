@@ -1048,9 +1048,23 @@ def _scan_vod(
             if _peak_too_close(peak, used_peaks, cand_gap):
                 continue
             hm = clip.get("highlight_metrics") or {}
-            clip_score = float(hm.get("clip_score") or clip.get("score") or 0.0)
+            clip_score = float(hm.get("clip_score") or 0.0)
+            row_score = float(clip.get("score") or 0.0)
+            pass_reason = str(hm.get("pass_reason") or "")
+            clip_off = os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1"
+            # With CLIP disabled, clip_score is always 0 — do NOT drop rule/boss PASS
+            # windows (Genshin was finding genshin_boss_ok then exhausting as blocked).
             if owner_exemplars and clip_score < min_clip and not clip.get("owner_anchor"):
-                continue
+                accept_noclip = clip_off and (
+                    bool(hm.get("rule_pass"))
+                    or pass_reason.startswith(
+                        ("genshin_boss", "fight", "panns", "hist", "noclip", "boss")
+                    )
+                    or row_score >= min_clip
+                    or float(hm.get("hook_score") or 0) >= 0.12
+                )
+                if not accept_noclip:
+                    continue
             start = max(0.0, peak - lead)
             sid = segment_id(vid, start)
             if sid in blocked_ids:
@@ -1060,7 +1074,7 @@ def _scan_vod(
                     "segment_id": sid,
                     "start": start,
                     "peak_start": peak,
-                    "score": float(clip.get("score", 0)),
+                    "score": max(row_score, clip_score, float(hm.get("hook_score") or 0)),
                     "clip": {**clip, "start": start, "peak_start": peak},
                 }
             )
@@ -1073,8 +1087,21 @@ def _scan_vod(
                 vod_id=vid,
                 lead_sec=lead,
             )
-            # No sendable row left (gap/labels/score) — exhaust even if a peak
-            # is technically "available" but filtered out. Prevents inbox loops.
+            # Score-filter with CLIP off is NOT "all peaks blocked" — don't exhaust
+            # a VOD that still has unused boss/fight windows.
+            clip_off = os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1"
+            if not blocked and clip_off:
+                log.warning(
+                    "no rows after score filter (CLIP off) vod=%s pool=%s — keep for retry, no exhaust",
+                    vod.name,
+                    len(pool),
+                )
+                if entry is not None:
+                    record_vod_scan(
+                        entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=pool
+                    )
+                    entry["reject_reason"] = "clip_off_score_filter"
+                return 0
             if not blocked:
                 blocked = True
             log.warning(
