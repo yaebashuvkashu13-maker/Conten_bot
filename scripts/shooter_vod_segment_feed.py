@@ -1155,30 +1155,45 @@ def _scan_vod_with_adaptive(
                 sent_set = load_feed_sent(game)
                 used_peaks = _used_peak_times(game, vid, sent_set)
                 blocked_ids = labeled_ids(game) | sent_set
-                rows = []
-                for idx, peak in enumerate(dense_peaks):
-                    # Peak is already a gunfire CENTER from dense+snap.
-                    # Skip peaks already shipped (gap) — don't thrash the same fights.
-                    if _peak_too_close(float(peak), used_peaks, gap_sec * 0.9):
-                        continue
-                    start = max(0.0, float(peak) - part_sec * 0.5)
-                    sid = segment_id(vid, start)
-                    if sid in blocked_ids:
-                        continue
-                    rows.append(
-                        {
-                            "segment_id": sid,
-                            "start": start,
-                            "peak_start": float(peak),
-                            "score": max(0.2, 0.95 - idx * 0.03),
-                            "clip": {
+
+                def _build_rows(peak_gap: float) -> list[dict]:
+                    out_rows: list[dict] = []
+                    for idx, peak in enumerate(dense_peaks):
+                        if _peak_too_close(float(peak), used_peaks, peak_gap):
+                            continue
+                        start = max(0.0, float(peak) - part_sec * 0.5)
+                        sid = segment_id(vid, start)
+                        if sid in blocked_ids:
+                            continue
+                        out_rows.append(
+                            {
+                                "segment_id": sid,
                                 "start": start,
                                 "peak_start": float(peak),
-                                "input_duration": part_sec,
-                                "output_duration": part_sec,
-                            },
-                        }
-                    )
+                                "score": max(0.2, 0.95 - idx * 0.03),
+                                "clip": {
+                                    "start": start,
+                                    "peak_start": float(peak),
+                                    "input_duration": part_sec,
+                                    "output_duration": part_sec,
+                                },
+                            }
+                        )
+                    return out_rows
+
+                rows = _build_rows(gap_sec * 0.9)
+                if len(rows) < min_clips:
+                    # Same VOD can still yield another ×3 if fights are denser.
+                    tight = max(22.0, gap_sec * 0.45)
+                    rows = _build_rows(tight)
+                    if len(rows) >= min_clips:
+                        log.info(
+                            "fast-montage tight unused-gap vod=%s gap=%.0f→%.0f rows=%s",
+                            vod.name,
+                            gap_sec,
+                            tight,
+                            len(rows),
+                        )
                 if len(rows) >= min_clips:
                     n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
                     if n_fast > 0:
