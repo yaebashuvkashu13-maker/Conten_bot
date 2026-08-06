@@ -2042,12 +2042,10 @@ def _process_vod_segments(
         log.info("fast-probe ok vod=%s reason=%s seeds=%s", vod.name, fast_reason, seed_peaks[:6])
 
         # Direct ship from real banner seeds — skip CLIP/PANNs thrash when we already
-        # have visual-ref ≥double. Still runs normalize + presend quality gates.
-        # Quality-first: never fast-ship (owner: banner-only tails like 9-RWfDZfai4_73).
-        fast_ship_ok = (
-            os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
-            and os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") != "1"
-        )
+        # have visual-ref ≥double. Still runs normalize + fight-before-banner + presend.
+        # Quality-first used to block this entirely → 20min hang then 0 sends while
+        # verified doubles sat unused. Fight/presend gates keep tails out.
+        fast_ship_ok = os.environ.get("MLBB_BANNER_FAST_SHIP", "1") == "1"
         if banner_seed_peaks and fast_ship_ok and "banner_probe_" in str(fast_reason):
             sent_direct = _try_ship_banner_seeds(
                 token, chat_id, vod, banner_seed_peaks, labeled_set | sent
