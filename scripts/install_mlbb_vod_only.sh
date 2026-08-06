@@ -226,6 +226,9 @@ install -m 755 \
   "$REPO/scripts/mlbb_continuous_worker.py" \
   "$REPO/scripts/mlbb_learning_first.py" \
   "$REPO/scripts/highlight_scorer.py" \
+  "$REPO/scripts/gameplay_gate.py" \
+  "$REPO/scripts/pubg_shooting_gate.py" \
+  "$REPO/scripts/pubg_combat_gate.py" \
   "$REPO/scripts/vod_state_io.py" \
   "$REPO/scripts/vod_env.py" \
   "$REPO/scripts/telegram_access.py" \

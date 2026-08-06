@@ -103,13 +103,15 @@ def snap_peak_to_gunfire(
     approx_center: float,
     *,
     duration: float,
-    search_radius: float = 14.0,
-    step: float = 2.0,
+    search_radius: float = 10.0,
+    step: float = 3.0,
     sample_sec: float = 4.0,
 ) -> tuple[float, float, float]:
     """
     Re-center a probe on the loudest local gunfire using the same density metric
     as the shooting gate. Returns (center, gun_density, panns_gun_max).
+
+    Kept cheap: ~7 audio windows, not dozens.
     """
     from gameplay_gate import score_pubg_gunfire_audio
 
@@ -119,7 +121,7 @@ def snap_peak_to_gunfire(
     lo = max(8.0, float(approx_center) - float(search_radius))
     hi = min(float(duration) - 8.0, float(approx_center) + float(search_radius))
     t = lo
-    while t <= hi:
+    while t <= hi + 1e-6:
         a = max(0.0, t - sample_sec * 0.5)
         try:
             gun, _burst, _rms = score_pubg_gunfire_audio(video_path, a, sample_sec)
@@ -130,7 +132,6 @@ def snap_peak_to_gunfire(
             pmax = float(panns.get("panns_gun_max", 0) or 0)
         except Exception:
             pmax = 0.0
-        # Prefer real spike/sustained density; break ties with PANNs.
         score = float(gun) * 2.0 + pmax
         if score > best_gun * 2.0 + best_panns + 1e-9:
             best_gun = float(gun)
@@ -148,10 +149,10 @@ def discover_montage_gun_peaks(
     gap_sec: float = 55.0,
 ) -> tuple[list[float], str]:
     """
-    Dense PANNs scan → snap to gunfire density → spaced peaks for ×3 montage.
+    Dense PANNs scan → spaced candidates → snap only those → ×3 montage peaks.
 
-    Returns peak CENTERS (not probe starts). Typical cost: a few minutes on CPU.
-    Quality still enforced later by shooting/combat/visual presend on each part.
+    Snap is applied ONLY to the shortlist (not every probe) so we stay minutes,
+    not half an hour of ffmpeg audio extracts.
     """
     profile = normalize_profile(profile)
     from smart_video_editor import ffprobe_duration
@@ -167,58 +168,77 @@ def discover_montage_gun_peaks(
     if not offsets:
         return [], "dense_probe_too_short"
 
-    scored: list[tuple[float, float, float]] = []  # panns, center_hint, offset
+    log.info(
+        "dense gun probe start vod=%s offsets=%s skip=%.0f",
+        video_path.name,
+        len(offsets),
+        skip,
+    )
+    scored: list[tuple[float, float]] = []  # panns, center_hint
     for t in offsets:
         panns = score_panns_audio(video_path, t, WINDOW_SEC)
         gmax = float(panns.get("panns_gun_max", 0))
         if gmax >= gun_min:
-            scored.append((gmax, t + WINDOW_SEC * 0.5, t))
+            scored.append((gmax, t + WINDOW_SEC * 0.5))
+
+    if len(scored) < min_clips:
+        return [], f"dense_panns_0/{len(offsets)}" if not scored else (
+            f"dense_panns hits={len(scored)}/{len(offsets)} picked=0"
+        )
 
     scored.sort(key=lambda x: -x[0])
-    # Snap each candidate onto local max gunfire before spacing.
-    snapped: list[tuple[float, float, float]] = []  # (center, gun_dens, panns)
-    for panns_g, center_hint, _off in scored:
-        center, gun_d, pmax = snap_peak_to_gunfire(
-            video_path, center_hint, duration=dur
-        )
-        panns_use = max(panns_g, pmax)
-        if gun_d < dens_min and panns_use < gun_min * 1.25:
-            continue
-        snapped.append((center, gun_d, panns_use))
-
-    snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
     pool_cap = max(min_clips * 4, min_clips + 6)
-    picked: list[float] = []
-    picked_meta: list[tuple[float, float]] = []
-    for center, gun_d, panns_g in snapped:
-        if any(abs(center - p) < gap_sec for p in picked):
+    # First pass: space by PANNs only (cheap).
+    shortlist: list[tuple[float, float]] = []  # panns, center
+    for panns_g, center in scored:
+        if any(abs(center - c) < gap_sec for _g, c in shortlist):
             continue
-        picked.append(center)
-        picked_meta.append((gun_d, panns_g))
-        if len(picked) >= pool_cap:
+        shortlist.append((panns_g, center))
+        if len(shortlist) >= pool_cap:
             break
 
-    # Retry with tighter gap if we are short of montage.
-    if len(picked) < min_clips and gap_sec > 25:
+    if len(shortlist) < min_clips and gap_sec > 25:
         tight = max(22.0, gap_sec * 0.45)
-        picked = []
-        picked_meta = []
-        for center, gun_d, panns_g in snapped:
-            if any(abs(center - p) < tight for p in picked):
+        shortlist = []
+        for panns_g, center in scored:
+            if any(abs(center - c) < tight for _g, c in shortlist):
                 continue
-            picked.append(center)
-            picked_meta.append((gun_d, panns_g))
-            if len(picked) >= min_clips:
+            shortlist.append((panns_g, center))
+            if len(shortlist) >= pool_cap:
                 break
         gap_sec = tight
 
+    # Snap only the shortlist onto local gunfire (gate metric).
+    snapped: list[tuple[float, float, float]] = []  # center, gun, panns
+    for panns_g, center in shortlist:
+        c2, gun_d, pmax = snap_peak_to_gunfire(video_path, center, duration=dur)
+        panns_use = max(panns_g, pmax)
+        if gun_d < dens_min and panns_use < gun_min * 1.15:
+            log.info(
+                "dense snap drop center=%.0f→%.0f gun=%.3f panns=%.3f",
+                center,
+                c2,
+                gun_d,
+                panns_use,
+            )
+            continue
+        snapped.append((c2, gun_d, panns_use))
+
+    # Re-space after snap drift.
+    snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
+    picked: list[float] = []
+    for center, _gun, _p in snapped:
+        if any(abs(center - p) < gap_sec * 0.85 for p in picked):
+            continue
+        picked.append(center)
+        if len(picked) >= pool_cap:
+            break
+
     picked = sorted(picked)
-    top = snapped[0][2] if snapped else 0.0
+    top = scored[0][0] if scored else 0.0
     reason = (
-        f"dense_panns hits={len(scored)}/{len(offsets)} snapped={len(snapped)} "
-        f"picked={len(picked)} gap={gap_sec:.0f} top={top:.3f}"
-        if scored
-        else f"dense_panns_0/{len(offsets)}"
+        f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
+        f"snapped={len(snapped)} picked={len(picked)} gap={gap_sec:.0f} top={top:.3f}"
     )
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
     return picked, reason
