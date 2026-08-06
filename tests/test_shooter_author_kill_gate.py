@@ -29,13 +29,33 @@ def test_death_ocr_rejects(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     vod = tmp_path / "x.mp4"
     vod.write_bytes(b"x")
 
-    ocr_cycle = ["", "", "", "", "You were killed by Enemy", "", "", ""]
-
-    with patch.object(gate, "_read_frame", return_value=_fake_frame()), patch.object(
-        gate, "_ocr_blob", side_effect=ocr_cycle
-    ), patch("gameplay_gate.detect_game_viewport_crop", return_value=None):
+    with patch.object(
+        gate,
+        "detect_author_kill_signals",
+        return_value=(False, "no_author_kill", {}),
+    ), patch.object(
+        gate,
+        "detect_author_death_signals",
+        return_value=(True, "author_death_ocr=killed by", {"death_ocr": ["killed by"]}),
+    ):
         ok, reason, _m = gate.author_kill_window_ok(vod, 10.0, 12.0, profile="standoff")
     assert ok is False
+    assert "author_death" in reason
+
+
+def test_death_ocr_detector_reads_killed_by(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    vod = tmp_path / "x.mp4"
+    vod.write_bytes(b"x")
+    texts = iter(["", "You were killed by Enemy"] + [""] * 20)
+
+    def _ocr(_frame, **_kw):
+        return next(texts)
+
+    with patch.object(gate, "_read_frame", return_value=_fake_frame()), patch.object(
+        gate, "_ocr_blob", side_effect=_ocr
+    ), patch("gameplay_gate.detect_game_viewport_crop", return_value=None):
+        is_death, reason, _m = gate.detect_author_death_signals(vod, 10.0, 12.0)
+    assert is_death is True
     assert "author_death" in reason
 
 
