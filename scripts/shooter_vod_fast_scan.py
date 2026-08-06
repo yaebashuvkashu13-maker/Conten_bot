@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Cheap PUBG/Standoff VOD preflight — skip full highlight when no gun audio."""
+"""Cheap PUBG/Standoff VOD preflight + dense gun-peak discovery for montages."""
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
+
+log = logging.getLogger("shooter_vod_fast_scan")
 
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
@@ -22,6 +25,21 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
     if mid + WINDOW_SEC < dur - 45 and all(abs(mid - x) > 90 for x in offsets):
         offsets.append(round(mid, 1))
     return sorted(set(offsets))[: int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "6"))]
+
+
+def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
+    """Evenly spaced probes for montage (≥3 fights). Caps CPU via MAX."""
+    dur = max(0.0, float(duration))
+    if dur < skip_intro + 180:
+        return _probe_offsets(dur, skip_intro=skip_intro)
+    step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "50"))
+    cap = max(8, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "28")))
+    out: list[float] = []
+    t = skip_intro
+    while t + WINDOW_SEC < dur - 40 and len(out) < cap:
+        out.append(round(t, 1))
+        t += step
+    return out
 
 
 def vod_fast_combat_check(
@@ -69,6 +87,74 @@ def vod_fast_combat_check(
             [],
         )
     return True, f"fast_panns_{len(hits)}/{len(offsets)} top={top_gun:.3f}", hits
+
+
+def discover_montage_gun_peaks(
+    video_path: Path,
+    profile: str,
+    *,
+    min_clips: int = 3,
+    gap_sec: float = 55.0,
+) -> tuple[list[float], str]:
+    """
+    Dense PANNs scan → spaced gunfight peaks for ×3 montage without CLIP.
+
+    Typical cost: a few minutes on CPU for a 20–30 min VOD (not 15+ min CLIP).
+    Quality still enforced later by shooting/combat/visual presend on each part.
+    """
+    profile = normalize_profile(profile)
+    from smart_video_editor import ffprobe_duration
+
+    dur = ffprobe_duration(video_path)
+    if dur <= 0:
+        return [], "dense_probe_no_duration"
+
+    skip = float(
+        os.environ.get(
+            "PUBG_METRO_VOD_SKIP_INTRO_SEC",
+            os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "120"),
+        )
+    )
+    gun_min = float(os.environ.get("SHOOTER_VOD_DENSE_PANN_MIN", "0.16"))
+    offsets = _dense_offsets(dur, skip_intro=skip)
+    if not offsets:
+        return [], "dense_probe_too_short"
+
+    scored: list[tuple[float, float]] = []
+    for t in offsets:
+        panns = score_panns_audio(video_path, t, WINDOW_SEC)
+        gmax = float(panns.get("panns_gun_max", 0))
+        if gmax >= gun_min:
+            scored.append((gmax, t))
+
+    scored.sort(key=lambda x: -x[0])
+    picked: list[float] = []
+    for _gun, t in scored:
+        if any(abs(t - p) < gap_sec for p in picked):
+            continue
+        picked.append(t)
+        if len(picked) >= max(min_clips, min_clips + 2):
+            break
+
+    # Retry with tighter gap if we are one short of montage.
+    if len(picked) < min_clips and gap_sec > 25:
+        tight = max(22.0, gap_sec * 0.45)
+        picked = []
+        for _gun, t in scored:
+            if any(abs(t - p) < tight for p in picked):
+                continue
+            picked.append(t)
+            if len(picked) >= min_clips:
+                break
+        gap_sec = tight
+
+    picked = sorted(picked)
+    reason = (
+        f"dense_panns hits={len(scored)}/{len(offsets)} picked={len(picked)} "
+        f"gap={gap_sec:.0f} top={scored[0][0]:.3f}" if scored else f"dense_panns_0/{len(offsets)}"
+    )
+    log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:6])
+    return picked, reason
 
 
 def apply_fast_probe_seeds(peaks: list[float]) -> None:

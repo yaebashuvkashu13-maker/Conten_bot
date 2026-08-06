@@ -751,13 +751,17 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     game = profile
     text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
     if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
-        # Production shooters: CLIP on CPU can hang 15+ min per VOD. Fall back to
-        # histogram exemplars; gunfire/combat gates still enforce no-trash.
-        if (
-            os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1"
-            or profile in SHOOTER_PROFILES
-            or os.environ.get("HIGHLIGHT_ALLOW_NO_CLIP", "1") == "1"
-        ):
+        # Shooters: skip CLIP and hist substitute (hist still burns CPU decoding frames).
+        # Ranking uses panns + combat + visual (combat_authoritative when rule_pass).
+        if profile in SHOOTER_PROFILES or os.environ.get("HIGHLIGHT_ALLOW_NO_CLIP", "1") == "1":
+            if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+                hist_score, rows = _score_hist_exemplar_fallback(
+                    video_path, start_sec, duration_sec, profile
+                )
+                combined = text_score if text_score else hist_score
+                return combined, rows
+            return float(text_score or 0.0), [{"label": "noclip", "clip_score": 0.0, "pass": True, "fallback": "noclip"}]
+        if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
             )
@@ -1063,7 +1067,10 @@ def rule_gate(
     if profile == "genshin":
         if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
             return False, f"no_boss=motion{metrics.center_motion:.3f}:bar{metrics.boss_bar:.3f}"
-        if metrics.clip_score <= CLIP_MIN_SHOOTER:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= CLIP_MIN_SHOOTER
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
         if metrics.center_motion < 0.18:
             return False, f"motion_low={metrics.center_motion:.3f}"
@@ -1072,7 +1079,10 @@ def rule_gate(
     if profile == "mobile_legends":
         if metrics.minimap_delta < 0.012 or metrics.skill_delta < 0.007:
             return False, f"hud_low=mini{metrics.minimap_delta:.3f}:skill{metrics.skill_delta:.3f}"
-        if metrics.clip_score <= 0.03:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= 0.03
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
         if os.environ.get("MLBB_COMBAT_GATE", "1") == "1" and video_path is not None:
             from mlbb_combat_moment import passes_combat_gate, score_combat_moment
@@ -1085,7 +1095,10 @@ def rule_gate(
     if profile == "wot":
         if metrics.panns_explosion < 0.20 and metrics.panns_gun_max < 0.20:
             return False, f"panns_explosion_low={metrics.panns_explosion:.3f}"
-        if metrics.clip_score <= 0.03:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= 0.03
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
         return True, "wot_impact_ok"
 
@@ -1735,10 +1748,25 @@ def discover_highlight_candidates(
                 start, metrics = row
                 if _consume(start, metrics) and len(verified) >= limit:
                     break
+                # Shooter montage: stop as soon as we have enough combat peaks.
+                need_m = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+                if (
+                    profile in SHOOTER_PROFILES
+                    and os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1"
+                    and len(verified) >= need_m
+                ):
+                    log.info(
+                        "vod montage early-stop peaks=%s need=%s vod=%s",
+                        len(verified),
+                        need_m,
+                        video_path.name,
+                    )
+                    break
                 if (
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                    and profile == "mobile_legends"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
@@ -1752,10 +1780,24 @@ def discover_highlight_candidates(
             start, metrics = row
             if _consume(start, metrics) and len(verified) >= limit:
                 break
+            need_m = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+            if (
+                profile in SHOOTER_PROFILES
+                and os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1"
+                and len(verified) >= need_m
+            ):
+                log.info(
+                    "vod montage early-stop peaks=%s need=%s vod=%s",
+                    len(verified),
+                    need_m,
+                    video_path.name,
+                )
+                break
             if (
                 verified
                 and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                and profile == "mobile_legends"
             ):
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",

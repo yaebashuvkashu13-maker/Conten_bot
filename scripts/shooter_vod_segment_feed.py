@@ -85,11 +85,14 @@ def _vod_min_sec() -> float:
 
 
 def _vod_max_sec() -> float:
-    raw = os.environ.get("SHOOTER_VOD_MAX_SEC") or os.environ.get("MLBB_VOD_MAX_SEC", "3600")
-    try:
-        return float(raw)
-    except ValueError:
-        return 3600.0
+    # Never inherit MLBB_VOD_MAX_SEC=1200 — that purged 20–30 min montage streams.
+    raw = os.environ.get("SHOOTER_VOD_MAX_SEC")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return 3600.0
 
 
 def _shooter_vod_length_ok(path: Path, dur: float | None = None) -> bool:
@@ -1114,6 +1117,75 @@ def _scan_vod_with_adaptive(
                 return 0
         else:
             apply_fast_probe_seeds(seed_peaks)
+            # Fast ×3 montage: dense PANNs peaks → presend gates → send.
+            # Skips 15–30 min CLIP/highlight thrash while keeping no-trash gates.
+            if (
+                _montage_enabled(game)
+                and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
+            ):
+                from shooter_vod_fast_scan import discover_montage_gun_peaks
+
+                min_clips, _max_c, gap_sec, _part, _final = _montage_limits()
+                dense_peaks, dense_reason = discover_montage_gun_peaks(
+                    vod,
+                    _profile(game),
+                    min_clips=min_clips,
+                    gap_sec=gap_sec,
+                )
+                log.info(
+                    "fast-montage probe vod=%s reason=%s peaks=%s",
+                    vod.name,
+                    dense_reason,
+                    dense_peaks[:6],
+                )
+                if len(dense_peaks) >= min_clips:
+                    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+                    rows = []
+                    for peak in dense_peaks:
+                        start = max(0.0, float(peak) - lead)
+                        sid = segment_id(vid, start)
+                        if sid in labeled_ids(game) | load_feed_sent(game):
+                            continue
+                        rows.append(
+                            {
+                                "segment_id": sid,
+                                "start": start,
+                                "peak_start": float(peak),
+                                "score": 0.55,
+                                "clip": {
+                                    "start": start,
+                                    "peak_start": float(peak),
+                                    "input_duration": 22.0,
+                                    "output_duration": 22.0,
+                                },
+                            }
+                        )
+                    if len(rows) >= min_clips:
+                        n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
+                        if n_fast > 0:
+                            if entry is not None:
+                                record_vod_scan(
+                                    entry,
+                                    sent=n_fast,
+                                    pool_peaks=dense_peaks,
+                                    blocked=False,
+                                )
+                            _save_state(game, state)
+                            if clear_fast_seeds:
+                                clear_fast_seeds()
+                            log.info(
+                                "fast-montage SENT game=%s vod=%s n=%s peaks=%s",
+                                game,
+                                vod.name,
+                                n_fast,
+                                dense_peaks[:6],
+                            )
+                            return n_fast
+                        log.warning(
+                            "fast-montage rejected by gates vod=%s peaks=%s — fall through highlight",
+                            vod.name,
+                            len(rows),
+                        )
 
     if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":
         from genshin_vod_fast_scan import (
@@ -1259,7 +1331,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
 
     inbox_files = sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game))
+    max_vods = max(1, int(os.environ.get("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")))
+    tried = 0
     for mp4 in inbox_files:
+        if tried >= max_vods:
+            log.info("max vods per run reached game=%s n=%s", game, max_vods)
+            break
         entries = _vod_registry_entries(state, mp4)
         if any(r.get("exhausted") for r in entries):
             # Collapse duplicate rows so the next cycle stays clean.
@@ -1276,6 +1353,16 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():
             continue
+        if not _shooter_vod_length_ok(mp4):
+            log.info(
+                "skip length vod=%s dur=%.0f min=%.0f max=%.0f",
+                mp4.name,
+                _ffprobe_duration(mp4),
+                _vod_min_sec(),
+                _vod_max_sec(),
+            )
+            continue
+        tried += 1
         if entry is None:
             entry = _upsert_vod_registry(
                 state,
@@ -1314,18 +1401,21 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 )
                 log.info("exhausted vod=%s reason=%s", mp4.name, reason)
         _save_state(game, state)
-        print(f"pipeline done sent={n} vods=1 game={game}")
-        return 0
+        if n > 0:
+            print(f"pipeline done sent={n} vods=1 game={game}")
+            return 0
+        # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
+        log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
     # All inbox VODs exhausted (or none usable) — do not thrash YouTube discovery for hours.
-    # Stall tracker in daily_cycle_runner will skip the game after N zero runs.
     if inbox_files and os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1") == "1":
         usable = False
         for mp4 in inbox_files:
             entries = _vod_registry_entries(state, mp4)
             if not entries or not any(r.get("exhausted") for r in entries):
-                usable = True
-                break
+                if _ffprobe_duration(mp4) >= _vod_min_sec() and _shooter_vod_length_ok(mp4):
+                    usable = True
+                    break
         if not usable:
             log.warning("inbox all exhausted — skip discovery hang game=%s count=%s", game, len(inbox_files))
             print(f"pipeline done sent=0 vods=0 game={game} inbox_dead=1")
@@ -1414,6 +1504,13 @@ def main() -> int:
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
+    os.environ.setdefault("SHOOTER_VOD_FAST_MONTAGE", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")
+    os.environ.setdefault("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "3600")
+    os.environ.setdefault("SHOOTER_VOD_MIN_SEC", "600")
+    os.environ.setdefault("HIGHLIGHT_ALLOW_NO_CLIP", "1")
+    os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "1")
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
