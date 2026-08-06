@@ -831,6 +831,18 @@ def bounds_from_banner(
             end = min(file_dur, start + min_d)
             dur = end - start
 
+    # Must show several seconds of fight *before* the kill banner (not banner-only tail).
+    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
+    if float(banner_sec) - start < min_pre:
+        start = max(0.0, float(banner_sec) - min_pre)
+        dur = end - start
+        if dur < min_d:
+            end = min(float(file_dur), start + min_d)
+            dur = end - start
+        if dur > hard_max:
+            end = start + hard_max
+            dur = hard_max
+
     return round(start, 2), round(end, 2), round(dur, 2)
 
 
@@ -865,6 +877,11 @@ def resolve_fight_bounds(
     mode = moment_anchor_mode()
 
     if hit is not None and _hit_qualifies(hit, min_tier=min_tier):
+        # Motion sustain must be probed *before* the banner — peak at banner time
+        # often lands on post-fight tail (owner complaint: only kill banner, no fight).
+        probe_lag = float(os.environ.get("MLBB_KILL_BANNER_FIGHT_PROBE_LAG", "12"))
+        probe_peak = max(5.0, float(hit.sec) - probe_lag)
+        fight_start, fight_end, fight_dur = detect_fight_bounds(vod, probe_peak)
         start, end, dur = bounds_from_banner(
             hit.sec,
             file_dur,

@@ -1281,6 +1281,15 @@ def _detect_render_freeze(path: Path) -> tuple[bool, str, list[dict[str, float]]
     return True, "freeze_ok", freezes
 
 
+def _presend_min_banner_lead() -> float:
+    return float(
+        os.environ.get(
+            "MLBB_PRESEND_MIN_BANNER_LEAD",
+            os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "10"),
+        )
+    )
+
+
 def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, str, dict]:
     """
     Final gate on rendered mp4 + source window that will be sent.
@@ -1349,6 +1358,35 @@ def _validate_before_send(vod: Path, row: dict, rendered: Path) -> tuple[bool, s
 
     crop = _vod_crop_box(vod, cut_start, dur)
     report["crop"] = crop
+
+    banner_sec = float(row.get("banner_sec") or row.get("peak_start") or cut_start)
+    min_pre = _presend_min_banner_lead()
+    pre_banner = banner_sec - cut_start
+    report["banner_sec"] = round(banner_sec, 2)
+    report["pre_banner_sec"] = round(pre_banner, 2)
+    if pre_banner < min_pre:
+        return (
+            False,
+            f"pre_banner_short={pre_banner:.1f}s_need>={min_pre:.0f}",
+            report,
+        )
+    banner_rel = pre_banner / max(dur, 1e-6)
+    report["banner_rel"] = round(banner_rel, 3)
+    if banner_rel > 0.68:
+        return False, f"banner_tail_heavy=rel{banner_rel:.2f}", report
+
+    pre_win = max(2.0, min(pre_banner - 0.5, dur * 0.55))
+    pre_motion, pre_mini, _, _ = score_segment_combat(
+        vod, cut_start, pre_win, crop_box=crop, sample_frames=6
+    )
+    report["pre_banner_motion"] = round(pre_motion, 4)
+    report["pre_banner_mini"] = round(pre_mini, 4)
+    if pre_motion < _presend_min_motion() * 0.85 and pre_mini < _presend_min_minimap_delta():
+        return (
+            False,
+            f"pre_banner_no_fight=motion{pre_motion:.3f}",
+            report,
+        )
 
     for label, t0 in (("cut", cut_start), ("peak", peak_start)):
         motion, mini, skill, _text = score_segment_combat(
@@ -1840,6 +1878,16 @@ def _try_ship_banner_seeds(
             log.info("banner fast-ship skip peak=%.1f no_streak_meta tier=%s", peak, tier)
             continue
         start = float(lead_clip["start"])
+        banner_sec = float(lead_clip.get("banner_sec", lead_clip.get("peak_start", peak)))
+        min_pre = _presend_min_banner_lead()
+        if banner_sec - start < min_pre:
+            log.info(
+                "banner fast-ship skip peak=%.1f pre_banner=%.1fs need>=%.0f",
+                peak,
+                banner_sec - start,
+                min_pre,
+            )
+            continue
         sid = segment_id(vod, start)
         if sid in blocked_ids:
             continue

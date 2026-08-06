@@ -1138,6 +1138,29 @@ def _scan_vod_with_adaptive(
     return sent
 
 
+def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
+    """Park/delete too-short inbox files so discovery isn't blocked on trash."""
+    parked = inbox.parent / "parked"
+    parked.mkdir(parents=True, exist_ok=True)
+    min_sec = _vod_min_sec()
+    removed = 0
+    for mp4 in list(inbox.glob("yt_*.mp4")):
+        dur = _ffprobe_duration(mp4)
+        if dur >= min_sec and _vod_length_ok(dur):
+            continue
+        dest = parked / mp4.name
+        try:
+            if dest.exists():
+                mp4.unlink(missing_ok=True)
+            else:
+                mp4.rename(dest)
+            removed += 1
+            log.info("parked short inbox vod=%s dur=%.0fs min=%.0fs", mp4.name, dur, min_sec)
+        except OSError as exc:
+            log.warning("park short inbox fail %s: %s", mp4.name, exc)
+    return removed
+
+
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
     ok_cycle, reason = can_send_for_game(game, 1)
@@ -1150,6 +1173,9 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     used = set(state.get("used_youtube_ids", []))
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
+    purged = _purge_junk_inbox_vods(game, inbox)
+    if purged:
+        log.info("purged short inbox vods game=%s count=%s", game, purged)
 
     for mp4 in sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game)):
         entries = _vod_registry_entries(state, mp4)

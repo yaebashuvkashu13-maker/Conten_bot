@@ -93,7 +93,7 @@ def test_bounds_fallback_without_fight() -> None:
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
+    assert start == 38.0
     assert 8.0 <= dur <= 28.0
 
 
