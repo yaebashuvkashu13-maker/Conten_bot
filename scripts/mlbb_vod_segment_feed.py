@@ -306,6 +306,11 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         scanned = float(row.get("last_scan_at") or 0)
         ranked.append((1 if scanned else 0, scanned, abs(dur - target), dur, row))
     if not ranked:
+        # Soft reopen: banner miss ≠ empty VOD. Prefer rescan local full matches
+        # over downloading 3–4min highlight shorts when YouTube is flaky.
+        reopened = _reopen_soft_exhausted_inbox(registry)
+        if reopened:
+            return reopened
         return None
     ranked.sort(key=lambda item: (item[0], item[1], item[2]))
     pick = ranked[0][4]
@@ -318,6 +323,55 @@ def _pick_available_vod(registry: list[dict]) -> dict | None:
         bool(ranked[0][0]),
     )
     return pick
+
+
+_SOFT_EXHAUST_REASONS = (
+    "banner_probe_0",
+    "yield_banner_miss",
+    "banner_fast_discover_0",
+    "no_banner",
+)
+
+
+def _reopen_soft_exhausted_inbox(registry: list[dict]) -> dict | None:
+    """Re-queue local inbox VODs exhausted only on soft banner misses."""
+    if os.environ.get("MLBB_VOD_REOPEN_SOFT_EXHAUSTED", "1") != "1":
+        return None
+    target = _vod_target_dur_sec()
+    candidates: list[tuple[float, dict]] = []
+    for row in registry:
+        if not row.get("exhausted"):
+            continue
+        reason = str(row.get("reject_reason") or "")
+        soft = (not reason) or any(reason.startswith(p) for p in _SOFT_EXHAUST_REASONS)
+        if not soft:
+            continue
+        if int(row.get("soft_reopen_count") or 0) >= int(os.environ.get("MLBB_VOD_SOFT_REOPEN_MAX", "1")):
+            continue
+        path = Path(str(row.get("path", "")))
+        if not path.exists():
+            continue
+        dur = _ffprobe_duration(path)
+        if not _vod_length_ok(path, dur):
+            continue
+        # Prefer full matches (≥8 min); skip highlight shorts.
+        if dur < float(os.environ.get("MLBB_VOD_SOFT_REOPEN_MIN_SEC", "480")):
+            continue
+        candidates.append((abs(dur - target), row))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0])
+    row = candidates[0][1]
+    row["exhausted"] = False
+    row["reject_reason"] = ""
+    row["soft_reopen_count"] = int(row.get("soft_reopen_count") or 0) + 1
+    row["soft_reopened_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    log.info(
+        "reopen soft-exhausted vod=%s reason_was soft reopen=%s",
+        row.get("id") or Path(str(row.get("path"))).name,
+        row["soft_reopen_count"],
+    )
+    return row
 
 
 def _sync_vod_entry_to_state(state: dict, entry: dict, vod: Path) -> None:
@@ -418,7 +472,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
         vod_max_age_days,
     )
 
-    min_sec = _vod_min_sec()
+    min_sec = max(_vod_min_sec(), float(os.environ.get("MLBB_VOD_DISCOVER_MIN_SEC", "480")))
     max_sec = _vod_max_sec()
     target = _vod_target_dur_sec()
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))

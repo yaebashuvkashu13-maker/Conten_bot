@@ -1617,14 +1617,15 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
     """
     if os.environ.get("SHOOTER_VOD_RECYCLE_PARKED", "1") != "1":
         return None
-    max_recycles = max(1, int(os.environ.get("SHOOTER_VOD_RECYCLE_MAX_PER_VOD", "1")))
-    cooldown = float(os.environ.get("SHOOTER_VOD_RECYCLE_COOLDOWN_SEC", "1800"))
+    max_recycles = max(1, int(os.environ.get("SHOOTER_VOD_RECYCLE_MAX_PER_VOD", "2")))
+    cooldown = float(os.environ.get("SHOOTER_VOD_RECYCLE_COOLDOWN_SEC", "900"))
     dead_reasons = {
-        "fast_montage_presend_reject",
-        "montage_fast_path_no_send",
         "no_combat_peaks",
         "all_peaks_blocked",
     }
+    # With CLIP final-rank enabled, previous montage_fast_path rejects are worth one more try.
+    if os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") != "1":
+        dead_reasons.update({"fast_montage_presend_reject", "montage_fast_path_no_send"})
     parked = inbox.parent / "parked"
     if not parked.is_dir():
         return None
@@ -1639,7 +1640,9 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
         vid = vod_youtube_id(mp4)
         entry = next((r for r in registry if str(r.get("id") or "") == vid), None) or {}
         recycles = int(entry.get("recycle_count") or 0)
-        if recycles >= max_recycles:
+        # Long VODs (≥15min) get one extra recycle attempt after path upgrades.
+        allow = max_recycles + (1 if dur >= 900 else 0)
+        if recycles >= allow:
             continue
         last_rec = float(entry.get("last_recycle_at") or 0)
         if last_rec > 0 and (now - last_rec) < cooldown:
