@@ -224,17 +224,19 @@ def discover_montage_gun_peaks(
             continue
         snapped.append((c2, gun_d, panns_use))
 
-    # Re-space after snap drift.
     snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
     picked: list[float] = []
-    for center, _gun, _p in snapped:
+    picked_scores: list[float] = []
+    for center, gun_d, panns_g in snapped:
         if any(abs(center - p) < gap_sec * 0.85 for p in picked):
             continue
         picked.append(center)
+        picked_scores.append(float(gun_d) * 2.0 + float(panns_g))
         if len(picked) >= pool_cap:
             break
 
-    picked = sorted(picked)
+    # Keep strength order (not chronological) so montage tries best fights first.
+    # Chronological reorder happens only after parts are accepted for xfade.
     top = scored[0][0] if scored else 0.0
     reason = (
         f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "

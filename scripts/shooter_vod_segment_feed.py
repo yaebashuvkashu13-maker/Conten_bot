@@ -473,19 +473,29 @@ def _validate_shooter_presend(
     # Montage parts: shooting/PANNs gate is enough — full combat visual on every
     # 22s slice was rejecting valid gunfire windows (panns_trust then dropped).
     shooting_only = montage_part and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
-    if shooting_only and game in ("pubg", "standoff"):
+    if shooting_only and game in ("pubg", "standoff", "wot"):
         from highlight_scorer import score_panns_audio
         from pubg_shooting_gate import pubg_passes_shooting_gate
 
-        panns = score_panns_audio(vod, start, dur)
+        # Gate the fight CORE around peak, not the whole 22s part (lead/tail walk
+        # was falsely flagged loot_walk while the middle is clear gunfire).
+        peak = float(row.get("peak_start") or start)
+        core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
+        gate_start = max(0.0, peak - core * 0.5)
+        gate_dur = min(float(dur), core)
+        if gate_start + gate_dur > start + float(dur):
+            gate_start = max(0.0, start + float(dur) - gate_dur)
+        panns = score_panns_audio(vod, gate_start, gate_dur)
         panns_gun = float(panns.get("panns_gun_max", 0) or 0)
         ok, reason, metrics = pubg_passes_shooting_gate(
-            vod, start, dur, panns_gun_max=panns_gun
+            vod, gate_start, gate_dur, panns_gun_max=panns_gun
         )
         metrics = dict(metrics or {})
         metrics["panns_gun_max"] = panns_gun
+        metrics["gate_core_start"] = round(gate_start, 2)
+        metrics["gate_core_dur"] = round(gate_dur, 2)
         ok, reason = soft_allow_owner_montage_part(
-            game, vod, start, ok, reason, montage_part=True, metrics=metrics
+            game, vod, gate_start, ok, reason, montage_part=True, metrics=metrics
         )
         if not ok:
             return False, reason, metrics
@@ -1143,8 +1153,9 @@ def _scan_vod_with_adaptive(
                     float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", "22")),
                 )
                 rows = []
-                for peak in dense_peaks:
+                for idx, peak in enumerate(dense_peaks):
                     # Peak is already a gunfire CENTER from dense+snap.
+                    # dense_peaks are strength-ordered — preserve that in score.
                     start = max(0.0, float(peak) - part_sec * 0.5)
                     sid = segment_id(vid, start)
                     if sid in labeled_ids(game) | load_feed_sent(game):
@@ -1154,7 +1165,7 @@ def _scan_vod_with_adaptive(
                             "segment_id": sid,
                             "start": start,
                             "peak_start": float(peak),
-                            "score": 0.55,
+                            "score": max(0.2, 0.95 - idx * 0.03),
                             "clip": {
                                 "start": start,
                                 "peak_start": float(peak),

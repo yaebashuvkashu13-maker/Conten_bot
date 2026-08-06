@@ -173,8 +173,14 @@ def pubg_passes_shooting_gate(
     ):
         # Strong PANNs gunfire: don't call continuous auto-fire "loot".
         # Spike-density alone under-counts sprays; require audible energy too.
-        panns_strong = panns_gun_max >= float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
-        audible = gun >= min_gun * 0.55 or rms >= 0.035
+        panns_floor = float(
+            os.environ.get(
+                "PUBG_PANNS_LOOT_OVERRIDE_MIN",
+                os.environ.get("PUBG_PANNS_TRUST_MIN", "0.28"),
+            )
+        )
+        panns_strong = panns_gun_max >= panns_floor
+        audible = gun >= min_gun * 0.45 or rms >= 0.028 or panns_gun_max >= 0.45
         if panns_strong and audible:
             metrics["panns_loot_override"] = True
         elif not (panns_gun_max >= 0.40 and gun >= min_gun * 0.85):
