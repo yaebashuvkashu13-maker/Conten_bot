@@ -152,6 +152,7 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   SHOOTER_VOD_RECYCLE_COOLDOWN_SEC=1800 SHOOTER_VOD_DISCOVERY_PAUSE_SEC=900 \
   SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK=0 VOD_ZERO_SEND_COOLDOWN_SEC=600 \
   PUBG_PANNS_TRUST_QUALITY_FLOOR=0.40 PUBG_PANNS_LOOT_OVERRIDE_MIN=0.40 \
+  SHOOTER_AUTHOR_KILL_GATE=1 SHOOTER_REJECT_AUTHOR_DEATH=1 SHOOTER_REQUIRE_AUTHOR_KILL=1 \
   DAILY_GAME_MLBB_QUOTA=5 DAILY_GAME_PUBG_QUOTA=3 DAILY_GAME_STANDOFF_QUOTA=3 \
   DAILY_GAME_GENSHIN_QUOTA=5 DAILY_GAME_WOT_QUOTA=3 \
   MLBB_VOD_MAX_PER_VOD=5 MLBB_VOD_SOFT_MAX_PEAK_TRIES=12 MLBB_VOD_STRICT_PEAK_TRIES=4 \
@@ -234,6 +235,10 @@ install -m 755 \
   "$REPO/scripts/gameplay_gate.py" \
   "$REPO/scripts/pubg_shooting_gate.py" \
   "$REPO/scripts/pubg_combat_gate.py" \
+  "$REPO/scripts/shooter_author_kill_gate.py" \
+  "$REPO/scripts/shooter_vod_segment_feed.py" \
+  "$REPO/scripts/vod_peak_gap.py" \
+  "$REPO/scripts/calibration_dislike_reasons.py" \
   "$REPO/scripts/vod_state_io.py" \
   "$REPO/scripts/vod_env.py" \
   "$REPO/scripts/telegram_access.py" \
@@ -353,6 +358,9 @@ for kv in \
   SHOOTER_VOD_RECYCLE_MAX_PER_VOD=1 \
   SHOOTER_VOD_DISCOVERY_PAUSE_SEC=900 \
   PUBG_PANNS_TRUST_QUALITY_FLOOR=0.40 \
+  SHOOTER_AUTHOR_KILL_GATE=1 \
+  SHOOTER_REJECT_AUTHOR_DEATH=1 \
+  SHOOTER_REQUIRE_AUTHOR_KILL=1 \
   HIGHLIGHT_CLIP_DISABLED=1; do
   key="${kv%%=*}"
   val="${kv#*=}"

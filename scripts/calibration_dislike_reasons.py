@@ -21,6 +21,7 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("classic", "🌤 Классика / небо"),
         ("no_combat", "🔇 Нет перестрелки"),
         ("no_kill", "💀 Килл не виден"),
+        ("author_death", "☠️ Автора убивают"),
         ("loot_run", "🎒 Бег / лут без боя"),
         ("promo", "📢 Реклама"),
         ("boring", "😴 Скучно"),
@@ -29,6 +30,8 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
     "standoff": (
         ("not_gameplay", "🎬 Не геймплей"),
         ("no_gunfire", "🔇 Нет стрельбы"),
+        ("no_kill", "💀 Килл автора не виден"),
+        ("author_death", "☠️ Автора убивают"),
         ("menu_lobby", "📋 Меню / лобби"),
         ("promo", "📢 Реклама"),
         ("boring", "😴 Скучно"),

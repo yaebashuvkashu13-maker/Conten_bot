@@ -47,6 +47,11 @@ NEVER_SOFT_ALLOW_REASONS: frozenset[str] = frozenset(
         "panns_speech_dominant",
         "panns_music_dominant",
         "panns_no_gunshot",
+        "author_death",
+        "author_death_ocr",
+        "author_death_hud",
+        "author_death_screen",
+        "no_author_kill",
     }
 )
 # Borderline-only reasons that may soft-pass near owner-good IF gunfire evidence exists.

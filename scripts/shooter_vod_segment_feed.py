@@ -530,7 +530,20 @@ def _validate_shooter_presend(
         )
         if not ok:
             return False, reason, metrics
-        return True, reason, metrics
+        # Author must be the one fragging — reject death-cam / "author keeps dying" trash.
+        from shooter_author_kill_gate import author_kill_window_ok
+
+        kill_ok, kill_reason, kill_metrics = author_kill_window_ok(
+            vod,
+            gate_start,
+            gate_dur,
+            profile=game,
+            shoot_metrics=metrics,
+        )
+        metrics.update(kill_metrics)
+        if not kill_ok:
+            return False, kill_reason, metrics
+        return True, f"{reason}+{kill_reason}", metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
     ok, reason = soft_allow_owner_montage_part(
         game,
@@ -543,6 +556,23 @@ def _validate_shooter_presend(
     )
     if not ok:
         return False, reason, metrics
+    if game in ("pubg", "standoff", "wot"):
+        from shooter_author_kill_gate import author_kill_window_ok
+
+        kill_ok, kill_reason, kill_metrics = author_kill_window_ok(
+            vod,
+            start,
+            float(dur),
+            profile=game,
+            shoot_metrics=metrics if isinstance(metrics, dict) else None,
+        )
+        if isinstance(metrics, dict):
+            metrics.update(kill_metrics)
+        else:
+            metrics = dict(kill_metrics)
+        if not kill_ok:
+            return False, kill_reason, metrics
+        return True, f"{reason or 'shooter_combat_ok'}+{kill_reason}", metrics
     return True, reason or "shooter_combat_ok", metrics
 
 
