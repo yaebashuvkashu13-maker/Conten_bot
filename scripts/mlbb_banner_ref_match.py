@@ -461,6 +461,13 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if best[0] >= strong and best[2] in ("owner", "owner_cal") and struct >= struct_thr * 0.80:
         return best
 
+    # Weak hits: reject when clearly closer to owner-labeled no_banner/enemy.
+    if best[0] < strong and _neg_enabled() and os.environ.get("MLBB_BANNER_WEAK_NEG_LEAD", "1") == "1":
+        neg = match_negative_banner_reference(frame)
+        lead = float(os.environ.get("MLBB_BANNER_POS_NEG_LEAD", "0.03"))
+        if neg is not None and best[0] < neg[0] + lead:
+            return None
+
     # Owner-label logistic is the main no_banner filter (hist neg-gate killed goods).
     model = _load_logit_model()
     if model is not None and os.environ.get("MLBB_BANNER_OWNER_LOGIT", "1") == "1":
@@ -471,13 +478,14 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         if prob is None:
             return None
         # Floor-only hits must clear both logit and structure (no free FP).
-        if best[0] < float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.36")):
+        cal_min = float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.36"))
+        if best[0] < cal_min:
             if prob >= thr and struct >= struct_thr:
                 return best
             return None
-        if prob >= thr and struct >= struct_thr * 0.85:
+        if prob >= thr and struct >= struct_thr * 0.90:
             return best
-        if prob >= thr and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42")):
+        if prob >= thr and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42")) and struct >= struct_thr * 0.85:
             return best
         if (
             best[2] in ("owner", "owner_cal")
