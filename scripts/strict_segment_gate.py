@@ -109,6 +109,7 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
     if soft:
         min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.008")))
+    # cruise_cap = minimum impact required while moving (name is historical).
     cruise_cap = float(
         os.environ.get(
             "WOT_BRAWL_CRUISE_IMPACT_MAX",
@@ -116,7 +117,12 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
         )
     )
     if soft:
-        cruise_cap = max(cruise_cap, float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.10")))
+        # Soft/SLA must LOWER the moving-impact floor. Using max(..., 0.10/0.15)
+        # previously rejected every real WoT fight (typical impact 0.015–0.04).
+        soft_cruise = float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015"))
+        if os.environ.get("SMART_WOT_CRUISE_IMPACT_CAP"):
+            soft_cruise = min(soft_cruise, float(os.environ["SMART_WOT_CRUISE_IMPACT_CAP"]))
+        cruise_cap = min(cruise_cap, soft_cruise)
     if os.environ.get("WOT_BRAWL_GATE", "1") == "1":
         min_flashes = max(1, int(os.environ.get("WOT_BRAWL_MIN_HIT_FLASHES", "2")))
         if soft:
