@@ -1142,11 +1142,16 @@ def _scan_vod(
             return 0
 
     # Normal pool: cache first. Full rediscover on long VODs is a known multi-hour hang —
-    # only do it when forced or the file is short enough.
-    if entry and pool_cache_valid(entry):
-        pool = minimal_pool_from_entry(entry)
-        log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
-    elif long_vod and not force_rediscover:
+    # only do it when forced, short enough, or genshin/wot need fresh boss/brawl peaks.
+    if entry and pool_cache_valid(entry) and os.environ.get("SHOOTER_VOD_FORCE_REDISCOVER", "0") != "1":
+        if str(entry.get("reject_reason") or "") != "peaks_blocked_rediscover":
+            pool = minimal_pool_from_entry(entry)
+            log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
+        else:
+            pool = []
+            force_rediscover = True
+            log.info("invalidate blocked cache — rediscover vod=%s", vod.name)
+    elif long_vod and not force_rediscover and game not in ("genshin", "wot"):
         pool = []
         log.warning(
             "skip full rediscover on long vod=%.0fs name=%s — use owner hints / download next",

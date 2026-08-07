@@ -105,12 +105,17 @@ def train_logit() -> dict:
         hist = cv2.calcHist([hsv], [0, 1], None, [16, 12], [0, 180, 0, 256]).flatten()
         hist = hist / (hist.sum() + 1e-6)
         gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-        edge = float((cv2.Canny(gray, 60, 140) > 0).mean())
+        edge_map = cv2.Canny(gray, 60, 140)
+        edge = float((edge_map > 0).mean())
         cyan = cv2.inRange(hsv, (75, 40, 80), (130, 255, 255))
         gold = cv2.inRange(hsv, (15, 60, 100), (40, 255, 255))
         white = cv2.inRange(hsv, (0, 0, 180), (180, 50, 255))
         hh, ww = patch.shape[:2]
         center = cyan[int(hh * 0.2) : int(hh * 0.8), int(ww * 0.25) : int(ww * 0.75)]
+        row = (cyan > 0).mean(axis=1)
+        band = float(row.max()) if row.size else 0.0
+        edge_row = (edge_map > 0).mean(axis=1)
+        edge_band = float(edge_row.max()) if edge_row.size else 0.0
         return np.concatenate(
             [
                 hist,
@@ -122,6 +127,8 @@ def train_logit() -> dict:
                     float((center > 0).mean()) if center.size else 0.0,
                     float(gray.mean() / 255.0),
                     float(gray.std() / 255.0),
+                    band,
+                    edge_band,
                 ],
             ]
         )
@@ -190,8 +197,10 @@ def train_logit() -> dict:
     n0 = max(40, len(ya) - n_photos)
     prob = 1.0 / (1.0 + np.exp(-np.clip(Xa[:n0] @ w + b, -20, 20)))
     yy = ya[:n0]
-    best = (0.0, 0.42)
-    for thr in np.linspace(0.30, 0.55, 51):
+    # Prefer high recall on owner goods; precision secondary (live path also
+    # needs owner_cal visual sim + structure).
+    best = (0.0, 0.42, 0.0, 0.0)
+    for thr in np.linspace(0.28, 0.58, 61):
         pred = prob >= thr
         tp = float(((pred == 1) & (yy == 1)).sum())
         fn = float(((pred == 0) & (yy == 1)).sum())
@@ -199,8 +208,10 @@ def train_logit() -> dict:
         rec = tp / (tp + fn + 1e-9)
         prec = tp / (tp + fp + 1e-9)
         f1 = 2 * prec * rec / (prec + rec + 1e-9)
-        if rec >= 0.82 and f1 >= best[0]:
-            best = (f1, float(thr))
+        # Score: recall-first (≥0.88), then F1.
+        score = f1 + (0.15 if rec >= 0.88 else 0.0) + (0.08 if rec >= 0.92 else 0.0)
+        if score >= best[0]:
+            best = (score, float(thr), rec, prec)
 
     out = _ref_root() / "owner_cal" / "banner_logit.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -210,18 +221,28 @@ def train_logit() -> dict:
                 "w": w.tolist(),
                 "b": float(b),
                 "thr": best[1],
-                "f1": best[0],
+                "f1": float(2 * best[3] * best[2] / (best[3] + best[2] + 1e-9)),
+                "recall": best[2],
+                "precision": best[3],
                 "n": int(len(ya)),
                 "pos": int(ya.sum()),
                 "neg": int(len(ya) - ya.sum()),
-                "feat": "hist16x12+edge+cyan+gold+white+center+meanstd",
+                "feat": "hist16x12+edge+cyan+gold+white+center+meanstd+band+edge_band",
             },
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
-    return {"trained": True, "thr": best[1], "f1": best[0], "n": int(len(ya)), "path": str(out)}
+    return {
+        "trained": True,
+        "thr": best[1],
+        "f1": float(2 * best[3] * best[2] / (best[3] + best[2] + 1e-9)),
+        "recall": best[2],
+        "precision": best[3],
+        "n": int(len(ya)),
+        "path": str(out),
+    }
 
 
 def sync(*, wipe: bool = True) -> dict:

@@ -85,7 +85,7 @@ def _owner_min_sim() -> float:
             return min(0.45, float(th["MLBB_BANNER_POS_OWN_KILL_MIN_SIM"]))
         except (TypeError, ValueError):
             pass
-    return 0.40
+    return 0.38
 
 
 def _neg_wins(pos_score: float, neg_score: float, *, source: str) -> bool:
@@ -164,7 +164,11 @@ def _prep_ref_patch(img) -> object | None:
 
 
 def patch_similarity(patch_a, patch_b) -> float:
-    """Hue-robust histogram correlation + light edge agreement."""
+    """Hue hist + edge letterforms + cyan-mask agreement.
+
+    Owner kill banners share a cyan horizontal band + white text edges.
+    Hue alone confuses them with plain top-HUD (no_banner labels).
+    """
     import cv2
     import numpy as np
 
@@ -178,21 +182,54 @@ def patch_similarity(patch_a, patch_b) -> float:
         cv2.normalize(hist_a, hist_a)
         cv2.normalize(hist_b, hist_b)
         hist = float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
-        # Edge correl catches banner letterforms better than hue alone.
         ga = cv2.cvtColor(patch_a, cv2.COLOR_BGR2GRAY)
         gb = cv2.cvtColor(patch_b, cv2.COLOR_BGR2GRAY)
-        ea = cv2.Canny(ga, 60, 140)
-        eb = cv2.Canny(gb, 60, 140)
-        ea_f = ea.astype(np.float32).ravel()
-        eb_f = eb.astype(np.float32).ravel()
+        ea = cv2.Canny(ga, 60, 140).astype(np.float32)
+        eb = cv2.Canny(gb, 60, 140).astype(np.float32)
+        ea_f = ea.ravel()
+        eb_f = eb.ravel()
         if float(ea_f.std()) < 1e-3 or float(eb_f.std()) < 1e-3:
-            return hist
-        edge = float(np.corrcoef(ea_f, eb_f)[0, 1])
-        if edge != edge:  # NaN
             edge = 0.0
-        return 0.72 * hist + 0.28 * edge
+        else:
+            edge = float(np.corrcoef(ea_f, eb_f)[0, 1])
+            if edge != edge:
+                edge = 0.0
+        ca = cv2.inRange(a, (75, 40, 80), (130, 255, 255)).astype(np.float32)
+        cb = cv2.inRange(b, (75, 40, 80), (130, 255, 255)).astype(np.float32)
+        ca_f = ca.ravel()
+        cb_f = cb.ravel()
+        if float(ca_f.std()) < 1e-3 or float(cb_f.std()) < 1e-3:
+            cyan = 0.0
+        else:
+            cyan = float(np.corrcoef(ca_f, cb_f)[0, 1])
+            if cyan != cyan:
+                cyan = 0.0
+        # Edges+cyan carry kill-letterform shape; hist is soft prior.
+        return 0.48 * hist + 0.32 * edge + 0.20 * cyan
     except Exception:
         return 0.0
+
+
+def banner_structure_score(frame) -> float:
+    """0..1 — cyan horizontal kill-band strength in top HUD (owner goods ~0.55+)."""
+    import cv2
+    import numpy as np
+
+    patch = extract_banner_zone_patch(frame)
+    if patch is None:
+        return 0.0
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    cyan = cv2.inRange(hsv, (75, 40, 80), (130, 255, 255))
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    edge = float((cv2.Canny(gray, 60, 140) > 0).mean())
+    cyan_r = float((cyan > 0).mean())
+    row = (cyan > 0).mean(axis=1)
+    band = float(row.max()) if row.size else 0.0
+    hh, ww = cyan.shape
+    center = float((cyan[int(hh * 0.2) : int(hh * 0.8), int(ww * 0.25) : int(ww * 0.75)] > 0).mean())
+    # Tuned on owner labels: own_kill cyan~0.39 band~0.66; no_banner cyan~0.26 band~0.49
+    raw = 0.35 * cyan_r + 0.35 * band + 0.20 * center + 0.10 * min(1.0, edge / 0.22)
+    return float(max(0.0, min(1.0, raw)))
 
 
 @lru_cache(maxsize=1)
@@ -310,7 +347,8 @@ def _patch_logit_features(patch) -> object | None:
     hist = cv2.calcHist([hsv], [0, 1], None, [16, 12], [0, 180, 0, 256]).flatten()
     hist = hist / (hist.sum() + 1e-6)
     gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-    edge = float((cv2.Canny(gray, 60, 140) > 0).mean())
+    edge_map = cv2.Canny(gray, 60, 140)
+    edge = float((edge_map > 0).mean())
     cyan = cv2.inRange(hsv, (75, 40, 80), (130, 255, 255))
     gold = cv2.inRange(hsv, (15, 60, 100), (40, 255, 255))
     white = cv2.inRange(hsv, (0, 0, 180), (180, 50, 255))
@@ -318,6 +356,11 @@ def _patch_logit_features(patch) -> object | None:
     cy0, cy1 = int(hh * 0.2), int(hh * 0.8)
     cx0, cx1 = int(ww * 0.25), int(ww * 0.75)
     center = cyan[cy0:cy1, cx0:cx1]
+    row = (cyan > 0).mean(axis=1)
+    band = float(row.max()) if row.size else 0.0
+    # Horizontal edge energy — kill text is a wide letter strip.
+    edge_row = (edge_map > 0).mean(axis=1)
+    edge_band = float(edge_row.max()) if edge_row.size else 0.0
     return np.concatenate(
         [
             hist,
@@ -329,6 +372,8 @@ def _patch_logit_features(patch) -> object | None:
                 float((center > 0).mean()) if center.size else 0.0,
                 float(gray.mean() / 255.0),
                 float(gray.std() / 255.0),
+                band,
+                edge_band,
             ],
         ]
     )
@@ -399,19 +444,35 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if best is None:
         return None
 
-    # Strong visual self-match to owner crop — trust it.
-    strong = float(os.environ.get("MLBB_BANNER_STRONG_SIM", "0.58"))
-    if best[0] >= strong and best[2] in ("owner", "owner_cal"):
+    struct = banner_structure_score(frame)
+    struct_thr = float(os.environ.get("MLBB_BANNER_STRUCT_THR", "0.48"))
+
+    # Strong visual self-match to owner crop — trust it when cyan-band is present.
+    strong = float(os.environ.get("MLBB_BANNER_STRONG_SIM", "0.55"))
+    if best[0] >= strong and best[2] in ("owner", "owner_cal") and struct >= struct_thr * 0.85:
         return best
 
-    # Otherwise require owner-label logistic to agree (cuts no_banner FP).
+    # Owner-label logistic is the main no_banner filter (hist neg-gate killed goods).
     model = _load_logit_model()
     if model is not None and os.environ.get("MLBB_BANNER_OWNER_LOGIT", "1") == "1":
         _wb, thr = model
+        thr = float(os.environ.get("MLBB_BANNER_LOGIT_THR", str(thr)))
+        soft = float(os.environ.get("MLBB_BANNER_LOGIT_SOFT_THR", str(max(0.28, thr - 0.12))))
         prob = owner_logit_score(frame)
-        if prob is None or prob < thr:
+        if prob is None:
             return None
-    elif _neg_enabled():
+        if prob >= thr:
+            return best
+        # High structure + decent owner sim + soft logit — still a kill banner.
+        if (
+            best[2] in ("owner", "owner_cal")
+            and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.45"))
+            and struct >= struct_thr
+            and prob >= soft
+        ):
+            return best
+        return None
+    if _neg_enabled():
         neg = match_negative_banner_reference(frame)
         if neg is not None and _neg_wins(best[0], neg[0], source=best[2]):
             return None
