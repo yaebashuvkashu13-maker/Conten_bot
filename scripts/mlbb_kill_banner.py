@@ -460,29 +460,32 @@ def _motion_hint_peaks(analysis: dict, *, limit: int, duration: float) -> list[f
 
 
 def _duration_grid_peaks(duration: float, *, limit: int) -> list[float]:
-    """Mid-game probe grid — no full-VOD analyze required."""
+    """Mid-game probe grid — no full-VOD analyze required.
+
+    Owner rule: uploaded VODs contain kills. Scan early+mid match densely;
+    do not burn 20 minutes proving emptiness.
+    """
     if duration <= 240:
-        t0 = 20.0
+        t0 = 15.0
     elif duration <= 480:
-        t0 = min(float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300")), 90.0)
+        t0 = 45.0
     else:
-        t0 = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "120"))
-        t0 = min(t0, 120.0)
-    t1 = max(t0 + 40.0, duration - 25.0)
+        # Ranked games often have first double by ~1–2 min — don't wait until 5 min.
+        t0 = float(os.environ.get("MLBB_BANNER_FAST_T0_SEC", "60"))
+    t1 = max(t0 + 40.0, duration - 20.0)
     if t1 <= t0 + 1.0:
         return [round(duration * 0.45, 2)]
-    step = float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "28"))
+    step = float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "20"))
     peaks: list[float] = []
     t = t0
-    while t < t1 and len(peaks) < limit * 3:
+    while t < t1 and len(peaks) < limit * 4:
         peaks.append(round(t, 2))
         t += step
-    # Prefer denser mid-game samples if grid is sparse.
     if len(peaks) < limit:
         mid = t0 + (t1 - t0) * 0.45
-        for delta in (-90, -45, 0, 45, 90, 150):
+        for delta in (-90, -45, 0, 45, 90, 150, 210):
             p = round(mid + delta, 2)
-            if t0 <= p <= t1 and all(abs(p - x) > 12 for x in peaks):
+            if t0 <= p <= t1 and all(abs(p - x) > 10 for x in peaks):
                 peaks.append(p)
             if len(peaks) >= limit:
                 break
@@ -529,8 +532,8 @@ def discover_vod_kill_banners_fast(
         return []
     need = min_tier if min_tier is not None else _min_tier()
     # Wider mid-match grid by default — early-only 10/75s left quota stuck at 3/5.
-    max_probes = max(4, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "20")))
-    max_sec = max(20.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "150")))
+    max_probes = max(6, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "28")))
+    max_sec = max(30.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "120")))
     # Collect multiple doubles so SEND_ONE can still pick an unsent peak.
     ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "0") == "1"
     deadline = time.monotonic() + max_sec
@@ -581,6 +584,51 @@ def discover_vod_kill_banners_fast(
         )
         if ship_on_first and hits:
             break
+
+    # Dense retry: VODs have kills — first grid miss is a sampling miss, not emptiness.
+    if (
+        not hits
+        and os.environ.get("MLBB_BANNER_FAST_DENSE_RETRY", "1") == "1"
+        and time.monotonic() < deadline
+        and probes < max_probes
+    ):
+        dense_step = max(8.0, float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "20")) * 0.5)
+        old_step = os.environ.get("MLBB_BANNER_FAST_STEP_SEC")
+        os.environ["MLBB_BANNER_FAST_STEP_SEC"] = str(dense_step)
+        try:
+            denser = _duration_grid_peaks(duration, limit=max_probes)
+        finally:
+            if old_step is None:
+                os.environ.pop("MLBB_BANNER_FAST_STEP_SEC", None)
+            else:
+                os.environ["MLBB_BANNER_FAST_STEP_SEC"] = old_step
+        denser = [p for p in denser if all(abs(p - x) > 6.0 for x in peaks)]
+        denser = _color_tip_rank(vod, denser)[: max(4, max_probes - probes)]
+        log.info(
+            "banner fast-dense-retry %s: extra=%s remaining_budget=%.0fs",
+            vod.name,
+            [round(p, 1) for p in denser[:10]],
+            max(0.0, deadline - time.monotonic()),
+        )
+        for peak in denser:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=True)
+            if hit is None or not _hit_qualifies(hit, min_tier=need) or hit.source != "ref":
+                continue
+            hits.append(hit)
+            log.info(
+                "banner fast-hit %s: @%.1fs tier=%s src=%s label=%s probes=%s (dense)",
+                vod.name,
+                hit.sec,
+                hit.tier,
+                hit.source,
+                hit.label,
+                probes,
+            )
+            if ship_on_first:
+                break
 
     hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
     log.info(
