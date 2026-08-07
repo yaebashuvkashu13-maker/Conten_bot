@@ -423,24 +423,32 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
 
     early = float(os.environ.get("MLBB_BANNER_REF_EARLY_ACCEPT", "0.68"))
     best: tuple[float, str, str, int] | None = None
+    weak: tuple[float, str, str, int] | None = None
+    floor = float(os.environ.get("MLBB_BANNER_FLOOR_SIM", "0.28"))
     for path, name, source, tier_hint in rows:
         ref = _ref_patch_cached(path)
         if ref is None:
             continue
         score = patch_similarity(patch, ref)
+        tier = _tier_from_hint(tier_hint)
+        if source in ("owner", "owner_cal") and (weak is None or score > weak[0]):
+            weak = (score, name, source, tier)
         if source in ("owner", "owner_cal"):
             need = _owner_min_sim()
             if source == "owner_cal":
-                need = min(need, float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.38")))
+                need = min(need, float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.36")))
         else:
             need = _ref_min_sim()
         if score < need:
             continue
-        tier = _tier_from_hint(tier_hint)
         if best is None or score > best[0]:
             best = (score, name, source, tier)
             if best[0] >= early:
                 break
+
+    # Soft floor: keep best weak owner hit for logit+structure gate.
+    if best is None and weak is not None and weak[0] >= floor:
+        best = weak
 
     if best is None:
         return None
@@ -462,11 +470,15 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         prob = owner_logit_score(frame)
         if prob is None:
             return None
+        # Floor-only hits must clear both logit and structure (no free FP).
+        if best[0] < float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.36")):
+            if prob >= thr and struct >= struct_thr:
+                return best
+            return None
         if prob >= thr and struct >= struct_thr * 0.85:
             return best
         if prob >= thr and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42")):
             return best
-        # High structure + decent owner sim + soft logit — still a kill banner.
         if (
             best[2] in ("owner", "owner_cal")
             and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42"))
