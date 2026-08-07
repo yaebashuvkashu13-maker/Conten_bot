@@ -101,29 +101,38 @@ def probe_segment(
 
 def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject tank cruise: motion without sustained hits."""
+    soft = os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
+    impact = float(metrics.get("impact_density", 0))
+    motion = float(metrics.get("center_motion", 0))
+    flashes = int(metrics.get("hit_flash_count", 0))
+    burst = float(metrics.get("burst_ratio", 0))
+    min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
+    if soft:
+        min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.008")))
+    cruise_cap = float(
+        os.environ.get(
+            "WOT_BRAWL_CRUISE_IMPACT_MAX",
+            str(max(min_impact * 1.35, 0.070)),
+        )
+    )
+    if soft:
+        cruise_cap = max(cruise_cap, float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.10")))
     if os.environ.get("WOT_BRAWL_GATE", "1") == "1":
-        impact = float(metrics.get("impact_density", 0))
-        motion = float(metrics.get("center_motion", 0))
-        flashes = int(metrics.get("hit_flash_count", 0))
-        min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
         min_flashes = max(1, int(os.environ.get("WOT_BRAWL_MIN_HIT_FLASHES", "2")))
+        if soft:
+            min_flashes = max(1, int(os.environ.get("WOT_SOFT_MIN_HIT_FLASHES", "1")))
         if flashes and flashes < min_flashes:
             return True, f"low_hit_flashes={flashes}:need{min_flashes}"
         if impact < min_impact:
             return True, f"no_hits=density{impact:.3f}"
-        if motion >= 0.10 and impact < 0.05:
+        if motion >= 0.10 and impact < cruise_cap:
             return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
-        burst = float(metrics.get("burst_ratio", 0))
         if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
             return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"
         return False, ""
-    impact = float(metrics.get("impact_density", 0))
-    motion = float(metrics.get("center_motion", 0))
-    burst = float(metrics.get("burst_ratio", 0))
-    min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
     if impact < min_impact:
         return True, f"no_hits=density{impact:.3f}"
-    if motion >= 0.10 and impact < max(min_impact * 1.35, 0.070):
+    if motion >= 0.10 and impact < cruise_cap:
         return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
     if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
         return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"
