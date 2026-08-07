@@ -12,6 +12,16 @@ from pathlib import Path
 
 
 def main() -> int:
+    # Prefer VPS runtime env so OWNER_MIN_SIM / LOGIT_THR match the live bot.
+    env_path = Path(os.environ.get("VIDEO_BOT_ENV", "/root/.video_bot.env"))
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
     os.environ.setdefault("CONTENT_BOT_REPO", str(Path(__file__).resolve().parent.parent))
     os.environ.setdefault(
         "MLBB_BANNER_REF_ROOT",

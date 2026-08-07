@@ -70,22 +70,20 @@ def _ref_min_sim() -> float:
 
 
 def _owner_min_sim() -> float:
-    th = _profile_thresholds()
-    # Profile POS_OWN_KILL_MIN_SIM=0.50 was tuned for old hist-only scores and
-    # rejects real owner screenshots under edge-aware similarity (~0.43–0.55).
+    # Env always wins — profile POS_OWN_KILL_MIN_SIM=0.50 was for old hist scores.
     raw = os.environ.get("MLBB_BANNER_OWNER_MIN_SIM")
     if raw:
         try:
             return float(raw)
         except ValueError:
             pass
+    th = _profile_thresholds()
     if "MLBB_BANNER_POS_OWN_KILL_MIN_SIM" in th:
         try:
-            # Soft ceiling — never demand >0.45 for owner photos/crops.
-            return min(0.45, float(th["MLBB_BANNER_POS_OWN_KILL_MIN_SIM"]))
+            return min(0.42, float(th["MLBB_BANNER_POS_OWN_KILL_MIN_SIM"]))
         except (TypeError, ValueError):
             pass
-    return 0.38
+    return 0.36
 
 
 def _neg_wins(pos_score: float, neg_score: float, *, source: str) -> bool:
@@ -138,8 +136,10 @@ def extract_banner_zone_patch(frame) -> object | None:
     h, w = frame.shape[:2]
     if h < 80 or w < 160:
         return None
-    y0, y1 = int(h * 0.02), int(h * 0.30)
-    x0, x1 = int(w * 0.15), int(w * 0.85)
+    # Must match mlbb_banner_owner_cal_sync._crop_banner_zone — self-match
+    # on owner labels collapses if live crop is tighter than training crops.
+    y0, y1 = int(h * 0.02), int(h * 0.32)
+    x0, x1 = int(w * 0.12), int(w * 0.88)
     patch = frame[y0:y1, x0:x1]
     if patch.size == 0:
         return None
@@ -151,9 +151,10 @@ def _prep_ref_patch(img) -> object | None:
 
     if img is None:
         return None
-    # Already a wide banner crop from owner_cal sync.
+    # Already a wide banner crop from owner_cal sync (320x96 etc).
     if img.shape[0] < img.shape[1] * 0.8:
         return cv2.resize(img, (160, 48))
+    # Full frame / photo — same geometry as extract_banner_zone_patch.
     h, w = img.shape[:2]
     y0, y1 = int(h * 0.02), int(h * 0.32)
     x0, x1 = int(w * 0.12), int(w * 0.88)
@@ -449,7 +450,7 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
 
     # Strong visual self-match to owner crop — trust it when cyan-band is present.
     strong = float(os.environ.get("MLBB_BANNER_STRONG_SIM", "0.55"))
-    if best[0] >= strong and best[2] in ("owner", "owner_cal") and struct >= struct_thr * 0.85:
+    if best[0] >= strong and best[2] in ("owner", "owner_cal") and struct >= struct_thr * 0.80:
         return best
 
     # Owner-label logistic is the main no_banner filter (hist neg-gate killed goods).
@@ -457,16 +458,18 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if model is not None and os.environ.get("MLBB_BANNER_OWNER_LOGIT", "1") == "1":
         _wb, thr = model
         thr = float(os.environ.get("MLBB_BANNER_LOGIT_THR", str(thr)))
-        soft = float(os.environ.get("MLBB_BANNER_LOGIT_SOFT_THR", str(max(0.28, thr - 0.12))))
+        soft = float(os.environ.get("MLBB_BANNER_LOGIT_SOFT_THR", str(max(0.28, thr - 0.10))))
         prob = owner_logit_score(frame)
         if prob is None:
             return None
-        if prob >= thr:
+        if prob >= thr and struct >= struct_thr * 0.85:
+            return best
+        if prob >= thr and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42")):
             return best
         # High structure + decent owner sim + soft logit — still a kill banner.
         if (
             best[2] in ("owner", "owner_cal")
-            and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.45"))
+            and best[0] >= float(os.environ.get("MLBB_BANNER_SOFT_SIM", "0.42"))
             and struct >= struct_thr
             and prob >= soft
         ):
