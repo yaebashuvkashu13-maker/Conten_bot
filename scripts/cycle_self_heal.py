@@ -360,9 +360,10 @@ def hourly_sla_check() -> None:
     )
 
 
-def heal_once() -> dict:
+def heal_once(*, exclude_unstall: set[str] | frozenset[str] | None = None) -> dict:
     reset_if_new_day()
     report: dict = {"ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+    exclude = {str(x).strip().lower() for x in (exclude_unstall or set()) if x}
 
     # Must outlive a healthy feed iteration (runner timeout) — never kill mid-scan.
     try:
@@ -379,12 +380,16 @@ def heal_once() -> dict:
     for g in GAME_ORDER:
         if quota_remaining(g) <= 0:
             continue
+        if g in exclude:
+            continue
         recycled[g] = recycle_parked_batch(g, limit=int(os.environ.get("SELF_HEAL_RECYCLE_LIMIT", "6")))
     report["recycled"] = recycled
 
-    cleared = unstall_games_with_inbox()
+    cleared = [g for g in unstall_games_with_inbox() if g not in exclude]
     # Also unstall any rem>0 game that has local media (inbox OR parked just recycled).
     for g in GAME_ORDER:
+        if g in exclude:
+            continue
         if quota_remaining(g) <= 0:
             continue
         if _game_has_local_media(g):
@@ -393,6 +398,7 @@ def heal_once() -> dict:
                 if x not in cleared:
                     cleared.append(x)
     report["unstalled"] = cleared
+    report["exclude_unstall"] = sorted(exclude)
 
     summary = status_summary()
     report["summary"] = summary

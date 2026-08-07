@@ -1253,7 +1253,21 @@ def score_candidate_window(
     profile = normalize_profile(profile)
     os.environ["_HIGHLIGHT_PROFILE"] = profile
 
-    panns = score_panns_audio(video_path, start_sec, duration_sec)
+    panns: dict[str, float]
+    if profile == "genshin" or os.environ.get("HIGHLIGHT_SKIP_PANNS", "0") == "1":
+        # Genshin boss detection is HP-bar / motion — PANNs gun model hangs on CPU
+        # and caused 10-minute timeout spam in the daily cycle.
+        panns = {
+            "panns_gunshot": 0.0,
+            "panns_machine_gun": 0.0,
+            "panns_explosion": 0.0,
+            "panns_artillery": 0.0,
+            "panns_speech": 0.0,
+            "panns_music": 0.0,
+            "panns_gun_max": 0.0,
+        }
+    else:
+        panns = score_panns_audio(video_path, start_sec, duration_sec)
     clip_score, frames = score_clip_exemplar(video_path, start_sec, duration_sec, profile)
     # Sentinel hard-fail is exactly -1.0 with a clip_* reason. Histogram fallback
     # can legitimately return negative similarity — do not treat it as CLIP death.
@@ -1874,11 +1888,13 @@ def discover_highlight_candidates(
         return True
 
     if workers > 1 and len(pending) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_evaluate_highlight_start, video_path, start, profile): start
-                for start in pending
-            }
+        log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = {
+            pool.submit(_evaluate_highlight_start, video_path, start, profile): start
+            for start in pending
+        }
+        try:
             for fut in as_completed(futures):
                 if len(verified) >= limit:
                     break
@@ -1915,10 +1931,6 @@ def discover_highlight_candidates(
                         video_path.name,
                     )
                     break
-            # Cancel leftovers so we do not keep burning CPU after budget/early-stop.
-            for fut in futures:
-                if not fut.done():
-                    fut.cancel()
                 if (
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
@@ -1927,6 +1939,12 @@ def discover_highlight_candidates(
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
+        finally:
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
+            # Never block shutdown on hung PANNs/ffmpeg workers (cycle timeout spam root).
+            pool.shutdown(wait=False, cancel_futures=True)
     else:
         for start in pending:
             if len(verified) >= limit:

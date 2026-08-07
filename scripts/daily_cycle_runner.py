@@ -103,6 +103,48 @@ def _load_runtime_env() -> dict[str, str]:
     return env
 
 
+def _park_inbox_head_after_timeout(game: str) -> str | None:
+    """Move the hung inbox VOD aside so the next loop does not re-enter the same hang."""
+    roots = {
+        "mlbb": Path("/root/data/mlbb/youtube_nightly/inbox"),
+        "pubg": Path("/root/data/pubg/youtube_nightly/inbox"),
+        "standoff": Path("/root/data/standoff/youtube_nightly/inbox"),
+        "genshin": Path("/root/data/genshin/youtube_nightly/inbox"),
+        "wot": Path("/root/data/wot/youtube_nightly/inbox"),
+    }
+    inbox = roots.get(game)
+    if inbox is None or not inbox.is_dir():
+        return None
+    vods = sorted(inbox.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+    if not vods:
+        return None
+    # Prefer the VOD currently named in recent logs; else oldest inbox file.
+    target = vods[0]
+    try:
+        log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
+        if log_path.exists():
+            tail = log_path.read_text(errors="replace")[-8000:]
+            for name in reversed([p.name for p in vods]):
+                if name in tail and ("parallel score" in tail or "TIMEOUT" in tail or "highlight" in tail):
+                    hit = inbox / name
+                    if hit.exists():
+                        target = hit
+                        break
+    except OSError:
+        pass
+    park = inbox.parent / "park_timeout"
+    park.mkdir(parents=True, exist_ok=True)
+    dest = park / target.name
+    if dest.exists():
+        dest = park / f"{target.stem}_{int(time.time())}{target.suffix}"
+    try:
+        target.rename(dest)
+        return dest.name
+    except OSError as exc:
+        log.warning("park timeout vod failed %s: %s", target, exc)
+        return None
+
+
 def _run_timeout_sec() -> int:
     try:
         return max(120, int(os.environ.get("DAILY_CYCLE_RUN_TIMEOUT_SEC", "1800")))
@@ -201,13 +243,31 @@ def main() -> int:
                 Path(lock).unlink(missing_ok=True)
             except OSError:
                 pass
-        _notify(token, chat_id, f"⏱️ Антизависание: {game.upper()} timeout {timeout}s — процесс убит.")
+        # One Telegram line per game per day — never spam every 10 minutes.
+        day = time.strftime("%Y-%m-%d")
+        _notify_once(
+            token,
+            chat_id,
+            f"timeout:{game}:{day}",
+            f"⏱️ Антизависание: {game.upper()} timeout {timeout}s — процесс убит "
+            f"(это сообщение 1 раз в день на игру, дальше только в лог).",
+        )
+        parked = _park_inbox_head_after_timeout(game)
+        if parked:
+            log.warning("timeout parked hung vod game=%s file=%s", game, parked)
         rc = 124
-        # Self-heal immediately so next loop does not wait for human / cron.
+        # Heal locks/procs but do NOT clear stall for this game (that caused the spam loop).
         try:
             from cycle_self_heal import heal_once
 
-            heal_once()
+            heal_once(exclude_unstall={game})
+        except TypeError:
+            try:
+                from cycle_self_heal import heal_once
+
+                heal_once()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("post-timeout self-heal failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             log.warning("post-timeout self-heal failed: %s", exc)
 
@@ -239,16 +299,32 @@ def main() -> int:
     except OSError:
         pass
 
-    entry = note_feed_iteration(game, delta, thrash=thrash)
+    entry = note_feed_iteration(game, delta, thrash=thrash, timed_out=timed_out)
     log.info(
-        "done game=%s sent_delta=%s zero_runs=%s thrash_runs=%s stalled=%s timed_out=%s",
+        "done game=%s sent_delta=%s zero_runs=%s thrash_runs=%s timeout_runs=%s stalled=%s timed_out=%s",
         game,
         delta,
         entry.get("zero_runs"),
         entry.get("thrash_runs"),
+        entry.get("timeout_runs"),
         is_game_stalled(game),
         timed_out,
     )
+    timeout_limit = max(2, int(os.environ.get("DAILY_CYCLE_TIMEOUT_SKIP_AFTER", "2")))
+    if timed_out and int(entry.get("timeout_runs") or 0) >= timeout_limit:
+        force_skip_game(
+            game,
+            reason=f"timeout_x{entry.get('timeout_runs')} hung_highlight",
+        )
+        nxt = active_game()
+        _notify_once(
+            token,
+            chat_id,
+            f"timeout_skip:{game}:{time.strftime('%Y-%m-%d')}",
+            f"⏭ {game.upper()}: {entry.get('timeout_runs')} timeout подряд — skip на сегодня. "
+            f"Следующая: {nxt or 'нет'}",
+        )
+        return rc
     if delta == 0 and is_game_stalled(game):
         # Never burn remaining quota while usable local VODs still exist.
         has_local = False
@@ -258,7 +334,7 @@ def main() -> int:
             has_local = bool(game_has_ready_media(game))
         except Exception:
             has_local = False
-        if has_local:
+        if has_local and not timed_out:
             log.warning(
                 "stall hold game=%s — local usable media present; self-heal instead of skip",
                 game,
@@ -266,7 +342,14 @@ def main() -> int:
             try:
                 from cycle_self_heal import heal_once
 
-                heal_once()
+                heal_once(exclude_unstall={game})
+            except TypeError:
+                try:
+                    from cycle_self_heal import heal_once
+
+                    heal_once()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("stall-hold heal failed: %s", exc)
             except Exception as exc:  # noqa: BLE001
                 log.warning("stall-hold heal failed: %s", exc)
             time.sleep(15.0)

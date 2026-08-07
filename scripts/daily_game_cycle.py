@@ -149,11 +149,19 @@ def is_game_stalled(game: str) -> bool:
     return False
 
 
-def note_feed_iteration(game: str, sent_delta: int, *, thrash: bool = False) -> dict:
+def note_feed_iteration(
+    game: str,
+    sent_delta: int,
+    *,
+    thrash: bool = False,
+    timed_out: bool = False,
+) -> dict:
     """
     Track zero-send streaks so the cycle can skip a stuck game (anti-hang).
     thrash=True when feed returned immediately with inbox_dead / no candidates
     (not a normal one-VOD reject).
+    timed_out=True after runner killed a hung feed — counted separately so
+    self-heal unstall cannot reset the timeout streak forever.
     """
     reset_if_new_day()
     game = game.strip().lower()
@@ -161,10 +169,14 @@ def note_feed_iteration(game: str, sent_delta: int, *, thrash: bool = False) -> 
         return {}
     state = load_state()
     stall = state.setdefault("stall", {})
-    entry = stall.setdefault(game, {"zero_runs": 0, "thrash_runs": 0, "since": None, "force_skip": False})
+    entry = stall.setdefault(
+        game,
+        {"zero_runs": 0, "thrash_runs": 0, "timeout_runs": 0, "since": None, "force_skip": False},
+    )
     if int(sent_delta) > 0:
         entry["zero_runs"] = 0
         entry["thrash_runs"] = 0
+        entry["timeout_runs"] = 0
         entry["since"] = None
         entry["force_skip"] = False
         entry["last_send_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -172,6 +184,9 @@ def note_feed_iteration(game: str, sent_delta: int, *, thrash: bool = False) -> 
         entry["zero_runs"] = int(entry.get("zero_runs") or 0) + 1
         if thrash:
             entry["thrash_runs"] = int(entry.get("thrash_runs") or 0) + 1
+        if timed_out:
+            entry["timeout_runs"] = int(entry.get("timeout_runs") or 0) + 1
+            entry["last_timeout_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         if not entry.get("since"):
             entry["since"] = time.time()
         entry["last_zero_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -211,16 +226,23 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
         if g not in GAME_ORDER:
             continue
         entry = stall.setdefault(g, {})
+        # Do not wipe an active timeout streak via self-heal — that reopened the TG spam loop.
+        if int(entry.get("timeout_runs") or 0) >= 2 and "self_heal" in str(reason):
+            continue
         if not (
             entry.get("force_skip")
             or int(entry.get("zero_runs") or 0) > 0
             or int(entry.get("thrash_runs") or 0) > 0
+            or int(entry.get("timeout_runs") or 0) > 0
             or entry.get("since")
         ):
             continue
         entry["force_skip"] = False
         entry["zero_runs"] = 0
         entry["thrash_runs"] = 0
+        # Keep timeout_runs unless explicit manual clear / new day.
+        if "self_heal" not in str(reason):
+            entry["timeout_runs"] = 0
         entry["since"] = None
         entry["cleared_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         entry["clear_reason"] = reason[:160]
