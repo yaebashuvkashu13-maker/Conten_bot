@@ -273,14 +273,14 @@ def _game_min_usable_sec(game: str) -> float:
         except ValueError:
             return 480.0
     try:
-        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or "300")
+        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or "180")
     except ValueError:
-        base = 300.0
+        base = 180.0
     if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
         try:
-            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
+            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "240"))
         except ValueError:
-            floor = 600.0
+            floor = 240.0
         return max(base, floor)
     return base
 

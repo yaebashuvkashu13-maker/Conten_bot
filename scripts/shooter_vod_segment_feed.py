@@ -69,17 +69,21 @@ log = logging.getLogger("shooter_vod_feed")
 
 
 def _vod_min_sec() -> float:
-    """Shooter/montage games need longer VODs than MLBB singles (~3 fights)."""
+    """Shooter VODs: prefer long streams, but allow ~4min combat VODs.
+
+    A hard 600s floor left Standoff/WoT idle when inbox held only short
+    fight clips (owner SLA: ship highlights, don't wait for 10min+ only).
+    """
     raw = os.environ.get("SHOOTER_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC")
     if raw:
         try:
             base = float(raw)
         except ValueError:
-            base = 300.0
+            base = 180.0
     else:
-        base = 300.0
+        base = 180.0
     if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
-        montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
+        montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "240"))
         return max(base, montage_floor)
     return base
 
