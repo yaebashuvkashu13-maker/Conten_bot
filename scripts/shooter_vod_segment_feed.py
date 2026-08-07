@@ -1109,7 +1109,7 @@ def _scan_vod(
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
     montage = _montage_enabled(game)
-    min_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
+    min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
     owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0)) if montage else []
     owner_hints = [
         c
