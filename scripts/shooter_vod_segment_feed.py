@@ -778,7 +778,8 @@ def _send_montage(
     remaining = list(picked)
 
     for attempt in range(max_attempts):
-        if len(remaining) < min_clips:
+        # Soft/partial ship: do not bail just because we have < ideal ×3 peaks.
+        if len(remaining) < soft_min:
             break
         temp_dir = Path(tempfile.mkdtemp(prefix=f"{game}-montage-"))
         segment_paths: list[Path] = []
@@ -816,46 +817,40 @@ def _send_montage(
                 # burn the 20min runner timeout rejecting outdoor_sky tails.
                 ship_target = max_clips
                 if os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
-                    ship_target = max(_montage_soft_min_clips(), 1)
+                    ship_target = max(soft_min, 1)
                 if len(segment_paths) >= ship_target:
                     break
                 if len(segment_paths) >= max_clips:
                     break
 
-            if len(segment_paths) < min_clips:
-                soft_min = _montage_soft_min_clips()
-                if len(segment_paths) >= soft_min:
-                    log.warning(
-                        "montage shipping partial game=%s parts=%s wanted=%s attempt=%s",
-                        game,
-                        len(segment_paths),
-                        min_clips,
-                        attempt + 1,
+            if len(segment_paths) < soft_min:
+                log.warning(
+                    "montage after-presend insufficient game=%s parts=%s soft_need=%s attempt=%s",
+                    game,
+                    len(segment_paths),
+                    soft_min,
+                    attempt + 1,
+                )
+                remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
+                if not remaining:
+                    remaining = [
+                        r
+                        for r in rows
+                        if str(r.get("segment_id") or "") not in rejected_sids
+                    ]
+                    remaining = _pick_montage_rows(
+                        remaining, min_clips=soft_min, max_clips=max_clips, gap_sec=gap_sec
                     )
-                    # Fall through to merge/send with whatever passed gates.
-                else:
-                    log.warning(
-                        "montage after-presend insufficient game=%s parts=%s need=%s attempt=%s",
-                        game,
-                        len(segment_paths),
-                        min_clips,
-                        attempt + 1,
-                    )
-                    # Drop failed peaks; next attempt uses remaining unused dense rows.
-                    remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
-                    if not remaining:
-                        remaining = [
-                            r
-                            for r in rows
-                            if str(r.get("segment_id") or "") not in rejected_sids
-                        ]
-                        remaining = _pick_montage_rows(
-                            remaining, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec
-                        )
-                    continue
-
-            if len(segment_paths) < _montage_soft_min_clips():
                 continue
+
+            if len(segment_paths) < min_clips:
+                log.warning(
+                    "montage shipping partial game=%s parts=%s wanted=%s attempt=%s",
+                    game,
+                    len(segment_paths),
+                    min_clips,
+                    attempt + 1,
+                )
 
             ordered = sorted(
                 zip(accepted_rows, segment_paths, durations),
