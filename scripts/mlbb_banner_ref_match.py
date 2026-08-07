@@ -461,11 +461,12 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if best[0] >= strong and best[2] in ("owner", "owner_cal") and struct >= struct_thr * 0.80:
         return best
 
-    # Weak hits: reject when clearly closer to owner-labeled no_banner/enemy.
+    # Weak hits: reject only when negative clearly wins (close ties keep going
+    # to logit+structure — owner goods often share HUD chrome with no_banner).
     if best[0] < strong and _neg_enabled() and os.environ.get("MLBB_BANNER_WEAK_NEG_LEAD", "1") == "1":
         neg = match_negative_banner_reference(frame)
-        lead = float(os.environ.get("MLBB_BANNER_POS_NEG_LEAD", "0.03"))
-        if neg is not None and best[0] < neg[0] + lead:
+        win_gap = float(os.environ.get("MLBB_BANNER_NEG_WIN_GAP", "0.05"))
+        if neg is not None and neg[0] > best[0] + win_gap:
             return None
 
     # Owner-label logistic is the main no_banner filter (hist neg-gate killed goods).
