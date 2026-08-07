@@ -521,6 +521,36 @@ def _validate_shooter_presend(
             if not ok_metro:
                 return False, metro_reason, {"metro": metro_reason}
     if game in EXTENDED_GAMES:
+        # WoT montage SLA path: prefer gun/impact shooting gate over cruise visual.
+        # Extended strict gate was rejecting every dense-PANNs peak as cruise_no_action.
+        if (
+            game == "wot"
+            and montage_part
+            and os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
+            and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
+        ):
+            from highlight_scorer import score_panns_audio
+            from pubg_shooting_gate import pubg_passes_shooting_gate
+
+            peak = float(row.get("peak_start") or start)
+            core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
+            gate_start = max(0.0, peak - core * 0.5)
+            gate_dur = min(float(dur), core)
+            if gate_start + gate_dur > start + float(dur):
+                gate_start = max(0.0, start + float(dur) - gate_dur)
+            panns = score_panns_audio(vod, gate_start, gate_dur)
+            panns_gun = float(panns.get("panns_gun_max", 0) or 0)
+            ok, reason, metrics = pubg_passes_shooting_gate(
+                vod, gate_start, gate_dur, panns_gun_max=panns_gun
+            )
+            metrics = dict(metrics or {})
+            metrics["panns_gun_max"] = panns_gun
+            metrics["gate_core_start"] = round(gate_start, 2)
+            metrics["gate_core_dur"] = round(gate_dur, 2)
+            ok, reason = soft_allow_owner_montage_part(
+                game, vod, gate_start, ok, reason, montage_part=True, metrics=metrics
+            )
+            return ok, reason, metrics
         from strict_segment_gate import passes_strict_gate
 
         ok, reason, metrics = passes_strict_gate(vod, start, dur, profile)
