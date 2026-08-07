@@ -10,17 +10,21 @@ from highlight_scorer import normalize_profile
 
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
+    """Dense-enough boss HP probes — sparse 240s steps missed whole fights."""
     dur = max(0.0, float(duration))
-    if dur < skip_intro + 90:
+    skip = min(float(skip_intro), max(20.0, dur * 0.08))
+    if dur < skip + 40:
         return []
+    step = float(os.environ.get("GENSHIN_VOD_FAST_PROBE_STEP_SEC", "90"))
+    if dur < 600:
+        step = min(step, 60.0)
+    cap = max(6, int(os.environ.get("GENSHIN_VOD_FAST_PROBE_MAX", "16")))
     offsets: list[float] = []
-    for delta in (0, 240, 600, 960, 1500, 2100):
-        t = skip_intro + delta
-        if t < dur - 45:
-            offsets.append(round(t, 1))
-    return sorted(set(offsets))[
-        : int(os.environ.get("GENSHIN_VOD_FAST_PROBE_MAX", "6"))
-    ]
+    t = skip
+    while t < dur - 20 and len(offsets) < cap:
+        offsets.append(round(t, 1))
+        t += step
+    return offsets
 
 
 def _boss_bar_at(video_path: Path, t: float) -> float:

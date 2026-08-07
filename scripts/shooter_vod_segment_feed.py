@@ -1267,6 +1267,24 @@ def _scan_vod(
                 soften_level,
                 blocked,
             )
+            # Genshin/WoT: one blocked seed must not kill a long VOD — force denser
+            # rediscover next tick instead of exhausting (owner SLA / full boss fights).
+            if game in ("genshin", "wot") and vod_dur >= 400:
+                if entry is not None:
+                    entry["last_pool_peaks"] = []
+                    entry.pop("pool_cache_at", None)
+                    record_vod_scan(
+                        entry, sent=0, pool_peaks=pool_peaks, blocked=False, pool=[]
+                    )
+                    entry["reject_reason"] = "peaks_blocked_rediscover"
+                    entry["exhausted"] = False
+                log.warning(
+                    "keep vod for denser rediscover game=%s vod=%s used=%s",
+                    game,
+                    vod.name,
+                    used_peaks[:8],
+                )
+                return 0
             if entry is not None:
                 record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0
@@ -1524,16 +1542,17 @@ def _scan_vod_with_adaptive(
                         clear_fast_seeds()
                     return 0
                 log.warning(
-                    "fast-montage insufficient unused peaks vod=%s have=%s need=%s used=%s — exhaust for discovery",
+                    "fast-montage insufficient unused peaks vod=%s have=%s need=%s soft=%s used=%s — exhaust for discovery",
                     vod.name,
                     len(rows),
                     min_clips,
+                    soft_min,
                     len(used_peaks),
                 )
                 _mark_vod_exhausted(
                     state,
                     vod,
-                    reason=f"fast_montage_need_{min_clips}_have_{len(rows)}",
+                    reason=f"fast_montage_need_{soft_min}_have_{len(rows)}",
                     delete_file=False,
                 )
                 if entry is not None:
