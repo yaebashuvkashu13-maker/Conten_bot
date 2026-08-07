@@ -81,9 +81,9 @@ def _vod_min_sec() -> float:
         except ValueError:
             base = 180.0
     else:
-        base = 180.0
+        base = 120.0
     if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
-        montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "240"))
+        montage_floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "120"))
         return max(base, montage_floor)
     return base
 

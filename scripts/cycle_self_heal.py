@@ -103,14 +103,14 @@ def _min_vod_sec(game: str) -> float:
         except ValueError:
             return 480.0
     try:
-        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC") or "180")
+        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC") or "120")
     except ValueError:
-        base = 180.0
+        base = 120.0
     if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
         try:
-            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "240"))
+            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "120"))
         except ValueError:
-            floor = 240.0
+            floor = 120.0
         return max(base, floor)
     return base
 
