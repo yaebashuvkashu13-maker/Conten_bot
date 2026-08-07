@@ -276,23 +276,6 @@ def _best_sim(patch, rows: list[tuple], *, path_idx: int = 0) -> tuple[float, ob
     return best
 
 
-def match_negative_banner_reference(frame) -> tuple[float, str, str] | None:
-    if not _neg_enabled():
-        return None
-    patch = extract_banner_zone_patch(frame)
-    if patch is None:
-        return None
-    rows = _load_negative_ref_rows()
-    if not rows:
-        return None
-    best = _best_sim(patch, list(rows), path_idx=0)
-    if best is None or best[0] < _neg_min_sim():
-        return None
-    score, row = best
-    path, reason = row
-    return score, reason, path
-
-
 def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     """Return (score, ref_name, source, tier) for best reference match, or None."""
     if not _ref_match_enabled():
@@ -304,6 +287,20 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if not rows:
         return None
 
+    # Cap bank size for live speed: prefer owner_cal → owner photos → wiki.
+    # Full bank is still available via MLBB_BANNER_REF_MATCH_ALL=1.
+    if os.environ.get("MLBB_BANNER_REF_MATCH_ALL", "0") != "1":
+        cap = max(40, int(os.environ.get("MLBB_BANNER_REF_MATCH_CAP", "140")))
+        owner_cal = [r for r in rows if r[2] == "owner_cal"]
+        owner = [r for r in rows if r[2] == "owner"]
+        wiki = [r for r in rows if r[2] not in ("owner_cal", "owner")]
+        # Diversify: take from each bucket.
+        n_cal = min(len(owner_cal), max(40, cap * 2 // 3))
+        n_own = min(len(owner), max(20, cap // 5))
+        n_wiki = min(len(wiki), max(10, cap - n_cal - n_own))
+        rows = tuple(owner_cal[:n_cal] + owner[:n_own] + wiki[:n_wiki])
+
+    early = float(os.environ.get("MLBB_BANNER_REF_EARLY_ACCEPT", "0.68"))
     best: tuple[float, str, str, int] | None = None
     for path, name, source, tier_hint in rows:
         ref = _ref_patch_cached(path)
@@ -312,7 +309,6 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         score = patch_similarity(patch, ref)
         if source in ("owner", "owner_cal"):
             need = _owner_min_sim()
-            # owner_cal crops are already banner-zone — slightly softer.
             if source == "owner_cal":
                 need = min(need, float(os.environ.get("MLBB_BANNER_OWNER_CAL_MIN_SIM", "0.38")))
         else:
@@ -322,6 +318,8 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         tier = _tier_from_hint(tier_hint)
         if best is None or score > best[0]:
             best = (score, name, source, tier)
+            if best[0] >= early:
+                break
 
     if best is None:
         return None
@@ -331,12 +329,53 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if neg is not None:
         neg_score, neg_reason, _neg_path = neg
         if neg_score + 1e-6 >= best[0] - _neg_margin():
-            # Negative wins or too close — do not ship.
             return None
-        # Soft: still require a clear positive lead on no_banner specifically.
         if neg_reason == "no_banner" and best[0] < neg_score + _neg_margin():
             return None
 
+    return best
+
+
+def match_negative_banner_reference(frame) -> tuple[float, str, str] | None:
+    if not _neg_enabled():
+        return None
+    patch = extract_banner_zone_patch(frame)
+    if patch is None:
+        return None
+    rows = _load_negative_ref_rows()
+    if not rows:
+        return None
+    # Cap negatives too — no_banner dominates; keep mix of reasons.
+    if os.environ.get("MLBB_BANNER_REF_MATCH_ALL", "0") != "1":
+        cap = max(30, int(os.environ.get("MLBB_BANNER_NEG_MATCH_CAP", "100")))
+        by: dict[str, list] = {}
+        for path, reason in rows:
+            by.setdefault(reason, []).append((path, reason))
+        picked: list[tuple[str, str]] = []
+        # Round-robin reasons so enemy_kill isn't drowned by no_banner.
+        while len(picked) < cap and any(by.values()):
+            for reason in list(by.keys()):
+                bucket = by.get(reason) or []
+                if not bucket:
+                    continue
+                picked.append(bucket.pop(0))
+                if len(picked) >= cap:
+                    break
+        rows = tuple(picked)
+
+    early = float(os.environ.get("MLBB_BANNER_NEG_EARLY_ACCEPT", "0.70"))
+    best: tuple[float, str, str] | None = None
+    for path, reason in rows:
+        ref = _ref_patch_cached(path)
+        if ref is None:
+            continue
+        score = patch_similarity(patch, ref)
+        if best is None or score > best[0]:
+            best = (score, reason, path)
+            if best[0] >= early:
+                break
+    if best is None or best[0] < _neg_min_sim():
+        return None
     return best
 
 
