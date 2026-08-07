@@ -71,13 +71,34 @@ def _ref_min_sim() -> float:
 
 def _owner_min_sim() -> float:
     th = _profile_thresholds()
-    for key in ("MLBB_BANNER_POS_OWN_KILL_MIN_SIM", "MLBB_BANNER_OWNER_MIN_SIM"):
-        if key in th:
-            try:
-                return float(th[key])
-            except (TypeError, ValueError):
-                pass
-    return float(os.environ.get("MLBB_BANNER_OWNER_MIN_SIM", "0.42"))
+    # Profile POS_OWN_KILL_MIN_SIM=0.50 was tuned for old hist-only scores and
+    # rejects real owner screenshots under edge-aware similarity (~0.43–0.55).
+    raw = os.environ.get("MLBB_BANNER_OWNER_MIN_SIM")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    if "MLBB_BANNER_POS_OWN_KILL_MIN_SIM" in th:
+        try:
+            # Soft ceiling — never demand >0.45 for owner photos/crops.
+            return min(0.45, float(th["MLBB_BANNER_POS_OWN_KILL_MIN_SIM"]))
+        except (TypeError, ValueError):
+            pass
+    return 0.40
+
+
+def _neg_wins(pos_score: float, neg_score: float, *, source: str) -> bool:
+    """Reject only when negative clearly beats positive.
+
+    Hue hist of top HUD is similar for kill banner vs plain HUD (no_banner),
+    so a soft margin the other way killed 39/40 true owner goods.
+    """
+    if source in ("owner", "owner_cal"):
+        gap = float(os.environ.get("MLBB_BANNER_OWNER_NEG_WIN_GAP", "0.10"))
+        return neg_score > pos_score + gap
+    gap = float(os.environ.get("MLBB_BANNER_WIKI_NEG_WIN_GAP", "0.03"))
+    return neg_score > pos_score + gap
 
 
 def _neg_min_sim() -> float:
@@ -87,12 +108,7 @@ def _neg_min_sim() -> float:
             return float(th["MLBB_BANNER_NEG_REF_MIN_SIM"])
         except (TypeError, ValueError):
             pass
-    return float(os.environ.get("MLBB_BANNER_NEG_REF_MIN_SIM", "0.40"))
-
-
-def _neg_margin() -> float:
-    """Positive must beat negative by this margin to ship."""
-    return float(os.environ.get("MLBB_BANNER_NEG_POS_MARGIN", "0.06"))
+    return float(os.environ.get("MLBB_BANNER_NEG_REF_MIN_SIM", "0.42"))
 
 
 def _neg_enabled() -> bool:
@@ -324,13 +340,11 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if best is None:
         return None
 
-    # Reject if closer to owner-labeled trash (no_banner / enemy / not_kill).
+    # Reject only when negative clearly beats positive (HUD hist is noisy).
     neg = match_negative_banner_reference(frame)
     if neg is not None:
         neg_score, neg_reason, _neg_path = neg
-        if neg_score + 1e-6 >= best[0] - _neg_margin():
-            return None
-        if neg_reason == "no_banner" and best[0] < neg_score + _neg_margin():
+        if _neg_wins(best[0], neg_score, source=best[2]):
             return None
 
     return best
