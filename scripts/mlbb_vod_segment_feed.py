@@ -105,9 +105,52 @@ def _vod_min_peak_sec(vod: Path | None = None) -> float:
     return base
 
 
+def _vod_pick_min_sec() -> float:
+    """Quality-first: never pick 3–5 min highlight shorts (owner: boring)."""
+    floor = _vod_min_sec()
+    if os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1":
+        return max(floor, float(os.environ.get("MLBB_VOD_QUALITY_MIN_SEC", "480")))
+    return floor
+
+
 def _vod_length_ok(path: Path, dur: float | None = None) -> bool:
     length = dur if dur is not None else _ffprobe_duration(path)
-    return _vod_min_sec() <= length <= _vod_max_sec()
+    return _vod_pick_min_sec() <= length <= _vod_max_sec()
+
+
+def _banner_fast_ship_min_vod_sec() -> float:
+    return float(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_VOD_SEC", "480"))
+
+
+def _banner_fast_ship_min_peak_sec(vod: Path) -> float:
+    """
+    Fast-ship previously ignored MIN_PEAK and sent early laning doubles
+    (60–150s) that the owner marked boring. Keep a mid-fight floor, slightly
+    softer than full MIN_PEAK so known-good ~280s doubles still ship.
+    """
+    explicit = os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC")
+    if explicit not in (None, ""):
+        return float(explicit)
+    base = _vod_min_peak_sec(vod)
+    floor = float(os.environ.get("MLBB_BANNER_FAST_SHIP_PEAK_FLOOR", "240"))
+    return max(180.0, min(base, floor) if base > 0 else floor)
+
+
+def _banner_fast_ship_seed_ok(vod: Path, peak: float, tier: int) -> tuple[bool, str]:
+    dur = _ffprobe_duration(vod)
+    min_vod = _banner_fast_ship_min_vod_sec()
+    if dur < min_vod:
+        return False, f"vod_too_short={dur:.0f}<{min_vod:.0f}"
+    min_peak = _banner_fast_ship_min_peak_sec(vod)
+    # Triple+ mid-fight is rarer and usually less "boring" — slight peak relax.
+    if int(tier) >= 3:
+        min_peak = max(120.0, min_peak * 0.75)
+    if float(peak) < min_peak:
+        return False, f"peak_too_early={peak:.0f}<{min_peak:.0f}"
+    min_tier = int(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_TIER", "2"))
+    if int(tier) < min_tier:
+        return False, f"tier_low={tier}<{min_tier}"
+    return True, "ok"
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -1955,9 +1998,10 @@ def _clip_from_banner_seed(vod: Path, peak: float) -> dict:
         "banner_source": src,
         "fight_start": fight_start,
         "fight_dur": dur,
-        "score": 0.55,
-        "hook_score": 0.40,
-        "clip_score": 0.55,
+        # Unscored provisional — do NOT fake 0.55 (looked like owner-learn pass).
+        "score": 0.0,
+        "hook_score": 0.0,
+        "clip_score": 0.0,
     }
 
 
@@ -1974,8 +2018,28 @@ def _try_ship_banner_seeds(
     """
     from mlbb_learning_first import can_send
 
-    peaks = [float(p) for p in seed_peaks[:6]]
-    log.info("banner fast-ship begin vod=%s peaks=%s", vod.name, peaks)
+    vod_dur = _ffprobe_duration(vod)
+    min_vod = _banner_fast_ship_min_vod_sec()
+    if vod_dur < min_vod:
+        log.warning(
+            "banner fast-ship skip vod=%s too_short dur=%.0fs need>=%.0f",
+            vod.name,
+            vod_dur,
+            min_vod,
+        )
+        return 0
+
+    peaks = [float(p) for p in seed_peaks[:8]]
+    # Owner boring pattern: earliest doubles. Prefer later mid-fight peaks first.
+    if os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1":
+        peaks = sorted(peaks, reverse=True)
+    log.info(
+        "banner fast-ship begin vod=%s dur=%.0fs min_peak=%.0f peaks=%s",
+        vod.name,
+        vod_dur,
+        _banner_fast_ship_min_peak_sec(vod),
+        peaks,
+    )
     sent_n = 0
     send_one = os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
     for peak in peaks:
@@ -1983,6 +2047,11 @@ def _try_ship_banner_seeds(
         if not ok_batch:
             log.warning("banner fast-ship blocked reason=%s", block_reason)
             break
+        # Tier unknown until clip built — provisional check with tier=2 (seed floor).
+        ok_seed, seed_reason = _banner_fast_ship_seed_ok(vod, peak, tier=2)
+        if not ok_seed:
+            log.info("banner fast-ship skip peak=%.1f gate=%s", peak, seed_reason)
+            continue
         t0 = time.monotonic()
         lead_clip = _clip_from_banner_seed(vod, peak)
         log.info(
@@ -2012,6 +2081,10 @@ def _try_ship_banner_seeds(
         ):
             log.info("banner fast-ship skip peak=%.1f no_streak_meta tier=%s", peak, tier)
             continue
+        ok_seed, seed_reason = _banner_fast_ship_seed_ok(vod, float(lead_clip.get("banner_sec") or peak), tier)
+        if not ok_seed:
+            log.info("banner fast-ship skip peak=%.1f gate=%s", peak, seed_reason)
+            continue
         start = float(lead_clip["start"])
         banner_sec = float(lead_clip.get("banner_sec", lead_clip.get("peak_start", peak)))
         min_pre = _presend_min_banner_lead()
@@ -2039,10 +2112,9 @@ def _try_ship_banner_seeds(
             "input_duration": lead_clip.get("input_duration"),
             "fight_dur": lead_clip.get("input_duration"),
             "pass_reason": "banner_fast_ship",
-            # Required by caption / segment index — banner path skips highlight scorer.
-            "score": float(lead_clip.get("score") or lead_clip.get("clip_score") or 0.55),
-            "hook_score": float(lead_clip.get("hook_score") or 0.40),
-            "clip_score": float(lead_clip.get("clip_score") or 0.55),
+            "score": float(lead_clip.get("score") or 0.0),
+            "hook_score": float(lead_clip.get("hook_score") or 0.0),
+            "clip_score": float(lead_clip.get("clip_score") or 0.0),
             "gate_reason": "banner_fast_ship",
         }
         n, _preskip, _sblock = _send_segment_batch(token, chat_id, vod, [row], file_sha256(vod))
@@ -2163,6 +2235,35 @@ def _process_vod_segments(
                     clear_fast_seeds()
                 log.info("banner fast-ship done vod=%s sent=%s", vod.name, sent_direct)
                 return sent_total
+            # Seeds existed but early/short gates killed them. Do NOT fall into
+            # 20min analyze_video thrash — pick another VOD next.
+            if (
+                os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1"
+                and os.environ.get("MLBB_BANNER_FAST_SHIP_NO_FALLBACK", "1") == "1"
+            ):
+                log.warning(
+                    "banner fast-ship gated empty — skip highlight thrash vod=%s",
+                    vod.name,
+                )
+                if entry is not None:
+                    record_vod_scan(
+                        entry,
+                        sent=0,
+                        pool_peaks=banner_seed_peaks,
+                        blocked=True,
+                    )
+                    entry["reject_reason"] = "banner_fast_ship_gated"
+                state = _load_state()
+                if entry:
+                    _sync_vod_entry_to_state(state, entry, vod)
+                scanned = set(state.get("scanned_vods", []))
+                scanned.add(vod.name)
+                state["scanned_vods"] = sorted(scanned)
+                record_vod_outcome(state, vod_id=vid, sent=0)
+                _save_state(state)
+                if clear_fast_seeds:
+                    clear_fast_seeds()
+                return 0
 
 
     try:
