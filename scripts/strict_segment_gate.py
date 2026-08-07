@@ -110,7 +110,8 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     if soft:
         # Soft quality floor for real cannon fights (~0.015–0.04). Do NOT use
         # starve floors (0.005–0.008) — that shipped cruise as "combat".
-        min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")))
+        # Real fight band ~0.015–0.04; below that is map cruise filler.
+        min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.015")))
     # cruise_cap = minimum impact required while moving (name is historical).
     cruise_cap = float(
         os.environ.get(
@@ -120,7 +121,7 @@ def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     )
     if soft:
         # Soft must LOWER the moving-impact floor vs hard 0.07+, never raise it.
-        soft_cruise = float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020"))
+        soft_cruise = float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015"))
         if os.environ.get("SMART_WOT_CRUISE_IMPACT_CAP"):
             soft_cruise = min(soft_cruise, float(os.environ["SMART_WOT_CRUISE_IMPACT_CAP"]))
         cruise_cap = min(cruise_cap, soft_cruise)

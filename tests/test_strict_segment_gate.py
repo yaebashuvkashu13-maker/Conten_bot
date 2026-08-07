@@ -23,13 +23,13 @@ def test_wot_soft_cruise_allows_real_fight_impact(monkeypatch: pytest.MonkeyPatc
     """Soft quality floor must pass real cannon impacts (~0.02), not raise to 0.10+."""
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_GATE", "1")
     monkeypatch.setenv("WOT_BRAWL_GATE", "1")
-    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")
-    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020")
+    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.015")
+    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015")
     monkeypatch.setenv("WOT_SOFT_MIN_HIT_FLASHES", "2")
     monkeypatch.setenv("WOT_BRAWL_CRUISE_IMPACT_MAX", "0.12")
     monkeypatch.delenv("SMART_WOT_CRUISE_IMPACT_CAP", raising=False)
     metrics = {
-        "impact_density": 0.025,
+        "impact_density": 0.018,
         "center_motion": 0.129,
         "hit_flash_count": 2,
         "burst_ratio": 3.0,
@@ -41,8 +41,8 @@ def test_wot_soft_cruise_allows_real_fight_impact(monkeypatch: pytest.MonkeyPatc
 def test_wot_soft_cruise_still_rejects_empty_drive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_GATE", "1")
     monkeypatch.setenv("WOT_BRAWL_GATE", "1")
-    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")
-    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020")
+    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.015")
+    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015")
     metrics = {
         "impact_density": 0.002,
         "center_motion": 0.186,
@@ -57,10 +57,10 @@ def test_wot_soft_cruise_still_rejects_empty_drive(monkeypatch: pytest.MonkeyPat
 def test_wot_soft_rejects_weak_impact_below_quality_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_GATE", "1")
     monkeypatch.setenv("WOT_BRAWL_GATE", "1")
-    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")
-    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020")
+    monkeypatch.setenv("WOT_SOFT_MIN_IMPACT_DENSITY", "0.015")
+    monkeypatch.setenv("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015")
     metrics = {
-        "impact_density": 0.012,
+        "impact_density": 0.008,
         "center_motion": 0.14,
         "hit_flash_count": 2,
         "burst_ratio": 2.5,

@@ -43,6 +43,7 @@ from shooter_vod_segment_store import (
 )
 from shooter_owner_montage import (
     merge_owner_hints_into_pool,
+    owner_good_fight_peaks,
     owner_good_pool,
     soft_allow_owner_montage_part,
     vod_has_owner_montage_anchors,
@@ -1484,6 +1485,28 @@ def _scan_vod_with_adaptive(
                     min_clips=min_clips,
                     gap_sec=gap_sec,
                 )
+                # Owner-good fight times first (gold labels) — PANNs alone often
+                # picks cruise SFX that fail impact/flash gates.
+                try:
+                    owner_peaks = owner_good_fight_peaks(game, vod)
+                except Exception:
+                    owner_peaks = []
+                if owner_peaks:
+                    merged: list[float] = []
+                    for t in list(owner_peaks) + list(dense_peaks or []):
+                        ft = float(t)
+                        if any(abs(ft - x) < max(12.0, gap_sec * 0.4) for x in merged):
+                            continue
+                        merged.append(ft)
+                    dense_peaks = merged
+                    dense_reason = f"owner+{dense_reason}"
+                    log.info(
+                        "fast-montage owner peaks game=%s vod=%s n=%s first=%s",
+                        game,
+                        vod.name,
+                        len(owner_peaks),
+                        owner_peaks[:6],
+                    )
                 log.info(
                     "fast-montage probe vod=%s reason=%s peaks=%s",
                     vod.name,
