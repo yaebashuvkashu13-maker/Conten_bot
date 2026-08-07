@@ -303,21 +303,17 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
     if not rows:
         return None
 
-    # Cap bank size for live speed: prefer owner_cal → owner photos → wiki.
-    # Full bank is still available via MLBB_BANNER_REF_MATCH_ALL=1.
     if os.environ.get("MLBB_BANNER_REF_MATCH_ALL", "0") != "1":
         cap = max(40, int(os.environ.get("MLBB_BANNER_REF_MATCH_CAP", "140")))
         owner_cal = [r for r in rows if r[2] == "owner_cal"]
         owner = [r for r in rows if r[2] == "owner"]
         wiki = [r for r in rows if r[2] not in ("owner_cal", "owner")]
-        # Diversify: take from each bucket.
         n_cal = min(len(owner_cal), max(40, cap * 2 // 3))
         n_own = min(len(owner), max(20, cap // 5))
         n_wiki = min(len(wiki), max(10, cap - n_cal - n_own))
         rows = tuple(owner_cal[:n_cal] + owner[:n_own] + wiki[:n_wiki])
 
-    early = float(os.environ.get("MLBB_BANNER_REF_EARLY_ACCEPT", "0.68"))
-    best: tuple[float, str, str, int] | None = None
+    scored: list[tuple[float, str, str, int]] = []
     for path, name, source, tier_hint in rows:
         ref = _ref_patch_cached(path)
         if ref is None:
@@ -331,21 +327,49 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
             need = _ref_min_sim()
         if score < need:
             continue
-        tier = _tier_from_hint(tier_hint)
-        if best is None or score > best[0]:
-            best = (score, name, source, tier)
-            if best[0] >= early:
-                break
+        scored.append((score, name, source, _tier_from_hint(tier_hint)))
 
-    if best is None:
+    if not scored:
         return None
+    scored.sort(key=lambda r: -r[0])
+    best = scored[0]
+    top_k = max(1, int(os.environ.get("MLBB_BANNER_POS_TOPK", "3")))
+    pos_top = sum(s[0] for s in scored[:top_k]) / min(top_k, len(scored))
 
-    # Reject only when negative clearly beats positive (HUD hist is noisy).
-    neg = match_negative_banner_reference(frame)
-    if neg is not None:
-        neg_score, neg_reason, _neg_path = neg
-        if _neg_wins(best[0], neg_score, source=best[2]):
-            return None
+    # Negatives: compare top-k means — single best hist is too noisy on HUD chrome.
+    if _neg_enabled():
+        neg_rows = _load_negative_ref_rows()
+        if neg_rows:
+            if os.environ.get("MLBB_BANNER_REF_MATCH_ALL", "0") != "1":
+                cap_n = max(30, int(os.environ.get("MLBB_BANNER_NEG_MATCH_CAP", "100")))
+                by: dict[str, list] = {}
+                for path, reason in neg_rows:
+                    by.setdefault(reason, []).append((path, reason))
+                picked: list[tuple[str, str]] = []
+                while len(picked) < cap_n and any(by.values()):
+                    for reason in list(by.keys()):
+                        bucket = by.get(reason) or []
+                        if not bucket:
+                            continue
+                        picked.append(bucket.pop(0))
+                        if len(picked) >= cap_n:
+                            break
+                neg_rows = tuple(picked)
+            neg_scores: list[float] = []
+            for path, _reason in neg_rows:
+                ref = _ref_patch_cached(path)
+                if ref is None:
+                    continue
+                neg_scores.append(patch_similarity(patch, ref))
+            if neg_scores:
+                neg_scores.sort(reverse=True)
+                neg_top = sum(neg_scores[:top_k]) / min(top_k, len(neg_scores))
+                lead = float(os.environ.get("MLBB_BANNER_POS_NEG_LEAD", "0.04"))
+                # Strong self-match (≥0.60): allow even if neg is close.
+                if best[0] < 0.60 and pos_top < neg_top + lead:
+                    return None
+                if best[0] >= 0.60 and _neg_wins(best[0], neg_scores[0], source=best[2]):
+                    return None
 
     return best
 
