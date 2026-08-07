@@ -269,6 +269,7 @@ def clear_banner_ref_cache() -> None:
     _load_ref_rows.cache_clear()
     _load_negative_ref_rows.cache_clear()
     _ref_patch_cached.cache_clear()
+    _load_logit_model.cache_clear()
 
 
 @lru_cache(maxsize=512)
@@ -279,17 +280,78 @@ def _ref_patch_cached(path: str):
     return _prep_ref_patch(img)
 
 
-def _best_sim(patch, rows: list[tuple], *, path_idx: int = 0) -> tuple[float, object] | None:
-    best: tuple[float, object] | None = None
-    for row in rows:
-        path = row[path_idx]
-        ref = _ref_patch_cached(path)
-        if ref is None:
-            continue
-        score = patch_similarity(patch, ref)
-        if best is None or score > best[0]:
-            best = (score, row)
-    return best
+@lru_cache(maxsize=1)
+def _load_logit_model() -> tuple[object, float] | None:
+    """Owner-label logistic weights trained by mlbb_banner_owner_cal_sync."""
+    path = banner_ref_root() / "owner_cal" / "banner_logit.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        import numpy as np
+
+        w = np.asarray(data.get("w") or [], dtype=np.float64)
+        b = float(data.get("b") or 0.0)
+        thr = float(data.get("thr") or os.environ.get("MLBB_BANNER_LOGIT_THR", "0.45"))
+        if w.size < 8:
+            return None
+        return (w, b), thr
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _patch_logit_features(patch) -> object | None:
+    import cv2
+    import numpy as np
+
+    if patch is None:
+        return None
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [16, 12], [0, 180, 0, 256]).flatten()
+    hist = hist / (hist.sum() + 1e-6)
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    edge = float((cv2.Canny(gray, 60, 140) > 0).mean())
+    cyan = cv2.inRange(hsv, (75, 40, 80), (130, 255, 255))
+    gold = cv2.inRange(hsv, (15, 60, 100), (40, 255, 255))
+    white = cv2.inRange(hsv, (0, 0, 180), (180, 50, 255))
+    hh, ww = patch.shape[:2]
+    cy0, cy1 = int(hh * 0.2), int(hh * 0.8)
+    cx0, cx1 = int(ww * 0.25), int(ww * 0.75)
+    center = cyan[cy0:cy1, cx0:cx1]
+    return np.concatenate(
+        [
+            hist,
+            [
+                edge,
+                float((cyan > 0).mean()),
+                float((gold > 0).mean()),
+                float((white > 0).mean()),
+                float((center > 0).mean()) if center.size else 0.0,
+                float(gray.mean() / 255.0),
+                float(gray.std() / 255.0),
+            ],
+        ]
+    )
+
+
+def owner_logit_score(frame) -> float | None:
+    """P(kill-banner) from owner-label logistic model, or None if unavailable."""
+    if os.environ.get("MLBB_BANNER_OWNER_LOGIT", "1") != "1":
+        return None
+    model = _load_logit_model()
+    if model is None:
+        return None
+    (w, b), _thr = model
+    patch = extract_banner_zone_patch(frame)
+    feat = _patch_logit_features(patch)
+    if feat is None:
+        return None
+    import numpy as np
+
+    if feat.shape[0] != w.shape[0]:
+        return None
+    z = float(feat @ w + b)
+    return float(1.0 / (1.0 + np.exp(-max(-20.0, min(20.0, z)))))
 
 
 def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
@@ -313,7 +375,8 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
         n_wiki = min(len(wiki), max(10, cap - n_cal - n_own))
         rows = tuple(owner_cal[:n_cal] + owner[:n_own] + wiki[:n_wiki])
 
-    scored: list[tuple[float, str, str, int]] = []
+    early = float(os.environ.get("MLBB_BANNER_REF_EARLY_ACCEPT", "0.68"))
+    best: tuple[float, str, str, int] | None = None
     for path, name, source, tier_hint in rows:
         ref = _ref_patch_cached(path)
         if ref is None:
@@ -327,49 +390,31 @@ def match_banner_reference(frame) -> tuple[float, str, str, int] | None:
             need = _ref_min_sim()
         if score < need:
             continue
-        scored.append((score, name, source, _tier_from_hint(tier_hint)))
+        tier = _tier_from_hint(tier_hint)
+        if best is None or score > best[0]:
+            best = (score, name, source, tier)
+            if best[0] >= early:
+                break
 
-    if not scored:
+    if best is None:
         return None
-    scored.sort(key=lambda r: -r[0])
-    best = scored[0]
-    top_k = max(1, int(os.environ.get("MLBB_BANNER_POS_TOPK", "3")))
-    pos_top = sum(s[0] for s in scored[:top_k]) / min(top_k, len(scored))
 
-    # Negatives: compare top-k means — single best hist is too noisy on HUD chrome.
-    if _neg_enabled():
-        neg_rows = _load_negative_ref_rows()
-        if neg_rows:
-            if os.environ.get("MLBB_BANNER_REF_MATCH_ALL", "0") != "1":
-                cap_n = max(30, int(os.environ.get("MLBB_BANNER_NEG_MATCH_CAP", "100")))
-                by: dict[str, list] = {}
-                for path, reason in neg_rows:
-                    by.setdefault(reason, []).append((path, reason))
-                picked: list[tuple[str, str]] = []
-                while len(picked) < cap_n and any(by.values()):
-                    for reason in list(by.keys()):
-                        bucket = by.get(reason) or []
-                        if not bucket:
-                            continue
-                        picked.append(bucket.pop(0))
-                        if len(picked) >= cap_n:
-                            break
-                neg_rows = tuple(picked)
-            neg_scores: list[float] = []
-            for path, _reason in neg_rows:
-                ref = _ref_patch_cached(path)
-                if ref is None:
-                    continue
-                neg_scores.append(patch_similarity(patch, ref))
-            if neg_scores:
-                neg_scores.sort(reverse=True)
-                neg_top = sum(neg_scores[:top_k]) / min(top_k, len(neg_scores))
-                lead = float(os.environ.get("MLBB_BANNER_POS_NEG_LEAD", "0.04"))
-                # Strong self-match (≥0.60): allow even if neg is close.
-                if best[0] < 0.60 and pos_top < neg_top + lead:
-                    return None
-                if best[0] >= 0.60 and _neg_wins(best[0], neg_scores[0], source=best[2]):
-                    return None
+    # Strong visual self-match to owner crop — trust it.
+    strong = float(os.environ.get("MLBB_BANNER_STRONG_SIM", "0.58"))
+    if best[0] >= strong and best[2] in ("owner", "owner_cal"):
+        return best
+
+    # Otherwise require owner-label logistic to agree (cuts no_banner FP).
+    model = _load_logit_model()
+    if model is not None and os.environ.get("MLBB_BANNER_OWNER_LOGIT", "1") == "1":
+        _wb, thr = model
+        prob = owner_logit_score(frame)
+        if prob is None or prob < thr:
+            return None
+    elif _neg_enabled():
+        neg = match_negative_banner_reference(frame)
+        if neg is not None and _neg_wins(best[0], neg[0], source=best[2]):
+            return None
 
     return best
 

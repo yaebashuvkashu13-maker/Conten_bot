@@ -93,6 +93,137 @@ def _write_crop(src: Path, dest: Path) -> bool:
     return bool(cv2.imwrite(str(dest), patch))
 
 
+def train_logit() -> dict:
+    """Train logistic P(kill-banner) on owner labels + photos; write banner_logit.json."""
+    import cv2
+    import numpy as np
+
+    from mlbb_banner_ref_match import extract_banner_zone_patch
+
+    def feat(patch):
+        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [16, 12], [0, 180, 0, 256]).flatten()
+        hist = hist / (hist.sum() + 1e-6)
+        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+        edge = float((cv2.Canny(gray, 60, 140) > 0).mean())
+        cyan = cv2.inRange(hsv, (75, 40, 80), (130, 255, 255))
+        gold = cv2.inRange(hsv, (15, 60, 100), (40, 255, 255))
+        white = cv2.inRange(hsv, (0, 0, 180), (180, 50, 255))
+        hh, ww = patch.shape[:2]
+        center = cyan[int(hh * 0.2) : int(hh * 0.8), int(ww * 0.25) : int(ww * 0.75)]
+        return np.concatenate(
+            [
+                hist,
+                [
+                    edge,
+                    float((cyan > 0).mean()),
+                    float((gold > 0).mean()),
+                    float((white > 0).mean()),
+                    float((center > 0).mean()) if center.size else 0.0,
+                    float(gray.mean() / 255.0),
+                    float(gray.std() / 255.0),
+                ],
+            ]
+        )
+
+    X: list = []
+    y: list = []
+    labels_path = _labels_path()
+    if labels_path.exists():
+        try:
+            labels = list(json.loads(labels_path.read_text(encoding="utf-8")).get("labels") or [])
+        except (json.JSONDecodeError, OSError):
+            labels = []
+        for row in labels:
+            if not isinstance(row, dict):
+                continue
+            reason = str(row.get("reason") or "")
+            if reason in POSITIVE_REASONS:
+                label = 1.0
+            elif reason in NEGATIVE_REASONS:
+                label = 0.0
+            else:
+                continue
+            shot = Path(str(row.get("screenshot") or ""))
+            if not shot.exists():
+                continue
+            img = cv2.imread(str(shot))
+            patch = extract_banner_zone_patch(img)
+            if patch is None:
+                continue
+            X.append(feat(patch))
+            y.append(label)
+
+    photos = _owner_photos()
+    if photos.exists():
+        for path in sorted(photos.glob("*.jpg"))[:150]:
+            img = cv2.imread(str(path))
+            patch = extract_banner_zone_patch(img)
+            if patch is None:
+                continue
+            X.append(feat(patch))
+            y.append(1.0)
+
+    if len(X) < 40 or sum(y) < 10 or (len(y) - sum(y)) < 10:
+        return {"trained": False, "reason": "insufficient_labels", "n": len(X)}
+
+    Xa = np.asarray(X, dtype=np.float64)
+    ya = np.asarray(y, dtype=np.float64)
+    w = np.zeros(Xa.shape[1], dtype=np.float64)
+    b = 0.0
+    lr = 0.35
+    l2 = 0.02
+    npos = max(1.0, float(ya.sum()))
+    nneg = max(1.0, float(len(ya) - ya.sum()))
+    for _ in range(800):
+        z = Xa @ w + b
+        p = 1.0 / (1.0 + np.exp(-np.clip(z, -20, 20)))
+        weights = np.where(ya > 0.5, nneg / npos, 1.0)
+        err = (p - ya) * weights
+        w -= lr * ((Xa.T @ err) / weights.sum() + l2 * w)
+        b -= lr * (err.sum() / weights.sum())
+
+    # Photos were appended last — evaluate threshold on label rows only.
+    n_photos = 0
+    if photos.exists():
+        n_photos = min(150, len(list(photos.glob("*.jpg"))))
+    n0 = max(40, len(ya) - n_photos)
+    prob = 1.0 / (1.0 + np.exp(-np.clip(Xa[:n0] @ w + b, -20, 20)))
+    yy = ya[:n0]
+    best = (0.0, 0.42)
+    for thr in np.linspace(0.30, 0.55, 51):
+        pred = prob >= thr
+        tp = float(((pred == 1) & (yy == 1)).sum())
+        fn = float(((pred == 0) & (yy == 1)).sum())
+        fp = float(((pred == 1) & (yy == 0)).sum())
+        rec = tp / (tp + fn + 1e-9)
+        prec = tp / (tp + fp + 1e-9)
+        f1 = 2 * prec * rec / (prec + rec + 1e-9)
+        if rec >= 0.82 and f1 >= best[0]:
+            best = (f1, float(thr))
+
+    out = _ref_root() / "owner_cal" / "banner_logit.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "w": w.tolist(),
+                "b": float(b),
+                "thr": best[1],
+                "f1": best[0],
+                "n": int(len(ya)),
+                "pos": int(ya.sum()),
+                "neg": int(len(ya) - ya.sum()),
+                "feat": "hist16x12+edge+cyan+gold+white+center+meanstd",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {"trained": True, "thr": best[1], "f1": best[0], "n": int(len(ya)), "path": str(out)}
+
+
 def sync(*, wipe: bool = True) -> dict:
     import cv2  # noqa: F401 — fail fast if missing
 
@@ -166,12 +297,16 @@ def sync(*, wipe: bool = True) -> dict:
             else:
                 report["skipped"] += 1
 
+    logit = train_logit()
+    report["logit"] = logit
+
     meta = {
         "updated_from": str(labels_path),
         "positive": report["positive"],
         "negative": report["negative"],
         "owner_photos": report["owner_photos"],
         "by_reason": report["by_reason"],
+        "logit": logit,
     }
     (root / "sync_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
