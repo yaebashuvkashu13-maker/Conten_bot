@@ -161,6 +161,10 @@ def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1")
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")
     assert feed._montage_limits()[0] == 3
-    assert feed._montage_soft_min_clips() == 1
+    assert feed._montage_soft_min_clips("pubg") == 1
+    assert feed._montage_soft_min_clips("wot") == 2
+    monkeypatch.setenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", "3")
+    assert feed._montage_soft_min_clips("wot") == 3
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "0")
-    assert feed._montage_soft_min_clips() == 3
+    assert feed._montage_soft_min_clips("pubg") == 3
+    assert feed._montage_soft_min_clips("wot") == 3

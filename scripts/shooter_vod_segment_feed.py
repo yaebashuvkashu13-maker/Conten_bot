@@ -673,10 +673,16 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
     return min_clips, max_clips, gap, part_max, final_max
 
 
-def _montage_soft_min_clips() -> int:
-    """Ship this many good parts even if ideal ×3 failed (better than stall-idle)."""
+def _montage_soft_min_clips(game: str | None = None) -> int:
+    """Ship this many gate-passed parts when ideal ×3 is unavailable.
+
+    WoT floor is 2: owner mission is tank shot+impact склейка, not a single
+    14s SLA filler (×1 trash). Other shooters may still soft-ship 1.
+    """
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
         return _montage_limits()[0]
+    if game == "wot":
+        return max(2, int(os.environ.get("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", "2")))
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))
 
 
@@ -754,7 +760,7 @@ def _send_montage(
         return 0
 
     min_clips, max_clips, gap_sec, part_max, final_max = _montage_limits()
-    soft_min = _montage_soft_min_clips()
+    soft_min = _montage_soft_min_clips(game)
     # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
     picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
     if len(picked) < min_clips:
@@ -1438,7 +1444,7 @@ def _scan_vod_with_adaptive(
             # Owner anchors alone must NOT keep a dead VOD alive forever —
             # that spun every idle tick with zero Telegram and paid CPU.
             # Still try dense montage once when anchors exist; otherwise exhaust.
-            has_anchors = game != "wot" and vod_has_owner_montage_anchors(game, vod)
+            has_anchors = vod_has_owner_montage_anchors(game, vod)
             if not has_anchors:
                 log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
                 _mark_vod_exhausted(
@@ -1526,7 +1532,7 @@ def _scan_vod_with_adaptive(
                     return out_rows
 
                 rows = _build_rows(gap_sec * 0.9)
-                soft_min = _montage_soft_min_clips()
+                soft_min = _montage_soft_min_clips(game)
                 if len(rows) < min_clips:
                     # Same VOD can still yield another ×3 if fights are denser.
                     tight = max(22.0, gap_sec * 0.45)

@@ -1108,11 +1108,14 @@ def segment_is_valid_for_montage(
         impact_density, burst_ratio, audio_rms = score_pubg_gunfire_audio(
             video_path, start_sec, duration_sec
         )
+        soft = os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
         min_impact = (
             float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
             if min_gunfire is None
             else min_gunfire
         )
+        if soft:
+            min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")))
         min_burst = float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3"))
         min_audio = float(os.environ.get("SMART_WOT_MIN_AUDIO_RMS", "0.010"))
         if impact_density < min_impact and burst_ratio < min_burst:
@@ -1127,7 +1130,10 @@ def segment_is_valid_for_montage(
                 return False, f"cruise_no_action=motion{center_motion:.3f}"
         if impact_density < min_impact * 0.85 and center_motion < 0.020:
             return False, f"empty_drive=density{impact_density:.3f}"
-        if center_motion >= 0.10 and impact_density < max(min_impact * 1.35, 0.070):
+        cruise_need = max(min_impact * 1.35, 0.070)
+        if soft:
+            cruise_need = min(cruise_need, float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020")))
+        if center_motion >= 0.10 and impact_density < cruise_need:
             return False, f"cruise_no_action=motion{center_motion:.3f}:impact{impact_density:.3f}"
         return True, "brawl_ok"
     if profile in ("pubg", "standoff"):

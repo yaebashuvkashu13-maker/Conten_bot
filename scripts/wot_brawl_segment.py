@@ -65,12 +65,19 @@ def validate_wot_brawl_segment(
         "impact_density": impact,
         "center_motion": motion,
     }
+    soft = os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
     min_impact = _min_impact_density()
     min_flashes = _min_hit_flashes()
+    cruise_need = 0.05
+    if soft:
+        # Align with _wot_extra_reject quality soft floors (shot+impact, not cruise).
+        min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.020")))
+        min_flashes = max(2, int(os.environ.get("WOT_SOFT_MIN_HIT_FLASHES", "2")))
+        cruise_need = float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.020"))
     if flashes < min_flashes:
         return False, f"wot_low_flashes={flashes}:need{min_flashes}", out
     if impact < min_impact:
         return False, f"wot_low_impact=density{impact:.3f}:need{min_impact:.3f}", out
-    if motion > 0.10 and impact < 0.05 and duration_sec > 5.0:
+    if motion > 0.10 and impact < cruise_need and duration_sec > 5.0:
         return False, f"wot_cruise=motion{motion:.3f}:impact{impact:.3f}", out
     return True, f"wot_brawl_ok=flashes{flashes}:impact{impact:.3f}", out
