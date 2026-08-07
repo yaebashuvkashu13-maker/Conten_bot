@@ -114,28 +114,41 @@ def main() -> int:
     if game is None:
         rem = status_summary()["remaining"]
         if any(int(v) > 0 for v in rem.values()):
-            log.warning("all remaining games stalled — idle rem=%s", rem)
-            rem_key = ",".join(f"{k}:{rem.get(k, 0)}" for k in ("mlbb", "pubg", "standoff", "genshin", "wot"))
-            _notify_once(
-                token,
-                chat_id,
-                f"all_stalled:{rem_key}",
-                f"⚠️ Цикл: оставшиеся игры залипли (stall skip). "
-                f"Остаток квот: {rem}. Жду правки inbox/discovery или 00:00. "
-                f"(это сообщение один раз, не спам)",
-            )
-            # Stop 8s busy-loop: sleep here so wrapper does not re-notify/re-log every tick.
-            time.sleep(_idle_stalled_sleep_sec())
-        else:
-            log.info("all daily quotas done — idle")
-            _notify_once(
-                token,
-                chat_id,
-                "quotas_done",
-                "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.",
-            )
-            time.sleep(_idle_stalled_sleep_sec())
-        return 0
+            # Last chance: clear stall when inbox still has VODs (avoid 8h idle).
+            try:
+                from daily_game_cycle import unstall_games_with_inbox
+
+                cleared = unstall_games_with_inbox()
+                if cleared:
+                    log.warning("unstalled games with inbox ready: %s", cleared)
+                    game = active_game()
+            except Exception as exc:
+                log.warning("unstall check failed: %s", exc)
+        if game is None:
+            rem = status_summary()["remaining"]
+            if any(int(v) > 0 for v in rem.values()):
+                log.warning("all remaining games stalled — idle rem=%s", rem)
+                rem_key = ",".join(f"{k}:{rem.get(k, 0)}" for k in ("mlbb", "pubg", "standoff", "genshin", "wot"))
+                _notify_once(
+                    token,
+                    chat_id,
+                    f"all_stalled:{rem_key}",
+                    f"⚠️ Цикл: оставшиеся игры залипли (stall skip). "
+                    f"Остаток квот: {rem}. Жду правки inbox/discovery или 00:00. "
+                    f"(это сообщение один раз, не спам)",
+                )
+                # Stop 8s busy-loop: sleep here so wrapper does not re-notify/re-log every tick.
+                time.sleep(_idle_stalled_sleep_sec())
+            else:
+                log.info("all daily quotas done — idle")
+                _notify_once(
+                    token,
+                    chat_id,
+                    "quotas_done",
+                    "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.",
+                )
+                time.sleep(_idle_stalled_sleep_sec())
+            return 0
 
     state = load_state()
     if state.get("notified", {}).get("active_game") != game:

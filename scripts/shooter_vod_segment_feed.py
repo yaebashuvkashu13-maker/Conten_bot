@@ -615,12 +615,20 @@ def _montage_only(game: str) -> bool:
 
 def _montage_limits() -> tuple[int, int, float, float, float]:
     """min_clips, max_clips, gap_sec, part_max_sec, final_max_sec."""
-    min_clips = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+    # Allow 1 via env — hard floor of 2 caused 8h idle when only 1 part passed gates.
+    min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
     max_clips = max(min_clips, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55"))
     part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
     final_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "70"))
     return min_clips, max_clips, gap, part_max, final_max
+
+
+def _montage_soft_min_clips() -> int:
+    """Ship this many good parts even if ideal ×3 failed (better than stall-idle)."""
+    if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
+        return _montage_limits()[0]
+    return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))
 
 
 def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_sec: float) -> list[dict]:
@@ -697,6 +705,7 @@ def _send_montage(
         return 0
 
     min_clips, max_clips, gap_sec, part_max, final_max = _montage_limits()
+    soft_min = _montage_soft_min_clips()
     # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
     picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
     if len(picked) < min_clips:
@@ -705,15 +714,23 @@ def _send_montage(
         if len(picked) >= min_clips:
             log.info("montage tight-gap ok game=%s gap=%.0f→%.0f peaks=%s", game, gap_sec, tight, len(picked))
             gap_sec = tight
-    if len(picked) < min_clips:
+    if len(picked) < soft_min:
         log.warning(
-            "montage insufficient peaks game=%s have=%s need=%s rows=%s",
+            "montage insufficient peaks game=%s have=%s need=%s soft=%s rows=%s",
             game,
             len(picked),
             min_clips,
+            soft_min,
             len(rows),
         )
         return 0
+    if len(picked) < min_clips:
+        log.warning(
+            "montage soft peaks game=%s have=%s wanted=%s — try partial",
+            game,
+            len(picked),
+            min_clips,
+        )
 
     # Fast discovery (PANNs) + quality: CLIP ranks only this shortlist under a budget.
     try:
@@ -768,24 +785,38 @@ def _send_montage(
                     break
 
             if len(segment_paths) < min_clips:
-                log.warning(
-                    "montage after-presend insufficient game=%s parts=%s need=%s attempt=%s",
-                    game,
-                    len(segment_paths),
-                    min_clips,
-                    attempt + 1,
-                )
-                # Drop failed peaks; next attempt uses remaining unused dense rows.
-                remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
-                if not remaining:
-                    remaining = [
-                        r
-                        for r in rows
-                        if str(r.get("segment_id") or "") not in rejected_sids
-                    ]
-                    remaining = _pick_montage_rows(
-                        remaining, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec
+                soft_min = _montage_soft_min_clips()
+                if len(segment_paths) >= soft_min:
+                    log.warning(
+                        "montage shipping partial game=%s parts=%s wanted=%s attempt=%s",
+                        game,
+                        len(segment_paths),
+                        min_clips,
+                        attempt + 1,
                     )
+                    # Fall through to merge/send with whatever passed gates.
+                else:
+                    log.warning(
+                        "montage after-presend insufficient game=%s parts=%s need=%s attempt=%s",
+                        game,
+                        len(segment_paths),
+                        min_clips,
+                        attempt + 1,
+                    )
+                    # Drop failed peaks; next attempt uses remaining unused dense rows.
+                    remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
+                    if not remaining:
+                        remaining = [
+                            r
+                            for r in rows
+                            if str(r.get("segment_id") or "") not in rejected_sids
+                        ]
+                        remaining = _pick_montage_rows(
+                            remaining, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec
+                        )
+                    continue
+
+            if len(segment_paths) < _montage_soft_min_clips():
                 continue
 
             ordered = sorted(
@@ -806,10 +837,16 @@ def _send_montage(
 
             montage_id = f"{vod_youtube_id(vod)}_mtg_{int(time.time())}"
             out = seg_root / f"montage_{montage_id}.mp4"
-            run_command(build_xfade_command(segment_paths, durations, out))
+            if len(segment_paths) == 1:
+                shutil.copy2(segment_paths[0], out)
+            else:
+                run_command(build_xfade_command(segment_paths, durations, out))
             final_dur = _ffprobe_duration(out)
-            if final_dur < 18.0:
-                log.warning("montage too short game=%s dur=%.1f", game, final_dur)
+            min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_FINAL_SEC", "18"))
+            if len(segment_paths) == 1:
+                min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
+            if final_dur < min_final:
+                log.warning("montage too short game=%s dur=%.1f need>=%.0f", game, final_dur, min_final)
                 out.unlink(missing_ok=True)
                 return 0
 
@@ -1360,6 +1397,7 @@ def _scan_vod_with_adaptive(
                     return out_rows
 
                 rows = _build_rows(gap_sec * 0.9)
+                soft_min = _montage_soft_min_clips()
                 if len(rows) < min_clips:
                     # Same VOD can still yield another ×3 if fights are denser.
                     tight = max(22.0, gap_sec * 0.45)
@@ -1372,7 +1410,15 @@ def _scan_vod_with_adaptive(
                             tight,
                             len(rows),
                         )
-                if len(rows) >= min_clips:
+                if len(rows) >= soft_min:
+                    if len(rows) < min_clips:
+                        log.warning(
+                            "fast-montage soft-shortlist vod=%s rows=%s soft_min=%s wanted=%s",
+                            vod.name,
+                            len(rows),
+                            soft_min,
+                            min_clips,
+                        )
                     n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
                     if n_fast > 0:
                         if entry is not None:

@@ -127,3 +127,40 @@ def test_disabled_cycle_allows_all(isolated_state: Path, monkeypatch: pytest.Mon
     ok, reason = cycle.can_send_for_game("standoff", 1)
     assert ok is True
     assert reason == "cycle_disabled"
+
+
+def test_clear_stall_resumes_force_skipped_game(isolated_state: Path) -> None:
+    for _ in range(5):
+        cycle.record_send("mlbb", 1)
+    cycle.force_skip_game("pubg", reason="test")
+    assert cycle.is_game_stalled("pubg") is True
+    assert cycle.active_game() == "standoff"
+    cleared = cycle.clear_stall("pubg", reason="unit")
+    assert cleared == ["pubg"]
+    assert cycle.is_game_stalled("pubg") is False
+    assert cycle.active_game() == "pubg"
+
+
+def test_unstall_on_inbox_ready(isolated_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for _ in range(5):
+        cycle.record_send("mlbb", 1)
+    cycle.force_skip_game("pubg", reason="test")
+    inbox = tmp_path / "pubg_inbox"
+    inbox.mkdir()
+    (inbox / "yt_abc.mp4").write_bytes(b"x")
+    monkeypatch.setenv("DAILY_GAME_UNSTALL_ON_INBOX", "1")
+    with patch.object(cycle, "_game_inbox_ready", side_effect=lambda g: g == "pubg"):
+        assert cycle.active_game() == "pubg"
+    assert cycle.is_game_stalled("pubg") is False
+
+
+def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> None:
+    import shooter_vod_segment_feed as feed
+
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")
+    assert feed._montage_limits()[0] == 3
+    assert feed._montage_soft_min_clips() == 1
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "0")
+    assert feed._montage_soft_min_clips() == 3

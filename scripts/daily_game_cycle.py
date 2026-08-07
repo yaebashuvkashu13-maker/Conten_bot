@@ -199,9 +199,86 @@ def force_skip_game(game: str, reason: str = "manual") -> None:
     save_state(state)
 
 
+def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> list[str]:
+    """Clear force_skip / zero-run stall so remaining quota can resume."""
+    reset_if_new_day()
+    state = load_state()
+    stall = state.setdefault("stall", {})
+    games = [game.strip().lower()] if game else list(GAME_ORDER)
+    cleared: list[str] = []
+    for g in games:
+        if g not in GAME_ORDER:
+            continue
+        entry = stall.setdefault(g, {})
+        if not (
+            entry.get("force_skip")
+            or int(entry.get("zero_runs") or 0) > 0
+            or int(entry.get("thrash_runs") or 0) > 0
+            or entry.get("since")
+        ):
+            continue
+        entry["force_skip"] = False
+        entry["zero_runs"] = 0
+        entry["thrash_runs"] = 0
+        entry["since"] = None
+        entry["cleared_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        entry["clear_reason"] = reason[:160]
+        entry.pop("skip_reason", None)
+        stall[g] = entry
+        cleared.append(g)
+    notified = state.setdefault("notified", {})
+    for key in list(notified):
+        if key.startswith("all_stalled:") or key.startswith("stall_skip:"):
+            del notified[key]
+    save_state(state)
+    return cleared
+
+
+def _game_inbox_ready(game: str) -> bool:
+    """True when local inbox still has at least one VOD to scan."""
+    game = game.strip().lower()
+    roots = [
+        Path(os.environ.get(f"{game.upper()}_DATA_ROOT", f"/root/data/{game}"))
+        / "youtube_nightly"
+        / "inbox",
+        Path(f"/root/data/{game}/youtube_nightly/inbox"),
+        Path(f"/root/data/{game}/inbox"),
+    ]
+    if game == "genshin":
+        roots.append(Path("/root/data/genshin/remount"))
+    for inbox in roots:
+        try:
+            if any(inbox.glob("yt_*.mp4")) or any(inbox.glob("*.mp4")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def unstall_games_with_inbox() -> list[str]:
+    """
+    Stall-skip must not freeze remaining quota for hours while local VODs sit unused.
+    If a stalled game still has inbox files, clear its stall once.
+    """
+    if os.environ.get("DAILY_GAME_UNSTALL_ON_INBOX", "1") != "1":
+        return []
+    reset_if_new_day()
+    cleared: list[str] = []
+    for game in GAME_ORDER:
+        if quota_remaining(game) <= 0:
+            continue
+        if not is_game_stalled(game):
+            continue
+        if not _game_inbox_ready(game):
+            continue
+        cleared.extend(clear_stall(game, reason="inbox_ready_unstall"))
+    return cleared
+
+
 def active_game() -> str | None:
     """Next game that still has daily quota and is not stalled. None if all done/skipped."""
     reset_if_new_day()
+    unstall_games_with_inbox()
     for game in GAME_ORDER:
         if quota_remaining(game) <= 0:
             continue
