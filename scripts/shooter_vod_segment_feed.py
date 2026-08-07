@@ -956,6 +956,19 @@ def _send_montage(
     return 0
 
 
+def _game_lead_sec(game: str) -> float:
+    g = game.strip().lower()
+    if g == "genshin":
+        return float(os.environ.get("GENSHIN_VOD_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "2")))
+    if g == "wot":
+        return float(os.environ.get("WOT_VOD_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "4")))
+    if g == "pubg":
+        return float(os.environ.get("PUBG_VOD_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "4")))
+    if g == "standoff":
+        return float(os.environ.get("STANDOFF_VOD_LEAD_SEC", os.environ.get("MLBB_VOD_LEAD_SEC", "4")))
+    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+
+
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
     if _montage_enabled(game):
         n = _send_montage(game, token, chat_id, vod, to_send, sig)
@@ -986,8 +999,34 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             to_send_ranked = list(to_send)
     for row in to_send_ranked[:1]:
         sid = row["segment_id"]
+        clip = dict(row.get("clip") or {})
+        peak = float(row.get("peak_start", row.get("start", clip.get("start", 0))) or 0)
+        # Owner rule: Genshin clip = full boss fight (HP bar start → fight end).
+        if game == "genshin" and os.environ.get("GENSHIN_BOSS_FULL_FIGHT", "1") == "1":
+            try:
+                from genshin_boss_segment import apply_genshin_full_fight_clip
+
+                clip = apply_genshin_full_fight_clip(vod, clip, peak_sec=peak)
+                row = {
+                    **row,
+                    "clip": clip,
+                    "start": float(clip["start"]),
+                    "peak_start": peak,
+                    "segment_id": segment_id(vod_youtube_id(vod), float(clip["start"])),
+                }
+                sid = row["segment_id"]
+                log.info(
+                    "genshin full-fight clip vod=%s peak=%.1f start=%.1f dur=%.1fs end=%.1f",
+                    vod.name,
+                    peak,
+                    float(clip["start"]),
+                    float(clip["input_duration"]),
+                    float(clip.get("fight_end") or 0),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("genshin full-fight expand failed: %s — keep peak window", exc)
         out = seg_root / f"seg_{sid}.mp4"
-        if not render_single_segment(vod, row["clip"], out):
+        if not render_single_segment(vod, clip, out):
             continue
         # Soft reject: if CLIP scored this window and it is trash vs exemplars, skip.
         clip_s = float(row.get("clip_score") or (row.get("highlight_metrics") or {}).get("clip_score") or 0)
@@ -1103,7 +1142,7 @@ def _scan_vod(
     labeled = labeled_ids(game)
     sent_set = load_feed_sent(game)
     vid = vod_youtube_id(vod)
-    lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    lead = _game_lead_sec(game)
     seg_gap = segment_gap_sec(game, soften_level=soften_level)
     index_segments = load_index(game).get("segments", [])
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
