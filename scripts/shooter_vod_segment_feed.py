@@ -86,18 +86,42 @@ def _vod_min_sec() -> float:
 
 def _vod_max_sec() -> float:
     # Never inherit MLBB_VOD_MAX_SEC=1200 — that purged 20–30 min montage streams.
+    # Long ranked/custom streams (1.5–3h) are the best montage sources.
     raw = os.environ.get("SHOOTER_VOD_MAX_SEC")
     if raw:
         try:
             return float(raw)
         except ValueError:
             pass
-    return 3600.0
+    return 14400.0
 
 
 def _shooter_vod_length_ok(path: Path, dur: float | None = None) -> bool:
     length = dur if dur is not None else _ffprobe_duration(path)
     return _vod_min_sec() <= length <= _vod_max_sec()
+
+
+def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
+    """Park only too-short inbox files. Never park long VODs for exceeding max."""
+    parked = inbox.parent / "parked"
+    parked.mkdir(parents=True, exist_ok=True)
+    min_sec = _vod_min_sec()
+    removed = 0
+    for mp4 in list(inbox.glob("yt_*.mp4")):
+        dur = _ffprobe_duration(mp4)
+        if dur >= min_sec:
+            continue
+        dest = parked / mp4.name
+        try:
+            if dest.exists():
+                mp4.unlink(missing_ok=True)
+            else:
+                mp4.rename(dest)
+            removed += 1
+            log.info("parked short inbox vod=%s dur=%.0fs min=%.0fs", mp4.name, dur, min_sec)
+        except OSError as exc:
+            log.warning("park short inbox fail %s: %s", mp4.name, exc)
+    return removed
 
 
 ENV_PATH = Path("/root/.video_bot.env")
@@ -484,11 +508,14 @@ def _validate_shooter_presend(
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
     if game == "pubg":
-        from pubg_metro_royale_gate import segment_looks_metro_royale
+        # Owner spec: classic BR firefights + kill text — Metro is optional preference,
+        # not a hard reject (outdoor_sky was killing almost all real Erangel/Miramar fights).
+        if os.environ.get("PUBG_METRO_GATE", "0") == "1":
+            from pubg_metro_royale_gate import segment_looks_metro_royale
 
-        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
-        if not ok_metro:
-            return False, metro_reason, {"metro": metro_reason}
+            ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+            if not ok_metro:
+                return False, metro_reason, {"metro": metro_reason}
     if game in EXTENDED_GAMES:
         from strict_segment_gate import passes_strict_gate
 
@@ -1651,29 +1678,6 @@ def _scan_vod_with_adaptive(
             )
 
     return sent
-
-
-def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
-    """Park/delete too-short inbox files so discovery isn't blocked on trash."""
-    parked = inbox.parent / "parked"
-    parked.mkdir(parents=True, exist_ok=True)
-    min_sec = _vod_min_sec()
-    removed = 0
-    for mp4 in list(inbox.glob("yt_*.mp4")):
-        dur = _ffprobe_duration(mp4)
-        if dur >= min_sec and _shooter_vod_length_ok(mp4, dur):
-            continue
-        dest = parked / mp4.name
-        try:
-            if dest.exists():
-                mp4.unlink(missing_ok=True)
-            else:
-                mp4.rename(dest)
-            removed += 1
-            log.info("parked short inbox vod=%s dur=%.0fs min=%.0fs", mp4.name, dur, min_sec)
-        except OSError as exc:
-            log.warning("park short inbox fail %s: %s", mp4.name, exc)
-    return removed
 
 
 def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
