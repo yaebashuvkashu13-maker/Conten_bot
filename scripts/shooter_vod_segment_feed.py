@@ -781,6 +781,13 @@ def _send_montage(
                 segment_paths.append(part)
                 durations.append(dur)
                 accepted_rows.append(work_row)
+                # Owner SLA: ship as soon as we have soft_min good fights — don't
+                # burn the 20min runner timeout rejecting outdoor_sky tails.
+                ship_target = max_clips
+                if os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
+                    ship_target = max(_montage_soft_min_clips(), 1)
+                if len(segment_paths) >= ship_target:
+                    break
                 if len(segment_paths) >= max_clips:
                     break
 

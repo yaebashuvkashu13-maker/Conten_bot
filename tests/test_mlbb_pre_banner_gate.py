@@ -17,9 +17,9 @@ def test_lead_sec_uses_kill_banner_min_pre() -> None:
 
     os.environ["MLBB_KILL_BANNER_LEAD_SEC"] = "8"
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
-    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "12"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
     try:
-        assert _lead_sec() == 12.0
+        assert _lead_sec() == 8.0
     finally:
         for k in ("MLBB_KILL_BANNER_LEAD_SEC", "MLBB_VOD_LEAD_SEC", "MLBB_KILL_BANNER_MIN_PRE_SEC"):
             os.environ.pop(k, None)
@@ -28,20 +28,28 @@ def test_lead_sec_uses_kill_banner_min_pre() -> None:
 def test_bounds_enforces_min_pre_banner() -> None:
     from mlbb_kill_banner import bounds_from_banner
 
-    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "12"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
+    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     try:
-        start, _end, dur = bounds_from_banner(
+        start, end, dur = bounds_from_banner(
             76.8,
             file_dur=200.0,
             fight_start=74.0,
             fight_end=82.0,
         )
-        assert 76.8 - start >= 12.0
-        assert (76.8 - start) / dur >= 0.55
+        assert 76.8 - start >= 5.0
+        assert end - 76.8 <= 3.5
+        assert dur >= 8.0
     finally:
-        os.environ.pop("MLBB_KILL_BANNER_MIN_PRE_SEC", None)
+        for k in (
+            "MLBB_KILL_BANNER_MIN_PRE_SEC",
+            "MLBB_KILL_BANNER_POST_SEC",
+            "MLBB_FIGHT_MIN_SEC",
+            "MLBB_FIGHT_MAX_SEC",
+        ):
+            os.environ.pop(k, None)
 
 
 def test_presend_rejects_banner_tail_only(tmp_path: Path) -> None:

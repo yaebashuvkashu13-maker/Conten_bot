@@ -33,7 +33,7 @@ def _lead_sec() -> float:
     """Seconds of fight gameplay before kill banner — not just banner flash."""
     banner = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", "0") or 0)
     vod = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
-    floor = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
+    floor = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"))
     return max(floor, banner, vod)
 
 

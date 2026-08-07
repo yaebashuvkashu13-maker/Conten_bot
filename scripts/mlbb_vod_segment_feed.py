@@ -1382,7 +1382,7 @@ def _presend_min_banner_lead() -> float:
     return float(
         os.environ.get(
             "MLBB_PRESEND_MIN_BANNER_LEAD",
-            os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "10"),
+            os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"),
         )
     )
 
@@ -1973,9 +1973,11 @@ def _clip_from_banner_seed(vod: Path, peak: float) -> dict:
                 peak,
             )
 
-    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
-    fight_start = max(0.0, banner_sec - max(min_pre, 14.0))
-    fight_end = min(file_dur, banner_sec + 4.0)
+    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"))
+    post = float(os.environ.get("MLBB_KILL_BANNER_POST_SEC", "3"))
+    # Owner rule: 5s before banner → fight end +3s (fast-ship uses banner as fight end).
+    fight_start = max(0.0, banner_sec - max(min_pre, 5.0))
+    fight_end = min(file_dur, banner_sec + max(post, 3.0))
     start, end, dur = bounds_from_banner(
         banner_sec,
         file_dur,

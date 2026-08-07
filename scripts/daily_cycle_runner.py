@@ -32,11 +32,22 @@ SCRIPTS = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml")) / "sc
 
 
 def _idle_stalled_sleep_sec() -> int:
-    """When all remaining games are stalled, do not spin every 8s and spam TG."""
+    """When all remaining games are stalled, do not spin every 8s and spam TG.
+
+    If local media still exists, sleep briefly so self-heal can resume — never 15min
+    blackouts with rem>0 (owner SLA: ≥1 video/hour).
+    """
     try:
-        return max(60, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_SEC", "900")))
-    except ValueError:
-        return 900
+        from daily_game_cycle import GAME_ORDER, _game_inbox_ready, quota_remaining
+
+        has_media = any(
+            quota_remaining(g) > 0 and _game_inbox_ready(g) for g in GAME_ORDER
+        )
+        if has_media:
+            return max(20, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_WITH_MEDIA_SEC", "45")))
+        return max(60, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_SEC", "300")))
+    except Exception:
+        return 120
 
 
 def _notify_once(token: str, chat_id: str, key: str, text: str) -> bool:
@@ -178,9 +189,27 @@ def main() -> int:
         thrash = True
         log.error("TIMEOUT game=%s after %ss — kill hang", game, timeout)
         subprocess.run(["pkill", "-f", f"shooter_vod_segment_feed.py {game}"], check=False)
+        subprocess.run(["pkill", "-f", "mlbb_vod_segment_feed.py"], check=False)
         subprocess.run(["pkill", "-f", "yt-dlp"], check=False)
+        subprocess.run(["pkill", "-f", "ffmpeg"], check=False)
+        for lock in (
+            f"/tmp/{game}_vod_segment_feed.lock",
+            "/tmp/mlbb_vod_segment_feed.lock",
+            "/tmp/mlbb_vod_ytdlp.lock",
+        ):
+            try:
+                Path(lock).unlink(missing_ok=True)
+            except OSError:
+                pass
         _notify(token, chat_id, f"⏱️ Антизависание: {game.upper()} timeout {timeout}s — процесс убит.")
         rc = 124
+        # Self-heal immediately so next loop does not wait for human / cron.
+        try:
+            from cycle_self_heal import heal_once
+
+            heal_once()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("post-timeout self-heal failed: %s", exc)
 
     after = send_count(game)
     delta = max(0, after - before)

@@ -234,21 +234,31 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
     return cleared
 
 
+def _game_data_root(game: str) -> Path:
+    g = game.strip().upper()
+    for key in (f"VOD_{g}_DATA_ROOT", f"SHOOTER_{g}_DATA_ROOT", f"{g}_DATA_ROOT"):
+        raw = os.environ.get(key)
+        if raw:
+            return Path(raw)
+    return Path(f"/root/data/{game.strip().lower()}")
+
+
 def _game_inbox_ready(game: str) -> bool:
-    """True when local inbox still has at least one VOD to scan."""
+    """True when local inbox OR parked still has at least one VOD to scan/recycle."""
     game = game.strip().lower()
+    root = _game_data_root(game) / "youtube_nightly"
     roots = [
-        Path(os.environ.get(f"{game.upper()}_DATA_ROOT", f"/root/data/{game}"))
-        / "youtube_nightly"
-        / "inbox",
+        root / "inbox",
+        root / "parked",
         Path(f"/root/data/{game}/youtube_nightly/inbox"),
+        Path(f"/root/data/{game}/youtube_nightly/parked"),
         Path(f"/root/data/{game}/inbox"),
     ]
     if game == "genshin":
         roots.append(Path("/root/data/genshin/remount"))
-    for inbox in roots:
+    for folder in roots:
         try:
-            if any(inbox.glob("yt_*.mp4")) or any(inbox.glob("*.mp4")):
+            if any(folder.glob("yt_*.mp4")) or any(folder.glob("*.mp4")):
                 return True
         except OSError:
             continue
@@ -258,7 +268,7 @@ def _game_inbox_ready(game: str) -> bool:
 def unstall_games_with_inbox() -> list[str]:
     """
     Stall-skip must not freeze remaining quota for hours while local VODs sit unused.
-    If a stalled game still has inbox files, clear its stall once.
+    If a stalled game still has inbox/parked files, clear its stall once.
     """
     if os.environ.get("DAILY_GAME_UNSTALL_ON_INBOX", "1") != "1":
         return []

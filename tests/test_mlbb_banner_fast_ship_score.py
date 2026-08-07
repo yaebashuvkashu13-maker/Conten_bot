@@ -46,8 +46,9 @@ def test_clip_from_banner_seed_skips_full_normalize() -> None:
     assert clip["banner_sec"] == 253.5
     assert clip["peak_start"] == 253.5
     assert float(clip["input_duration"]) >= 7.0
-    assert 253.5 - float(clip["start"]) >= 10.0
+    assert 253.5 - float(clip["start"]) >= 4.5
     assert float(clip.get("clip_score") or 0) == 0.0  # unscored, not fake 0.55
+    assert float(clip.get("fight_end") or 0) - 253.5 <= 3.5  # ~+3s post banner
     requick.assert_not_called()
     normalize.assert_not_called()
     analysis.assert_not_called()

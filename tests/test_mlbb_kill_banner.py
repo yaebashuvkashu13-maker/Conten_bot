@@ -74,6 +74,8 @@ def test_reject_enemy_triple() -> None:
 
 def test_bounds_from_fight_sustain() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
+    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
@@ -84,16 +86,19 @@ def test_bounds_from_fight_sustain() -> None:
         fight_end=118.0,
     )
     assert start == 88.0
-    assert end == 116.0
-    assert dur == 28.0
+    assert end == 103.0  # banner + 3s post
+    assert dur == 15.0
 
 
 def test_bounds_fallback_without_fight() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
+    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 38.0
+    assert start == 45.0  # banner - 5s
+    assert end == 53.0  # at least min fight 8s ending at banner+3
     assert 8.0 <= dur <= 28.0
 
 

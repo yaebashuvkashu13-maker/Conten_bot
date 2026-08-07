@@ -831,8 +831,8 @@ def bounds_from_banner(
             end = min(file_dur, start + min_d)
             dur = end - start
 
-    # Must show several seconds of fight *before* the kill banner (not banner-only tail).
-    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "12"))
+    # Owner rule: ~5s fight before banner (not long walk-in).
+    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"))
     if float(banner_sec) - start < min_pre:
         start = max(0.0, float(banner_sec) - min_pre)
         dur = end - start
@@ -842,6 +842,15 @@ def bounds_from_banner(
         if dur > hard_max:
             end = start + hard_max
             dur = hard_max
+
+    # Owner rule: ~3s after banner / fight end (cut loot/runaway tails).
+    post = float(os.environ.get("MLBB_KILL_BANNER_POST_SEC", "3"))
+    if end - float(banner_sec) > post + 0.5:
+        end = min(float(file_dur), float(banner_sec) + post)
+        dur = end - start
+        if dur < min_d:
+            start = max(0.0, end - min_d)
+            dur = end - start
 
     return round(start, 2), round(end, 2), round(dur, 2)
 
