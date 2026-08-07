@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -243,8 +244,49 @@ def _game_data_root(game: str) -> Path:
     return Path(f"/root/data/{game.strip().lower()}")
 
 
+def _ffprobe_duration_quick(path: Path) -> float:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        )
+        return float(out.decode().strip() or 0)
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return 0.0
+
+
+def _game_min_usable_sec(game: str) -> float:
+    g = game.strip().lower()
+    if g == "mlbb":
+        try:
+            return float(os.environ.get("MLBB_VOD_MIN_SEC", "480"))
+        except ValueError:
+            return 480.0
+    try:
+        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or "300")
+    except ValueError:
+        base = 300.0
+    if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
+        try:
+            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
+        except ValueError:
+            floor = 600.0
+        return max(base, floor)
+    return base
+
+
 def _game_inbox_ready(game: str) -> bool:
-    """True when local inbox OR parked still has at least one VOD to scan/recycle."""
+    """True when local inbox OR parked has at least one VOD long enough to scan."""
     game = game.strip().lower()
     root = _game_data_root(game) / "youtube_nightly"
     roots = [
@@ -256,13 +298,32 @@ def _game_inbox_ready(game: str) -> bool:
     ]
     if game == "genshin":
         roots.append(Path("/root/data/genshin/remount"))
+    min_sec = _game_min_usable_sec(game)
+    # Fast path: any sufficiently large file is likely long enough (avoid ffprobe storm).
+    # ~40MB floor ≈ short junk; real 10min+ VODs are usually much larger.
+    size_floor = int(os.environ.get("DAILY_GAME_USABLE_SIZE_FLOOR", "80000000"))
     for folder in roots:
         try:
-            if any(folder.glob("yt_*.mp4")) or any(folder.glob("*.mp4")):
-                return True
+            for mp4 in list(folder.glob("yt_*.mp4")) + list(folder.glob("*.mp4")):
+                try:
+                    if mp4.stat().st_size < size_floor:
+                        # Still verify a few small-looking files — some are long low-bitrate.
+                        if _ffprobe_duration_quick(mp4) >= min_sec:
+                            return True
+                        continue
+                    # Large file: confirm duration once.
+                    if _ffprobe_duration_quick(mp4) >= min_sec:
+                        return True
+                except OSError:
+                    continue
         except OSError:
             continue
     return False
+
+
+def game_has_ready_media(game: str) -> bool:
+    """Public alias for runner / heal — usable local VOD present."""
+    return _game_inbox_ready(game)
 
 
 def unstall_games_with_inbox() -> list[str]:

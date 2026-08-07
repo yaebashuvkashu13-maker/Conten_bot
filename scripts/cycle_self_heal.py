@@ -73,19 +73,70 @@ def _game_has_local_media(game: str) -> bool:
     return False
 
 
+def _ffprobe_duration(path: Path) -> float:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        return float(out.decode().strip() or 0)
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return 0.0
+
+
+def _min_vod_sec(game: str) -> float:
+    """Match shooter montage floor — never recycle 3–4min junk into inbox."""
+    g = game.strip().lower()
+    if g == "mlbb":
+        try:
+            return float(os.environ.get("MLBB_VOD_MIN_SEC", "480"))
+        except ValueError:
+            return 480.0
+    try:
+        base = float(os.environ.get("SHOOTER_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC") or "300")
+    except ValueError:
+        base = 300.0
+    if os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1":
+        try:
+            floor = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_VOD_SEC", "600"))
+        except ValueError:
+            floor = 600.0
+        return max(base, floor)
+    return base
+
+
 def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
-    """Move longest parked VODs back to inbox so unstall/feed can use them."""
+    """Move longest *usable* parked VODs back to inbox so unstall/feed can use them.
+
+    Size-only ranking previously flooded inbox with short high-bitrate clips
+    (~3–4 min) that fail SHOOTER_VOD_MONTAGE_MIN_VOD_SEC and look like inbox_dead.
+    """
     inbox, parked = _inbox_and_parked(game)
     if not parked.is_dir():
         return 0
     inbox.mkdir(parents=True, exist_ok=True)
-    files = sorted(
-        (p for p in parked.glob("yt_*.mp4")),
-        key=lambda p: p.stat().st_size if p.exists() else 0,
-        reverse=True,
-    )
+    min_sec = _min_vod_sec(game)
+    scored: list[tuple[float, Path]] = []
+    for p in parked.glob("yt_*.mp4"):
+        if not p.exists():
+            continue
+        dur = _ffprobe_duration(p)
+        if dur < min_sec:
+            continue
+        scored.append((dur, p))
+    scored.sort(key=lambda t: -t[0])
     moved = 0
-    for src in files:
+    for dur, src in scored:
         if moved >= limit:
             break
         dest = inbox / src.name
@@ -94,7 +145,7 @@ def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
         try:
             src.rename(dest)
             moved += 1
-            _log(f"recycle {game}: {src.name} → inbox")
+            _log(f"recycle {game}: {src.name} dur={dur:.0f}s → inbox")
         except OSError as exc:
             _log(f"recycle fail {game} {src.name}: {exc}")
     # Clear discovery pause / recycle caps in state so feed retries.
@@ -121,6 +172,10 @@ def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
             sp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             pass
+    if moved == 0 and scored:
+        _log(f"recycle {game}: candidates={len(scored)} but inbox already has them")
+    elif moved == 0:
+        _log(f"recycle {game}: no parked VOD ≥{min_sec:.0f}s")
     return moved
 
 
@@ -309,7 +364,13 @@ def heal_once() -> dict:
     reset_if_new_day()
     report: dict = {"ts": time.strftime("%Y-%m-%d %H:%M:%S")}
 
+    # Must outlive a healthy feed iteration (runner timeout) — never kill mid-scan.
+    try:
+        runner_to = float(os.environ.get("DAILY_CYCLE_RUN_TIMEOUT_SEC", "600"))
+    except ValueError:
+        runner_to = 600.0
     max_age = float(os.environ.get("STALL_PROC_MAX_SEC", "900"))
+    max_age = max(max_age, runner_to + 120.0)
     report["killed"] = kill_hung_processes(max_age_sec=max_age)
     report["locks_cleared"] = clear_stale_locks()
 
@@ -340,6 +401,12 @@ def heal_once() -> dict:
     ensure_feed_alive(any(int(v) > 0 for v in (summary.get("remaining") or {}).values()))
     hourly_sla_check()
     return report
+
+
+def run_self_heal(*, notify: bool = True) -> dict:
+    """Alias used by runner / ops — notify flag reserved for future TG gating."""
+    _ = notify
+    return heal_once()
 
 
 def main() -> int:

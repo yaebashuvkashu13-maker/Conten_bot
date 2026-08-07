@@ -1033,12 +1033,28 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
     ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
     fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
-    # Prefer larger (longer) VODs — short junk burns stall budget without combat.
+    # Prefer longer usable VODs — short junk burns stall budget without combat.
     try:
         size_prio = -int(mp4.stat().st_size)
     except OSError:
         size_prio = 0
-    return (1 if scanned else 0, owner_prio, fast_fail, metro_prio, ru_prio, size_prio, scanned, mp4.stat().st_mtime)
+    # Duration beats size when self-heal accidentally recycled short high-bitrate clips.
+    dur = float((entry or {}).get("duration") or (entry or {}).get("dur") or 0)
+    if dur <= 0:
+        dur = _ffprobe_duration(mp4)
+    dur_prio = 0 if dur >= _vod_min_sec() else 1
+    return (
+        1 if scanned else 0,
+        dur_prio,
+        owner_prio,
+        fast_fail,
+        metro_prio,
+        ru_prio,
+        -int(dur),
+        size_prio,
+        scanned,
+        mp4.stat().st_mtime,
+    )
 
 
 def _scan_vod(

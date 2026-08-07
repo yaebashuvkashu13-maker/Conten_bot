@@ -250,6 +250,27 @@ def main() -> int:
         timed_out,
     )
     if delta == 0 and is_game_stalled(game):
+        # Never burn remaining quota while usable local VODs still exist.
+        has_local = False
+        try:
+            from daily_game_cycle import game_has_ready_media
+
+            has_local = bool(game_has_ready_media(game))
+        except Exception:
+            has_local = False
+        if has_local:
+            log.warning(
+                "stall hold game=%s — local usable media present; self-heal instead of skip",
+                game,
+            )
+            try:
+                from cycle_self_heal import heal_once
+
+                heal_once()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("stall-hold heal failed: %s", exc)
+            time.sleep(15.0)
+            return rc
         force_skip_game(game, reason=f"stall thrash={entry.get('thrash_runs')} zero={entry.get('zero_runs')} timeout={timed_out}")
         nxt = active_game()
         _notify_once(
