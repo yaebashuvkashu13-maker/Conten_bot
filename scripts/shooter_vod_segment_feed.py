@@ -1121,7 +1121,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
 
 
 def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> tuple:
-    """Unscanned VODs first; owner-anchor VODs before others; Metro + Russian next."""
+    """Long combat VODs first; zombie blocked shorts last (they burn max-vods budget)."""
     from pubg_metro_royale_gate import title_metro_hint
     from youtube_game_prefs import russian_score
 
@@ -1132,7 +1132,8 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     metro_prio = 0 if title_metro_hint(title) else 1
     ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
     ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
-    fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
+    reject = str((entry or {}).get("reject_reason") or "")
+    fast_fail = 1 if reject.startswith("fast_panns_0") else 0
     # Prefer longer usable VODs — short junk burns stall budget without combat.
     try:
         size_prio = -int(mp4.stat().st_size)
@@ -1142,15 +1143,30 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     dur = float((entry or {}).get("duration") or (entry or {}).get("dur") or 0)
     if dur <= 0:
         dur = _ffprobe_duration(mp4)
-    dur_prio = 0 if dur >= _vod_min_sec() else 1
+    # Tier: 90min+ streams → mid combat → barely-legal → under min.
+    long_floor = float(os.environ.get("SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC", "1800"))
+    if dur >= long_floor:
+        dur_tier = 0
+    elif dur >= max(_vod_min_sec(), 600.0):
+        dur_tier = 1
+    elif dur >= _vod_min_sec():
+        dur_tier = 2
+    else:
+        dur_tier = 3
+    # Registry rows with blocked=True but never stamped last_scan_at were retried
+    # every run ahead of real long VODs (FpMs/wEmX stuck at rank 30+).
+    blocked = bool((entry or {}).get("last_scan_blocked"))
+    sent_ok = int((entry or {}).get("last_scan_sent") or 0) > 0
+    zombie_blocked = 1 if blocked and scanned <= 0 and not sent_ok else 0
     return (
+        zombie_blocked,
         1 if scanned else 0,
-        dur_prio,
+        dur_tier,
+        -int(dur),
         owner_prio,
         fast_fail,
         metro_prio,
         ru_prio,
-        -int(dur),
         size_prio,
         scanned,
         mp4.stat().st_mtime,
@@ -1647,22 +1663,39 @@ def _scan_vod_with_adaptive(
                     if clear_fast_seeds:
                         clear_fast_seeds()
                     return 0
+                vod_dur_fast = _ffprobe_duration(vod)
+                long_vod = vod_dur_fast >= float(
+                    os.environ.get("SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC", "1800")
+                )
                 log.warning(
-                    "fast-montage insufficient unused peaks vod=%s have=%s need=%s soft=%s used=%s — exhaust for discovery",
+                    "fast-montage insufficient unused peaks vod=%s have=%s need=%s soft=%s used=%s%s",
                     vod.name,
                     len(rows),
                     min_clips,
                     soft_min,
                     len(used_peaks),
+                    " — keep long vod" if long_vod else " — exhaust for discovery",
                 )
-                _mark_vod_exhausted(
-                    state,
-                    vod,
-                    reason=f"fast_montage_need_{soft_min}_have_{len(rows)}",
-                    delete_file=False,
-                )
-                if entry is not None:
-                    record_vod_scan(entry, sent=0, pool_peaks=dense_peaks, blocked=True)
+                if long_vod:
+                    # 90min+ streams still have fights outside the used gap window;
+                    # exhausting them left the feed thrashing 3–5min junk for hours.
+                    if entry is not None:
+                        entry["exhausted"] = False
+                        entry["reject_reason"] = (
+                            f"fast_montage_need_{soft_min}_have_{len(rows)}_long_keep"
+                        )
+                        record_vod_scan(
+                            entry, sent=0, pool_peaks=dense_peaks, blocked=True
+                        )
+                else:
+                    _mark_vod_exhausted(
+                        state,
+                        vod,
+                        reason=f"fast_montage_need_{soft_min}_have_{len(rows)}",
+                        delete_file=False,
+                    )
+                    if entry is not None:
+                        record_vod_scan(entry, sent=0, pool_peaks=dense_peaks, blocked=True)
                 _save_state(game, state)
                 if clear_fast_seeds:
                     clear_fast_seeds()

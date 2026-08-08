@@ -68,6 +68,23 @@ def test_used_peak_times_montage_parts_list() -> None:
     assert 80.0 in peaks
 
 
+def test_used_peak_times_montage_parts_not_multiplied() -> None:
+    """Each part sid must not re-append the full montage_parts list (used=21 bug)."""
+    parts = ["5XMoDWiXksA_33", "5XMoDWiXksA_71", "5XMoDWiXksA_105"]
+    index = [
+        {
+            "segment_id": sid,
+            "peak_start": peak,
+            "montage_id": "5XMoDWiXksA_mtg_1",
+            "montage_parts": parts,
+        }
+        for sid, peak in zip(parts, [40.8, 78.8, 112.8])
+    ]
+    peaks = used_peak_times_shooter("5XMoDWiXksA", set(parts), index)
+    assert peaks == [33.0, 40.8, 71.0, 78.8, 105.0, 112.8]
+    assert len(peaks) == 6
+
+
 def test_segment_gap_softens_for_shooter_l2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHOOTER_VOD_SEGMENT_GAP_SEC", raising=False)
     monkeypatch.delenv("SHOOTER_VOD_SOFT_SEGMENT_GAP_SEC", raising=False)

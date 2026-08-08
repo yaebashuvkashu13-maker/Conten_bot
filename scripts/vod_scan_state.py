@@ -92,9 +92,14 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if entry.get("exhausted"):
         return True
     last = float(entry.get("last_scan_at") or 0)
+    sent_ok = int(entry.get("last_scan_sent") or 0) > 0
+    # Zombie rows: blocked forever with no scan timestamp — used to burn every
+    # max-vods slot before long inbox files. Skip until an explicit unstall.
     if last <= 0:
+        if entry.get("last_scan_blocked") and not sent_ok:
+            return True
         return False
-    if int(entry.get("last_scan_sent") or 0) > 0:
+    if sent_ok:
         return False
     age = time.time() - last
     if age < blocked_rescan_cooldown_sec(game, entry) and entry.get("last_scan_blocked"):

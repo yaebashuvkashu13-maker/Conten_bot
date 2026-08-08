@@ -79,6 +79,20 @@ def test_scan_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     assert should_skip_vod_rescan(entry2) is False
 
 
+def test_skip_zombie_blocked_without_scan_timestamp() -> None:
+    """Blocked rows with last_scan_at=0 must not burn max-vods ahead of long VODs."""
+    zombie = {"last_scan_at": 0, "last_scan_blocked": True, "last_scan_sent": 0}
+    assert should_skip_vod_rescan(zombie, game="pubg") is True
+    # Prior successful send on a long VOD stays eligible for another ×3 pass.
+    keep = {
+        "last_scan_at": 0,
+        "last_scan_blocked": True,
+        "last_scan_sent": 1,
+        "exhausted": False,
+    }
+    assert should_skip_vod_rescan(keep, game="pubg") is False
+
+
 def test_gap_block_shorter_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     from vod_scan_state import blocked_rescan_cooldown_sec
 
