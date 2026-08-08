@@ -95,10 +95,22 @@ def _vod_max_sec() -> float:
     raw = os.environ.get("SHOOTER_VOD_MAX_SEC")
     if raw:
         try:
-            return float(raw)
+            val = float(raw)
         except ValueError:
-            pass
-    return 14400.0
+            val = 14400.0
+    else:
+        val = 14400.0
+    # A mistaken MAX_SEC=3600 skipped 90min combat VODs (FpMs) and left the
+    # feed thrashing 3–5min junk for hours. Floor at 3h usable body.
+    floor = float(os.environ.get("SHOOTER_VOD_MAX_SEC_FLOOR", "10800"))
+    if val < floor:
+        log.warning(
+            "SHOOTER_VOD_MAX_SEC=%.0f below floor=%.0f — raising (long combat VODs)",
+            val,
+            floor,
+        )
+        val = floor
+    return val
 
 
 def _shooter_vod_length_ok(path: Path, dur: float | None = None) -> bool:
