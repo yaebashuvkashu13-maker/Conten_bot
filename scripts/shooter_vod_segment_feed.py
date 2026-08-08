@@ -675,15 +675,23 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
 
 
 def _montage_soft_min_clips(game: str | None = None) -> int:
-    """Ship this many gate-passed parts when ideal ×3 is unavailable.
+    """Minimum accepted parts before a montage may ship.
 
-    WoT floor is 2: owner mission is tank shot+impact склейка, not a single
-    14s SLA filler (×1 trash). Other shooters may still soft-ship 1.
+    Standoff/WoT: owner lowered daily quota specifically for full ×3 склейки
+    (harder combat edits). Never soft-ship ×1/×2 fillers for those games.
+    PUBG may still partial-ship when SHIP_PARTIAL=1.
     """
+    ideal = _montage_limits()[0]
+    if game in ("wot", "standoff"):
+        key = (
+            "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS"
+            if game == "wot"
+            else "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS"
+        )
+        # Floor = ideal (default 3). Env can only raise, never drop below.
+        return max(ideal, int(os.environ.get(key, str(ideal))))
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
-        return _montage_limits()[0]
-    if game == "wot":
-        return max(2, int(os.environ.get("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", "2")))
+        return ideal
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))
 
 
@@ -842,6 +850,7 @@ def _send_montage(
                 # burn the 20min runner timeout rejecting outdoor_sky tails.
                 ship_target = max_clips
                 if os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
+                    # Still never below soft_min (×3 for standoff/wot).
                     ship_target = max(soft_min, 1)
                 if len(segment_paths) >= ship_target:
                     break

@@ -160,11 +160,17 @@ def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1")
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")
+    monkeypatch.delenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
+    monkeypatch.delenv("STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
     assert feed._montage_limits()[0] == 3
     assert feed._montage_soft_min_clips("pubg") == 1
-    assert feed._montage_soft_min_clips("wot") == 2
-    monkeypatch.setenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", "3")
+    # Owner contract: standoff/wot full ×3 склейка (quota was lowered for this).
     assert feed._montage_soft_min_clips("wot") == 3
+    assert feed._montage_soft_min_clips("standoff") == 3
+    monkeypatch.setenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", "4")
+    assert feed._montage_soft_min_clips("wot") == 4
+    monkeypatch.delenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "0")
     assert feed._montage_soft_min_clips("pubg") == 3
     assert feed._montage_soft_min_clips("wot") == 3
+    assert feed._montage_soft_min_clips("standoff") == 3
