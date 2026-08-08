@@ -141,6 +141,32 @@ def test_clear_stall_resumes_force_skipped_game(isolated_state: Path) -> None:
     assert cycle.active_game() == "pubg"
 
 
+def test_clear_stall_preserves_timeout_streak_on_auto_unstall(
+    isolated_state: Path,
+) -> None:
+    """SLA/self-heal must not reset timeout_runs — else skip-after never trips."""
+    for _ in range(5):
+        cycle.record_send("mlbb", 1)
+    for _ in range(3):
+        cycle.record_send("pubg", 1)
+    for _ in range(3):
+        cycle.record_send("standoff", 1)
+    cycle.note_feed_iteration("genshin", 0, timed_out=True)
+    entry = (cycle.load_state().get("stall") or {}).get("genshin") or {}
+    assert int(entry.get("timeout_runs") or 0) == 1
+
+    assert cycle.clear_stall("genshin", reason="hourly_sla_local_media") == []
+    assert cycle.clear_stall("genshin", reason="self_heal_local_media") == []
+    assert cycle.clear_stall("genshin", reason="inbox_ready_unstall") == []
+    entry = (cycle.load_state().get("stall") or {}).get("genshin") or {}
+    assert int(entry.get("timeout_runs") or 0) == 1
+
+    cleared = cycle.clear_stall("genshin", reason="manual_clear")
+    assert cleared == ["genshin"]
+    entry = (cycle.load_state().get("stall") or {}).get("genshin") or {}
+    assert int(entry.get("timeout_runs") or 0) == 0
+
+
 def test_unstall_on_inbox_ready(isolated_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for _ in range(5):
         cycle.record_send("mlbb", 1)

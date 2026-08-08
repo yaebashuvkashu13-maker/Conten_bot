@@ -215,6 +215,12 @@ def force_skip_game(game: str, reason: str = "manual") -> None:
     save_state(state)
 
 
+def _is_auto_stall_clear(reason: str) -> bool:
+    """Self-heal / SLA / inbox-ready must not erase timeout streaks."""
+    r = str(reason).lower()
+    return any(tok in r for tok in ("self_heal", "hourly_sla", "inbox_ready"))
+
+
 def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> list[str]:
     """Clear force_skip / zero-run stall so remaining quota can resume."""
     reset_if_new_day()
@@ -226,14 +232,17 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
         if g not in GAME_ORDER:
             continue
         entry = stall.setdefault(g, {})
-        # Do not wipe an active timeout streak via self-heal — that reopened the TG spam loop.
-        if int(entry.get("timeout_runs") or 0) >= 2 and "self_heal" in str(reason):
+        timeout_runs = int(entry.get("timeout_runs") or 0)
+        # Any timeout streak + auto-unstall: leave entry alone. hourly_sla_local_media
+        # previously wiped timeout_runs=1 before TIMEOUT_SKIP_AFTER could force_skip,
+        # leaving genshin in a multi-hour park_timeout loop with timeout_runs stuck at 0.
+        if timeout_runs > 0 and _is_auto_stall_clear(reason):
             continue
         if not (
             entry.get("force_skip")
             or int(entry.get("zero_runs") or 0) > 0
             or int(entry.get("thrash_runs") or 0) > 0
-            or int(entry.get("timeout_runs") or 0) > 0
+            or timeout_runs > 0
             or entry.get("since")
         ):
             continue
@@ -241,7 +250,7 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
         entry["zero_runs"] = 0
         entry["thrash_runs"] = 0
         # Keep timeout_runs unless explicit manual clear / new day.
-        if "self_heal" not in str(reason):
+        if not _is_auto_stall_clear(reason):
             entry["timeout_runs"] = 0
         entry["since"] = None
         entry["cleared_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
