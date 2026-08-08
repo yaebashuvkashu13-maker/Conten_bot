@@ -237,20 +237,37 @@ def discover_montage_gun_peaks(
     snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
     picked: list[float] = []
     picked_scores: list[float] = []
+    pick_gap = gap_sec * 0.85
     for center, gun_d, panns_g in snapped:
-        if any(abs(center - p) < gap_sec * 0.85 for p in picked):
+        if any(abs(center - p) < pick_gap for p in picked):
             continue
         picked.append(center)
         picked_scores.append(float(gun_d) * 2.0 + float(panns_g))
         if len(picked) >= pool_cap:
             break
 
+    # Owner ×3 склейка: if spacing ate the third fight, tighten once more.
+    if len(picked) < min_clips and snapped:
+        ultra = max(14.0, gap_sec * 0.35)
+        if ultra < pick_gap:
+            picked = []
+            picked_scores = []
+            for center, gun_d, panns_g in snapped:
+                if any(abs(center - p) < ultra for p in picked):
+                    continue
+                picked.append(center)
+                picked_scores.append(float(gun_d) * 2.0 + float(panns_g))
+                if len(picked) >= pool_cap:
+                    break
+            pick_gap = ultra
+            gap_sec = ultra / 0.85 if ultra > 0 else gap_sec
+
     # Keep strength order (not chronological) so montage tries best fights first.
     # Chronological reorder happens only after parts are accepted for xfade.
     top = scored[0][0] if scored else 0.0
     reason = (
         f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
-        f"snapped={len(snapped)} picked={len(picked)} gap={gap_sec:.0f} top={top:.3f}"
+        f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f}"
     )
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
     return picked, reason

@@ -1566,16 +1566,26 @@ def _scan_vod_with_adaptive(
 
                 rows = _build_rows(gap_sec * 0.9)
                 soft_min = _montage_soft_min_clips(game)
-                if len(rows) < min_clips:
-                    # Same VOD can still yield another ×3 if fights are denser.
-                    tight = max(22.0, gap_sec * 0.45)
+                if len(rows) < soft_min:
+                    # Same VOD can still yield ×3 if fights are denser than montage gap.
+                    tight = max(18.0, gap_sec * 0.45)
                     rows = _build_rows(tight)
-                    if len(rows) >= min_clips:
+                    if len(rows) >= soft_min:
                         log.info(
                             "fast-montage tight unused-gap vod=%s gap=%.0f→%.0f rows=%s",
                             vod.name,
                             gap_sec,
                             tight,
+                            len(rows),
+                        )
+                if len(rows) < soft_min:
+                    ultra = max(12.0, gap_sec * 0.28)
+                    rows = _build_rows(ultra)
+                    if len(rows) >= soft_min:
+                        log.info(
+                            "fast-montage ultra unused-gap vod=%s gap→%.0f rows=%s",
+                            vod.name,
+                            ultra,
                             len(rows),
                         )
                 if len(rows) >= soft_min:
@@ -1616,9 +1626,9 @@ def _scan_vod_with_adaptive(
                     remaining_unused = [
                         p
                         for p in dense_peaks
-                        if not _peak_too_close(float(p), used_peaks, max(22.0, gap_sec * 0.45))
+                        if not _peak_too_close(float(p), used_peaks, max(12.0, gap_sec * 0.28))
                     ]
-                    if len(remaining_unused) < min_clips:
+                    if len(remaining_unused) < soft_min:
                         _mark_vod_exhausted(
                             state,
                             vod,
