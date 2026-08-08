@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -73,6 +74,8 @@ def test_reject_enemy_triple() -> None:
 
 def test_bounds_from_fight_sustain() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
+    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     os.environ["MLBB_FIGHT_HARD_MAX_SEC"] = "32"
@@ -83,16 +86,19 @@ def test_bounds_from_fight_sustain() -> None:
         fight_end=118.0,
     )
     assert start == 88.0
-    assert end == 116.0
-    assert dur == 28.0
+    assert end == 103.0  # banner + 3s post
+    assert dur == 15.0
 
 
 def test_bounds_fallback_without_fight() -> None:
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
+    os.environ["MLBB_KILL_BANNER_MIN_PRE_SEC"] = "5"
+    os.environ["MLBB_KILL_BANNER_POST_SEC"] = "3"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
     os.environ["MLBB_FIGHT_MAX_SEC"] = "28"
     start, end, dur = bounds_from_banner(50.0, file_dur=120.0)
-    assert start == 46.0
+    assert start == 45.0  # banner - 5s
+    assert end == 53.0  # at least min fight 8s ending at banner+3
     assert 8.0 <= dur <= 28.0
 
 
@@ -117,26 +123,92 @@ def test_discover_banners_handles_numpy_motion() -> None:
     def fake_scan_window(*_a, **_kw):
         return []
 
+    def fake_find_banner(*_a, **_kw):
+        return None
+
     old = os.environ.get("MLBB_VOD_BANNER_DISCOVER")
+    old_full = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL")
+    old_fb = os.environ.get("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE")
+    old_fast = os.environ.get("MLBB_BANNER_FAST_DISCOVER")
     os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    os.environ["MLBB_VOD_BANNER_DISCOVER_FULL"] = "0"
+    os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = "0"
+    os.environ["MLBB_BANNER_FAST_DISCOVER"] = "0"
     try:
         import mlbb_fight_segment as fight
 
         orig = fight._analysis_for
         orig_scan = kb.scan_window
+        orig_find = kb.find_banner_near_peak
         fight._analysis_for = fake_analysis_for
         kb.scan_window = fake_scan_window
+        kb.find_banner_near_peak = fake_find_banner
         try:
             hits = kb.discover_vod_kill_banners(vod)
             assert hits == []
+            peaks = kb._motion_hint_peaks(fake_analysis, limit=4, duration=600.0)
+            assert len(peaks) == 4
+            assert all(p >= 90.0 for p in peaks)
         finally:
             fight._analysis_for = orig
             kb.scan_window = orig_scan
+            kb.find_banner_near_peak = orig_find
     finally:
         if old is None:
             os.environ.pop("MLBB_VOD_BANNER_DISCOVER", None)
         else:
             os.environ["MLBB_VOD_BANNER_DISCOVER"] = old
+        if old_full is None:
+            os.environ.pop("MLBB_VOD_BANNER_DISCOVER_FULL", None)
+        else:
+            os.environ["MLBB_VOD_BANNER_DISCOVER_FULL"] = old_full
+        if old_fb is None:
+            os.environ.pop("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE", None)
+        else:
+            os.environ["MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE"] = old_fb
+        if old_fast is None:
+            os.environ.pop("MLBB_BANNER_FAST_DISCOVER", None)
+        else:
+            os.environ["MLBB_BANNER_FAST_DISCOVER"] = old_fast
+
+
+def test_duration_grid_and_fast_discover_skips_analyze() -> None:
+    import mlbb_kill_banner as kb
+
+    peaks = kb._duration_grid_peaks(780.0, limit=8)
+    assert len(peaks) >= 4
+    assert peaks[0] >= 90.0
+
+    vod = Path("/tmp/fake_fast_vod.mp4")
+    calls = {"analysis": 0}
+
+    def boom_analysis(_vod: Path) -> dict:
+        calls["analysis"] += 1
+        raise AssertionError("fast discover must not call analyze_video")
+
+    old = {k: os.environ.get(k) for k in ("MLBB_VOD_BANNER_DISCOVER", "MLBB_BANNER_FAST_DISCOVER", "MLBB_BANNER_FAST_MAX_PROBES")}
+    os.environ["MLBB_VOD_BANNER_DISCOVER"] = "1"
+    os.environ["MLBB_BANNER_FAST_DISCOVER"] = "1"
+    os.environ["MLBB_BANNER_FAST_MAX_PROBES"] = "4"
+    try:
+        import mlbb_fight_segment as fight
+        from smart_video_editor import ffprobe_duration as real_ff
+
+        orig_a = fight._analysis_for
+        fight._analysis_for = boom_analysis
+        with patch.object(kb, "find_banner_near_peak", return_value=None), patch(
+            "smart_video_editor.ffprobe_duration", return_value=600.0
+        ), patch.object(kb, "_color_tip_rank", side_effect=lambda _v, peaks: peaks):
+            hits = kb.discover_vod_kill_banners_fast(vod)
+        assert hits == []
+        assert calls["analysis"] == 0
+    finally:
+        fight._analysis_for = orig_a
+        for key, val in old.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
 
     os.environ["MLBB_VOD_LEAD_SEC"] = "4"
     os.environ["MLBB_FIGHT_MIN_SEC"] = "8"
@@ -196,12 +268,20 @@ def test_resolve_fight_bounds_strict_requires_banner() -> None:
     vod = Path("/tmp/fake_vod_strict.mp4")
     old = {
         k: os.environ.get(k)
-        for k in ("MLBB_VOD_KILL_BANNER", "MLBB_KILL_BANNER_REQUIRED", "MLBB_VOD_MOTION_ANCHOR_OK")
+        for k in (
+            "MLBB_VOD_KILL_BANNER",
+            "MLBB_KILL_BANNER_REQUIRED",
+            "MLBB_VOD_MOTION_ANCHOR_OK",
+            "MLBB_MOMENT_ANCHOR",
+            "MLBB_BANNER_ENRICH_ONLY",
+        )
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
+    os.environ["MLBB_VOD_BANNER_PRESEND"] = "1"
+    os.environ["MLBB_MOMENT_ANCHOR"] = "banner"
+    os.environ["MLBB_BANNER_ENRICH_ONLY"] = "0"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
-    os.environ.pop("MLBB_VOD_BANNER_PRESEND", None)
     try:
         with (
             patch.object(kb, "find_banner_near_peak", return_value=None),
@@ -221,7 +301,9 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
     from unittest.mock import patch
 
     vod = Path("/tmp/fake_vod_deep.mp4")
-    hit = kb.KillBannerHit(sec=102.0, tier=2, label="double", text="DOUBLE KILL", source="ocr")
+    hit = kb.KillBannerHit(
+        sec=102.0, tier=2, label="double", text="ref=owner sim=0.55", source="ref"
+    )
     calls: list[bool] = []
 
     def fake_find(_vod, _peak, *, quick: bool = False):
@@ -230,11 +312,23 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
 
     old = {
         k: os.environ.get(k)
-        for k in ("MLBB_VOD_KILL_BANNER", "MLBB_KILL_BANNER_REQUIRED", "MLBB_KILL_BANNER_MIN_TIER")
+        for k in (
+            "MLBB_VOD_KILL_BANNER",
+            "MLBB_KILL_BANNER_REQUIRED",
+            "MLBB_KILL_BANNER_MIN_TIER",
+            "MLBB_MOMENT_ANCHOR",
+            "MLBB_BANNER_ENRICH_ONLY",
+            "MLBB_BANNER_VISUAL_OK",
+            "MLBB_BANNER_OCR_OK",
+        )
     }
     os.environ["MLBB_VOD_KILL_BANNER"] = "1"
     os.environ["MLBB_KILL_BANNER_REQUIRED"] = "1"
     os.environ["MLBB_KILL_BANNER_MIN_TIER"] = "double"
+    os.environ["MLBB_MOMENT_ANCHOR"] = "banner"
+    os.environ["MLBB_BANNER_ENRICH_ONLY"] = "0"
+    os.environ["MLBB_BANNER_VISUAL_OK"] = "1"
+    os.environ["MLBB_BANNER_OCR_OK"] = "0"
     os.environ.pop("MLBB_VOD_MOTION_ANCHOR_OK", None)
     try:
         with (
@@ -245,6 +339,7 @@ def test_resolve_fight_bounds_tries_deep_scan_before_reject() -> None:
         assert calls == [True, False]
         assert out is not None
         assert out[3]["anchor"] == "kill_banner"
+        assert out[3]["banner_source"] == "ref"
     finally:
         for key, val in old.items():
             if val is None:

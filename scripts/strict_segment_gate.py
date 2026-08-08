@@ -101,29 +101,46 @@ def probe_segment(
 
 def _wot_extra_reject(metrics: dict) -> tuple[bool, str]:
     """Reject tank cruise: motion without sustained hits."""
+    soft = os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_GATE", "0") == "1"
+    impact = float(metrics.get("impact_density", 0))
+    motion = float(metrics.get("center_motion", 0))
+    flashes = int(metrics.get("hit_flash_count", 0))
+    burst = float(metrics.get("burst_ratio", 0))
+    min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
+    if soft:
+        # Soft quality floor for real cannon fights (~0.015–0.04). Do NOT use
+        # starve floors (0.005–0.008) — that shipped cruise as "combat".
+        # Real fight band ~0.015–0.04; below that is map cruise filler.
+        min_impact = min(min_impact, float(os.environ.get("WOT_SOFT_MIN_IMPACT_DENSITY", "0.015")))
+    # cruise_cap = minimum impact required while moving (name is historical).
+    cruise_cap = float(
+        os.environ.get(
+            "WOT_BRAWL_CRUISE_IMPACT_MAX",
+            str(max(min_impact * 1.35, 0.070)),
+        )
+    )
+    if soft:
+        # Soft must LOWER the moving-impact floor vs hard 0.07+, never raise it.
+        soft_cruise = float(os.environ.get("WOT_SOFT_CRUISE_IMPACT_MAX", "0.015"))
+        if os.environ.get("SMART_WOT_CRUISE_IMPACT_CAP"):
+            soft_cruise = min(soft_cruise, float(os.environ["SMART_WOT_CRUISE_IMPACT_CAP"]))
+        cruise_cap = min(cruise_cap, soft_cruise)
     if os.environ.get("WOT_BRAWL_GATE", "1") == "1":
-        impact = float(metrics.get("impact_density", 0))
-        motion = float(metrics.get("center_motion", 0))
-        flashes = int(metrics.get("hit_flash_count", 0))
-        min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
         min_flashes = max(1, int(os.environ.get("WOT_BRAWL_MIN_HIT_FLASHES", "2")))
+        if soft:
+            min_flashes = max(2, int(os.environ.get("WOT_SOFT_MIN_HIT_FLASHES", "2")))
         if flashes and flashes < min_flashes:
             return True, f"low_hit_flashes={flashes}:need{min_flashes}"
         if impact < min_impact:
             return True, f"no_hits=density{impact:.3f}"
-        if motion >= 0.10 and impact < 0.05:
+        if motion >= 0.10 and impact < cruise_cap:
             return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
-        burst = float(metrics.get("burst_ratio", 0))
         if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
             return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"
         return False, ""
-    impact = float(metrics.get("impact_density", 0))
-    motion = float(metrics.get("center_motion", 0))
-    burst = float(metrics.get("burst_ratio", 0))
-    min_impact = float(os.environ.get("SMART_WOT_MIN_IMPACT_DENSITY", "0.052"))
     if impact < min_impact:
         return True, f"no_hits=density{impact:.3f}"
-    if motion >= 0.10 and impact < max(min_impact * 1.35, 0.070):
+    if motion >= 0.10 and impact < cruise_cap:
         return True, f"cruise_no_action=motion{motion:.3f}:impact{impact:.3f}"
     if impact < min_impact * 1.05 and burst < float(os.environ.get("SMART_WOT_MIN_BURST_RATIO", "2.3")):
         return True, f"empty_drive=density{impact:.3f}:burst{burst:.2f}"

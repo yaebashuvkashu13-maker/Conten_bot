@@ -21,6 +21,7 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("classic", "🌤 Классика / небо"),
         ("no_combat", "🔇 Нет перестрелки"),
         ("no_kill", "💀 Килл не виден"),
+        ("author_death", "☠️ Автора убивают"),
         ("loot_run", "🎒 Бег / лут без боя"),
         ("promo", "📢 Реклама"),
         ("boring", "😴 Скучно"),
@@ -29,6 +30,8 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
     "standoff": (
         ("not_gameplay", "🎬 Не геймплей"),
         ("no_gunfire", "🔇 Нет стрельбы"),
+        ("no_kill", "💀 Килл автора не виден"),
+        ("author_death", "☠️ Автора убивают"),
         ("menu_lobby", "📋 Меню / лобби"),
         ("promo", "📢 Реклама"),
         ("boring", "😴 Скучно"),
@@ -146,6 +149,12 @@ def labeled_keyboard_markup(
         rows: list[list[dict]] = [[{"text": "✅ Хорошо", "callback_data": f"{g}_noop"}]]
         if vid:
             rows.append([{"text": "📁 HQ файл", "callback_data": f"{g}_hq:{vid}"}])
+            try:
+                from social_publish import social_button_row
+
+                rows.append(social_button_row(g, vid))
+            except Exception:
+                pass
         return {"inline_keyboard": rows}
     mark = f"❌ {dislike_reason_label(g, reason)}"
     return {"inline_keyboard": [[{"text": mark, "callback_data": f"{g}_noop"}]]}

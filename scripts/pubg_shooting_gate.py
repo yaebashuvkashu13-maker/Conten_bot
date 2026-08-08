@@ -17,6 +17,10 @@ from gameplay_gate import (
 MIN_GUNFIRE_DENSITY = 0.068
 MIN_BURST_RATIO = 5.2
 
+# Absolute floors even when soften/env try to lower them (quality floor).
+QUALITY_FLOOR_GUNFIRE = 0.055
+QUALITY_FLOOR_BURST = 4.8
+
 FORBIDDEN_REASONS = frozenset(
     {
         "run_no_fight",
@@ -26,6 +30,7 @@ FORBIDDEN_REASONS = frozenset(
         "run_loot",
         "talk_menu",
         "talk_low_gun",
+        "streamer_talk",
         "no_shots",
         "low_gunfire",
         "silent_segment",
@@ -33,15 +38,17 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
 
 
 def _min_gunfire() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    return max(raw, QUALITY_FLOOR_GUNFIRE)
 
 
 def _min_burst() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    return max(raw, QUALITY_FLOOR_BURST)
 
 
 def reason_is_forbidden(reason: str) -> bool:
@@ -49,6 +56,15 @@ def reason_is_forbidden(reason: str) -> bool:
     if base in FORBIDDEN_REASONS:
         return True
     return any(fragment in reason for fragment in FORBIDDEN_REASONS)
+
+
+def owner_reason_counts_as_audio(reason: str) -> bool:
+    """Pass reasons from pubg_passes_owner_heuristics (incl. panns_trust=…)."""
+    base = reason.split("=", 1)[0].split(":")[0]
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    # panns_trust / panns_audio / relax_* / tiktok_* are explicit pass tokens.
+    return base.startswith(("panns_", "relax_", "tiktok_"))
 
 
 def pubg_probe_segment(
@@ -127,9 +143,11 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # ok_owner already means heuristics passed; do not drop panns_trust just because
+    # the reason string is not exactly fight_audio/light_combat (that blocked montages).
+    heuristic_audio = bool(ok_owner) and owner_reason_counts_as_audio(owner_reason)
 
-    if owner_reason == "sniper_hold":
+    if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
             return False, f"sniper_hold_no_motion=motion{motion:.3f}:gun{gun:.3f}", metrics
         if gun < min_gun * 0.90:
@@ -153,7 +171,21 @@ def pubg_passes_shooting_gate(
         crop_box=crop,
         gunfire_density=gun,
     ):
-        return False, f"loot_walk=density{gun:.3f}", metrics
+        # Strong PANNs gunfire: don't call continuous auto-fire "loot".
+        # Spike-density alone under-counts sprays; require audible energy too.
+        # Floor must match owner trust (0.40) — 0.28 let ambient/UI SFX override.
+        panns_floor = float(
+            os.environ.get(
+                "PUBG_PANNS_LOOT_OVERRIDE_MIN",
+                os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40"),
+            )
+        )
+        panns_strong = panns_gun_max >= panns_floor
+        audible = gun >= min_gun * 0.85 or (rms >= 0.035 and gun >= min_gun * 0.55)
+        if panns_strong and audible:
+            metrics["panns_loot_override"] = True
+        elif not (panns_gun_max >= 0.45 and gun >= min_gun * 0.85):
+            return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
         video_path,
@@ -166,9 +198,23 @@ def pubg_passes_shooting_gate(
     metrics["gate_reason"] = gate_reason
 
     if reason_is_forbidden(gate_reason):
-        return False, gate_reason, metrics
+        base = str(gate_reason).split("=", 1)[0]
+        # Visual run/loot/fake-gun must not override clear gunfire evidence —
+        # but weak PANNs (0.28) was shipping trash walk segments.
+        panns_floor = float(
+            os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", os.environ.get("PUBG_PANNS_TRUST_MIN", "0.40"))
+        )
+        panns_ok = panns_gun_max >= panns_floor
+        if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"} and (
+            strict_audio
+            or (heuristic_audio and gun >= min_gun * 0.85)
+            or (panns_ok and gun >= min_gun * 0.85)
+        ):
+            metrics["visual_override"] = gate_reason
+        else:
+            return False, gate_reason, metrics
 
-    if not gate_ok:
+    if not gate_ok and not metrics.get("visual_override"):
         return False, gate_reason, metrics
 
     pass_reason = (
@@ -176,6 +222,8 @@ def pubg_passes_shooting_gate(
         if strict_audio
         else f"{owner_reason}=gun{gun:.3f}:burst{burst:.2f}"
     )
+    if metrics.get("visual_override"):
+        pass_reason = f"{pass_reason}+override:{metrics['visual_override'].split('=')[0]}"
     return True, pass_reason, metrics
 
 

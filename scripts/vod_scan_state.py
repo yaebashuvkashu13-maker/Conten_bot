@@ -15,17 +15,30 @@ def scan_cooldown_sec(game: str = "") -> int:
     if g == "mlbb":
         raw = os.environ.get(
             "MLBB_VOD_SCAN_COOLDOWN_SEC",
-            os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200"),
+            os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "1800"),
         )
         return max(60, int(raw))
-    return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "7200")))
+    return max(60, int(os.environ.get("SHOOTER_VOD_SCAN_COOLDOWN_SEC", "1800")))
+
+
+def blocked_rescan_cooldown_sec(game: str, entry: dict[str, Any]) -> int:
+    """Shorter retry when peaks exist but were gap-blocked — avoids 2h idle."""
+    base = scan_cooldown_sec(game)
+    if not entry.get("last_scan_blocked"):
+        return base
+    peaks = entry.get("last_pool_peaks") or []
+    reason = str(entry.get("reject_reason") or "").strip()
+    if peaks and not reason:
+        short = int(os.environ.get("VOD_GAP_BLOCK_COOLDOWN_SEC", "900"))
+        return min(base, max(60, short))
+    return base
 
 
 def strict_peak_tries(game: str = "") -> int:
     """Presend peak attempts per run at strict (L0) — walk pool without exhausting VOD."""
     g = (game or "").strip().lower()
     if g == "mlbb":
-        return max(1, int(os.environ.get("MLBB_VOD_STRICT_PEAK_TRIES", "2")))
+        return max(1, int(os.environ.get("MLBB_VOD_STRICT_PEAK_TRIES", "4")))
     return max(1, int(os.environ.get("SHOOTER_VOD_STRICT_PEAK_TRIES", "2")))
 
 
@@ -79,12 +92,22 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     if entry.get("exhausted"):
         return True
     last = float(entry.get("last_scan_at") or 0)
+    sent_ok = int(entry.get("last_scan_sent") or 0) > 0
+    # Zombie rows: blocked forever with no scan timestamp — used to burn every
+    # max-vods slot before long inbox files. Skip until an explicit unstall.
     if last <= 0:
+        if entry.get("last_scan_blocked") and not sent_ok:
+            return True
         return False
-    if int(entry.get("last_scan_sent") or 0) > 0:
+    if sent_ok:
         return False
     age = time.time() - last
-    if age < scan_cooldown_sec(game) and entry.get("last_scan_blocked"):
+    if age < blocked_rescan_cooldown_sec(game, entry) and entry.get("last_scan_blocked"):
+        return True
+    # Zero-send without blocked flag (gate reject / anti-hang) — still cool down
+    # so we don't re-dense-scan the same VOD every 8s idle tick.
+    zero_cd = int(os.environ.get("VOD_ZERO_SEND_COOLDOWN_SEC", "600"))
+    if age < max(60, zero_cd) and str(entry.get("reject_reason") or ""):
         return True
     return False
 
@@ -192,10 +215,12 @@ def record_vod_scan(
             )
         entry["last_pool_peaks"] = detail
         entry["last_pool_at"] = time.time()
-    elif pool_peaks:
+    else:
+        # Empty list must be written — falsy `elif pool_peaks:` skipped [] and
+        # left last_pool_peaks unset, so dead VODs never exhausted (PUBG spam loop).
         entry["last_pool_peaks"] = [
-            {"peak_sec": round(p, 1), "score": 0.0, "blocked_reason": ""}
-            for p in pool_peaks[:24]
+            {"peak_sec": round(float(p), 1), "score": 0.0, "blocked_reason": ""}
+            for p in list(pool_peaks or [])[:24]
         ]
         entry["last_pool_at"] = time.time()
     if analysis_cache_key:

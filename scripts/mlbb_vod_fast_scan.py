@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MLBB VOD fast preflight — sparse banner color + PANNs combat probes."""
+"""MLBB VOD fast preflight — banner-first (default) or legacy combat/gun probes."""
 
 from __future__ import annotations
 
@@ -10,20 +10,9 @@ from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 
 def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
-    dur = max(0.0, float(duration))
-    if dur < skip_intro + 120:
-        return []
-    offsets: list[float] = []
-    for delta in (0, 180, 420, 780, 1200, 1800):
-        t = skip_intro + delta
-        if t + WINDOW_SEC < dur - 60:
-            offsets.append(round(t, 1))
-    mid = skip_intro + max(0.0, (dur - skip_intro) * 0.45)
-    if mid + WINDOW_SEC < dur - 60 and all(abs(mid - x) > 90 for x in offsets):
-        offsets.append(round(mid, 1))
-    return sorted(set(offsets))[
-        : int(os.environ.get("MLBB_VOD_FAST_PROBE_MAX", "6"))
-    ]
+    from mlbb_combat_moment import probe_offsets
+
+    return probe_offsets(duration, skip_intro=skip_intro)
 
 
 def _banner_color_at(video_path: Path, t: float) -> float:
@@ -36,17 +25,56 @@ def _banner_color_at(video_path: Path, t: float) -> float:
     return float(_announce_color_score(frame))
 
 
+def fast_banner_probe(video_path: Path) -> tuple[bool, str, list[float]]:
+    """
+    Fast preflight: find real ≥double via visual ref match only.
+    Returns seed peaks at banner seconds. Color alone never counts as success.
+    """
+    from mlbb_kill_banner import discover_vod_kill_banners_fast
+
+    hits = discover_vod_kill_banners_fast(video_path)
+    if not hits:
+        return False, "banner_probe_0_real_double", []
+    seeds = [round(float(h.sec), 1) for h in hits[:8]]
+    top = hits[0]
+    return (
+        True,
+        f"banner_probe_{len(hits)} tier={top.tier} src={top.source} @{top.sec:.0f}s",
+        seeds,
+    )
+
+
 def vod_fast_combat_check(
     video_path: Path,
     profile: str = "mobile_legends",
 ) -> tuple[bool, str, list[float]]:
     """
-    Six sparse probes: kill-banner color zone + PANNs combat.
-    Returns (ok, reason, seed_peak_starts).
+    Sparse preflight before full highlight scan.
+    Default (MLBB_FAST_PROBE_MODE=banner): visual kill-banner ref match first.
+    combat: HUD teamfight probes (slower — pulls full analyze).
+    gun: legacy banner color + PANNs gunfire.
     """
     profile = normalize_profile(profile)
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") != "1":
         return True, "fast_probe_disabled", []
+
+    mode = (os.environ.get("MLBB_FAST_PROBE_MODE") or "banner").strip().lower()
+    if mode in ("banner", "kill_banner", "auto"):
+        # auto follows moment anchor
+        if mode == "auto":
+            from mlbb_combat_moment import moment_anchor_mode
+
+            if moment_anchor_mode() != "banner":
+                mode = "combat"
+            else:
+                mode = "banner"
+        if mode == "banner" or mode == "kill_banner":
+            return fast_banner_probe(video_path)
+
+    if mode == "combat":
+        from mlbb_combat_moment import fast_combat_probe
+
+        return fast_combat_probe(video_path, profile)
 
     from smart_video_editor import ffprobe_duration
 
@@ -54,7 +82,7 @@ def vod_fast_combat_check(
     if dur <= 0:
         return False, "fast_probe_no_duration", []
 
-    skip = float(os.environ.get("MLBB_VOD_FAST_SKIP_INTRO", "300"))
+    skip = float(os.environ.get("MLBB_VOD_FAST_SKIP_INTRO", "120"))
     offsets = _probe_offsets(dur, skip_intro=skip)
     if not offsets:
         return False, "fast_probe_too_short", []

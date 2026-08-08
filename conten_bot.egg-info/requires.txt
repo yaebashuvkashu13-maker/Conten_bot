@@ -9,3 +9,9 @@ yt-dlp
 
 [dev]
 pytest
+
+[highlight]
+torch
+panns-inference
+open-clip-torch
+Pillow

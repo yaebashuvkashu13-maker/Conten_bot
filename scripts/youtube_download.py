@@ -257,12 +257,12 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         str(template),
         url,
     ]
-    subprocess.run(
-        cmd,
-        check=True,
-        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(env),
-    )
+    # Same 403 client fallback as search — bare subprocess.run hung/failed downloads.
+    timeout = int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400"))
+    proc = run_ytdlp(cmd, env, timeout=timeout, label="download")
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "")[-800:]
+        raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {err}")
     files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")

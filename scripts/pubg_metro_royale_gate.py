@@ -97,7 +97,7 @@ def segment_looks_metro_royale(
     start_sec: float,
     duration_sec: float,
 ) -> tuple[bool, str]:
-    if os.environ.get("PUBG_METRO_GATE", "1") != "1":
+    if os.environ.get("PUBG_METRO_GATE", "0") != "1":
         return True, "metro_gate_off"
     if os.environ.get("PUBG_METRO_SEGMENT_TRUST_VOD", "0") == "1":
         return True, "metro_vod_trusted"
@@ -155,7 +155,7 @@ def vod_looks_metro_royale(
     title: str | None = None,
 ) -> tuple[bool, str]:
     """Sample a few points in the VOD before investing in a full scan."""
-    if os.environ.get("PUBG_METRO_GATE", "1") != "1":
+    if os.environ.get("PUBG_METRO_GATE", "0") != "1":
         return True, "metro_gate_off"
     if title_metro_hint(title) and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1":
         return True, "metro_title_trusted"

@@ -61,20 +61,36 @@ def streak_threshold() -> int:
 
 def soften_level(streak: int) -> int:
     """0=strict, 1=soft (streak>=threshold), 2=softer (streak>=threshold+3)."""
+    if os.environ.get("MLBB_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0
     if streak >= need + 3:
-        return 2
-    return 1
+        level = 2
+    else:
+        level = 1
+    # Quality-first: never drop below mild soften (no L2 motion-only trash).
+    max_level = int(os.environ.get("MLBB_VOD_MAX_SOFTEN_LEVEL", "1"))
+    return max(0, min(level, max_level))
 
 
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
     if level >= 2:
-        return dict(SOFTEN_L2)
-    return dict(SOFTEN_L1)
+        ov = dict(SOFTEN_L2)
+    else:
+        ov = dict(SOFTEN_L1)
+    if os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1":
+        # Keep banner/combat bar from collapsing under soften.
+        ov["MLBB_KILL_BANNER_REQUIRED"] = os.environ.get(
+            "MLBB_QUALITY_BANNER_REQUIRED", "1"
+        )
+        ov["MLBB_VOD_BANNER_PRESEND"] = os.environ.get("MLBB_QUALITY_BANNER_PRESEND", "1")
+        ov["MLBB_VOD_MOTION_ANCHOR_OK"] = "0"
+        ov["MLBB_VOD_MIN_CLIP_SCORE"] = os.environ.get("MLBB_QUALITY_MIN_CLIP_SCORE", "0.08")
+    return ov
 
 
 def trailing_zero_streak(results: list[dict]) -> int:
