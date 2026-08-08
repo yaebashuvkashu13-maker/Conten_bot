@@ -82,12 +82,13 @@ def test_banner_fast_ship_rejects_short_vod_and_early_peak() -> None:
                 "MLBB_BANNER_FAST_SHIP_MIN_VOD_SEC": "480",
                 "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC": "240",
                 "MLBB_VOD_MIN_PEAK_SEC": "300",
+                "MLBB_BANNER_FAST_SHIP_MIN_TIER": "3",
             },
             clear=False,
         ),
         patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=180.0),
     ):
-        ok, reason = _banner_fast_ship_seed_ok(vod, 280.0, tier=2)
+        ok, reason = _banner_fast_ship_seed_ok(vod, 280.0, tier=3)
         assert not ok
         assert "vod_too_short" in reason
 
@@ -97,17 +98,20 @@ def test_banner_fast_ship_rejects_short_vod_and_early_peak() -> None:
             {
                 "MLBB_BANNER_FAST_SHIP_MIN_VOD_SEC": "480",
                 "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC": "240",
+                "MLBB_BANNER_FAST_SHIP_MIN_TIER": "3",
             },
             clear=False,
         ),
         patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=900.0),
     ):
-        ok_early, reason_early = _banner_fast_ship_seed_ok(vod, 138.0, tier=2)
+        ok_early, reason_early = _banner_fast_ship_seed_ok(vod, 138.0, tier=3)
         assert not ok_early
         assert "peak_too_early" in reason_early
-        ok_mid, _ = _banner_fast_ship_seed_ok(vod, 285.0, tier=2)
+        ok_double, reason_double = _banner_fast_ship_seed_ok(vod, 285.0, tier=2)
+        assert not ok_double
+        assert "tier_low" in reason_double
+        ok_mid, _ = _banner_fast_ship_seed_ok(vod, 285.0, tier=3)
         assert ok_mid
-
 
 def test_quality_first_pick_min_rejects_highlight_shorts() -> None:
     from mlbb_vod_segment_feed import _vod_pick_min_sec

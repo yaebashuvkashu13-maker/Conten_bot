@@ -677,17 +677,18 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
 def _montage_soft_min_clips(game: str | None = None) -> int:
     """Minimum accepted parts before a montage may ship.
 
-    Standoff/WoT: owner lowered daily quota specifically for full ×3 склейки
-    (harder combat edits). Never soft-ship ×1/×2 fillers for those games.
-    PUBG may still partial-ship when SHIP_PARTIAL=1.
+    OWNER CONTRACT (do not regress):
+    PUBG / Standoff / WoT quotas were lowered specifically so each send is a
+    full ×3 склейка (multi-fight), never a single 14s filler. Soft/partial
+    below ideal is forbidden for these games.
     """
     ideal = _montage_limits()[0]
-    if game in ("wot", "standoff"):
-        key = (
-            "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS"
-            if game == "wot"
-            else "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS"
-        )
+    if game in ("pubg", "standoff", "wot"):
+        key = {
+            "pubg": "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS",
+            "standoff": "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS",
+            "wot": "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS",
+        }[game]
         # Floor = ideal (default 3). Env can only raise, never drop below.
         return max(ideal, int(os.environ.get(key, str(ideal))))
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":

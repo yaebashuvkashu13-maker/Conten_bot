@@ -147,7 +147,8 @@ def _banner_fast_ship_seed_ok(vod: Path, peak: float, tier: int) -> tuple[bool, 
         min_peak = max(120.0, min_peak * 0.75)
     if float(peak) < min_peak:
         return False, f"peak_too_early={peak:.0f}<{min_peak:.0f}"
-    min_tier = int(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_TIER", "2"))
+    # OWNER: doubles-only fast-ships read as trash/lane. Default require triple+.
+    min_tier = int(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_TIER", "3"))
     if int(tier) < min_tier:
         return False, f"tier_low={tier}<{min_tier}"
     return True, "ok"

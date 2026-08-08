@@ -74,10 +74,11 @@ class KillBannerHit:
 
 
 def _min_tier() -> int:
-    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "double").strip().lower()
+    # OWNER: lane doubles are trash; default require triple+ teamfight streaks.
+    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "triple").strip().lower()
     if raw.isdigit():
         return max(1, int(raw))
-    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 2)
+    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 3)
 
 
 def _banner_required() -> bool:
