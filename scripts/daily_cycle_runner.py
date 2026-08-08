@@ -152,9 +152,50 @@ def _run_timeout_sec() -> int:
         return 1800
 
 
+def _ensure_disk_headroom() -> None:
+    """ENOSPC silently killed the feed for 6h — cleanup before each iteration."""
+    import shutil
+
+    try:
+        free_gb = shutil.disk_usage("/").free / (1024**3)
+    except OSError as exc:
+        log.warning("disk usage check failed: %s", exc)
+        return
+    min_free = float(os.environ.get("VPS_DISK_MIN_FREE_GB", "8"))
+    if free_gb >= min_free:
+        return
+    log.error("disk low free=%.1fGB (need>=%.1f) — running cleanup", free_gb, min_free)
+    script = SCRIPTS / "vps_disk_cleanup.sh"
+    if script.is_file():
+        try:
+            subprocess.run(["bash", str(script)], check=False, timeout=240)
+        except Exception as exc:
+            log.warning("disk cleanup failed: %s", exc)
+    # Emergency parks wipe if still critical.
+    try:
+        free2 = shutil.disk_usage("/").free / (1024**3)
+    except OSError:
+        return
+    if free2 >= min_free * 0.5:
+        log.warning("disk after cleanup free=%.1fGB", free2)
+        return
+    for g in ("mlbb", "pubg", "standoff", "genshin", "wot"):
+        base = Path(f"/root/data/{g}/youtube_nightly")
+        for sub in ("hold_quota", "hold_barren", "park_dead", "park_timeout", "exhausted"):
+            p = base / sub
+            if p.is_dir():
+                subprocess.run(["rm", "-rf", str(p)], check=False)
+                p.mkdir(parents=True, exist_ok=True)
+    try:
+        log.warning("disk emergency free=%.1fGB", shutil.disk_usage("/").free / (1024**3))
+    except OSError:
+        pass
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     env = _load_runtime_env()
+    _ensure_disk_headroom()
     if not enabled():
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode

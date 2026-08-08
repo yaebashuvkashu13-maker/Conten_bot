@@ -536,6 +536,14 @@ def discover_vod_kill_banners_fast(
     max_sec = max(30.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "120")))
     # Collect multiple doubles so SEND_ONE can still pick an unsent peak.
     ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "0") == "1"
+    # Do not stop on early laning doubles — fast-ship rejects peak_too_early and
+    # then empties the VOD (hour SLA stall). Keep searching past min peak floor.
+    min_peak_ship = float(
+        os.environ.get(
+            "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC",
+            os.environ.get("MLBB_BANNER_FAST_SHIP_PEAK_FLOOR", "240"),
+        )
+    )
     deadline = time.monotonic() + max_sec
     hits: list[KillBannerHit] = []
     probes = 0
@@ -544,13 +552,17 @@ def discover_vod_kill_banners_fast(
     if not peaks:
         peaks = _duration_grid_peaks(duration, limit=max_probes)
     peaks = _color_tip_rank(vod, peaks)[: max_probes * 2]
+    # Prefer mid/late fight candidates first when quality-first.
+    if os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1":
+        peaks = sorted(peaks, key=lambda p: (0 if float(p) >= min_peak_ship else 1, float(p)))
 
     log.info(
-        "banner fast-discover %s: peaks=%s budget=%.0fs need_tier>=%s",
+        "banner fast-discover %s: peaks=%s budget=%.0fs need_tier>=%s min_peak>=%.0f",
         vod.name,
         [round(p, 1) for p in peaks[:12]],
         max_sec,
         need,
+        min_peak_ship,
     )
 
     for peak in peaks:
@@ -582,8 +594,14 @@ def discover_vod_kill_banners_fast(
             hit.label,
             probes,
         )
-        if ship_on_first and hits:
+        if ship_on_first and hits and float(hits[-1].sec) >= min_peak_ship:
             break
+        if ship_on_first and hits and float(hits[-1].sec) < min_peak_ship:
+            log.info(
+                "banner fast-hit early @%.1fs < min_peak=%.0f — keep searching",
+                hits[-1].sec,
+                min_peak_ship,
+            )
 
     # Dense retry: VODs have kills — first grid miss is a sampling miss, not emptiness.
     if (
@@ -627,8 +645,14 @@ def discover_vod_kill_banners_fast(
                 hit.label,
                 probes,
             )
-            if ship_on_first:
+            if ship_on_first and float(hit.sec) >= min_peak_ship:
                 break
+            if ship_on_first and float(hit.sec) < min_peak_ship:
+                log.info(
+                    "banner fast-hit early @%.1fs < min_peak=%.0f — keep searching (dense)",
+                    hit.sec,
+                    min_peak_ship,
+                )
 
     hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
     log.info(
