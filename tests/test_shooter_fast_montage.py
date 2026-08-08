@@ -18,7 +18,19 @@ def test_dense_offsets_caps_and_steps(monkeypatch) -> None:
     offs = fast._dense_offsets(2000.0, skip_intro=120.0)
     assert len(offs) == 10
     assert offs[0] == 120.0
-    assert offs[1] - offs[0] == 60.0
+    # Spans whole VOD — step stretches beyond the configured 60s floor.
+    assert offs[1] - offs[0] >= 60.0
+    assert offs[-1] > 1500.0
+
+
+def test_dense_offsets_spans_long_vod(monkeypatch) -> None:
+    """90min streams must probe past the first ~20min (old fixed step×cap)."""
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "32")
+    offs = fast._dense_offsets(5428.0, skip_intro=28.0)
+    assert len(offs) == 32
+    assert offs[0] == 28.0
+    assert offs[-1] > 4000.0
 
 
 def test_discover_montage_picks_spaced_peaks(monkeypatch) -> None:

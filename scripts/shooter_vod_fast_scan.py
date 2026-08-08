@@ -48,7 +48,11 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
 
 
 def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
-    """Evenly spaced probes for montage (≥3 fights). Caps CPU via MAX."""
+    """Evenly spaced probes for montage (≥3 fights). Caps CPU via MAX.
+
+    Critical: a fixed step+cap only covered the first ~20min of 90min streams,
+    so used early fights left have<3 while the rest of the VOD was never probed.
+    """
     dur = max(0.0, float(duration))
     # Short VODs: denser step, still probe (was empty at skip+180 threshold).
     if dur < skip_intro + 120:
@@ -57,6 +61,10 @@ def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
     if dur < 600:
         step = min(step, 25.0)
     cap = max(10, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")))
+    usable = max(0.0, dur - skip_intro - 12.0 - WINDOW_SEC)
+    if usable > 0 and cap > 1:
+        # Stretch so probes span the whole VOD instead of clustering at the start.
+        step = max(step, usable / float(cap - 1))
     out: list[float] = []
     t = skip_intro
     while t + WINDOW_SEC < dur - 12 and len(out) < cap:
