@@ -693,16 +693,25 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
     PUBG / Standoff / WoT quotas were lowered specifically so each send is a
     full ×3 склейка (multi-fight), never a single 14s filler. Soft/partial
     below ideal is forbidden for these games.
+
+    Emergency escape (SLA): SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN=2 allows a
+    2-fight склейка when inbox VODs cannot form ×3 (used peaks / gate rejects)
+    so the daily cycle does not idle for hours with rem>0.
     """
     ideal = _montage_limits()[0]
+    emergency = int(os.environ.get("SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN", "0") or 0)
     if game in ("pubg", "standoff", "wot"):
         key = {
             "pubg": "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS",
             "standoff": "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS",
             "wot": "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS",
         }[game]
-        # Floor = ideal (default 3). Env can only raise, never drop below.
-        return max(ideal, int(os.environ.get(key, str(ideal))))
+        # Floor = ideal (default 3). Env can only raise, never drop below —
+        # unless emergency soft-min is explicitly enabled for SLA recovery.
+        configured = max(ideal, int(os.environ.get(key, str(ideal))))
+        if emergency >= 2:
+            return max(2, min(configured, emergency))
+        return configured
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
         return ideal
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))

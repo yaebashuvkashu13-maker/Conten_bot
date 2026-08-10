@@ -255,6 +255,7 @@ def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
     monkeypatch.delenv("WOT_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
     monkeypatch.delenv("STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS", raising=False)
+    monkeypatch.delenv("SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN", raising=False)
     assert feed._montage_limits()[0] == 3
     # OWNER CONTRACT: all combat shooters full ×3 (quota lowered for склейки).
     assert feed._montage_soft_min_clips("pubg") == 3
@@ -267,3 +268,8 @@ def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> Non
     assert feed._montage_soft_min_clips("pubg") == 3
     assert feed._montage_soft_min_clips("wot") == 3
     assert feed._montage_soft_min_clips("standoff") == 3
+    # SLA emergency: allow 2-fight склейка without regressing the default floor.
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN", "2")
+    assert feed._montage_soft_min_clips("pubg") == 2
+    assert feed._montage_soft_min_clips("standoff") == 2
+    assert feed._montage_soft_min_clips("wot") == 2
