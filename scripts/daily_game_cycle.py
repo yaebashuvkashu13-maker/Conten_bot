@@ -382,8 +382,13 @@ def unstall_games_with_inbox() -> list[str]:
         if not _game_inbox_ready(game):
             continue
         entry = stall.get(game) or {}
+        skip_reason = str(entry.get("skip_reason") or "").lower()
+        # Manual / banner-dead holds must stick — inbox files exist but cannot ship.
+        if entry.get("force_skip") and any(
+            tok in skip_reason for tok in ("banner_dead", "no_ship", "manual_hold", "no_auto_unstall")
+        ):
+            continue
         reason = "inbox_ready_unstall"
-        skip_reason = str(entry.get("skip_reason") or "")
         if entry.get("force_skip") and "hung_highlight" in skip_reason:
             # Must NOT match _is_auto_stall_clear ("inbox_ready" token) — we need
             # timeout_runs wiped so the game can actually resume.

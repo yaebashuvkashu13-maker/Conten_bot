@@ -337,6 +337,9 @@ def main() -> int:
                 if "no scannable inbox + discovery paused" in line:
                     thrash = True
                     break
+                if "banner miss streak=" in line and game == "mlbb":
+                    thrash = True
+                    break
     except OSError:
         pass
 

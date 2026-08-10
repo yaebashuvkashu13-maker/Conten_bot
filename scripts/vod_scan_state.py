@@ -97,8 +97,19 @@ def should_skip_vod_rescan(entry: dict[str, Any] | None, *, game: str = "") -> b
     # max-vods slot before long inbox files. Skip until an explicit unstall.
     if last <= 0:
         if entry.get("last_scan_blocked") and not sent_ok:
-            return True
-        return False
+            # Heal inconsistent rows: pool evidence exists but last_scan_at was
+            # wiped (merge/bootstrap). Restore timestamp so cooldown can expire
+            # instead of permanently skipping a real inbox file.
+            pool_at = float(entry.get("last_pool_at") or 0)
+            if pool_at > 0 or entry.get("last_pool_peaks"):
+                entry["last_scan_at"] = pool_at if pool_at > 0 else (
+                    time.time() - blocked_rescan_cooldown_sec(game, entry) - 1.0
+                )
+                last = float(entry["last_scan_at"])
+            else:
+                return True
+        else:
+            return False
     if sent_ok:
         return False
     age = time.time() - last

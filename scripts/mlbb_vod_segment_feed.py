@@ -322,25 +322,33 @@ def _auto_exhaust_oversized(registry: list[dict]) -> int:
 
 def _pick_available_vod(registry: list[dict]) -> dict | None:
     target = _vod_target_dur_sec()
+    # Prefer a non-exhausted duplicate over skipping the id entirely when an
+    # older exhausted row still sits in the registry.
     exhausted_ids = {
         str(row.get("id") or "")
         for row in registry
         if row.get("exhausted") and row.get("id")
     }
+    non_exhausted_ids = {
+        str(row.get("id") or "")
+        for row in registry
+        if (not row.get("exhausted")) and row.get("id")
+    }
     ranked: list[tuple[int, float, float, float, dict]] = []
     seen_ids: set[str] = set()
     for row in registry:
         vid = str(row.get("id") or "")
-        if vid and vid in exhausted_ids:
-            continue
         if row.get("exhausted"):
+            continue
+        if vid and vid in exhausted_ids and vid not in non_exhausted_ids:
             continue
         if should_skip_vod_rescan(row, game="mlbb"):
             continue
         if vid and vid in seen_ids:
             continue
-        path = Path(str(row.get("path", "")))
-        if not path.exists():
+        path = Path(str(row.get("path") or ""))
+        # Path("") / "." exists as cwd — never treat as a VOD.
+        if not path.is_file() or path.suffix.lower() not in {".mp4", ".mkv", ".webm"}:
             continue
         dur = _ffprobe_duration(path)
         if not _vod_length_ok(path, dur):
@@ -408,8 +416,24 @@ def _reopen_soft_exhausted_inbox(registry: list[dict]) -> dict | None:
     row = candidates[0][1]
     row["exhausted"] = False
     row["reject_reason"] = ""
+    row["last_scan_blocked"] = False
     row["soft_reopen_count"] = int(row.get("soft_reopen_count") or 0) + 1
     row["soft_reopened_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # Clear sibling exhausted duplicates so pick does not skip this id.
+    vid = str(row.get("id") or "")
+    if vid:
+        for other in registry:
+            if other is row:
+                continue
+            if str(other.get("id") or "") != vid:
+                continue
+            other["exhausted"] = False
+            other["reject_reason"] = ""
+            other["last_scan_blocked"] = False
+            other["soft_reopen_count"] = max(
+                int(other.get("soft_reopen_count") or 0),
+                int(row["soft_reopen_count"]),
+            )
     log.info(
         "reopen soft-exhausted vod=%s reason_was soft reopen=%s",
         row.get("id") or Path(str(row.get("path"))).name,
@@ -2600,6 +2624,8 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
     total_sent = 0
     vods_done = 0
     notified_download = False
+    banner_miss_streak = 0
+    banner_miss_limit = max(1, int(os.environ.get("MLBB_VOD_BANNER_MISS_EXIT_AFTER", "2")))
 
     while time.time() < deadline and vods_done < max_vods:
         vod, entry = _resolve_next_vod(
@@ -2630,6 +2656,17 @@ def _run_feed(env: dict[str, str], token: str, chat_id: str) -> int:
         total_sent += n
         vods_done += 1
         registry[:] = _ensure_registry(env)
+        reason = str((entry or {}).get("reject_reason") or "")
+        if n <= 0 and reason.startswith("banner_probe_0"):
+            banner_miss_streak += 1
+            if banner_miss_streak >= banner_miss_limit:
+                log.warning(
+                    "banner miss streak=%s — exit feed so daily cycle can rotate",
+                    banner_miss_streak,
+                )
+                break
+        else:
+            banner_miss_streak = 0
 
     print(f"pipeline done sent={total_sent} vods={vods_done}")
     return 0 if total_sent > 0 or vods_done > 0 else 0

@@ -226,6 +226,19 @@ def test_unstall_on_inbox_ready(isolated_state: Path, tmp_path: Path, monkeypatc
     assert cycle.is_game_stalled("pubg") is False
 
 
+def test_banner_dead_force_skip_not_auto_unstalled(
+    isolated_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """banner_dead hold must stick so cycle can rotate while MLBB inbox cannot ship."""
+    cycle.force_skip_game("mlbb", reason="banner_dead_rotate")
+    monkeypatch.setenv("DAILY_GAME_UNSTALL_ON_INBOX", "1")
+    with patch.object(cycle, "_game_inbox_ready", return_value=True):
+        cleared = cycle.unstall_games_with_inbox()
+    assert "mlbb" not in cleared
+    assert cycle.is_game_stalled("mlbb") is True
+    assert cycle.active_game() == "pubg"
+
+
 def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> None:
     import shooter_vod_segment_feed as feed
 

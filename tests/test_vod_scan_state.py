@@ -93,6 +93,22 @@ def test_skip_zombie_blocked_without_scan_timestamp() -> None:
     assert should_skip_vod_rescan(keep, game="pubg") is False
 
 
+def test_heal_zombie_with_pool_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inconsistent blocked+pool but last_scan_at=0 must become rescanable."""
+    monkeypatch.setenv("VOD_GAP_BLOCK_COOLDOWN_SEC", "60")
+    monkeypatch.setenv("MLBB_VOD_SCAN_COOLDOWN_SEC", "3600")
+    entry = {
+        "last_scan_at": 0,
+        "last_scan_blocked": True,
+        "last_scan_sent": 0,
+        "last_pool_at": time.time() - 7200,
+        "last_pool_peaks": [{"peak_sec": 114.8, "score": 0.0, "blocked_reason": ""}],
+        "exhausted": False,
+    }
+    assert should_skip_vod_rescan(entry, game="mlbb") is False
+    assert float(entry["last_scan_at"]) > 0
+
+
 def test_gap_block_shorter_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     from vod_scan_state import blocked_rescan_cooldown_sec
 
