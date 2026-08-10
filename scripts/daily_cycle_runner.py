@@ -351,8 +351,35 @@ def main() -> int:
         is_game_stalled(game),
         timed_out,
     )
-    timeout_limit = max(2, int(os.environ.get("DAILY_CYCLE_TIMEOUT_SKIP_AFTER", "2")))
+    timeout_limit = max(2, int(os.environ.get("DAILY_CYCLE_TIMEOUT_SKIP_AFTER", "4")))
     if timed_out and int(entry.get("timeout_runs") or 0) >= timeout_limit:
+        # Never burn the day's remaining quota while usable VODs still sit in inbox.
+        # Hung VODs are already parked; keep scanning the rest.
+        has_local = False
+        try:
+            from daily_game_cycle import game_has_ready_media
+
+            has_local = bool(game_has_ready_media(game))
+        except Exception:
+            has_local = False
+        if has_local:
+            log.warning(
+                "timeout streak game=%s n=%s but local media remains — continue (no force_skip)",
+                game,
+                entry.get("timeout_runs"),
+            )
+            # Soft-decay so one bad file cannot escalate forever.
+            try:
+                state = load_state()
+                stall = state.setdefault("stall", {})
+                soft = stall.setdefault(game, {})
+                soft["timeout_runs"] = max(0, int(soft.get("timeout_runs") or 0) - 1)
+                soft["force_skip"] = False
+                stall[game] = soft
+                save_state(state)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("timeout soft-decay failed: %s", exc)
+            return rc
         force_skip_game(
             game,
             reason=f"timeout_x{entry.get('timeout_runs')} hung_highlight",

@@ -364,11 +364,16 @@ def unstall_games_with_inbox() -> list[str]:
     """
     Stall-skip must not freeze remaining quota for hours while local VODs sit unused.
     If a stalled game still has inbox/parked files, clear its stall once.
+
+    hung_highlight force_skip is a full resume (clears timeout_runs): one hung VOD
+    must not lock the whole game while more inbox files remain.
     """
     if os.environ.get("DAILY_GAME_UNSTALL_ON_INBOX", "1") != "1":
         return []
     reset_if_new_day()
     cleared: list[str] = []
+    state = load_state()
+    stall = state.get("stall") or {}
     for game in GAME_ORDER:
         if quota_remaining(game) <= 0:
             continue
@@ -376,7 +381,14 @@ def unstall_games_with_inbox() -> list[str]:
             continue
         if not _game_inbox_ready(game):
             continue
-        cleared.extend(clear_stall(game, reason="inbox_ready_unstall"))
+        entry = stall.get(game) or {}
+        reason = "inbox_ready_unstall"
+        skip_reason = str(entry.get("skip_reason") or "")
+        if entry.get("force_skip") and "hung_highlight" in skip_reason:
+            # Must NOT match _is_auto_stall_clear ("inbox_ready" token) — we need
+            # timeout_runs wiped so the game can actually resume.
+            reason = "resume_hung_with_media"
+        cleared.extend(clear_stall(game, reason=reason))
     return cleared
 
 

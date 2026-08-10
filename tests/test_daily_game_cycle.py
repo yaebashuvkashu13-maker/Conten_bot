@@ -167,6 +167,27 @@ def test_clear_stall_preserves_timeout_streak_on_auto_unstall(
     assert int(entry.get("timeout_runs") or 0) == 0
 
 
+def test_unstall_resumes_hung_highlight_when_inbox_ready(
+    isolated_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """hung_highlight force_skip must fully clear when local VODs remain."""
+    for _ in range(5):
+        cycle.record_send("mlbb", 1)
+    cycle.force_skip_game("pubg", reason="timeout_x2 hung_highlight")
+    state = cycle.load_state()
+    state["stall"]["pubg"]["timeout_runs"] = 2
+    cycle.save_state(state)
+    assert cycle.is_game_stalled("pubg") is True
+    monkeypatch.setenv("DAILY_GAME_UNSTALL_ON_INBOX", "1")
+    with patch.object(cycle, "_game_inbox_ready", side_effect=lambda g: g == "pubg"):
+        cleared = cycle.unstall_games_with_inbox()
+    assert "pubg" in cleared
+    entry = (cycle.load_state().get("stall") or {}).get("pubg") or {}
+    assert entry.get("force_skip") is False
+    assert int(entry.get("timeout_runs") or 0) == 0
+    assert cycle.is_game_stalled("pubg") is False
+
+
 def test_clear_stall_noop_keeps_all_stalled_notify_key(isolated_state: Path) -> None:
     """No-op auto-unstall must not wipe anti-spam keys (TG spam every ~45s)."""
     for _ in range(5):
