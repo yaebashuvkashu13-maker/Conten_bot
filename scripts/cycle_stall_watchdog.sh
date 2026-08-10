@@ -5,6 +5,15 @@ set -euo pipefail
 
 LOG=/root/data/mlbb/cycle_stall_watchdog.log
 mkdir -p "$(dirname "$LOG")"
+
+# Single-flight: two cron entries used to race and double-send SLA Telegram.
+LOCK=/tmp/cycle_stall_watchdog.lock
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "===== cycle_stall_watchdog $(date -Is) skipped (lock busy) =====" >>"$LOG"
+  exit 0
+fi
+
 exec >>"$LOG" 2>&1
 
 if [[ -f /root/.video_bot.env ]]; then set -a; # shellcheck disable=SC1091

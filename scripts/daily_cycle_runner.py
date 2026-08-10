@@ -340,6 +340,13 @@ def main() -> int:
                 if "banner miss streak=" in line and game == "mlbb":
                     thrash = True
                     break
+                # Burned through local VODs with montage gate rejects — rotate.
+                if "max vods per run reached" in line and f"game={game}" in line and delta <= 0:
+                    thrash = True
+                    break
+                if "fast-montage rejected by gates" in line and f"game={game}" in line and delta <= 0:
+                    thrash = True
+                    break
     except OSError:
         pass
 

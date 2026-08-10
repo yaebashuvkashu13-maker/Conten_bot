@@ -279,39 +279,68 @@ def ensure_feed_alive(need: bool) -> None:
 
 
 def _tg_notify(text: str, *, key: str) -> None:
-    """At-most-once-per-key-hour Telegram notify."""
+    """At-most-once-per-key Telegram notify (race-safe against duplicate cron)."""
     token = os.environ.get("TG_BOT_TOKEN", "").strip()
     chat = os.environ.get("TG_CHAT_ID", "").strip()
     if not token or not chat:
         return
-    state = load_state()
-    notified = state.setdefault("notified", {})
-    prev = str(notified.get(key) or "")
-    # Rate-limit: same key within 55 minutes → skip.
-    if prev:
-        try:
-            prev_ts = time.mktime(time.strptime(prev, "%Y-%m-%d %H:%M:%S"))
-            if time.time() - prev_ts < 55 * 60:
-                return
-        except ValueError:
-            pass
+    # Serialize duplicate watchdog crons so two */5 entries cannot both send.
+    lock_path = Path(os.environ.get("DAILY_CYCLE_NOTIFY_LOCK", "/tmp/cycle_tg_notify.lock"))
+    lock_fh = None
     try:
-        import urllib.parse
-        import urllib.request
+        lock_fh = open(lock_path, "a+", encoding="utf-8")
+        import fcntl
 
-        data = urllib.parse.urlencode(
-            {"chat_id": chat, "text": text[:3500]}
-        ).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=data,
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=20).read()
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        lock_fh = None
+
+    try:
+        state = load_state()
+        notified = state.setdefault("notified", {})
+        prev = str(notified.get(key) or "")
+        # Default: once per calendar day for sla_breach:* ; 6h for other keys.
+        if key.startswith("sla_breach:"):
+            cooldown = float(os.environ.get("DAILY_CYCLE_SLA_NOTIFY_COOLDOWN_SEC", str(20 * 3600)))
+        else:
+            cooldown = float(os.environ.get("DAILY_CYCLE_NOTIFY_COOLDOWN_SEC", str(6 * 3600)))
+        if prev:
+            try:
+                prev_ts = time.mktime(time.strptime(prev, "%Y-%m-%d %H:%M:%S"))
+                if time.time() - prev_ts < cooldown:
+                    return
+            except ValueError:
+                pass
+        # Claim the slot before network I/O so a twin cron cannot double-send.
         notified[key] = time.strftime("%Y-%m-%d %H:%M:%S")
         save_state(state)
-    except Exception as exc:  # noqa: BLE001
-        _log(f"tg notify fail: {exc}")
+        try:
+            import urllib.parse
+            import urllib.request
+
+            data = urllib.parse.urlencode(
+                {"chat_id": chat, "text": text[:3500]}
+            ).encode()
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data=data,
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=20).read()
+        except Exception as exc:  # noqa: BLE001
+            # Allow a retry later if Telegram itself failed.
+            notified.pop(key, None)
+            save_state(state)
+            _log(f"tg notify fail: {exc}")
+    finally:
+        if lock_fh is not None:
+            try:
+                import fcntl
+
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+                lock_fh.close()
+            except OSError:
+                pass
 
 
 def _parse_send_ts(entry: dict) -> float:
@@ -322,6 +351,16 @@ def _parse_send_ts(entry: dict) -> float:
         return time.mktime(time.strptime(raw, "%Y-%m-%d %H:%M:%S"))
     except ValueError:
         return 0.0
+
+
+def _feed_busy() -> bool:
+    """True when a cycle feed/ffmpeg is actively working — don't SLA-spam mid-run."""
+    try:
+        out = subprocess.check_output(["pgrep", "-af", "daily_cycle_runner|shooter_vod_segment_feed|mlbb_vod_segment_feed.py"], text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
+    lines = [ln for ln in out.splitlines() if "pgrep" not in ln]
+    return bool(lines)
 
 
 def hourly_sla_check() -> None:
@@ -344,7 +383,17 @@ def hourly_sla_check() -> None:
     if age < sla_sec:
         _log(f"sla ok last_send_age={age:.0f}s rem={rem}")
         return
-    # Self-heal first, then alert.
+    # Feed is mid-timeout (e.g. PUBG encode) — heal quietly, no Telegram spam.
+    if _feed_busy() and os.environ.get("DAILY_CYCLE_SLA_SKIP_IF_BUSY", "1") == "1":
+        _log(f"sla quiet (feed busy) age={age:.0f}s rem={rem}")
+        for g in GAME_ORDER:
+            if int(rem.get(g, 0) or 0) <= 0:
+                continue
+            if _game_has_local_media(g):
+                recycle_parked_batch(g, limit=6)
+                clear_stall(g, reason="hourly_sla_local_media")
+        return
+    # Self-heal first, then alert (at most once per day by default).
     for g in GAME_ORDER:
         if int(rem.get(g, 0) or 0) <= 0:
             continue
