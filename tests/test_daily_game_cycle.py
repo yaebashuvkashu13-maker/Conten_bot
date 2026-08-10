@@ -167,6 +167,31 @@ def test_clear_stall_preserves_timeout_streak_on_auto_unstall(
     assert int(entry.get("timeout_runs") or 0) == 0
 
 
+def test_clear_stall_noop_keeps_all_stalled_notify_key(isolated_state: Path) -> None:
+    """No-op auto-unstall must not wipe anti-spam keys (TG spam every ~45s)."""
+    for _ in range(5):
+        cycle.record_send("mlbb", 1)
+    for _ in range(3):
+        cycle.record_send("pubg", 1)
+    for _ in range(3):
+        cycle.record_send("standoff", 1)
+    cycle.note_feed_iteration("genshin", 0, timed_out=True)
+    state = cycle.load_state()
+    state.setdefault("notified", {})["all_stalled:2099-01-01"] = "2026-08-10 07:00:00"
+    state["notified"]["stall_skip:genshin"] = "2026-08-10 07:00:00"
+    cycle.save_state(state)
+
+    assert cycle.clear_stall("genshin", reason="inbox_ready_unstall") == []
+    notified = cycle.load_state().get("notified") or {}
+    assert notified.get("all_stalled:2099-01-01") == "2026-08-10 07:00:00"
+    assert notified.get("stall_skip:genshin") == "2026-08-10 07:00:00"
+
+    assert cycle.clear_stall("genshin", reason="manual_clear") == ["genshin"]
+    notified = cycle.load_state().get("notified") or {}
+    assert "all_stalled:2099-01-01" not in notified
+    assert "stall_skip:genshin" not in notified
+
+
 def test_unstall_on_inbox_ready(isolated_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for _ in range(5):
         cycle.record_send("mlbb", 1)

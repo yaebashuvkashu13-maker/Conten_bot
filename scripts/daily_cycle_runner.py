@@ -44,8 +44,8 @@ def _idle_stalled_sleep_sec() -> int:
             quota_remaining(g) > 0 and _game_inbox_ready(g) for g in GAME_ORDER
         )
         if has_media:
-            return max(20, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_WITH_MEDIA_SEC", "45")))
-        return max(60, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_SEC", "300")))
+            return max(120, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_WITH_MEDIA_SEC", "600")))
+        return max(300, int(os.environ.get("DAILY_CYCLE_STALLED_IDLE_SEC", "900")))
     except Exception:
         return 120
 
@@ -222,11 +222,11 @@ def main() -> int:
             rem = status_summary()["remaining"]
             if any(int(v) > 0 for v in rem.values()):
                 log.warning("all remaining games stalled — idle rem=%s", rem)
-                rem_key = ",".join(f"{k}:{rem.get(k, 0)}" for k in ("mlbb", "pubg", "standoff", "genshin", "wot"))
+                day = status_summary().get("day") or "today"
                 _notify_once(
                     token,
                     chat_id,
-                    f"all_stalled:{rem_key}",
+                    f"all_stalled:{day}",
                     f"⚠️ Цикл: оставшиеся игры залипли (stall skip). "
                     f"Остаток квот: {rem}. Жду правки inbox/discovery или 00:00. "
                     f"(это сообщение один раз, не спам)",

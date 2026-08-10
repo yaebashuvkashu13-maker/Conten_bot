@@ -258,10 +258,13 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
         entry.pop("skip_reason", None)
         stall[g] = entry
         cleared.append(g)
-    notified = state.setdefault("notified", {})
-    for key in list(notified):
-        if key.startswith("all_stalled:") or key.startswith("stall_skip:"):
-            del notified[key]
+    # Only reset anti-spam keys when a stall was actually cleared.
+    # Wiping on no-op clears (timeout-protected auto-unstall) caused TG spam every ~45s.
+    if cleared:
+        notified = state.setdefault("notified", {})
+        for key in list(notified):
+            if key.startswith("all_stalled:") or key.startswith("stall_skip:"):
+                del notified[key]
     save_state(state)
     return cleared
 
