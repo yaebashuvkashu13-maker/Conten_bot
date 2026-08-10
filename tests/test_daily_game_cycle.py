@@ -237,6 +237,13 @@ def test_banner_dead_force_skip_not_auto_unstalled(
     assert "mlbb" not in cleared
     assert cycle.is_game_stalled("mlbb") is True
     assert cycle.active_game() == "pubg"
+    # Self-heal / SLA must also leave the hold alone.
+    assert cycle.clear_stall("mlbb", reason="self_heal_local_media") == []
+    assert cycle.clear_stall("mlbb", reason="hourly_sla_local_media") == []
+    assert cycle.is_game_stalled("mlbb") is True
+    # Explicit manual clear is still allowed.
+    assert cycle.clear_stall("mlbb", reason="manual_clear") == ["mlbb"]
+    assert cycle.is_game_stalled("mlbb") is False
 
 
 def test_montage_soft_min_allows_partial(monkeypatch: pytest.MonkeyPatch) -> None:

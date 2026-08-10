@@ -221,6 +221,14 @@ def _is_auto_stall_clear(reason: str) -> bool:
     return any(tok in r for tok in ("self_heal", "hourly_sla", "inbox_ready"))
 
 
+def _is_sticky_force_skip(entry: dict) -> bool:
+    """Operator holds that auto-heal must not reopen (banner dead, manual hold)."""
+    if not entry.get("force_skip"):
+        return False
+    r = str(entry.get("skip_reason") or "").lower()
+    return any(tok in r for tok in ("banner_dead", "no_ship", "manual_hold", "no_auto_unstall"))
+
+
 def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> list[str]:
     """Clear force_skip / zero-run stall so remaining quota can resume."""
     reset_if_new_day()
@@ -238,6 +246,11 @@ def clear_stall(game: str | None = None, *, reason: str = "manual_clear") -> lis
         # leaving genshin in a multi-hour park_timeout loop with timeout_runs stuck at 0.
         if timeout_runs > 0 and _is_auto_stall_clear(reason):
             continue
+        # banner_dead / manual_hold must survive self-heal + SLA unstall.
+        if _is_sticky_force_skip(entry):
+            r = str(reason).lower()
+            if _is_auto_stall_clear(reason) or not r.startswith("manual"):
+                continue
         if not (
             entry.get("force_skip")
             or int(entry.get("zero_runs") or 0) > 0
