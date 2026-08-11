@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-08-11-owner-refresh-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -762,7 +762,7 @@ def _handle_shooter_vseg_callback(
             },
             timeout=15,
         )
-        if is_good:
+        if is_good and os.environ.get('SHOOTER_VOD_AUTO_HQ_ON_YES', '0') == '1':
             hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
             if not hq_ok:
                 send_message(
@@ -1069,6 +1069,186 @@ def _handle_game_shorts_callback(
     return False
 
 
+    return False
+
+
+def _social_good_markup(prefix: str, item_id: str) -> dict:
+    """Restore post-OK keyboard (HQ + social) for a clip id."""
+    if prefix.endswith('_vseg'):
+        game = prefix[: -len('_vseg')] or 'mlbb'
+        if game == 'mlbb':
+            from mlbb_vod_segment_store import labeled_keyboard_markup as markup
+
+            return markup('good', segment_id=item_id)
+        from shooter_vod_segment_store import labeled_keyboard_markup as markup
+
+        return markup(game, 'good', segment_id=item_id)
+    game = prefix or 'mlbb'
+    if game == 'mlbb':
+        from mlbb_calibration_store import labeled_keyboard_markup as markup
+
+        return markup('good', video_id=item_id)
+    from calibration_dislike_reasons import labeled_keyboard_markup as markup
+
+    return markup(game, 'good', video_id=item_id)
+
+
+def _handle_social_publish_callback(
+    data: str,
+    *,
+    chat_id: str | int,
+    message_id: int,
+    query_id: str,
+) -> bool:
+    """Handle *_social / *_pub callbacks for VOD segments and Shorts."""
+    if '_social:' not in data and '_social_back:' not in data and '_pub:' not in data:
+        return False
+
+    prefixes = (
+        'mlbb_vseg',
+        'pubg_vseg',
+        'standoff_vseg',
+        'genshin_vseg',
+        'wot_vseg',
+        'mlbb',
+        'pubg',
+        'standoff',
+        'genshin',
+        'wot',
+    )
+    prefix = ''
+    action = ''
+    rest = ''
+    for cand in prefixes:
+        for act_name, act_suffix in (
+            ('social_back', '_social_back:'),
+            ('social', '_social:'),
+            ('pub', '_pub:'),
+        ):
+            token = f'{cand}{act_suffix}'
+            if data.startswith(token):
+                prefix = cand
+                action = act_name
+                rest = data[len(token) :]
+                break
+        if prefix:
+            break
+    if not prefix:
+        return False
+
+    if action == 'social':
+        item_id = rest.strip()
+        try:
+            from social_publish import format_status_message, platforms_keyboard
+
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Выбери площадку'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': platforms_keyboard(prefix, item_id),
+                },
+                timeout=15,
+            )
+            send_message(chat_id, format_status_message())
+        except Exception as exc:
+            logging.exception('social picker failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if action == 'social_back':
+        item_id = rest.strip()
+        try:
+            api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': _social_good_markup(prefix, item_id),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('social back failed data=%s', data)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': str(exc)[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    # action == pub → yt|ig|tt|vk:item_id
+    try:
+        platform_short, item_id = rest.split(':', 1)
+    except ValueError:
+        api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
+        return True
+    platform_short = platform_short.strip().lower()
+    item_id = item_id.strip()
+    kind = 'vseg' if prefix.endswith('_vseg') else 'shorts'
+    game = prefix[: -len('_vseg')] if prefix.endswith('_vseg') else prefix
+
+    try:
+        from social_publish import PLATFORM_LABELS, SHORT_TO_PLATFORM, publish_clip, resolve_clip_path
+
+        platform = SHORT_TO_PLATFORM.get(platform_short, platform_short)
+        label = PLATFORM_LABELS.get(platform, platform)
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': f'Заливаю в {label}…'},
+            timeout=15,
+        )
+        path, meta = resolve_clip_path(kind=kind, game=game, item_id=item_id)
+        if path is None:
+            send_message(chat_id, f'❌ Файл клипа не найден на диске ({game}/{kind} #{item_id}).')
+            return True
+        send_message(chat_id, f'📤 Публикую в {label}: {path.name}…')
+        result = publish_clip(platform, path, meta=meta)
+        url = str(result.get('url') or '').strip()
+        rid = str(result.get('id') or '').strip()
+        msg = f'✅ {label}: готово'
+        if rid:
+            msg += f'\nid={rid}'
+        if url:
+            msg += f'\n{url}'
+        send_message(chat_id, msg)
+        api_call(
+            'editMessageReplyMarkup',
+            {
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'reply_markup': _social_good_markup(prefix, item_id),
+            },
+            timeout=15,
+        )
+    except Exception as exc:
+        logging.exception('social publish failed data=%s', data)
+        send_message(chat_id, f'❌ Не удалось залить: {exc}'[:500])
+        try:
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': _social_good_markup(prefix, item_id),
+                },
+                timeout=15,
+            )
+        except Exception:
+            pass
+    return True
+
+
 def handle_callback_query(query: dict) -> None:
     query_id = query.get('id')
     data = str(query.get('data') or '')
@@ -1096,6 +1276,14 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if _handle_social_publish_callback(
+        data,
+        chat_id=chat_id,
+        message_id=message_id,
+        query_id=query_id,
+    ):
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
@@ -1106,7 +1294,7 @@ def handle_callback_query(query: dict) -> None:
         ):
             return
 
-    for shooter_game in ('pubg', 'standoff'):
+    for shooter_game in ('pubg', 'standoff', 'genshin', 'wot'):
         if _handle_shooter_vseg_callback(
             shooter_game,
             data,
@@ -1347,7 +1535,7 @@ def handle_callback_query(query: dict) -> None:
             },
             timeout=15,
         )
-        if mode == 'vseg' and is_good:
+        if mode == 'vseg' and is_good and os.environ.get('MLBB_VOD_AUTO_HQ_ON_YES', '0') == '1':
             hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
             if not hq_ok:
                 send_message(
@@ -2831,6 +3019,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
+        {'command': 'refresh', 'description': 'Обновить — перезапуск отправки видео'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
@@ -3122,9 +3311,30 @@ def handle_message(message: dict):
             f'youtube={"да" if youtube_ingest_allowed(chat_id) else "нет"} '
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
             f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}\n'
-            f'YouTube: ссылка Shorts или /yt <url> → /make'
+            f'YouTube: ссылка Shorts или /yt <url> → /make\n'
+            f'Нет видео долго? /refresh или напиши «обновить»'
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
         )
+        return
+    if is_owner(chat_id) and (
+        cmd in ('/refresh', '/obnovit', '/обновить', '/update', '/reload', 'обновить', 'refresh')
+        or text.strip().lower() in ('обновить', 'refresh', 'update', '/обновить')
+    ):
+        now = time.time()
+        last = float(getattr(handle_message, '_last_refresh_at', 0) or 0)
+        if now - last < 45:
+            send_message(chat_id, f'Уже обновляю (подожди {int(45 - (now - last))}с).')
+            return
+        setattr(handle_message, '_last_refresh_at', now)
+        send_message(chat_id, 'Обновляю цикл отправки…')
+        try:
+            from cycle_owner_refresh import format_refresh_reply, owner_refresh
+
+            report = owner_refresh(kick=True)
+            send_message(chat_id, format_refresh_reply(report))
+        except Exception as exc:
+            logging.exception('owner refresh failed')
+            send_message(chat_id, f'❌ Обновление не удалось: {exc}')
         return
     if cmd in ('/yt', '/youtube'):
         if not youtube_ingest_allowed(chat_id):

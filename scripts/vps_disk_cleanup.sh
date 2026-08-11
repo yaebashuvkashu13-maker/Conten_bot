@@ -17,7 +17,31 @@ find /root/hourly_previews -type f -mtime +3 -delete 2>/dev/null || true
 find /root/videos -name '*.mp4' -mtime +2 -size +50M -delete 2>/dev/null || true
 find /root/datasets/mlbb/vod_segments -name '*.mp4' -mtime +14 -delete 2>/dev/null || true
 find /tmp -maxdepth 1 -name 'mlbb_split_*' -mtime +1 -exec rm -rf {} + 2>/dev/null || true
-rm -rf /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
+find /tmp -maxdepth 1 \( -name '*-montage-*' -o -name 'wot-*' -o -name 'pubg-*' -o -name 'standoff-*' \) -mtime +0 -exec rm -rf {} + 2>/dev/null || true
+rm -rf /root/.cache/pip /root/.cache/huggingface /root/.cache/yt-dlp 2>/dev/null || true
+rm -rf '/root/inbox=' 2>/dev/null || true
+
+# Parks/holds fill the disk and killed the feed for hours (ENOSPC). Keep inbox only.
+for g in mlbb pubg standoff genshin wot; do
+  base=/root/data/$g/youtube_nightly
+  for sub in park_timeout park_dead hold_quota hold_barren exhausted hold; do
+    if [[ -d "$base/$sub" ]]; then
+      # Keep 2 newest in park_timeout; wipe the rest / all other parks.
+      if [[ "$sub" == "park_timeout" ]]; then
+        mapfile -t parks < <(ls -t "$base/$sub"/*.mp4 2>/dev/null || true)
+        for ((i=2; i<${#parks[@]}; i++)); do
+          rm -f "${parks[$i]}"
+        done
+      else
+        rm -rf "$base/$sub"
+        mkdir -p "$base/$sub"
+      fi
+    fi
+  done
+done
+
+# Old one-shot backups (multi-GB) — never needed for live send.
+find /root/data/mlbb/backups -maxdepth 1 -type d -name 'pre_*' -mtime +3 -exec rm -rf {} + 2>/dev/null || true
 
 : >"$KEEP_FILE"
 if [[ -f "$STATE" ]]; then

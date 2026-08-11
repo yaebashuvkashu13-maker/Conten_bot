@@ -30,7 +30,11 @@ def _extend_bins(max_d: float, win: float) -> int:
 
 
 def _lead_sec() -> float:
-    return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    """Seconds of fight gameplay before kill banner — not just banner flash."""
+    banner = float(os.environ.get("MLBB_KILL_BANNER_LEAD_SEC", "0") or 0)
+    vod = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    floor = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"))
+    return max(floor, banner, vod)
 
 
 _CACHE: dict[str, dict] = {}

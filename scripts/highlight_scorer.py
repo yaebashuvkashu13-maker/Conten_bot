@@ -12,7 +12,8 @@ import logging
 import math
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -251,7 +252,7 @@ def _filter_bad_label_starts(
 
 
 def _mlbb_skip_intro_sec() -> float:
-    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "300"))
+    return float(os.environ.get("HIGHLIGHT_MLBB_SKIP_INTRO_SEC", "120"))
 
 
 def _action_peak_starts(analysis: dict, profile: str, *, limit: int = 48) -> list[float]:
@@ -609,7 +610,7 @@ def _load_highlight_queries() -> dict:
 
 
 def score_text_query_clip(
-    video_path: Path, start_sec: float, duration_sec: float, profile: str
+    video_path: Path, start_sec: float, duration_sec: float, profile: str, *, force: bool = False
 ) -> float:
     """HL-CLIP style text-query scoring from config/highlight_queries.yaml."""
     profile = normalize_profile(profile)
@@ -619,7 +620,7 @@ def score_text_query_clip(
     if not good_q and not bad_q:
         return 0.0
 
-    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+    if not force and os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
         return 0.0
     try:
         import open_clip
@@ -744,13 +745,35 @@ def _text_bootstrap_embeddings(game: str) -> tuple[np.ndarray, np.ndarray]:
     return enc(good), enc(bad)
 
 
-def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float, profile: str) -> tuple[float, list[dict]]:
+def score_clip_exemplar(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    profile: str,
+    *,
+    force: bool = False,
+) -> tuple[float, list[dict]]:
+    """Score a window against good/bad exemplars.
+
+    force=True: run real CLIP even when HIGHLIGHT_CLIP_DISABLED=1.
+    Used for final shortlist ranking only — never for full-VOD discovery.
+    """
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
     profile = normalize_profile(profile)
     game = profile
-    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile)
-    if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+    text_score = score_text_query_clip(video_path, start_sec, duration_sec, profile, force=force)
+    if not force and os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") == "1":
+        # Shooters: skip CLIP and hist substitute (hist still burns CPU decoding frames).
+        # Ranking uses panns + combat + visual (combat_authoritative when rule_pass).
+        if profile in SHOOTER_PROFILES or os.environ.get("HIGHLIGHT_ALLOW_NO_CLIP", "1") == "1":
+            if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
+                hist_score, rows = _score_hist_exemplar_fallback(
+                    video_path, start_sec, duration_sec, profile
+                )
+                combined = text_score if text_score else hist_score
+                return combined, rows
+            return float(text_score or 0.0), [{"label": "noclip", "clip_score": 0.0, "pass": True, "fallback": "noclip"}]
         if os.environ.get("HIGHLIGHT_TRAIN_MODE", "0") == "1":
             hist_score, rows = _score_hist_exemplar_fallback(
                 video_path, start_sec, duration_sec, profile
@@ -826,6 +849,132 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     else:
         clip_final = text_score if text_score else exemplar_score
     return clip_final, frame_rows
+
+
+def rank_shortlist_with_clip(
+    video_path: Path,
+    rows: list[dict],
+    profile: str,
+    *,
+    max_n: int | None = None,
+    timeout_sec: float | None = None,
+    min_score: float | None = None,
+    enabled: bool | None = None,
+) -> list[dict]:
+    """Fast+quality: CLIP-rank only the final shortlist (never full-VOD).
+
+    Discovery stays CLIP-off / PANNs-only. This scores ≤max_n windows under a
+    hard wall-clock budget. On timeout/failure, keeps original PANNs order.
+    """
+    if enabled is None:
+        enabled = os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1"
+    if not enabled or not rows:
+        return rows
+
+    try:
+        max_n = max(1, int(max_n if max_n is not None else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_MAX", "6")))
+    except ValueError:
+        max_n = 6
+    try:
+        timeout_sec = float(
+            timeout_sec
+            if timeout_sec is not None
+            else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_TIMEOUT_SEC", "60")
+        )
+    except ValueError:
+        timeout_sec = 60.0
+    try:
+        min_score = float(
+            min_score
+            if min_score is not None
+            else os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_MIN", str(CLIP_MIN_SHOOTER))
+        )
+    except ValueError:
+        min_score = float(CLIP_MIN_SHOOTER)
+
+    profile = normalize_profile(profile)
+    core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
+    candidates = list(rows[:max_n])
+    scored: list[dict] = []
+    t0 = time.monotonic()
+
+    # Warm CLIP once in this thread so workers share a loaded model cache.
+    try:
+        _clip_bundle()
+    except Exception as exc:
+        log.warning("CLIP warm failed — keep PANNs order: %s", exc)
+        return rows
+
+    def _one(row: dict) -> dict:
+        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+        start = max(0.0, peak - core * 0.5)
+        dur = max(6.0, core)
+        clip_s, _frames = score_clip_exemplar(video_path, start, dur, profile, force=True)
+        out = dict(row)
+        hm = dict(out.get("highlight_metrics") or {})
+        hm["clip_score"] = round(float(clip_s), 4)
+        hm["clip_rank"] = True
+        out["highlight_metrics"] = hm
+        out["clip_score"] = float(clip_s)
+        # Blend: keep gun/panns signal, boost semantic match.
+        base = float(out.get("score") or 0.0)
+        out["score"] = max(base, float(clip_s)) + 0.35 * float(clip_s)
+        return out
+
+    workers = min(2, len(candidates))
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = {pool.submit(_one, row): row for row in candidates}
+            done, not_done = wait(futs, timeout=max(5.0, timeout_sec))
+            for fut in done:
+                try:
+                    scored.append(fut.result())
+                except Exception as exc:
+                    log.warning("CLIP shortlist score failed: %s", exc)
+            for fut in not_done:
+                fut.cancel()
+            if not_done:
+                log.warning(
+                    "CLIP shortlist timeout after %.1fs — scored=%s/%s keep rest by PANNs",
+                    time.monotonic() - t0,
+                    len(scored),
+                    len(candidates),
+                )
+                # Append unscored remainder in original order.
+                scored_ids = {id(r) for r in scored}
+                # Map back via segment_id
+                got = {str(r.get("segment_id") or ""): r for r in scored}
+                for row in candidates:
+                    sid = str(row.get("segment_id") or "")
+                    if sid not in got:
+                        scored.append(row)
+    except Exception as exc:
+        log.warning("CLIP shortlist aborted — keep PANNs order: %s", exc)
+        return rows
+
+    # Prefer windows that actually look like owner-good fights.
+    strong = [r for r in scored if float(r.get("clip_score") or 0.0) >= min_score]
+    weak = [r for r in scored if float(r.get("clip_score") or 0.0) < min_score]
+    strong.sort(key=lambda r: float(r.get("clip_score") or r.get("score") or 0), reverse=True)
+    weak.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+    if strong:
+        ordered = strong + weak
+        log.info(
+            "CLIP shortlist rank vod=%s strong=%s weak=%s top=%.3f budget=%.1fs",
+            video_path.name,
+            len(strong),
+            len(weak),
+            float(strong[0].get("clip_score") or 0),
+            time.monotonic() - t0,
+        )
+        # Append rows beyond max_n unchanged.
+        return ordered + list(rows[max_n:])
+    log.info(
+        "CLIP shortlist no strong windows vod=%s min=%.2f — keep PANNs order",
+        video_path.name,
+        min_score,
+    )
+    return scored + list(rows[max_n:]) if scored else rows
 
 
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:
@@ -1057,7 +1206,10 @@ def rule_gate(
     if profile == "genshin":
         if metrics.boss_bar < 0.35 and metrics.center_motion < 0.18:
             return False, f"no_boss=motion{metrics.center_motion:.3f}:bar{metrics.boss_bar:.3f}"
-        if metrics.clip_score <= CLIP_MIN_SHOOTER:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= CLIP_MIN_SHOOTER
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
         if metrics.center_motion < 0.18:
             return False, f"motion_low={metrics.center_motion:.3f}"
@@ -1066,14 +1218,26 @@ def rule_gate(
     if profile == "mobile_legends":
         if metrics.minimap_delta < 0.012 or metrics.skill_delta < 0.007:
             return False, f"hud_low=mini{metrics.minimap_delta:.3f}:skill{metrics.skill_delta:.3f}"
-        if metrics.clip_score <= 0.03:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= 0.03
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
+        if os.environ.get("MLBB_COMBAT_GATE", "1") == "1" and video_path is not None:
+            from mlbb_combat_moment import passes_combat_gate, score_combat_moment
+
+            combat, _detail = score_combat_moment(video_path, start_sec, duration_sec=duration_sec)
+            if not passes_combat_gate(combat):
+                return False, f"combat_low={combat:.3f}"
         return True, "mlbb_fight_ok"
 
     if profile == "wot":
         if metrics.panns_explosion < 0.20 and metrics.panns_gun_max < 0.20:
             return False, f"panns_explosion_low={metrics.panns_explosion:.3f}"
-        if metrics.clip_score <= 0.03:
+        if (
+            os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1"
+            and metrics.clip_score <= 0.03
+        ):
             return False, f"clip_low={metrics.clip_score:.3f}"
         return True, "wot_impact_ok"
 
@@ -1089,9 +1253,34 @@ def score_candidate_window(
     profile = normalize_profile(profile)
     os.environ["_HIGHLIGHT_PROFILE"] = profile
 
-    panns = score_panns_audio(video_path, start_sec, duration_sec)
+    panns: dict[str, float]
+    if profile == "genshin" or os.environ.get("HIGHLIGHT_SKIP_PANNS", "0") == "1":
+        # Genshin boss detection is HP-bar / motion — PANNs gun model hangs on CPU
+        # and caused 10-minute timeout spam in the daily cycle.
+        panns = {
+            "panns_gunshot": 0.0,
+            "panns_machine_gun": 0.0,
+            "panns_explosion": 0.0,
+            "panns_artillery": 0.0,
+            "panns_speech": 0.0,
+            "panns_music": 0.0,
+            "panns_gun_max": 0.0,
+        }
+    else:
+        panns = score_panns_audio(video_path, start_sec, duration_sec)
     clip_score, frames = score_clip_exemplar(video_path, start_sec, duration_sec, profile)
-    if clip_score < 0:
+    # Sentinel hard-fail is exactly -1.0 with a clip_* reason. Histogram fallback
+    # can legitimately return negative similarity — do not treat it as CLIP death.
+    hard_clip_fail = (
+        clip_score <= -1.0
+        and frames
+        and (
+            str(frames[0].get("reason") or "") in ("clip_disabled",)
+            or str(frames[0].get("reason") or "").startswith("clip_unavailable")
+        )
+        and not any(f.get("fallback") == "hist" for f in frames)
+    )
+    if hard_clip_fail:
         m = HighlightMetrics(
             start=start_sec,
             duration=duration_sec,
@@ -1108,7 +1297,7 @@ def score_candidate_window(
         start=start_sec,
         duration=duration_sec,
         profile=profile,
-        clip_score=clip_score,
+        clip_score=max(0.0, float(clip_score)),
         ocr_text=ocr_text,
         ocr_hits=ocr_hits,
         center_motion=motion["center_motion"],
@@ -1479,10 +1668,12 @@ def _pann_probe_limit(profile: str) -> int:
 def stage1_panns_prefilter(video_path: Path, starts: list[float], profile: str) -> list[float]:
     """Keep windows where PANNs gun max is promising (cheap batch on sparse set)."""
     profile = normalize_profile(profile)
-    max_pann = _pann_probe_limit(profile)
-    starts = starts[:max_pann]
+    # MOBA/Genshin/WoT: do NOT truncate stage1 by PANN probe limit — that limit is for
+    # expensive gun-audio scoring on shooters only.
     if profile not in SHOOTER_PROFILES:
         return starts
+    max_pann = _pann_probe_limit(profile)
+    starts = starts[:max_pann]
     pre_min = float(os.environ.get("HIGHLIGHT_PANN_PREFILTER_MIN", "0.12"))
     workers = _parallel_workers()
 
@@ -1606,7 +1797,7 @@ def discover_highlight_candidates(
     starts = stage1_candidates(video_path, profile)
     log.info("highlight stage1 %s: %s windows", video_path.name, len(starts))
     if profile == "mobile_legends":
-        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "0") == "1"
+        use_discover = os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") == "1"
         use_prefilter = os.environ.get("MLBB_VOD_BANNER_PREFILTER", "0") == "1"
         if use_discover or use_prefilter:
             from mlbb_kill_banner import discover_vod_kill_banners, filter_peaks_with_ocr_banner
@@ -1670,6 +1861,11 @@ def discover_highlight_candidates(
         log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
 
     verified: list[dict] = []
+    try:
+        score_budget = float(os.environ.get("HIGHLIGHT_SCORE_BUDGET_SEC", "120"))
+    except ValueError:
+        score_budget = 120.0
+    score_deadline = time.monotonic() + max(15.0, score_budget)
 
     def _consume(start: float, metrics: HighlightMetrics) -> bool:
         if not _accept_highlight_candidate(video_path, start, metrics, profile):
@@ -1692,16 +1888,27 @@ def discover_highlight_candidates(
         return True
 
     if workers > 1 and len(pending) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_evaluate_highlight_start, video_path, start, profile): start
-                for start in pending
-            }
+        log.info("highlight parallel score %s: %s windows x%d workers", video_path.name, len(pending), workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = {
+            pool.submit(_evaluate_highlight_start, video_path, start, profile): start
+            for start in pending
+        }
+        try:
             for fut in as_completed(futures):
                 if len(verified) >= limit:
                     break
+                if time.monotonic() >= score_deadline:
+                    log.warning(
+                        "highlight score budget %.0fs hit vod=%s verified=%s pending=%s — stop",
+                        score_budget,
+                        video_path.name,
+                        len(verified),
+                        len(pending),
+                    )
+                    break
                 try:
-                    row = fut.result()
+                    row = fut.result(timeout=max(1.0, score_deadline - time.monotonic()))
                 except Exception as exc:
                     log.warning("highlight parallel score failed start=%s: %s", futures[fut], exc)
                     continue
@@ -1710,13 +1917,34 @@ def discover_highlight_candidates(
                 start, metrics = row
                 if _consume(start, metrics) and len(verified) >= limit:
                     break
+                # Shooter montage: stop as soon as we have enough combat peaks.
+                need_m = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+                if (
+                    profile in SHOOTER_PROFILES
+                    and os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1"
+                    and len(verified) >= need_m
+                ):
+                    log.info(
+                        "vod montage early-stop peaks=%s need=%s vod=%s",
+                        len(verified),
+                        need_m,
+                        video_path.name,
+                    )
+                    break
                 if (
                     verified
                     and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                     and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                    and profile == "mobile_legends"
                 ):
                     log.info("vod send_one: stop after first highlight pass start=%.1f", verified[-1]["start"])
                     break
+        finally:
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
+            # Never block shutdown on hung PANNs/ffmpeg workers (cycle timeout spam root).
+            pool.shutdown(wait=False, cancel_futures=True)
     else:
         for start in pending:
             if len(verified) >= limit:
@@ -1727,10 +1955,24 @@ def discover_highlight_candidates(
             start, metrics = row
             if _consume(start, metrics) and len(verified) >= limit:
                 break
+            need_m = max(2, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+            if (
+                profile in SHOOTER_PROFILES
+                and os.environ.get("SHOOTER_VOD_MONTAGE", "1") == "1"
+                and len(verified) >= need_m
+            ):
+                log.info(
+                    "vod montage early-stop peaks=%s need=%s vod=%s",
+                    len(verified),
+                    need_m,
+                    video_path.name,
+                )
+                break
             if (
                 verified
                 and os.environ.get("MLBB_VOD_SEND_ONE", "1") == "1"
                 and os.environ.get("MLBB_VOD_ONLY", "0") == "1"
+                and profile == "mobile_legends"
             ):
                 log.info(
                     "vod send_one: stop after first highlight pass start=%.1f",

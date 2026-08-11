@@ -15,14 +15,19 @@
       {"tc": "1:45:08", "time_sec": 6308, "label": "bad", "note": "run no starter shots"}
     ],
     "n97cHIR9Qow": [
-      {"tc": "30:45", "time_sec": 1845, "label": "good"},
-      {"tc": "33:25", "time_sec": 2005, "label": "good"},
+      {"tc": "30:45", "time_sec": 1845, "label": "bad", "note": "owner_reject_2026-08-05"},
+      {"tc": "33:25", "time_sec": 2005, "label": "bad", "note": "sniper_hold"},
       {"tc": "35:05", "time_sec": 2105, "label": "bad"},
-      {"tc": "35:50", "time_sec": 2150, "label": "good"},
+      {"tc": "35:50", "time_sec": 2150, "label": "bad", "note": "owner_reject_2026-08-05"},
       {"tc": "36:55", "time_sec": 2215, "label": "bad"},
       {"tc": "38:07", "time_sec": 2287, "label": "bad"},
-      {"tc": "41:10", "time_sec": 2470, "label": "good"},
+      {"tc": "41:10", "time_sec": 2470, "label": "bad", "note": "owner_reject_2026-08-05"},
       {"tc": "42:01", "time_sec": 2521, "label": "bad"}
+    ],
+    "FpMs48XOnq0": [
+      {"tc": "03:50", "time_sec": 230, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+      {"tc": "05:00", "time_sec": 300, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+      {"tc": "07:55", "time_sec": 475, "label": "bad", "note": "owner_reject_soft_gate_talk"}
     ]
   }
 }

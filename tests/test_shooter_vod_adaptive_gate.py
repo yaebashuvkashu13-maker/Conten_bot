@@ -17,14 +17,22 @@ from shooter_vod_adaptive_gate import (  # noqa: E402
     record_vod_outcome,
     soften_level,
     streak_from_state,
-    streak_threshold,
 )
 
 
-def test_soften_after_two_zero_vods(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_soften_capped_at_quality_max(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "2")
+    monkeypatch.delenv("SHOOTER_VOD_MAX_SOFTEN_LEVEL", raising=False)  # default 1
+    monkeypatch.delenv("SHOOTER_VOD_DISABLE_SOFTEN", raising=False)
     assert soften_level(0) == 0
     assert soften_level(1) == 0
+    assert soften_level(2) == 1
+    assert soften_level(10) == 1  # capped — no L3/L4 trash path
+
+
+def test_soften_can_raise_ceiling_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_MAX_SOFTEN_LEVEL", "4")
     assert soften_level(2) == 1
     assert soften_level(3) == 2
     assert soften_level(6) == 3
@@ -55,16 +63,16 @@ def test_l2_has_pov_gate_off() -> None:
     assert float(ov["VISUAL_MENU_OVERLAY_MAX"]) > float(overrides_for_level(1)["VISUAL_MENU_OVERLAY_MAX"])
     assert ov.get("PUBG_METRO_VOD_MIN_PROBES") == "1"
     assert ov.get("PUBG_METRO_SEGMENT_RELAX") == "1"
+    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "0"
 
 
-def test_l3_trusts_metro_vod_on_presend() -> None:
+def test_l3_never_enables_relax_heuristics() -> None:
     ov = overrides_for_level(3)
     assert ov.get("PUBG_METRO_SEGMENT_TRUST_VOD") == "1"
-    assert ov.get("PUBG_REJECT_BOT_FARM") == "0"
+    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "0"
 
 
-def test_l4_trusts_panns_and_more_probes() -> None:
+def test_l4_never_enables_relax_heuristics() -> None:
     ov = overrides_for_level(4)
-    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "2"
+    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "0"
     assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) >= 24
-    assert float(ov.get("PUBG_PANNS_TRUST_MIN", "0")) <= 0.30

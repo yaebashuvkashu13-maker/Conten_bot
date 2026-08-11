@@ -54,6 +54,7 @@ install_scripts() {
     vk_mlbb_queue.py \
     vk_mlbb_upload.py \
     vk_mlbb_publish_slot.py \
+    social_publish.py \
     install_vk_mlbb_scheduler.sh \
     resend_montage_preview.py; do
     if [[ -f "$REPO/scripts/$f" ]]; then

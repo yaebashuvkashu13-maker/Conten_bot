@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Overnight quality profile for all shooter games + cycle runner.
+# Soften capped, no talk/loot soft-gate, longer Standoff VODs preferred.
+set -euo pipefail
+set -a
+# shellcheck disable=SC1091
+source /root/.video_bot.env
+set +a
+
+export PYTHONPATH="${CONTENT_BOT_REPO:-/root/content_bot_ml}/scripts:${PYTHONPATH:-}"
+export SHOOTER_VOD_QUALITY_FIRST=1
+export SHOOTER_VOD_MAX_SOFTEN_LEVEL=1
+export SHOOTER_VOD_DISABLE_SOFTEN=0
+export PUBG_RELAX_OWNER_HEURISTICS=0
+export SHOOTER_VOD_MONTAGE_SOFT_GATE=0
+export SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW=0
+export SMART_PUBG_MIN_GUNFIRE_DENSITY=0.060
+export SMART_STANDOFF_MIN_GUNFIRE_DENSITY=0.060
+export SMART_PUBG_MIN_BURST_RATIO=5.0
+export PUBG_PANNS_TRUST_MIN=0.42
+export PUBG_PANNS_TRUST_QUALITY_FLOOR=0.40
+export SHOOTER_VOD_MONTAGE_MIN_CLIP_SCORE=0.04
+export SHOOTER_VOD_FAST_SKIP_INTRO=90
+export SHOOTER_VOD_FAST_PANN_MIN=0.16
+export SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC=1800
+export SHOOTER_VOD_FORCE_REDISCOVER=0
+export SHOOTER_VOD_ADAPTIVE_NOTIFY=0
+export SHOOTER_VOD_EXHAUST_NOTIFY=0
+export SHOOTER_VOD_MONTAGE=1
+export SHOOTER_VOD_MONTAGE_ONLY=1
+export SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=1
+export MLBB_VOD_DISABLE_SOFTEN=0
+export MLBB_VOD_ZERO_STREAK_SOFTEN=3
+export MLBB_VOD_QUALITY_MODE_RELAX=0
+export EXTENDED_VOD_DISABLE_SOFTEN=1
+
+cd "${CONTENT_BOT_REPO:-/root/content_bot_ml}"
+exec python3 -u scripts/daily_cycle_runner.py

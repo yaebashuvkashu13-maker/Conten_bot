@@ -10,17 +10,23 @@ from pathlib import Path
 LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
-# n97cHIR9Qow — owner review 2026-06-06
+# n97cHIR9Qow — owner review 2026-06-06; 2026-08-05 owner: today's склейки from
+# 1845/2150/2470 were trash (run/fake gun) → flipped to bad.
 DEFAULT_LABELS: dict[str, list[dict]] = {
     "n97cHIR9Qow": [
-        {"tc": "30:45", "time_sec": 1845.0, "label": "good"},
-        {"tc": "33:25", "time_sec": 2005.0, "label": "good"},
+        {"tc": "30:45", "time_sec": 1845.0, "label": "bad", "note": "owner_reject_2026-08-05"},
+        {"tc": "33:25", "time_sec": 2005.0, "label": "bad", "note": "sniper_hold"},
         {"tc": "35:05", "time_sec": 2105.0, "label": "bad"},
-        {"tc": "35:50", "time_sec": 2150.0, "label": "good"},
+        {"tc": "35:50", "time_sec": 2150.0, "label": "bad", "note": "owner_reject_2026-08-05"},
         {"tc": "36:55", "time_sec": 2215.0, "label": "bad"},
         {"tc": "38:07", "time_sec": 2287.0, "label": "bad"},
-        {"tc": "41:10", "time_sec": 2470.0, "label": "good"},
+        {"tc": "41:10", "time_sec": 2470.0, "label": "bad", "note": "owner_reject_2026-08-05"},
         {"tc": "42:01", "time_sec": 2521.0, "label": "bad"},
+    ],
+    "FpMs48XOnq0": [
+        {"tc": "03:50", "time_sec": 230.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+        {"tc": "05:00", "time_sec": 300.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
+        {"tc": "07:55", "time_sec": 475.0, "label": "bad", "note": "owner_reject_soft_gate_talk"},
     ],
 }
 
@@ -48,6 +54,18 @@ def load_owner_labels() -> dict[str, list[dict]]:
                 if key not in seen:
                     merged[vid].append(row)
                     seen.add(key)
+    # Same timestamp: bad wins over good (owner reject after earlier good mark).
+    for vid, rows in merged.items():
+        by_t: dict[float, dict] = {}
+        for row in rows:
+            try:
+                t = float(row["time_sec"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            prev = by_t.get(t)
+            if prev is None or str(row.get("label")) == "bad":
+                by_t[t] = row
+        merged[vid] = list(by_t.values())
     return merged
 
 
@@ -147,10 +165,13 @@ def pubg_passes_owner_heuristics(
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
     panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    # Quality floor: never trust weak PANNs as "gunfire" (softened env used to drop this to 0.28).
+    panns_trust = max(panns_trust, float(os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40")))
     if panns_gun_max >= panns_trust:
         return True, f"panns_trust={panns_gun_max:.3f}"
+    # RELAX heuristics disabled unless explicitly forced AND quality-first is off.
     relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
-    if relax in ("1", "2"):
+    if relax in ("1", "2") and os.environ.get("SHOOTER_VOD_QUALITY_FIRST", "1") != "1":
         if panns_gun_max >= max(0.22, panns_trust - 0.08) and gunfire_density >= 0.020:
             return True, f"panns_audio=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}"
         if gunfire_density >= 0.040 and burst_ratio >= 3.5:
@@ -161,16 +182,23 @@ def pubg_passes_owner_heuristics(
             return True, f"panns_relax_l4={panns_gun_max:.3f}"
     if audio_rms > 0.050 and gunfire_density < 0.015 and panns_gun_max < 0.25:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
-    if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
-        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if center_motion >= 0.075 and gunfire_density < 0.115 and panns_gun_max < 0.28:
-        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if gunfire_density < 0.040 and audio_rms > 0.036:
-        return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
+    # Real fights often have high camera motion — accept clear gunfire BEFORE
+    # the run_fake_gun heuristic (which previously blocked gun~0.05–0.11 fights).
     if gunfire_density >= 0.055:
         return True, "fight_audio"
     if center_motion < 0.022 and gunfire_density >= 0.028 and burst_ratio >= 5.5:
         return True, "sniper_hold"
     if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:
         return True, "light_combat"
+    if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
+        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    fake_gun_ceil = float(os.environ.get("PUBG_RUN_FAKE_GUN_MAX", "0.050"))
+    if (
+        center_motion >= 0.075
+        and gunfire_density < fake_gun_ceil
+        and panns_gun_max < 0.32
+    ):
+        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    if gunfire_density < 0.040 and audio_rms > 0.036:
+        return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     return False, f"below_owner_floor=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"

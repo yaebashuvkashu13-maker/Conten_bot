@@ -74,14 +74,15 @@ class KillBannerHit:
 
 
 def _min_tier() -> int:
-    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "double").strip().lower()
+    # OWNER: lane doubles are trash; default require triple+ teamfight streaks.
+    raw = (os.environ.get("MLBB_KILL_BANNER_MIN_TIER") or "triple").strip().lower()
     if raw.isdigit():
         return max(1, int(raw))
-    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 2)
+    return {"single": 1, "double": 2, "triple": 3, "maniac": 4, "savage": 5}.get(raw, 3)
 
 
 def _banner_required() -> bool:
-    return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "1") == "1"
+    return os.environ.get("MLBB_KILL_BANNER_REQUIRED", "0") == "1"
 
 
 def _motion_anchor_ok() -> bool:
@@ -90,7 +91,7 @@ def _motion_anchor_ok() -> bool:
         return True
     if not _banner_required():
         return True
-    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "1") != "1":
+    if os.environ.get("MLBB_VOD_BANNER_PRESEND", "0") != "1":
         return True
     return False
 
@@ -121,6 +122,11 @@ def classify_banner_text(text: str) -> KillBannerHit | None:
 
 
 def _announce_color_score(frame) -> float:
+    """Score MLBB kill-announce flash in the top-center HUD zone.
+
+    Real banners are bluish/cyan (HSV H≈95–115 on owner/wiki samples), not gold.
+    White text glow is secondary evidence.
+    """
     import cv2
     import numpy as np
 
@@ -130,10 +136,14 @@ def _announce_color_score(frame) -> float:
     zone = hsv[int(h * 0.02) : int(h * 0.30), int(w * 0.15) : int(w * 0.85)]
     if zone.size == 0:
         return 0.0
-    gold = cv2.inRange(zone, np.array([8, 100, 140]), np.array([40, 255, 255]))
+    # OpenCV H is 0–179. Owner kill photos median ~H103/S121/V161; wiki classic ~H107.
+    cyan = cv2.inRange(zone, np.array([75, 55, 95]), np.array([130, 255, 255]))
     white = cv2.inRange(zone, np.array([0, 0, 210]), np.array([180, 50, 255]))
-    combined = cv2.bitwise_or(gold, white)
-    ratio = float(np.count_nonzero(combined)) / float(combined.size)
+    n = float(cyan.size)
+    cyan_ratio = float(np.count_nonzero(cyan)) / n
+    white_ratio = float(np.count_nonzero(white)) / n
+    # Cyan dominates; white text glow is secondary so plain bright UI does not dominate.
+    ratio = cyan_ratio + 0.45 * white_ratio
     return min(1.0, ratio * 11.0)
 
 
@@ -253,45 +263,64 @@ def _sample_frames(vod: Path, t0: float, t1: float) -> list[tuple[float, object]
 
 
 def _classify_frame(sec: float, frame, *, deep: bool = False) -> KillBannerHit | None:
-    classified = classify_banner_text(_ocr_banner_zones(frame, deep=deep))
-    if classified is not None:
-        return KillBannerHit(
-            sec=round(sec, 2),
-            tier=classified.tier,
-            label=classified.label,
-            text=classified.text,
-            source="ocr",
-        )
+    """
+    Ship path is deterministic visual ref match only:
+    cyan tip → wiki/owner photo bank → source=ref.
+    OCR is not used. Color alone never invents a streak.
+    """
     color = _announce_color_score(frame)
-    if color >= _color_min_score():
-        deep_text = _ocr_banner_zones(frame, deep=True)
-        if _ENEMY_STREAK_RE.search(deep_text):
-            return None
-        if classify_banner_text(deep_text) is not None:
-            classified = classify_banner_text(deep_text)
-            assert classified is not None
-            return KillBannerHit(
-                sec=round(sec, 2),
-                tier=classified.tier,
-                label=classified.label,
-                text=classified.text,
-                source="ocr",
-            )
-        if not _color_only_allowed():
-            return None
+    color_gate = _color_min_score() * (0.55 if deep else 0.75)
+
+    if color >= color_gate or deep:
+        try:
+            from mlbb_banner_ref_match import classify_banner_reference
+
+            ref_hit = classify_banner_reference(sec, frame)
+            if ref_hit is not None:
+                return ref_hit
+        except Exception:
+            pass
+
+    if color >= _color_min_score() and _color_as_streak_allowed():
+        # Debug/legacy only — feed still rejects flash/color for shipping.
+        tier = 3 if color >= _color_min_score() * 1.6 else 2
         return KillBannerHit(
             sec=round(sec, 2),
-            tier=3,
-            label="announce",
-            text=f"color={color:.3f}",
-            source="color",
+            tier=tier,
+            label="triple" if tier >= 3 else "double",
+            text=f"color_flash={color:.3f}",
+            source="flash",
         )
     return None
 
 
 def _color_only_allowed() -> bool:
+    """Legacy: allow color-only hits in verify_rendered_clip. Default off."""
     return os.environ.get("MLBB_KILL_BANNER_COLOR_ONLY", "0") == "1"
 
+
+def _color_as_streak_allowed() -> bool:
+    """Opt-in only: treat cyan flash as fake double/triple. Default OFF."""
+    return os.environ.get("MLBB_BANNER_COLOR_AS_STREAK", "0") == "1"
+
+
+def _visual_banner_ok() -> bool:
+    """Wiki/owner visual ref match is the only ship gate."""
+    return os.environ.get("MLBB_BANNER_VISUAL_OK", "1") == "1"
+
+
+def _hit_qualifies(hit: KillBannerHit, *, min_tier: int) -> bool:
+    """Only source=ref at min_tier ships. OCR/flash/color never qualify."""
+    if hit.tier < min_tier:
+        return False
+    if hit.source == "ref" and _visual_banner_ok():
+        return True
+    return False
+
+
+def _source_rank(source: str) -> int:
+    """Lower is better. Only ref matters for shipping."""
+    return {"ref": 0, "ocr": 1, "flash": 2, "color": 3}.get(str(source or ""), 9)
 
 def _candidate_secs(
     frames: list[tuple[float, object]],
@@ -328,7 +357,7 @@ def scan_window(
     deep: bool = False,
     quick: bool = False,
 ) -> list[KillBannerHit]:
-    """Scan [t0, t1] for kill-streak banners; color prefilter then OCR on candidates."""
+    """Scan [t0, t1] for kill-streak banners; cyan tip → visual ref match."""
     if quick:
         deep = False
         span = max(0.0, t1 - t0)
@@ -352,33 +381,38 @@ def scan_window(
     if not hits and frames and not quick:
         for sec, frame in frames:
             hit = _classify_frame(sec, frame, deep=True)
-            if hit is not None and hit.source == "ocr":
+            if hit is not None and hit.source == "ref":
                 hits.append(hit)
                 break
-    hits.sort(key=lambda h: (-h.tier, 0 if h.source == "ocr" else 1, h.sec))
+    hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
     return hits
 
 
 def find_banner_near_peak(vod: Path, peak_sec: float, *, quick: bool = False) -> KillBannerHit | None:
     """Look for streak banner around motion peak (banner at/just after peak)."""
     if quick:
-        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "10"))
-        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "6"))
+        before = float(os.environ.get("MLBB_KILL_BANNER_QUICK_BEFORE", "12"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_QUICK_AFTER", "8"))
         hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, quick=True)
     else:
-        before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "20"))
-        after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "10"))
-        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec)
+        before = float(os.environ.get("MLBB_KILL_BANNER_SCAN_BEFORE", "24"))
+        after = float(os.environ.get("MLBB_KILL_BANNER_SCAN_AFTER", "12"))
+        hits = scan_window(vod, peak_sec - before, peak_sec + after, focus_sec=peak_sec, deep=True)
     if not hits:
         return None
     min_tier = _min_tier()
-    for hit in hits:
-        if hit.tier >= min_tier and hit.source == "ocr":
+    # Prefer higher-tier ref hits closest to peak.
+    ranked = sorted(
+        hits,
+        key=lambda h: (
+            _source_rank(h.source),
+            -h.tier,
+            abs(h.sec - peak_sec),
+        ),
+    )
+    for hit in ranked:
+        if _hit_qualifies(hit, min_tier=min_tier):
             return hit
-    if not _banner_required():
-        for hit in hits:
-            if hit.tier >= min_tier:
-                return hit
     return None
 
 
@@ -392,6 +426,246 @@ def _adaptive_banner_scan_start(vod: Path, duration: float) -> float:
     return base
 
 
+def _motion_hint_peaks(analysis: dict, *, limit: int, duration: float) -> list[float]:
+    """Derive probe times from motion/audio when caller passes no hint_peaks."""
+    import numpy as np
+
+    win = float(analysis.get("window_seconds", 2.0) or 2.0)
+    if duration <= 240:
+        t0 = 15.0
+    elif duration <= 480:
+        t0 = min(float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300")), 90.0)
+    else:
+        t0 = float(os.environ.get("MLBB_VOD_MIN_PEAK_SEC", "300"))
+
+    motion = np.asarray(_analysis_series(analysis, "center_motion"), dtype=np.float32)
+    audio = np.asarray(_analysis_series(analysis, "audio"), dtype=np.float32)
+    picked: list[float] = []
+    if motion.size >= 4:
+        combined = motion if audio.size != motion.size else motion * 0.55 + audio * 0.45
+        for bi in np.argsort(combined)[::-1]:
+            t = float(bi) * win + win * 0.5
+            if t < t0 or t > duration - 4.0:
+                continue
+            if any(abs(t - p) < 8.0 for p in picked):
+                continue
+            picked.append(round(t, 2))
+            if len(picked) >= limit:
+                return picked
+
+    t1 = max(t0 + 30.0, duration - 20.0)
+    if t1 <= t0 + 1.0:
+        return [round(duration * 0.5, 2)]
+    step = (t1 - t0) / max(limit, 1)
+    return [round(t0 + (i + 0.5) * step, 2) for i in range(limit)]
+
+
+def _duration_grid_peaks(duration: float, *, limit: int) -> list[float]:
+    """Mid-game probe grid — no full-VOD analyze required.
+
+    Owner rule: uploaded VODs contain kills. Scan early+mid match densely;
+    do not burn 20 minutes proving emptiness.
+    """
+    if duration <= 240:
+        t0 = 15.0
+    elif duration <= 480:
+        t0 = 45.0
+    else:
+        # Ranked games often have first double by ~1–2 min — don't wait until 5 min.
+        t0 = float(os.environ.get("MLBB_BANNER_FAST_T0_SEC", "60"))
+    t1 = max(t0 + 40.0, duration - 20.0)
+    if t1 <= t0 + 1.0:
+        return [round(duration * 0.45, 2)]
+    step = float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "20"))
+    peaks: list[float] = []
+    t = t0
+    while t < t1 and len(peaks) < limit * 4:
+        peaks.append(round(t, 2))
+        t += step
+    if len(peaks) < limit:
+        mid = t0 + (t1 - t0) * 0.45
+        for delta in (-90, -45, 0, 45, 90, 150, 210):
+            p = round(mid + delta, 2)
+            if t0 <= p <= t1 and all(abs(p - x) > 10 for x in peaks):
+                peaks.append(p)
+            if len(peaks) >= limit:
+                break
+    return peaks[: max(limit, 1)]
+
+
+def _color_tip_rank(vod: Path, peaks: list[float]) -> list[float]:
+    """Cheap single-frame cyan tip sort — does NOT invent kill tiers."""
+    from gameplay_gate import _read_frame_at
+
+    scored: list[tuple[float, float]] = []
+    for t in peaks:
+        frame = _read_frame_at(vod, t)
+        color = float(_announce_color_score(frame)) if frame is not None else 0.0
+        scored.append((t, color))
+    scored.sort(key=lambda row: (-row[1], row[0]))
+    # Keep tips that look announce-ish first, but never drop all peaks.
+    gate = _color_min_score() * 0.5
+    tipped = [t for t, c in scored if c >= gate]
+    if len(tipped) >= 3:
+        return tipped
+    return [t for t, _ in scored]
+
+
+def discover_vod_kill_banners_fast(
+    vod: Path,
+    *,
+    min_tier: int | None = None,
+    hint_peaks: list[float] | None = None,
+) -> list[KillBannerHit]:
+    """
+    Fast discover: ffprobe grid → cyan tip rank → visual ref match only.
+    No OCR. No color-invented doubles. No full-VOD analyze.
+    """
+    if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
+        return []
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
+        return []
+
+    from smart_video_editor import ffprobe_duration
+
+    duration = float(ffprobe_duration(vod) or 0.0)
+    if duration < 20.0:
+        return []
+    need = min_tier if min_tier is not None else _min_tier()
+    # Wider mid-match grid by default — early-only 10/75s left quota stuck at 3/5.
+    max_probes = max(6, int(os.environ.get("MLBB_BANNER_FAST_MAX_PROBES", "28")))
+    max_sec = max(30.0, float(os.environ.get("MLBB_BANNER_FAST_MAX_SEC", "120")))
+    # Collect multiple doubles so SEND_ONE can still pick an unsent peak.
+    ship_on_first = os.environ.get("MLBB_BANNER_FAST_SHIP_ON_FIRST", "0") == "1"
+    # Do not stop on early laning doubles — fast-ship rejects peak_too_early and
+    # then empties the VOD (hour SLA stall). Keep searching past min peak floor.
+    min_peak_ship = float(
+        os.environ.get(
+            "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC",
+            os.environ.get("MLBB_BANNER_FAST_SHIP_PEAK_FLOOR", "240"),
+        )
+    )
+    deadline = time.monotonic() + max_sec
+    hits: list[KillBannerHit] = []
+    probes = 0
+
+    peaks = [float(p) for p in (hint_peaks or []) if p is not None]
+    if not peaks:
+        peaks = _duration_grid_peaks(duration, limit=max_probes)
+    peaks = _color_tip_rank(vod, peaks)[: max_probes * 2]
+    # Prefer mid/late fight candidates first when quality-first.
+    if os.environ.get("MLBB_VOD_QUALITY_FIRST", "1") == "1":
+        peaks = sorted(peaks, key=lambda p: (0 if float(p) >= min_peak_ship else 1, float(p)))
+
+    log.info(
+        "banner fast-discover %s: peaks=%s budget=%.0fs need_tier>=%s min_peak>=%.0f",
+        vod.name,
+        [round(p, 1) for p in peaks[:12]],
+        max_sec,
+        need,
+        min_peak_ship,
+    )
+
+    for peak in peaks:
+        if probes >= max_probes or time.monotonic() >= deadline:
+            break
+        probes += 1
+        hit = find_banner_near_peak(vod, peak, quick=True)
+        if hit is None:
+            continue
+        if not _hit_qualifies(hit, min_tier=need):
+            continue
+        # Hard rule: only visual ref ships.
+        if hit.source != "ref":
+            continue
+        if hits and abs(hit.sec - hits[-1].sec) < 6.0:
+            if hit.tier > hits[-1].tier or (
+                hit.tier == hits[-1].tier
+                and _source_rank(hit.source) < _source_rank(hits[-1].source)
+            ):
+                hits[-1] = hit
+        else:
+            hits.append(hit)
+        log.info(
+            "banner fast-hit %s: @%.1fs tier=%s src=%s label=%s probes=%s",
+            vod.name,
+            hit.sec,
+            hit.tier,
+            hit.source,
+            hit.label,
+            probes,
+        )
+        if ship_on_first and hits and float(hits[-1].sec) >= min_peak_ship:
+            break
+        if ship_on_first and hits and float(hits[-1].sec) < min_peak_ship:
+            log.info(
+                "banner fast-hit early @%.1fs < min_peak=%.0f — keep searching",
+                hits[-1].sec,
+                min_peak_ship,
+            )
+
+    # Dense retry: VODs have kills — first grid miss is a sampling miss, not emptiness.
+    if (
+        not hits
+        and os.environ.get("MLBB_BANNER_FAST_DENSE_RETRY", "1") == "1"
+        and time.monotonic() < deadline
+        and probes < max_probes
+    ):
+        dense_step = max(8.0, float(os.environ.get("MLBB_BANNER_FAST_STEP_SEC", "20")) * 0.5)
+        old_step = os.environ.get("MLBB_BANNER_FAST_STEP_SEC")
+        os.environ["MLBB_BANNER_FAST_STEP_SEC"] = str(dense_step)
+        try:
+            denser = _duration_grid_peaks(duration, limit=max_probes)
+        finally:
+            if old_step is None:
+                os.environ.pop("MLBB_BANNER_FAST_STEP_SEC", None)
+            else:
+                os.environ["MLBB_BANNER_FAST_STEP_SEC"] = old_step
+        denser = [p for p in denser if all(abs(p - x) > 6.0 for x in peaks)]
+        denser = _color_tip_rank(vod, denser)[: max(4, max_probes - probes)]
+        log.info(
+            "banner fast-dense-retry %s: extra=%s remaining_budget=%.0fs",
+            vod.name,
+            [round(p, 1) for p in denser[:10]],
+            max(0.0, deadline - time.monotonic()),
+        )
+        for peak in denser:
+            if probes >= max_probes or time.monotonic() >= deadline:
+                break
+            probes += 1
+            hit = find_banner_near_peak(vod, peak, quick=True)
+            if hit is None or not _hit_qualifies(hit, min_tier=need) or hit.source != "ref":
+                continue
+            hits.append(hit)
+            log.info(
+                "banner fast-hit %s: @%.1fs tier=%s src=%s label=%s probes=%s (dense)",
+                vod.name,
+                hit.sec,
+                hit.tier,
+                hit.source,
+                hit.label,
+                probes,
+            )
+            if ship_on_first and float(hit.sec) >= min_peak_ship:
+                break
+            if ship_on_first and float(hit.sec) < min_peak_ship:
+                log.info(
+                    "banner fast-hit early @%.1fs < min_peak=%.0f — keep searching (dense)",
+                    hit.sec,
+                    min_peak_ship,
+                )
+
+    hits.sort(key=lambda h: (-h.tier, _source_rank(h.source), h.sec))
+    log.info(
+        "banner fast-discover %s: done probes=%s hits=%s elapsed=%.1fs",
+        vod.name,
+        probes,
+        len(hits),
+        max_sec - max(0.0, deadline - time.monotonic()),
+    )
+    return hits
+
+
 def discover_vod_kill_banners(
     vod: Path,
     *,
@@ -399,13 +673,29 @@ def discover_vod_kill_banners(
     hint_peaks: list[float] | None = None,
 ) -> list[KillBannerHit]:
     """
-    Motion-gated sparse OCR scan for kill banners independent of motion peaks.
-    Capped by probe count and wall time — full-VOD deep OCR can stall for hours.
+    Kill-banner discover. Default: fast path (no full analyze).
+    Set MLBB_BANNER_FAST_DISCOVER=0 to force legacy motion-analyze discover.
     """
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return []
     if os.environ.get("MLBB_VOD_BANNER_DISCOVER", "1") != "1":
         return []
+    # Fast path first — correct (visual ref primary) and skips multi-minute analyze.
+    if os.environ.get("MLBB_BANNER_FAST_DISCOVER", "1") == "1":
+        fast_hits = discover_vod_kill_banners_fast(
+            vod, min_tier=min_tier, hint_peaks=hint_peaks
+        )
+        if fast_hits:
+            return fast_hits
+        # Optional one deep retry on the best tip only when fast found nothing.
+        if os.environ.get("MLBB_BANNER_FAST_DEEP_RETRY", "1") == "1" and hint_peaks:
+            need = min_tier if min_tier is not None else _min_tier()
+            for peak in list(hint_peaks)[:2]:
+                hit = find_banner_near_peak(vod, float(peak), quick=False)
+                if hit is not None and _hit_qualifies(hit, min_tier=need) and hit.source == "ref":
+                    return [hit]
+        return []
+
     import numpy as np
 
     from mlbb_fight_segment import _analysis_for
@@ -422,10 +712,15 @@ def discover_vod_kill_banners(
     probes = 0
 
     def _merge_hit(hit: KillBannerHit) -> None:
-        if hit.tier < need or hit.source != "ocr":
+        if not _hit_qualifies(hit, min_tier=need):
+            return
+        if hit.source in ("flash", "color", "ocr"):
             return
         if hits and hit.sec - hits[-1].sec < 6.0:
-            if hit.tier > hits[-1].tier:
+            if hit.tier > hits[-1].tier or (
+                hit.tier == hits[-1].tier
+                and _source_rank(hit.source) < _source_rank(hits[-1].source)
+            ):
                 hits[-1] = hit
         else:
             hits.append(hit)
@@ -441,9 +736,17 @@ def discover_vod_kill_banners(
                 return True
         return probes < max_probes and time.monotonic() < deadline
 
-    # Phase 1: narrow scan around stage1 motion peaks (fast).
+    # Phase 1: narrow scan around motion peaks (caller hints or auto-derived).
     peak_limit = max(4, int(os.environ.get("MLBB_KILL_BANNER_DISCOVER_PEAK_HINTS", "6")))
-    for peak in sorted(set(hint_peaks or []))[:peak_limit]:
+    peaks = [float(p) for p in (hint_peaks or []) if p is not None]
+    if not peaks:
+        peaks = _motion_hint_peaks(analysis, limit=peak_limit, duration=duration)
+        log.info(
+            "banner discover %s: auto hint peaks=%s",
+            vod.name,
+            [round(p, 1) for p in peaks[:peak_limit]],
+        )
+    for peak in sorted(set(peaks))[:peak_limit]:
         if probes >= max_probes or time.monotonic() >= deadline:
             break
         probes += 1
@@ -452,7 +755,14 @@ def discover_vod_kill_banners(
             _merge_hit(hit)
 
     # Phase 2 (full VOD motion sweep) is opt-in — default off; it can stall for hours.
-    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1":
+    # If peaks-only produced nothing, still do a short motion sweep so quota hunts
+    # are not stuck with probes=0 / hits=0 after a long analyze_video.
+    force_sparse = (
+        not hits
+        and probes > 0
+        and os.environ.get("MLBB_VOD_BANNER_DISCOVER_FALLBACK_SPARSE", "1") == "1"
+    )
+    if os.environ.get("MLBB_VOD_BANNER_DISCOVER_FULL", "0") != "1" and not force_sparse:
         hits.sort(key=lambda h: h.sec)
         log.info(
             "banner discover %s: peaks-only probes=%s hits=%s",
@@ -461,6 +771,12 @@ def discover_vod_kill_banners(
             len(hits),
         )
         return hits
+    if force_sparse:
+        log.info(
+            "banner discover %s: fallback sparse after empty peaks-only probes=%s",
+            vod.name,
+            probes,
+        )
 
     # Phase 2: sparse motion-gated sweep for banners away from motion peaks.
     if probes < max_probes and time.monotonic() < deadline:
@@ -508,7 +824,7 @@ def filter_peaks_with_ocr_banner(
     max_probe: int | None = None,
     known_banners: list[KillBannerHit] | None = None,
 ) -> list[float]:
-    """Keep motion peaks that have an OCR-qualified kill banner nearby."""
+    """Keep motion peaks that have a qualifying kill banner nearby (ref primary)."""
     if os.environ.get("MLBB_VOD_BANNER_PREFILTER", "1") != "1":
         return peaks
     limit = max_probe or int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_PEAKS", "16"))
@@ -518,7 +834,7 @@ def filter_peaks_with_ocr_banner(
     qualified = [
         h
         for h in (known_banners or [])
-        if h.tier >= need and h.source == "ocr"
+        if _hit_qualifies(h, min_tier=need)
     ]
     if qualified:
         kept: list[float] = []
@@ -529,10 +845,10 @@ def filter_peaks_with_ocr_banner(
                     break
         return kept
     kept: list[float] = []
-    ocr_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
-    for peak in peaks[: max(1, ocr_cap)]:
+    probe_cap = min(limit, int(os.environ.get("MLBB_VOD_BANNER_PREFILTER_OCR_PEAKS", "8")))
+    for peak in peaks[: max(1, probe_cap)]:
         hit = find_banner_near_peak(vod, peak, quick=True)
-        if hit and hit.source == "ocr" and hit.tier >= need:
+        if hit and _hit_qualifies(hit, min_tier=need):
             kept.append(peak)
     return kept
 
@@ -588,6 +904,27 @@ def bounds_from_banner(
             end = min(file_dur, start + min_d)
             dur = end - start
 
+    # Owner rule: ~5s fight before banner (not long walk-in).
+    min_pre = float(os.environ.get("MLBB_KILL_BANNER_MIN_PRE_SEC", "5"))
+    if float(banner_sec) - start < min_pre:
+        start = max(0.0, float(banner_sec) - min_pre)
+        dur = end - start
+        if dur < min_d:
+            end = min(float(file_dur), start + min_d)
+            dur = end - start
+        if dur > hard_max:
+            end = start + hard_max
+            dur = hard_max
+
+    # Owner rule: ~3s after banner / fight end (cut loot/runaway tails).
+    post = float(os.environ.get("MLBB_KILL_BANNER_POST_SEC", "3"))
+    if end - float(banner_sec) > post + 0.5:
+        end = min(float(file_dur), float(banner_sec) + post)
+        dur = end - start
+        if dur < min_d:
+            start = max(0.0, end - min_d)
+            dur = end - start
+
     return round(start, 2), round(end, 2), round(dur, 2)
 
 
@@ -597,9 +934,10 @@ def resolve_fight_bounds(
     file_dur: float,
 ) -> tuple[float, float, float, dict] | None:
     """
-    Prefer kill-streak banner anchor inside motion sustain window.
-    Returns None only when banner is mandatory and no qualifying streak is found.
+    Prefer kill-banner anchor via visual ref match inside motion sustain.
+    Falls back to motion when banner missing and motion_anchor / combat mode allows it.
     """
+    from mlbb_combat_moment import moment_anchor_mode
     from mlbb_fight_segment import detect_fight_bounds
 
     fight_start, fight_end, fight_dur = detect_fight_bounds(vod, peak_sec)
@@ -618,58 +956,43 @@ def resolve_fight_bounds(
     if hit is None:
         hit = find_banner_near_peak(vod, peak_sec, quick=False)
     min_tier = _min_tier()
+    mode = moment_anchor_mode()
 
-    if _motion_anchor_ok():
-        if hit is not None and hit.tier >= min_tier:
-            start, end, dur = bounds_from_banner(
-                hit.sec,
-                file_dur,
-                fight_start=fight_start,
-                fight_end=fight_end,
-            )
-            return (
-                start,
-                end,
-                dur,
-                {
-                    "anchor": "kill_banner",
-                    "banner_sec": hit.sec,
-                    "kill_banner": hit.label,
-                    "kill_banner_tier": hit.tier,
-                    "banner_text": hit.text,
-                    "banner_source": hit.source,
-                    "fight_start": fight_start,
-                    "fight_end": fight_end,
-                    "fight_dur": fight_dur,
-                },
-            )
+    if hit is not None and _hit_qualifies(hit, min_tier=min_tier):
+        # Motion sustain must be probed *before* the banner — peak at banner time
+        # often lands on post-fight tail (owner complaint: only kill banner, no fight).
+        probe_lag = float(os.environ.get("MLBB_KILL_BANNER_FIGHT_PROBE_LAG", "12"))
+        probe_peak = max(5.0, float(hit.sec) - probe_lag)
+        fight_start, fight_end, fight_dur = detect_fight_bounds(vod, probe_peak)
+        start, end, dur = bounds_from_banner(
+            hit.sec,
+            file_dur,
+            fight_start=fight_start,
+            fight_end=fight_end,
+        )
+        return (
+            start,
+            end,
+            dur,
+            {
+                "anchor": "kill_banner",
+                "banner_sec": hit.sec,
+                "kill_banner": hit.label,
+                "kill_banner_tier": hit.tier,
+                "banner_text": hit.text,
+                "banner_source": hit.source,
+                "fight_start": fight_start,
+                "fight_end": fight_end,
+                "fight_dur": fight_dur,
+            },
+        )
+
+    # No banner: combat/motion modes keep the fight; strict banner mode rejects.
+    if mode in ("combat", "motion") or _motion_anchor_ok():
         return fight_start, fight_end, fight_dur, motion_meta
-
-    if hit is None or hit.tier < min_tier:
-        return None
-
-    start, end, dur = bounds_from_banner(
-        hit.sec,
-        file_dur,
-        fight_start=fight_start,
-        fight_end=fight_end,
-    )
-    return (
-        start,
-        end,
-        dur,
-        {
-            "anchor": "kill_banner",
-            "banner_sec": hit.sec,
-            "kill_banner": hit.label,
-            "kill_banner_tier": hit.tier,
-            "banner_text": hit.text,
-            "banner_source": hit.source,
-            "fight_start": fight_start,
-            "fight_end": fight_end,
-            "fight_dur": fight_dur,
-        },
-    )
+    if not _banner_required():
+        return fight_start, fight_end, fight_dur, motion_meta
+    return None
 
 
 def verify_banner_on_source(
@@ -678,14 +1001,14 @@ def verify_banner_on_source(
     *,
     min_tier: int | None = None,
 ) -> tuple[bool, str]:
-    """Presend: verify streak banner on source VOD (rendered mp4 OCR is unreliable)."""
+    """Presend: verify streak banner on source VOD via visual ref only."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
     need = min_tier if min_tier is not None else _min_tier()
     hits = scan_window(vod, banner_sec - 2.0, banner_sec + 3.0, focus_sec=banner_sec, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"source_banner_ok:{hit.label}@{hit.sec:.1f}s"
+        if _hit_qualifies(hit, min_tier=need):
+            return True, f"source_banner_ok:{hit.source}:{hit.label}@{hit.sec:.1f}s"
     if hits and not _banner_required():
         return True, f"source_banner_weak:{hits[0].label}"
     return False, f"source_banner_missing_min_tier={need}"
@@ -698,7 +1021,7 @@ def verify_rendered_clip(
     banner_sec: float | None = None,
     clip_start: float | None = None,
 ) -> tuple[bool, str]:
-    """Presend: streak banner must appear inside rendered mp4."""
+    """Presend: streak banner must appear inside rendered mp4 (ref primary)."""
     if os.environ.get("MLBB_VOD_KILL_BANNER", "1") != "1":
         return True, "banner_check_off"
     from smart_video_editor import ffprobe_duration
@@ -719,8 +1042,8 @@ def verify_rendered_clip(
 
     hits = scan_window(path, t0, t1, deep=True)
     for hit in hits:
-        if hit.tier >= need and hit.source == "ocr":
-            return True, f"banner_ok:{hit.label}@{hit.sec:.1f}s"
+        if _hit_qualifies(hit, min_tier=need):
+            return True, f"banner_ok:{hit.source}:{hit.label}@{hit.sec:.1f}s"
     if _color_only_allowed():
         for hit in hits:
             if hit.tier >= need:

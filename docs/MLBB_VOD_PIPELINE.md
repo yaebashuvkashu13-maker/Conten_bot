@@ -183,7 +183,7 @@ bash /root/content_bot_ml/scripts/vps_disk_cleanup.sh
 
 1. Сканирует окно `[peak - SCAN_BEFORE, peak + SCAN_AFTER]` (default 14+6 с).
 2. FFmpeg batch sampling кадров.
-3. **Color prefilter:** золото/белый в верхней центральной зоне (2–30% высоты).
+3. **Color prefilter:** голубой/циан + белый в верхней центральной зоне (2–30% высоты).
 4. **OCR** только на кандидатах (top color frames + кадр у peak):
    - зоны: top-center, kill-feed слева;
    - pytesseract eng+rus, PSM 7 (deep mode: 6, 8).
