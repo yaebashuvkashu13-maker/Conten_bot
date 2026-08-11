@@ -287,6 +287,16 @@ def _ensure_registry(env: dict[str, str]) -> list[dict]:
     registry: list[dict] = list(state.get("vods", []))
     if _repair_registry_ids(registry):
         log.info("repaired registry youtube ids")
+    # Drop empty-twin duplicates that reopen exhausted banner misses.
+    try:
+        from cycle_owner_refresh import _collapse_duplicates
+
+        collapsed = _collapse_duplicates(registry)
+        if len(collapsed) != len(registry):
+            log.info("collapsed registry duplicates %s→%s", len(registry), len(collapsed))
+            registry = collapsed
+    except Exception:
+        pass
     known = {r.get("id") for r in registry}
     known_paths = {str(r.get("path", "")) for r in registry}
     used = set(state.get("used_youtube_ids", []))

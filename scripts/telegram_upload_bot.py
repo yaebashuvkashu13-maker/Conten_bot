@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-06-no-auto-hq-social-v1'
+BOT_VERSION = '2026-08-11-owner-refresh-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -3019,6 +3019,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
+        {'command': 'refresh', 'description': 'Обновить — перезапуск отправки видео'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
@@ -3310,9 +3311,30 @@ def handle_message(message: dict):
             f'youtube={"да" if youtube_ingest_allowed(chat_id) else "нет"} '
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
             f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}\n'
-            f'YouTube: ссылка Shorts или /yt <url> → /make'
+            f'YouTube: ссылка Shorts или /yt <url> → /make\n'
+            f'Нет видео долго? /refresh или напиши «обновить»'
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
         )
+        return
+    if is_owner(chat_id) and (
+        cmd in ('/refresh', '/obnovit', '/обновить', '/update', '/reload', 'обновить', 'refresh')
+        or text.strip().lower() in ('обновить', 'refresh', 'update', '/обновить')
+    ):
+        now = time.time()
+        last = float(getattr(handle_message, '_last_refresh_at', 0) or 0)
+        if now - last < 45:
+            send_message(chat_id, f'Уже обновляю (подожди {int(45 - (now - last))}с).')
+            return
+        setattr(handle_message, '_last_refresh_at', now)
+        send_message(chat_id, 'Обновляю цикл отправки…')
+        try:
+            from cycle_owner_refresh import format_refresh_reply, owner_refresh
+
+            report = owner_refresh(kick=True)
+            send_message(chat_id, format_refresh_reply(report))
+        except Exception as exc:
+            logging.exception('owner refresh failed')
+            send_message(chat_id, f'❌ Обновление не удалось: {exc}')
         return
     if cmd in ('/yt', '/youtube'):
         if not youtube_ingest_allowed(chat_id):

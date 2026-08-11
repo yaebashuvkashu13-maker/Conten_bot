@@ -136,6 +136,7 @@ def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
         scored.append((dur, p))
     scored.sort(key=lambda t: -t[0])
     moved = 0
+    moved_names: set[str] = set()
     for dur, src in scored:
         if moved >= limit:
             break
@@ -145,6 +146,7 @@ def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
         try:
             src.rename(dest)
             moved += 1
+            moved_names.add(src.name)
             _log(f"recycle {game}: {src.name} dur={dur:.0f}s → inbox")
         except OSError as exc:
             _log(f"recycle fail {game} {src.name}: {exc}")
@@ -160,14 +162,20 @@ def recycle_parked_batch(game: str, *, limit: int = 8) -> int:
         except (OSError, json.JSONDecodeError):
             continue
         data["discovery_pause_until"] = 0
+        # Only reset recycle caps. Never blank-reopen every exhausted row —
+        # that resurrected dead MLBB banner misses every watchdog tick.
         for row in data.get("vods") or []:
             if not isinstance(row, dict):
                 continue
-            if int(row.get("recycle_count") or 0) > 0 or row.get("exhausted"):
+            if int(row.get("recycle_count") or 0) > 0:
                 row["recycle_count"] = 0
+                row.pop("last_recycle_at", None)
+            path_name = Path(str(row.get("path") or "")).name
+            if path_name and path_name in moved_names:
                 row["exhausted"] = False
                 row["reject_reason"] = ""
-                row.pop("last_recycle_at", None)
+                row["last_scan_blocked"] = False
+                row["last_scan_at"] = 0
         try:
             sp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
