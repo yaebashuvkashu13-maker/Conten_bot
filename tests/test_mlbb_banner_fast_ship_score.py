@@ -83,6 +83,7 @@ def test_banner_fast_ship_rejects_short_vod_and_early_peak() -> None:
                 "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC": "240",
                 "MLBB_VOD_MIN_PEAK_SEC": "300",
                 "MLBB_BANNER_FAST_SHIP_MIN_TIER": "3",
+                "MLBB_BANNER_FAST_SHIP_ALIGN_DISCOVER": "0",
             },
             clear=False,
         ),
@@ -99,6 +100,7 @@ def test_banner_fast_ship_rejects_short_vod_and_early_peak() -> None:
                 "MLBB_BANNER_FAST_SHIP_MIN_VOD_SEC": "480",
                 "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC": "240",
                 "MLBB_BANNER_FAST_SHIP_MIN_TIER": "3",
+                "MLBB_BANNER_FAST_SHIP_ALIGN_DISCOVER": "0",
             },
             clear=False,
         ),
@@ -112,6 +114,29 @@ def test_banner_fast_ship_rejects_short_vod_and_early_peak() -> None:
         assert "tier_low" in reason_double
         ok_mid, _ = _banner_fast_ship_seed_ok(vod, 285.0, tier=3)
         assert ok_mid
+
+
+def test_banner_fast_ship_aligns_tier_to_discover_double() -> None:
+    from mlbb_vod_segment_feed import _banner_fast_ship_min_tier, _banner_fast_ship_seed_ok
+
+    vod = Path("/tmp/fake_vod.mp4")
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "MLBB_BANNER_FAST_SHIP_MIN_TIER": "3",
+                "MLBB_BANNER_FAST_SHIP_ALIGN_DISCOVER": "1",
+                "MLBB_KILL_BANNER_MIN_TIER": "double",
+                "MLBB_BANNER_FAST_SHIP_MIN_VOD_SEC": "480",
+                "MLBB_BANNER_FAST_SHIP_MIN_PEAK_SEC": "240",
+            },
+            clear=False,
+        ),
+        patch("mlbb_vod_segment_feed._ffprobe_duration", return_value=900.0),
+    ):
+        assert _banner_fast_ship_min_tier() == 2
+        ok_double, _ = _banner_fast_ship_seed_ok(vod, 285.0, tier=2)
+        assert ok_double
 
 def test_quality_first_pick_min_rejects_highlight_shorts() -> None:
     from mlbb_vod_segment_feed import _vod_pick_min_sec

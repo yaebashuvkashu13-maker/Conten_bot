@@ -136,6 +136,20 @@ def _banner_fast_ship_min_peak_sec(vod: Path) -> float:
     return max(180.0, min(base, floor) if base > 0 else floor)
 
 
+def _banner_fast_ship_min_tier() -> int:
+    """
+    Fast-ship floor. Default prefers triple+, but never require a higher streak
+    than discover already searched for — otherwise doubles found by
+    MLBB_KILL_BANNER_MIN_TIER=double are always gated → 0 MLBB sends.
+    """
+    want = max(1, int(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_TIER", "3")))
+    if os.environ.get("MLBB_BANNER_FAST_SHIP_ALIGN_DISCOVER", "1") == "1":
+        from mlbb_kill_banner import _min_tier
+
+        want = min(want, int(_min_tier()))
+    return want
+
+
 def _banner_fast_ship_seed_ok(vod: Path, peak: float, tier: int) -> tuple[bool, str]:
     dur = _ffprobe_duration(vod)
     min_vod = _banner_fast_ship_min_vod_sec()
@@ -147,8 +161,9 @@ def _banner_fast_ship_seed_ok(vod: Path, peak: float, tier: int) -> tuple[bool, 
         min_peak = max(120.0, min_peak * 0.75)
     if float(peak) < min_peak:
         return False, f"peak_too_early={peak:.0f}<{min_peak:.0f}"
-    # OWNER: doubles-only fast-ships read as trash/lane. Default require triple+.
-    min_tier = int(os.environ.get("MLBB_BANNER_FAST_SHIP_MIN_TIER", "3"))
+    # OWNER: doubles-only fast-ships read as trash/lane. Default require triple+,
+    # aligned down to discover min via _banner_fast_ship_min_tier().
+    min_tier = _banner_fast_ship_min_tier()
     if int(tier) < min_tier:
         return False, f"tier_low={tier}<{min_tier}"
     return True, "ok"
@@ -381,6 +396,7 @@ _SOFT_EXHAUST_REASONS = (
     "banner_probe_0",
     "yield_banner_miss",
     "banner_fast_discover_0",
+    "banner_fast_ship_gated",
     "no_banner",
 )
 

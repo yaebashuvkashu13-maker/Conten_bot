@@ -69,7 +69,27 @@ def vod_fast_combat_check(
             else:
                 mode = "banner"
         if mode == "banner" or mode == "kill_banner":
-            return fast_banner_probe(video_path)
+            ok, reason, seeds = fast_banner_probe(video_path)
+            if ok:
+                return ok, reason, seeds
+            # Emergency: banner grid miss → combat/gun so MLBB can still ship
+            # when refs find nothing (quota stuck at 0). Off by default.
+            fallback = (os.environ.get("MLBB_BANNER_MISS_FALLBACK") or "").strip().lower()
+            if fallback in ("combat", "gun", "1", "true", "yes"):
+                if fallback in ("1", "true", "yes"):
+                    fallback = "combat"
+                # Combat clips must not be blocked by banner-required gates.
+                os.environ.setdefault("MLBB_BANNER_ENRICH_ONLY", "1")
+                if fallback == "combat":
+                    from mlbb_combat_moment import fast_combat_probe
+
+                    ok2, reason2, seeds2 = fast_combat_probe(video_path, profile)
+                    if ok2:
+                        return ok2, f"banner_miss_fallback:{reason2}", seeds2
+                    return False, f"{reason}|fallback_{reason2}", []
+                mode = "gun"
+            else:
+                return ok, reason, seeds
 
     if mode == "combat":
         from mlbb_combat_moment import fast_combat_probe
