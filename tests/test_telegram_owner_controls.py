@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 from telegram_owner_controls import (  # noqa: E402
     BTN_PROCESS,
     BTN_RESET,
+    CALLBACK_PROCESS,
     CALLBACK_RESET,
     DEFAULT_VOD_SEARCH_BATCH,
     DEFAULT_VOD_SEARCH_LIMIT,
@@ -34,13 +35,19 @@ def test_keyboard_has_process_and_reset() -> None:
     texts = [btn["text"] for row in kb["keyboard"] for btn in row]
     assert BTN_PROCESS in texts
     assert BTN_RESET in texts
+    assert "Процесс" in texts
+    assert "Сброс" in texts
     assert kb["resize_keyboard"] is True
+    assert kb.get("one_time_keyboard") is False
 
 
 def test_inline_reset_callback() -> None:
     markup = process_inline_keyboard()
-    btn = markup["inline_keyboard"][0][0]
-    assert btn["callback_data"] == CALLBACK_RESET
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    data = {b["callback_data"] for b in flat}
+    assert CALLBACK_RESET in data
+    assert CALLBACK_PROCESS in data
+    assert len(flat) == 2
 
 
 def test_button_text_is_process_command() -> None:
@@ -56,6 +63,7 @@ def test_button_text_is_reset_command() -> None:
     assert is_reset_command("/reset")
     assert is_reset_command("/reset pubg")
     assert is_reset_command("Сброс")
+    assert is_reset_command("сброс процесса")
     assert not is_reset_command("/status")
 
 

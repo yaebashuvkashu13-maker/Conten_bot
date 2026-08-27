@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-27-tg-process-reset-v1'
+BOT_VERSION = '2026-08-27-tg-process-reset-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -448,13 +448,18 @@ def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
-def send_owner_controls(chat_id: str | int, text: str, *, inline: bool = False):
+def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = False):
+    """Owner messages: always pin bottom reply keyboard; optionally also send inline row."""
     from telegram_owner_controls import owner_reply_keyboard, process_inline_keyboard
 
-    markup = {**owner_reply_keyboard()}
-    if inline:
-        markup = process_inline_keyboard()
-    send_message(chat_id, text, reply_markup=markup)
+    # Reply keyboard + inline cannot be in one Telegram message — send reply bar first.
+    send_message(chat_id, text, reply_markup=owner_reply_keyboard())
+    if with_inline:
+        send_message(
+            chat_id,
+            'Кнопки: Процесс · Сброс',
+            reply_markup=process_inline_keyboard(),
+        )
 
 
 def _schedule_owner_sync() -> None:
@@ -1114,10 +1119,10 @@ def handle_callback_query(query: dict) -> None:
 
             if data == 'ops_process':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
-                send_owner_controls(chat_id, format_process_report())
+                send_owner_controls(chat_id, format_process_report(), with_inline=True)
             else:
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
-                send_owner_controls(chat_id, run_reset('all'))
+                send_owner_controls(chat_id, run_reset('all'), with_inline=True)
         except Exception as exc:
             logging.exception('ops callback failed')
             try:
@@ -2931,15 +2936,15 @@ def handle_message(message: dict):
         )
 
         if is_process_command(text):
-            send_owner_controls(chat_id, format_process_report())
+            send_owner_controls(chat_id, format_process_report(), with_inline=True)
             return
         if is_reset_command(text) or cmd == '/reset':
             try:
                 game = parse_reset_game(text)
             except ValueError as exc:
-                send_owner_controls(chat_id, f'Сброс: {exc}')
+                send_owner_controls(chat_id, f'Сброс: {exc}', with_inline=True)
                 return
-            send_owner_controls(chat_id, run_reset(game))
+            send_owner_controls(chat_id, run_reset(game), with_inline=True)
             return
 
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
@@ -2948,6 +2953,28 @@ def handle_message(message: dict):
             return
 
     if cmd == '/start' or text.startswith('/start'):
+        if is_owner(chat_id):
+            start_text = (
+                'Владелец: кнопки внизу — «Процесс» (что ищет пайплайн) и «Сброс» (открыть исчерпанные VOD).\n'
+                'Команды: /process · /reset · /ping · /make\n\n'
+            )
+            if is_pubg_chat(chat_id):
+                start_text += (
+                    'Режим PUBG: отправляйте видео со стрима — получите нарезку Smart Edit. '
+                    'Параллельно ролики сохраняются для обучения по PUBG.'
+                )
+            elif chat_id in AUTO_MAKE_CHAT_IDS:
+                start_text += (
+                    'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически.'
+                )
+            else:
+                start_text += (
+                    'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make.\n'
+                    'YouTube / Shorts: ссылка или /yt <url> → /make.\n'
+                    'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
+                )
+            send_owner_controls(chat_id, start_text, with_inline=True)
+            return
         if is_pubg_chat(chat_id):
             send_message(
                 chat_id,
@@ -2963,17 +2990,13 @@ def handle_message(message: dict):
                 'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически (3-4 сцены, 33-57 сек).',
             )
         else:
-            start_text = (
+            send_message(
+                chat_id,
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
                 'YouTube / Shorts: пришли ссылку одной строкой (или /yt <url>) → /make.\n'
                 'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
-                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.\n\n'
-                'Кнопки внизу: «Процесс» — что сейчас ищет пайплайн, «Сброс» — снова открыть исчерпанные VOD.'
+                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
             )
-            if is_owner(chat_id):
-                send_owner_controls(chat_id, start_text)
-            else:
-                send_message(chat_id, start_text)
         return
     if cmd in ('/ad', '/реклама', '/ads'):
         if not is_owner(chat_id):
@@ -3174,8 +3197,7 @@ def handle_message(message: dict):
     if cmd == '/ping':
         register_bot_commands()
         yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
-        send_message(
-            chat_id,
+        ping_text = (
             f'Бот на связи ({BOT_VERSION}).\n'
             f'chat_id={chat_id}\n'
             f'владелец(TG_CHAT_ID)={"да" if is_owner(chat_id) else "нет"} '
@@ -3184,8 +3206,13 @@ def handle_message(message: dict):
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
             f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}\n'
             f'YouTube: ссылка Shorts или /yt <url> → /make'
-            + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
+            + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
+        if is_owner(chat_id):
+            ping_text += '\n\nКнопки: Процесс · Сброс (внизу и под сообщением).'
+            send_owner_controls(chat_id, ping_text, with_inline=True)
+        else:
+            send_message(chat_id, ping_text)
         return
     if cmd in ('/yt', '/youtube'):
         if not youtube_ingest_allowed(chat_id):
