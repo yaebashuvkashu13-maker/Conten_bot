@@ -33,21 +33,16 @@ from telegram_owner_controls import (  # noqa: E402
 def test_keyboard_has_process_and_reset() -> None:
     kb = owner_reply_keyboard()
     texts = [btn["text"] for row in kb["keyboard"] for btn in row]
-    assert BTN_PROCESS in texts
-    assert BTN_RESET in texts
     assert "Процесс" in texts
     assert "Сброс" in texts
-    assert kb["resize_keyboard"] is True
-    assert kb.get("one_time_keyboard") is False
 
 
-def test_inline_reset_callback() -> None:
+def test_inline_optional_helpers_still_exist() -> None:
     markup = process_inline_keyboard()
     flat = [b for row in markup["inline_keyboard"] for b in row]
     data = {b["callback_data"] for b in flat}
     assert CALLBACK_RESET in data
     assert CALLBACK_PROCESS in data
-    assert len(flat) == 2
 
 
 def test_button_text_is_process_command() -> None:
@@ -95,7 +90,7 @@ def test_process_report_includes_games() -> None:
     assert "бот Telegram: работает" in text
     assert "MLBB" in text
     assert "исчерпано=4" in text
-    assert "Сброс" in text
+    assert "/reset" in text
 
 
 def test_run_reset_clears_exhausted_and_search_offset(

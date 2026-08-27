@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-27-tg-process-reset-v2'
+BOT_VERSION = '2026-08-27-tg-process-reset-v3'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -449,17 +449,18 @@ def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None
 
 
 def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = False):
-    """Owner messages: always pin bottom reply keyboard; optionally also send inline row."""
-    from telegram_owner_controls import owner_reply_keyboard, process_inline_keyboard
+    """Owner ops replies as plain text (no permanent keyboards)."""
+    del with_inline  # call-site compat; owner asked for text-only commands
+    send_message(chat_id, text)
 
-    # Reply keyboard + inline cannot be in one Telegram message — send reply bar first.
-    send_message(chat_id, text, reply_markup=owner_reply_keyboard())
-    if with_inline:
-        send_message(
-            chat_id,
-            'Кнопки: Процесс · Сброс',
-            reply_markup=process_inline_keyboard(),
-        )
+
+def remove_owner_reply_keyboard(chat_id: str | int, text: str) -> None:
+    """Drop any previously pinned reply keyboard."""
+    send_message(
+        chat_id,
+        text,
+        reply_markup={'remove_keyboard': True},
+    )
 
 
 def _schedule_owner_sync() -> None:
@@ -1119,10 +1120,10 @@ def handle_callback_query(query: dict) -> None:
 
             if data == 'ops_process':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
-                send_owner_controls(chat_id, format_process_report(), with_inline=True)
+                send_owner_controls(chat_id, format_process_report())
             else:
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
-                send_owner_controls(chat_id, run_reset('all'), with_inline=True)
+                send_owner_controls(chat_id, run_reset('all'))
         except Exception as exc:
             logging.exception('ops callback failed')
             try:
@@ -2936,15 +2937,15 @@ def handle_message(message: dict):
         )
 
         if is_process_command(text):
-            send_owner_controls(chat_id, format_process_report(), with_inline=True)
+            send_owner_controls(chat_id, format_process_report())
             return
         if is_reset_command(text) or cmd == '/reset':
             try:
                 game = parse_reset_game(text)
             except ValueError as exc:
-                send_owner_controls(chat_id, f'Сброс: {exc}', with_inline=True)
+                send_owner_controls(chat_id, f'Сброс: {exc}')
                 return
-            send_owner_controls(chat_id, run_reset(game), with_inline=True)
+            send_owner_controls(chat_id, run_reset(game))
             return
 
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
@@ -2955,8 +2956,11 @@ def handle_message(message: dict):
     if cmd == '/start' or text.startswith('/start'):
         if is_owner(chat_id):
             start_text = (
-                'Владелец: кнопки внизу — «Процесс» (что ищет пайплайн) и «Сброс» (открыть исчерпанные VOD).\n'
-                'Команды: /process · /reset · /ping · /make\n\n'
+                'Владелец. По необходимости текстом:\n'
+                '/process — что сейчас ищет пайплайн\n'
+                '/reset — снова открыть исчерпанные VOD\n'
+                '/ping — версия бота\n'
+                '/make — нарезка из загруженных файлов\n\n'
             )
             if is_pubg_chat(chat_id):
                 start_text += (
@@ -2973,7 +2977,7 @@ def handle_message(message: dict):
                     'YouTube / Shorts: ссылка или /yt <url> → /make.\n'
                     'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
                 )
-            send_owner_controls(chat_id, start_text, with_inline=True)
+            remove_owner_reply_keyboard(chat_id, start_text)
             return
         if is_pubg_chat(chat_id):
             send_message(
@@ -3209,8 +3213,8 @@ def handle_message(message: dict):
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
         if is_owner(chat_id):
-            ping_text += '\n\nКнопки: Процесс · Сброс (внизу и под сообщением).'
-            send_owner_controls(chat_id, ping_text, with_inline=True)
+            ping_text += '\n\nПо необходимости: /process · /reset'
+            remove_owner_reply_keyboard(chat_id, ping_text)
         else:
             send_message(chat_id, ping_text)
         return

@@ -185,7 +185,8 @@ def format_process_report(
         )
 
     if any(int(r.get("actionable_inbox") or 0) == 0 and int(r.get("inbox") or 0) > 0 for r in rows):
-        lines.append("Inbox исчерпан — нажми «Сброс», чтобы снова искать клипы в уже скачанных VOD.")
+        lines.append("Inbox исчерпан — напиши /reset, чтобы снова искать клипы в уже скачанных VOD.")
+    lines.append("Команды: /process · /reset")
     return "\n".join(lines)
 
 
