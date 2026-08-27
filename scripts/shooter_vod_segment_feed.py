@@ -217,7 +217,14 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
 
     out: list[dict] = []
     for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + ["--flat-playlist", "--print", "%(id)s|%(title)s|%(duration)s|%(uploader)s", url]
+        cmd = ytdlp_cmd(env) + [
+            "--flat-playlist",
+            "--playlist-end",
+            str(int(params.get("limit") or 50)),
+            "--print",
+            "%(id)s|%(title)s|%(duration)s|%(uploader)s",
+            url,
+        ]
         cmd += ytdlp_extra_args(env)
         proc = run_ytdlp(cmd, env, timeout=120, label=f"search-{game}")
         if proc.returncode != 0:
@@ -521,6 +528,10 @@ def _scan_vod_with_adaptive(
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
+    if os.environ.get("SHOOTER_VOD_SCAN_NOTIFY", "1") == "1":
+        from telegram_owner_controls import scan_start_text
+
+        send_message(token, chat_id, scan_start_text(game, vid))
 
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
@@ -735,6 +746,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
         return 0
 
+    from telegram_owner_controls import DEFAULT_VOD_SEARCH_BATCH, DEFAULT_VOD_SEARCH_LIMIT, discovery_start_text
+
+    batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", str(DEFAULT_VOD_SEARCH_BATCH))))
+    limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", str(DEFAULT_VOD_SEARCH_LIMIT))))
+    send_message(token, chat_id, discovery_start_text(game, batch=batch, limit=limit))
     candidates = _discover_candidates(game, env, used)
     if not candidates:
         send_message(token, chat_id, f"⚠️ Не нашёл новый {game.upper()} стрим. Повторю позже.")

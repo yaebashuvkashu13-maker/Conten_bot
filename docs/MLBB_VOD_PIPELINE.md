@@ -269,7 +269,8 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 | `MLBB_VOD_MIN_SEC` | 180 | Мин. длина VOD |
 | `MLBB_VOD_MAX_SEC` | 1200 | Макс. длина VOD |
 | `MLBB_VOD_TARGET_DUR_SEC` | 780 | Целевая длина ~13 мин |
-| `MLBB_VOD_SEARCH_BATCH` | 3 | Queries за цикл |
+| `MLBB_VOD_SEARCH_BATCH` | 6 | Queries за цикл |
+| `MLBB_VOD_SEARCH_LIMIT` | 50 | Результатов YouTube на запрос |
 | `MLBB_VOD_MAX_AGE_DAYS` | 35 | Макс. возраст upload |
 
 ### Scan / send

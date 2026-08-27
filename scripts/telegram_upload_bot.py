@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-08-27-tg-process-reset-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -438,11 +438,23 @@ def is_limited_notify(chat_id: str | int) -> bool:
     return str(chat_id) in LIMITED_NOTIFY_CHAT_IDS
 
 
-def send_message(chat_id: str | int, text: str):
+def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None):
+    payload: dict = {'chat_id': str(chat_id), 'text': text}
+    if reply_markup:
+        payload['reply_markup'] = reply_markup
     try:
-        api_call('sendMessage', {'chat_id': str(chat_id), 'text': text}, timeout=30)
+        api_call('sendMessage', payload, timeout=30)
     except Exception as exc:
         logging.error('failed to send message to %s: %s', chat_id, exc)
+
+
+def send_owner_controls(chat_id: str | int, text: str, *, inline: bool = False):
+    from telegram_owner_controls import owner_reply_keyboard, process_inline_keyboard
+
+    markup = {**owner_reply_keyboard()}
+    if inline:
+        markup = process_inline_keyboard()
+    send_message(chat_id, text, reply_markup=markup)
 
 
 def _schedule_owner_sync() -> None:
@@ -1094,6 +1106,28 @@ def handle_callback_query(query: dict) -> None:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
         except Exception:
             pass
+        return
+
+    if data in ('ops_process', 'ops_reset'):
+        try:
+            from telegram_owner_controls import format_process_report, run_reset
+
+            if data == 'ops_process':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
+                send_owner_controls(chat_id, format_process_report())
+            else:
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
+                send_owner_controls(chat_id, run_reset('all'))
+        except Exception as exc:
+            logging.exception('ops callback failed')
+            try:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                    timeout=15,
+                )
+            except Exception:
+                pass
         return
 
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
@@ -2831,6 +2865,8 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
+        {'command': 'process', 'description': 'Процесс пайплайна (что сейчас ищет)'},
+        {'command': 'reset', 'description': 'Сброс исчерпанных VOD + поиск'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
@@ -2885,6 +2921,27 @@ def handle_message(message: dict):
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
+    if is_owner(chat_id):
+        from telegram_owner_controls import (
+            format_process_report,
+            is_process_command,
+            is_reset_command,
+            parse_reset_game,
+            run_reset,
+        )
+
+        if is_process_command(text):
+            send_owner_controls(chat_id, format_process_report())
+            return
+        if is_reset_command(text) or cmd == '/reset':
+            try:
+                game = parse_reset_game(text)
+            except ValueError as exc:
+                send_owner_controls(chat_id, f'Сброс: {exc}')
+                return
+            send_owner_controls(chat_id, run_reset(game))
+            return
+
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
     if not (text.startswith('/') or caption.startswith('/')):
         if try_youtube_ingest(chat_id, message):
@@ -2906,13 +2963,17 @@ def handle_message(message: dict):
                 'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически (3-4 сцены, 33-57 сек).',
             )
         else:
-            send_message(
-                chat_id,
+            start_text = (
                 'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make — я соберу Smart Edit v1.1 из 3-4 хайлайтов на 33-57 секунд.\n\n'
                 'YouTube / Shorts: пришли ссылку одной строкой (или /yt <url>) → /make.\n'
                 'Примеры рекламы (скрины): /ad → фото → /ad_done.\n'
-                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.',
+                'Водяной знак «god of mlbb»: /wm → фото → /wm_done.\n\n'
+                'Кнопки внизу: «Процесс» — что сейчас ищет пайплайн, «Сброс» — снова открыть исчерпанные VOD.'
             )
+            if is_owner(chat_id):
+                send_owner_controls(chat_id, start_text)
+            else:
+                send_message(chat_id, start_text)
         return
     if cmd in ('/ad', '/реклама', '/ads'):
         if not is_owner(chat_id):
