@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-27-tg-process-reset-v3'
+BOT_VERSION = '2026-08-27-tg-process-reset-v4'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -449,8 +449,8 @@ def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None
 
 
 def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = False):
-    """Owner ops replies as plain text (no permanent keyboards)."""
-    del with_inline  # call-site compat; owner asked for text-only commands
+    """Owner ops replies as plain text only (no reply/inline keyboards)."""
+    del with_inline  # call-site compat; keyboards intentionally unused
     send_message(chat_id, text)
 
 

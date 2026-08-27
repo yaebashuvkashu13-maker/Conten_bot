@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Owner Telegram controls: process status, exhausted-inbox reset, reply keyboard."""
+"""Owner Telegram controls: process status and exhausted-inbox reset (text commands)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from reset_vod_inbox_exhausted import reset_game
 from vod_game_registry import VOD_GAMES, load_state, save_state
 from vod_pipeline_health import health_row
 
-BTN_PROCESS = "Процесс"
-BTN_RESET = "Сброс"
+# Legacy callback ids (old inline messages); no keyboards are attached anymore.
 CALLBACK_RESET = "ops_reset"
 CALLBACK_PROCESS = "ops_process"
 
@@ -51,28 +50,6 @@ DEFAULT_VOD_SEARCH_LIMIT = 50
 DEFAULT_VOD_SEARCH_BATCH = 6
 
 
-def owner_reply_keyboard() -> dict:
-    """Persistent bottom bar — always both buttons in one row."""
-    return {
-        "keyboard": [[{"text": BTN_PROCESS}, {"text": BTN_RESET}]],
-        "resize_keyboard": True,
-        "is_persistent": True,
-        "one_time_keyboard": False,
-    }
-
-
-def process_inline_keyboard() -> dict:
-    """Inline under status message — both Process and Reset visible without hunting the bottom bar."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "📊 Процесс", "callback_data": CALLBACK_PROCESS},
-                {"text": "🔄 Сброс", "callback_data": CALLBACK_RESET},
-            ]
-        ],
-    }
-
-
 def _norm_text(text: str) -> str:
     return " ".join((text or "").strip().split()).lower()
 
@@ -83,11 +60,9 @@ def is_process_command(text: str) -> bool:
     if token in ("/process", "/процесс", "/proc"):
         return True
     return _norm_text(raw) in {
-        _norm_text(BTN_PROCESS),
         "процесс",
         "process",
         "статус пайплайна",
-        "📊 процесс",
     }
 
 
@@ -97,10 +72,8 @@ def is_reset_command(text: str) -> bool:
     if token in ("/reset", "/сброс"):
         return True
     return _norm_text(raw) in {
-        _norm_text(BTN_RESET),
         "сброс",
         "reset",
-        "🔄 сброс",
         "сброс процесса",
         "reset process",
     }

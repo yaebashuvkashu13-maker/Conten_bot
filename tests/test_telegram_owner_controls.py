@@ -12,8 +12,6 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from telegram_owner_controls import (  # noqa: E402
-    BTN_PROCESS,
-    BTN_RESET,
     CALLBACK_PROCESS,
     CALLBACK_RESET,
     DEFAULT_VOD_SEARCH_BATCH,
@@ -22,42 +20,29 @@ from telegram_owner_controls import (  # noqa: E402
     format_process_report,
     is_process_command,
     is_reset_command,
-    owner_reply_keyboard,
     parse_reset_game,
-    process_inline_keyboard,
     run_reset,
     scan_start_text,
 )
 
 
-def test_keyboard_has_process_and_reset() -> None:
-    kb = owner_reply_keyboard()
-    texts = [btn["text"] for row in kb["keyboard"] for btn in row]
-    assert "Процесс" in texts
-    assert "Сброс" in texts
+def test_legacy_callback_ids_stable() -> None:
+    assert CALLBACK_PROCESS == "ops_process"
+    assert CALLBACK_RESET == "ops_reset"
 
 
-def test_inline_optional_helpers_still_exist() -> None:
-    markup = process_inline_keyboard()
-    flat = [b for row in markup["inline_keyboard"] for b in row]
-    data = {b["callback_data"] for b in flat}
-    assert CALLBACK_RESET in data
-    assert CALLBACK_PROCESS in data
-
-
-def test_button_text_is_process_command() -> None:
-    assert is_process_command(BTN_PROCESS)
+def test_text_process_command() -> None:
     assert is_process_command("/process")
     assert is_process_command("/процесс")
-    assert is_process_command("Процесс")
+    assert is_process_command("процесс")
+    assert is_process_command("process")
     assert not is_process_command("/make")
 
 
-def test_button_text_is_reset_command() -> None:
-    assert is_reset_command(BTN_RESET)
+def test_text_reset_command() -> None:
     assert is_reset_command("/reset")
     assert is_reset_command("/reset pubg")
-    assert is_reset_command("Сброс")
+    assert is_reset_command("сброс")
     assert is_reset_command("сброс процесса")
     assert not is_reset_command("/status")
 
