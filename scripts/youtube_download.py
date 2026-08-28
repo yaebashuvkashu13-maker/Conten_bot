@@ -104,7 +104,8 @@ def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
 def youtube_format_fallbacks(url: str, env: dict[str, str]) -> list[str]:
     primary = youtube_format_for_url(url, env)
     fallbacks = [
-        env.get("YOUTUBE_FORMAT_FALLBACK", "b[height<=720]/bv*+ba/b"),
+        env.get("YOUTUBE_FORMAT_FALLBACK", "18/b[height<=720]/bv*+ba/b"),
+        "best[ext=mp4]/best",
         "b/bv*+ba/b",
     ]
     out = [primary]
