@@ -29,7 +29,8 @@ def test_discovery_rotates_queries() -> None:
     b = vod_discovery_search_cycle(1, "pubg", {})
     assert a["queries"] != b["queries"]
     assert len(a["queries"]) >= 1
-    assert int(a["limit"]) == 50
+    assert int(a["limit"]) == 80
+    assert str(a["queries"][0]).lower().startswith(("метро", "пабг"))
 
 
 def test_pubg_ru_stream_title_ok() -> None:

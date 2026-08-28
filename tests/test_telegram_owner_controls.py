@@ -106,11 +106,11 @@ def test_run_reset_clears_exhausted_and_search_offset(
 
 
 def test_search_defaults_are_high_enough_to_find_vods() -> None:
-    assert DEFAULT_VOD_SEARCH_LIMIT >= 50
-    assert DEFAULT_VOD_SEARCH_BATCH >= 6
-    text = discovery_start_text("mlbb", batch=6, limit=50)
-    assert "6 запросов" in text
-    assert "50 результатов" in text
+    assert DEFAULT_VOD_SEARCH_LIMIT >= 80
+    assert DEFAULT_VOD_SEARCH_BATCH >= 10
+    text = discovery_start_text("pubg", batch=10, limit=80)
+    assert "10 запросов" in text
+    assert "80 результатов" in text
     assert "Ищу" in text
     assert "Сканирую MLBB" in scan_start_text("mlbb", "abc123xyz00")
 
@@ -119,6 +119,7 @@ def test_shooter_default_search_limit() -> None:
     from youtube_shooter_vod_prefs import vod_discovery_search_cycle
 
     params = vod_discovery_search_cycle(0, "pubg", {})
-    assert int(params["limit"]) == 50
-    assert int(params["batch"]) == 6
-    assert len(params["queries"]) == 6
+    assert int(params["limit"]) == 80
+    assert int(params["batch"]) == 10
+    assert len(params["queries"]) == 10
+    assert any("метро" in q.lower() or "пабг" in q.lower() for q in params["queries"])

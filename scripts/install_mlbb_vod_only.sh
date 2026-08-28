@@ -149,9 +149,31 @@ for kv in   MLBB_ONLY_MODE=1 VK_MLBB_DISABLED=1 VK_MLBB_NOTIFY_EMPTY=0 \
   fi
 done
 
-# EU split-server: MLBB on server 1, PUBG/Standoff on server 2 — keep MLBB quota at 0.
-if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]]; then
-  sed -i 's/^DAILY_MLBB_QUOTA=.*/DAILY_MLBB_QUOTA=0/' "$ENV_FILE"
+# EU split-server / PUBG-only: unlimited Metro Royale, other games idle.
+_apply_pubg_only_env() {
+  touch /root/data/mlbb/EU_PUBG_ONLY
+  for kv in \
+    VOD_PUBG_ONLY=1 \
+    DAILY_MLBB_QUOTA=0 DAILY_STANDOFF_QUOTA=0 DAILY_GENSHIN_QUOTA=0 DAILY_WOT_QUOTA=0 \
+    DAILY_PUBG_QUOTA=-1 \
+    SHOOTER_VOD_SEARCH_BATCH=10 SHOOTER_VOD_SEARCH_LIMIT=80 \
+    MLBB_VOD_SEARCH_BATCH=10 MLBB_VOD_SEARCH_LIMIT=80 \
+    MLBB_VOD_SEARCH_DELAY=3 SHOOTER_VOD_SEARCH_DELAY=3 \
+    MLBB_VOD_IDLE_SEC=15 SHOOTER_VOD_PREFER_RUSSIAN=1 \
+    SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_MAX_PANN_PROBE=24 \
+    PUBG_METRO_GATE=1; do
+    key="${kv%%=*}"
+    val="${kv#*=}"
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+      sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+    else
+      echo "${key}=${val}" >>"$ENV_FILE"
+    fi
+  done
+}
+
+if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
+  _apply_pubg_only_env
 fi
 
 VOD_SEARCH_CSV="$(python3 - <<PY

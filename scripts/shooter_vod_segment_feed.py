@@ -382,7 +382,7 @@ def _inbox_order_key(mp4: Path, registry: list[dict]) -> tuple:
     title = str((entry or {}).get("title") or "")
     metro_prio = 0 if title_metro_hint(title) else 1
     ru = russian_score({"title": title, "uploader": str((entry or {}).get("uploader") or "")})
-    ru_prio = 0 if ru >= 0.10 else (1 if ru >= 0.05 else 2)
+    ru_prio = 0 if ru >= 0.08 else (1 if ru >= 0.03 else 2)
     fast_fail = 1 if str((entry or {}).get("reject_reason") or "").startswith("fast_panns_0") else 0
     return (1 if scanned else 0, fast_fail, metro_prio, ru_prio, scanned, mp4.stat().st_mtime)
 

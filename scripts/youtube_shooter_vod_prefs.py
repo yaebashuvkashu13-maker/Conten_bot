@@ -38,32 +38,38 @@ BAD_TITLE_RE = re.compile(
     re.I,
 )
 
-PUBG_CORE_QUERIES = (
+# Russian-first queries rotate before EN — faster relevant discovery for RU owner.
+PUBG_RU_QUERIES = (
+    "метро рояль пабг мобайл ранкед матч стрим",
+    "пабг мобайл метро рояль геймплей русский",
+    "метро рояль пабг стрим русский полный матч",
+    "метро рояль пабг мобайл полный матч",
+    "метро рояль пабг мобайл ранкед матч",
+    "метро рояль пабг мобайл стрим",
+    "пабг мобайл метро рояль геймплей",
+    "метро рояль пабг файт перестрелка",
+    "метро рояль пабг снайпер",
+    "пабг мобайл метро рояль ranked replay",
+)
+
+PUBG_EN_QUERIES = (
     "PUBG Mobile Metro Royale gameplay ranked",
     "PUBG Mobile Metro Royale full match",
     "PUBG Mobile Metro Royale squad fight ranked",
     "PUBG Mobile Metro Royale TPP ranked replay",
-    "метро рояль пабг мобайл ранкед матч",
-    "метро рояль пабг мобайл полный матч",
-    "метро рояль пабг мобайл стрим",
     "PUBG Mobile Metro Royale стрим полный",
-    "пабг мобайл метро рояль геймплей",
-    "метро рояль пабг стрим русский",
+    "PUBG Mobile Metro Royale sniper fight",
+    "PUBG Mobile Metro Royale close range fight",
+    "PUBG Mobile Metro Royale final circle ranked",
 )
+
+PUBG_CORE_QUERIES = PUBG_RU_QUERIES + PUBG_EN_QUERIES
 
 STANDOFF_CORE_QUERIES = (
     "Standoff 2 ranked gameplay full match",
     "Standoff 2 competitive gameplay replay",
     "Standoff 2 clutch ranked match",
     "Standoff 2 5v5 ranked gameplay",
-)
-
-PUBG_ANGLE_QUERIES = (
-    "PUBG Mobile Metro Royale sniper fight",
-    "PUBG Mobile Metro Royale close range fight",
-    "PUBG Mobile Metro Royale final circle ranked",
-    "метро рояль пабг файт перестрелка",
-    "метро рояль пабг снайпер",
 )
 
 STANDOFF_ANGLE_QUERIES = (
@@ -76,7 +82,7 @@ def _queries_for(game: str) -> tuple[str, ...]:
     g = game.strip().lower()
     if g == "standoff":
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
-    return PUBG_CORE_QUERIES + PUBG_ANGLE_QUERIES
+    return PUBG_CORE_QUERIES
 
 
 def title_ok(game: str, title: str) -> bool:
@@ -120,15 +126,15 @@ def pick_discovery_candidate(game: str, candidates: list[dict]) -> dict | None:
         from pubg_metro_royale_gate import title_metro_hint
         from youtube_game_prefs import russian_score
 
-        for cand in ranked[:12]:
+        for cand in ranked[:16]:
             title = str(cand.get("title") or "")
-            if title_metro_hint(title) and russian_score(cand) >= 0.06:
+            if title_metro_hint(title) and russian_score(cand) >= 0.04:
                 return cand
         for cand in ranked[:12]:
             if title_metro_hint(str(cand.get("title") or "")):
                 return cand
-        for cand in ranked[:8]:
-            if russian_score(cand) >= 0.12:
+        for cand in ranked[:10]:
+            if russian_score(cand) >= 0.08:
                 return cand
     return ranked[0]
 
@@ -137,9 +143,11 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
     """Rotate shooter search queries (same batch/delay pattern as MLBB)."""
     env = env or {}
     queries = list(_queries_for(game))
-    batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", "6")))
+    default_batch = "10" if game.strip().lower() == "pubg" else "6"
+    default_limit = "80" if game.strip().lower() == "pubg" else "50"
+    batch = int(env.get("MLBB_VOD_SEARCH_BATCH", env.get("SHOOTER_VOD_SEARCH_BATCH", default_batch)))
     delay = float(env.get("MLBB_VOD_SEARCH_DELAY", env.get("SHOOTER_VOD_SEARCH_DELAY", "6")))
-    limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", "50")))
+    limit = int(env.get("MLBB_VOD_SEARCH_LIMIT", env.get("SHOOTER_VOD_SEARCH_LIMIT", default_limit)))
     if not queries:
         return {"queries": [], "batch": batch, "delay": delay, "limit": limit, "sp": ""}
     offset = (cycle * batch) % len(queries)

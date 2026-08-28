@@ -21,6 +21,24 @@
 
 Включение: `DAILY_GAME_CYCLE_ENABLED=1` (ставится `install_mlbb_vod_only.sh`).
 
+## PUBG-only (безлимит)
+
+Для сервера только с PUBG Metro Royale:
+
+```bash
+VOD_PUBG_ONLY=1
+DAILY_PUBG_QUOTA=-1          # безлимит (∞)
+DAILY_MLBB_QUOTA=0
+DAILY_STANDOFF_QUOTA=0
+DAILY_GENSHIN_QUOTA=0
+DAILY_WOT_QUOTA=0
+SHOOTER_VOD_SEARCH_BATCH=10  # запросов за цикл
+SHOOTER_VOD_SEARCH_LIMIT=80  # результатов на запрос
+SHOOTER_VOD_PREFER_RUSSIAN=1
+```
+
+Маркер `/root/data/mlbb/EU_PUBG_ONLY` включает эти настройки через `install_mlbb_vod_only.sh`.
+
 ## PUBG: перестрелка от лица стримера (не фон)
 
 Используем мультимодальный стек (уже в репо + новый `pubg_pov_engagement_ok`):

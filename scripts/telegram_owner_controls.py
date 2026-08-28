@@ -46,8 +46,8 @@ GAME_ALIASES = {
     "вот": "wot",
 }
 
-DEFAULT_VOD_SEARCH_LIMIT = 50
-DEFAULT_VOD_SEARCH_BATCH = 6
+DEFAULT_VOD_SEARCH_LIMIT = 80
+DEFAULT_VOD_SEARCH_BATCH = 10
 
 
 def _norm_text(text: str) -> str:
@@ -133,7 +133,8 @@ def format_process_report(
             active = st.get("active_game") or "готово"
             rem = st.get("remaining") or {}
             quota = " ".join(f"{g}={rem.get(g, 0)}" for g in VOD_GAMES)
-            lines.append(f"• день {st.get('day')}: активна {active}; осталось {quota}")
+            mode = "PUBG-only ∞" if st.get("pubg_only") else "мульти-игра"
+            lines.append(f"• день {st.get('day')}: {mode}; активна {active}; осталось {quota}")
         else:
             lines.append("• дневной цикл выключен")
     except Exception:

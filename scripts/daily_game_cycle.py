@@ -36,16 +36,36 @@ def enabled() -> bool:
     return os.environ.get("DAILY_GAME_CYCLE_ENABLED", "0") == "1"
 
 
-def quota_for(game: str) -> int:
+def pubg_only_mode() -> bool:
+    """Unlimited PUBG-only pipeline — other games stay idle."""
+    return os.environ.get("VOD_PUBG_ONLY", "0") == "1"
+
+
+def _quota_raw(game: str) -> str:
     game = game.strip().lower()
     defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
     env_key = f"DAILY_{game.upper()}_QUOTA"
     fallback = f"DAILY_GAME_{game.upper()}_QUOTA"
-    raw = os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
+    return os.environ.get(env_key, os.environ.get(fallback, str(defaults.get(game, 10))))
+
+
+def quota_unlimited(game: str) -> bool:
     try:
-        return max(0, int(raw))
+        return int(_quota_raw(game)) < 0
+    except ValueError:
+        return False
+
+
+def quota_for(game: str) -> int:
+    game = game.strip().lower()
+    defaults = {"mlbb": 10, "pubg": 10, "standoff": 10, "genshin": 5, "wot": 5}
+    try:
+        val = int(_quota_raw(game))
     except ValueError:
         return defaults.get(game, 10)
+    if val < 0:
+        return 10**9
+    return max(0, val)
 
 
 def load_state() -> dict:
@@ -95,6 +115,8 @@ def send_count(game: str) -> int:
 
 def quota_remaining(game: str) -> int:
     game = game.strip().lower()
+    if quota_unlimited(game):
+        return 10**9
     return max(0, quota_for(game) - send_count(game))
 
 
@@ -112,6 +134,8 @@ def record_send(game: str, count: int = 1) -> None:
 def active_game() -> str | None:
     """Next game that still has daily quota. None if all quotas met."""
     reset_if_new_day()
+    if pubg_only_mode():
+        return "pubg" if quota_remaining("pubg") > 0 else None
     for game in GAME_ORDER:
         if quota_remaining(game) > 0:
             return game
@@ -119,10 +143,12 @@ def active_game() -> str | None:
 
 
 def can_send_for_game(game: str, count: int = 1) -> tuple[bool, str]:
+    game = game.strip().lower()
+    if pubg_only_mode() and game != "pubg":
+        return False, "pubg_only_mode"
     if not enabled():
         return True, "cycle_disabled"
     reset_if_new_day()
-    game = game.strip().lower()
     active = active_game()
     if active is None:
         return False, "all_quotas_done"
@@ -142,12 +168,19 @@ def status_summary() -> dict:
     state = load_state()
     sends = {g: int(state.get("sends", {}).get(g, 0)) for g in GAME_ORDER}
     quotas = {g: quota_for(g) for g in GAME_ORDER}
+    remaining: dict[str, int | str] = {}
+    for g in GAME_ORDER:
+        if quota_unlimited(g):
+            remaining[g] = "∞"
+        else:
+            remaining[g] = max(0, quotas[g] - sends[g])
     return {
         "day": state.get("day"),
         "active_game": active_game(),
+        "pubg_only": pubg_only_mode(),
         "sends": sends,
         "quotas": quotas,
-        "remaining": {g: max(0, quotas[g] - sends[g]) for g in GAME_ORDER},
+        "remaining": remaining,
     }
 
 
