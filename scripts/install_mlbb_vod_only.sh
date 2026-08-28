@@ -173,6 +173,9 @@ _apply_pubg_only_env() {
     SHOOTER_VOD_ZERO_STREAK_SOFTEN=0 SHOOTER_VOD_DENSE_PANN_MIN=0.16 \
     SHOOTER_VOD_DENSE_PROBE_MAX=48 SHOOTER_VOD_DENSE_PROBE_STEP_SEC=30 \
     SHOOTER_VOD_DENSE_PROBE_PASSES=2 SHOOTER_VOD_MONTAGES_PER_VOD=3 \
+    YOUTUBE_FORMAT='b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b' \
+    YOUTUBE_FORMAT_FALLBACK='b[height<=720]/bv*+ba/b' \
+    YTDLP_REMOTE_COMPONENTS='ejs:github' \
     SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES=6 \
     SHOOTER_VOD_EXHAUST_NOTIFY=1 SHOOTER_VOD_ADAPTIVE_NOTIFY=0; do
     key="${kv%%=*}"
@@ -188,6 +191,20 @@ _apply_pubg_only_env() {
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
   _apply_pubg_only_env
 fi
+
+# yt-dlp 2026+ needs a JS runtime for full YouTube format lists (avoids download stalls).
+ensure_ytdlp_deno() {
+  if command -v deno >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x /root/.deno/bin/deno ]]; then
+    return 0
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/root/.deno sh >/dev/null 2>&1 || true
+  fi
+}
+ensure_ytdlp_deno
 
 VOD_SEARCH_CSV="$(python3 - <<PY
 import sys

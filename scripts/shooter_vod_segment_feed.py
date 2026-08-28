@@ -2270,6 +2270,26 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
+    # All inbox files on rescan cooldown — do not burn 3+ min on discovery every tick.
+    if tried == 0 and inbox_files:
+        cooldown_only = True
+        for mp4 in inbox_files:
+            entries = _vod_registry_entries(state, mp4)
+            if any(r.get("exhausted") for r in entries):
+                continue
+            entry = entries[0] if entries else None
+            if not should_skip_vod_rescan(entry, game=game):
+                cooldown_only = False
+                break
+        if cooldown_only:
+            log.info(
+                "inbox rescan cooldown only — yield game=%s files=%s",
+                game,
+                len(inbox_files),
+            )
+            print(f"pipeline done sent=0 vods=0 game={game} inbox_cooldown=1")
+            return 0
+
     # If discovery is paused and we have nothing to scan this tick, stop immediately
     # (do not fall into empty search / recycle loops that burn idle every 8s).
     pause_until = float(state.get("discovery_pause_until") or 0)

@@ -97,9 +97,21 @@ def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
         return env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b")
     return env.get(
         "YOUTUBE_FORMAT",
-        "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
-        "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
     )
+
+
+def youtube_format_fallbacks(url: str, env: dict[str, str]) -> list[str]:
+    primary = youtube_format_for_url(url, env)
+    fallbacks = [
+        env.get("YOUTUBE_FORMAT_FALLBACK", "b[height<=720]/bv*+ba/b"),
+        "b/bv*+ba/b",
+    ]
+    out = [primary]
+    for fmt in fallbacks:
+        if fmt and fmt not in out:
+            out.append(fmt)
+    return out
 
 
 def ytdlp_match_filter(env: dict[str, str]) -> str:
@@ -270,33 +282,42 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
     if is_twitch_vod_url(url):
         url = normalize_twitch_url(url)
         prefix = "tw"
+        formats = [
+            env.get("TWITCH_FORMAT", "bv*[height<=1080]+ba/b[height<=1080]/b"),
+        ]
     else:
         url = normalize_youtube_url(url)
         prefix = "yt"
+        formats = youtube_format_fallbacks(url, env)
     dest_dir.mkdir(parents=True, exist_ok=True)
     template = dest_dir / f"{prefix}_%(id)s.%(ext)s"
-    fmt = youtube_format_for_url(url, env) if prefix == "yt" else env.get(
-        "TWITCH_FORMAT",
-        "bv*[height<=1080]+ba/b[height<=1080]/b",
-    )
-    cmd = ytdlp_cmd(env) + [
-        "--no-playlist",
-        "--restrict-filenames",
-        "--merge-output-format",
-        "mp4",
-        "-f",
-        fmt,
-        *ytdlp_extra_args(env),
-        "-o",
-        str(template),
-        url,
-    ]
-    subprocess.run(
-        cmd,
-        check=True,
-        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(env),
-    )
+    last_err = ""
+    for fmt in formats:
+        cmd = ytdlp_cmd(env) + [
+            "--no-playlist",
+            "--restrict-filenames",
+            "--merge-output-format",
+            "mp4",
+            "-f",
+            fmt,
+            *ytdlp_extra_args(env),
+            "-o",
+            str(template),
+            url,
+        ]
+        proc = run_ytdlp(
+            cmd,
+            env,
+            timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+            label=f"download-{prefix}",
+        )
+        if proc.returncode == 0:
+            break
+        last_err = (proc.stderr or proc.stdout or "")[:800]
+        if "format is not available" not in last_err.lower():
+            raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {last_err}")
+    else:
+        raise RuntimeError(f"yt-dlp download failed: {last_err}")
     files = sorted(dest_dir.glob(f"{prefix}_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
