@@ -33,11 +33,11 @@ bash /root/content_bot_ml/scripts/install_mlbb_vod_only.sh
 
 Архивы попадают в тот же inbox PUBG (`/root/data/pubg/youtube_nightly/inbox/`) с префиксом `tw_<video_id>.mp4` и обрабатываются `shooter_vod_segment_feed.py pubg`.
 
-## Каналы по умолчанию
+## Каналы по умолчанию (RU Metro, owner list)
 
-В `scripts/twitch_vod_prefs.py` уже есть стартовый список (RU + международные PUBG Mobile). Его можно полностью заменить через `TWITCH_PUBG_CHANNELS`.
+`shifuwoe`, `aderrtheman`, `karat_pm`, `b1_kitty`, `zzzerbin`, `tw_lexa`, `tagav23`, `amazonka_aa`, `essko21`, `lada2oo`, `spulae111`
 
-Рекомендация: пришлите **5–15 логинов**, с которых вы хотите нарезку (желательно Metro Royale, русский приоритет — как на YouTube). Бот не угадывает «кто сейчас в эфире»; он берёт **последние архивы** выбранных каналов.
+Полностью заменить: `TWITCH_PUBG_CHANNELS=login1,login2,...`
 
 ## Live vs VOD
 

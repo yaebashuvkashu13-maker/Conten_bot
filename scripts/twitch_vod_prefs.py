@@ -9,29 +9,19 @@ from urllib.parse import quote_plus
 
 from youtube_shooter_vod_prefs import BAD_TITLE_RE, LIVE_TITLE_RE, title_ok as shooter_title_ok
 
-# Popular PUBG Mobile / Metro Royale streamers (login = twitch.tv/<login>).
-# Override anytime: TWITCH_PUBG_CHANNELS=login1,login2,...
+# RU PUBG Mobile / Metro Royale (owner list). Override: TWITCH_PUBG_CHANNELS=login1,login2,...
 DEFAULT_PUBG_CHANNELS: tuple[str, ...] = (
-  # RU / CIS
-    "by_owl",
-    "leva2k",
-    "k1nG",
-    "7teen",
-    "ceh9",
-    "buster",
-    "bratishkinoff",
-    "melstroy",
-    # International PUBG Mobile
-    "Levinho",
-    "Paraboy",
-    "Jonathan_Gaming",
-    "Soul_Mortal",
-    "iFerg",
-    "Kaymind",
-    "Wynnsanity",
-    "TGLTN",
-    "chocotaco",
-    "shroud",
+    "shifuwoe",
+    "aderrtheman",
+    "karat_pm",
+    "b1_kitty",
+    "zzzerbin",
+    "tw_lexa",
+    "tagav23",
+    "amazonka_aa",
+    "essko21",
+    "lada2oo",
+    "spulae111",
 )
 
 TWITCH_VOD_TITLE_RE = re.compile(
@@ -60,12 +50,20 @@ def channel_logins(game: str = "pubg") -> list[str]:
     return []
 
 
-def title_ok(game: str, title: str) -> bool:
+def _known_channel_logins(game: str = "pubg") -> set[str]:
+    return {c.lower() for c in channel_logins(game)}
+
+
+def title_ok(game: str, title: str, *, channel_login: str = "") -> bool:
     t = title or ""
     if LIVE_TITLE_RE.search(t) or BAD_TITLE_RE.search(t) or TWITCH_SKIP_TITLE_RE.search(t):
         return False
     if game.strip().lower() != "pubg":
         return False
+    ch = channel_login.strip().lower()
+    if ch and ch in _known_channel_logins(game):
+        # Whitelisted Metro streamers — accept archives unless title is clearly off-topic.
+        return True
     if TWITCH_VOD_TITLE_RE.search(t):
         return True
     return shooter_title_ok(game, t)

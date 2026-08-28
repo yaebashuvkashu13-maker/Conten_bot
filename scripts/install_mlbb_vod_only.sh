@@ -205,6 +205,10 @@ pairs = {
     "SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES": "6",
     "SHOOTER_VOD_EXHAUST_NOTIFY": "1",
     "SHOOTER_VOD_ADAPTIVE_NOTIFY": "0",
+    "TWITCH_VOD_ENABLED": "1",
+    "TWITCH_PUBG_CHANNELS": "shifuwoe,aderrtheman,karat_pm,b1_kitty,zzzerbin,tw_lexa,tagav23,amazonka_aa,essko21,lada2oo,spulae111",
+    "TWITCH_VOD_SEARCH_BATCH": "4",
+    "TWITCH_VOD_SEARCH_LIMIT": "8",
 }
 for key, val in pairs.items():
     set_env_kv(env_file, key, val)

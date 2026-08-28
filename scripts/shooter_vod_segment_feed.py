@@ -469,6 +469,11 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
         _save_state(game, state)
         twitch_limit = int(t_params.get("limit", 12))
         for url in t_params.get("urls", []):
+            channel_login = ""
+            if "/videos" in url:
+                parts = url.split("twitch.tv/", 1)[-1].split("/", 1)
+                if parts:
+                    channel_login = parts[0].strip().lower()
             cmd = ytdlp_cmd(env) + [
                 "--flat-playlist",
                 "--playlist-end",
@@ -495,7 +500,7 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 if live_status in ("is_live", "is_upcoming"):
                     used.add(vid)
                     continue
-                if not twitch_title_ok(game, title):
+                if not twitch_title_ok(game, title, channel_login=channel_login):
                     continue
                 try:
                     dur = float(row.get("duration") or 0)

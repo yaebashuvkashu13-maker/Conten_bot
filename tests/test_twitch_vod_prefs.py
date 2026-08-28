@@ -11,6 +11,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from twitch_vod_prefs import (  # noqa: E402
+    DEFAULT_PUBG_CHANNELS,
     channel_logins,
     parse_flat_playlist_line,
     title_ok,
@@ -36,9 +37,14 @@ def test_parse_flat_playlist_line() -> None:
     assert row["url"] == "https://www.twitch.tv/videos/12345"
 
 
-def test_title_ok_pubg_metro() -> None:
-    assert title_ok("pubg", "PUBG Mobile Metro Royale ranked")
-    assert not title_ok("pubg", "Just Chatting with friends")
+def test_title_ok_whitelisted_channel() -> None:
+    assert title_ok("pubg", "ranked grind day 42", channel_login="shifuwoe")
+    assert not title_ok("pubg", "Just Chatting hangout", channel_login="shifuwoe")
+
+
+def test_default_channels_include_owner_list() -> None:
+    assert "shifuwoe" in DEFAULT_PUBG_CHANNELS
+    assert "spulae111" in DEFAULT_PUBG_CHANNELS
 
 
 def test_discovery_cycle_rotates_channels() -> None:
