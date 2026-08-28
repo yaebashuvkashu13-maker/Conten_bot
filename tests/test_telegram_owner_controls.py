@@ -13,14 +13,18 @@ sys.path.insert(0, str(SCRIPTS))
 
 from telegram_owner_controls import (  # noqa: E402
     CALLBACK_PROCESS,
+    CALLBACK_RECOVER,
     CALLBACK_RESET,
     DEFAULT_VOD_SEARCH_BATCH,
     DEFAULT_VOD_SEARCH_LIMIT,
     discovery_start_text,
     format_process_report,
     is_process_command,
+    is_recover_command,
     is_reset_command,
+    parse_recover_game,
     parse_reset_game,
+    run_recover,
     run_reset,
     scan_start_text,
 )
@@ -29,6 +33,7 @@ from telegram_owner_controls import (  # noqa: E402
 def test_legacy_callback_ids_stable() -> None:
     assert CALLBACK_PROCESS == "ops_process"
     assert CALLBACK_RESET == "ops_reset"
+    assert CALLBACK_RECOVER == "ops_recover"
 
 
 def test_text_process_command() -> None:
@@ -45,6 +50,21 @@ def test_text_reset_command() -> None:
     assert is_reset_command("сброс")
     assert is_reset_command("сброс процесса")
     assert not is_reset_command("/status")
+
+
+def test_text_recover_command() -> None:
+    assert is_recover_command("/recover")
+    assert is_recover_command("/recover pubg")
+    assert is_recover_command("/fix")
+    assert is_recover_command("нет видео")
+    assert not is_recover_command("/reset")
+
+
+def test_parse_recover_game() -> None:
+    assert parse_recover_game("/recover") == "all"
+    assert parse_recover_game("/recover pubg") == "pubg"
+    with pytest.raises(ValueError):
+        parse_recover_game("/recover fortnite")
 
 
 def test_parse_reset_game() -> None:

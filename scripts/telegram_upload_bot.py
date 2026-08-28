@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-27-tg-process-reset-v4'
+BOT_VERSION = '2026-08-28-tg-recover-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -1114,13 +1114,16 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
-    if data in ('ops_process', 'ops_reset'):
+    if data in ('ops_process', 'ops_reset', 'ops_recover'):
         try:
-            from telegram_owner_controls import format_process_report, run_reset
+            from telegram_owner_controls import format_process_report, run_recover, run_reset
 
             if data == 'ops_process':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
                 send_owner_controls(chat_id, format_process_report())
+            elif data == 'ops_recover':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover'}, timeout=15)
+                send_owner_controls(chat_id, run_recover('all'))
             else:
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
                 send_owner_controls(chat_id, run_reset('all'))
@@ -2872,6 +2875,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'process', 'description': 'Процесс пайплайна (что сейчас ищет)'},
+        {'command': 'recover', 'description': 'Починить feed — видео снова пошли'},
         {'command': 'reset', 'description': 'Сброс исчерпанных VOD + поиск'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
@@ -2931,13 +2935,24 @@ def handle_message(message: dict):
         from telegram_owner_controls import (
             format_process_report,
             is_process_command,
+            is_recover_command,
             is_reset_command,
+            parse_recover_game,
             parse_reset_game,
+            run_recover,
             run_reset,
         )
 
         if is_process_command(text):
             send_owner_controls(chat_id, format_process_report())
+            return
+        if is_recover_command(text) or cmd == '/recover':
+            try:
+                game = parse_recover_game(text)
+            except ValueError as exc:
+                send_owner_controls(chat_id, f'Recover: {exc}')
+                return
+            send_owner_controls(chat_id, run_recover(game))
             return
         if is_reset_command(text) or cmd == '/reset':
             try:
@@ -2958,6 +2973,7 @@ def handle_message(message: dict):
             start_text = (
                 'Владелец. По необходимости текстом:\n'
                 '/process — что сейчас ищет пайплайн\n'
+                '/recover — починить feed, если видео не идут\n'
                 '/reset — снова открыть исчерпанные VOD\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
@@ -3213,7 +3229,7 @@ def handle_message(message: dict):
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
         if is_owner(chat_id):
-            ping_text += '\n\nПо необходимости: /process · /reset'
+            ping_text += '\n\nПо необходимости: /process · /recover · /reset'
             remove_owner_reply_keyboard(chat_id, ping_text)
         else:
             send_message(chat_id, ping_text)

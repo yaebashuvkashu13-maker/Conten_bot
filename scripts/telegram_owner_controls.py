@@ -13,6 +13,7 @@ from vod_pipeline_health import health_row
 # Legacy callback ids (old inline messages); no keyboards are attached anymore.
 CALLBACK_RESET = "ops_reset"
 CALLBACK_PROCESS = "ops_process"
+CALLBACK_RECOVER = "ops_recover"
 
 PROCESS_PATTERNS: tuple[tuple[str, str], ...] = (
     ("telegram_bot", "telegram_upload_bot.py"),
@@ -79,10 +80,32 @@ def is_reset_command(text: str) -> bool:
     }
 
 
+def is_recover_command(text: str) -> bool:
+    raw = (text or "").strip()
+    token = raw.split()[0].split("@")[0].lower() if raw else ""
+    if token in ("/recover", "/восстановить", "/fix"):
+        return True
+    return _norm_text(raw) in {
+        "recover",
+        "восстановить",
+        "восстановление",
+        "почему нет видео",
+        "нет видео",
+    }
+
+
 def parse_reset_game(text: str) -> str:
+    return parse_game_arg(text, default="all")
+
+
+def parse_recover_game(text: str) -> str:
+    return parse_game_arg(text, default="all")
+
+
+def parse_game_arg(text: str, *, default: str = "all") -> str:
     parts = (text or "").strip().split()
     if len(parts) < 2:
-        return "all"
+        return default
     alias = GAME_ALIASES.get(parts[1].strip().lower(), "")
     if alias:
         return alias
@@ -159,8 +182,12 @@ def format_process_report(
         )
 
     if any(int(r.get("actionable_inbox") or 0) == 0 and int(r.get("inbox") or 0) > 0 for r in rows):
-        lines.append("Inbox исчерпан — напиши /reset, чтобы снова искать клипы в уже скачанных VOD.")
-    lines.append("Команды: /process · /reset")
+        lines.append("Inbox исчерпан — /reset или /recover pubg.")
+    if not running.get("vod_supervisor") or not (
+        running.get("daily_cycle") or running.get("shooter_feed") or running.get("mlbb_feed")
+    ):
+        lines.append("Feed не работает — напиши /recover.")
+    lines.append("Команды: /process · /recover · /reset")
     return "\n".join(lines)
 
 
@@ -170,6 +197,12 @@ def reset_discovery_offsets(game: str) -> None:
     state["discovery_search_cycle"] = 0
     state["discovery_cycle"] = 0
     save_state(game, state)
+
+
+def run_recover(game: str = "all") -> str:
+    from vod_feed_recover import run_recover as _run_recover
+
+    return _run_recover(game)
 
 
 def run_reset(game: str = "all") -> str:
