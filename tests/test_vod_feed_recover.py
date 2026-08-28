@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,8 @@ from vod_feed_recover import (  # noqa: E402
     bump_scan_cooldowns,
     clear_discovery_pauses,
     clear_feed_locks,
+    clear_stale_owner_batch_lock,
+    park_exhausted_inbox,
     run_recover,
 )
 
@@ -72,6 +76,36 @@ def test_bump_scan_cooldowns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     row = json.loads(state_path.read_text(encoding="utf-8"))["vods"][0]
     assert "last_scan_at" not in row
     assert "reject_reason" not in row
+
+
+def test_clear_stale_owner_batch_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lock = tmp_path / "OWNER_BATCH_RUNNING"
+    lock.write_text("", encoding="utf-8")
+    old = time.time() - 7200
+    os.utime(lock, (old, old))
+    monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_LOCK", lock)
+    monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_STALE_SEC", 3600)
+    note = clear_stale_owner_batch_lock()
+    assert note and "снят" in note
+    assert not lock.exists()
+
+
+def test_park_exhausted_inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "pubg"
+    inbox = root / "youtube_nightly" / "inbox"
+    inbox.mkdir(parents=True)
+    mp4 = inbox / "yt_abc123xyz00.mp4"
+    mp4.write_bytes(b"x")
+    state_path = root / "vod_segment_state.json"
+    state_path.write_text(
+        json.dumps({"vods": [{"id": "abc123xyz00", "exhausted": True}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+    n = park_exhausted_inbox("pubg")
+    assert n == 1
+    assert not mp4.exists()
+    assert (root / "youtube_nightly" / "parked" / "yt_abc123xyz00.mp4").exists()
 
 
 def test_run_recover_message(

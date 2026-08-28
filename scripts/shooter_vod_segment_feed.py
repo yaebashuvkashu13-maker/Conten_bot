@@ -2275,7 +2275,8 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
-    # All inbox files on rescan cooldown — do not burn 3+ min on discovery every tick.
+    # All inbox files on rescan cooldown — skip re-scan this tick but still discover
+    # fresh VODs (otherwise 100+ junk inbox blocks YouTube/Twitch forever).
     if tried == 0 and inbox_files:
         cooldown_only = True
         for mp4 in inbox_files:
@@ -2286,7 +2287,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             if not should_skip_vod_rescan(entry, game=game):
                 cooldown_only = False
                 break
-        if cooldown_only:
+        if cooldown_only and os.environ.get("SHOOTER_VOD_DISCOVERY_WHEN_INBOX_COOLDOWN", "1") == "1":
+            log.info(
+                "inbox rescan cooldown only — skip rescan, run discovery game=%s files=%s",
+                game,
+                len(inbox_files),
+            )
+        elif cooldown_only:
             log.info(
                 "inbox rescan cooldown only — yield game=%s files=%s",
                 game,
