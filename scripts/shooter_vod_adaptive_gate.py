@@ -108,28 +108,39 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
 
 
 def soften_level(streak: int) -> int:
+    """Adaptive soften ceiling — L3/L4 used to ship talk/loot trash via RELAX heuristics."""
+    if os.environ.get("SHOOTER_VOD_DISABLE_SOFTEN", "0") == "1":
+        return 0
     need = streak_threshold()
     if streak < need:
         return 0
     if streak >= need + 8:
-        return 4
-    if streak >= need + 4:
-        return 3
-    if streak >= need + 1:
-        return 2
-    return 1
+        level = 4
+    elif streak >= need + 4:
+        level = 3
+    elif streak >= need + 1:
+        level = 2
+    else:
+        level = 1
+    # Quality-first default: never go past mild visual soften (L1).
+    max_level = int(os.environ.get("SHOOTER_VOD_MAX_SOFTEN_LEVEL", "1"))
+    return max(0, min(level, max_level))
 
 
 def overrides_for_level(level: int) -> dict[str, str]:
     if level <= 0:
         return {}
     if level >= 4:
-        return dict(SHOOTER_SOFTEN_L4)
-    if level >= 3:
-        return dict(SHOOTER_SOFTEN_L3)
-    if level >= 2:
-        return dict(SHOOTER_SOFTEN_L2)
-    return dict(SHOOTER_SOFTEN_L1)
+        ov = dict(SHOOTER_SOFTEN_L4)
+    elif level >= 3:
+        ov = dict(SHOOTER_SOFTEN_L3)
+    elif level >= 2:
+        ov = dict(SHOOTER_SOFTEN_L2)
+    else:
+        ov = dict(SHOOTER_SOFTEN_L1)
+    # Never let soften re-enable owner-heuristic relax (talk/loot path).
+    ov["PUBG_RELAX_OWNER_HEURISTICS"] = "0"
+    return ov
 
 
 def soften_summary(level: int) -> str:
