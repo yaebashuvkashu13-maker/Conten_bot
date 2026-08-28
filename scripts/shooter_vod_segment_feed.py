@@ -525,9 +525,9 @@ def _validate_shooter_presend(
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
     if game == "pubg":
-        # Owner spec: classic BR firefights + kill text — Metro is optional preference,
-        # not a hard reject (outdoor_sky was killing almost all real Erangel/Miramar fights).
-        if os.environ.get("PUBG_METRO_GATE", "0") == "1":
+        # VOD-level metro check already ran in inbox/scan. Per-part sky/outdoor
+        # transitions inside a Metro stream were blocking ×2+ montage ships.
+        if os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
             from pubg_metro_royale_gate import segment_looks_metro_royale
 
             ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
