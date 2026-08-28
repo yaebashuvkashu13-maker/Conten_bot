@@ -49,8 +49,24 @@ if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   log "restart vod supervisor"
   pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
   sleep 1
-  rm -f /tmp/mlbb_vod_segment_feed.lock
+  rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
   nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+fi
+
+# Supervisor died but left no child — common when .video_bot.env has unquoted yt-dlp formats.
+FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+if [[ -f "$FEED_LOG" ]]; then
+  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
+  DEAD_SEC="${MLBB_VOD_FEED_DEAD_SEC:-900}"
+  if [[ "$LOG_AGE_SEC" -gt "$DEAD_SEC" ]] \
+    && ! pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
+    && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; then
+    log "feed dead log_age=${LOG_AGE_SEC}s — restart supervisor"
+    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+    sleep 1
+    rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
+    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  fi
 fi
 
 # Disk emergency — inbox cleanup when root is nearly full (common silence cause).
@@ -88,14 +104,10 @@ fi
 # Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
 SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
 if [[ "$SILENCE_SEC" -gt 0 ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-  TOKEN="${TG_BOT_TOKEN:-}"
-  CHAT="${TG_CHAT_ID:-}"
+  TOKEN="$(env_val TG_BOT_TOKEN)"
+  CHAT="$(env_val TG_CHAT_ID)"
   if [[ -n "$TOKEN" && -n "$CHAT" ]]; then
-    python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
+    TG_BOT_TOKEN="$TOKEN" TG_CHAT_ID="$CHAT" python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
 import json, os, re, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 

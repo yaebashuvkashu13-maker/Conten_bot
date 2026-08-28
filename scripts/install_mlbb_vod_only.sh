@@ -152,40 +152,63 @@ done
 # EU split-server / PUBG-only: unlimited Metro Royale, other games idle.
 _apply_pubg_only_env() {
   touch /root/data/mlbb/EU_PUBG_ONLY
-  for kv in \
-    VOD_PUBG_ONLY=1 \
-    DAILY_MLBB_QUOTA=0 DAILY_STANDOFF_QUOTA=0 DAILY_GENSHIN_QUOTA=0 DAILY_WOT_QUOTA=0 \
-    DAILY_PUBG_QUOTA=-1 \
-    SHOOTER_VOD_SEARCH_BATCH=10 SHOOTER_VOD_SEARCH_LIMIT=80 \
-    MLBB_VOD_SEARCH_BATCH=10 MLBB_VOD_SEARCH_LIMIT=80 \
-    MLBB_VOD_SEARCH_DELAY=3 SHOOTER_VOD_SEARCH_DELAY=3 \
-    MLBB_VOD_IDLE_SEC=15 SHOOTER_VOD_PREFER_RUSSIAN=1 \
-    SHOOTER_VOD_FAST_PROBE=1 SHOOTER_VOD_MAX_PANN_PROBE=24 \
-    PUBG_METRO_GATE=1 \
-    VOD_PUBG_QUALITY_STRICT=1 \
-    SHOOTER_VOD_MONTAGE=1 SHOOTER_VOD_MONTAGE_ONLY=1 SHOOTER_VOD_FAST_MONTAGE=1 \
-    PUBG_VOD_MONTAGE=1 PUBG_VOD_MONTAGE_ONLY=1 \
-    SHOOTER_VOD_MONTAGE_MIN_CLIPS=3 PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS=3 \
-    SHOOTER_VOD_MONTAGE_MAX_CLIPS=3 SHOOTER_VOD_MONTAGE_GAP_SEC=55 \
-    SHOOTER_VOD_MONTAGE_SHIP_PARTIAL=0 SHOOTER_VOD_MONTAGE_EARLY_SHIP=0 \
-    SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=0 SHOOTER_VOD_MONTAGE_CLIP_RANK=1 \
-    PUBG_VOD_MONTAGE_MIN_FINAL_SEC=32 SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN=0 \
-    SHOOTER_VOD_ZERO_STREAK_SOFTEN=0 SHOOTER_VOD_DENSE_PANN_MIN=0.16 \
-    SHOOTER_VOD_DENSE_PROBE_MAX=48 SHOOTER_VOD_DENSE_PROBE_STEP_SEC=30 \
-    SHOOTER_VOD_DENSE_PROBE_PASSES=2 SHOOTER_VOD_MONTAGES_PER_VOD=3 \
-    YOUTUBE_FORMAT='b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b' \
-    YOUTUBE_FORMAT_FALLBACK='18/b[height<=720]/bv*+ba/b' \
-    YTDLP_PLAYER_CLIENTS=android,web,ios,mweb \
-    SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES=6 \
-    SHOOTER_VOD_EXHAUST_NOTIFY=1 SHOOTER_VOD_ADAPTIVE_NOTIFY=0; do
-    key="${kv%%=*}"
-    val="${kv#*=}"
-    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-      sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
-    else
-      echo "${key}=${val}" >>"$ENV_FILE"
-    fi
-  done
+  python3 - <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, "/root/content_bot_ml/scripts")
+from vod_env import set_env_kv
+
+env_file = Path("/root/.video_bot.env")
+pairs = {
+    "VOD_PUBG_ONLY": "1",
+    "DAILY_MLBB_QUOTA": "0",
+    "DAILY_STANDOFF_QUOTA": "0",
+    "DAILY_GENSHIN_QUOTA": "0",
+    "DAILY_WOT_QUOTA": "0",
+    "DAILY_PUBG_QUOTA": "-1",
+    "SHOOTER_VOD_SEARCH_BATCH": "10",
+    "SHOOTER_VOD_SEARCH_LIMIT": "80",
+    "MLBB_VOD_SEARCH_BATCH": "10",
+    "MLBB_VOD_SEARCH_LIMIT": "80",
+    "MLBB_VOD_SEARCH_DELAY": "3",
+    "SHOOTER_VOD_SEARCH_DELAY": "3",
+    "MLBB_VOD_IDLE_SEC": "15",
+    "SHOOTER_VOD_PREFER_RUSSIAN": "1",
+    "SHOOTER_VOD_FAST_PROBE": "1",
+    "SHOOTER_VOD_MAX_PANN_PROBE": "24",
+    "PUBG_METRO_GATE": "1",
+    "VOD_PUBG_QUALITY_STRICT": "1",
+    "SHOOTER_VOD_MONTAGE": "1",
+    "SHOOTER_VOD_MONTAGE_ONLY": "1",
+    "SHOOTER_VOD_FAST_MONTAGE": "1",
+    "PUBG_VOD_MONTAGE": "1",
+    "PUBG_VOD_MONTAGE_ONLY": "1",
+    "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "3",
+    "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS": "3",
+    "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "3",
+    "SHOOTER_VOD_MONTAGE_GAP_SEC": "55",
+    "SHOOTER_VOD_MONTAGE_SHIP_PARTIAL": "0",
+    "SHOOTER_VOD_MONTAGE_EARLY_SHIP": "0",
+    "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY": "0",
+    "SHOOTER_VOD_MONTAGE_CLIP_RANK": "1",
+    "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "32",
+    "SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN": "0",
+    "SHOOTER_VOD_ZERO_STREAK_SOFTEN": "0",
+    "SHOOTER_VOD_DENSE_PANN_MIN": "0.16",
+    "SHOOTER_VOD_DENSE_PROBE_MAX": "48",
+    "SHOOTER_VOD_DENSE_PROBE_STEP_SEC": "30",
+    "SHOOTER_VOD_DENSE_PROBE_PASSES": "2",
+    "SHOOTER_VOD_MONTAGES_PER_VOD": "3",
+    "YOUTUBE_FORMAT": "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
+    "YOUTUBE_FORMAT_FALLBACK": "18/b[height<=720]/bv*+ba/b",
+    "YTDLP_PLAYER_CLIENTS": "android,web,ios,mweb",
+    "SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES": "6",
+    "SHOOTER_VOD_EXHAUST_NOTIFY": "1",
+    "SHOOTER_VOD_ADAPTIVE_NOTIFY": "0",
+}
+for key, val in pairs.items():
+    set_env_kv(env_file, key, val)
+PY
 }
 
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
@@ -281,9 +304,8 @@ cat >"$WRAPPER_VOD" <<'EOF'
 #!/usr/bin/env bash
 # One VOD feed at a time — continuous loop, flock prevents duplicates.
 set -Eeuo pipefail
-set -a
-source /root/.video_bot.env
-set +a
+# Do NOT `source /root/.video_bot.env` here — yt-dlp format strings contain []
+# which bash glob-expands and kills the supervisor. Python feeds load env safely.
 export CONTENT_BOT_REPO=/root/content_bot_ml
 export PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO}/scripts"
 export HIGHLIGHT_HEATMAP=0

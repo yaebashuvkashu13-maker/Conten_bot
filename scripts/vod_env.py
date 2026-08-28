@@ -22,3 +22,34 @@ def load_env(path: Path | None = None) -> dict[str, str]:
         key, value = line.split("=", 1)
         env[key.strip()] = value.strip().strip('"').strip("'")
     return env
+
+
+def _needs_quoting(value: str) -> bool:
+    return any(ch in value for ch in "[]<>*?|&;()$`\\\"' ")
+
+
+def format_env_line(key: str, value: str) -> str:
+    """Safe KEY=VALUE line for bash source (yt-dlp format strings contain [])."""
+    if _needs_quoting(value):
+        escaped = value.replace("'", "'\"'\"'")
+        return f"{key}='{escaped}'"
+    return f"{key}={value}"
+
+
+def set_env_kv(path: Path, key: str, value: str) -> None:
+    """Upsert one env key with shell-safe quoting."""
+    path = path or DEFAULT_ENV_PATH
+    line = format_env_line(key, value)
+    lines: list[str] = []
+    found = False
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if raw.strip().startswith(f"{key}="):
+                if not found:
+                    lines.append(line)
+                    found = True
+                continue
+            lines.append(raw)
+    if not found:
+        lines.append(line)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
