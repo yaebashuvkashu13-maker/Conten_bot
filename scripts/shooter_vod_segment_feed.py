@@ -64,6 +64,7 @@ from vod_scan_state import (
     used_peaks_for_vod,
 )
 from vod_game_registry import VOD_PIPELINE_REV
+from vod_quality import pubg_quality_strict
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
@@ -524,15 +525,12 @@ def _validate_shooter_presend(
     if dur <= 0:
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
-    if game == "pubg":
-        # VOD-level metro check already ran in inbox/scan. Per-part sky/outdoor
-        # transitions inside a Metro stream were blocking ×2+ montage ships.
-        if os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
-            from pubg_metro_royale_gate import segment_looks_metro_royale
+    if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1":
+        from pubg_metro_royale_gate import segment_looks_metro_royale
 
-            ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
-            if not ok_metro:
-                return False, metro_reason, {"metro": metro_reason}
+        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+        if not ok_metro:
+            return False, metro_reason, {"metro": metro_reason}
     if game in EXTENDED_GAMES:
         # WoT: never use PUBG gunfire shooting gate — tank cannon scores as
         # talk_low_gun (gun~0.01) and starved the SLA hour. Soft cruise impact
@@ -563,9 +561,13 @@ def _validate_shooter_presend(
             if not boss_ok:
                 return False, boss_reason, metrics
         return ok, reason, metrics
-    # Montage parts: shooting/PANNs gate is enough — full combat visual on every
-    # 22s slice was rejecting valid gunfire windows (panns_trust then dropped).
-    shooting_only = montage_part and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
+    # Montage parts: shooting-only is faster but skips full combat visual gate.
+    # Quality-strict PUBG requires the same presend stack as single sends.
+    shooting_only = (
+        montage_part
+        and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
+        and not (game == "pubg" and pubg_quality_strict())
+    )
     if shooting_only and game in ("pubg", "standoff", "wot"):
         from highlight_scorer import score_panns_audio
         from pubg_shooting_gate import pubg_passes_shooting_gate
@@ -607,15 +609,16 @@ def _validate_shooter_presend(
             return False, kill_reason, metrics
         return True, f"{reason}+{kill_reason}", metrics
     ok, reason, metrics = pubg_passes_combat_gate(vod, start, dur, profile)
-    ok, reason = soft_allow_owner_montage_part(
-        game,
-        vod,
-        start,
-        ok,
-        reason,
-        montage_part=montage_part,
-        metrics=metrics if isinstance(metrics, dict) else None,
-    )
+    if not (game == "pubg" and pubg_quality_strict() and montage_part):
+        ok, reason = soft_allow_owner_montage_part(
+            game,
+            vod,
+            start,
+            ok,
+            reason,
+            montage_part=montage_part,
+            metrics=metrics if isinstance(metrics, dict) else None,
+        )
     if not ok:
         return False, reason, metrics
     if game in ("pubg", "standoff", "wot"):
@@ -701,8 +704,10 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
             "standoff": "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS",
             "wot": "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS",
         }[game]
-        # Floor = ideal (default 3). Env can only raise, never drop below.
-        return max(ideal, int(os.environ.get(key, str(ideal))))
+        soft = max(ideal, int(os.environ.get(key, str(ideal))))
+        if game == "pubg" and pubg_quality_strict():
+            return soft
+        return soft
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
         return ideal
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))
@@ -762,6 +767,39 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
     return clip
 
 
+def _validate_montage_final(game: str, vod: Path, accepted_rows: list[dict]) -> tuple[bool, str]:
+    """Extra quality pass after parts passed presend — strict PUBG only."""
+    if game != "pubg" or not pubg_quality_strict():
+        return True, "skip"
+    profile = _profile(game)
+    for row in accepted_rows:
+        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+        start = float(row.get("start", clip.get("start", 0)) or 0)
+        dur = float(clip.get("output_duration") or clip.get("input_duration") or 14)
+        peak = float(row.get("peak_start", start))
+        core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
+        gate_start = max(0.0, peak - core * 0.5)
+        gate_dur = min(dur, core)
+        ok_metro, metro_reason = True, "skip"
+        if os.environ.get("PUBG_METRO_GATE", "0") == "1":
+            from pubg_metro_royale_gate import segment_looks_metro_royale
+
+            ok_metro, metro_reason = segment_looks_metro_royale(vod, gate_start, gate_dur)
+        if not ok_metro:
+            return False, f"final_metro_{metro_reason}"
+        ok, reason, _ = pubg_passes_combat_gate(vod, gate_start, gate_dur, profile)
+        if not ok:
+            return False, f"final_combat_{reason}"
+        from shooter_author_kill_gate import author_kill_window_ok
+
+        kill_ok, kill_reason, _ = author_kill_window_ok(
+            vod, gate_start, gate_dur, profile=game, shoot_metrics={}
+        )
+        if not kill_ok:
+            return False, f"final_kill_{kill_reason}"
+    return True, "montage_final_ok"
+
+
 def _send_montage(
     game: str,
     token: str,
@@ -815,6 +853,9 @@ def _send_montage(
 
         picked = rank_shortlist_with_clip(vod, picked, _profile(game))
     except Exception as exc:
+        if game == "pubg" and pubg_quality_strict():
+            log.warning("montage CLIP rank required but failed: %s", exc)
+            return 0
         log.warning("montage CLIP rank skipped: %s", exc)
 
     seg_root = _paths(game)["segments"]
@@ -866,23 +907,25 @@ def _send_montage(
                 segment_paths.append(part)
                 durations.append(dur)
                 accepted_rows.append(work_row)
-                # Owner SLA: ship as soon as we have soft_min good fights — don't
-                # burn the 20min runner timeout rejecting outdoor_sky tails.
-                ship_target = max_clips
-                if os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
-                    # Still never below soft_min (×3 for standoff/wot).
+                strict_pubg = game == "pubg" and pubg_quality_strict()
+                if strict_pubg:
+                    ship_target = min_clips
+                elif os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
                     ship_target = max(soft_min, 1)
+                else:
+                    ship_target = max_clips
                 if len(segment_paths) >= ship_target:
                     break
                 if len(segment_paths) >= max_clips:
                     break
 
-            if len(segment_paths) < soft_min:
+            need_parts = min_clips if (game == "pubg" and pubg_quality_strict()) else soft_min
+            if len(segment_paths) < need_parts:
                 log.warning(
                     "montage after-presend insufficient game=%s parts=%s soft_need=%s attempt=%s",
                     game,
                     len(segment_paths),
-                    soft_min,
+                    need_parts,
                     attempt + 1,
                 )
                 remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
@@ -895,6 +938,16 @@ def _send_montage(
                     remaining = _pick_montage_rows(
                         remaining, min_clips=soft_min, max_clips=max_clips, gap_sec=gap_sec
                     )
+                continue
+
+            if game == "pubg" and pubg_quality_strict() and len(segment_paths) < min_clips:
+                log.warning(
+                    "montage strict need ideal parts game=%s have=%s need=%s",
+                    game,
+                    len(segment_paths),
+                    min_clips,
+                )
+                remaining = [r for r in remaining if str(r.get("segment_id") or "") not in rejected_sids]
                 continue
 
             if len(segment_paths) < min_clips:
@@ -925,17 +978,30 @@ def _send_montage(
             montage_id = f"{vod_youtube_id(vod)}_mtg_{int(time.time())}"
             out = seg_root / f"montage_{montage_id}.mp4"
             if len(segment_paths) == 1:
+                if game == "pubg" and pubg_quality_strict() and min_clips >= 2:
+                    log.warning("montage strict forbid single-part ship game=%s", game)
+                    continue
                 shutil.copy2(segment_paths[0], out)
             else:
                 run_command(build_xfade_command(segment_paths, durations, out))
             final_dur = _ffprobe_duration(out)
             min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_FINAL_SEC", "18"))
+            if game == "pubg" and pubg_quality_strict():
+                min_final = max(
+                    min_final,
+                    float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
+                )
             if len(segment_paths) == 1:
                 min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
             if final_dur < min_final:
                 log.warning("montage too short game=%s dur=%.1f need>=%.0f", game, final_dur, min_final)
                 out.unlink(missing_ok=True)
-                return 0
+                continue
+            ok_final, final_reason = _validate_montage_final(game, vod, accepted_rows)
+            if not ok_final:
+                log.warning("montage final reject game=%s reason=%s", game, final_reason)
+                out.unlink(missing_ok=True)
+                continue
 
             peaks = ",".join(str(int(r.get("peak_start", r["start"]))) for r in accepted_rows)
             caption = (
@@ -1819,6 +1885,31 @@ def _scan_vod_with_adaptive(
         )
         _save_state(game, state)
         return 0
+
+    if pubg_quality_strict() and game == "pubg":
+        try:
+            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=0, entry=entry)
+        finally:
+            if clear_fast_seeds is not None:
+                clear_fast_seeds()
+        new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
+        state["last_adaptive_level"] = 0
+        _save_state(game, state)
+        if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
+            if new_streak % 3 == 0:
+                entry = _vod_registry_entry(state, vod)
+                send_message(
+                    token,
+                    chat_id,
+                    telegram_exhaust_notice(
+                        game,
+                        vid,
+                        level=0,
+                        streak=new_streak,
+                        detail=scan_zero_detail(entry),
+                    ),
+                )
+        return sent
 
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)

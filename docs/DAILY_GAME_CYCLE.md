@@ -39,6 +39,22 @@ SHOOTER_VOD_PREFER_RUSSIAN=1
 
 Маркер `/root/data/mlbb/EU_PUBG_ONLY` включает эти настройки через `install_mlbb_vod_only.sh`.
 
+## Quality-strict PUBG (по умолчанию в PUBG-only)
+
+```bash
+VOD_PUBG_QUALITY_STRICT=1
+SHOOTER_VOD_MONTAGE_MIN_CLIPS=3          # ×3 склейка, не одиночные куски
+PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS=3
+SHOOTER_VOD_MONTAGE_SHIP_PARTIAL=0       # без частичных отправок
+SHOOTER_VOD_MONTAGE_EARLY_SHIP=0         # ждём полный набор частей
+SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=0      # полный combat presend на каждый кусок
+SHOOTER_VOD_ZERO_STREAK_SOFTEN=0         # без ослабления гейтов
+PUBG_METRO_GATE=1                        # Metro на VOD и на каждой части
+PUBG_VOD_MONTAGE_MIN_FINAL_SEC=32
+```
+
+Идея: **усложняем** пайплайн (CLIP-rank, metro + combat + author-kill на каждый кусок, финальная проверка), чтобы в Telegram уходили только плотные ×3 склейки.
+
 ## PUBG: перестрелка от лица стримера (не фон)
 
 Используем мультимодальный стек (уже в репо + новый `pubg_pov_engagement_ok`):
