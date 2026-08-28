@@ -819,9 +819,16 @@ def _send_montage(
 
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
-    max_attempts = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES", "3")))
+    max_attempts = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES", "6")))
     rejected_sids: set[str] = set()
     remaining = list(picked)
+    if len(rows) > len(picked):
+        seen = {str(r.get("segment_id") or "") for r in remaining}
+        for row in rows:
+            sid = str(row.get("segment_id") or "")
+            if sid and sid not in seen:
+                remaining.append(row)
+                seen.add(sid)
 
     for attempt in range(max_attempts):
         # Soft/partial ship: do not bail just because we have < ideal ×3 peaks.
@@ -1616,6 +1623,19 @@ def _scan_vod_with_adaptive(
                             ultra,
                             len(rows),
                         )
+                # Presend often rejects 1–2 peaks — give montage the full dense pool
+                # (one row per fight) so it can still ship ×2+ after gate rejects.
+                if len(dense_peaks or []) >= soft_min:
+                    expanded = _build_rows(max(6.0, gap_sec * 0.12))
+                    if len(expanded) > len(rows):
+                        log.info(
+                            "fast-montage expand pool vod=%s rows=%s→%s peaks=%s",
+                            vod.name,
+                            len(rows),
+                            len(expanded),
+                            len(dense_peaks),
+                        )
+                        rows = expanded
                 if len(rows) >= soft_min:
                     if len(rows) < min_clips:
                         log.warning(
