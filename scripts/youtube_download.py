@@ -221,13 +221,22 @@ def _ytdlp_is_403(proc: subprocess.CompletedProcess[str]) -> bool:
     return "403" in err or "Forbidden" in err
 
 
+def _ytdlp_should_retry_clients(proc: subprocess.CompletedProcess[str]) -> bool:
+    if proc.returncode == 0:
+        return False
+    err = f"{proc.stderr or ''}{proc.stdout or ''}".lower()
+    if "403" in err or "forbidden" in err:
+        return True
+    return "format is not available" in err or "only images are available" in err
+
+
 def ytdlp_player_client_fallbacks(env: dict[str, str]) -> list[str]:
     cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
     if cookies and Path(cookies).exists():
         # android/ios skip when cookies are set — web+mweb first.
         raw = env.get("YTDLP_PLAYER_CLIENTS", "web,mweb,tv,android,ios")
     else:
-        raw = env.get("YTDLP_PLAYER_CLIENTS", "web,android,ios,mweb")
+        raw = env.get("YTDLP_PLAYER_CLIENTS", "android,web,ios,mweb")
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
@@ -257,7 +266,9 @@ def run_ytdlp(
         timeout=timeout,
         env=base_env,
     )
-    if proc.returncode == 0 or not _ytdlp_is_403(proc):
+    if proc.returncode == 0:
+        return proc
+    if not _ytdlp_should_retry_clients(proc):
         return proc
     retry_delay = float(env.get("YTDLP_403_RETRY_DELAY", "4"))
     for client in ytdlp_player_client_fallbacks(env):
@@ -273,7 +284,7 @@ def run_ytdlp(
         )
         if proc.returncode == 0:
             return proc
-        if not _ytdlp_is_403(proc):
+        if not _ytdlp_should_retry_clients(proc):
             break
     return proc
 
@@ -315,8 +326,11 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         if proc.returncode == 0:
             break
         last_err = (proc.stderr or proc.stdout or "")[:800]
-        if "format is not available" not in last_err.lower():
-            raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {last_err}")
+        if "format is not available" in last_err.lower():
+            continue
+        if _ytdlp_should_retry_clients(proc):
+            continue
+        raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {last_err}")
     else:
         raise RuntimeError(f"yt-dlp download failed: {last_err}")
     files = sorted(dest_dir.glob(f"{prefix}_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
