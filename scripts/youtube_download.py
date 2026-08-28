@@ -33,6 +33,31 @@ def ytdlp_bin(env: dict[str, str] | None = None) -> str:
     return "yt-dlp"
 
 
+def is_twitch_vod_url(url: str) -> bool:
+    host = urlparse(url.strip()).netloc.lower().split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host in ("twitch.tv", "m.twitch.tv", "www.twitch.tv")
+
+
+def normalize_twitch_url(url: str) -> str:
+    raw = url.strip().rstrip(".,);")
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    elif not raw.startswith("http"):
+        raw = "https://" + raw.lstrip("/")
+    parsed = urlparse(raw)
+    path = parsed.path.strip("/")
+    parts = path.split("/")
+    if len(parts) >= 2 and parts[0] == "videos" and parts[1].isdigit():
+        return f"https://www.twitch.tv/videos/{parts[1]}"
+    return raw
+
+
+def media_url_prefix(url: str) -> str:
+    return "tw" if is_twitch_vod_url(url) else "yt"
+
+
 def normalize_youtube_url(url: str) -> str:
     raw = url.strip().rstrip(".,);")
     if not raw:
@@ -242,16 +267,25 @@ def run_ytdlp(
 
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     env = {**os.environ, **(env or load_env())}
-    url = normalize_youtube_url(url)
+    if is_twitch_vod_url(url):
+        url = normalize_twitch_url(url)
+        prefix = "tw"
+    else:
+        url = normalize_youtube_url(url)
+        prefix = "yt"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    template = dest_dir / "yt_%(id)s.%(ext)s"
+    template = dest_dir / f"{prefix}_%(id)s.%(ext)s"
+    fmt = youtube_format_for_url(url, env) if prefix == "yt" else env.get(
+        "TWITCH_FORMAT",
+        "bv*[height<=1080]+ba/b[height<=1080]/b",
+    )
     cmd = ytdlp_cmd(env) + [
         "--no-playlist",
         "--restrict-filenames",
         "--merge-output-format",
         "mp4",
         "-f",
-        youtube_format_for_url(url, env),
+        fmt,
         *ytdlp_extra_args(env),
         "-o",
         str(template),
@@ -263,7 +297,7 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
         env=subprocess_env_no_proxy(env),
     )
-    files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(dest_dir.glob(f"{prefix}_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
     return files[0]

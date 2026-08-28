@@ -51,6 +51,10 @@ SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=0      # полный combat presend на ка
 SHOOTER_VOD_ZERO_STREAK_SOFTEN=0         # без ослабления гейтов
 PUBG_METRO_GATE=1                        # Metro на VOD и на каждой части
 PUBG_VOD_MONTAGE_MIN_FINAL_SEC=32
+SHOOTER_VOD_MONTAGES_PER_VOD=3      # до 3 ×3 склеек с одного VOD за визит
+SHOOTER_VOD_DENSE_PROBE_MAX=48      # больше окон PANNs по длине стрима
+SHOOTER_VOD_DENSE_PROBE_STEP_SEC=30
+SHOOTER_VOD_DENSE_PROBE_PASSES=2    # сдвиг сетки при повторном визите
 ```
 
 Идея: **усложняем** пайплайн (CLIP-rank, metro + combat + author-kill на каждый кусок, финальная проверка), чтобы в Telegram уходили только плотные ×3 склейки.

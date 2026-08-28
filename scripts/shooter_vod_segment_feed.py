@@ -64,7 +64,7 @@ from vod_scan_state import (
     used_peaks_for_vod,
 )
 from vod_game_registry import VOD_PIPELINE_REV
-from vod_quality import pubg_quality_strict
+from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
@@ -119,13 +119,18 @@ def _shooter_vod_length_ok(path: Path, dur: float | None = None) -> bool:
     return _vod_min_sec() <= length <= _vod_max_sec()
 
 
+def _inbox_mp4_files(inbox: Path) -> list[Path]:
+    files = list(inbox.glob("yt_*.mp4")) + list(inbox.glob("tw_*.mp4"))
+    return sorted(set(files), key=lambda p: p.name)
+
+
 def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
     """Park only too-short inbox files. Never park long VODs for exceeding max."""
     parked = inbox.parent / "parked"
     parked.mkdir(parents=True, exist_ok=True)
     min_sec = _vod_min_sec()
     removed = 0
-    for mp4 in list(inbox.glob("yt_*.mp4")):
+    for mp4 in list(_inbox_mp4_files(inbox)):
         dur = _ffprobe_duration(mp4)
         if dur >= min_sec:
             continue
@@ -448,6 +453,71 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 }
             )
         time.sleep(float(params.get("delay", 6)))
+
+    from twitch_vod_prefs import twitch_vod_enabled
+
+    if twitch_vod_enabled(game):
+        from twitch_vod_prefs import (
+            parse_flat_playlist_line,
+            title_ok as twitch_title_ok,
+            vod_discovery_search_cycle as twitch_cycle,
+        )
+
+        t_cycle = int(state.get("twitch_discovery_cycle", 0))
+        t_params = twitch_cycle(t_cycle, game, env)
+        state["twitch_discovery_cycle"] = t_cycle + 1
+        _save_state(game, state)
+        twitch_limit = int(t_params.get("limit", 12))
+        for url in t_params.get("urls", []):
+            cmd = ytdlp_cmd(env) + [
+                "--flat-playlist",
+                "--playlist-end",
+                str(twitch_limit),
+                "--print",
+                "%(id)s|%(title)s|%(duration)s|%(uploader)s|%(live_status)s",
+                url,
+            ]
+            cmd += ytdlp_extra_args(env)
+            proc = run_ytdlp(cmd, env, timeout=120, label=f"twitch-search-{game}")
+            if proc.returncode != 0:
+                err = (proc.stderr or "")[:400]
+                log.warning("twitch search failed %s: %s", url, err)
+                continue
+            for line in (proc.stdout or "").splitlines():
+                row = parse_flat_playlist_line(line)
+                if not row:
+                    continue
+                vid = row["id"]
+                if vid in used:
+                    continue
+                title = row["title"]
+                live_status = row.get("live_status", "")
+                if live_status in ("is_live", "is_upcoming"):
+                    used.add(vid)
+                    continue
+                if not twitch_title_ok(game, title):
+                    continue
+                try:
+                    dur = float(row.get("duration") or 0)
+                except ValueError:
+                    dur = 0.0
+                if dur <= 0:
+                    used.add(vid)
+                    continue
+                if not _shooter_vod_length_ok(Path("x.mp4"), dur):
+                    continue
+                out.append(
+                    {
+                        "id": vid,
+                        "title": title,
+                        "url": row["url"],
+                        "duration": dur,
+                        "uploader": row.get("uploader", ""),
+                        "source": "twitch",
+                    }
+                )
+            time.sleep(float(t_params.get("delay", 6)))
+
     if not out:
         pause_sec = float(
             os.environ.get(
@@ -647,6 +717,20 @@ def _used_peak_times(game: str, vod_id: str, sent_set: set[str]) -> list[float]:
 
 def _peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> bool:
     return peak_too_close(peak, used_peaks, gap_sec)
+
+
+def _dense_probe_pass_index(entry: dict | None) -> int:
+    """Rotate dense PANNs grid across revisits of the same long VOD."""
+    passes = dense_probe_passes()
+    if passes <= 1:
+        return 0
+    visit = int((entry or {}).get("dense_probe_visit") or 0)
+    return visit % passes
+
+
+def _bump_dense_probe_visit(entry: dict | None) -> None:
+    if entry is not None:
+        entry["dense_probe_visit"] = int(entry.get("dense_probe_visit") or 0) + 1
 
 
 def _montage_enabled(game: str) -> bool:
@@ -1590,11 +1674,13 @@ def _scan_vod_with_adaptive(
                 from shooter_vod_fast_scan import discover_montage_gun_peaks
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
+                probe_pass = _dense_probe_pass_index(entry)
                 dense_peaks, dense_reason = discover_montage_gun_peaks(
                     vod,
                     _profile(game),
                     min_clips=min_clips,
                     gap_sec=gap_sec,
+                    probe_pass=probe_pass,
                 )
                 # Owner-good fight times first (gold labels) — PANNs alone often
                 # picks cruise SFX that fail impact/flash gates.
@@ -1636,18 +1722,24 @@ def _scan_vod_with_adaptive(
                         )
                     ),
                 )
-                sent_set = load_feed_sent(game)
-                used_peaks = _used_peak_times(game, vid, sent_set)
-                blocked_ids = labeled_ids(game) | sent_set
+                soft_min = _montage_soft_min_clips(game)
+                max_montages = montages_per_vod(game)
+                total_sent = 0
+                presend_reject = False
 
-                def _build_rows(peak_gap: float) -> list[dict]:
+                def _build_rows(
+                    peak_gap: float,
+                    *,
+                    used: list[float],
+                    blocked: set[str],
+                ) -> list[dict]:
                     out_rows: list[dict] = []
                     for idx, peak in enumerate(dense_peaks):
-                        if _peak_too_close(float(peak), used_peaks, peak_gap):
+                        if _peak_too_close(float(peak), used, peak_gap):
                             continue
                         start = max(0.0, float(peak) - part_sec * 0.5)
                         sid = segment_id(vid, start)
-                        if sid in blocked_ids:
+                        if sid in blocked:
                             continue
                         out_rows.append(
                             {
@@ -1665,78 +1757,100 @@ def _scan_vod_with_adaptive(
                         )
                     return out_rows
 
-                rows = _build_rows(gap_sec * 0.9)
-                soft_min = _montage_soft_min_clips(game)
-                if len(rows) < soft_min:
-                    # Same VOD can still yield ×3 if fights are denser than montage gap.
-                    tight = max(18.0, gap_sec * 0.45)
-                    rows = _build_rows(tight)
-                    if len(rows) >= soft_min:
-                        log.info(
-                            "fast-montage tight unused-gap vod=%s gap=%.0f→%.0f rows=%s",
-                            vod.name,
-                            gap_sec,
-                            tight,
-                            len(rows),
-                        )
-                if len(rows) < soft_min:
-                    ultra = max(12.0, gap_sec * 0.28)
-                    rows = _build_rows(ultra)
-                    if len(rows) >= soft_min:
-                        log.info(
-                            "fast-montage ultra unused-gap vod=%s gap→%.0f rows=%s",
-                            vod.name,
-                            ultra,
-                            len(rows),
-                        )
-                # Presend often rejects 1–2 peaks — give montage the full dense pool
-                # (one row per fight) so it can still ship ×2+ after gate rejects.
-                if len(dense_peaks or []) >= soft_min:
-                    expanded = _build_rows(max(6.0, gap_sec * 0.12))
-                    if len(expanded) > len(rows):
-                        log.info(
-                            "fast-montage expand pool vod=%s rows=%s→%s peaks=%s",
-                            vod.name,
-                            len(rows),
-                            len(expanded),
-                            len(dense_peaks),
-                        )
-                        rows = expanded
-                if len(rows) >= soft_min:
+                def _shortlist_rows(used: list[float], blocked: set[str]) -> list[dict]:
+                    rows = _build_rows(gap_sec * 0.9, used=used, blocked=blocked)
+                    if len(rows) < soft_min:
+                        tight = max(18.0, gap_sec * 0.45)
+                        rows = _build_rows(tight, used=used, blocked=blocked)
+                        if len(rows) >= soft_min:
+                            log.info(
+                                "fast-montage tight unused-gap vod=%s gap=%.0f→%.0f rows=%s",
+                                vod.name,
+                                gap_sec,
+                                tight,
+                                len(rows),
+                            )
+                    if len(rows) < soft_min:
+                        ultra = max(12.0, gap_sec * 0.28)
+                        rows = _build_rows(ultra, used=used, blocked=blocked)
+                        if len(rows) >= soft_min:
+                            log.info(
+                                "fast-montage ultra unused-gap vod=%s gap→%.0f rows=%s",
+                                vod.name,
+                                ultra,
+                                len(rows),
+                            )
+                    if len(dense_peaks or []) >= soft_min:
+                        expanded = _build_rows(max(6.0, gap_sec * 0.12), used=used, blocked=blocked)
+                        if len(expanded) > len(rows):
+                            log.info(
+                                "fast-montage expand pool vod=%s rows=%s→%s peaks=%s",
+                                vod.name,
+                                len(rows),
+                                len(expanded),
+                                len(dense_peaks),
+                            )
+                            rows = expanded
+                    return rows
+
+                for montage_idx in range(max_montages):
+                    sent_set = load_feed_sent(game)
+                    used_peaks = _used_peak_times(game, vid, sent_set)
+                    blocked_ids = labeled_ids(game) | sent_set
+                    rows = _shortlist_rows(used_peaks, blocked_ids)
+                    if len(rows) < soft_min:
+                        break
                     if len(rows) < min_clips:
                         log.warning(
-                            "fast-montage soft-shortlist vod=%s rows=%s soft_min=%s wanted=%s",
+                            "fast-montage soft-shortlist vod=%s rows=%s soft_min=%s wanted=%s idx=%s",
                             vod.name,
                             len(rows),
                             soft_min,
                             min_clips,
+                            montage_idx,
                         )
                     n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
                     if n_fast > 0:
-                        if entry is not None:
-                            record_vod_scan(
-                                entry,
-                                sent=n_fast,
-                                pool_peaks=dense_peaks,
-                                blocked=False,
-                            )
-                        _save_state(game, state)
-                        if clear_fast_seeds:
-                            clear_fast_seeds()
+                        total_sent += n_fast
                         log.info(
-                            "fast-montage SENT game=%s vod=%s n=%s peaks=%s",
+                            "fast-montage SENT game=%s vod=%s n=%s idx=%s/%s peaks=%s",
                             game,
                             vod.name,
                             n_fast,
+                            montage_idx + 1,
+                            max_montages,
                             dense_peaks[:6],
                         )
-                        return n_fast
+                        if montage_idx + 1 >= max_montages:
+                            break
+                        continue
+                    presend_reject = True
                     log.warning(
-                        "fast-montage rejected by gates vod=%s peaks=%s — skip slow highlight hang",
+                        "fast-montage rejected by gates vod=%s peaks=%s idx=%s — try next slice",
                         vod.name,
                         len(rows),
+                        montage_idx,
                     )
-                    # Only exhaust when remaining unused dense peaks cannot form another shortlist.
+                    break
+
+                if total_sent > 0:
+                    if entry is not None:
+                        record_vod_scan(
+                            entry,
+                            sent=total_sent,
+                            pool_peaks=dense_peaks,
+                            blocked=False,
+                        )
+                        if total_sent < max_montages:
+                            _bump_dense_probe_visit(entry)
+                    _save_state(game, state)
+                    if clear_fast_seeds:
+                        clear_fast_seeds()
+                    return total_sent
+
+                if presend_reject:
+                    sent_set = load_feed_sent(game)
+                    used_peaks = _used_peak_times(game, vid, sent_set)
                     remaining_unused = [
                         p
                         for p in dense_peaks
@@ -1757,10 +1871,15 @@ def _scan_vod_with_adaptive(
                             blocked=False,
                         )
                         entry["reject_reason"] = "fast_montage_presend_reject_retry"
+                        _bump_dense_probe_visit(entry)
                     _save_state(game, state)
                     if clear_fast_seeds:
                         clear_fast_seeds()
                     return 0
+
+                sent_set = load_feed_sent(game)
+                used_peaks = _used_peak_times(game, vid, sent_set)
+                rows = _shortlist_rows(used_peaks, labeled_ids(game) | sent_set)
                 vod_dur_fast = _ffprobe_duration(vod)
                 long_vod = vod_dur_fast >= float(
                     os.environ.get("SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC", "1800")
@@ -1785,6 +1904,7 @@ def _scan_vod_with_adaptive(
                         record_vod_scan(
                             entry, sent=0, pool_peaks=dense_peaks, blocked=True
                         )
+                        _bump_dense_probe_visit(entry)
                 else:
                     _mark_vod_exhausted(
                         state,
@@ -1991,7 +2111,7 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
     candidates: list[tuple[float, Path, dict]] = []
     registry = state.setdefault("vods", [])
     now = time.time()
-    for mp4 in parked.glob("yt_*.mp4"):
+    for mp4 in list(parked.glob("yt_*.mp4")) + list(parked.glob("tw_*.mp4")):
         dur = _ffprobe_duration(mp4)
         if dur < min_sec or not _shooter_vod_length_ok(mp4, dur):
             continue
@@ -2073,7 +2193,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     if purged:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
 
-    inbox_files = sorted(inbox.glob("yt_*.mp4"), key=lambda p: _inbox_order_key(p, registry, game=game))
+    inbox_files = sorted(_inbox_mp4_files(inbox), key=lambda p: _inbox_order_key(p, registry, game=game))
     max_vods = max(1, int(os.environ.get("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")))
     tried = 0
     for mp4 in inbox_files:
@@ -2176,7 +2296,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if not usable:
             parked = inbox.parent / "parked"
             parked.mkdir(parents=True, exist_ok=True)
-            for mp4 in list(inbox.glob("yt_*.mp4")):
+            for mp4 in list(_inbox_mp4_files(inbox)):
                 entries = _vod_registry_entries(state, mp4)
                 if entries and any(r.get("exhausted") for r in entries):
                     dest = parked / mp4.name

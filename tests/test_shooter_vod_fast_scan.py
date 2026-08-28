@@ -69,3 +69,14 @@ def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
     assert ok is True
     assert reason == "fast_probe_disabled"
     assert peaks == []
+
+
+def test_dense_offsets_probe_pass_shifts_grid(monkeypatch) -> None:
+    from shooter_vod_fast_scan import _dense_offsets
+
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "8")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40")
+    a = _dense_offsets(7200.0, skip_intro=120.0, probe_pass=0)
+    b = _dense_offsets(7200.0, skip_intro=120.0, probe_pass=1)
+    assert a and b
+    assert a[0] != b[0] or a != b

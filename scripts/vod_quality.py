@@ -15,3 +15,23 @@ def pubg_quality_strict() -> bool:
         return False
     # PUBG-only servers default to quality-first (not throughput shortcuts).
     return os.environ.get("VOD_PUBG_ONLY", "0") == "1"
+
+
+def montages_per_vod(game: str = "pubg") -> int:
+    """How many ×N склейки to ship from one VOD visit before moving on."""
+    raw = os.environ.get("SHOOTER_VOD_MONTAGES_PER_VOD", "").strip()
+    if raw:
+        return max(1, int(raw))
+    if game == "pubg" and pubg_quality_strict():
+        return 3
+    return 1
+
+
+def dense_probe_passes() -> int:
+    """Rotate dense PANNs windows across long VODs (same gates, more coverage)."""
+    raw = os.environ.get("SHOOTER_VOD_DENSE_PROBE_PASSES", "").strip()
+    if raw:
+        return max(1, int(raw))
+    if pubg_quality_strict():
+        return 2
+    return 1

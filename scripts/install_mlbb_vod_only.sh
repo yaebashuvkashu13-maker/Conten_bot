@@ -171,6 +171,8 @@ _apply_pubg_only_env() {
     SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=0 SHOOTER_VOD_MONTAGE_CLIP_RANK=1 \
     PUBG_VOD_MONTAGE_MIN_FINAL_SEC=32 SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN=0 \
     SHOOTER_VOD_ZERO_STREAK_SOFTEN=0 SHOOTER_VOD_DENSE_PANN_MIN=0.16 \
+    SHOOTER_VOD_DENSE_PROBE_MAX=48 SHOOTER_VOD_DENSE_PROBE_STEP_SEC=30 \
+    SHOOTER_VOD_DENSE_PROBE_PASSES=2 SHOOTER_VOD_MONTAGES_PER_VOD=3 \
     SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES=6 \
     SHOOTER_VOD_EXHAUST_NOTIFY=1 SHOOTER_VOD_ADAPTIVE_NOTIFY=0; do
     key="${kv%%=*}"
@@ -201,6 +203,7 @@ install -m 755 \
   "$REPO/scripts/daily_game_cycle.py" \
   "$REPO/scripts/daily_cycle_runner.py" \
   "$REPO/scripts/vod_quality.py" \
+  "$REPO/scripts/twitch_vod_prefs.py" \
   "$REPO/scripts/shooter_vod_segment_feed.py" \
   "$REPO/scripts/shooter_owner_montage.py" \
   "$REPO/scripts/shooter_author_kill_gate.py" \

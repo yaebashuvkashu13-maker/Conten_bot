@@ -47,11 +47,12 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
     return sorted(set(offsets))[: int(os.environ.get("SHOOTER_VOD_FAST_PROBE_MAX", "6"))]
 
 
-def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
+def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -> list[float]:
     """Evenly spaced probes for montage (≥3 fights). Caps CPU via MAX.
 
     Critical: a fixed step+cap only covered the first ~20min of 90min streams,
     so used early fights left have<3 while the rest of the VOD was never probed.
+    probe_pass shifts the grid so later visits scan different timeline slices.
     """
     dur = max(0.0, float(duration))
     # Short VODs: denser step, still probe (was empty at skip+180 threshold).
@@ -65,8 +66,11 @@ def _dense_offsets(duration: float, *, skip_intro: float) -> list[float]:
     if usable > 0 and cap > 1:
         # Stretch so probes span the whole VOD instead of clustering at the start.
         step = max(step, usable / float(cap - 1))
+    phase_shift = 0.0
+    if probe_pass > 0 and usable > 0:
+        phase_shift = (probe_pass * step * 2.5) % max(step, usable / max(cap, 1))
     out: list[float] = []
-    t = skip_intro
+    t = skip_intro + phase_shift
     while t + WINDOW_SEC < dur - 12 and len(out) < cap:
         out.append(round(t, 1))
         t += step
@@ -165,6 +169,7 @@ def discover_montage_gun_peaks(
     *,
     min_clips: int = 3,
     gap_sec: float = 55.0,
+    probe_pass: int = 0,
 ) -> tuple[list[float], str]:
     """
     Dense PANNs scan → spaced candidates → snap only those → ×3 montage peaks.
@@ -182,15 +187,16 @@ def discover_montage_gun_peaks(
     skip = _skip_intro_sec(profile, duration=dur)
     gun_min = float(os.environ.get("SHOOTER_VOD_DENSE_PANN_MIN", "0.16"))
     dens_min = float(os.environ.get("SHOOTER_VOD_DENSE_GUN_MIN", "0.045"))
-    offsets = _dense_offsets(dur, skip_intro=skip)
+    offsets = _dense_offsets(dur, skip_intro=skip, probe_pass=probe_pass)
     if not offsets:
         return [], "dense_probe_too_short"
 
     log.info(
-        "dense gun probe start vod=%s offsets=%s skip=%.0f",
+        "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
         video_path.name,
         len(offsets),
         skip,
+        probe_pass,
     )
     scored: list[tuple[float, float]] = []  # panns, center_hint
     for t in offsets:
@@ -275,7 +281,7 @@ def discover_montage_gun_peaks(
     top = scored[0][0] if scored else 0.0
     reason = (
         f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
-        f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f}"
+        f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f} pass={probe_pass}"
     )
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
     return picked, reason

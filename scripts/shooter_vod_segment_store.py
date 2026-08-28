@@ -52,6 +52,8 @@ def vod_youtube_id(path: Path) -> str:
     stem = path.stem
     if stem.startswith("yt_"):
         return stem[3:][:11]
+    if stem.startswith("tw_"):
+        return stem[3:]
     return stem[:11]
 
 
