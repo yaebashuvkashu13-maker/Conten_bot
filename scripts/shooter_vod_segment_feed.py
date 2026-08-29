@@ -1131,7 +1131,7 @@ def _send_montage(
                 f"👍 Ок / 👎 Не ок"
             )
             primary_sid = accepted_rows[0]["segment_id"]
-            if not send_video(
+            sent_ok = send_video(
                 token,
                 chat_id,
                 out,
@@ -1140,7 +1140,22 @@ def _send_montage(
                 record_learning=False,
                 reply_markup=keyboard(game, primary_sid),
                 cycle_game=game,
-            ):
+            )
+            if not sent_ok:
+                time.sleep(2.0)
+                sent_ok = send_video(
+                    token,
+                    chat_id,
+                    out,
+                    caption,
+                    seg_id=primary_sid,
+                    record_learning=False,
+                    reply_markup=keyboard(game, primary_sid),
+                    cycle_game=game,
+                )
+            if not sent_ok:
+                size = out.stat().st_size if out.is_file() else 0
+                log.error("montage telegram send failed game=%s file=%s bytes=%s", game, out.name, size)
                 return 0
 
             for row in accepted_rows:
@@ -1665,6 +1680,8 @@ def _scan_vod_with_adaptive(
                     entry["exhausted"] = True
             _save_state(game, state)
             return 0
+        # VOD passed metro — do not re-reject montage parts with stricter segment probes.
+        os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
 
     prev_level = int(state.get("last_adaptive_level") or 0)
     active_level = 0
@@ -1875,7 +1892,7 @@ def _scan_vod_with_adaptive(
                         len(rows),
                         montage_idx,
                     )
-                    break
+                    continue
 
                 if total_sent > 0:
                     if entry is not None:
@@ -2022,14 +2039,18 @@ def _scan_vod_with_adaptive(
             return 0
         apply_wot_seeds(seed_peaks)
 
-    # Hard anti-hang: montage-only shooters never enter CLIP/hist highlight.
-    # Fast-montage above is the only productive path; fallback burns paid CPU.
+    # Hard anti-hang: montage-only shooters skip CLIP/highlight unless fallback allowed.
+    allow_fallback = os.environ.get("SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK", "0") == "1"
+    if game == "pubg" and (
+        os.environ.get("SHOOTER_VOD_DELIVERY_FIRST", "0") == "1" or not pubg_quality_strict()
+    ):
+        allow_fallback = True
     if (
         game in ("pubg", "standoff", "wot")
         and _montage_only(game)
         and os.environ.get("SHOOTER_VOD_FAST_PROBE", "1") == "1"
         and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
-        and os.environ.get("SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK", "0") != "1"
+        and not allow_fallback
     ):
         log.warning(
             "montage-only anti-hang: skip highlight fallback game=%s vod=%s",
@@ -2525,14 +2546,20 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
+    file_env = load_env(ENV_PATH)
+    os.environ.update({k: str(v) for k, v in file_env.items()})
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_MONTAGE", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")
     os.environ.setdefault("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1")
-    os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "3600")
-    os.environ.setdefault("SHOOTER_VOD_MIN_SEC", "600")
+    # Never inherit a 600s floor — that blocked every 4–9 min Metro VOD.
+    os.environ.setdefault(
+        "SHOOTER_VOD_MIN_SEC",
+        file_env.get("MLBB_VOD_MIN_SEC") or os.environ.get("MLBB_VOD_MIN_SEC") or "180",
+    )
+    os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "14400")
     os.environ.setdefault("HIGHLIGHT_ALLOW_NO_CLIP", "1")
     # Disable CLIP during fast probe unless montage rank needs it (strict PUBG).
     if pubg_quality_strict() or os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
@@ -2553,7 +2580,7 @@ def main() -> int:
     lock = _feed_lock(game)
     if lock is None:
         return 0
-    env = {**os.environ, **load_env(ENV_PATH)}
+    env = {**os.environ, **file_env}
     for key in (
         "SHOOTER_VOD_FEED",
         "SHOOTER_VOD_FAST_PROBE",
@@ -2565,6 +2592,20 @@ def main() -> int:
         "SHOOTER_VOD_OWNER_BACKFILL",
         "SHOOTER_VOD_MIN_CLIP_SCORE",
         "HIGHLIGHT_USE_OWNER_ANCHORS",
+        "SHOOTER_VOD_MIN_SEC",
+        "SHOOTER_VOD_MAX_SEC",
+        "VOD_PUBG_ONLY",
+        "VOD_PUBG_QUALITY_STRICT",
+        "SHOOTER_VOD_DELIVERY_FIRST",
+        "SHOOTER_VOD_MONTAGE_SHIP_PARTIAL",
+        "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS",
+        "SHOOTER_VOD_MONTAGES_PER_VOD",
+        "SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK",
+        "PUBG_METRO_SEGMENT_RELAX",
+        "PUBG_METRO_TITLE_TRUST",
+        "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY",
+        "DAILY_PUBG_QUOTA",
+        "DAILY_MLBB_QUOTA",
     ):
         if key in env:
             os.environ[key] = str(env[key])

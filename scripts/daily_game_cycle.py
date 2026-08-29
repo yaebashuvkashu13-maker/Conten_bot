@@ -38,7 +38,9 @@ def enabled() -> bool:
 
 def pubg_only_mode() -> bool:
     """Unlimited PUBG-only pipeline — other games stay idle."""
-    return os.environ.get("VOD_PUBG_ONLY", "0") == "1"
+    if os.environ.get("VOD_PUBG_ONLY", "0") == "1":
+        return True
+    return (DATA_ROOT / "EU_PUBG_ONLY").is_file()
 
 
 def _quota_raw(game: str) -> str:

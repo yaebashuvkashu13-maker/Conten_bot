@@ -96,7 +96,7 @@ if [[ -f "$FEED_LOG" ]]; then
     pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
     pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
     sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock
+    rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/pubg_vod_segment_feed.lock /tmp/standoff_vod_segment_feed.lock
     nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
   fi
 fi
@@ -179,7 +179,7 @@ if now - last_alert < silence:
     raise SystemExit(0)
 hours = int(age // 3600)
 msg = (
-    f"⚠️ MLBB VOD: тишина ~{hours}ч — клипов не было.\n"
+    f"⚠️ VOD feed: тишина ~{hours}ч — клипов не было.\n"
     f"Проверь: feed, диск, лог mlbb_vod_segment_feed.log"
 )
 data = urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode()

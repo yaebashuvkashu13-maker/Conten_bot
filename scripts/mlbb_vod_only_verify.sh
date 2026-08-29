@@ -136,5 +136,16 @@ if [[ "$FAIL" -ne 0 ]]; then
   echo "VERIFY FAILED"
   exit 1
 fi
+
+if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
+  check_env VOD_PUBG_ONLY 1
+  check_env VOD_PUBG_QUALITY_STRICT 0
+  check_env DAILY_MLBB_QUOTA 0
+  check_env DAILY_PUBG_QUOTA -1
+  check_env SHOOTER_VOD_MIN_SEC 180
+  check_env SHOOTER_VOD_DELIVERY_FIRST 1
+  echo "PUBG-only env bundle: OK"
+fi
+
 echo "VERIFY OK"
 exit 0

@@ -11,10 +11,8 @@ def pubg_quality_strict() -> bool:
     explicit = os.environ.get("VOD_PUBG_QUALITY_STRICT", "").strip()
     if explicit == "1":
         return True
-    if explicit == "0":
-        return False
-    # PUBG-only servers default to quality-first (not throughput shortcuts).
-    return os.environ.get("VOD_PUBG_ONLY", "0") == "1"
+    # Delivery-first by default — strict mode is opt-in via VOD_PUBG_QUALITY_STRICT=1.
+    return False
 
 
 def montages_per_vod(game: str = "pubg") -> int:

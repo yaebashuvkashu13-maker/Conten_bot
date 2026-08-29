@@ -33,4 +33,9 @@ def test_dense_probe_passes_strict_default(monkeypatch: pytest.MonkeyPatch) -> N
 def test_pubg_quality_strict_defaults_with_pubg_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VOD_PUBG_QUALITY_STRICT", raising=False)
     monkeypatch.setenv("VOD_PUBG_ONLY", "1")
+    assert pubg_quality_strict() is False
+
+
+def test_pubg_quality_strict_explicit_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
     assert pubg_quality_strict() is True

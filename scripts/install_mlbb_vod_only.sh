@@ -194,9 +194,13 @@ pairs = {
     "SHOOTER_VOD_MONTAGE_GAP_SEC": "55",
     "SHOOTER_VOD_MONTAGE_SHIP_PARTIAL": "1",
     "SHOOTER_VOD_MONTAGE_EARLY_SHIP": "1",
-    "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY": "0",
+    "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY": "1",
     "SHOOTER_VOD_MONTAGE_CLIP_RANK": "1",
-    "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "24",
+    "SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK": "1",
+    "SHOOTER_VOD_MIN_SEC": "180",
+    "SHOOTER_VOD_MAX_SEC": "14400",
+    "SHOOTER_VOD_MONTAGE_MIN_VOD_SEC": "120",
+    "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "18",
     "SHOOTER_VOD_MONTAGE_EMERGENCY_SOFT_MIN": "1",
     "SHOOTER_VOD_ZERO_STREAK_SOFTEN": "1",
     "SHOOTER_VOD_DENSE_PANN_MIN": "0.16",
@@ -207,13 +211,14 @@ pairs = {
     "SHOOTER_VOD_USED_IDS_MAX": "200",
     "SHOOTER_VOD_DELIVERY_FIRST": "1",
     "SHOOTER_VOD_AUTO_HEAL": "1",
+    "PUBG_METRO_TITLE_TRUST": "1",
+    "PUBG_METRO_SEGMENT_RELAX": "1",
     "YOUTUBE_FORMAT": "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
     "YOUTUBE_FORMAT_FALLBACK": "18/b[height<=720]/bv*+ba/b",
     "YTDLP_PLAYER_CLIENTS": "android,web,ios,mweb",
     "SHOOTER_VOD_MONTAGE_SHORTLIST_TRIES": "6",
     "SHOOTER_VOD_EXHAUST_NOTIFY": "1",
     "SHOOTER_VOD_ADAPTIVE_NOTIFY": "0",
-    "PUBG_METRO_TITLE_TRUST": "0",
     "SHOOTER_VOD_YTSEARCH_ONLY": "1",
     "TWITCH_VOD_ENABLED": "0",
     "TWITCH_PUBG_CHANNELS": "shifuwoe,aderrtheman,karat_pm,b1_kitty,zzzerbin,tw_lexa,tagav23,amazonka_aa,essko21,lada2oo,spulae111",
@@ -373,6 +378,11 @@ while true; do
 done
 EOF
 chmod 755 "$WRAPPER_VOD"
+if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
+  if ! grep -q '^export VOD_PUBG_ONLY=1' "$WRAPPER_VOD" 2>/dev/null; then
+    sed -i '/export CONTENT_BOT_REPO=/a export VOD_PUBG_ONLY=1\nexport SHOOTER_VOD_DELIVERY_FIRST=1' "$WRAPPER_VOD"
+  fi
+fi
 
 disable_shorts_wrapper mlbb_calibration_feed.sh
 disable_shorts_wrapper mlbb_youtube_shorts_ingest.sh
