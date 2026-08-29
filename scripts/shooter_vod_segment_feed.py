@@ -937,6 +937,8 @@ def _send_montage(
         )
 
     # Fast discovery (PANNs) + quality: CLIP ranks only this shortlist under a budget.
+    prev_clip_disabled = os.environ.get("HIGHLIGHT_CLIP_DISABLED")
+    os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
     try:
         from highlight_scorer import rank_shortlist_with_clip
 
@@ -946,6 +948,11 @@ def _send_montage(
             log.warning("montage CLIP rank required but failed: %s", exc)
             return 0
         log.warning("montage CLIP rank skipped: %s", exc)
+    finally:
+        if prev_clip_disabled is None:
+            os.environ.pop("HIGHLIGHT_CLIP_DISABLED", None)
+        else:
+            os.environ["HIGHLIGHT_CLIP_DISABLED"] = prev_clip_disabled
 
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
@@ -1192,6 +1199,8 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     # Final CLIP quality gate on the single chosen clip (discovery stays CLIP-off).
     to_send_ranked = list(to_send)
     if os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
+        prev_clip_disabled = os.environ.get("HIGHLIGHT_CLIP_DISABLED")
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
         try:
             from highlight_scorer import rank_shortlist_with_clip
 
@@ -1201,6 +1210,11 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         except Exception as exc:
             log.warning("single CLIP rank skipped: %s", exc)
             to_send_ranked = list(to_send)
+        finally:
+            if prev_clip_disabled is None:
+                os.environ.pop("HIGHLIGHT_CLIP_DISABLED", None)
+            else:
+                os.environ["HIGHLIGHT_CLIP_DISABLED"] = prev_clip_disabled
     for row in to_send_ranked[:1]:
         sid = row["segment_id"]
         clip = dict(row.get("clip") or {})
@@ -2453,10 +2467,14 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "3600")
     os.environ.setdefault("SHOOTER_VOD_MIN_SEC", "600")
     os.environ.setdefault("HIGHLIGHT_ALLOW_NO_CLIP", "1")
-    # Never re-enable CLIP via setdefault(…, "0") after this — paid hang.
-    os.environ["HIGHLIGHT_CLIP_DISABLED"] = os.environ.get("HIGHLIGHT_CLIP_DISABLED", "1") or "1"
-    if os.environ.get("HIGHLIGHT_CLIP_DISABLED") != "1":
-        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "1"
+    # Disable CLIP during fast probe unless montage rank needs it (strict PUBG).
+    if pubg_quality_strict() or os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
+        if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1":
+            os.environ.setdefault("HIGHLIGHT_CLIP_DISABLED", "0")
+    else:
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = os.environ.get("HIGHLIGHT_CLIP_DISABLED", "1") or "1"
+        if os.environ.get("HIGHLIGHT_CLIP_DISABLED") != "1":
+            os.environ["HIGHLIGHT_CLIP_DISABLED"] = "1"
     os.environ.setdefault("SHOOTER_VOD_PREFER_RUSSIAN", "1")
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
