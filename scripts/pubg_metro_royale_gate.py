@@ -157,7 +157,17 @@ def vod_looks_metro_royale(
     """Sample a few points in the VOD before investing in a full scan."""
     if os.environ.get("PUBG_METRO_GATE", "1") != "1":
         return True, "metro_gate_off"
-    if title_metro_hint(title) and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1":
+    try:
+        from vod_quality import pubg_quality_strict
+
+        strict = pubg_quality_strict()
+    except Exception:
+        strict = os.environ.get("VOD_PUBG_QUALITY_STRICT", "0") == "1"
+    if (
+        title_metro_hint(title)
+        and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1"
+        and not strict
+    ):
         return True, "metro_title_trusted"
     if duration_sec is None:
         from mlbb_vod_segment_feed import _ffprobe_duration
