@@ -132,11 +132,6 @@ echo "vod_feed_pids=${vod_pids[*]:-} cycle_pids=${cycle_pids[*]:-} supervisor=${
 echo "load: $(uptime | sed 's/.*load average: //')"
 grep -E '^MLBB_VOD_ONLY=|^MLBB_VOD_DISABLED=|^MLBB_CALIBRATION_FEED_ENABLED=' "$ENV_FILE" || true
 
-if [[ "$FAIL" -ne 0 ]]; then
-  echo "VERIFY FAILED"
-  exit 1
-fi
-
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
   check_env VOD_PUBG_ONLY 1
   check_env VOD_PUBG_QUALITY_STRICT 0
@@ -147,5 +142,9 @@ if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FIL
   echo "PUBG-only env bundle: OK"
 fi
 
+if [[ "$FAIL" -ne 0 ]]; then
+  echo "VERIFY FAILED"
+  exit 1
+fi
 echo "VERIFY OK"
 exit 0
