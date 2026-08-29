@@ -121,6 +121,7 @@ def test_run_recover_message(
             {
                 "vods": [{"id": "abc123xyz00", "exhausted": True, "reject_reason": "not_metro"}],
                 "discovery_pause_until": 9999999999.0,
+                "used_youtube_ids": ["old11111111", "old22222222"],
             }
         ),
         encoding="utf-8",
@@ -133,6 +134,8 @@ def test_run_recover_message(
     )
     assert "🔧 Восстановление" in msg
     assert "test restart" in msg
+    assert "discovery: очищено used YouTube ID" in msg
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["vods"][0]["exhausted"] is False
     assert "discovery_pause_until" not in state
+    assert state.get("used_youtube_ids") == []

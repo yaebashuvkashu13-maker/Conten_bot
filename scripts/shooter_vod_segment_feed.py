@@ -63,7 +63,7 @@ from vod_scan_state import (
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
-from vod_game_registry import VOD_PIPELINE_REV
+from vod_game_registry import VOD_PIPELINE_REV, trim_used_youtube_ids
 from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env
 
@@ -387,6 +387,16 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
         cycle_fn = shooter_cycle
 
     state = _load_state(game)
+    trimmed = trim_used_youtube_ids(state, game)
+    if trimmed:
+        _save_state(game, state)
+        used = set(state.get("used_youtube_ids", []))
+        log.info(
+            "trimmed used_youtube_ids game=%s removed=%s remain=%s",
+            game,
+            trimmed,
+            len(used),
+        )
     # Honor discovery pause (403 / empty) — don't hammer yt-dlp every idle tick.
     pause_until = float(state.get("discovery_pause_until") or 0)
     if pause_until > time.time():
@@ -403,56 +413,74 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
 
     out: list[dict] = []
     saw_403 = False
-    for url in params.get("urls", []):
-        cmd = ytdlp_cmd(env) + [
-            "--flat-playlist",
-            "--print",
-            "%(id)s|%(title)s|%(duration)s|%(uploader)s|%(live_status)s",
-            url,
-        ]
-        cmd += ytdlp_extra_args(env)
-        proc = run_ytdlp(cmd, env, timeout=90, label=f"search-{game}")
-        if proc.returncode != 0:
-            err = (proc.stderr or "")[:400]
-            log.warning("search failed %s: %s", url, err)
-            if "403" in err or "Forbidden" in err:
-                saw_403 = True
-            continue
-        for line in (proc.stdout or "").splitlines():
-            parts = line.split("|", 4)
-            if len(parts) < 2:
+
+    def _search_youtube(urls: list[str], delay: float) -> None:
+        nonlocal saw_403
+        for url in urls:
+            cmd = ytdlp_cmd(env) + [
+                "--flat-playlist",
+                "--print",
+                "%(id)s|%(title)s|%(duration)s|%(uploader)s|%(live_status)s",
+                url,
+            ]
+            cmd += ytdlp_extra_args(env)
+            proc = run_ytdlp(cmd, env, timeout=90, label=f"search-{game}")
+            if proc.returncode != 0:
+                err = (proc.stderr or "")[:400]
+                log.warning("search failed %s: %s", url, err)
+                if "403" in err or "Forbidden" in err:
+                    saw_403 = True
                 continue
-            vid, title = parts[0][:11], parts[1]
-            if vid in used or len(vid) != 11:
-                continue
-            live_status = (parts[4] if len(parts) > 4 else "").strip().lower()
-            if live_status in ("is_live", "is_upcoming"):
-                log.info("skip live/upcoming id=%s status=%s", vid, live_status)
-                used.add(vid)
-                continue
-            if not title_ok_fn(game, title):
-                continue
-            try:
-                dur = float(parts[2]) if len(parts) > 2 and parts[2] not in ("NA", "None", "") else 0.0
-            except ValueError:
-                dur = 0.0
-            # Live streams often report duration 0 / NA — never download those.
-            if dur <= 0:
-                log.info("skip zero-duration (likely live) id=%s title=%s", vid, title[:40])
-                used.add(vid)
-                continue
-            if not _shooter_vod_length_ok(Path("x.mp4"), dur):
-                continue
-            out.append(
-                {
-                    "id": vid,
-                    "title": title[:120],
-                    "url": f"https://www.youtube.com/watch?v={vid}",
-                    "duration": dur,
-                    "uploader": parts[3][:60] if len(parts) > 3 else "",
-                }
+            for line in (proc.stdout or "").splitlines():
+                parts = line.split("|", 4)
+                if len(parts) < 2:
+                    continue
+                vid, title = parts[0][:11], parts[1]
+                if vid in used or len(vid) != 11:
+                    continue
+                live_status = (parts[4] if len(parts) > 4 else "").strip().lower()
+                if live_status in ("is_live", "is_upcoming"):
+                    log.info("skip live/upcoming id=%s status=%s", vid, live_status)
+                    used.add(vid)
+                    continue
+                if not title_ok_fn(game, title):
+                    continue
+                try:
+                    dur = float(parts[2]) if len(parts) > 2 and parts[2] not in ("NA", "None", "") else 0.0
+                except ValueError:
+                    dur = 0.0
+                if dur <= 0:
+                    log.info("skip zero-duration (likely live) id=%s title=%s", vid, title[:40])
+                    used.add(vid)
+                    continue
+                if not _shooter_vod_length_ok(Path("x.mp4"), dur):
+                    continue
+                out.append(
+                    {
+                        "id": vid,
+                        "title": title[:120],
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "duration": dur,
+                        "uploader": parts[3][:60] if len(parts) > 3 else "",
+                    }
+                )
+            time.sleep(delay)
+
+    _search_youtube(list(params.get("urls", [])), float(params.get("delay", 6)))
+
+    if not out and not saw_403:
+        state = _load_state(game)
+        freed = trim_used_youtube_ids(state, game, aggressive=True)
+        if freed:
+            _save_state(game, state)
+            used.clear()
+            used.update(state.get("used_youtube_ids", []))
+            log.info(
+                "discovery empty — cleared stale used ids game=%s removed=%s retry",
+                game,
+                freed,
             )
-        time.sleep(float(params.get("delay", 6)))
+            _search_youtube(list(params.get("urls", [])), float(params.get("delay", 6)))
 
     from twitch_vod_prefs import twitch_vod_enabled
 
@@ -779,13 +807,7 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
 
 
 def _montage_soft_min_clips(game: str | None = None) -> int:
-    """Minimum accepted parts before a montage may ship.
-
-    OWNER CONTRACT (do not regress):
-    PUBG / Standoff / WoT quotas were lowered specifically so each send is a
-    full ×3 склейка (multi-fight), never a single 14s filler. Soft/partial
-    below ideal is forbidden for these games.
-    """
+    """Minimum accepted parts before a montage may ship."""
     ideal = _montage_limits()[0]
     if game in ("pubg", "standoff", "wot"):
         key = {
@@ -793,10 +815,13 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
             "standoff": "STANDOFF_VOD_MONTAGE_SOFT_MIN_CLIPS",
             "wot": "WOT_VOD_MONTAGE_SOFT_MIN_CLIPS",
         }[game]
-        soft = max(ideal, int(os.environ.get(key, str(ideal))))
+        raw = os.environ.get(key, "").strip()
+        soft = int(raw) if raw else ideal
         if game == "pubg" and pubg_quality_strict():
-            return soft
-        return soft
+            return max(ideal, soft)
+        if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") == "1":
+            return max(1, soft)
+        return max(ideal, soft)
     if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
         return ideal
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))

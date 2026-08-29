@@ -11,7 +11,14 @@ from typing import Callable
 
 from reset_vod_inbox_exhausted import reset_game
 from telegram_owner_controls import reset_discovery_offsets, running_processes
-from vod_game_registry import VOD_GAMES, inbox_video_ids, load_state, save_state, spec
+from vod_game_registry import (
+    VOD_GAMES,
+    inbox_video_ids,
+    load_state,
+    save_state,
+    spec,
+    trim_used_youtube_ids,
+)
 
 DEFAULT_SUPERVISOR = "/usr/local/bin/mlbb_vod_segment_feed.sh"
 DEFAULT_FEED_LOG = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
@@ -240,6 +247,15 @@ def restart_supervisor(*, force: bool = False) -> tuple[bool, str]:
     return True, f"{reason or 'supervisor запущен'} (ожидаем feed…)"
 
 
+def trim_discovery_used_ids(game: str) -> int:
+    """Clear bloated used_youtube_ids so YouTube search can find fresh VODs."""
+    state = load_state(game)
+    removed = trim_used_youtube_ids(state, game, aggressive=True)
+    if removed:
+        save_state(game, state)
+    return removed
+
+
 def run_recover(
     game: str = "all",
     *,
@@ -253,12 +269,14 @@ def run_recover(
     cooled = 0
     reset_total = 0
     parked = 0
+    trimmed_used = 0
     for g in games:
         if clear_discovery_pauses(g):
             pauses += 1
         cooled += bump_scan_cooldowns(g)
         reset_total += reset_inbox_exhausted(g)
         parked += park_exhausted_inbox(g)
+        trimmed_used += trim_discovery_used_ids(g)
 
     restarted, restart_note = restart(force=True)
 
@@ -278,6 +296,10 @@ def run_recover(
         lines.append(f"• inbox exhausted: снова в очереди {reset_total} VOD")
     else:
         lines.append("• inbox exhausted: изменений не было")
+    if trimmed_used:
+        lines.append(f"• discovery: очищено used YouTube ID {trimmed_used}")
+    else:
+        lines.append("• discovery: used YouTube ID без изменений")
     lines.append(f"• supervisor: {'перезапущен' if restarted else 'без перезапуска'} — {restart_note}")
     lines.append(
         "• процессы: "
