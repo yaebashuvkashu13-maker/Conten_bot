@@ -175,11 +175,30 @@ def vod_looks_metro_royale(
         duration_sec = _ffprobe_duration(video_path)
     intro = float(os.environ.get("PUBG_METRO_VOD_SKIP_INTRO_SEC", "120"))
     dur = max(float(duration_sec or 0), intro + 60)
-    probes = [
-        intro + 60,
-        min(dur * 0.40, intro + 300),
-        min(dur * 0.55, max(intro + 120, dur - 90)),
-    ]
+    probes: list[float] = []
+    # Metro fights often land in first 2 min — probing only at 180s+ missed real VODs.
+    if title_metro_hint(title):
+        probes.extend([45.0, 90.0, 120.0])
+    else:
+        probes.append(min(120.0, max(45.0, dur * 0.08)))
+    probes.extend(
+        [
+            intro + 60,
+            min(dur * 0.40, intro + 300),
+            min(dur * 0.55, max(intro + 120, dur - 90)),
+        ]
+    )
+    seen: set[int] = set()
+    unique: list[float] = []
+    for t in sorted(probes):
+        if t >= max(30.0, dur - 12.0):
+            continue
+        key = int(t)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(t)
+    probes = unique[:6]
     oks = 0
     reasons: list[str] = []
     for t in probes:
