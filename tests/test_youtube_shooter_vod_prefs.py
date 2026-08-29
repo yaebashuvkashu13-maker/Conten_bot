@@ -31,6 +31,13 @@ def test_discovery_rotates_queries() -> None:
     assert len(a["queries"]) >= 1
     assert int(a["limit"]) == 80
     assert str(a["queries"][0]).lower().startswith(("метро", "пабг"))
+    assert all(str(u).startswith("ytsearch") for u in a["urls"])
+
+
+def test_discovery_can_use_results_url_when_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_YTSEARCH_ONLY", "0")
+    params = vod_discovery_search_cycle(0, "pubg", {})
+    assert any("youtube.com/results" in str(u) for u in params["urls"])
 
 
 def test_pubg_ru_stream_title_ok() -> None:

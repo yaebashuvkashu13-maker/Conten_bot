@@ -162,9 +162,11 @@ def vod_discovery_search_cycle(cycle: int, game: str, env: dict[str, str] | None
     )
     duration_sp = YOUTUBE_DURATION_SP_4_TO_20 if sp else ""
     search_urls = []
+    ytsearch_only = os.environ.get("SHOOTER_VOD_YTSEARCH_ONLY", "1") == "1"
     for q in picked:
         url = f"ytsearch{limit}:{quote_plus(q)}"
-        if duration_sp or freshness:
+        # youtube.com/results → HTTP 403 on VPS; ytsearch + duration filter in code.
+        if (duration_sp or freshness) and not ytsearch_only:
             url = f"https://www.youtube.com/results?search_query={quote_plus(q)}"
             if duration_sp:
                 url += f"&sp={duration_sp}"
