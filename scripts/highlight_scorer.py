@@ -828,6 +828,62 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     return clip_final, frame_rows
 
 
+def rank_shortlist_with_clip(
+    video_path: Path,
+    rows: list[dict],
+    profile: str,
+    *,
+    max_n: int | None = None,
+) -> list[dict]:
+    """Score montage shortlist windows with CLIP; return rows sorted best-first."""
+    if not rows:
+        return rows
+    profile = normalize_profile(profile)
+    cap = len(rows)
+    if max_n is not None:
+        cap = min(cap, max(1, int(max_n)))
+    budget = min(
+        len(rows),
+        max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_BUDGET", str(cap)))),
+    )
+
+    scored: list[dict] = []
+    for row in rows[:budget]:
+        clip = dict(row.get("clip") or {})
+        start = float(row.get("start", clip.get("start", 0)) or 0)
+        dur = float(
+            clip.get("input_duration")
+            or clip.get("output_duration")
+            or row.get("duration")
+            or WINDOW_SEC
+        )
+        dur = max(4.0, dur)
+        clip_score, _frames = score_clip_exemplar(video_path, start, dur, profile)
+        hm = dict(row.get("highlight_metrics") or {})
+        if clip_score >= 0:
+            hm["clip_score"] = round(float(clip_score), 4)
+            hm["clip_rank"] = True
+        else:
+            hm.setdefault("clip_rank", False)
+        base = float(row.get("score", 0) or 0)
+        scored.append(
+            {
+                **row,
+                "clip_score": max(0.0, float(clip_score)),
+                "highlight_metrics": hm,
+                "score": base + max(0.0, float(clip_score)) * 0.35,
+            }
+        )
+
+    scored.sort(
+        key=lambda r: (float(r.get("clip_score", 0)), float(r.get("score", 0))),
+        reverse=True,
+    )
+    if max_n is not None:
+        return scored[: max(1, int(max_n))]
+    return scored
+
+
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:
     try:
         from pubg_combat_gate import _pubg_killfeed_hits

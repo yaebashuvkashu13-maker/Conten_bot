@@ -64,7 +64,27 @@ def test_shooter_rule_delegates_to_combat_gate() -> None:
     assert reason2 == "no_shots"
 
 
-def test_shooter_rule_requires_video_path() -> None:
+def test_rank_shortlist_with_clip_sorts_by_clip_score(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from highlight_scorer import rank_shortlist_with_clip
+
+    vod = tmp_path / "vod.mp4"
+    vod.write_bytes(b"x")
+    rows = [
+        {"segment_id": "a", "start": 10.0, "clip": {"start": 10.0, "input_duration": 12.0}, "score": 0.5},
+        {"segment_id": "b", "start": 40.0, "clip": {"start": 40.0, "input_duration": 12.0}, "score": 0.9},
+    ]
+
+    def fake_clip(path: Path, start: float, dur: float, profile: str) -> tuple[float, list]:
+        return (0.2 if start < 30 else 0.8, [])
+
+    monkeypatch.setattr("highlight_scorer.score_clip_exemplar", fake_clip)
+    ranked = rank_shortlist_with_clip(vod, rows, "pubg")
+    assert ranked[0]["segment_id"] == "b"
+    assert ranked[0]["highlight_metrics"]["clip_rank"] is True
+
+
     m = HighlightMetrics(
         start=0,
         duration=10,
