@@ -103,43 +103,69 @@ fi
 
 # Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
 SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
+AUTO_HEAL_SEC="${MLBB_VOD_AUTO_HEAL_SEC:-7200}"
 if [[ "$SILENCE_SEC" -gt 0 ]]; then
   TOKEN="$(env_val TG_BOT_TOKEN)"
   CHAT="$(env_val TG_CHAT_ID)"
   if [[ -n "$TOKEN" && -n "$CHAT" ]]; then
-    TG_BOT_TOKEN="$TOKEN" TG_CHAT_ID="$CHAT" python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
+    TG_BOT_TOKEN="$TOKEN" TG_CHAT_ID="$CHAT" AUTO_HEAL_SEC="$AUTO_HEAL_SEC" python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
 import json, os, re, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 
 silence = int(sys.argv[1])
+auto_heal = int(os.environ.get("AUTO_HEAL_SEC", "7200"))
 token = os.environ.get("TG_BOT_TOKEN", "")
 chat = os.environ.get("TG_CHAT_ID", "")
 if not token or not chat:
     raise SystemExit(0)
 stamp_path = Path("/root/data/mlbb/vod_silence_alert.json")
+heal_stamp = Path("/root/data/mlbb/vod_auto_heal.json")
 now = time.time()
 
 def last_sent_age() -> float:
-    sent_path = Path("/root/data/mlbb/vod_segment_feed_sent.json")
-    if sent_path.exists():
+    best = silence + 1.0
+    for rel in (
+        "mlbb/vod_segment_feed_sent.json",
+        "pubg/vod_segment_feed_sent.json",
+    ):
+        sent_path = Path("/root/data") / rel
+        if not sent_path.exists():
+            continue
         try:
             data = json.loads(sent_path.read_text(encoding="utf-8"))
             ts = data.get("updated_at", "")
             if ts:
-                return now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+                best = min(best, now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S")))
         except Exception:
             pass
     log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
     if not log_path.exists():
-        return silence + 1
+        return best
     last = 0.0
-    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-8000:]:
-        m = re.search(r"sent=(\d+) vod=", line)
-        if m and int(m.group(1)) > 0:
+    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-12000:]:
+        if re.search(r"fast-montage SENT|sent=\d+ vod=1|SENT game=pubg", line):
             last = now
-    return now - last if last else silence + 1
+    if last:
+        best = min(best, now - last)
+    return best
 
 age = last_sent_age()
+if age >= auto_heal and age < silence:
+    last_heal = 0.0
+    if heal_stamp.exists():
+        try:
+            last_heal = float(json.loads(heal_stamp.read_text(encoding="utf-8")).get("last_heal_ts") or 0)
+        except Exception:
+            last_heal = 0.0
+    if now - last_heal >= auto_heal:
+        repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
+        recover = repo / "scripts" / "vod_feed_recover.py"
+        if recover.is_file():
+            import subprocess
+            subprocess.run([sys.executable, str(recover), "--game", "pubg"], check=False, timeout=120)
+            heal_stamp.write_text(json.dumps({"last_heal_ts": now}), encoding="utf-8")
+            print(f"auto-heal pubg age_sec={int(age)}")
+            raise SystemExit(0)
 if age < silence:
     raise SystemExit(0)
 state = {}

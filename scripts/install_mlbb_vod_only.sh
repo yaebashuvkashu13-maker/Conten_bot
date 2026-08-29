@@ -3,6 +3,11 @@
 # Run on VPS after git pull: bash scripts/install_mlbb_vod_only.sh
 set -Eeuo pipefail
 
+ENV_ONLY=0
+if [[ "${1:-}" == "--env-only" ]]; then
+  ENV_ONLY=1
+fi
+
 REPO="${REPO:-/root/content_bot_ml}"
 ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 PAUSE=/root/data/mlbb/PAUSED_PIPELINES
@@ -200,6 +205,8 @@ pairs = {
     "SHOOTER_VOD_DENSE_PROBE_PASSES": "2",
     "SHOOTER_VOD_MONTAGES_PER_VOD": "1",
     "SHOOTER_VOD_USED_IDS_MAX": "200",
+    "SHOOTER_VOD_DELIVERY_FIRST": "1",
+    "SHOOTER_VOD_AUTO_HEAL": "1",
     "YOUTUBE_FORMAT": "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
     "YOUTUBE_FORMAT_FALLBACK": "18/b[height<=720]/bv*+ba/b",
     "YTDLP_PLAYER_CLIENTS": "android,web,ios,mweb",
@@ -220,6 +227,11 @@ PY
 
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
   _apply_pubg_only_env
+fi
+
+if [[ "$ENV_ONLY" == "1" ]]; then
+  echo "env-only sync done $(date -Is)"
+  exit 0
 fi
 
 # yt-dlp 2026+ needs a JS runtime for full YouTube format lists (avoids download stalls).

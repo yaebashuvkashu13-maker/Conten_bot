@@ -2129,6 +2129,37 @@ def _scan_vod_with_adaptive(
     return sent
 
 
+def _apply_delivery_overrides(game: str, state: dict) -> None:
+    """Relax strict montage when the feed has been silent too long."""
+    if game != "pubg":
+        return
+    if os.environ.get("SHOOTER_VOD_DELIVERY_FIRST", "0") == "1":
+        os.environ["VOD_PUBG_QUALITY_STRICT"] = "0"
+        os.environ["SHOOTER_VOD_MONTAGE_SHIP_PARTIAL"] = "1"
+        os.environ["PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS"] = "1"
+        os.environ["SHOOTER_VOD_MONTAGES_PER_VOD"] = "1"
+        return
+    from vod_game_registry import streak_from_state
+
+    streak = streak_from_state(state)
+    used_n = len(state.get("used_youtube_ids") or [])
+    used_max = max(50, int(os.environ.get("SHOOTER_VOD_USED_IDS_MAX", "200")))
+    threshold = max(1, int(os.environ.get("SHOOTER_VOD_DELIVERY_OVERRIDE_STREAK", "2")))
+    if streak < threshold and used_n <= used_max and pubg_quality_strict():
+        return
+    os.environ["VOD_PUBG_QUALITY_STRICT"] = "0"
+    os.environ["SHOOTER_VOD_MONTAGE_SHIP_PARTIAL"] = "1"
+    os.environ["PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS"] = "1"
+    os.environ["SHOOTER_VOD_MONTAGES_PER_VOD"] = "1"
+    os.environ.setdefault("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "1")
+    log.warning(
+        "delivery override game=%s streak=%s used_ids=%s strict→0 partial→1",
+        game,
+        streak,
+        used_n,
+    )
+
+
 def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
     """
     When YouTube discovery is 403/empty, pull ONE parked VOD back — with memory.
@@ -2171,6 +2202,9 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
             continue
         reason = str(entry.get("reject_reason") or "")
         reason_base = reason.split("=", 1)[0]
+        reason_low = reason.lower()
+        if any(k in reason_low for k in ("classic_outdoor", "metro_vod_reject", "not_metro", "classic_map")):
+            continue
         if reason_base in dead_reasons or reason.startswith("fast_panns_0"):
             # Already failed productive path — don't burn another dense scan.
             continue
@@ -2228,7 +2262,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         log.info("skip feed game=%s reason=%s", game, reason)
         return 0
 
+    from vod_feed_recover import auto_heal_stalled_feed
+
     state = _load_state(game)
+    _apply_delivery_overrides(game, state)
+    heal = auto_heal_stalled_feed(game)
+    if heal.get("healed"):
+        log.warning("auto-heal game=%s %s", game, heal)
+        state = _load_state(game)
+        _apply_delivery_overrides(game, state)
     registry = state.setdefault("vods", [])
     used = set(state.get("used_youtube_ids", []))
     inbox = _paths(game)["inbox"]

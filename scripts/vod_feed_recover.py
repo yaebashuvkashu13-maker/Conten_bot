@@ -256,6 +256,48 @@ def trim_discovery_used_ids(game: str) -> int:
     return removed
 
 
+def should_auto_heal(game: str, state: dict | None = None) -> tuple[bool, str]:
+    if os.environ.get("SHOOTER_VOD_AUTO_HEAL", "1") != "1":
+        return False, "disabled"
+    state = state if state is not None else load_state(game)
+    from vod_game_registry import streak_from_state
+
+    streak = streak_from_state(state)
+    streak_need = max(2, int(os.environ.get("SHOOTER_VOD_AUTO_HEAL_STREAK", "3")))
+    used_n = len(state.get("used_youtube_ids") or [])
+    used_max = max(50, int(os.environ.get("SHOOTER_VOD_USED_IDS_MAX", "200")))
+    pause_until = float(state.get("discovery_pause_until") or 0)
+    paused = pause_until > time.time()
+
+    if used_n > used_max:
+        return True, f"used_ids={used_n}>{used_max}"
+    if streak >= streak_need and paused:
+        return True, f"streak={streak}+discovery_paused"
+    if streak >= streak_need * 2:
+        return True, f"streak={streak}"
+    inbox_ids = inbox_video_ids(game)
+    if inbox_ids:
+        registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+        if all(registry.get(vid, {}).get("exhausted") for vid in inbox_ids):
+            return True, "inbox_all_exhausted"
+    return False, ""
+
+
+def auto_heal_stalled_feed(game: str) -> dict[str, object]:
+    """Lightweight self-heal on each feed tick — no supervisor restart."""
+    state = load_state(game)
+    ok, reason = should_auto_heal(game, state)
+    if not ok:
+        return {"healed": 0}
+    stats: dict[str, object] = {"healed": 1, "reason": reason}
+    stats["paused"] = int(clear_discovery_pauses(game))
+    stats["trimmed"] = trim_discovery_used_ids(game)
+    stats["parked"] = park_exhausted_inbox(game)
+    stats["cooled"] = bump_scan_cooldowns(game)
+    stats["reset"] = reset_inbox_exhausted(game)
+    return stats
+
+
 def run_recover(
     game: str = "all",
     *,
