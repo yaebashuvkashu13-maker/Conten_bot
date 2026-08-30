@@ -1416,12 +1416,13 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     zombie_blocked = 1 if blocked and scanned <= 0 and not sent_ok else 0
     peaks_n = len((entry or {}).get("last_pool_peaks") or [])
     pool_ready = 0 if peaks_n >= _montage_soft_min_clips(game) else 1
-    # Ready montage candidates: shorter VODs ship faster; others keep long-first.
+    # Ready: more cached peaks first (almost-montage), then shorter VOD for faster retry.
     dur_sort = int(dur) if pool_ready == 0 else -int(dur)
     return (
         pool_ready,
         zombie_blocked,
         1 if scanned else 0,
+        -peaks_n if pool_ready == 0 else 0,
         dur_tier if pool_ready else 0,
         dur_sort,
         owner_prio,
