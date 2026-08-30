@@ -12,7 +12,7 @@ from typing import Callable
 # Daily-cycle order (quotas reset at Moscow midnight).
 DAILY_GAMES = ("mlbb", "pubg", "standoff", "genshin", "wot")
 # Bump when VOD gate/feed logic changes — grep logs for this string to verify deploy.
-VOD_PIPELINE_REV = "vod-montage-ship-fix-2026-08-30"
+VOD_PIPELINE_REV = "vod-ready-pool-priority-2026-08-30"
 # All games with VOD inbox / segment feed support.
 VOD_GAMES = DAILY_GAMES
 

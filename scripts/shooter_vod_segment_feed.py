@@ -1377,7 +1377,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
 
 
 def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> tuple:
-    """Long combat VODs first; zombie blocked shorts last (they burn max-vods budget)."""
+    """Pool-ready VODs first (skip re-probe); else long combat; zombie blocked last."""
     from pubg_metro_royale_gate import title_metro_hint
     from youtube_game_prefs import russian_score
 
@@ -1414,11 +1414,16 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     blocked = bool((entry or {}).get("last_scan_blocked"))
     sent_ok = int((entry or {}).get("last_scan_sent") or 0) > 0
     zombie_blocked = 1 if blocked and scanned <= 0 and not sent_ok else 0
+    peaks_n = len((entry or {}).get("last_pool_peaks") or [])
+    pool_ready = 0 if peaks_n >= _montage_soft_min_clips(game) else 1
+    # Ready montage candidates: shorter VODs ship faster; others keep long-first.
+    dur_sort = int(dur) if pool_ready == 0 else -int(dur)
     return (
+        pool_ready,
         zombie_blocked,
         1 if scanned else 0,
-        dur_tier,
-        -int(dur),
+        dur_tier if pool_ready else 0,
+        dur_sort,
         owner_prio,
         fast_fail,
         metro_prio,
@@ -1698,7 +1703,11 @@ def _scan_vod_with_adaptive(
     entry = _vod_registry_entry(state, vod)
 
     if game == "pubg":
-        ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
+        inbox_trust = os.environ.get("PUBG_METRO_INBOX_TRUST", "1") == "1"
+        if inbox_trust and str(vod).find("/inbox/") >= 0:
+            ok_metro, metro_reason = True, "inbox_trusted"
+        else:
+            ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
         if not ok_metro:
             log.warning("metro reject scan vod=%s reason=%s", vod.name, metro_reason)
             entry = _vod_registry_entry(state, vod)
@@ -1763,14 +1772,24 @@ def _scan_vod_with_adaptive(
                 from shooter_vod_fast_scan import discover_montage_gun_peaks
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
-                probe_pass = _dense_probe_pass_index(entry)
-                dense_peaks, dense_reason = discover_montage_gun_peaks(
-                    vod,
-                    _profile(game),
-                    min_clips=min_clips,
-                    gap_sec=gap_sec,
-                    probe_pass=probe_pass,
-                )
+                cached_peaks = peak_values_from_entry(entry)
+                if len(cached_peaks) >= min_clips:
+                    dense_peaks = cached_peaks
+                    dense_reason = f"cached_pool_{len(cached_peaks)}"
+                    log.info(
+                        "fast-montage reuse cached peaks vod=%s n=%s",
+                        vod.name,
+                        len(cached_peaks),
+                    )
+                else:
+                    probe_pass = _dense_probe_pass_index(entry)
+                    dense_peaks, dense_reason = discover_montage_gun_peaks(
+                        vod,
+                        _profile(game),
+                        min_clips=min_clips,
+                        gap_sec=gap_sec,
+                        probe_pass=probe_pass,
+                    )
                 # Owner-good fight times first (gold labels) — PANNs alone often
                 # picks cruise SFX that fail impact/flash gates.
                 try:
