@@ -2334,7 +2334,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         if game == "pubg":
             streak_in = _adaptive_gate(game).streak_from_state(state)
             title = str(entry.get("title") or "")
-            ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
+            if os.environ.get("PUBG_METRO_INBOX_TRUST", "1") == "1":
+                # Discovery already filtered by Metro title — skip redundant visual re-reject.
+                ok_metro, metro_reason = True, "inbox_trusted"
+            else:
+                ok_metro, metro_reason = _pubg_metro_vod_ok(mp4, title=title, streak=streak_in)
             if not ok_metro:
                 log.warning("metro skip inbox vod=%s reason=%s", mp4.name, metro_reason)
                 if _pubg_metro_should_exhaust(title, streak_in):
