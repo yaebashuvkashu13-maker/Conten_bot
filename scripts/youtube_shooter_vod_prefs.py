@@ -63,7 +63,8 @@ PUBG_EN_QUERIES = (
     "PUBG Mobile Metro Royale final circle ranked",
 )
 
-PUBG_CORE_QUERIES = PUBG_RU_QUERIES + PUBG_EN_QUERIES
+# EN first — Cyrillic ytsearch on VPS often returns unrelated garbage.
+PUBG_CORE_QUERIES = PUBG_EN_QUERIES + PUBG_RU_QUERIES
 
 STANDOFF_CORE_QUERIES = (
     "Standoff 2 ranked gameplay full match",
@@ -78,11 +79,36 @@ STANDOFF_ANGLE_QUERIES = (
 )
 
 
+def _parse_env_queries(raw: str) -> tuple[str, ...]:
+    out: list[str] = []
+    for part in raw.replace("\n", ",").split(","):
+        q = part.strip().strip('"').strip("'")
+        if q and q not in out:
+            out.append(q)
+    return tuple(out)
+
+
 def _queries_for(game: str) -> tuple[str, ...]:
     g = game.strip().lower()
     if g == "standoff":
         return STANDOFF_CORE_QUERIES + STANDOFF_ANGLE_QUERIES
+    env_raw = os.environ.get("PUBG_VOD_SEARCH_QUERIES", "").strip()
+    if env_raw:
+        custom = _parse_env_queries(env_raw)
+        if custom:
+            # Env list may be RU-heavy; keep EN fallbacks at the tail for empty batches.
+            merged: list[str] = list(custom)
+            for q in PUBG_EN_QUERIES:
+                if q not in merged:
+                    merged.append(q)
+            return tuple(merged)
     return PUBG_CORE_QUERIES
+
+
+def pubg_en_fallback_search_urls(limit: int | None = None) -> list[str]:
+    """Last-resort discovery URLs when a rotated batch returns zero Metro hits."""
+    lim = limit or int(os.environ.get("SHOOTER_VOD_SEARCH_LIMIT", "40"))
+    return [f"ytsearch{lim}:{quote_plus(q)}" for q in PUBG_EN_QUERIES[:4]]
 
 
 def title_ok(game: str, title: str) -> bool:

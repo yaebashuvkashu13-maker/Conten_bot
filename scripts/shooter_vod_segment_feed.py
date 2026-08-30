@@ -468,6 +468,13 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
 
     _search_youtube(list(params.get("urls", [])), float(params.get("delay", 6)))
 
+    if not out and not saw_403 and game == "pubg":
+        from youtube_shooter_vod_prefs import pubg_en_fallback_search_urls
+
+        fb_urls = pubg_en_fallback_search_urls(int(params.get("limit", 40)))
+        log.info("discovery RU/empty batch — EN fallback game=%s urls=%s", game, len(fb_urls))
+        _search_youtube(fb_urls, min(float(params.get("delay", 6)), 4.0))
+
     if not out and not saw_403:
         state = _load_state(game)
         freed = trim_used_youtube_ids(state, game, aggressive=True)
@@ -481,6 +488,13 @@ def _discover_candidates(game: str, env: dict[str, str], used: set[str]) -> list
                 freed,
             )
             _search_youtube(list(params.get("urls", [])), float(params.get("delay", 6)))
+            if not out and game == "pubg":
+                from youtube_shooter_vod_prefs import pubg_en_fallback_search_urls
+
+                _search_youtube(
+                    pubg_en_fallback_search_urls(int(params.get("limit", 40))),
+                    min(float(params.get("delay", 6)), 4.0),
+                )
 
     from twitch_vod_prefs import twitch_vod_enabled
 

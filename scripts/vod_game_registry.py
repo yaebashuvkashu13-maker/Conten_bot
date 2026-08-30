@@ -149,17 +149,14 @@ def trim_used_youtube_ids(
 
     keep: set[str] = set(inbox_ids)
     for vid, row in registry.items():
-        if vid and not row.get("exhausted"):
+        if vid and vid in inbox_ids and not row.get("exhausted"):
             keep.add(vid)
 
-    if aggressive:
-        new_used = sorted(u for u in used if u in keep)
-    elif before <= max_keep:
+    if not aggressive and before <= max_keep:
         return 0
-    else:
-        new_used = sorted(u for u in used if u in keep)
-        if len(new_used) > max_keep:
-            new_used = new_used[-max_keep:]
+    new_used = sorted(u for u in used if u in keep)
+    if len(new_used) > max_keep:
+        new_used = new_used[-max_keep:]
 
     removed = before - len(new_used)
     if removed > 0:
