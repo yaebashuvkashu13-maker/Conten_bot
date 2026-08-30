@@ -1,18 +1,18 @@
-"""Integration tests for PUBG delivery path — must ship, not stall."""
+"""Integration tests for PUBG montage path — quality-first, min 2 parts."""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from vod_quality import pubg_delivery_mode, pubg_quality_strict  # noqa: E402
+from vod_quality import pubg_quality_strict  # noqa: E402
 
 
 def test_pubg_quality_strict_opt_in_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -20,14 +20,13 @@ def test_pubg_quality_strict_opt_in_only(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("VOD_PUBG_ONLY", "1")
     assert pubg_quality_strict() is False
 
-
-def test_pubg_delivery_mode_with_delivery_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SHOOTER_VOD_DELIVERY_FIRST", "1")
-    assert pubg_delivery_mode() is True
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
+    assert pubg_quality_strict() is True
 
 
 def test_montage_part_skips_metro_segment_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     from shooter_vod_segment_feed import _validate_shooter_presend  # noqa: E402
+    from unittest.mock import patch
 
     monkeypatch.setenv("PUBG_METRO_GATE", "1")
     monkeypatch.delenv("PUBG_METRO_SEGMENT_TRUST_VOD", raising=False)
@@ -47,45 +46,22 @@ def test_montage_part_skips_metro_segment_gate(monkeypatch: pytest.MonkeyPatch) 
     assert ok is True
 
 
-def test_emergency_single_send_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from shooter_vod_segment_feed import _try_emergency_single_send  # noqa: E402
+def test_pubg_montage_soft_min_at_least_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_segment_feed import _montage_soft_min_clips  # noqa: E402
 
-    monkeypatch.setenv("SHOOTER_VOD_DELIVERY_FIRST", "1")
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "2")
+    monkeypatch.setenv("PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")
     monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "0")
-    monkeypatch.setenv("DAILY_GAME_CYCLE_ENABLED", "0")
-    vod = tmp_path / "yt_abc123xyz00.mp4"
-    vod.write_bytes(b"\x00" * 128)
-    out = tmp_path / "seg_out.mp4"
-    out.write_bytes(b"\x00" * 64)
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1")
+    assert _montage_soft_min_clips("pubg") == 2
 
-    with patch("shooter_vod_segment_feed._paths", return_value={"segments": tmp_path / "seg"}):
-        with patch("shooter_vod_segment_feed._montage_limits", return_value=(1, 3, 55.0, 20.0, 70.0)):
-            with patch("shooter_vod_segment_feed._prepare_montage_clip") as prep:
-                with patch("shooter_vod_segment_feed.render_single_segment", return_value=True):
-                    with patch(
-                        "shooter_vod_segment_feed._validate_shooter_presend",
-                        return_value=(True, "shoot_ok", {}),
-                    ):
-                        with patch("shooter_vod_segment_feed.send_video", return_value=True):
-                            with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=14.0):
-                                with patch("shooter_vod_segment_feed.upsert_segment"):
-                                    with patch("shooter_vod_segment_feed.mark_feed_sent"):
-                                        with patch("shooter_vod_segment_feed.cycle_record_send"):
-                                            prep.return_value = {
-                                                "start": 10.0,
-                                                "peak_start": 12.0,
-                                                "input_duration": 14.0,
-                                                "output_duration": 14.0,
-                                            }
-                                            n = _try_emergency_single_send(
-                                                "pubg", "tok", "123", vod, [45.0, 120.0], "sig"
-                                            )
-    assert n == 1
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
+    assert _montage_soft_min_clips("pubg") >= 2
 
 
 def test_main_min_sec_not_600(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     env_file = tmp_path / ".video_bot.env"
-    env_file.write_text("MLBB_VOD_MIN_SEC=180\nSHOOTER_VOD_DELIVERY_FIRST=1\n", encoding="utf-8")
+    env_file.write_text("MLBB_VOD_MIN_SEC=180\nVOD_PUBG_QUALITY_STRICT=1\n", encoding="utf-8")
     monkeypatch.setattr("shooter_vod_segment_feed.ENV_PATH", env_file)
     monkeypatch.setattr("shooter_vod_segment_feed._feed_lock", lambda _g: None)
 
@@ -112,6 +88,3 @@ def test_auto_heal_triggers_on_bloated_used(monkeypatch: pytest.MonkeyPatch, tmp
     ok, reason = should_auto_heal("pubg", load_state("pubg"))
     assert ok is True
     assert "used_ids" in reason
-
-
-import os  # noqa: E402

@@ -59,7 +59,7 @@ def test_montage_soft_min_partial_ship(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")
     monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "0")
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1")
-    assert _montage_soft_min_clips("pubg") == 1
+    assert _montage_soft_min_clips("pubg") == 2
 
     monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
     assert _montage_soft_min_clips("pubg") == 3

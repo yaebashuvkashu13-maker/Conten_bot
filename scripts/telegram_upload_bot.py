@@ -781,12 +781,7 @@ def _handle_shooter_vseg_callback(
             timeout=15,
         )
         if is_good:
-            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+            pass  # HQ only on explicit 📁 HQ файл button — never auto-send after 👍 Ок
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -1391,12 +1386,7 @@ def handle_callback_query(query: dict) -> None:
             timeout=15,
         )
         if mode == 'vseg' and is_good:
-            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+            pass  # HQ only on explicit 📁 HQ файл button — never auto-send after 👍 Ок
     except Exception as exc:
         try:
             api_call(

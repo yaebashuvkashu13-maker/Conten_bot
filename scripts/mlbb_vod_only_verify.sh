@@ -134,11 +134,12 @@ grep -E '^MLBB_VOD_ONLY=|^MLBB_VOD_DISABLED=|^MLBB_CALIBRATION_FEED_ENABLED=' "$
 
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
   check_env VOD_PUBG_ONLY 1
-  check_env VOD_PUBG_QUALITY_STRICT 0
+  check_env VOD_PUBG_QUALITY_STRICT 1
   check_env DAILY_MLBB_QUOTA 0
   check_env DAILY_PUBG_QUOTA -1
   check_env SHOOTER_VOD_MIN_SEC 180
-  check_env SHOOTER_VOD_DELIVERY_FIRST 1
+  check_env PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS 2
+  check_env SHOOTER_VOD_MONTAGE_SHIP_PARTIAL 0
   echo "PUBG-only env bundle: OK"
 fi
 

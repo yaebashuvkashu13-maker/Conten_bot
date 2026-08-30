@@ -64,7 +64,7 @@ from vod_scan_state import (
     used_peaks_for_vod,
 )
 from vod_game_registry import VOD_PIPELINE_REV, trim_used_youtube_ids
-from vod_quality import dense_probe_passes, montages_per_vod, pubg_delivery_mode, pubg_quality_strict
+from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env
 
 log = logging.getLogger("shooter_vod_feed")
@@ -831,14 +831,15 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
         }[game]
         raw = os.environ.get(key, "").strip()
         soft = int(raw) if raw else ideal
-        if game == "pubg" and pubg_quality_strict():
-            return max(ideal, soft)
-        if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") == "1":
+        if game == "pubg":
+            # Owner contract: PUBG montage = minimum 2 fight clips, never a lone peak.
+            return max(2, soft, ideal if pubg_quality_strict() else 0)
+        if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "0") == "1":
             return max(1, soft)
         return max(ideal, soft)
-    if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "1") != "1":
+    if os.environ.get("SHOOTER_VOD_MONTAGE_SHIP_PARTIAL", "0") != "1":
         return ideal
-    return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "1")))
+    return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "2")))
 
 
 def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_sec: float) -> list[dict]:
@@ -893,109 +894,6 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
         }
     )
     return clip
-
-
-def _try_emergency_single_send(
-    game: str,
-    token: str,
-    chat_id: str,
-    vod: Path,
-    peaks: list[float],
-    sig: str,
-) -> int:
-    """Last-resort: ship one gun peak when montage gates reject everything."""
-    if game != "pubg" or not pubg_delivery_mode() or not peaks:
-        return 0
-    if os.environ.get("SHOOTER_VOD_EMERGENCY_SINGLE", "1") != "1":
-        return 0
-    ok_cycle, cycle_reason = can_send_for_game(game, 1)
-    if not ok_cycle:
-        log.info("emergency blocked cycle=%s", cycle_reason)
-        return 0
-
-    _, _max_c, _gap, part_max, _final = _montage_limits()
-    saved = {
-        k: os.environ.get(k)
-        for k in (
-            "PUBG_METRO_SEGMENT_TRUST_VOD",
-            "SHOOTER_AUTHOR_KILL_GATE",
-            "SHOOTER_REQUIRE_AUTHOR_KILL",
-            "SHOOTER_VOD_SINGLE_CLIP_REJECT",
-            "SHOOTER_VOD_MONTAGE_CLIP_RANK",
-        )
-    }
-    os.environ["PUBG_METRO_SEGMENT_TRUST_VOD"] = "1"
-    os.environ["SHOOTER_AUTHOR_KILL_GATE"] = "0"
-    os.environ["SHOOTER_REQUIRE_AUTHOR_KILL"] = "0"
-    os.environ["SHOOTER_VOD_SINGLE_CLIP_REJECT"] = "0"
-    os.environ["SHOOTER_VOD_MONTAGE_CLIP_RANK"] = "0"
-    seg_root = _paths(game)["segments"]
-    seg_root.mkdir(parents=True, exist_ok=True)
-    try:
-        for p in sorted({float(x) for x in peaks}, key=float):
-            clip = _prepare_montage_clip(
-                {"peak_start": p, "start": p, "clip": {}, "score": 1.0},
-                vod,
-                part_max=part_max,
-            )
-            sid = segment_id(vod_youtube_id(vod), float(clip["start"]))
-            out = seg_root / f"seg_{sid}.mp4"
-            if not render_single_segment(vod, clip, out):
-                continue
-            dur_out = _ffprobe_duration(out)
-            if dur_out < 5.0:
-                continue
-            presend_reason = "emergency_trusted_peak"
-            if os.environ.get("SHOOTER_VOD_EMERGENCY_SKIP_PRESEND", "1") != "1":
-                presend_ok, presend_reason, _ = _validate_shooter_presend(
-                    game, vod, {"clip": clip, "peak_start": p, "start": clip["start"]}, out, montage_part=True
-                )
-                if not presend_ok:
-                    log.warning("emergency presend reject peak=%.1f: %s", p, presend_reason)
-                    continue
-            caption = (
-                f"PUBG Metro Royale #{sid}\n"
-                f"{vod_youtube_id(vod)} @ {int(clip['start'])}s (пик {int(p)}s)\n"
-                f"Emergency ✓ | {presend_reason}\n"
-                f"👍 Ок / 👎 Не ок"
-            )
-            if send_video(
-                token,
-                chat_id,
-                out,
-                caption,
-                seg_id=sid,
-                record_learning=False,
-                reply_markup=keyboard(game, sid),
-                cycle_game=game,
-            ):
-                upsert_segment(
-                    game,
-                    {
-                        "segment_id": sid,
-                        "path": str(out),
-                        "vod": str(vod),
-                        "vod_id": vod_youtube_id(vod),
-                        "start": float(clip["start"]),
-                        "duration": _ffprobe_duration(out),
-                        "peak_start": p,
-                        "score": 1.0,
-                        "sig": sig,
-                        "emergency_send": True,
-                        "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    },
-                )
-                mark_feed_sent(game, [sid])
-                cycle_record_send(game, 1)
-                log.info("emergency single SENT game=%s vod=%s peak=%.1f", game, vod.name, p)
-                return 1
-        return 0
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
 
 
 def _validate_montage_final(game: str, vod: Path, accepted_rows: list[dict]) -> tuple[bool, str]:
@@ -1216,8 +1114,8 @@ def _send_montage(
             montage_id = f"{vod_youtube_id(vod)}_mtg_{int(time.time())}"
             out = seg_root / f"montage_{montage_id}.mp4"
             if len(segment_paths) == 1:
-                if game == "pubg" and pubg_quality_strict() and min_clips >= 2:
-                    log.warning("montage strict forbid single-part ship game=%s", game)
+                if game == "pubg":
+                    log.warning("montage forbid single-part ship game=%s need>=2", game)
                     continue
                 shutil.copy2(segment_paths[0], out)
             else:
@@ -1342,7 +1240,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
         n = _send_montage(game, token, chat_id, vod, to_send, sig)
         if n > 0:
             return n
-        if _montage_only(game) and not pubg_delivery_mode():
+        if _montage_only(game):
             log.warning("montage-only: refuse single-clip fallback game=%s", game)
             return 0
     ok_cycle, cycle_reason = can_send_for_game(game, 1)
@@ -2034,16 +1932,6 @@ def _scan_vod_with_adaptive(
                         for p in dense_peaks
                         if not _peak_too_close(float(p), used_peaks, max(12.0, gap_sec * 0.28))
                     ]
-                    n_em = _try_emergency_single_send(
-                        game, token, chat_id, vod, remaining_unused or list(dense_peaks or []), file_sha256(vod)
-                    )
-                    if n_em > 0:
-                        if entry is not None:
-                            record_vod_scan(entry, sent=n_em, pool_peaks=dense_peaks, blocked=False)
-                        _save_state(game, state)
-                        if clear_fast_seeds:
-                            clear_fast_seeds()
-                        return n_em
                     if len(remaining_unused) < soft_min:
                         _mark_vod_exhausted(
                             state,
@@ -2105,13 +1993,7 @@ def _scan_vod_with_adaptive(
                 _save_state(game, state)
                 if clear_fast_seeds:
                     clear_fast_seeds()
-                if _montage_only(game):
-                    n_em = _try_emergency_single_send(
-                        game, token, chat_id, vod, list(dense_peaks or []), file_sha256(vod)
-                    )
-                    if n_em > 0:
-                        return n_em
-                    return 0
+                return 0
 
     if game == "genshin" and os.environ.get("GENSHIN_VOD_FAST_PROBE", "1") == "1":
         from genshin_vod_fast_scan import (
@@ -2173,10 +2055,6 @@ def _scan_vod_with_adaptive(
 
     # Hard anti-hang: montage-only shooters skip CLIP/highlight unless fallback allowed.
     allow_fallback = os.environ.get("SHOOTER_VOD_ALLOW_HIGHLIGHT_FALLBACK", "0") == "1"
-    if game == "pubg" and (
-        os.environ.get("SHOOTER_VOD_DELIVERY_FIRST", "0") == "1" or not pubg_quality_strict()
-    ):
-        allow_fallback = True
     if (
         game in ("pubg", "standoff", "wot")
         and _montage_only(game)
@@ -2191,13 +2069,6 @@ def _scan_vod_with_adaptive(
         )
         if clear_fast_seeds is not None:
             clear_fast_seeds()
-        peaks = []
-        if entry is not None and entry.get("last_pool_peaks"):
-            peaks = [float(p) for p in entry.get("last_pool_peaks") or []]
-        n_em = _try_emergency_single_send(game, token, chat_id, vod, peaks, file_sha256(vod))
-        if n_em > 0:
-            _save_state(game, state)
-            return n_em
         if entry is not None:
             entry["reject_reason"] = entry.get("reject_reason") or "montage_fast_path_no_send"
             record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
@@ -2287,37 +2158,6 @@ def _scan_vod_with_adaptive(
             )
 
     return sent
-
-
-def _apply_delivery_overrides(game: str, state: dict) -> None:
-    """Relax strict montage when the feed has been silent too long."""
-    if game != "pubg":
-        return
-    if os.environ.get("SHOOTER_VOD_DELIVERY_FIRST", "0") == "1":
-        os.environ["VOD_PUBG_QUALITY_STRICT"] = "0"
-        os.environ["SHOOTER_VOD_MONTAGE_SHIP_PARTIAL"] = "1"
-        os.environ["PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS"] = "1"
-        os.environ["SHOOTER_VOD_MONTAGES_PER_VOD"] = "1"
-        return
-    from vod_game_registry import streak_from_state
-
-    streak = streak_from_state(state)
-    used_n = len(state.get("used_youtube_ids") or [])
-    used_max = max(50, int(os.environ.get("SHOOTER_VOD_USED_IDS_MAX", "200")))
-    threshold = max(1, int(os.environ.get("SHOOTER_VOD_DELIVERY_OVERRIDE_STREAK", "2")))
-    if streak < threshold and used_n <= used_max and pubg_quality_strict():
-        return
-    os.environ["VOD_PUBG_QUALITY_STRICT"] = "0"
-    os.environ["SHOOTER_VOD_MONTAGE_SHIP_PARTIAL"] = "1"
-    os.environ["PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS"] = "1"
-    os.environ["SHOOTER_VOD_MONTAGES_PER_VOD"] = "1"
-    os.environ.setdefault("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "1")
-    log.warning(
-        "delivery override game=%s streak=%s used_ids=%s strict→0 partial→1",
-        game,
-        streak,
-        used_n,
-    )
 
 
 def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
@@ -2425,12 +2265,10 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     from vod_feed_recover import auto_heal_stalled_feed
 
     state = _load_state(game)
-    _apply_delivery_overrides(game, state)
     heal = auto_heal_stalled_feed(game)
     if heal.get("healed"):
         log.warning("auto-heal game=%s %s", game, heal)
         state = _load_state(game)
-        _apply_delivery_overrides(game, state)
     registry = state.setdefault("vods", [])
     used = set(state.get("used_youtube_ids", []))
     inbox = _paths(game)["inbox"]
@@ -2735,7 +2573,6 @@ def main() -> int:
         "SHOOTER_VOD_MAX_SEC",
         "VOD_PUBG_ONLY",
         "VOD_PUBG_QUALITY_STRICT",
-        "SHOOTER_VOD_DELIVERY_FIRST",
         "SHOOTER_VOD_MONTAGE_SHIP_PARTIAL",
         "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS",
         "SHOOTER_VOD_MONTAGES_PER_VOD",
@@ -2744,7 +2581,6 @@ def main() -> int:
         "PUBG_METRO_TITLE_TRUST",
         "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY",
         "SHOOTER_REQUIRE_AUTHOR_KILL",
-        "SHOOTER_VOD_EMERGENCY_SINGLE",
         "DAILY_PUBG_QUOTA",
         "DAILY_MLBB_QUOTA",
     ):
