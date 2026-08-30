@@ -23,6 +23,7 @@ from shooter_vod_adaptive_gate import (  # noqa: E402
 
 def test_soften_after_two_zero_vods(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "2")
+    monkeypatch.setenv("SHOOTER_VOD_MAX_SOFTEN_LEVEL", "4")
     assert soften_level(0) == 0
     assert soften_level(1) == 0
     assert soften_level(2) == 1
@@ -65,6 +66,7 @@ def test_l3_trusts_metro_vod_on_presend() -> None:
 
 def test_l4_trusts_panns_and_more_probes() -> None:
     ov = overrides_for_level(4)
-    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "2"
+    # Delivery safety: relax heuristics stay off even at L4.
+    assert ov.get("PUBG_RELAX_OWNER_HEURISTICS") == "0"
     assert int(ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "0")) >= 24
     assert float(ov.get("PUBG_PANNS_TRUST_MIN", "0")) <= 0.30

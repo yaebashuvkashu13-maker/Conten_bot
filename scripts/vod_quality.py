@@ -15,6 +15,15 @@ def pubg_quality_strict() -> bool:
     return False
 
 
+def pubg_delivery_mode() -> bool:
+    """Throughput mode: ship clips even when montage gates are picky."""
+    if os.environ.get("SHOOTER_VOD_DELIVERY_FIRST", "0") == "1":
+        return True
+    if os.environ.get("VOD_PUBG_ONLY", "0") == "1" and not pubg_quality_strict():
+        return True
+    return False
+
+
 def montages_per_vod(game: str = "pubg") -> int:
     """How many ×N склейки to ship from one VOD visit before moving on."""
     raw = os.environ.get("SHOOTER_VOD_MONTAGES_PER_VOD", "").strip()
