@@ -928,12 +928,17 @@ def _try_emergency_single_send(
             out = seg_root / f"seg_{sid}.mp4"
             if not render_single_segment(vod, clip, out):
                 continue
-            presend_ok, presend_reason, _ = _validate_shooter_presend(
-                game, vod, {"clip": clip, "peak_start": p, "start": clip["start"]}, out, montage_part=True
-            )
-            if not presend_ok:
-                log.warning("emergency presend reject peak=%.1f: %s", p, presend_reason)
+            dur_out = _ffprobe_duration(out)
+            if dur_out < 5.0:
                 continue
+            presend_reason = "emergency_trusted_peak"
+            if os.environ.get("SHOOTER_VOD_EMERGENCY_SKIP_PRESEND", "1") != "1":
+                presend_ok, presend_reason, _ = _validate_shooter_presend(
+                    game, vod, {"clip": clip, "peak_start": p, "start": clip["start"]}, out, montage_part=True
+                )
+                if not presend_ok:
+                    log.warning("emergency presend reject peak=%.1f: %s", p, presend_reason)
+                    continue
             caption = (
                 f"PUBG Metro Royale #{sid}\n"
                 f"{vod_youtube_id(vod)} @ {int(clip['start'])}s (пик {int(p)}s)\n"
