@@ -154,11 +154,86 @@ def _peaks_from_feedback_labels(game: str, vod: Path) -> list[float]:
     return out
 
 
+def _owner_bad_peaks(game: str, vod: Path) -> list[tuple[float, str]]:
+    """Owner 👎 peaks with optional dislike reason (no_kill, loot_run, …)."""
+    if game != "pubg":
+        return []
+    out: list[tuple[float, str]] = []
+    try:
+        from daily_game_cycle import profile_for_game
+        from vod_owner_learning import owner_labels_for_vod_scan
+
+        for row in owner_labels_for_vod_scan(vod, profile_for_game(game)):
+            if str(row.get("label") or "") != "bad":
+                continue
+            try:
+                t = float(row["time_sec"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            out.append((t, str(row.get("note") or "")))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("owner bad peaks load failed: %s", exc)
+
+    from shooter_vod_segment_store import _paths
+
+    path = _paths(game)["labels"]
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        vid = _video_id(vod)
+        for row in data.get("bad", []) + [
+            r for r in data.get("feedback", []) if r.get("owner_label") in ("no", "bad")
+        ]:
+            sid = str(row.get("segment_id") or "")
+            row_vid = ""
+            vod_field = str(row.get("vod") or "")
+            if vod_field:
+                vp = Path(vod_field)
+                row_vid = vp.stem[3:] if vp.stem.startswith("yt_") else vp.stem
+            elif sid.startswith(f"{vid}_"):
+                row_vid = vid
+            if row_vid != vid:
+                continue
+            peak = row.get("peak_start", row.get("start"))
+            if peak is None and "_" in sid:
+                try:
+                    peak = float(sid.rsplit("_", 1)[-1])
+                except ValueError:
+                    continue
+            try:
+                out.append((float(peak), str(row.get("reason") or "")))
+            except (TypeError, ValueError):
+                continue
+    deduped: list[tuple[float, str]] = []
+    for t, reason in sorted(out, key=lambda x: x[0]):
+        if any(abs(t - p) <= 4.0 for p, _ in deduped):
+            continue
+        deduped.append((t, reason))
+    return deduped
+
+
+def _reject_radius_for_reason(reason: str, *, default: float = 20.0) -> float:
+    """Wider block zone for recurring owner trash patterns."""
+    r = reason.strip().lower()
+    if r in ("no_kill", "no_combat", "loot_run", "not_metro", "classic"):
+        return max(default, 30.0)
+    if r in ("promo", "boring", "blurry", "not_gameplay"):
+        return max(default, 22.0)
+    return default
+
+
 def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: float = 20.0) -> bool:
     if game != "pubg":
         return False
-    for t in PUBG_OWNER_REJECTED_PEAKS.get(_video_id(vod), []):
+    vid = _video_id(vod)
+    for t in PUBG_OWNER_REJECTED_PEAKS.get(vid, []):
         if abs(float(peak_sec) - float(t)) <= radius:
+            return True
+    for t, reason in _owner_bad_peaks(game, vod):
+        block_r = _reject_radius_for_reason(reason, default=radius)
+        if abs(float(peak_sec) - float(t)) <= block_r:
             return True
     return False
 
