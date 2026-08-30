@@ -163,12 +163,11 @@ def vod_looks_metro_royale(
         strict = pubg_quality_strict()
     except Exception:
         strict = os.environ.get("VOD_PUBG_QUALITY_STRICT", "0") == "1"
-    if (
-        title_metro_hint(title)
-        and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1"
-        and not strict
-    ):
-        return True, "metro_title_trusted"
+    if title_metro_hint(title) and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1":
+        # YouTube search already filters Metro titles; strict visual probes often
+        # false-reject map-7/8 VODs (classic_outdoor_sky on non-Erangel content).
+        if not strict or os.environ.get("PUBG_METRO_TITLE_TRUST_STRICT", "1") == "1":
+            return True, "metro_title_trusted"
     if duration_sec is None:
         from mlbb_vod_segment_feed import _ffprobe_duration
 

@@ -1123,10 +1123,23 @@ def _send_montage(
             final_dur = _ffprobe_duration(out)
             min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_FINAL_SEC", "18"))
             if game == "pubg" and pubg_quality_strict():
-                min_final = max(
-                    min_final,
-                    float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
+                per_part = float(
+                    os.environ.get(
+                        "SHOOTER_VOD_MONTAGE_PART_SEC",
+                        str(float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10")) + 4.0),
+                    )
                 )
+                if len(segment_paths) >= 2:
+                    # 2×14s parts xfade to ~28s — do not reject valid double montages.
+                    min_final = max(
+                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "24")),
+                        len(segment_paths) * per_part * 0.82,
+                    )
+                else:
+                    min_final = max(
+                        min_final,
+                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
+                    )
             if len(segment_paths) == 1:
                 min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
             if final_dur < min_final:
