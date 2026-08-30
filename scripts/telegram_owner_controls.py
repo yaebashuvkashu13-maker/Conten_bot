@@ -7,7 +7,7 @@ import subprocess
 from typing import Iterable
 
 from reset_vod_inbox_exhausted import reset_game
-from vod_game_registry import VOD_GAMES, load_state, save_state
+from vod_game_registry import VOD_GAMES, VOD_PIPELINE_REV, load_state, save_state
 from vod_pipeline_health import health_row
 
 # Legacy callback ids (old inline messages); no keyboards are attached anymore.
@@ -141,7 +141,7 @@ def format_process_report(
     running = running if running is not None else running_processes()
     rows = list(rows) if rows is not None else [health_row(g) for g in VOD_GAMES]
 
-    lines = ["📊 Процесс пайплайна"]
+    lines = ["📊 Процесс пайплайна", f"• rev: {VOD_PIPELINE_REV}"]
     proc_bits = [
         f"{PROCESS_LABELS[name]}: {_alive(running.get(name, False))}"
         for name, _pat in PROCESS_PATTERNS
@@ -165,6 +165,18 @@ def format_process_report(
 
     for row in rows:
         game = str(row.get("game") or "?").upper()
+        if game == "PUBG":
+            try:
+                st = load_state("pubg")
+                used_n = len(st.get("used_youtube_ids") or [])
+                pause = float(st.get("discovery_pause_until") or 0)
+                import time as _time
+
+                if pause > _time.time():
+                    lines.append(f"• discovery pause: ещё {int(pause - _time.time())}s")
+                lines.append(f"• used YouTube IDs: {used_n}")
+            except Exception:
+                pass
         inbox = int(row.get("inbox") or 0)
         actionable = int(row.get("actionable_inbox") or 0)
         exhausted = int(row.get("exhausted_inbox") or 0)

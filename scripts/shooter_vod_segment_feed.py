@@ -628,7 +628,7 @@ def _validate_shooter_presend(
     if dur <= 0:
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
-    if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1":
+    if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
         ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)

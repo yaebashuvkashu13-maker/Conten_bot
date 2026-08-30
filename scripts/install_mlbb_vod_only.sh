@@ -211,6 +211,7 @@ pairs = {
     "SHOOTER_VOD_USED_IDS_MAX": "200",
     "SHOOTER_VOD_DELIVERY_FIRST": "1",
     "SHOOTER_VOD_AUTO_HEAL": "1",
+    "SHOOTER_REQUIRE_AUTHOR_KILL": "0",
     "PUBG_METRO_TITLE_TRUST": "1",
     "PUBG_METRO_SEGMENT_RELAX": "1",
     "YOUTUBE_FORMAT": "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
