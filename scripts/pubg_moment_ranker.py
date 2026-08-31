@@ -366,6 +366,12 @@ def _load_artifact() -> dict | None:
         return None
     if tuple(artifact.get("feature_names") or ()) != FEATURE_NAMES:
         return None
+    validation = artifact.get("oof_balanced_accuracy")
+    min_validation = float(os.environ.get("PUBG_RANKER_MIN_OOF_BALANCED_ACCURACY", "0.52"))
+    if validation is None and os.environ.get("PUBG_RANKER_ALLOW_UNVALIDATED", "0") != "1":
+        return None
+    if validation is not None and float(validation) < min_validation:
+        return None
     _MODEL_CACHE = (str(path), mtime_ns, artifact)
     return artifact
 
