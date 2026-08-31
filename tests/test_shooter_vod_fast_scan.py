@@ -178,6 +178,26 @@ def test_snap_peak_runs_panns_once(monkeypatch, tmp_path: Path) -> None:
     assert center >= 100
 
 
+def test_audio_snap_skips_redundant_panns(monkeypatch, tmp_path: Path) -> None:
+    from shooter_vod_fast_scan import snap_peak_to_gunfire
+
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"vod")
+    with patch(
+        "gameplay_gate.score_pubg_gunfire_audio",
+        return_value=(0.08, 5.0, 0.03),
+    ), patch("shooter_vod_fast_scan.score_panns_audio") as panns:
+        _center, density, pmax = snap_peak_to_gunfire(
+            vod,
+            100.0,
+            duration=1000.0,
+            confirm_panns=False,
+        )
+    panns.assert_not_called()
+    assert density == 0.08
+    assert pmax == 0.0
+
+
 def test_audio_generator_finds_transients_across_timeline() -> None:
     from shooter_vod_fast_scan import _rank_audio_windows
     import numpy as np

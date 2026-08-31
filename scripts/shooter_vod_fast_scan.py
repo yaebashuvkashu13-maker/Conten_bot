@@ -276,6 +276,7 @@ def snap_peak_to_gunfire(
     search_radius: float = 10.0,
     step: float = 3.0,
     sample_sec: float = 4.0,
+    confirm_panns: bool = True,
 ) -> tuple[float, float, float]:
     """
     Re-center a probe on the loudest local gunfire using the same density metric
@@ -302,12 +303,14 @@ def snap_peak_to_gunfire(
         t += float(step)
     # Coarse dense scan already supplied a PANN score. Confirm only the selected
     # local gun maximum instead of running the neural model at every 3s offset.
-    try:
-        best_start = max(0.0, best_c - sample_sec * 0.5)
-        panns = score_panns_audio(video_path, best_start, sample_sec)
-        best_panns = float(panns.get("panns_gun_max", 0) or 0)
-    except Exception:
-        best_panns = 0.0
+    best_panns = 0.0
+    if confirm_panns:
+        try:
+            best_start = max(0.0, best_c - sample_sec * 0.5)
+            panns = score_panns_audio(video_path, best_start, sample_sec)
+            best_panns = float(panns.get("panns_gun_max", 0) or 0)
+        except Exception:
+            best_panns = 0.0
     return round(best_c, 1), max(0.0, best_gun), best_panns
 
 
@@ -408,7 +411,12 @@ def discover_montage_gun_peaks(
     # Snap only the shortlist onto local gunfire (gate metric).
     snapped: list[tuple[float, float, float]] = []  # center, gun, panns
     for panns_g, center in shortlist:
-        c2, gun_d, pmax = snap_peak_to_gunfire(video_path, center, duration=dur)
+        c2, gun_d, pmax = snap_peak_to_gunfire(
+            video_path,
+            center,
+            duration=dur,
+            confirm_panns=not audio_generator,
+        )
         panns_use = max(panns_g, pmax)
         if not audio_generator and gun_d < dens_min and panns_use < gun_min * 1.15:
             log.info(
