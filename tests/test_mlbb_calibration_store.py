@@ -388,6 +388,7 @@ def test_apply_owner_label_bad_blocks_queue(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
     monkeypatch.setattr(store, "INDEX_PATH", index)
     monkeypatch.setattr(store, "LABELS_PATH", labels)
+    monkeypatch.setattr(store, "REPO_LABELS_PATH", tmp_path / "repo_labels.json")
     ex_root = tmp_path / "exemplars"
     owner_labels = tmp_path / "owner_labels.json"
     monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(ex_root))
