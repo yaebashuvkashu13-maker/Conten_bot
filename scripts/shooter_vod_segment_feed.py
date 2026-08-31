@@ -840,6 +840,14 @@ def _montage_only(game: str) -> bool:
     return os.environ.get(game_key or "", "1") == "1"
 
 
+def _dense_on_fast_probe_miss(game: str) -> bool:
+    return (
+        _montage_enabled(game)
+        and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
+        and os.environ.get("SHOOTER_VOD_DENSE_ON_FAST_MISS", "1") == "1"
+    )
+
+
 def _montage_limits() -> tuple[int, int, float, float, float]:
     """min_clips, max_clips, gap_sec, part_max_sec, final_max_sec."""
     # Allow 1 via env — hard floor of 2 caused 8h idle when only 1 part passed gates.
@@ -1804,11 +1812,23 @@ def _scan_vod_with_adaptive(
         clear_fast_seeds = clear_fast_probe_seeds
         ok_fast, fast_reason, seed_peaks = vod_fast_combat_check(vod, _profile(game))
         if not ok_fast:
+            dense_on_miss = _dense_on_fast_probe_miss(game)
+            if dense_on_miss:
+                # Sparse probes are only a cost optimization, not evidence that
+                # the whole VOD has no fights. Always let the timeline-wide
+                # dense montage scan make the final decision.
+                log.info(
+                    "fast-probe miss vod=%s reason=%s — continue with dense montage",
+                    vod.name,
+                    fast_reason,
+                )
+                seed_peaks = []
+                ok_fast = True
             # Owner anchors alone must NOT keep a dead VOD alive forever —
             # that spun every idle tick with zero Telegram and paid CPU.
             # Still try dense montage once when anchors exist; otherwise exhaust.
             has_anchors = vod_has_owner_montage_anchors(game, vod)
-            if not has_anchors:
+            if not ok_fast and not has_anchors:
                 log.info("fast-skip vod=%s reason=%s", vod.name, fast_reason)
                 _mark_vod_exhausted(
                     state,
@@ -1822,14 +1842,15 @@ def _scan_vod_with_adaptive(
                 if os.environ.get("SHOOTER_VOD_FAST_SKIP_NOTIFY", "0") == "1":
                     send_message(token, chat_id, f"⏭ {game.upper()} {vid}: быстрый skip — {fast_reason}")
                 return 0
-            log.info(
-                "fast-probe weak vod=%s reason=%s — one dense montage try via owner anchors",
-                vod.name,
-                fast_reason,
-            )
-            seed_peaks = seed_peaks or []
-            apply_fast_probe_seeds(seed_peaks)
-            ok_fast = True  # allow montage branch; if it fails we exhaust
+            if not ok_fast:
+                log.info(
+                    "fast-probe weak vod=%s reason=%s — one dense montage try via owner anchors",
+                    vod.name,
+                    fast_reason,
+                )
+                seed_peaks = seed_peaks or []
+                apply_fast_probe_seeds(seed_peaks)
+                ok_fast = True  # allow montage branch; if it fails we exhaust
         if ok_fast:
             apply_fast_probe_seeds(seed_peaks or [])
             # Fast ×3 montage: dense gun peaks → snap → presend → send.

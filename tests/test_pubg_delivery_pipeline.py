@@ -110,6 +110,21 @@ def test_rejected_dense_pool_is_not_reused() -> None:
     assert not _dense_pool_cache_usable({}, peaks, 2)
 
 
+def test_fast_probe_miss_falls_through_to_dense_montage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shooter_vod_segment_feed import _dense_on_fast_probe_miss  # noqa: E402
+
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE", "1")
+    monkeypatch.setenv("PUBG_VOD_MONTAGE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_FAST_MONTAGE", "1")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_ON_FAST_MISS", "1")
+    assert _dense_on_fast_probe_miss("pubg") is True
+
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_ON_FAST_MISS", "0")
+    assert _dense_on_fast_probe_miss("pubg") is False
+
+
 def test_final_gate_reports_only_failing_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     from shooter_vod_segment_feed import _validate_montage_final  # noqa: E402
     from unittest.mock import patch
