@@ -650,6 +650,10 @@ def _validate_shooter_presend(
         ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
         if not ok_metro:
             return False, metro_reason, {"metro": metro_reason}
+    if game == "pubg" and os.environ.get("PUBG_PRESEND_SCORE_MODE", "1") == "1":
+        from pubg_quality_score import score_pubg_window
+
+        return score_pubg_window(vod, start, dur)
     if game in EXTENDED_GAMES:
         # WoT: never use PUBG gunfire shooting gate — tank cannon scores as
         # talk_low_gun (gun~0.01) and starved the SLA hour. Soft cruise impact
@@ -900,7 +904,13 @@ def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_
     return picked
 
 
-def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
+def _prepare_montage_clip(
+    row: dict,
+    vod: Path,
+    *,
+    part_max: float,
+    game: str = "",
+) -> dict:
     """Peak-center montage parts on the fight core — not a 22s walk+loot window.
 
     Default ship length matches what we gate (core + small pad). Longer tails
@@ -922,6 +932,19 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
     start = max(0.0, peak - half)
     dur = want
     file_dur = _ffprobe_duration(vod)
+    segment_report: dict = {}
+    if game == "pubg" and os.environ.get("PUBG_FIGHT_SEGMENTER", "1") == "1":
+        try:
+            from pubg_fight_segment import resolve_pubg_fight_bounds
+
+            start, dur, segment_report = resolve_pubg_fight_bounds(
+                vod,
+                peak,
+                file_duration=file_dur,
+            )
+            dur = min(float(dur), part_max)
+        except Exception as exc:
+            log.warning("pubg fight segmenter fallback peak=%.1f: %s", peak, exc)
     if file_dur > 1.0 and start + dur > file_dur:
         start = max(0.0, file_dur - dur)
         dur = max(8.0, file_dur - start)
@@ -933,6 +956,8 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
             "output_duration": round(dur, 2),
         }
     )
+    if segment_report:
+        clip["segment_report"] = segment_report
     return clip
 
 
@@ -946,6 +971,18 @@ def _validate_montage_final(
     """Extra quality pass after parts passed presend — strict PUBG only."""
     if game != "pubg" or not pubg_quality_strict():
         return True, "skip"
+    if os.environ.get("PUBG_PRESEND_SCORE_MODE", "1") == "1":
+        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
+        for row in accepted_rows:
+            quality = row.get("quality_report") or {}
+            score = float(quality.get("quality_score", 0.0))
+            if quality.get("hard_reject") or score < threshold:
+                if report is not None:
+                    report.setdefault("rejected_sids", []).append(
+                        str(row.get("segment_id") or "")
+                    )
+                return False, f"final_quality={score:.3f}:min{threshold:.2f}"
+        return True, "montage_final_score_ok"
     profile = _profile(game)
     for row in accepted_rows:
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
@@ -1074,7 +1111,7 @@ def _send_montage(
                 sid = str(row.get("segment_id") or "")
                 if sid in rejected_sids:
                     continue
-                clip = _prepare_montage_clip(row, vod, part_max=part_max)
+                clip = _prepare_montage_clip(row, vod, part_max=part_max, game=game)
                 part = temp_dir / f"part_{idx:02d}.mp4"
                 work_row = {**row, "clip": clip, "start": clip["start"], "peak_start": clip["peak_start"]}
                 if not render_single_segment(vod, clip, part):
@@ -1091,6 +1128,11 @@ def _send_montage(
                     part.unlink(missing_ok=True)
                     rejected_sids.add(sid)
                     continue
+                work_row["quality_report"] = dict(_report or {})
+                work_row["score"] = max(
+                    float(work_row.get("score", 0.0)),
+                    float(work_row["quality_report"].get("quality_score", 0.0)),
+                )
                 dur = _ffprobe_duration(part)
                 if dur < 6.0:
                     part.unlink(missing_ok=True)
@@ -1277,6 +1319,8 @@ def _send_montage(
                         "duration": final_dur,
                         "peak_start": row.get("peak_start", row["start"]),
                         "score": row.get("score", 0),
+                        "quality_metrics": row.get("quality_report", {}),
+                        "segment_report": (row.get("clip") or {}).get("segment_report", {}),
                         "sig": sig,
                         "montage_id": montage_id,
                         "montage_parts": [str(r["segment_id"]) for r in accepted_rows],
@@ -1928,6 +1972,17 @@ def _scan_vod_with_adaptive(
                         part_sec=part_max,
                     )
                     dense_reason = f"{dense_reason} {kf_reason}"
+                    try:
+                        from pubg_moment_ranker import rank_peaks_with_model
+
+                        dense_peaks, ranker_reason = rank_peaks_with_model(
+                            vod,
+                            dense_peaks,
+                            part_sec=part_max,
+                        )
+                        dense_reason = f"{dense_reason} {ranker_reason}"
+                    except Exception as exc:
+                        log.warning("pubg ranker fallback vod=%s: %s", vod.name, exc)
                 log.info(
                     "fast-montage probe vod=%s reason=%s peaks=%s",
                     vod.name,

@@ -208,6 +208,11 @@ pairs = {
     "SHOOTER_VOD_DENSE_PROBE_STEP_SEC": "30",
     "SHOOTER_VOD_DENSE_PROBE_PASSES": "3",
     "SHOOTER_VOD_CANDIDATE_POOL_TARGET": "16",
+    "PUBG_RANKER_ENABLED": "1",
+    "PUBG_RANKER_MAX_PROBES": "16",
+    "PUBG_PRESEND_SCORE_MODE": "1",
+    "PUBG_QUALITY_SCORE_MIN": "0.48",
+    "PUBG_FIGHT_SEGMENTER": "1",
     "SHOOTER_VOD_MONTAGES_PER_VOD": "1",
     "SHOOTER_VOD_USED_IDS_MAX": "200",
     "SHOOTER_VOD_AUTO_HEAL": "1",
@@ -278,6 +283,11 @@ install -m 755 \
   "$REPO/scripts/shooter_vod_segment_feed.py" \
   "$REPO/scripts/shooter_owner_montage.py" \
   "$REPO/scripts/shooter_author_kill_gate.py" \
+  "$REPO/scripts/pubg_moment_ranker.py" \
+  "$REPO/scripts/pubg_quality_score.py" \
+  "$REPO/scripts/pubg_fight_segment.py" \
+  "$REPO/scripts/pubg_regression_benchmark.py" \
+  "$REPO/scripts/benchmark_panns_workers.py" \
   "$REPO/scripts/shooter_vod_segment_store.py" \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/shooter_vod_fast_scan.py" \
@@ -455,6 +465,35 @@ RandomizedDelaySec=2min
 WantedBy=timers.target
 UNIT
 
+cat >/etc/systemd/system/content-bot-pubg-ranker.service <<'UNIT'
+[Unit]
+Description=Train PUBG moment ranker from owner feedback
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/root/.video_bot.env
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+ExecStart=/usr/bin/python3 /usr/local/bin/pubg_moment_ranker.py --train-if-changed
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=4h
+UNIT
+
+cat >/etc/systemd/system/content-bot-pubg-ranker.timer <<'UNIT'
+[Unit]
+Description=Nightly PUBG moment-ranker training
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 cat >/etc/logrotate.d/content-bot-vod <<'ROTATE'
 /root/data/mlbb/*.log /root/data/mlbb/logs/*.log /root/data/pubg/*.log /root/data/pubg/logs/*.log {
     size 20M
@@ -500,6 +539,7 @@ else
   echo "VOD feed systemd service already running — left untouched"
 fi
 systemctl enable --now content-bot-vod-cleanup.timer
+systemctl enable --now content-bot-pubg-ranker.timer
 
 TMP=$(mktemp)
 crontab -l 2>/dev/null | grep -v "$MARK" \
