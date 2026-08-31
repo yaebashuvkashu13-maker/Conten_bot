@@ -311,6 +311,8 @@ install -m 755 \
   "$REPO/scripts/telegram_access.py" \
   "$REPO/scripts/telegram_owner_controls.py" \
   "$REPO/scripts/vod_pipeline_health.py" \
+  "$REPO/scripts/vod_disk_cleanup.py" \
+  "$REPO/scripts/vps_disk_cleanup.sh" \
   "$REPO/scripts/vod_game_registry.py" \
   "$REPO/scripts/reset_vod_inbox_exhausted.py" \
   "$REPO/scripts/vod_feed_recover.py" \
@@ -391,6 +393,80 @@ if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FIL
   fi
 fi
 
+cat >/etc/systemd/system/content-bot-vod-feed.service <<'UNIT'
+[Unit]
+Description=Content Bot PUBG/MLBB VOD feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mlbb_vod_segment_feed.sh
+Restart=always
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat >/etc/systemd/system/telegram-upload-bot.service <<'UNIT'
+[Unit]
+Description=Telegram upload bot (Conten_bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+ExecStart=/usr/bin/python3 -u /usr/local/bin/telegram_upload_bot.py
+Restart=always
+RestartSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat >/etc/systemd/system/content-bot-vod-cleanup.service <<'UNIT'
+[Unit]
+Description=Content Bot VOD disk watermark cleanup
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/root/.video_bot.env
+ExecStart=/usr/local/bin/vps_disk_cleanup.sh
+Nice=10
+IOSchedulingClass=idle
+UNIT
+
+cat >/etc/systemd/system/content-bot-vod-cleanup.timer <<'UNIT'
+[Unit]
+Description=Run Content Bot VOD cleanup every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+cat >/etc/logrotate.d/content-bot-vod <<'ROTATE'
+/root/data/mlbb/*.log /root/data/mlbb/logs/*.log /root/data/pubg/*.log /root/data/pubg/logs/*.log {
+    size 20M
+    rotate 5
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+ROTATE
+
 disable_shorts_wrapper mlbb_calibration_feed.sh
 disable_shorts_wrapper mlbb_youtube_shorts_ingest.sh
 
@@ -407,16 +483,23 @@ for f in /etc/cron.d/mlbb_video /etc/cron.d/youtube_proactive; do
   fi
 done
 
-# Single supervisor process for the VOD loop (not cron-spawned duplicates).
-if [[ "${MLBB_VOD_INSTALL_RESTART_FEED:-0}" == "1" ]]; then
+# Migrate legacy nohup processes into one observable, restartable service.
+systemctl daemon-reload
+if [[ "${MLBB_VOD_INSTALL_RESTART_FEED:-0}" == "1" ]] \
+  || ! systemctl is-active --quiet content-bot-vod-feed.service; then
+  systemctl stop content-bot-vod-feed.service 2>/dev/null || true
   pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  sleep 1
-  nohup "$WRAPPER_VOD" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
-elif ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1; then
-  nohup "$WRAPPER_VOD" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  pkill -f 'daily_cycle_runner.py' 2>/dev/null || true
+  pkill -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
+  pkill -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
+  sleep 2
+  rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/pubg_vod_segment_feed.lock
+  systemctl enable --now content-bot-vod-feed.service
 else
-  echo "VOD feed supervisor already running — left untouched"
+  systemctl enable content-bot-vod-feed.service >/dev/null
+  echo "VOD feed systemd service already running — left untouched"
 fi
+systemctl enable --now content-bot-vod-cleanup.timer
 
 TMP=$(mktemp)
 crontab -l 2>/dev/null | grep -v "$MARK" \
@@ -437,19 +520,14 @@ rm -f "$TMP"
 bash "$REPO/scripts/mlbb_deploy_sync.sh" 2>/dev/null || true
 bash "$REPO/scripts/disable_vk_mlbb_scheduler.sh" 2>/dev/null || true
 
-if systemctl is-active telegram-upload-bot >/dev/null 2>&1; then
-  systemctl restart telegram-upload-bot
-elif pgrep -f telegram_upload_bot.py >/dev/null 2>&1; then
-  pkill -f telegram_upload_bot.py 2>/dev/null || true
-  sleep 1
-  nohup env PYTHONPATH="/usr/local/bin:${CONTENT_BOT_REPO:-/root/content_bot_ml}/scripts" \
-    python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
-fi
+pkill -f telegram_upload_bot.py 2>/dev/null || true
+systemctl enable --now telegram-upload-bot.service
+systemctl restart telegram-upload-bot.service
 
 sleep 3
 bash "$BIN/mlbb_vod_only_verify.sh" || true
 
 echo "===== MLBB VOD-only mode $(date -Is) ====="
-echo "Supervisor: 1x mlbb_vod_segment_feed.sh loop | Shorts worker: OFF"
+echo "Supervisor: content-bot-vod-feed.service | Cleanup: content-bot-vod-cleanup.timer | Shorts worker: OFF"
 pgrep -af 'mlbb_vod_segment_feed|telegram_upload_bot' || echo "(starting…)"
 tail -5 /root/data/mlbb/mlbb_vod_segment_feed.log 2>/dev/null || echo "(log empty yet)"

@@ -8,6 +8,22 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "[$(date -Is)] $*" >>"$LOG"; }
 
+restart_vod_feed() {
+  if systemctl cat content-bot-vod-feed.service >/dev/null 2>&1; then
+    systemctl restart content-bot-vod-feed.service
+  else
+    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  fi
+}
+
+restart_telegram_bot() {
+  if systemctl cat telegram-upload-bot.service >/dev/null 2>&1; then
+    systemctl restart telegram-upload-bot.service
+  else
+    nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+  fi
+}
+
 env_val() {
   local key="$1"
   grep "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
@@ -39,7 +55,7 @@ done
 
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   log "restart telegram_upload_bot"
-  nohup python3 "$BIN/telegram_upload_bot.py" >>/root/data/mlbb/telegram_upload_bot.log 2>&1 &
+  restart_telegram_bot
 fi
 
 if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
@@ -50,7 +66,7 @@ if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
   sleep 1
   rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
-  nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+  restart_vod_feed
 fi
 
 # Supervisor died but left no child — common when .video_bot.env has unquoted yt-dlp formats.
@@ -65,13 +81,13 @@ if [[ -f "$FEED_LOG" ]]; then
     pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
     sleep 1
     rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
-    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+    restart_vod_feed
   fi
 fi
 
 # Disk emergency — inbox cleanup when root is nearly full (common silence cause).
 DISK_PCT="$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')"
-if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge 95 ]]; then
+if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge "${VOD_CLEANUP_MAX_USED_PCT:-88}" ]]; then
   log "disk critical ${DISK_PCT}% — run vps_disk_cleanup"
   REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   if [[ -x "$REPO/scripts/vps_disk_cleanup.sh" ]]; then
@@ -97,7 +113,7 @@ if [[ -f "$FEED_LOG" ]]; then
     pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
     sleep 2
     rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/pubg_vod_segment_feed.lock /tmp/standoff_vod_segment_feed.lock
-    nohup "$BIN/mlbb_vod_segment_feed.sh" >>/root/data/mlbb/vod_only_supervisor.log 2>&1 &
+    restart_vod_feed
   fi
 fi
 
