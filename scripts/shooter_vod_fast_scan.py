@@ -15,7 +15,7 @@ import numpy as np
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 log = logging.getLogger("shooter_vod_fast_scan")
-AUDIO_GENERATOR_VERSION = 2
+AUDIO_GENERATOR_VERSION = 3
 
 
 def candidate_pool_target(min_clips: int = 2) -> int:
@@ -50,6 +50,7 @@ def _rank_audio_windows(
     step_sec: float = 2.0,
     max_candidates: int = 96,
     gap_sec: float = 10.0,
+    chunk_sec: float = 300.0,
 ) -> list[float]:
     """Rank gun-transient windows from one decoded PCM stream."""
     if pcm.size < sample_rate * window_sec:
@@ -77,13 +78,31 @@ def _rank_audio_windows(
             center = base_sec + (offset * frame / sample_rate) + window_sec * 0.5
             scored.append((score, center))
     scored.sort(key=lambda row: -row[0])
-    picked: list[float] = []
-    for _score, center in scored:
-        if any(abs(center - old) < gap_sec for old in picked):
-            continue
-        picked.append(round(center, 1))
-        if len(picked) >= max_candidates:
+    chunks: dict[int, list[tuple[float, float]]] = {}
+    for row in scored:
+        chunks.setdefault(int(row[1] // max(chunk_sec, 1.0)), []).append(row)
+    quota = max(1, min(4, max_candidates // max(len(chunks), 1)))
+    selected: list[tuple[float, float]] = []
+    selected_centers: list[float] = []
+    for chunk_rows in chunks.values():
+        used = 0
+        for row in chunk_rows:
+            if any(abs(row[1] - old) < gap_sec for old in selected_centers):
+                continue
+            selected.append(row)
+            selected_centers.append(row[1])
+            used += 1
+            if used >= quota:
+                break
+    for row in scored:
+        if len(selected) >= max_candidates:
             break
+        if any(abs(row[1] - old) < gap_sec for old in selected_centers):
+            continue
+        selected.append(row)
+        selected_centers.append(row[1])
+    selected.sort(key=lambda row: -row[0])
+    picked = [round(center, 1) for _score, center in selected[:max_candidates]]
     return picked
 
 
@@ -411,12 +430,15 @@ def discover_montage_gun_peaks(
     # Snap only the shortlist onto local gunfire (gate metric).
     snapped: list[tuple[float, float, float]] = []  # center, gun, panns
     for panns_g, center in shortlist:
-        c2, gun_d, pmax = snap_peak_to_gunfire(
-            video_path,
-            center,
-            duration=dur,
-            confirm_panns=not audio_generator,
-        )
+        if audio_generator:
+            c2, gun_d, pmax = center, dens_min, 0.0
+        else:
+            c2, gun_d, pmax = snap_peak_to_gunfire(
+                video_path,
+                center,
+                duration=dur,
+                confirm_panns=True,
+            )
         panns_use = max(panns_g, pmax)
         if not audio_generator and gun_d < dens_min and panns_use < gun_min * 1.15:
             log.info(

@@ -220,6 +220,27 @@ def test_audio_generator_finds_transients_across_timeline() -> None:
     assert any(abs(peak - 50) <= 4 for peak in peaks)
 
 
+def test_audio_generator_preserves_quiet_timeline_chunks() -> None:
+    from shooter_vod_fast_scan import _rank_audio_windows
+    import numpy as np
+
+    sample_rate = 1000
+    pcm = np.zeros(sample_rate * 900, dtype=np.int16)
+    # Many loud events in chunk 0 must not evict the quieter event in chunk 2.
+    for second in range(20, 280, 20):
+        pcm[second * sample_rate : second * sample_rate + 100] = 30000
+    pcm[700 * sample_rate : 700 * sample_rate + 70] = 18000
+    peaks = _rank_audio_windows(
+        pcm,
+        sample_rate=sample_rate,
+        base_sec=0,
+        max_candidates=9,
+        gap_sec=8,
+        chunk_sec=300,
+    )
+    assert any(abs(peak - 700) <= 4 for peak in peaks)
+
+
 def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "1")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "10")
