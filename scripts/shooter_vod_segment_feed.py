@@ -629,6 +629,19 @@ def _row_window_start(row: dict) -> float:
     return float(row.get("peak_start", 0) or 0)
 
 
+def _pubg_score_mode_ready() -> bool:
+    if os.environ.get("PUBG_PRESEND_SCORE_MODE", "1") != "1":
+        return False
+    if os.environ.get("PUBG_SCORE_REQUIRE_RANKER", "1") != "1":
+        return True
+    try:
+        from pubg_moment_ranker import ranker_available
+
+        return ranker_available()
+    except Exception:
+        return False
+
+
 def _validate_shooter_presend(
     game: str,
     vod: Path,
@@ -650,7 +663,7 @@ def _validate_shooter_presend(
         ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
         if not ok_metro:
             return False, metro_reason, {"metro": metro_reason}
-    if game == "pubg" and os.environ.get("PUBG_PRESEND_SCORE_MODE", "1") == "1":
+    if game == "pubg" and _pubg_score_mode_ready():
         from pubg_quality_score import score_pubg_window
 
         return score_pubg_window(vod, start, dur)
@@ -971,7 +984,7 @@ def _validate_montage_final(
     """Extra quality pass after parts passed presend — strict PUBG only."""
     if game != "pubg" or not pubg_quality_strict():
         return True, "skip"
-    if os.environ.get("PUBG_PRESEND_SCORE_MODE", "1") == "1":
+    if _pubg_score_mode_ready():
         threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
         for row in accepted_rows:
             quality = row.get("quality_report") or {}

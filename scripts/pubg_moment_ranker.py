@@ -414,6 +414,10 @@ def predict_from_features(features: dict[str, float]) -> float | None:
     return float(probability)
 
 
+def ranker_available() -> bool:
+    return _load_artifact() is not None
+
+
 def rank_peaks_with_model(
     video_path: Path,
     peaks: list[float],

@@ -152,6 +152,7 @@ def test_pubg_presend_uses_score_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import patch
 
     monkeypatch.setenv("PUBG_PRESEND_SCORE_MODE", "1")
+    monkeypatch.setenv("PUBG_SCORE_REQUIRE_RANKER", "0")
     monkeypatch.setenv("PUBG_METRO_GATE", "0")
     row = {"start": 90.0, "clip": {"start": 90.0, "input_duration": 20.0}}
     with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=20.0), patch(
@@ -169,6 +170,18 @@ def test_pubg_presend_uses_score_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ok is True
     assert reason == "quality_ok=0.7"
     assert report["quality_score"] == 0.7
+
+
+def test_score_mode_waits_for_validated_ranker(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_segment_feed import _pubg_score_mode_ready  # noqa: E402
+    from unittest.mock import patch
+
+    monkeypatch.setenv("PUBG_PRESEND_SCORE_MODE", "1")
+    monkeypatch.setenv("PUBG_SCORE_REQUIRE_RANKER", "1")
+    with patch("pubg_moment_ranker.ranker_available", return_value=False):
+        assert _pubg_score_mode_ready() is False
+    with patch("pubg_moment_ranker.ranker_available", return_value=True):
+        assert _pubg_score_mode_ready() is True
 
 
 def test_final_gate_reports_only_failing_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
