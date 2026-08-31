@@ -237,29 +237,41 @@ def training_signature() -> str:
     return digest.hexdigest()
 
 
-def _best_threshold(y_true: list[int], probabilities: list[float]) -> float:
+def _threshold_metrics(
+    y_true: list[int],
+    probabilities: list[float],
+    threshold: float,
+) -> tuple[float, float, float]:
+    pred = [int(p >= threshold) for p in probabilities]
+    tp = sum(1 for y, p in zip(y_true, pred) if y == p == 1)
+    fp = sum(1 for y, p in zip(y_true, pred) if y == 0 and p == 1)
+    tn = sum(1 for y, p in zip(y_true, pred) if y == p == 0)
+    fn = sum(1 for y, p in zip(y_true, pred) if y == 1 and p == 0)
+    precision = tp / max(tp + fp, 1)
+    recall = tp / max(tp + fn, 1)
+    specificity = tn / max(tn + fp, 1)
+    balanced = (recall + specificity) * 0.5
+    f1 = 2 * precision * recall / max(precision + recall, 1e-9)
+    return balanced * 0.7 + f1 * 0.3, balanced, f1
+
+
+def _best_threshold(y_true: list[int], probabilities: list[float]) -> tuple[float, float, float]:
     if not y_true or len(set(y_true)) < 2:
-        return 0.5
-    best = (0.0, 0.5)
+        return 0.5, 0.0, 0.0
+    best = (0.0, 0.5, 0.0, 0.0)
     for threshold in [x / 100 for x in range(30, 76, 5)]:
-        pred = [int(p >= threshold) for p in probabilities]
-        tp = sum(1 for y, p in zip(y_true, pred) if y == p == 1)
-        fp = sum(1 for y, p in zip(y_true, pred) if y == 0 and p == 1)
-        fn = sum(1 for y, p in zip(y_true, pred) if y == 1 and p == 0)
-        precision = tp / max(tp + fp, 1)
-        recall = tp / max(tp + fn, 1)
-        f1 = 2 * precision * recall / max(precision + recall, 1e-9)
-        if (f1, threshold) > best:
-            best = (f1, threshold)
-    return best[1]
+        objective, balanced, f1 = _threshold_metrics(y_true, probabilities, threshold)
+        if (objective, threshold) > (best[0], best[1]):
+            best = (objective, threshold, balanced, f1)
+    return best[1], best[2], best[3]
 
 
 def train(*, if_changed: bool = False) -> dict[str, Any]:
     global _MODEL_CACHE
     import joblib
     import numpy as np
+    from sklearn.ensemble import RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import balanced_accuracy_score
     from sklearn.model_selection import LeaveOneGroupOut
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
@@ -312,38 +324,68 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
     groups = np.asarray([row.video_id for row in samples])
     weights = np.asarray([row.weight for row in samples], dtype=np.float32)
 
-    def make_model() -> Pipeline:
-        return Pipeline(
+    factories = {
+        "logistic_regression": lambda: Pipeline(
             [
                 ("scale", StandardScaler()),
                 ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
             ]
-        )
+        ),
+        "random_forest": lambda: RandomForestClassifier(
+            n_estimators=300,
+            max_depth=5,
+            min_samples_leaf=2,
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=1,
+        ),
+    }
 
-    oof_y: list[int] = []
-    oof_p: list[float] = []
+    def fit_model(model: Any, name: str, x: Any, target: Any, sample_weight: Any) -> None:
+        if name == "logistic_regression":
+            model.fit(x, target, model__sample_weight=sample_weight)
+        else:
+            model.fit(x, target, sample_weight=sample_weight)
+
+    evaluations: dict[str, dict[str, Any]] = {}
     if len(set(groups)) >= 3:
-        for train_idx, test_idx in LeaveOneGroupOut().split(X, y, groups):
-            if len(set(y[train_idx])) < 2:
-                continue
-            fold = make_model()
-            fold.fit(X[train_idx], y[train_idx], model__sample_weight=weights[train_idx])
-            oof_y.extend(int(v) for v in y[test_idx])
-            oof_p.extend(float(v) for v in fold.predict_proba(X[test_idx])[:, 1])
-    threshold = _best_threshold(oof_y, oof_p)
-    oof_balanced_accuracy = None
-    if oof_y and len(set(oof_y)) == 2:
-        oof_balanced_accuracy = float(
-            balanced_accuracy_score(oof_y, [int(p >= threshold) for p in oof_p])
-        )
-
-    model = make_model()
-    model.fit(X, y, model__sample_weight=weights)
+        for name, factory in factories.items():
+            oof_y: list[int] = []
+            oof_p: list[float] = []
+            for train_idx, test_idx in LeaveOneGroupOut().split(X, y, groups):
+                if len(set(y[train_idx])) < 2:
+                    continue
+                fold = factory()
+                fit_model(fold, name, X[train_idx], y[train_idx], weights[train_idx])
+                oof_y.extend(int(v) for v in y[test_idx])
+                oof_p.extend(float(v) for v in fold.predict_proba(X[test_idx])[:, 1])
+            threshold, balanced, f1 = _best_threshold(oof_y, oof_p)
+            evaluations[name] = {
+                "threshold": threshold,
+                "balanced_accuracy": balanced,
+                "f1": f1,
+                "samples": len(oof_y),
+                "objective": balanced * 0.7 + f1 * 0.3,
+            }
+    model_name = max(
+        evaluations,
+        key=lambda name: float(evaluations[name]["objective"]),
+        default="logistic_regression",
+    )
+    selected = evaluations.get(
+        model_name,
+        {"threshold": 0.5, "balanced_accuracy": None, "f1": None},
+    )
+    threshold = float(selected["threshold"])
+    oof_balanced_accuracy = selected["balanced_accuracy"]
+    model = factories[model_name]()
+    fit_model(model, model_name, X, y, weights)
     artifact = {
         "artifact_version": 1,
         "feature_version": FEATURE_VERSION,
         "feature_names": FEATURE_NAMES,
         "model": model,
+        "model_name": model_name,
         "threshold": threshold,
         "training_signature": signature,
         "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -352,6 +394,8 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
         "negative": negatives,
         "groups": len(set(groups)),
         "oof_balanced_accuracy": oof_balanced_accuracy,
+        "oof_f1": selected["f1"],
+        "candidate_models": evaluations,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".joblib", delete=False) as handle:
