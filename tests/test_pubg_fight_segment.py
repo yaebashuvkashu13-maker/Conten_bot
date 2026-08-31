@@ -24,11 +24,22 @@ def test_segmenter_expands_from_contact_through_finale(
     monkeypatch.setenv("PUBG_SEGMENT_SAMPLE_SEC", "3")
     segmenter.clear_segment_cache()
 
-    def activity(_path: Path, start: float, _duration: float):
-        active = 92 <= start <= 108
-        return (0.8 if active else 0.05), {"gun": 0.08 if active else 0.0}
+    def timeline(_path: Path, scan_start: float, scan_end: float, *, step: float, sample: float):
+        rows = []
+        start = scan_start
+        while start + sample <= scan_end:
+            active = 92 <= start <= 108
+            rows.append(
+                {
+                    "start": start,
+                    "score": 0.8 if active else 0.05,
+                    "gun": 0.08 if active else 0.0,
+                }
+            )
+            start += step
+        return rows
 
-    monkeypatch.setattr(segmenter, "_activity_score", activity)
+    monkeypatch.setattr(segmenter, "_activity_timeline", timeline)
 
     def killfeed(_path: Path, start: float, _duration: float, _profile: str):
         return (0.8 if 105 <= start <= 109 else 0.0), {}
@@ -51,7 +62,7 @@ def test_segmenter_falls_back_when_no_timeline(tmp_path: Path) -> None:
     vod = tmp_path / "yt_abcdefghijk.mp4"
     vod.write_bytes(b"vod")
     segmenter.clear_segment_cache()
-    with patch.object(segmenter, "_activity_score", return_value=(0.0, {})):
+    with patch.object(segmenter, "_activity_timeline", return_value=[]):
         start, duration, report = segmenter.resolve_pubg_fight_bounds(
             vod,
             1.0,

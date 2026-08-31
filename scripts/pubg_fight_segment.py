@@ -7,24 +7,86 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 _CACHE: dict[tuple[str, int, int, int], tuple[float, float, dict[str, Any]]] = {}
 
 
+def _score_pcm(pcm: np.ndarray) -> tuple[float, float, float]:
+    if pcm.size < 384:
+        return 0.0, 0.0, 0.0
+    samples = pcm.astype(np.float32) / 32768.0
+    frame = 256
+    energies = [
+        float(np.sqrt(np.mean(samples[offset : offset + frame] ** 2)))
+        for offset in range(0, len(samples) - frame, frame)
+    ]
+    if len(energies) < 3:
+        return 0.0, 0.0, 0.0
+    values = np.asarray(energies, dtype=np.float32)
+    median = float(np.median(values))
+    peak = float(np.max(values))
+    rms = float(np.mean(values))
+    floor = max(median * 2.6, 0.010)
+    spikes = sum(
+        values[index] > floor and values[index] > values[index - 1] * 1.55
+        for index in range(1, len(values))
+    )
+    return spikes / max(len(values) - 1, 1), peak / max(rms, 1e-6), rms
+
+
+def _activity_timeline(
+    video_path: Path,
+    scan_start: float,
+    scan_end: float,
+    *,
+    step: float,
+    sample: float,
+) -> list[dict[str, Any]]:
+    from gameplay_gate import _extract_segment_audio_pcm
+
+    sample_rate = 11025
+    span = max(sample, scan_end - scan_start + sample)
+    pcm = _extract_segment_audio_pcm(
+        video_path,
+        scan_start,
+        span,
+        sample_rate=sample_rate,
+    )
+    rows: list[dict[str, Any]] = []
+    t = scan_start
+    while t + sample <= scan_end + 1e-6:
+        offset = max(0, int(round((t - scan_start) * sample_rate)))
+        count = max(1, int(round(sample * sample_rate)))
+        gun, burst, rms = _score_pcm(pcm[offset : offset + count])
+        score = min(1.0, gun / 0.065) * 0.65
+        score += min(1.0, burst / 6.0) * 0.25
+        score += min(1.0, rms / 0.050) * 0.10
+        rows.append(
+            {
+                "start": round(t, 2),
+                "score": round(min(1.0, score), 4),
+                "gun": round(float(gun), 4),
+                "burst": round(float(burst), 3),
+                "rms": round(float(rms), 4),
+            }
+        )
+        t += step
+    return rows
+
+
 def _activity_score(video_path: Path, start: float, duration: float) -> tuple[float, dict]:
+    """Compatibility helper for focused tests/tools."""
     from gameplay_gate import score_pubg_gunfire_audio
-    from highlight_scorer import score_panns_audio
 
     gun, burst, rms = score_pubg_gunfire_audio(video_path, start, duration)
-    panns = score_panns_audio(video_path, start, duration)
-    pmax = float(panns.get("panns_gun_max", 0.0))
-    score = min(1.0, gun / 0.065) * 0.50
-    score += min(1.0, burst / 6.0) * 0.20
-    score += min(1.0, pmax / 0.35) * 0.30
+    score = min(1.0, gun / 0.065) * 0.65
+    score += min(1.0, burst / 6.0) * 0.25
+    score += min(1.0, rms / 0.050) * 0.10
     return min(1.0, score), {
         "gun": round(float(gun), 4),
         "burst": round(float(burst), 3),
         "rms": round(float(rms), 4),
-        "panns": round(pmax, 4),
     }
 
 
@@ -46,13 +108,15 @@ def resolve_pubg_fight_bounds(
     after = float(os.environ.get("PUBG_SEGMENT_SCAN_AFTER", "24"))
     active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
     max_quiet = max(0, int(os.environ.get("PUBG_SEGMENT_MAX_QUIET_BINS", "2")))
-    timeline: list[dict[str, Any]] = []
-    t = max(0.0, float(peak_sec) - before)
+    scan_start = max(0.0, float(peak_sec) - before)
     limit = min(float(file_duration), float(peak_sec) + after)
-    while t + sample <= limit + 1e-6:
-        score, metrics = _activity_score(video_path, t, sample)
-        timeline.append({"start": round(t, 2), "score": round(score, 4), **metrics})
-        t += step
+    timeline = _activity_timeline(
+        video_path,
+        scan_start,
+        limit,
+        step=step,
+        sample=sample,
+    )
 
     if not timeline:
         start = max(0.0, float(peak_sec) - 7.0)
@@ -101,13 +165,20 @@ def resolve_pubg_fight_bounds(
     try:
         from pubg_killfeed_ocr import score_killfeed_segment
 
-        probe = max(start, peak_sec - 3.0)
-        while probe < min(file_duration - 2.0, end + 6.0):
+        probes = sorted(
+            {
+                max(start, peak_sec - 3.0),
+                max(start, peak_sec + 1.0),
+                max(start, end - 4.0),
+            }
+        )
+        for probe in probes:
+            if probe >= file_duration - 2.0:
+                continue
             score, _ = score_killfeed_segment(video_path, probe, 4.0, "pubg")
             if score > kill_score:
                 kill_score = float(score)
                 kill_sec = probe + 2.0
-            probe += 4.0
     except Exception:
         pass
     if kill_sec is not None and kill_score >= 0.20:
