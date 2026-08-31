@@ -700,12 +700,19 @@ def _handle_shooter_vseg_callback(
                 {'callback_query_id': query_id, 'text': '❌ Записано'},
                 timeout=15,
             )
+            from shooter_vod_segment_store import montage_labeled_keyboard_markup, montage_parts_from_segment
+
+            parts = montage_parts_from_segment(game, item_id)
+            if parts:
+                markup = montage_labeled_keyboard_markup(game, parts, reason=reason)
+            else:
+                markup = shooter_markup(game, 'bad', reason=reason)
             api_call(
                 'editMessageReplyMarkup',
                 {
                     'chat_id': chat_id,
                     'message_id': message_id,
-                    'reply_markup': shooter_markup(game, 'bad', reason=reason),
+                    'reply_markup': markup,
                 },
                 timeout=15,
             )
@@ -750,14 +757,22 @@ def _handle_shooter_vseg_callback(
         ok, reply = _shooter_apply_vseg_label(
             game, chat_id, item_id, is_good=is_good, reason=reason
         )
-        from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
-
-        markup = shooter_markup(
-            game,
-            'good' if is_good else 'bad',
-            reason=reason,
-            segment_id=item_id if is_good else '',
+        from shooter_vod_segment_store import (
+            labeled_keyboard_markup as shooter_markup,
+            montage_labeled_keyboard_markup,
+            montage_parts_from_segment,
         )
+
+        parts = montage_parts_from_segment(game, item_id)
+        if parts:
+            markup = montage_labeled_keyboard_markup(game, parts, reason=reason)
+        else:
+            markup = shooter_markup(
+                game,
+                'good' if is_good else 'bad',
+                reason=reason,
+                segment_id=item_id if is_good else '',
+            )
         alert = '✅ Ок' if is_good else '❌ Не ок'
         if not ok:
             api_call(

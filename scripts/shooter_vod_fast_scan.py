@@ -191,6 +191,13 @@ def discover_montage_gun_peaks(
     if not offsets:
         return [], "dense_probe_too_short"
 
+    try:
+        from panns_audio_cache import prewarm_grid
+
+        prewarm_grid(video_path, offsets, WINDOW_SEC)
+    except Exception:
+        pass
+
     log.info(
         "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
         video_path.name,

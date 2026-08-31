@@ -31,6 +31,7 @@ from pubg_combat_gate import pubg_passes_combat_gate
 from pubg_metro_royale_gate import title_metro_hint
 from shooter_vod_segment_store import (
     keyboard,
+    keyboard_for_parts,
     labeled_ids,
     load_feed_sent,
     load_index,
@@ -1156,9 +1157,10 @@ def _send_montage(
             caption = (
                 f"{game.upper()} склейка ×{len(accepted_rows)} · {final_dur:.0f}s\n"
                 f"{vod_youtube_id(vod)} peaks {peaks}\n"
-                f"👍 Ок / 👎 Не ок"
+                f"Оцените каждый фрагмент 👍/👎"
             )
             primary_sid = accepted_rows[0]["segment_id"]
+            part_markup = keyboard_for_parts(game, accepted_rows)
             sent_ok = send_video(
                 token,
                 chat_id,
@@ -1166,7 +1168,7 @@ def _send_montage(
                 caption,
                 seg_id=primary_sid,
                 record_learning=False,
-                reply_markup=keyboard(game, primary_sid),
+                reply_markup=part_markup,
                 cycle_game=game,
             )
             if not sent_ok:
@@ -1178,7 +1180,7 @@ def _send_montage(
                     caption,
                     seg_id=primary_sid,
                     record_learning=False,
-                    reply_markup=keyboard(game, primary_sid),
+                    reply_markup=part_markup,
                     cycle_game=game,
                 )
             if not sent_ok:
@@ -1813,6 +1815,16 @@ def _scan_vod_with_adaptive(
                         len(owner_peaks),
                         owner_peaks[:6],
                     )
+                if game == "pubg" and dense_peaks:
+                    from pubg_killfeed_ocr import rank_peaks_by_killfeed
+
+                    dense_peaks, kf_reason = rank_peaks_by_killfeed(
+                        vod,
+                        dense_peaks,
+                        _profile(game),
+                        part_sec=part_max,
+                    )
+                    dense_reason = f"{dense_reason} {kf_reason}"
                 log.info(
                     "fast-montage probe vod=%s reason=%s peaks=%s",
                     vod.name,
