@@ -37,11 +37,13 @@ def run_child(
     step_sec: float,
     window_sec: float,
     max_quality: int,
+    limit_sec: float,
 ) -> dict:
     from highlight_scorer import score_panns_audio
     from pubg_quality_score import score_pubg_window
 
-    duration = _duration(vod)
+    source_duration = _duration(vod)
+    duration = min(source_duration, limit_sec) if limit_sec > 0 else source_duration
     offsets = _offsets(duration, step_sec, window_sec)
     started = time.monotonic()
 
@@ -80,6 +82,7 @@ def run_child(
         "workers": workers,
         "vod": str(vod),
         "duration_sec": round(duration, 2),
+        "source_duration_sec": round(source_duration, 2),
         "probe_step_sec": step_sec,
         "probe_windows": len(offsets),
         "panns_candidates": len(candidates),
@@ -122,6 +125,8 @@ def run_parent(args: argparse.Namespace) -> dict:
                 str(args.window_sec),
                 "--max-quality",
                 str(args.max_quality),
+                "--limit-sec",
+                str(args.limit_sec),
             ]
             proc = subprocess.run(
                 command,
@@ -163,6 +168,7 @@ def main() -> int:
     parser.add_argument("--step-sec", type=float, default=60.0)
     parser.add_argument("--window-sec", type=float, default=8.0)
     parser.add_argument("--max-quality", type=int, default=16)
+    parser.add_argument("--limit-sec", type=float, default=5400.0)
     parser.add_argument("--timeout-sec", type=int, default=7200)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
@@ -175,6 +181,7 @@ def main() -> int:
             step_sec=max(5.0, args.step_sec),
             window_sec=max(2.0, args.window_sec),
             max_quality=max(1, args.max_quality),
+            limit_sec=max(0.0, args.limit_sec),
         )
     else:
         report = run_parent(args)
