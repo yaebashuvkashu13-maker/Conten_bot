@@ -169,6 +169,7 @@ def resolve_pubg_fight_bounds(
             {
                 max(start, peak_sec - 3.0),
                 max(start, peak_sec + 1.0),
+                max(start, peak_sec + 5.0),
                 max(start, end - 4.0),
             }
         )
