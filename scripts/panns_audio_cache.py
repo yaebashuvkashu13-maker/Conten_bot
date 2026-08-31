@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,19 @@ def prewarm_grid(path: Path, offsets: list[float], window_sec: float) -> int:
     """Ensure every probe window is cached (one ffmpeg+PANN pass per offset)."""
     from highlight_scorer import score_panns_audio
 
-    for t in offsets:
-        score_panns_audio(path, t, window_sec)
+    workers = max(
+        1,
+        int(
+            os.environ.get(
+                "PANN_PREWARM_WORKERS",
+                os.environ.get("HIGHLIGHT_PARALLEL_WORKERS", "1"),
+            )
+        ),
+    )
+    if workers == 1 or len(offsets) < 2:
+        for t in offsets:
+            score_panns_audio(path, t, window_sec)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(offsets))) as pool:
+            list(pool.map(lambda t: score_panns_audio(path, t, window_sec), offsets))
     return len(offsets)

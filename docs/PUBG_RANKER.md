@@ -21,5 +21,11 @@ python3 scripts/benchmark_panns_workers.py \
   --workers 1 2 4 --limit-sec 5400
 ```
 
+Server benchmark on `n97cHIR9Qow` (first 5400 seconds, 88 windows):
+
+- 1 worker: `0.1852` accepted clips / wall-clock minute;
+- 2 workers: `0.1879`;
+- 4 workers: `0.2270` (selected, about 23% above one worker).
+
 `data/pubg_regression_labels.json` is immutable. Online owner feedback may
 override old labels for training, but must not rewrite the regression set.

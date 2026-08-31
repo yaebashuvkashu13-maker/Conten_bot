@@ -69,6 +69,17 @@ def test_panns_audio_cache_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert hit["panns_gun_max"] == pytest.approx(0.42)
 
 
+def test_panns_prewarm_uses_all_offsets(monkeypatch: pytest.MonkeyPatch) -> None:
+    from panns_audio_cache import prewarm_grid
+    from unittest.mock import patch
+
+    monkeypatch.setenv("PANN_PREWARM_WORKERS", "4")
+    offsets = [10.0, 20.0, 30.0, 40.0]
+    with patch("highlight_scorer.score_panns_audio", return_value={}) as scorer:
+        assert prewarm_grid(Path("/tmp/vod.mp4"), offsets, 8.0) == 4
+    assert sorted(call.args[1] for call in scorer.call_args_list) == offsets
+
+
 def test_killfeed_rank_preserves_all_peaks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_KILLFEED_RANK", "1")
 
