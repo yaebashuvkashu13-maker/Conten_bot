@@ -99,7 +99,15 @@ def benchmark_vod(
     accepted: list[float] = []
     quality: list[dict] = []
     duration = float(ffprobe_duration(vod))
-    for peak in ranked:
+    good = [float(row["time_sec"]) for row in rows if row.get("label") == "good"]
+    bad = [float(row["time_sec"]) for row in rows if row.get("label") == "bad"]
+    targets = good + bad
+    quality_peaks = [
+        peak
+        for index, peak in enumerate(ranked)
+        if index < 10 or any(abs(float(peak) - target) <= tolerance for target in targets)
+    ]
+    for peak in quality_peaks:
         start, clip_duration, segment_report = resolve_pubg_fight_bounds(
             vod,
             float(peak),
@@ -120,8 +128,6 @@ def benchmark_vod(
         if ok:
             accepted.append(float(peak))
 
-    good = [float(row["time_sec"]) for row in rows if row.get("label") == "good"]
-    bad = [float(row["time_sec"]) for row in rows if row.get("label") == "bad"]
     good_generator_hits = sum(_nearest(peaks, target, tolerance) is not None for target in good)
     good_top10_hits = sum(_nearest(ranked[:10], target, tolerance) is not None for target in good)
     good_accepted_hits = sum(_nearest(accepted, target, tolerance) is not None for target in good)
