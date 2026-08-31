@@ -37,15 +37,11 @@ def score_pubg_window(
     duration_sec: float,
 ) -> tuple[bool, str, dict[str, Any]]:
     """Return acceptance, reason and complete feature/penalty report."""
-    from gameplay_gate import (
-        segment_is_valid_for_montage,
-        segment_looks_like_pubg_loot_or_walk,
-    )
     from highlight_scorer import score_panns_audio
     from pubg_combat_gate import _pubg_scan_training_ui, pubg_combat_visual_strict
     from pubg_killfeed_ocr import score_killfeed_segment
     from pubg_shooting_gate import pubg_probe_segment
-    from shooter_author_kill_gate import author_kill_window_ok
+    from shooter_author_kill_gate import detect_author_death_signals
 
     report: dict[str, Any] = {
         "start": round(float(start_sec), 3),
@@ -55,12 +51,6 @@ def score_pubg_window(
     if _owner_bad(video_path, start_sec, duration_sec):
         report["hard_reject"] = "owner_bad_window"
         return False, "hard_owner_bad_window", report
-
-    training, training_text = _pubg_scan_training_ui(video_path, start_sec, duration_sec)
-    if training:
-        report["training_ui"] = training_text
-        report["hard_reject"] = "training_ui"
-        return False, f"hard_training_ui={training_text}", report
 
     shoot = pubg_probe_segment(video_path, start_sec, duration_sec)
     report.update(shoot)
@@ -73,24 +63,14 @@ def score_pubg_window(
     motion = float(shoot.get("center_motion", 0.0))
     panns_gun = float(panns.get("panns_gun_max", 0.0))
 
-    crop = tuple(shoot["crop_box"]) if shoot.get("crop_box") else None
-    if crop is not None:
-        crop = tuple(int(value) for value in crop)
-    loot_walk = segment_looks_like_pubg_loot_or_walk(
-        video_path,
-        start_sec,
-        duration_sec,
-        crop_box=crop,
-        gunfire_density=gun,
+    center_text = float(shoot.get("center_text", 0.0))
+    loot_walk = (
+        (motion >= 0.030 and gun < 0.040)
+        or (motion < 0.014 and gun < 0.028)
+        or (center_text > 0.14 and gun < 0.040)
     )
-    gate_ok, gate_reason = segment_is_valid_for_montage(
-        video_path,
-        start_sec,
-        duration_sec,
-        profile="pubg",
-        crop_box=crop,
-        min_gunfire=0.0,
-    )
+    gate_ok = not loot_walk
+    gate_reason = "loot_walk" if loot_walk else "score_features_ok"
     report["loot_walk"] = bool(loot_walk)
     report["legacy_gate_ok"] = bool(gate_ok)
     report["legacy_gate_reason"] = gate_reason
@@ -114,16 +94,38 @@ def score_pubg_window(
     report["killfeed_density"] = round(float(killfeed), 4)
     report["killfeed"] = killfeed_row
 
-    author_ok, author_reason, author = author_kill_window_ok(
-        video_path,
-        start_sec,
-        duration_sec,
-        profile="pubg",
-        shoot_metrics=shoot,
+    best_flash = float(visual.get("best_hit_flash", 0.0))
+    best_weapon = float(visual.get("best_weapon_edge", 0.0))
+    has_kill = (
+        float(killfeed) >= 0.20
+        or best_flash >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004"))
+        or (
+            best_weapon >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_WEAPON_EDGE", "0.030"))
+            and gun >= 0.055
+            and motion >= 0.030
+        )
     )
-    has_kill = bool(author.get("has_author_kill"))
-    author_death = bool(author.get("author_death"))
-    report["author_ok"] = author_ok
+    author_death = False
+    author_reason = "author_kill_signal" if has_kill else "no_author_kill"
+    author: dict[str, Any] = {
+        "has_author_kill": has_kill,
+        "author_death": False,
+        "killfeed_density": float(killfeed),
+        "hit_flash": best_flash,
+        "weapon_edge": best_weapon,
+    }
+    # Death OCR is expensive. Run it only when no positive payoff signal exists.
+    if not has_kill:
+        author_death, death_reason, death_metrics = detect_author_death_signals(
+            video_path,
+            start_sec,
+            duration_sec,
+        )
+        author["author_death"] = author_death
+        author["death_metrics"] = death_metrics
+        if author_death:
+            author_reason = death_reason or "author_death"
+    report["author_ok"] = has_kill or not author_death
     report["author_reason"] = author_reason
     report["author"] = author
     if author_death and not has_kill:
@@ -134,10 +136,14 @@ def score_pubg_window(
     if gun < 0.010 and panns_gun < 0.08 and rms < 0.012:
         report["hard_reject"] = "no_action"
         return False, "hard_no_action", report
-    hard_gate_tokens = ("talk_menu", "draft", "queue", "loading", "owner_bad_window")
-    if any(token in str(gate_reason) for token in hard_gate_tokens):
-        report["hard_reject"] = str(gate_reason)
-        return False, f"hard_{gate_reason}", report
+    # OCR training/menu detection is reserved for suspicious text-heavy,
+    # low-action windows instead of adding three OCR reads to every candidate.
+    if center_text > 0.18 and gun < 0.030 and panns_gun < 0.18:
+        training, training_text = _pubg_scan_training_ui(video_path, start_sec, duration_sec)
+        if training:
+            report["training_ui"] = training_text
+            report["hard_reject"] = "training_ui"
+            return False, f"hard_training_ui={training_text}", report
 
     components = {
         "panns": _clip(panns_gun / 0.45) * 0.20,
