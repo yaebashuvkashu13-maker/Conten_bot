@@ -362,10 +362,16 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
         _MODEL_CACHE = None
     finally:
         tmp_path.unlink(missing_ok=True)
-    return {key: value for key, value in artifact.items() if key != "model"} | {
+    report = {key: value for key, value in artifact.items() if key != "model"} | {
         "status": "trained",
         "path": str(output),
     }
+    report_path = output.with_suffix(".json")
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return report
 
 
 def _load_artifact() -> dict | None:
