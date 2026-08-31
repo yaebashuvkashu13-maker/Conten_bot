@@ -15,6 +15,7 @@ import numpy as np
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 log = logging.getLogger("shooter_vod_fast_scan")
+AUDIO_GENERATOR_VERSION = 2
 
 
 def candidate_pool_target(min_clips: int = 2) -> int:
@@ -25,7 +26,11 @@ def candidate_pool_target(min_clips: int = 2) -> int:
 
 def _audio_candidate_cache_file(video_path: Path) -> Path:
     stat = video_path.stat()
-    raw = f"v1|{video_path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+    raw = (
+        f"v{AUDIO_GENERATOR_VERSION}|{video_path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|"
+        f"{os.environ.get('SHOOTER_VOD_AUDIO_CANDIDATE_MAX', '96')}|"
+        f"{os.environ.get('SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC', '10')}"
+    )
     key = hashlib.sha256(raw.encode()).hexdigest()[:32]
     root = Path(
         os.environ.get(
@@ -92,7 +97,7 @@ def discover_audio_candidate_offsets(
     cache_file = _audio_candidate_cache_file(video_path)
     try:
         cached = json.loads(cache_file.read_text(encoding="utf-8"))
-        if cached.get("version") == 1:
+        if cached.get("version") == AUDIO_GENERATOR_VERSION:
             return [float(value) for value in cached.get("peaks") or []]
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         pass
@@ -139,7 +144,10 @@ def discover_audio_candidate_offsets(
     )
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_file.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"version": 1, "peaks": peaks}), encoding="utf-8")
+    tmp.write_text(
+        json.dumps({"version": AUDIO_GENERATOR_VERSION, "peaks": peaks}),
+        encoding="utf-8",
+    )
     os.replace(tmp, cache_file)
     return peaks
 
