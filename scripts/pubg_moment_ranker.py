@@ -92,6 +92,7 @@ def resolve_vod(video_id: str, *, hinted_path: str = "") -> Path | None:
             Path("/root/data/pubg/youtube_nightly/inbox") / f"yt_{video_id}.mp4",
             Path("/root/data/pubg/youtube_nightly/parked") / f"yt_{video_id}.mp4",
             Path("/root/data/pubg/youtube_nightly/park_timeout") / f"yt_{video_id}.mp4",
+            Path("/root/data/pubg/regression_vods") / f"yt_{video_id}.mp4",
             _repo_root() / "data" / "samples" / f"yt_{video_id}.mp4",
         ]
     )
