@@ -157,6 +157,8 @@ def collect_candidates(
     for cache_root in [data_root / "vod_analysis_cache", *data_root.glob("*/analysis_cache")]:
         for path in _iter_files(cache_root):
             add(path, 6, "expired_analysis_cache", min_age_sec=14 * 86400)
+    for path in _iter_files(data_root / "pubg" / "ranker_features"):
+        add(path, 7, "expired_ranker_feature", min_age_sec=30 * 86400)
 
     # In PUBG-only operation, old VOD stores for other games are redownloadable.
     for game in GAMES:
