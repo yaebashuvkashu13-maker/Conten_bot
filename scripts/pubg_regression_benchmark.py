@@ -72,30 +72,49 @@ def benchmark_vod(
     tolerance: float,
 ) -> dict:
     from shooter_vod_fast_scan import discover_montage_gun_peaks
+    from smart_video_editor import ffprobe_duration
+    from pubg_fight_segment import resolve_pubg_fight_bounds
     from pubg_quality_score import score_pubg_window
+    from vod_quality import dense_probe_passes
 
     os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
     os.environ["PUBG_OWNER_ANCHORS"] = "0"
     os.environ["PUBG_OWNER_BAD_HARD_REJECT"] = "0"
-    peaks, generator_reason = discover_montage_gun_peaks(
-        vod,
-        "pubg",
-        min_clips=2,
-        gap_sec=float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55")),
-        probe_pass=0,
-    )
+    peaks: list[float] = []
+    generator_reasons: list[str] = []
+    for probe_pass in range(dense_probe_passes()):
+        pass_peaks, pass_reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55")),
+            probe_pass=probe_pass,
+        )
+        generator_reasons.append(pass_reason)
+        for peak in pass_peaks:
+            if not any(abs(float(peak) - old) <= 4.0 for old in peaks):
+                peaks.append(float(peak))
+    generator_reason = " | ".join(generator_reasons)
     ranked, ranker_reason = rank_peaks_with_model(vod, peaks, part_sec=14.0)
     accepted: list[float] = []
     quality: list[dict] = []
+    duration = float(ffprobe_duration(vod))
     for peak in ranked:
-        start = max(0.0, float(peak) - 7.0)
-        ok, reason, report = score_pubg_window(vod, start, 14.0)
+        start, clip_duration, segment_report = resolve_pubg_fight_bounds(
+            vod,
+            float(peak),
+            file_duration=duration,
+        )
+        ok, reason, report = score_pubg_window(vod, start, clip_duration)
         quality.append(
             {
                 "peak": round(float(peak), 2),
+                "start": start,
+                "duration": clip_duration,
                 "accepted": ok,
                 "reason": reason,
                 "score": report.get("quality_score"),
+                "segmenter": segment_report,
             }
         )
         if ok:
