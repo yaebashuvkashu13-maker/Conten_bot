@@ -186,7 +186,7 @@ def score_pubg_window(
         )
     except Exception:
         ranker_score = None
-    blend = float(os.environ.get("PUBG_QUALITY_RANKER_WEIGHT", "0.30"))
+    blend = float(os.environ.get("PUBG_QUALITY_RANKER_WEIGHT", "0.50"))
     quality = heuristic
     if ranker_score is not None:
         quality = _clip(heuristic * (1.0 - blend) + float(ranker_score) * blend)
