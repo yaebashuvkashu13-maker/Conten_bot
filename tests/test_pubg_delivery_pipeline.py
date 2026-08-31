@@ -29,6 +29,7 @@ def test_montage_part_skips_metro_segment_gate(monkeypatch: pytest.MonkeyPatch) 
     from unittest.mock import patch
 
     monkeypatch.setenv("PUBG_METRO_GATE", "1")
+    monkeypatch.setenv("PUBG_PRESEND_SCORE_MODE", "0")
     monkeypatch.delenv("PUBG_METRO_SEGMENT_TRUST_VOD", raising=False)
     vod = Path("/tmp/fake.mp4")
     rendered = Path("/tmp/out.mp4")
@@ -131,6 +132,7 @@ def test_final_gate_reports_only_failing_candidate(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
     monkeypatch.setenv("PUBG_METRO_GATE", "0")
+    monkeypatch.setenv("PUBG_PRESEND_SCORE_MODE", "0")
     rows = [
         {"segment_id": "vod_100", "start": 93.0, "peak_start": 100.0, "clip": {"output_duration": 14}},
         {"segment_id": "vod_200", "start": 193.0, "peak_start": 200.0, "clip": {"output_duration": 14}},
