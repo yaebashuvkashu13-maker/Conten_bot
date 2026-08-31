@@ -27,6 +27,7 @@ FEATURE_NAMES = (
     "center_motion",
     "killfeed_density",
 )
+_MODEL_CACHE: tuple[str, int, dict] | None = None
 
 
 def _repo_root() -> Path:
@@ -234,6 +235,7 @@ def _best_threshold(y_true: list[int], probabilities: list[float]) -> float:
 
 
 def train(*, if_changed: bool = False) -> dict[str, Any]:
+    global _MODEL_CACHE
     import joblib
     import numpy as np
     from sklearn.linear_model import LogisticRegression
@@ -243,7 +245,21 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
     from sklearn.preprocessing import StandardScaler
 
     output = model_path()
-    signature = training_signature()
+    samples = load_training_samples()
+    sample_state = [
+        (
+            row.video_id,
+            round(row.peak_sec, 2),
+            row.label,
+            row.source,
+            row.video_path.stat().st_size,
+            row.video_path.stat().st_mtime_ns,
+        )
+        for row in samples
+    ]
+    signature = hashlib.sha256(
+        f"{training_signature()}|{sample_state}".encode()
+    ).hexdigest()
     if if_changed and output.exists():
         try:
             old = joblib.load(output)
@@ -252,7 +268,6 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
         except Exception:
             pass
 
-    samples = load_training_samples()
     positives = sum(row.label for row in samples)
     negatives = len(samples) - positives
     if len(samples) < 12 or positives < 4 or negatives < 4:
@@ -323,6 +338,7 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
     try:
         joblib.dump(artifact, tmp_path)
         os.replace(tmp_path, output)
+        _MODEL_CACHE = None
     finally:
         tmp_path.unlink(missing_ok=True)
     return {key: value for key, value in artifact.items() if key != "model"} | {
@@ -332,9 +348,16 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
 
 
 def _load_artifact() -> dict | None:
+    global _MODEL_CACHE
     path = model_path()
     if not path.is_file():
         return None
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        return None
+    if _MODEL_CACHE and _MODEL_CACHE[:2] == (str(path), mtime_ns):
+        return _MODEL_CACHE[2]
     try:
         import joblib
 
@@ -343,6 +366,7 @@ def _load_artifact() -> dict | None:
         return None
     if tuple(artifact.get("feature_names") or ()) != FEATURE_NAMES:
         return None
+    _MODEL_CACHE = (str(path), mtime_ns, artifact)
     return artifact
 
 
