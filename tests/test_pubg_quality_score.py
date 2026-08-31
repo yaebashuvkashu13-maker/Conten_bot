@@ -44,7 +44,10 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
             return_value=(
                 True,
                 "ok",
-                {"best_hit_flash": 0.005 if author_kill else 0.0, "best_weapon_edge": 0.04},
+                {
+                    "best_hit_flash": 0.005 if author_kill else 0.0,
+                    "best_weapon_edge": 0.04 if author_kill else 0.0,
+                },
             ),
         ),
         patch(
