@@ -126,6 +126,51 @@ def test_fast_probe_miss_falls_through_to_dense_montage(
     assert _dense_on_fast_probe_miss("pubg") is False
 
 
+def test_prepare_pubg_clip_uses_fight_segmenter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_segment_feed import _prepare_montage_clip  # noqa: E402
+    from unittest.mock import patch
+
+    monkeypatch.setenv("PUBG_FIGHT_SEGMENTER", "1")
+    row = {"start": 93.0, "peak_start": 100.0, "clip": {}}
+    with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=300.0), patch(
+        "pubg_fight_segment.resolve_pubg_fight_bounds",
+        return_value=(88.0, 21.0, {"segmenter": "pubg_fight_v1"}),
+    ):
+        clip = _prepare_montage_clip(
+            row,
+            Path("/tmp/vod.mp4"),
+            part_max=28.0,
+            game="pubg",
+        )
+    assert clip["start"] == 88.0
+    assert clip["input_duration"] == 21.0
+    assert clip["segment_report"]["segmenter"] == "pubg_fight_v1"
+
+
+def test_pubg_presend_uses_score_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_segment_feed import _validate_shooter_presend  # noqa: E402
+    from unittest.mock import patch
+
+    monkeypatch.setenv("PUBG_PRESEND_SCORE_MODE", "1")
+    monkeypatch.setenv("PUBG_METRO_GATE", "0")
+    row = {"start": 90.0, "clip": {"start": 90.0, "input_duration": 20.0}}
+    with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=20.0), patch(
+        "pubg_quality_score.score_pubg_window",
+        return_value=(True, "quality_ok=0.7", {"quality_score": 0.7}),
+    ) as scorer:
+        ok, reason, report = _validate_shooter_presend(
+            "pubg",
+            Path("/tmp/vod.mp4"),
+            row,
+            Path("/tmp/rendered.mp4"),
+            montage_part=True,
+        )
+    scorer.assert_called_once()
+    assert ok is True
+    assert reason == "quality_ok=0.7"
+    assert report["quality_score"] == 0.7
+
+
 def test_final_gate_reports_only_failing_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     from shooter_vod_segment_feed import _validate_montage_final  # noqa: E402
     from unittest.mock import patch
