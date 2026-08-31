@@ -185,23 +185,22 @@ def load_training_samples() -> list[TrainingSample]:
             )
 
     feedback = _read_json(feedback_path())
-    rows = list(feedback.get("good") or []) + list(feedback.get("bad") or [])
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        sid = str(row.get("segment_id") or "")
-        video_id = str(row.get("vod_id") or "")
-        if not video_id and "_" in sid:
-            video_id = sid.rsplit("_", 1)[0]
-        hinted = str(row.get("vod") or "")
-        vod = resolve_vod(video_id, hinted_path=hinted)
-        if not video_id or not vod:
-            continue
-        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-        label = 1 if row in (feedback.get("good") or []) else 0
-        samples[(video_id, round(peak))] = TrainingSample(
-            video_id, vod, peak, label, "part_feedback", 1.0
-        )
+    for bucket, label in (("good", 1), ("bad", 0)):
+        for row in feedback.get(bucket) or []:
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("segment_id") or "")
+            video_id = str(row.get("vod_id") or "")
+            if not video_id and "_" in sid:
+                video_id = sid.rsplit("_", 1)[0]
+            hinted = str(row.get("vod") or "")
+            vod = resolve_vod(video_id, hinted_path=hinted)
+            if not video_id or not vod:
+                continue
+            peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+            samples[(video_id, round(peak))] = TrainingSample(
+                video_id, vod, peak, label, "part_feedback", 1.0
+            )
     return sorted(samples.values(), key=lambda row: (row.video_id, row.peak_sec))
 
 

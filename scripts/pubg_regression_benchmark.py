@@ -12,12 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pubg_moment_ranker import owner_labels_path, rank_peaks_with_model
+from pubg_moment_ranker import rank_peaks_with_model
 
 
-def _labels() -> dict[str, list[dict]]:
+def _labels(path: Path) -> dict[str, list[dict]]:
     try:
-        data = json.loads(owner_labels_path().read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     videos = data.get("videos")
@@ -76,6 +76,7 @@ def benchmark_vod(
 
     os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
     os.environ["PUBG_OWNER_ANCHORS"] = "0"
+    os.environ["PUBG_OWNER_BAD_HARD_REJECT"] = "0"
     peaks, generator_reason = discover_montage_gun_peaks(
         vod,
         "pubg",
@@ -150,6 +151,16 @@ def aggregate(rows: list[dict]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--vod-root", type=Path, default=Path("/root/data/pubg/regression_vods"))
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "PUBG_REGRESSION_LABELS",
+                str(Path(__file__).resolve().parent.parent / "data" / "pubg_regression_labels.json"),
+            )
+        ),
+    )
     parser.add_argument("--restore-missing", action="store_true")
     parser.add_argument("--tolerance-sec", type=float, default=30.0)
     parser.add_argument("--output", type=Path, default=Path("/root/data/pubg/regression_report.json"))
@@ -157,7 +168,7 @@ def main() -> int:
     parser.add_argument("--max-recall-drop", type=float, default=0.05)
     args = parser.parse_args()
 
-    labels = _labels()
+    labels = _labels(args.labels)
     if args.restore_missing:
         restore_report = restore_missing(list(labels), args.vod_root)
     else:
@@ -183,7 +194,7 @@ def main() -> int:
         "benchmark": "pubg_owner_regression_v1",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "elapsed_sec": round(time.monotonic() - started, 2),
-        "labels_file": str(owner_labels_path()),
+        "labels_file": str(args.labels),
         "expected_labels": sum(len(rows) for rows in labels.values()),
         "missing_vods": missing,
         "restore": restore_report,

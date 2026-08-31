@@ -13,6 +13,8 @@ def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
 
 
 def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
+    if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
+        return False
     try:
         from pubg_owner_calibration import segment_overlaps_owner_label
 
