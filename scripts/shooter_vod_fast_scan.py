@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import hashlib
+import subprocess
 from pathlib import Path
+
+import numpy as np
 
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
@@ -16,6 +21,127 @@ def candidate_pool_target(min_clips: int = 2) -> int:
     """Keep enough ranked moments to survive strict presend false positives."""
     raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     return max(10, int(raw), int(min_clips) * 4)
+
+
+def _audio_candidate_cache_file(video_path: Path) -> Path:
+    stat = video_path.stat()
+    raw = f"v1|{video_path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+    key = hashlib.sha256(raw.encode()).hexdigest()[:32]
+    root = Path(
+        os.environ.get(
+            "PUBG_AUDIO_CANDIDATE_CACHE",
+            "/root/data/pubg/audio_candidate_cache",
+        )
+    )
+    return root / f"{key}.json"
+
+
+def _rank_audio_windows(
+    pcm: np.ndarray,
+    *,
+    sample_rate: int,
+    base_sec: float,
+    window_sec: float = 4.0,
+    step_sec: float = 2.0,
+    max_candidates: int = 96,
+    gap_sec: float = 10.0,
+) -> list[float]:
+    """Rank gun-transient windows from one decoded PCM stream."""
+    if pcm.size < sample_rate * window_sec:
+        return []
+    samples = pcm.astype(np.float32) / 32768.0
+    frame = 256
+    usable = (len(samples) // frame) * frame
+    energies = np.sqrt(np.mean(samples[:usable].reshape(-1, frame) ** 2, axis=1))
+    frames_per_window = max(8, int(window_sec * sample_rate / frame))
+    frames_per_step = max(1, int(step_sec * sample_rate / frame))
+    scored: list[tuple[float, float]] = []
+    for offset in range(0, max(0, len(energies) - frames_per_window), frames_per_step):
+        values = energies[offset : offset + frames_per_window]
+        median = float(np.median(values))
+        mean = float(np.mean(values))
+        peak = float(np.max(values))
+        floor = max(median * 2.6, 0.010)
+        spikes = np.count_nonzero(
+            (values[1:] > floor) & (values[1:] > values[:-1] * 1.55)
+        )
+        density = float(spikes) / max(len(values) - 1, 1)
+        burst = peak / max(mean, 1e-6)
+        score = density * 4.0 + min(12.0, burst) * 0.012 + min(0.10, mean)
+        if density >= 0.012 or (burst >= 4.0 and peak >= 0.025):
+            center = base_sec + (offset * frame / sample_rate) + window_sec * 0.5
+            scored.append((score, center))
+    scored.sort(key=lambda row: -row[0])
+    picked: list[float] = []
+    for _score, center in scored:
+        if any(abs(center - old) < gap_sec for old in picked):
+            continue
+        picked.append(round(center, 1))
+        if len(picked) >= max_candidates:
+            break
+    return picked
+
+
+def discover_audio_candidate_offsets(
+    video_path: Path,
+    *,
+    duration: float,
+    skip_intro: float,
+) -> list[float]:
+    """Decode audio once and return high-recall transient candidates."""
+    cache_file = _audio_candidate_cache_file(video_path)
+    try:
+        cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        if cached.get("version") == 1:
+            return [float(value) for value in cached.get("peaks") or []]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    sample_rate = 11025
+    scan_duration = max(0.0, float(duration) - float(skip_intro) - 5.0)
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-hwaccel",
+        "none",
+        "-ss",
+        f"{skip_intro:.3f}",
+        "-t",
+        f"{scan_duration:.3f}",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "s16le",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(command, capture_output=True, timeout=900, check=False)
+    except subprocess.TimeoutExpired:
+        return []
+    if proc.returncode != 0 or not proc.stdout:
+        return []
+    pcm = np.frombuffer(proc.stdout, dtype=np.int16)
+    peaks = _rank_audio_windows(
+        pcm,
+        sample_rate=sample_rate,
+        base_sec=skip_intro,
+        max_candidates=max(
+            candidate_pool_target() * 3,
+            int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "96")),
+        ),
+        gap_sec=float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "10")),
+    )
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_file.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"version": 1, "peaks": peaks}), encoding="utf-8")
+    os.replace(tmp, cache_file)
+    return peaks
 
 
 def _skip_intro_sec(profile: str, *, duration: float | None = None) -> float:
@@ -201,7 +327,18 @@ def discover_montage_gun_peaks(
     skip = _skip_intro_sec(profile, duration=dur)
     gun_min = float(os.environ.get("SHOOTER_VOD_DENSE_PANN_MIN", "0.16"))
     dens_min = float(os.environ.get("SHOOTER_VOD_DENSE_GUN_MIN", "0.045"))
-    offsets = _dense_offsets(dur, skip_intro=skip, probe_pass=probe_pass)
+    audio_generator = (
+        profile == "pubg" and os.environ.get("SHOOTER_VOD_AUDIO_GENERATOR", "1") == "1"
+    )
+    if audio_generator:
+        audio_centers = discover_audio_candidate_offsets(
+            video_path,
+            duration=dur,
+            skip_intro=skip,
+        )
+        offsets = [max(0.0, center - WINDOW_SEC * 0.5) for center in audio_centers]
+    else:
+        offsets = _dense_offsets(dur, skip_intro=skip, probe_pass=probe_pass)
     if not offsets:
         return [], "dense_probe_too_short"
 
@@ -304,7 +441,8 @@ def discover_montage_gun_peaks(
     # Chronological reorder happens only after parts are accepted for xfade.
     top = scored[0][0] if scored else 0.0
     reason = (
-        f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
+        f"{'audio_generator' if audio_generator else 'dense_panns'} "
+        f"hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
         f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f} pass={probe_pass}"
     )
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])

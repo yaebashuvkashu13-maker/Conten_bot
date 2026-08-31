@@ -96,6 +96,7 @@ def test_dense_offsets_have_unique_third_pass(monkeypatch) -> None:
 
 
 def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
     vod = tmp_path / "yt_test.mp4"
@@ -122,6 +123,7 @@ def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> N
 
 
 def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
     vod = tmp_path / "yt_test.mp4"
@@ -174,3 +176,25 @@ def test_snap_peak_runs_panns_once(monkeypatch, tmp_path: Path) -> None:
     assert density == 0.10
     assert pmax == 0.4
     assert center >= 100
+
+
+def test_audio_generator_finds_transients_across_timeline() -> None:
+    from shooter_vod_fast_scan import _rank_audio_windows
+    import numpy as np
+
+    sample_rate = 1000
+    pcm = np.zeros(sample_rate * 60, dtype=np.int16)
+    for second in (10, 30, 50):
+        start = second * sample_rate
+        pcm[start : start + 80] = 30000
+        pcm[start + 300 : start + 360] = -28000
+    peaks = _rank_audio_windows(
+        pcm,
+        sample_rate=sample_rate,
+        base_sec=0,
+        max_candidates=10,
+        gap_sec=8,
+    )
+    assert any(abs(peak - 10) <= 4 for peak in peaks)
+    assert any(abs(peak - 30) <= 4 for peak in peaks)
+    assert any(abs(peak - 50) <= 4 for peak in peaks)

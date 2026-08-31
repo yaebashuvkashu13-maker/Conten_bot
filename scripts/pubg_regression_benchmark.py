@@ -82,7 +82,12 @@ def benchmark_vod(
     os.environ["PUBG_OWNER_BAD_HARD_REJECT"] = "0"
     peaks: list[float] = []
     generator_reasons: list[str] = []
-    for probe_pass in range(dense_probe_passes()):
+    passes = (
+        1
+        if os.environ.get("SHOOTER_VOD_AUDIO_GENERATOR", "1") == "1"
+        else dense_probe_passes()
+    )
+    for probe_pass in range(passes):
         pass_peaks, pass_reason = discover_montage_gun_peaks(
             vod,
             "pubg",
