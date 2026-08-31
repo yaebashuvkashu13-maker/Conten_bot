@@ -1978,7 +1978,7 @@ def _scan_vod_with_adaptive(
                         dense_peaks, ranker_reason = rank_peaks_with_model(
                             vod,
                             dense_peaks,
-                            part_sec=part_max,
+                            part_sec=min(14.0, part_max),
                         )
                         dense_reason = f"{dense_reason} {ranker_reason}"
                     except Exception as exc:
