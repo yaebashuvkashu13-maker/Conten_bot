@@ -485,6 +485,16 @@ def _panns_tagger():
 
 
 def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
+    try:
+        from panns_audio_cache import cache_enabled, get_cached, put_cached
+
+        if cache_enabled():
+            hit = get_cached(video_path, start_sec, duration_sec)
+            if hit is not None:
+                return hit
+    except Exception:
+        pass
+
     audio = _extract_audio_32k(video_path, start_sec, duration_sec)
     out = {
         "panns_gunshot": 0.0,
@@ -512,6 +522,13 @@ def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -
         out["panns_explosion"],
         out["panns_artillery"],
     )
+    try:
+        from panns_audio_cache import cache_enabled, put_cached
+
+        if cache_enabled():
+            put_cached(video_path, start_sec, duration_sec, out)
+    except Exception:
+        pass
     return out
 
 

@@ -114,3 +114,39 @@ def score_killfeed_segment(
     density = max(density, full_sc)
     tags = sorted(set(tags + full_hits))
     return density, {"killfeed_text": merged[:160], "killfeed_hits": tags, "killfeed_density": density}
+
+
+def rank_peaks_by_killfeed(
+    video_path: Path,
+    peaks: list[float],
+    profile: str,
+    *,
+    part_sec: float = 14.0,
+    max_probes: int = 12,
+) -> tuple[list[float], str]:
+    """Reorder peak shortlist — killfeed OCR first (cheap, before presend gates)."""
+    if os.environ.get("PUBG_KILLFEED_RANK", "1") != "1":
+        return list(peaks), "killfeed_rank_off"
+    if not peaks:
+        return [], "killfeed_rank_empty"
+    profile = profile.strip().lower()
+    if profile not in ("pubg", "standoff"):
+        return list(peaks), "killfeed_rank_skip_profile"
+
+    cap = max(2, int(os.environ.get("PUBG_KILLFEED_RANK_MAX", str(max_probes))))
+    probe = list(peaks)[:cap]
+    scored: list[tuple[float, float, float]] = []  # killfeed, panns_order, peak
+    for i, peak in enumerate(probe):
+        start = max(0.0, float(peak) - part_sec * 0.5)
+        try:
+            kf, _meta = score_killfeed_segment(video_path, start, part_sec, profile)
+        except Exception:
+            kf = 0.0
+        scored.append((float(kf), -float(i), float(peak)))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    ranked = [p for _kf, _ord, p in scored]
+    tail = [p for p in peaks if p not in ranked]
+    ranked.extend(tail)
+    top_kf = scored[0][0] if scored else 0.0
+    return ranked, f"killfeed_rank top={top_kf:.2f} n={len(probe)}"
