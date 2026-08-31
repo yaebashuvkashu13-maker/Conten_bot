@@ -151,6 +151,13 @@ def collect_candidates(
         for path in _iter_files(nightly / "hq_work"):
             add(path, 1, f"{game}_stale_hq_work", min_age_sec=6 * 3600)
 
+    # Derived analysis is cheap to regenerate and otherwise grows forever.
+    for path in _iter_files(data_root / "panns_audio_cache"):
+        add(path, 5, "expired_panns_cache", min_age_sec=8 * 86400)
+    for cache_root in [data_root / "vod_analysis_cache", *data_root.glob("*/analysis_cache")]:
+        for path in _iter_files(cache_root):
+            add(path, 6, "expired_analysis_cache", min_age_sec=14 * 86400)
+
     # In PUBG-only operation, old VOD stores for other games are redownloadable.
     for game in GAMES:
         nightly = data_root / game / "youtube_nightly"

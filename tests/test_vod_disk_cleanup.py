@@ -84,3 +84,29 @@ def test_cleanup_preserves_open_files(tmp_path: Path) -> None:
         open_paths={opened.resolve()},
     )
     assert opened.resolve() not in {row.path for row in candidates}
+
+
+def test_cleanup_prunes_only_expired_panns_cache(tmp_path: Path) -> None:
+    cache = tmp_path / "data" / "panns_audio_cache"
+    cache.mkdir(parents=True)
+    stale = cache / "stale.json"
+    fresh = cache / "fresh.json"
+    stale.write_text("{}")
+    fresh.write_text("{}")
+    import os
+
+    now = time.time()
+    os.utime(stale, (now - 9 * 86400, now - 9 * 86400))
+
+    candidates = collect_candidates(
+        data_root=tmp_path / "data",
+        datasets_root=tmp_path / "datasets",
+        repo_root=tmp_path / "repo",
+        home_root=tmp_path,
+        active_game="pubg",
+        now=now,
+        open_paths=set(),
+    )
+    paths = {row.path for row in candidates}
+    assert stale.resolve() in paths
+    assert fresh.resolve() not in paths
