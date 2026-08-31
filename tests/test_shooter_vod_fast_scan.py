@@ -12,7 +12,9 @@ sys.path.insert(0, str(SCRIPTS))
 
 from shooter_vod_fast_scan import (  # noqa: E402
     apply_fast_probe_seeds,
+    candidate_pool_target,
     clear_fast_probe_seeds,
+    discover_montage_gun_peaks,
     vod_fast_combat_check,
 )
 
@@ -80,3 +82,40 @@ def test_dense_offsets_probe_pass_shifts_grid(monkeypatch) -> None:
     b = _dense_offsets(7200.0, skip_intro=120.0, probe_pass=1)
     assert a and b
     assert a[0] != b[0] or a != b
+
+
+def test_dense_offsets_have_unique_third_pass(monkeypatch) -> None:
+    from shooter_vod_fast_scan import _dense_offsets
+
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    grids = [
+        _dense_offsets(1800.0, skip_intro=60.0, probe_pass=probe_pass)
+        for probe_pass in range(3)
+    ]
+    assert len({tuple(grid) for grid in grids}) == 3
+
+
+def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(1800.0)
+
+    with patch.dict(sys.modules, {"smart_video_editor": sve}), patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        return_value={"panns_gun_max": 0.50},
+    ), patch(
+        "shooter_vod_fast_scan.snap_peak_to_gunfire",
+        side_effect=lambda _path, center, **_kwargs: (center, 0.08, 0.50),
+    ):
+        peaks, reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=55.0,
+        )
+
+    assert candidate_pool_target(2) >= 10
+    assert len(peaks) == 16
+    assert "picked=16" in reason

@@ -150,6 +150,7 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
+DENSE_POOL_VERSION = 2
 
 
 def _game() -> str:
@@ -780,6 +781,36 @@ def _bump_dense_probe_visit(entry: dict | None) -> None:
         entry["dense_probe_visit"] = int(entry.get("dense_probe_visit") or 0) + 1
 
 
+def _dense_rejected_peaks(entry: dict | None) -> list[float]:
+    out: list[float] = []
+    for value in (entry or {}).get("dense_rejected_peaks") or []:
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _remember_dense_rejections(entry: dict | None, peaks: list[float]) -> None:
+    if entry is None or not peaks:
+        return
+    merged = _dense_rejected_peaks(entry)
+    for peak in peaks:
+        value = float(peak)
+        if not any(abs(value - old) <= 4.0 for old in merged):
+            merged.append(round(value, 1))
+    entry["dense_rejected_peaks"] = merged[-64:]
+
+
+def _dense_pool_cache_usable(entry: dict | None, cached_peaks: list[float], min_clips: int) -> bool:
+    if len(cached_peaks) < min_clips:
+        return False
+    if int((entry or {}).get("dense_pool_version") or 0) != DENSE_POOL_VERSION:
+        return False
+    reason = str((entry or {}).get("reject_reason") or "")
+    return not reason.startswith("fast_montage_presend_reject")
+
+
 def _montage_enabled(game: str) -> bool:
     """PUBG / Standoff / WoT ship as multi-clip montages; Genshin stays single by default."""
     if game == "genshin":
@@ -896,7 +927,13 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
     return clip
 
 
-def _validate_montage_final(game: str, vod: Path, accepted_rows: list[dict]) -> tuple[bool, str]:
+def _validate_montage_final(
+    game: str,
+    vod: Path,
+    accepted_rows: list[dict],
+    *,
+    report: dict | None = None,
+) -> tuple[bool, str]:
     """Extra quality pass after parts passed presend — strict PUBG only."""
     if game != "pubg" or not pubg_quality_strict():
         return True, "skip"
@@ -915,9 +952,13 @@ def _validate_montage_final(game: str, vod: Path, accepted_rows: list[dict]) -> 
 
             ok_metro, metro_reason = segment_looks_metro_royale(vod, gate_start, gate_dur)
         if not ok_metro:
+            if report is not None:
+                report.setdefault("rejected_sids", []).append(str(row.get("segment_id") or ""))
             return False, f"final_metro_{metro_reason}"
         ok, reason, _ = pubg_passes_combat_gate(vod, gate_start, gate_dur, profile)
         if not ok:
+            if report is not None:
+                report.setdefault("rejected_sids", []).append(str(row.get("segment_id") or ""))
             return False, f"final_combat_{reason}"
         from shooter_author_kill_gate import author_kill_window_ok
 
@@ -925,6 +966,8 @@ def _validate_montage_final(game: str, vod: Path, accepted_rows: list[dict]) -> 
             vod, gate_start, gate_dur, profile=game, shoot_metrics={}
         )
         if not kill_ok:
+            if report is not None:
+                report.setdefault("rejected_sids", []).append(str(row.get("segment_id") or ""))
             return False, f"final_kill_{kill_reason}"
     return True, "montage_final_ok"
 
@@ -936,6 +979,8 @@ def _send_montage(
     vod: Path,
     rows: list[dict],
     sig: str,
+    *,
+    report: dict | None = None,
 ) -> int:
     """Render N parts, xfade-merge, send one Telegram video."""
     import shutil
@@ -1032,6 +1077,8 @@ def _send_montage(
                 )
                 if not ok:
                     log.warning("montage part REJECT %s: %s", sid, reason)
+                    if report is not None:
+                        report.setdefault("rejected_sids", []).append(sid)
                     part.unlink(missing_ok=True)
                     rejected_sids.add(sid)
                     continue
@@ -1146,9 +1193,30 @@ def _send_montage(
                 log.warning("montage too short game=%s dur=%.1f need>=%.0f", game, final_dur, min_final)
                 out.unlink(missing_ok=True)
                 continue
-            ok_final, final_reason = _validate_montage_final(game, vod, accepted_rows)
+            final_report: dict = {}
+            ok_final, final_reason = _validate_montage_final(
+                game,
+                vod,
+                accepted_rows,
+                report=final_report,
+            )
             if not ok_final:
                 log.warning("montage final reject game=%s reason=%s", game, final_reason)
+                final_rejected = {
+                    str(sid)
+                    for sid in final_report.get("rejected_sids", [])
+                    if str(sid)
+                }
+                # A bad accepted part used to be validated six times in the
+                # same call. Drop only the row that failed and try a replacement.
+                rejected_sids.update(final_rejected)
+                if report is not None:
+                    report.setdefault("rejected_sids", []).extend(sorted(final_rejected))
+                remaining = [
+                    row
+                    for row in remaining
+                    if str(row.get("segment_id") or "") not in rejected_sids
+                ]
                 out.unlink(missing_ok=True)
                 continue
 
@@ -1770,11 +1838,16 @@ def _scan_vod_with_adaptive(
                 _montage_enabled(game)
                 and os.environ.get("SHOOTER_VOD_FAST_MONTAGE", "1") == "1"
             ):
-                from shooter_vod_fast_scan import discover_montage_gun_peaks
+                from shooter_vod_fast_scan import (
+                    candidate_pool_target,
+                    discover_montage_gun_peaks,
+                )
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
                 cached_peaks = peak_values_from_entry(entry)
-                if len(cached_peaks) >= min_clips:
+                pool_target = candidate_pool_target(min_clips)
+                rejected_peaks = _dense_rejected_peaks(entry)
+                if _dense_pool_cache_usable(entry, cached_peaks, min_clips):
                     dense_peaks = cached_peaks
                     dense_reason = f"cached_pool_{len(cached_peaks)}"
                     log.info(
@@ -1790,6 +1863,15 @@ def _scan_vod_with_adaptive(
                         min_clips=min_clips,
                         gap_sec=gap_sec,
                         probe_pass=probe_pass,
+                    )
+                    if entry is not None:
+                        entry["dense_pool_version"] = DENSE_POOL_VERSION
+                    log.info(
+                        "fast-montage refreshed pool vod=%s candidates=%s target=%s pass=%s",
+                        vod.name,
+                        len(dense_peaks),
+                        pool_target,
+                        probe_pass,
                     )
                 # Owner-good fight times first (gold labels) — PANNs alone often
                 # picks cruise SFX that fail impact/flash gates.
@@ -1844,6 +1926,8 @@ def _scan_vod_with_adaptive(
                 ) -> list[dict]:
                     out_rows: list[dict] = []
                     for idx, peak in enumerate(dense_peaks):
+                        if any(abs(float(peak) - bad) <= 4.0 for bad in rejected_peaks):
+                            continue
                         if _peak_too_close(float(peak), used, peak_gap):
                             continue
                         start = max(0.0, float(peak) - part_sec * 0.5)
@@ -1918,7 +2002,31 @@ def _scan_vod_with_adaptive(
                             min_clips,
                             montage_idx,
                         )
-                    n_fast = _send_montage(game, token, chat_id, vod, rows, file_sha256(vod))
+                    send_report: dict = {}
+                    n_fast = _send_montage(
+                        game,
+                        token,
+                        chat_id,
+                        vod,
+                        rows,
+                        file_sha256(vod),
+                        report=send_report,
+                    )
+                    rejected_sids = {
+                        str(sid)
+                        for sid in send_report.get("rejected_sids", [])
+                        if str(sid)
+                    }
+                    if rejected_sids:
+                        rejected_now = [
+                            float(row["peak_start"])
+                            for row in rows
+                            if str(row.get("segment_id") or "") in rejected_sids
+                        ]
+                        _remember_dense_rejections(entry, rejected_now)
+                        for peak in rejected_now:
+                            if not any(abs(peak - old) <= 4.0 for old in rejected_peaks):
+                                rejected_peaks.append(peak)
                     if n_fast > 0:
                         total_sent += n_fast
                         log.info(
@@ -1950,6 +2058,8 @@ def _scan_vod_with_adaptive(
                             pool_peaks=dense_peaks,
                             blocked=False,
                         )
+                        entry["dense_pool_version"] = DENSE_POOL_VERSION
+                        entry.pop("reject_reason", None)
                         if total_sent < max_montages:
                             _bump_dense_probe_visit(entry)
                     _save_state(game, state)
@@ -1979,6 +2089,7 @@ def _scan_vod_with_adaptive(
                             pool_peaks=dense_peaks,
                             blocked=False,
                         )
+                        entry["dense_pool_version"] = DENSE_POOL_VERSION
                         entry["reject_reason"] = "fast_montage_presend_reject_retry"
                         _bump_dense_probe_visit(entry)
                     _save_state(game, state)

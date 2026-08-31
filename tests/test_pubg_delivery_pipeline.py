@@ -88,3 +88,50 @@ def test_auto_heal_triggers_on_bloated_used(monkeypatch: pytest.MonkeyPatch, tmp
     ok, reason = should_auto_heal("pubg", load_state("pubg"))
     assert ok is True
     assert "used_ids" in reason
+
+
+def test_rejected_dense_pool_is_not_reused() -> None:
+    from shooter_vod_segment_feed import DENSE_POOL_VERSION, _dense_pool_cache_usable  # noqa: E402
+
+    peaks = [100.0, 200.0]
+    assert _dense_pool_cache_usable(
+        {"dense_pool_version": DENSE_POOL_VERSION},
+        peaks,
+        2,
+    )
+    assert not _dense_pool_cache_usable(
+        {
+            "dense_pool_version": DENSE_POOL_VERSION,
+            "reject_reason": "fast_montage_presend_reject_retry",
+        },
+        peaks,
+        2,
+    )
+    assert not _dense_pool_cache_usable({}, peaks, 2)
+
+
+def test_final_gate_reports_only_failing_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shooter_vod_segment_feed import _validate_montage_final  # noqa: E402
+    from unittest.mock import patch
+
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
+    monkeypatch.setenv("PUBG_METRO_GATE", "0")
+    rows = [
+        {"segment_id": "vod_100", "start": 93.0, "peak_start": 100.0, "clip": {"output_duration": 14}},
+        {"segment_id": "vod_200", "start": 193.0, "peak_start": 200.0, "clip": {"output_duration": 14}},
+    ]
+    report: dict = {}
+    with patch(
+        "shooter_vod_segment_feed.pubg_passes_combat_gate",
+        side_effect=[(False, "loot_walk", {}), (True, "ok", {})],
+    ):
+        ok, reason = _validate_montage_final(
+            "pubg",
+            Path("/tmp/vod.mp4"),
+            rows,
+            report=report,
+        )
+
+    assert ok is False
+    assert "loot_walk" in reason
+    assert report["rejected_sids"] == ["vod_100"]

@@ -12,6 +12,12 @@ from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 log = logging.getLogger("shooter_vod_fast_scan")
 
 
+def candidate_pool_target(min_clips: int = 2) -> int:
+    """Keep enough ranked moments to survive strict presend false positives."""
+    raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
+    return max(10, int(raw), int(min_clips) * 4)
+
+
 def _skip_intro_sec(profile: str, *, duration: float | None = None) -> float:
     profile = normalize_profile(profile)
     if profile == "pubg":
@@ -61,14 +67,22 @@ def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -
     step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40"))
     if dur < 600:
         step = min(step, 25.0)
-    cap = max(10, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")))
+    # A 2-part montage used to cap the ranked pool at 8 moments. Keep at least
+    # three coarse probes per desired candidate so a 10+ moment pool is possible.
+    cap = max(
+        10,
+        candidate_pool_target() * 3,
+        int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")),
+    )
     usable = max(0.0, dur - skip_intro - 12.0 - WINDOW_SEC)
     if usable > 0 and cap > 1:
         # Stretch so probes span the whole VOD instead of clustering at the start.
         step = max(step, usable / float(cap - 1))
     phase_shift = 0.0
     if probe_pass > 0 and usable > 0:
-        phase_shift = (probe_pass * step * 2.5) % max(step, usable / max(cap, 1))
+        # Irrational phase avoids pass 2 wrapping onto pass 0. The old 2.5×
+        # formula generated only two unique grids, regardless of configured passes.
+        phase_shift = (probe_pass * step * 0.38196601125) % step
     out: list[float] = []
     t = skip_intro + phase_shift
     while t + WINDOW_SEC < dur - 12 and len(out) < cap:
@@ -211,7 +225,7 @@ def discover_montage_gun_peaks(
         )
 
     scored.sort(key=lambda x: -x[0])
-    pool_cap = max(min_clips * 4, min_clips + 6)
+    pool_cap = candidate_pool_target(min_clips)
     # First pass: space by PANNs only (cheap).
     shortlist: list[tuple[float, float]] = []  # panns, center
     for panns_g, center in scored:
