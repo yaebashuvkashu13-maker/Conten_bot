@@ -83,3 +83,12 @@ def test_train_and_rank_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert report["status"] == "trained"
     assert report["samples"] == 12
     assert model.exists()
+
+
+def test_quality_report_reuses_training_features() -> None:
+    features = ranker.features_from_quality_report(
+        {"panns_gun_max": 0.5, "gunfire_density": 0.08}
+    )
+    assert features is not None
+    assert features["panns_gun_max"] == 0.5
+    assert features["gunfire_density"] == 0.08

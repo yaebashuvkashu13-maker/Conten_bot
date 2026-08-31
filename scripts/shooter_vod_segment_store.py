@@ -204,6 +204,8 @@ def apply_owner_label(
         "vod": row.get("vod", ""),
         "start": row.get("start", 0),
         "score": row.get("score", 0),
+        "quality_metrics": row.get("quality_metrics", {}),
+        "segment_report": row.get("segment_report", {}),
         "reason": reason,
         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "by_chat": by_chat,

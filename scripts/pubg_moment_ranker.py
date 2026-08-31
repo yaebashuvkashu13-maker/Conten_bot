@@ -166,6 +166,19 @@ class TrainingSample:
     label: int
     source: str
     weight: float
+    features: dict[str, float] | None = None
+
+
+def features_from_quality_report(report: dict) -> dict[str, float] | None:
+    if not isinstance(report, dict):
+        return None
+    features = {
+        name: float(report.get(name, 0.0) or 0.0)
+        for name in FEATURE_NAMES
+    }
+    if not any(features.values()):
+        return None
+    return features
 
 
 def load_training_samples() -> list[TrainingSample]:
@@ -200,7 +213,13 @@ def load_training_samples() -> list[TrainingSample]:
                 continue
             peak = float(row.get("peak_start", row.get("start", 0)) or 0)
             samples[(video_id, round(peak))] = TrainingSample(
-                video_id, vod, peak, label, "part_feedback", 1.0
+                video_id,
+                vod,
+                peak,
+                label,
+                "part_feedback",
+                1.0,
+                features_from_quality_report(row.get("quality_metrics") or {}),
             )
     return sorted(samples.values(), key=lambda row: (row.video_id, row.peak_sec))
 
@@ -281,7 +300,8 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
     X = np.asarray(
         [
             feature_vector(
-                extract_features(row.video_path, max(0.0, row.peak_sec - 7.0), 14.0)
+                row.features
+                or extract_features(row.video_path, max(0.0, row.peak_sec - 7.0), 14.0)
             )
             for row in samples
         ],
