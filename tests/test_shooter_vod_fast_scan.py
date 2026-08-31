@@ -198,3 +198,33 @@ def test_audio_generator_finds_transients_across_timeline() -> None:
     assert any(abs(peak - 10) <= 4 for peak in peaks)
     assert any(abs(peak - 30) <= 4 for peak in peaks)
     assert any(abs(peak - 50) <= 4 for peak in peaks)
+
+
+def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "1")
+    monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "10")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"vod")
+    sve = _mock_smart_video_editor(1200.0)
+    centers = [100.0 + index * 40 for index in range(12)]
+    with patch.dict(sys.modules, {"smart_video_editor": sve}), patch(
+        "shooter_vod_fast_scan.discover_audio_candidate_offsets",
+        return_value=centers,
+    ), patch(
+        "panns_audio_cache.prewarm_grid",
+        return_value=len(centers),
+    ), patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        return_value={"panns_gun_max": 0.01},
+    ), patch(
+        "shooter_vod_fast_scan.snap_peak_to_gunfire",
+        side_effect=lambda _path, center, **_kwargs: (center, 0.03, 0.01),
+    ):
+        peaks, reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=55.0,
+        )
+    assert len(peaks) == 10
+    assert "audio_generator" in reason

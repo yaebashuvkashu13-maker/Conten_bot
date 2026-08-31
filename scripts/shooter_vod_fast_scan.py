@@ -356,11 +356,15 @@ def discover_montage_gun_peaks(
         skip,
         probe_pass,
     )
-    scored: list[tuple[float, float]] = []  # panns, center_hint
-    for t in offsets:
+    scored: list[tuple[float, float]] = []  # fused generator score, center_hint
+    for index, t in enumerate(offsets):
         panns = score_panns_audio(video_path, t, WINDOW_SEC)
         gmax = float(panns.get("panns_gun_max", 0))
-        if gmax >= gun_min:
+        if audio_generator:
+            audio_prior = 1.0 - index / max(len(offsets), 1)
+            fused = gmax * 0.55 + audio_prior * 0.45
+            scored.append((fused, t + WINDOW_SEC * 0.5))
+        elif gmax >= gun_min:
             scored.append((gmax, t + WINDOW_SEC * 0.5))
 
     if len(scored) < min_clips:
@@ -398,7 +402,7 @@ def discover_montage_gun_peaks(
     for panns_g, center in shortlist:
         c2, gun_d, pmax = snap_peak_to_gunfire(video_path, center, duration=dur)
         panns_use = max(panns_g, pmax)
-        if gun_d < dens_min and panns_use < gun_min * 1.15:
+        if not audio_generator and gun_d < dens_min and panns_use < gun_min * 1.15:
             log.info(
                 "dense snap drop center=%.0f→%.0f gun=%.3f panns=%.3f",
                 center,
