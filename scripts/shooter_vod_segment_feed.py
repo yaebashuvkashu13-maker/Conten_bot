@@ -20,13 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from daily_game_cycle import can_send_for_game, profile_for_game, record_send as cycle_record_send
 from mlbb_vod_segment_feed import (
-    VodPipelineDownloader,
     _ffprobe_duration,
     _vod_target_dur_sec,
     render_single_segment,
     send_message,
     send_video,
 )
+from shooter_vod_bg_download import ShooterVodBgDownloader
 from pubg_combat_gate import pubg_passes_combat_gate
 from pubg_metro_royale_gate import title_metro_hint
 from shooter_vod_segment_store import (
@@ -64,7 +64,7 @@ from vod_scan_state import (
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
-from vod_game_registry import VOD_PIPELINE_REV, trim_used_youtube_ids
+from vod_scan_funnel import ScanFunnel
 from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env
 
@@ -1775,10 +1775,14 @@ def _scan_vod_with_adaptive(
                 from shooter_vod_fast_scan import discover_montage_gun_peaks
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
+                scan_funnel: ScanFunnel | None = None
                 cached_peaks = peak_values_from_entry(entry)
                 if len(cached_peaks) >= min_clips:
                     dense_peaks = cached_peaks
                     dense_reason = f"cached_pool_{len(cached_peaks)}"
+                    scan_funnel = ScanFunnel()
+                    scan_funnel.picked = len(cached_peaks)
+                    scan_funnel.feature_cache_hit = True
                     log.info(
                         "fast-montage reuse cached peaks vod=%s n=%s",
                         vod.name,
@@ -1786,13 +1790,16 @@ def _scan_vod_with_adaptive(
                     )
                 else:
                     probe_pass = _dense_probe_pass_index(entry)
+                    scan_funnel = ScanFunnel()
                     dense_peaks, dense_reason = discover_montage_gun_peaks(
                         vod,
                         _profile(game),
                         min_clips=min_clips,
                         gap_sec=gap_sec,
                         probe_pass=probe_pass,
+                        funnel=scan_funnel,
                     )
+                    scan_funnel.mark("discovery_done")
                 # Owner-good fight times first (gold labels) — PANNs alone often
                 # picks cruise SFX that fail impact/flash gates.
                 try:
@@ -1956,11 +1963,16 @@ def _scan_vod_with_adaptive(
 
                 if total_sent > 0:
                     if entry is not None:
+                        if scan_funnel is not None:
+                            scan_funnel.sent = total_sent
+                            scan_funnel.presend_pass = total_sent
+                            scan_funnel.mark("sent")
                         record_vod_scan(
                             entry,
                             sent=total_sent,
                             pool_peaks=dense_peaks,
                             blocked=False,
+                            funnel=scan_funnel.to_dict() if scan_funnel else None,
                         )
                         if total_sent < max_montages:
                             _bump_dense_probe_visit(entry)
@@ -1985,11 +1997,16 @@ def _scan_vod_with_adaptive(
                             delete_file=False,
                         )
                     elif entry is not None:
+                        if scan_funnel is not None:
+                            scan_funnel.presend_fail += 1
+                            scan_funnel.note_reject("fast_montage_presend_reject_retry")
+                            scan_funnel.mark("presend_fail")
                         record_vod_scan(
                             entry,
                             sent=0,
                             pool_peaks=dense_peaks,
                             blocked=False,
+                            funnel=scan_funnel.to_dict() if scan_funnel else None,
                         )
                         entry["reject_reason"] = "fast_montage_presend_reject_retry"
                         _bump_dense_probe_visit(entry)
@@ -2318,6 +2335,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     used = set(state.get("used_youtube_ids", []))
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
+    bg_dl = ShooterVodBgDownloader(
+        game,
+        env,
+        discover_fn=_discover_candidates,
+        download_fn=_download_vod,
+    )
+    if inbox_files := sorted(_inbox_mp4_files(inbox), key=lambda p: _inbox_order_key(p, registry, game=game)):
+        if bg_dl.enabled() and inbox_files:
+            bg_dl.start_if_idle(used)
     purged = _purge_junk_inbox_vods(game, inbox)
     if purged:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
@@ -2513,7 +2539,24 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         pick = candidates[0]
     if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
         send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
-    vod = _download_vod(game, pick, env)
+    vod, bg_pick = (None, None)
+    if bg_dl.enabled():
+        vod, bg_pick = bg_dl.pop_ready()
+    if vod is None:
+        vod = _download_vod(game, pick, env)
+    else:
+        log.info("using bg-downloaded vod=%s game=%s", vod.name, game)
+        pick = bg_pick or pick
+        _upsert_vod_registry(
+            state,
+            vid=str(pick.get("id") or vod_youtube_id(vod)),
+            path=str(vod),
+            title=str(pick.get("title") or ""),
+            exhausted=False,
+        )
+        used.add(str(pick.get("id") or vod_youtube_id(vod)))
+        state["used_youtube_ids"] = sorted(used)
+        _save_state(game, state)
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0

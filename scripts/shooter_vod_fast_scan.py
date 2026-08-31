@@ -128,6 +128,7 @@ def snap_peak_to_gunfire(
     search_radius: float = 10.0,
     step: float = 3.0,
     sample_sec: float = 4.0,
+    pcm_cache: object | None = None,
 ) -> tuple[float, float, float]:
     """
     Re-center a probe on the loudest local gunfire using the same density metric
@@ -146,7 +147,10 @@ def snap_peak_to_gunfire(
     while t <= hi + 1e-6:
         a = max(0.0, t - sample_sec * 0.5)
         try:
-            gun, _burst, _rms = score_pubg_gunfire_audio(video_path, a, sample_sec)
+            if pcm_cache is not None:
+                gun, _burst, _rms = pcm_cache.gunfire_metrics(a, sample_sec)
+            else:
+                gun, _burst, _rms = score_pubg_gunfire_audio(video_path, a, sample_sec)
         except Exception:
             gun = 0.0
         try:
@@ -170,15 +174,36 @@ def discover_montage_gun_peaks(
     min_clips: int = 3,
     gap_sec: float = 55.0,
     probe_pass: int = 0,
+    funnel: object | None = None,
 ) -> tuple[list[float], str]:
     """
-    Dense PANNs scan → spaced candidates → snap only those → ×3 montage peaks.
+    Dense scan → spaced candidates → snap only those → montage peaks.
 
-    Snap is applied ONLY to the shortlist (not every probe) so we stay minutes,
-    not half an hour of ffmpeg audio extracts.
+    With SHOOTER_VOD_AUDIO_BATCH=1: one PCM extract, DSP on all offsets,
+    PANNs only on top SHOOTER_VOD_PANN_TOP_N windows (default 40).
     """
     profile = normalize_profile(profile)
     from smart_video_editor import ffprobe_duration
+
+    try:
+        from vod_peak_feature_cache import cache_enabled, get_cached
+
+        if cache_enabled():
+            hit = get_cached(video_path, probe_pass)
+            if hit and len(hit.get("peaks") or []) >= min_clips:
+                peaks = [float(p) for p in hit["peaks"]]
+                reason = str(hit.get("reason") or f"feature_cache_{len(peaks)}")
+                if funnel is not None:
+                    funnel.feature_cache_hit = True
+                    funnel.picked = len(peaks)
+                    cached_funnel = hit.get("funnel")
+                    if isinstance(cached_funnel, dict):
+                        funnel.dsp_pass = int(cached_funnel.get("dsp_pass") or 0)
+                        funnel.panns_pass = int(cached_funnel.get("panns_pass") or 0)
+                log.info("dense gun peaks cache hit vod=%s n=%s", video_path.name, len(peaks))
+                return peaks, f"feature_cache {reason}"
+    except Exception:
+        pass
 
     dur = ffprobe_duration(video_path)
     if dur <= 0:
@@ -191,26 +216,65 @@ def discover_montage_gun_peaks(
     if not offsets:
         return [], "dense_probe_too_short"
 
+    if funnel is not None:
+        funnel.offsets_probed = len(offsets)
+
+    pcm_cache = None
+    batch_stats: dict[str, float | int] = {}
+    scored: list[tuple[float, float]] = []
+    pcm_float = None
+
     try:
-        from panns_audio_cache import prewarm_grid
+        from vod_audio_batch import (
+            VodPcmCache,
+            batch_enabled,
+            discover_scored_windows,
+            extract_vod_pcm_s16,
+            pcm_to_float,
+        )
 
-        prewarm_grid(video_path, offsets, WINDOW_SEC)
+        if batch_enabled():
+            pcm = extract_vod_pcm_s16(video_path, skip, max(0.0, dur - skip - 12.0))
+            pcm_float = pcm_to_float(pcm)
+            if pcm_float.size > 0:
+                pcm_cache = VodPcmCache(pcm_float, base_sec=skip)
+            scored, batch_stats = discover_scored_windows(
+                video_path,
+                offsets,
+                WINDOW_SEC,
+                gun_min=gun_min,
+                pcm_float=pcm_float if pcm_float.size > 0 else None,
+                pcm_base_sec=skip,
+            )
+            if funnel is not None:
+                funnel.merge_timings(batch_stats)
+                funnel.panns_pass = len(scored)
     except Exception:
-        pass
+        log.exception("batch audio discovery failed vod=%s — fallback sequential", video_path.name)
+        scored = []
 
-    log.info(
-        "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
-        video_path.name,
-        len(offsets),
-        skip,
-        probe_pass,
-    )
-    scored: list[tuple[float, float]] = []  # panns, center_hint
-    for t in offsets:
-        panns = score_panns_audio(video_path, t, WINDOW_SEC)
-        gmax = float(panns.get("panns_gun_max", 0))
-        if gmax >= gun_min:
-            scored.append((gmax, t + WINDOW_SEC * 0.5))
+    if not scored:
+        try:
+            from panns_audio_cache import prewarm_grid
+
+            prewarm_grid(video_path, offsets, WINDOW_SEC)
+        except Exception:
+            pass
+
+        log.info(
+            "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
+            video_path.name,
+            len(offsets),
+            skip,
+            probe_pass,
+        )
+        for t in offsets:
+            panns = score_panns_audio(video_path, t, WINDOW_SEC)
+            gmax = float(panns.get("panns_gun_max", 0))
+            if gmax >= gun_min:
+                scored.append((gmax, t + WINDOW_SEC * 0.5))
+        if funnel is not None:
+            funnel.panns_pass = len(scored)
 
     if len(scored) < min_clips:
         return [], f"dense_panns_0/{len(offsets)}" if not scored else (
@@ -219,8 +283,7 @@ def discover_montage_gun_peaks(
 
     scored.sort(key=lambda x: -x[0])
     pool_cap = max(min_clips * 4, min_clips + 6)
-    # First pass: space by PANNs only (cheap).
-    shortlist: list[tuple[float, float]] = []  # panns, center
+    shortlist: list[tuple[float, float]] = []
     for panns_g, center in scored:
         if any(abs(center - c) < gap_sec for _g, c in shortlist):
             continue
@@ -239,10 +302,17 @@ def discover_montage_gun_peaks(
                 break
         gap_sec = tight
 
-    # Snap only the shortlist onto local gunfire (gate metric).
-    snapped: list[tuple[float, float, float]] = []  # center, gun, panns
+    if funnel is not None:
+        funnel.shortlist = len(shortlist)
+
+    snapped: list[tuple[float, float, float]] = []
     for panns_g, center in shortlist:
-        c2, gun_d, pmax = snap_peak_to_gunfire(video_path, center, duration=dur)
+        c2, gun_d, pmax = snap_peak_to_gunfire(
+            video_path,
+            center,
+            duration=dur,
+            pcm_cache=pcm_cache,
+        )
         panns_use = max(panns_g, pmax)
         if gun_d < dens_min and panns_use < gun_min * 1.15:
             log.info(
@@ -254,6 +324,9 @@ def discover_montage_gun_peaks(
             )
             continue
         snapped.append((c2, gun_d, panns_use))
+
+    if funnel is not None:
+        funnel.snapped = len(snapped)
 
     snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
     picked: list[float] = []
@@ -267,7 +340,6 @@ def discover_montage_gun_peaks(
         if len(picked) >= pool_cap:
             break
 
-    # Owner ×3 склейка: if spacing ate the third fight, tighten once more.
     if len(picked) < min_clips and snapped:
         ultra = max(14.0, gap_sec * 0.35)
         if ultra < pick_gap:
@@ -283,14 +355,40 @@ def discover_montage_gun_peaks(
             pick_gap = ultra
             gap_sec = ultra / 0.85 if ultra > 0 else gap_sec
 
-    # Keep strength order (not chronological) so montage tries best fights first.
-    # Chronological reorder happens only after parts are accepted for xfade.
+    if funnel is not None:
+        funnel.picked = len(picked)
+
     top = scored[0][0] if scored else 0.0
     reason = (
         f"dense_panns hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
         f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f} pass={probe_pass}"
     )
+    if batch_stats:
+        reason += (
+            f" batch=dsp{batch_stats.get('dsp_pass', 0)}"
+            f"/panns{batch_stats.get('panns_windows', 0)}"
+        )
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
+
+    try:
+        from vod_peak_feature_cache import put_cached
+
+        features = [
+            {"peak_sec": round(float(p), 1), "score": round(float(s), 4)}
+            for p, s in zip(picked, picked_scores)
+        ]
+        put_cached(
+            video_path,
+            probe_pass,
+            peaks=picked,
+            reason=reason,
+            features=features,
+            funnel=funnel.to_dict() if funnel is not None and hasattr(funnel, "to_dict") else None,
+            timings=batch_stats or None,
+        )
+    except Exception:
+        pass
+
     return picked, reason
 
 
