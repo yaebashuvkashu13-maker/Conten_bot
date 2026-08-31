@@ -235,7 +235,10 @@ def discover_montage_gun_peaks(
         if len(shortlist) >= pool_cap:
             break
 
-    if len(shortlist) < min_clips and gap_sec > 25:
+    # Fill the recall pool, not merely the 2-part montage minimum. With 30s
+    # probes and a 55s first-pass gap, 15 real hits collapsed to 8–9 candidates.
+    desired = min(pool_cap, len(scored))
+    if len(shortlist) < desired and gap_sec > 25:
         tight = max(22.0, gap_sec * 0.45)
         shortlist = []
         for panns_g, center in scored:

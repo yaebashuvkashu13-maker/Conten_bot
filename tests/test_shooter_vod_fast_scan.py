@@ -119,3 +119,34 @@ def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> N
     assert candidate_pool_target(2) >= 10
     assert len(peaks) == 16
     assert "picked=16" in reason
+
+
+def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(1800.0)
+    calls = 0
+
+    def _panns(_path, _t, _window):
+        nonlocal calls
+        calls += 1
+        return {"panns_gun_max": 0.50 if calls <= 15 else 0.0}
+
+    with patch.dict(sys.modules, {"smart_video_editor": sve}), patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        side_effect=_panns,
+    ), patch(
+        "shooter_vod_fast_scan.snap_peak_to_gunfire",
+        side_effect=lambda _path, center, **_kwargs: (center, 0.08, 0.50),
+    ):
+        peaks, reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=55.0,
+        )
+
+    assert len(peaks) == 15
+    assert "shortlist=15" in reason
