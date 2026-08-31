@@ -298,6 +298,72 @@ def auto_heal_stalled_feed(game: str) -> dict[str, object]:
     return stats
 
 
+def _pool_ready_inbox_count(game: str) -> int:
+    """Inbox VODs with cached peaks (montage can skip dense probe)."""
+    state = load_state(game)
+    registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+    ready = 0
+    for vid in inbox_video_ids(game):
+        row = registry.get(vid) or {}
+        if row.get("exhausted"):
+            continue
+        if len(row.get("last_pool_peaks") or []) >= 2:
+            ready += 1
+    return ready
+
+
+def _eta_target_games(game: str) -> list[str]:
+    if game != "all":
+        return [game]
+    if os.environ.get("VOD_PUBG_ONLY", "0") == "1":
+        return ["pubg"]
+    from vod_pipeline_health import health_row
+
+    return [
+        g
+        for g in VOD_GAMES
+        if int(health_row(g).get("inbox") or 0) > 0
+        or int(health_row(g).get("actionable_inbox") or 0) > 0
+    ] or ["pubg"]
+
+
+def estimate_video_wait_eta(game: str = "pubg") -> str:
+    """Conservative ETA for the next Telegram clip after /recover."""
+    from vod_pipeline_health import health_row
+
+    targets = _eta_target_games(game)
+    lines: list[str] = []
+    feed_ok = feed_process_alive()
+    log_age = _log_age_sec(feed_log_path())
+
+    for g in targets:
+        row = health_row(g)
+        actionable = int(row.get("actionable_inbox") or 0)
+        inbox = int(row.get("inbox") or 0)
+        streak = int(row.get("streak") or 0)
+        pool_ready = _pool_ready_inbox_count(g)
+        label = g.upper()
+
+        if feed_ok and log_age is not None and log_age < 180:
+            eta = "~10–25 мин (склейка сейчас в работе)"
+        elif actionable == 0 and inbox > 0:
+            eta = "~30–60 мин после /reset pubg (inbox исчерпан)"
+        elif pool_ready > 0:
+            if streak >= 4:
+                eta = f"~20–45 мин ({pool_ready} VOD с пиками, недавно были отказы)"
+            else:
+                eta = f"~15–30 мин ({pool_ready} VOD с готовыми пиками)"
+        elif actionable > 0:
+            eta = f"~40–70 мин (поиск боёв в {actionable} VOD)"
+        elif not feed_ok:
+            eta = "~5–20 мин (feed перезапускается)"
+        else:
+            eta = "~20–40 мин (поиск новых VOD на YouTube)"
+        lines.append(f"⏱ {label}: ожидайте первое видео {eta}")
+
+    return "\n".join(lines)
+
+
 def run_recover(
     game: str = "all",
     *,
@@ -350,6 +416,7 @@ def run_recover(
             for name in ("vod_supervisor", "daily_cycle", "shooter_feed", "telegram_bot")
         )
     )
+    lines.append(estimate_video_wait_eta(game))
     lines.append("Через 1–2 мин проверь /process. Если снова тишина — /reset pubg.")
     return "\n".join(lines)
 

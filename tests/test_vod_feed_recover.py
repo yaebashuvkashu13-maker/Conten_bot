@@ -18,6 +18,7 @@ from vod_feed_recover import (  # noqa: E402
     clear_discovery_pauses,
     clear_feed_locks,
     clear_stale_owner_batch_lock,
+    estimate_video_wait_eta,
     park_exhausted_inbox,
     run_recover,
 )
@@ -135,7 +136,53 @@ def test_run_recover_message(
     assert "🔧 Восстановление" in msg
     assert "test restart" in msg
     assert "discovery: очищено used YouTube ID" in msg
+    assert "⏱" in msg
+    assert "ожидайте первое видео" in msg
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["vods"][0]["exhausted"] is False
     assert "discovery_pause_until" not in state
     assert state.get("used_youtube_ids") == []
+
+
+def test_estimate_eta_pool_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "pubg"
+    inbox = root / "youtube_nightly" / "inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "yt_abc123xyz00.mp4").write_bytes(b"x")
+    state_path = root / "vod_segment_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "vods": [
+                    {
+                        "id": "abc123xyz00",
+                        "last_pool_peaks": [{"peak_sec": 100.0}, {"peak_sec": 200.0}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+    monkeypatch.setattr("vod_feed_recover.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 600.0)
+    msg = estimate_video_wait_eta("pubg")
+    assert "⏱ PUBG" in msg
+    assert "готовыми пиками" in msg
+
+
+def test_estimate_eta_exhausted_inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "pubg"
+    inbox = root / "youtube_nightly" / "inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "yt_abc123xyz00.mp4").write_bytes(b"x")
+    state_path = root / "vod_segment_state.json"
+    state_path.write_text(
+        json.dumps({"vods": [{"id": "abc123xyz00", "exhausted": True}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+    monkeypatch.setattr("vod_feed_recover.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 600.0)
+    msg = estimate_video_wait_eta("pubg")
+    assert "/reset pubg" in msg
