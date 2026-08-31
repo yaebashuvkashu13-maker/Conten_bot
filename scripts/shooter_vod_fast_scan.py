@@ -153,7 +153,6 @@ def snap_peak_to_gunfire(
 
     best_c = float(approx_center)
     best_gun = -1.0
-    best_panns = 0.0
     lo = max(8.0, float(approx_center) - float(search_radius))
     hi = min(float(duration) - 8.0, float(approx_center) + float(search_radius))
     t = lo
@@ -163,17 +162,18 @@ def snap_peak_to_gunfire(
             gun, _burst, _rms = score_pubg_gunfire_audio(video_path, a, sample_sec)
         except Exception:
             gun = 0.0
-        try:
-            panns = score_panns_audio(video_path, a, sample_sec)
-            pmax = float(panns.get("panns_gun_max", 0) or 0)
-        except Exception:
-            pmax = 0.0
-        score = float(gun) * 2.0 + pmax
-        if score > best_gun * 2.0 + best_panns + 1e-9:
+        if float(gun) > best_gun + 1e-9:
             best_gun = float(gun)
-            best_panns = pmax
             best_c = float(t)
         t += float(step)
+    # Coarse dense scan already supplied a PANN score. Confirm only the selected
+    # local gun maximum instead of running the neural model at every 3s offset.
+    try:
+        best_start = max(0.0, best_c - sample_sec * 0.5)
+        panns = score_panns_audio(video_path, best_start, sample_sec)
+        best_panns = float(panns.get("panns_gun_max", 0) or 0)
+    except Exception:
+        best_panns = 0.0
     return round(best_c, 1), max(0.0, best_gun), best_panns
 
 

@@ -150,3 +150,27 @@ def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Pa
 
     assert len(peaks) == 15
     assert "shortlist=15" in reason
+
+
+def test_snap_peak_runs_panns_once(monkeypatch, tmp_path: Path) -> None:
+    from shooter_vod_fast_scan import snap_peak_to_gunfire
+
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"vod")
+    with patch(
+        "gameplay_gate.score_pubg_gunfire_audio",
+        side_effect=lambda _path, start, _dur: (0.10 if start >= 100 else 0.02, 5.0, 0.03),
+    ) as gun, patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        return_value={"panns_gun_max": 0.4},
+    ) as panns:
+        center, density, pmax = snap_peak_to_gunfire(
+            vod,
+            100.0,
+            duration=1000.0,
+        )
+    assert gun.call_count > 1
+    assert panns.call_count == 1
+    assert density == 0.10
+    assert pmax == 0.4
+    assert center >= 100
