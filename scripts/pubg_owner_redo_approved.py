@@ -160,6 +160,70 @@ def _full_vod_peak_pool(vod: Path, *, min_clips: int) -> tuple[list[float], str]
     return discover_montage_gun_peaks(vod, "pubg", min_clips=min_clips, gap_sec=gap)
 
 
+def _peak_fight_report(vod: Path, peak: float, file_dur: float | None = None) -> dict:
+    from pubg_fight_segment import resolve_pubg_fight_bounds
+    from shooter_vod_segment_feed import _ffprobe_duration
+
+    if file_dur is None:
+        file_dur = _ffprobe_duration(vod)
+    _start, _dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
+    return report
+
+
+def _peak_has_kill(vod: Path, peak: float, file_dur: float | None = None) -> bool:
+    report = _peak_fight_report(vod, peak, file_dur)
+    if report.get("kill_sec") is not None or report.get("kill_time") is not None:
+        return True
+    return float(report.get("killfeed_score", 0.0) or 0.0) >= 0.35
+
+
+def _tighten_owner_clip_bounds(
+    start: float,
+    dur: float,
+    report: dict,
+) -> tuple[float, float]:
+    """Owner redo: start at gunfire, end soon after kill — no loot walk tail."""
+    pre_pad = float(os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "1.5"))
+    post_kill = float(os.environ.get("PUBG_OWNER_POST_KILL_SEC", "5.0"))
+    shoot = report.get("shooting_start")
+    if shoot is not None:
+        start = float(shoot) - pre_pad
+    kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
+    end = float(start) + float(dur)
+    if kill is not None:
+        end = min(end, float(kill) + post_kill)
+    fight_end = report.get("fight_end")
+    if fight_end is not None:
+        end = min(end, float(fight_end))
+    dur = max(10.0, end - float(start))
+    return float(start), float(dur)
+
+
+def _pick_pair_second(
+    vod: Path,
+    candidates: list[float],
+    anchor: float,
+    *,
+    file_dur: float | None = None,
+) -> float:
+    """Next distinct fight in timeline; prefer first with a kill."""
+    after = sorted(p for p in candidates if p > float(anchor) + 8.0)
+    before = sorted((p for p in candidates if p < float(anchor) - 8.0), reverse=True)
+
+    def _choose(pool: list[float]) -> float | None:
+        if not pool:
+            return None
+        with_kill = [p for p in pool if _peak_has_kill(vod, p, file_dur)]
+        return float((with_kill or pool)[0])
+
+    prefer_after = os.environ.get("PUBG_OWNER_REDO_PREFER_AFTER_ANCHOR", "1") == "1"
+    if prefer_after:
+        picked = _choose(after) or _choose(before)
+    else:
+        picked = _choose(before) or _choose(after)
+    return picked if picked is not None else float(sorted(candidates)[0])
+
+
 def _pair_distinct_peaks(
     vod: Path,
     anchor: float,
@@ -192,17 +256,7 @@ def _pair_distinct_peaks(
         return [float(anchor)]
 
     ranked, style_reason, _sims = rank_peaks_by_style(vod, candidates, part_sec=14.0)
-    after = [p for p in ranked if p > float(anchor) + 8.0]
-    before = [p for p in ranked if p < float(anchor) - 8.0]
-    second: float | None = None
-    if os.environ.get("PUBG_OWNER_REDO_PREFER_AFTER_ANCHOR", "1") == "1" and after:
-        second = float(after[0])
-    elif before:
-        second = float(before[0])
-    elif after:
-        second = float(after[0])
-    else:
-        second = float(ranked[0])
+    second = _pick_pair_second(vod, candidates, anchor, file_dur=file_dur)
 
     peaks = _dedupe_peak_windows(vod, [float(anchor), second], file_dur=file_dur)
     log.info(
@@ -350,7 +404,9 @@ def _apply_redo_env() -> None:
         "SHOOTER_VOD_MONTAGE_POOL_PART_GAP_SEC": "45",
         "PUBG_OWNER_REDO_MIN_WINDOW_GAP_SEC": "30",
         "PUBG_SEGMENT_SCAN_AFTER": "40",
-        "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "6",
+        "PUBG_OWNER_CLIP_PRE_SHOOT_SEC": "1.5",
+        "PUBG_OWNER_POST_KILL_SEC": "5.0",
+        "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "4",
         "PUBG_REJECT_LOOT_WALK": "0",
         "PUBG_EARLY_PAYOFF_REJECT": "0",
         "VOD_PRESEND_CACHE": "0",
@@ -397,6 +453,7 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     bounds = []
     for peak in peaks:
         start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
+        start, dur = _tighten_owner_clip_bounds(start, dur, report)
         bounds.append(
             {
                 "peak": peak,
