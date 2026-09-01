@@ -98,7 +98,7 @@ def tighten_pubg_clip_bounds(
     fight_end = report.get("fight_end")
     if fight_end is not None:
         end = min(end, float(fight_end))
-    dur = max(8.0, end - float(start))
+    dur = max(10.0, end - float(start))
     if peak is not None:
         ok, _reason = validate_clip_fight_shape(start, dur, float(peak), report)
         if not ok:
@@ -221,6 +221,27 @@ def peak_shape_ok(
     return ok
 
 
+def peak_presend_ok(
+    vod: Path,
+    peak: float,
+    *,
+    file_dur: float | None = None,
+) -> tuple[bool, str, float, float]:
+    """Full presend check on tightened fight clip — not just shape."""
+    from pubg_fight_segment import resolve_pubg_fight_bounds
+    from pubg_quality_score import score_pubg_window
+
+    if file_dur is None:
+        from shooter_vod_segment_feed import _ffprobe_duration
+
+        file_dur = _ffprobe_duration(vod)
+    start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
+    start, dur = tighten_pubg_clip_bounds(start, dur, report, peak=float(peak))
+    dur = max(10.0, float(dur))
+    ok, reason, _rep = score_pubg_window(vod, start, dur)
+    return ok, reason, float(start), float(dur)
+
+
 def select_distinct_kill_peaks(
     vod: Path,
     pool: list[float],
@@ -241,8 +262,19 @@ def select_distinct_kill_peaks(
     ]
     if len(filtered) < min_clips:
         return []
-    ranked, _reason, meta = rank_peaks_fast(vod, filtered, "pubg", part_sec=14.0)
-    with_hit = [
+    ranked, _reason, meta = rank_peaks_fast(
+        vod,
+        filtered,
+        "pubg",
+        part_sec=14.0,
+        max_probes=max(len(filtered), min_clips * 8),
+    )
+    presend_hits: list[float] = []
+    for p in ranked:
+        ok, _reason, _start, _dur = peak_presend_ok(vod, float(p), file_dur=file_dur)
+        if ok:
+            presend_hits.append(float(p))
+    with_hit = presend_hits or [
         float(p)
         for p in ranked
         if meta.get(float(p), {}).get("notification_hit")
@@ -276,6 +308,7 @@ __all__ = [
     "peak_blocked_by_used_fights",
     "peak_fight_report",
     "peak_has_kill",
+    "peak_presend_ok",
     "peak_shape_ok",
     "select_distinct_kill_peaks",
     "tighten_pubg_clip_bounds",
