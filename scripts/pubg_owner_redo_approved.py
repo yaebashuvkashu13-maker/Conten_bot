@@ -254,7 +254,6 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
 
     sig = file_sha256(vod)
     file_dur = _ffprobe_duration(vod)
-    _min, _max, _gap, part_max, _final = _montage_limits()
     bounds = []
     for peak in peaks:
         start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
