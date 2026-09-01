@@ -230,6 +230,10 @@ pairs = {
     "PUBG_SCORE_REQUIRE_RANKER": "1",
     "PUBG_QUALITY_SCORE_MIN": "0.48",
     "PUBG_QUALITY_RANKER_WEIGHT": "0.70",
+    "PUBG_KILL_NOTIFICATION_AUTO": "1",
+    "PUBG_KILL_NOTIFICATION_ENABLED": "1",
+    "PUBG_REQUIRE_KILL_NOTIFICATION": "0",
+    "PUBG_KILL_NOTIFICATION_MIN_SCORE": "0.45",
     "PUBG_FIGHT_SEGMENTER": "1",
     "SHOOTER_VOD_MONTAGES_PER_VOD": "1",
     "SHOOTER_VOD_USED_IDS_MAX": "200",
@@ -320,6 +324,7 @@ install -m 755 \
   "$REPO/scripts/vod_analysis_cache.py" \
   "$REPO/scripts/mlbb_teamfight_detector.py" \
   "$REPO/scripts/pubg_killfeed_ocr.py" \
+  "$REPO/scripts/pubg_kill_notification.py" \
   "$REPO/scripts/genshin_boss_segment.py" \
   "$REPO/scripts/wot_brawl_segment.py" \
   "$REPO/scripts/vod_scan_state.py" \

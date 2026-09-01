@@ -89,6 +89,27 @@ def score_killfeed_segment(
 ) -> tuple[float, dict]:
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
+    if profile.strip().lower() == "pubg" and os.environ.get(
+        "PUBG_KILL_NOTIFICATION_AUTO", "1"
+    ) == "1":
+        from pubg_kill_notification import score_kill_notification_segment
+
+        notification_score, notification = score_kill_notification_segment(
+            video_path,
+            start_sec,
+            duration_sec,
+        )
+        text_score, text_hits = score_killfeed_text(
+            str(notification.get("notification_text") or "")
+        )
+        score = max(float(notification_score), float(text_score))
+        return score, {
+            "killfeed_text": str(notification.get("notification_text") or "")[:160],
+            "killfeed_hits": text_hits,
+            "killfeed_density": score,
+            **notification,
+        }
+
     crop = killfeed_crop(profile)
     viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     merged = ""

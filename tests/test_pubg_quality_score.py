@@ -90,3 +90,15 @@ def test_author_death_without_kill_remains_hard_reject(monkeypatch: pytest.Monke
     assert ok is False
     assert reason.startswith("hard_author_death")
     assert report["hard_reject"] == "author_death"
+
+
+def test_required_kill_notification_rejects_shooting_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PUBG_REQUIRE_KILL_NOTIFICATION", "1")
+    patches = _base_patches(author_kill=True)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
+    assert ok is False
+    assert reason.startswith("kill_notification_missing")
+    assert report["kill_notification_hit"] is False

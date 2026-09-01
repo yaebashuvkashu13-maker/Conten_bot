@@ -165,21 +165,25 @@ def resolve_pubg_fight_bounds(
     try:
         from pubg_killfeed_ocr import score_killfeed_segment
 
-        probes = sorted(
-            {
-                max(start, peak_sec - 3.0),
-                max(start, peak_sec + 1.0),
-                max(start, peak_sec + 5.0),
-                max(start, end - 4.0),
-            }
+        probe_start = max(start, peak_sec - 3.0)
+        probe_end = min(file_duration, end + 6.0)
+        probe_duration = max(2.0, probe_end - probe_start)
+        score, meta = score_killfeed_segment(
+            video_path,
+            probe_start,
+            probe_duration,
+            "pubg",
         )
-        for probe in probes:
-            if probe >= file_duration - 2.0:
-                continue
-            score, _ = score_killfeed_segment(video_path, probe, 4.0, "pubg")
-            if score > kill_score:
-                kill_score = float(score)
-                kill_sec = probe + 2.0
+        kill_score = float(score)
+        samples = meta.get("notification_samples") or []
+        best_sample = max(samples, key=lambda row: float(row.get("score", 0.0)), default=None)
+        if best_sample is not None and kill_score >= 0.20:
+            frame_count = max(1, int(meta.get("notification_frames") or len(samples) or 1))
+            kill_sec = probe_start + (
+                float(best_sample.get("index", 0)) + 0.5
+            ) * probe_duration / frame_count
+        elif kill_score >= 0.20:
+            kill_sec = peak_sec
     except Exception:
         pass
     if kill_sec is not None and kill_score >= 0.20:

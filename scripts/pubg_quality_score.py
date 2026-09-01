@@ -93,11 +93,17 @@ def score_pubg_window(
         killfeed, killfeed_row = 0.0, {}
     report["killfeed_density"] = round(float(killfeed), 4)
     report["killfeed"] = killfeed_row
+    notification_score = float(killfeed_row.get("notification_score", 0.0) or 0.0)
+    notification_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.45"))
+    notification_hit = notification_score >= notification_min
+    report["kill_notification_score"] = round(notification_score, 4)
+    report["kill_notification_hit"] = notification_hit
 
     best_flash = float(visual.get("best_hit_flash", 0.0))
     best_weapon = float(visual.get("best_weapon_edge", 0.0))
     has_kill = (
-        float(killfeed) >= 0.20
+        notification_hit
+        or float(killfeed) >= 0.30
         or best_flash >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004"))
         or (
             best_weapon >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_WEAPON_EDGE", "0.030"))
@@ -144,6 +150,16 @@ def score_pubg_window(
             report["training_ui"] = training_text
             report["hard_reject"] = "training_ui"
             return False, f"hard_training_ui={training_text}", report
+    if (
+        os.environ.get("PUBG_REQUIRE_KILL_NOTIFICATION", "0") == "1"
+        and not notification_hit
+    ):
+        report["quality_score"] = 0.0
+        report["quality_threshold"] = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
+        return False, (
+            f"kill_notification_missing={notification_score:.3f}:"
+            f"min{notification_min:.2f}"
+        ), report
 
     components = {
         "panns": _clip(panns_gun / 0.45) * 0.20,
