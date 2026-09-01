@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "min_colored_pixels": 10,
     "min_width_ratio": 0.035,
     "max_height_ratio": 0.14,
-    "min_aspect_ratio": 2.0,
+    "min_aspect_ratio": 3.0,
     "search": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.82},
     "hsv_ranges": [
         {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
