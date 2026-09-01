@@ -862,26 +862,39 @@ def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_
 
 
 def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
-    """Peak-center montage parts on the fight core — not a 22s walk+loot window.
+    """Peak-center montage parts on the fight sustain — not a fixed 14s window.
 
-    Default ship length matches what we gate (core + small pad). Longer tails
-    were the main trash-send path: gate passed on 10s gun core, shipped 22s with
-    loot/run edges.
+    Default: variable length from gunfire bins (SHOOTER_VOD_VARIABLE_LENGTH=1).
+    Falls back to fixed core+pad when analysis unavailable or env disabled.
     """
     clip = dict(row.get("clip") or {})
     start_hint = float(row.get("start", clip.get("start", 0)) or 0)
     peak = float(row.get("peak_start", clip.get("peak_start", start_hint)) or start_hint)
     core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
     pad = float(os.environ.get("SHOOTER_VOD_MONTAGE_CORE_PAD_SEC", "2"))
-    # Prefer fight-core length; never exceed part_max / env part sec.
-    want = min(
+    fixed_want = min(
         part_max,
         float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", str(core + pad * 2))),
         max(12.0, core + pad * 2),
     )
-    half = want * 0.5
-    start = max(0.0, peak - half)
-    dur = want
+
+    start = max(0.0, peak - fixed_want * 0.5)
+    dur = fixed_want
+    fight_end = start + dur
+
+    try:
+        from shooter_fight_segment import detect_shooter_fight_bounds, variable_length_enabled
+
+        if variable_length_enabled():
+            f_start, f_end, f_dur = detect_shooter_fight_bounds(vod, peak)
+            if f_dur >= max(10.0, fixed_want * 0.85):
+                start = f_start
+                dur = min(part_max, f_dur)
+                fight_end = min(f_end, start + dur)
+                dur = max(10.0, fight_end - start)
+    except Exception:
+        pass
+
     file_dur = _ffprobe_duration(vod)
     if file_dur > 1.0 and start + dur > file_dur:
         start = max(0.0, file_dur - dur)
@@ -890,6 +903,7 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
         {
             "start": start,
             "peak_start": peak,
+            "fight_end": round(start + dur, 2),
             "input_duration": round(dur, 2),
             "output_duration": round(dur, 2),
         }
