@@ -16,18 +16,15 @@ DEFAULT_CONFIG = {
     "enabled": True,
     "sample_fps": 1.5,
     "max_frames": 18,
-    "min_score": 0.34,
+    "min_score": 0.42,
     "min_colored_pixels": 10,
     "min_width_ratio": 0.035,
     "max_height_ratio": 0.14,
-    "min_aspect_ratio": 1.4,
-    "search": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.88},
+    "min_aspect_ratio": 2.0,
+    "search": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.82},
     "hsv_ranges": [
         {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
         {"name": "blue", "low": [100, 45, 70], "high": [135, 255, 255]},
-        {"name": "orange", "low": [6, 90, 90], "high": [30, 255, 255]},
-        {"name": "red_a", "low": [0, 100, 80], "high": [8, 255, 255]},
-        {"name": "red_b", "low": [170, 100, 80], "high": [179, 255, 255]},
     ],
 }
 
@@ -386,6 +383,10 @@ def score_kill_notification_segment(
             1.0,
             float(best_event["score"]) * 0.80 + text_score * 0.20,
         )
+        if text_chars == 0:
+            best_score *= 0.72
+        elif text_chars < 3:
+            best_score *= 0.84
 
     frame_rows: list[dict[str, Any]] = []
     hits = 0
