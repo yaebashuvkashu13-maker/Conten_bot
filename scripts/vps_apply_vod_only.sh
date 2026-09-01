@@ -2,7 +2,7 @@
 # Single VPS apply: git pull + VOD-only install + verify. Run after every code change.
 set -Eeuo pipefail
 REPO="${VPS_REPO_PATH:-/root/content_bot_ml}"
-BRANCH="${VPS_BRANCH:-cursor/pubg-unlimited-ru-search-a016}"
+BRANCH="${VPS_BRANCH:-${VOD_DEPLOY_BRANCH:-cursor/vod-pipeline-p0-p1-a016}}"
 ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 LOG=/root/data/mlbb/vps_apply_vod.log
 mkdir -p /root/data/mlbb

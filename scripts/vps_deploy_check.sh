@@ -5,7 +5,7 @@ set -euo pipefail
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 LOCK_FILE="${VOD_DEPLOY_LOCK_FILE:-/root/data/pubg/.deploy.lock}"
 REMOTE="${VOD_DEPLOY_REMOTE:-origin}"
-BRANCH="${VOD_DEPLOY_BRANCH:-cursor/pubg-unlimited-ru-search-a016}"
+BRANCH="${VOD_DEPLOY_BRANCH:-cursor/vod-pipeline-p0-p1-a016}"
 EXPECTED="${VOD_DEPLOY_COMMIT:-}"
 
 cd "$REPO"
@@ -28,16 +28,18 @@ fi
 git fetch "$REMOTE" "$BRANCH" >/dev/null 2>&1 || fail "cannot fetch $REMOTE/$BRANCH"
 
 LOCAL="$(git rev-parse HEAD)"
-REMOTE_HEAD="$(git rev-parse "$REMOTE/$BRANCH")"
+REMOTE_HEAD="$(git rev-parse "$REMOTE/$BRANCH" 2>/dev/null || git rev-parse "origin/$BRANCH")"
 
 if [[ -n "$EXPECTED" && "$LOCAL" != "$EXPECTED" ]]; then
   fail "HEAD $LOCAL != expected $EXPECTED"
 fi
 
-# Allow local == remote or local is ancestor of remote (fast-forward deploy)
+# On intentional branch switch deploy, local may differ from old remote tracking branch.
 if [[ "$LOCAL" != "$REMOTE_HEAD" ]]; then
-  if ! git merge-base --is-ancestor "$LOCAL" "$REMOTE_HEAD"; then
-    fail "history diverged local=$LOCAL remote=$REMOTE_HEAD"
+  if ! git merge-base --is-ancestor "$LOCAL" "$REMOTE_HEAD" 2>/dev/null; then
+    if ! git merge-base --is-ancestor "$REMOTE_HEAD" "$LOCAL" 2>/dev/null; then
+      fail "history diverged local=$LOCAL remote=$REMOTE_HEAD"
+    fi
   fi
 fi
 

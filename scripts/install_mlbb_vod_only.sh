@@ -166,6 +166,8 @@ from vod_env import set_env_kv
 env_file = Path("/root/.video_bot.env")
 pairs = {
     "VOD_PUBG_ONLY": "1",
+    "VPS_BRANCH": "cursor/vod-pipeline-p0-p1-a016",
+    "VOD_DEPLOY_BRANCH": "cursor/vod-pipeline-p0-p1-a016",
     "DAILY_MLBB_QUOTA": "0",
     "DAILY_STANDOFF_QUOTA": "0",
     "DAILY_GENSHIN_QUOTA": "0",

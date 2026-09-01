@@ -4,7 +4,7 @@ set -euo pipefail
 
 BRANCH="${VOD_DEPLOY_BRANCH:-cursor/vod-pipeline-p0-p1-a016}"
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
-SERVICE="${VOD_FEED_SERVICE:-mlbb-vod-segment-feed}"
+SERVICE="${VOD_FEED_SERVICE:-content-bot-vod-feed}"
 
 echo "=== deploy branch $BRANCH ==="
 cd "$REPO"
