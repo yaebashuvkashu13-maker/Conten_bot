@@ -132,10 +132,7 @@ def _fight_bounds(vod: Path, peak: float, file_dur: float | None = None) -> tupl
 
 def _bounds_distinct(a: tuple[float, float], b: tuple[float, float]) -> bool:
     gap = _min_window_gap_sec()
-    if a[1] + gap <= b[0] or b[1] + gap <= a[0]:
-        return True
-    pad = float(os.environ.get("PUBG_OWNER_REDO_OVERLAP_PAD_SEC", "4"))
-    return a[1] + pad <= b[0] or b[1] + pad <= a[0]
+    return a[1] + gap <= b[0] or b[1] + gap <= a[0]
 
 
 def _dedupe_peak_windows(
