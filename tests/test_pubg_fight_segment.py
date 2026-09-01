@@ -41,8 +41,8 @@ def test_segmenter_expands_from_contact_through_finale(
 
     monkeypatch.setattr(segmenter, "_activity_timeline", timeline)
 
-    def killfeed(_path: Path, start: float, _duration: float, _profile: str):
-        return (0.8 if 105 <= start <= 109 else 0.0), {}
+    def killfeed(_path: Path, start: float, duration: float, _profile: str):
+        return (0.8 if start <= 109 <= start + duration else 0.0), {}
 
     with patch("pubg_killfeed_ocr.score_killfeed_segment", side_effect=killfeed):
         start, duration, report = segmenter.resolve_pubg_fight_bounds(
