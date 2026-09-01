@@ -269,17 +269,21 @@ def select_distinct_kill_peaks(
         part_sec=14.0,
         max_probes=max(len(filtered), min_clips * 8),
     )
-    presend_hits: list[float] = []
+    presend_hits: list[tuple[float, float]] = []
     for p in ranked:
         ok, _reason, _start, _dur = peak_presend_ok(vod, float(p), file_dur=file_dur)
         if ok:
-            presend_hits.append(float(p))
-    with_hit = presend_hits or [
-        float(p)
-        for p in ranked
-        if meta.get(float(p), {}).get("notification_hit")
-        and peak_shape_ok(vod, float(p), file_dur=file_dur)
-    ]
+            note = float(meta.get(float(p), {}).get("notification_score", 0.0) or 0.0)
+            presend_hits.append((float(p), note))
+    presend_hits.sort(key=lambda item: -item[1])
+    with_hit = [p for p, _note in presend_hits]
+    if len(with_hit) < min_clips:
+        with_hit = [
+            float(p)
+            for p in ranked
+            if meta.get(float(p), {}).get("notification_hit")
+            and peak_shape_ok(vod, float(p), file_dur=file_dur)
+        ]
     if len(with_hit) < min_clips:
         shaped = [float(p) for p in ranked if peak_shape_ok(vod, float(p), file_dur=file_dur)]
         with_hit = shaped or with_hit

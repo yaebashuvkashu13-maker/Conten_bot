@@ -53,7 +53,7 @@ def validate_clip_fight_shape(
             return False, f"loot_tail tail={tail:.1f}s"
 
     coverage = _gunfire_coverage(report, start_f, dur_f)
-    if coverage is not None and coverage < min_gunfire_coverage_frac():
+    if coverage is not None and 0.0 < coverage < min_gunfire_coverage_frac():
         return False, f"low_gun_coverage={coverage:.2f}"
 
     return True, "fight_shape_ok"
