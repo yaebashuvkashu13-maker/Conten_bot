@@ -83,6 +83,39 @@ def _owner_good_peaks(vod: Path) -> list[float]:
     return out
 
 
+def _probe_anchor_vicinity(
+    vod: Path,
+    anchor: float,
+    *,
+    radius: float = 100.0,
+    step: float = 12.0,
+) -> list[float]:
+    """Lightweight fight probe around owner anchor when dense pool missed the zone."""
+    from pubg_fast_peak_rank import score_peak_fast
+
+    hits: list[tuple[float, float]] = []
+    t = float(anchor) - radius
+    end_t = float(anchor) + radius
+    while t <= end_t:
+        row = score_peak_fast(vod, t, part_sec=14.0, profile="pubg")
+        score = float(row.get("fast_score", 0.0) or 0.0)
+        if row.get("loot_walk"):
+            t += step
+            continue
+        if score >= float(os.environ.get("PUBG_OWNER_VICINITY_MIN_SCORE", "0.26")):
+            hits.append((score, float(t)))
+        t += step
+    hits.sort(key=lambda item: (-item[0], abs(item[1] - anchor)))
+    out: list[float] = []
+    for _score, peak in hits:
+        if any(abs(peak - p) <= 10.0 for p in out):
+            continue
+        out.append(peak)
+        if len(out) >= 8:
+            break
+    return out
+
+
 def _discover_cluster_peaks(
     vod: Path,
     anchor: float,
@@ -94,7 +127,7 @@ def _discover_cluster_peaks(
     from shooter_vod_fast_scan import discover_montage_gun_peaks
     from vod_montage_cluster import montage_cluster_span_sec, pick_montage_rows
 
-    span = float(os.environ.get("SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC", "240"))
+    span = float(os.environ.get("PUBG_OWNER_CLUSTER_SPAN_SEC", "120"))
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_GAP_SEC", "20"))
     pool, _reason = discover_montage_gun_peaks(
         vod,
@@ -109,6 +142,7 @@ def _discover_cluster_peaks(
         if abs(float(p) - float(anchor)) <= span
         and not any(abs(float(p) - float(bad)) <= 25.0 for bad in avoid)
     ]
+    near.extend(_probe_anchor_vicinity(vod, anchor, radius=span))
     if not any(abs(float(p) - float(anchor)) <= 4.0 for p in near):
         near.append(float(anchor))
     ranked, _style_reason, sims = rank_peaks_by_style(vod, sorted(set(near)), part_sec=14.0)
@@ -123,6 +157,7 @@ def _discover_cluster_peaks(
         }
         for p in ranked
     ]
+    os.environ["SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC"] = str(int(max(span, 90)))
     picked = pick_montage_rows(
         rows,
         min_clips=min_clips,
@@ -131,8 +166,19 @@ def _discover_cluster_peaks(
         anchor_peaks=[float(anchor)],
     )
     peaks = sorted(float(r["peak_start"]) for r in picked[:max_clips])
+    if float(anchor) not in peaks and len(peaks) < max_clips:
+        peaks = sorted(set(peaks + [float(anchor)]))
+    if len(peaks) < min_clips:
+        extras = [float(p) for p in ranked if float(p) not in peaks]
+        for peak in extras:
+            if any(abs(peak - p) <= gap for p in peaks):
+                continue
+            peaks.append(peak)
+            peaks.sort()
+            if len(peaks) >= min_clips:
+                break
     log.info("cluster vod=%s anchor=%.0f peaks=%s (%s)", vod.name, anchor, peaks, _style_reason)
-    return peaks
+    return peaks[:max_clips]
 
 
 def resolve_montage_peaks(vod: Path, *, min_clips: int = 2, max_clips: int = 2) -> list[float]:
@@ -182,6 +228,7 @@ def _apply_redo_env() -> None:
         "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "2",
         "SHOOTER_VOD_MONTAGE_PREFER_PARTS": "2",
         "SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC": "360",
+        "PUBG_OWNER_CLUSTER_SPAN_SEC": "120",
         "PUBG_SEGMENT_SCAN_AFTER": "40",
         "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "6",
         "PUBG_REJECT_LOOT_WALK": "1",
@@ -194,7 +241,7 @@ def _apply_redo_env() -> None:
 def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     from pubg_fight_segment import clear_segment_cache, resolve_pubg_fight_bounds
     from pubg_owner_peak_montage import _peak_rows, file_sha256
-    from shooter_vod_segment_feed import _ffprobe_duration, _montage_limits, _prepare_montage_clip, _send_montage
+    from shooter_vod_segment_feed import _ffprobe_duration, _send_montage
 
     vod = _resolve_vod(vid)
     if vod is None:
@@ -211,18 +258,15 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     bounds = []
     for peak in peaks:
         start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
-        row = {"peak_start": peak, "start": start, "score": 0.92, "clip": {}}
-        clip = _prepare_montage_clip(row, vod, part_max=part_max, game="pubg")
         bounds.append(
             {
                 "peak": peak,
                 "start": start,
                 "duration": dur,
                 "end": start + dur,
-                "clip_start": clip.get("start"),
-                "clip_dur": clip.get("input_duration"),
                 "shooting_start": report.get("shooting_start"),
                 "fight_end": report.get("fight_end"),
+                "report": report,
             }
         )
 
@@ -242,13 +286,18 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     clear_vod_sent(vod)
     rows = _peak_rows(vod, peaks, sig)
     for row, bound in zip(rows, bounds):
-        row["start"] = bound["clip_start"]
+        dur = float(bound["duration"])
+        start = float(bound["start"])
+        row["start"] = start
         row["peak_start"] = bound["peak"]
         row["clip"] = {
-            "start": bound["clip_start"],
+            "start": start,
             "peak_start": bound["peak"],
-            "input_duration": bound["clip_dur"],
-            "output_duration": bound["clip_dur"],
+            "input_duration": dur,
+            "output_duration": dur,
+            "fight_end": bound.get("fight_end"),
+            "bounds_locked": True,
+            "segment_report": bound.get("report") or {},
         }
 
     sent = _send_montage("pubg", token, chat_id, vod, rows, sig)

@@ -960,6 +960,8 @@ def _prepare_montage_clip(
     Falls back to fixed core+pad when analysis unavailable or env disabled.
     """
     clip = dict(row.get("clip") or {})
+    if clip.get("bounds_locked"):
+        return clip
     start_hint = float(row.get("start", clip.get("start", 0)) or 0)
     peak = float(row.get("peak_start", clip.get("peak_start", start_hint)) or start_hint)
     core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
