@@ -228,7 +228,8 @@ pairs = {
     "VOD_CASCADE_PANN_MAX": "25",
     "VOD_CASCADE_CLIP_MAX": "12",
     "VOD_CASCADE_KILL_MAX": "8",
-    "VOD_VIEWPORT_CACHE": "1",
+    "VOD_EVENT_AUDIO_DEDUP": "1",
+    "PUBG_KILL_NOTIFICATION_SAVE_CROPS": "1",
     "VOD_CONFIG_VALIDATE": "1",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
@@ -339,6 +340,12 @@ install -m 755 \
   "$REPO/scripts/youtube_source_health.py" \
   "$REPO/scripts/pubg_label_audit.py" \
   "$REPO/scripts/pubg_nightly_ranker_deploy.py" \
+  "$REPO/scripts/pubg_kill_notification_dataset.py" \
+  "$REPO/scripts/pubg_kill_notification_classifier.py" \
+  "$REPO/scripts/benchmark_model_backends.py" \
+  "$REPO/scripts/vps_deploy_pipeline.sh" \
+  "$REPO/scripts/install_nightly_ranker_cron.sh" \
+  "$REPO/scripts/migrate_runtime_labels.sh" \
   "$REPO/scripts/vps_deploy_check.sh" \
   "$REPO/scripts/shooter_fight_segment.py" \
   "$REPO/scripts/shooter_vod_bg_download.py" \

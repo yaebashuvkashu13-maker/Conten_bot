@@ -431,7 +431,7 @@ def score_kill_notification_segment(
         )
     ratio = hits / max(len(frames), 1)
     score = best_score if best_score >= threshold else best_score * 0.75
-    return score, {
+    meta = {
         "notification_score": round(score, 4),
         "notification_best_frame_score": round(best_score, 4),
         "notification_frames": len(frames),
@@ -443,6 +443,38 @@ def score_kill_notification_segment(
         "notification_onset": best_event,
         "notification_samples": frame_rows,
     }
+    if best_box is not None and event_index is not None and 0 <= event_index < len(views):
+        try:
+            from pubg_kill_notification_dataset import extract_crop, save_crop
+
+            crop = extract_crop(views[event_index], best_box)
+            key = save_crop(
+                crop if crop is not None else views[event_index],
+                video_path=video_path,
+                start_sec=start_sec,
+                box=best_box,
+                score=score,
+                text=best_text,
+                meta={"hits": hits, "ratio": ratio},
+            )
+            if key:
+                meta["notification_crop_key"] = key
+        except Exception:
+            pass
+    try:
+        from pubg_kill_notification_classifier import predict
+
+        if best_box is not None and event_index is not None:
+            from pubg_kill_notification_dataset import extract_crop
+
+            crop = extract_crop(views[event_index], best_box)
+            if crop is not None:
+                label, conf = predict(crop)
+                meta["notification_class"] = label
+                meta["notification_class_conf"] = round(conf, 4)
+    except Exception:
+        pass
+    return score, meta
 
 
 __all__ = [

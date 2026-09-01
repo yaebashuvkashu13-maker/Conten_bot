@@ -13,26 +13,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def _load_state(game: str) -> dict:
-    from shooter_vod_segment_store import load_state
+    from shooter_vod_segment_store import _paths
+    from vod_state_io import load_json_state
 
-    return load_state(game)
+    p = _paths(game)["state"]
+    return load_json_state(p, lambda: {"vods": [], "used_youtube_ids": []})
 
 
 def report(game: str = "pubg", *, since_hours: float = 24.0) -> dict:
     state = _load_state(game)
     cutoff = time.time() - since_hours * 3600.0
     rows: list[dict] = []
-    for vod_id, entry in (state.get("vods") or {}).items():
+    for entry in state.get("vods") or []:
+        if not isinstance(entry, dict):
+            continue
         last_at = float(entry.get("last_scan_at") or 0)
         if last_at < cutoff:
             continue
         funnel = entry.get("last_scan_funnel") or {}
         sent = int(entry.get("last_scan_sent") or funnel.get("sent") or 0)
         approved = int(funnel.get("approved") or sent)
-        timings = funnel.get("timings_ms") or {}
+        timings = entry.get("last_scan_timings_ms") or funnel.get("timings_ms") or {}
         rows.append(
             {
-                "vod_id": vod_id,
+                "vod_id": entry.get("vod_id") or entry.get("youtube_id") or entry.get("path", "")[-15:],
                 "sent": sent,
                 "approved": approved,
                 "reject_reason": entry.get("reject_reason"),

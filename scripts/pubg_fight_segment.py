@@ -47,16 +47,36 @@ def _activity_timeline(
 
     sample_rate = 11025
     span = max(sample, scan_end - scan_start + sample)
-    pcm = _extract_segment_audio_pcm(
-        video_path,
-        scan_start,
-        span,
-        sample_rate=sample_rate,
-    )
+    pcm = None
+    pcm_offset = 0
+    try:
+        from vod_feature_store import open_store
+
+        store = open_store(video_path, skip_intro=0.0)
+        if store is not None and store.ensure_pcm(scan_end + sample):
+            full = store.get_pcm_s16()
+            if full.size > 0:
+                i0 = max(0, int(scan_start * sample_rate))
+                i1 = min(len(full), int((scan_start + span) * sample_rate))
+                pcm = full[i0:i1]
+                pcm_offset = scan_start
+            store.close()
+    except Exception:
+        pcm = None
+    if pcm is None:
+        from gameplay_gate import _extract_segment_audio_pcm
+
+        pcm = _extract_segment_audio_pcm(
+            video_path,
+            scan_start,
+            span,
+            sample_rate=sample_rate,
+        )
+        pcm_offset = scan_start
     rows: list[dict[str, Any]] = []
     t = scan_start
     while t + sample <= scan_end + 1e-6:
-        offset = max(0, int(round((t - scan_start) * sample_rate)))
+        offset = max(0, int(round((t - pcm_offset) * sample_rate)))
         count = max(1, int(round(sample * sample_rate)))
         gun, burst, rms = _score_pcm(pcm[offset : offset + count])
         score = min(1.0, gun / 0.065) * 0.65

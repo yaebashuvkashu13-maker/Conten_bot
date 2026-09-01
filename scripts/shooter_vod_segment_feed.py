@@ -2069,9 +2069,10 @@ def _scan_vod_with_adaptive(
                         owner_peaks[:6],
                     )
                 try:
-                    from vod_event_dedup import merge_nearby_peaks
+                    from vod_event_dedup import dedup_by_audio_signature, merge_nearby_peaks
 
                     dense_peaks = merge_nearby_peaks(dense_peaks or [])
+                    dense_peaks = dedup_by_audio_signature(vod, dense_peaks)
                 except Exception:
                     pass
                 if game == "pubg" and dense_peaks:

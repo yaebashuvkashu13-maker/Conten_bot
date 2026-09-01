@@ -152,7 +152,7 @@ def append_owner_time_label(
     source: str = "vod_segment",
 ) -> bool:
     vid = video_id.strip()
-    if not vid or label not in ("good", "bad"):
+    if not vid or label not in ("good", "bad", "uncertain"):
         return False
     data = load_owner_labels(profile)
     videos: dict = data.setdefault("videos", {})

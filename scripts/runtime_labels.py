@@ -93,6 +93,17 @@ def save_runtime_labels(profile: str, data: dict) -> None:
     path = ensure_runtime_labels(profile)
     if path is None:
         return
+    prev = load_runtime_labels(profile)
+    history = list(prev.get("label_history") or [])
+    if prev.get("videos") != data.get("videos"):
+        history.append(
+            {
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "video_count": len((data.get("videos") or {})),
+            }
+        )
+        history = history[-50:]
+    data["label_history"] = history
     data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data.pop("seeded_from", None)
     tmp = path.with_suffix(f".{os.getpid()}.tmp")
