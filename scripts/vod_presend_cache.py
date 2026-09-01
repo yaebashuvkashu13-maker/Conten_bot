@@ -81,4 +81,34 @@ def put_presend(
     os.replace(tmp, path)
 
 
-__all__ = ["get_presend", "put_presend", "cache_enabled"]
+def clear_presend_cache(video_path: Path | None = None) -> int:
+    """Drop cached presend results (all or one VOD's windows)."""
+    root = cache_root()
+    if not root.is_dir():
+        return 0
+    removed = 0
+    if video_path is None:
+        for path in root.glob("*.json"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed
+    target = video_path.resolve()
+    for path in root.glob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        report = payload.get("report") or {}
+        if str(report.get("video") or "") == str(target):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+__all__ = ["get_presend", "put_presend", "cache_enabled", "clear_presend_cache"]

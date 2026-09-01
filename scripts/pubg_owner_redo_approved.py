@@ -241,6 +241,7 @@ def _apply_redo_env() -> None:
         "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "6",
         "PUBG_REJECT_LOOT_WALK": "0",
         "PUBG_EARLY_PAYOFF_REJECT": "0",
+        "VOD_PRESEND_CACHE": "0",
         "PUBG_STYLE_RANK_BLEND": "0.58",
     }
     for key, val in defaults.items():
@@ -257,6 +258,12 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
         return {"vid": vid, "status": "missing_vod"}
 
     clear_segment_cache()
+    try:
+        from vod_presend_cache import clear_presend_cache
+
+        clear_presend_cache()
+    except Exception:
+        pass
     peaks = resolve_montage_peaks(vod)
     if len(peaks) < 2:
         return {"vid": vid, "status": "insufficient_peaks", "peaks": peaks}
