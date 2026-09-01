@@ -9,11 +9,12 @@ import json
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2
 FEATURE_NAMES = (
     "panns_gunshot",
     "panns_machine_gun",
@@ -24,8 +25,6 @@ FEATURE_NAMES = (
     "gunfire_density",
     "burst_ratio",
     "audio_rms",
-    "center_motion",
-    "killfeed_density",
 )
 _MODEL_CACHE: tuple[str, int, dict] | None = None
 
@@ -125,15 +124,10 @@ def extract_features(video_path: Path, start_sec: float, duration_sec: float = 1
         return {name: float(cached["features"].get(name, 0.0)) for name in FEATURE_NAMES}
 
     from highlight_scorer import score_panns_audio
-    from pubg_killfeed_ocr import score_killfeed_segment
-    from pubg_shooting_gate import pubg_probe_segment
+    from gameplay_gate import score_pubg_gunfire_audio
 
     panns = score_panns_audio(video_path, start_sec, duration_sec)
-    shoot = pubg_probe_segment(video_path, start_sec, duration_sec)
-    try:
-        killfeed, _ = score_killfeed_segment(video_path, start_sec, duration_sec, "pubg")
-    except Exception:
-        killfeed = 0.0
+    gun, burst, rms = score_pubg_gunfire_audio(video_path, start_sec, duration_sec)
     features = {
         "panns_gunshot": float(panns.get("panns_gunshot", 0.0)),
         "panns_machine_gun": float(panns.get("panns_machine_gun", 0.0)),
@@ -141,11 +135,9 @@ def extract_features(video_path: Path, start_sec: float, duration_sec: float = 1
         "panns_speech": float(panns.get("panns_speech", 0.0)),
         "panns_music": float(panns.get("panns_music", 0.0)),
         "panns_gun_max": float(panns.get("panns_gun_max", 0.0)),
-        "gunfire_density": float(shoot.get("gunfire_density", 0.0)),
-        "burst_ratio": float(shoot.get("burst_ratio", 0.0)),
-        "audio_rms": float(shoot.get("audio_rms", 0.0)),
-        "center_motion": float(shoot.get("center_motion", 0.0)),
-        "killfeed_density": float(killfeed),
+        "gunfire_density": float(gun),
+        "burst_ratio": float(burst),
+        "audio_rms": float(rms),
     }
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": FEATURE_VERSION, "saved_at": time.time(), "features": features}
@@ -500,15 +492,38 @@ def rank_peaks_with_model(
         if index not in selected_set:
             selected_indices.append(index)
             selected_set.add(index)
-    scored: list[tuple[float, int, float]] = []
-    for index in selected_indices:
-        peak = peaks[index]
-        start = max(0.0, float(peak) - part_sec * 0.5)
+
+    def extract(index: int) -> tuple[int, float, dict[str, float] | None]:
+        peak = float(peaks[index])
+        start = max(0.0, peak - part_sec * 0.5)
         try:
-            score = predict_score(video_path, start, part_sec)
+            features = extract_features(video_path, start, part_sec)
         except Exception:
-            score = None
-        scored.append((float(score) if score is not None else -1.0, index, float(peak)))
+            features = None
+        return index, peak, features
+
+    workers = max(1, int(os.environ.get("PUBG_RANKER_WORKERS", "4")))
+    if workers == 1 or len(selected_indices) < 2:
+        extracted = [extract(index) for index in selected_indices]
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(selected_indices))) as pool:
+            extracted = list(pool.map(extract, selected_indices))
+    valid = [(index, peak, features) for index, peak, features in extracted if features is not None]
+    probabilities = (
+        artifact["model"].predict_proba(
+            [feature_vector(features) for _index, _peak, features in valid]
+        )[:, 1]
+        if valid
+        else []
+    )
+    probability_by_index = {
+        index: float(probability)
+        for (index, _peak, _features), probability in zip(valid, probabilities)
+    }
+    scored = [
+        (probability_by_index.get(index, -1.0), index, peak)
+        for index, peak, _features in extracted
+    ]
     scored.sort(key=lambda row: (-row[0], row[1]))
     ranked = [peak for _score, _index, peak in scored]
     ranked.extend(float(peak) for index, peak in enumerate(peaks) if index not in selected_set)

@@ -95,16 +95,23 @@ def test_quality_report_reuses_training_features() -> None:
 
 
 def test_ranker_budget_includes_timeline_diversity(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+
     peaks = [float(index * 10) for index in range(20)] + [900.0]
-    monkeypatch.setattr(ranker, "_load_artifact", lambda: {"model": object()})
+    class FakeModel:
+        def predict_proba(self, rows):
+            return np.asarray([[1.0 - row[0], row[0]] for row in rows])
+
+    monkeypatch.setattr(ranker, "_load_artifact", lambda: {"model": FakeModel()})
     seen: list[float] = []
 
-    def predict(_path: Path, start: float, _duration: float):
+    def extract(_path: Path, start: float, _duration: float):
         peak = start + 7.0
         seen.append(peak)
-        return 0.99 if peak == 900.0 else 0.1
+        value = 0.99 if peak == 900.0 else 0.1
+        return {name: value for name in ranker.FEATURE_NAMES}
 
-    monkeypatch.setattr(ranker, "predict_score", predict)
+    monkeypatch.setattr(ranker, "extract_features", extract)
     ranked, _ = ranker.rank_peaks_with_model(
         Path("/tmp/vod.mp4"),
         peaks,
