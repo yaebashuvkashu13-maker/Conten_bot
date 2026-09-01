@@ -14,11 +14,11 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("SHOOTER_FIGHT_MAX_SEC", "20"))
+    return float(os.environ.get("SHOOTER_FIGHT_MAX_SEC", "28"))
 
 
 def _fight_hard_max_sec() -> float:
-    return float(os.environ.get("SHOOTER_FIGHT_HARD_MAX_SEC", "24"))
+    return float(os.environ.get("SHOOTER_FIGHT_HARD_MAX_SEC", "32"))
 
 
 def _lead_sec() -> float:
@@ -39,15 +39,20 @@ def _analysis_for(vod: Path) -> dict:
     return analyze_video_cached(vod)
 
 
-def detect_shooter_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, float, float]:
+def detect_shooter_fight_bounds(
+    vod: Path,
+    peak_sec: float,
+    *,
+    part_cap: float | None = None,
+) -> tuple[float, float, float]:
     """
     Gunfire-sustain window around peak_sec.
 
-    Returns (start_sec, end_sec, duration_sec). Uses cached analyze_video bins
-    (gunfire + center_motion) — one pass per VOD, no per-peak ffmpeg.
+    Walks bins until quiet — returns the full fight span. If longer than part_cap,
+    trims only from the start (keeps natural fight end) so we never cut mid-contact.
     """
     min_d = _fight_min_sec()
-    max_d = _fight_max_sec()
+    max_d = float(part_cap) if part_cap is not None and part_cap > 0 else _fight_max_sec()
     lead = _lead_sec()
     analysis = _analysis_for(vod)
     win = float(analysis.get("window_seconds", 2.0))
@@ -57,7 +62,7 @@ def detect_shooter_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, floa
         half = min(max_d, max(min_d, 14.0)) * 0.5
         start = max(0.0, float(peak_sec) - half)
         end = min(file_dur, start + max(min_d, half * 2))
-        return round(start, 2), round(end, 2), round(end - start, 2)
+        return round(start, 2), round(end, 2), round(end - start)
 
     gunfire = np.asarray(analysis.get("gunfire", analysis.get("audio", [])), dtype=np.float32)
     motion = np.asarray(analysis.get("center_motion", analysis.get("motion", [])), dtype=np.float32)
@@ -74,7 +79,7 @@ def detect_shooter_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, floa
     peak_idx = int(round(float(peak_sec) / win))
     peak_idx = max(0, min(bins - 1, peak_idx))
 
-    extend = int(os.environ.get("SHOOTER_FIGHT_EXTEND_BINS", str(int(max_d / max(win, 0.5)) + 4)))
+    extend = int(os.environ.get("SHOOTER_FIGHT_EXTEND_BINS", str(int(max_d / max(win, 0.5)) + 6)))
     quiet_need = _sustain_quiet_bins()
 
     left = peak_idx
@@ -123,23 +128,18 @@ def detect_shooter_fight_bounds(vod: Path, peak_sec: float) -> tuple[float, floa
         end = min(file_dur, start + min_d)
         dur = end - start
 
-    hard_max = min(_fight_hard_max_sec(), max_d * 1.25)
-    if dur > max_d:
-        # Keep peak inside the window; prefer extending past the fight over pre-roll.
-        peak = float(peak_sec)
-        tail = max(lead, (end - peak))
-        head = max(lead, (peak - start))
-        if tail >= head:
-            start = max(0.0, peak - min(max_d * 0.35, head))
-            end = min(file_dur, max(start + max_d, peak + (max_d - (peak - start))))
-        else:
-            end = min(file_dur, peak + min(max_d * 0.65, tail))
-            start = max(0.0, end - max_d)
-        dur = end - start
-
-    if dur > hard_max:
+    # Cap only when montage budget requires it — keep fight end, trim lead.
+    hard_max = min(_fight_hard_max_sec(), max_d * 1.15)
+    cap = min(max_d, hard_max)
+    if dur > cap:
         end = min(file_dur, region_end)
-        start = max(0.0, end - hard_max)
+        start = max(region_start, end - cap)
         dur = end - start
+        peak_f = float(peak_sec)
+        if not (start <= peak_f <= end):
+            half = cap * 0.5
+            start = max(0.0, peak_f - half)
+            end = min(file_dur, start + cap)
+            dur = end - start
 
     return round(start, 2), round(end, 2), round(dur, 2)
