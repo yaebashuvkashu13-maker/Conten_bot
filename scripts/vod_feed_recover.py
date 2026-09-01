@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from reset_vod_inbox_exhausted import reset_game
+from daily_game_cycle import pubg_only_mode
 from telegram_owner_controls import reset_discovery_offsets, running_processes
 from vod_game_registry import (
     VOD_GAMES,
@@ -312,10 +313,18 @@ def _pool_ready_inbox_count(game: str) -> int:
     return ready
 
 
+def _recover_games(game: str) -> list[str]:
+    if game != "all":
+        return [game]
+    if pubg_only_mode():
+        return ["pubg"]
+    return list(VOD_GAMES)
+
+
 def _eta_target_games(game: str) -> list[str]:
     if game != "all":
         return [game]
-    if os.environ.get("VOD_PUBG_ONLY", "0") == "1":
+    if pubg_only_mode():
         return ["pubg"]
     from vod_pipeline_health import health_row
 
@@ -370,7 +379,7 @@ def run_recover(
     restart: Callable[..., tuple[bool, str]] = restart_supervisor,
     probe: Callable[[], dict[str, bool]] = running_processes,
 ) -> str:
-    games = list(VOD_GAMES) if game == "all" else [game]
+    games = _recover_games(game)
     lock_note = clear_stale_owner_batch_lock()
     locks = clear_feed_locks()
     pauses = 0

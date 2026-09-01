@@ -20,13 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from daily_game_cycle import can_send_for_game, profile_for_game, record_send as cycle_record_send
 from mlbb_vod_segment_feed import (
-    VodPipelineDownloader,
     _ffprobe_duration,
     _vod_target_dur_sec,
     render_single_segment,
     send_message,
     send_video,
 )
+from shooter_vod_bg_download import ShooterVodBgDownloader
 from pubg_combat_gate import pubg_passes_combat_gate
 from pubg_metro_royale_gate import title_metro_hint
 from shooter_vod_segment_store import (
@@ -64,7 +64,7 @@ from vod_scan_state import (
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
-from vod_game_registry import VOD_PIPELINE_REV, trim_used_youtube_ids
+from vod_scan_funnel import ScanFunnel
 from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env
 
@@ -151,7 +151,7 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
-DENSE_POOL_VERSION = 2
+DENSE_POOL_VERSION = 3
 
 
 def _game() -> str:
@@ -866,14 +866,32 @@ def _dense_on_fast_probe_miss(game: str) -> bool:
     )
 
 
+def _montage_xfade_sec() -> float:
+    return float(os.environ.get("SHOOTER_VOD_MONTAGE_XFADE_SEC", "0.28"))
+
+
+def _montage_part_budget(num_parts: int, final_max: float) -> float:
+    """Per-part seconds so N parts + xfades fit in final_max (default 55s ×3)."""
+    n = max(1, int(num_parts))
+    return (float(final_max) + _montage_xfade_sec() * (n - 1)) / n
+
+
+def _montage_prefer_parts(game: str | None, max_clips: int, soft_min: int) -> int:
+    """Target part count — default 3 for PUBG when available."""
+    raw = os.environ.get("SHOOTER_VOD_MONTAGE_PREFER_PARTS", "").strip()
+    prefer = int(raw) if raw else max_clips
+    if game == "pubg" and not raw:
+        prefer = max(prefer, 3)
+    return max(soft_min, min(max_clips, prefer))
+
+
 def _montage_limits() -> tuple[int, int, float, float, float]:
     """min_clips, max_clips, gap_sec, part_max_sec, final_max_sec."""
-    # Allow 1 via env — hard floor of 2 caused 8h idle when only 1 part passed gates.
     min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
     max_clips = max(min_clips, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55"))
-    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
-    final_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "70"))
+    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "22"))
+    final_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "55"))
     return min_clips, max_clips, gap, part_max, final_max
 
 
@@ -924,29 +942,48 @@ def _prepare_montage_clip(
     part_max: float,
     game: str = "",
 ) -> dict:
-    """Peak-center montage parts on the fight core — not a 22s walk+loot window.
+    """Peak-center montage parts on the fight sustain — not a fixed 14s window.
 
-    Default ship length matches what we gate (core + small pad). Longer tails
-    were the main trash-send path: gate passed on 10s gun core, shipped 22s with
-    loot/run edges.
+    Default: variable length from gunfire bins (SHOOTER_VOD_VARIABLE_LENGTH=1).
+    Falls back to fixed core+pad when analysis unavailable or env disabled.
     """
     clip = dict(row.get("clip") or {})
     start_hint = float(row.get("start", clip.get("start", 0)) or 0)
     peak = float(row.get("peak_start", clip.get("peak_start", start_hint)) or start_hint)
     core = float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10"))
     pad = float(os.environ.get("SHOOTER_VOD_MONTAGE_CORE_PAD_SEC", "2"))
-    # Prefer fight-core length; never exceed part_max / env part sec.
-    want = min(
+    fixed_want = min(
         part_max,
         float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_SEC", str(core + pad * 2))),
         max(12.0, core + pad * 2),
     )
-    half = want * 0.5
-    start = max(0.0, peak - half)
-    dur = want
+
+    start = max(0.0, peak - fixed_want * 0.5)
+    dur = fixed_want
+    fight_end = start + dur
+
     file_dur = _ffprobe_duration(vod)
     segment_report: dict = {}
-    if game == "pubg" and os.environ.get("PUBG_FIGHT_SEGMENTER", "1") == "1":
+    use_pubg_segmenter = (
+        game == "pubg" and os.environ.get("PUBG_FIGHT_SEGMENTER", "1") == "1"
+    )
+    if not use_pubg_segmenter:
+        try:
+            from shooter_fight_segment import (
+                detect_shooter_fight_bounds,
+                variable_length_enabled,
+            )
+
+            if variable_length_enabled():
+                f_start, f_end, f_dur = detect_shooter_fight_bounds(vod, peak)
+                if f_dur >= max(10.0, fixed_want * 0.85):
+                    start = f_start
+                    dur = min(part_max, f_dur)
+                    fight_end = min(f_end, start + dur)
+                    dur = max(10.0, fight_end - start)
+        except Exception:
+            pass
+    if use_pubg_segmenter:
         try:
             from pubg_fight_segment import resolve_pubg_fight_bounds
 
@@ -965,6 +1002,7 @@ def _prepare_montage_clip(
         {
             "start": start,
             "peak_start": peak,
+            "fight_end": round(start + dur, 2),
             "input_duration": round(dur, 2),
             "output_duration": round(dur, 2),
         }
@@ -1054,6 +1092,8 @@ def _send_montage(
 
     min_clips, max_clips, gap_sec, part_max, final_max = _montage_limits()
     soft_min = _montage_soft_min_clips(game)
+    prefer_parts = _montage_prefer_parts(game, max_clips, soft_min)
+    part_budget = min(part_max, _montage_part_budget(prefer_parts, final_max))
     # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
     picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
     if len(picked) < min_clips:
@@ -1124,7 +1164,12 @@ def _send_montage(
                 sid = str(row.get("segment_id") or "")
                 if sid in rejected_sids:
                     continue
-                clip = _prepare_montage_clip(row, vod, part_max=part_max, game=game)
+                clip = _prepare_montage_clip(
+                    row,
+                    vod,
+                    part_max=part_budget,
+                    game=game,
+                )
                 part = temp_dir / f"part_{idx:02d}.mp4"
                 work_row = {**row, "clip": clip, "start": clip["start"], "peak_start": clip["peak_start"]}
                 if not render_single_segment(vod, clip, part):
@@ -1157,10 +1202,10 @@ def _send_montage(
                 strict_pubg = game == "pubg" and pubg_quality_strict()
                 if strict_pubg:
                     ship_target = min_clips
-                elif os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "1") == "1":
+                elif os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "0") == "1":
                     ship_target = max(soft_min, 1)
                 else:
-                    ship_target = max_clips
+                    ship_target = prefer_parts
                 if len(segment_paths) >= ship_target:
                     break
                 if len(segment_paths) >= max_clips:
@@ -1214,13 +1259,24 @@ def _send_montage(
             segment_paths = [t[1] for t in ordered]
             durations = [t[2] for t in ordered]
 
-            while len(segment_paths) > min_clips:
-                est = sum(durations) - 0.28 * (len(segment_paths) - 1)
+            while len(segment_paths) > soft_min:
+                est = sum(durations) - _montage_xfade_sec() * (len(segment_paths) - 1)
                 if est <= final_max:
                     break
-                segment_paths.pop()
-                durations.pop()
-                accepted_rows.pop()
+                # Drop weakest fight — keep the more interesting peaks in the montage.
+                scores = [float(r.get("score", 0) or 0) for r in accepted_rows]
+                drop_idx = scores.index(min(scores))
+                log.info(
+                    "montage trim over budget game=%s est=%.1fs max=%.0f drop_idx=%s score=%.3f",
+                    game,
+                    est,
+                    final_max,
+                    drop_idx,
+                    scores[drop_idx],
+                )
+                segment_paths.pop(drop_idx)
+                durations.pop(drop_idx)
+                accepted_rows.pop(drop_idx)
 
             montage_id = f"{vod_youtube_id(vod)}_mtg_{int(time.time())}"
             out = seg_root / f"montage_{montage_id}.mp4"
@@ -1240,8 +1296,12 @@ def _send_montage(
                         str(float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10")) + 4.0),
                     )
                 )
-                if len(segment_paths) >= 2:
-                    # 2×14s parts xfade to ~28s — do not reject valid double montages.
+                if len(segment_paths) >= 3:
+                    min_final = max(
+                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "42")),
+                        len(segment_paths) * part_budget * 0.82,
+                    )
+                elif len(segment_paths) >= 2:
                     min_final = max(
                         float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "24")),
                         len(segment_paths) * per_part * 0.82,
@@ -1251,6 +1311,11 @@ def _send_montage(
                         min_final,
                         float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
                     )
+            elif game == "pubg" and len(segment_paths) >= 3:
+                min_final = max(
+                    float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "40")),
+                    len(segment_paths) * part_budget * 0.80,
+                )
             if len(segment_paths) == 1:
                 min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
             if final_dur < min_final:
@@ -1924,12 +1989,16 @@ def _scan_vod_with_adaptive(
                 )
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
+                scan_funnel: ScanFunnel | None = None
                 cached_peaks = peak_values_from_entry(entry)
                 pool_target = candidate_pool_target(min_clips)
                 rejected_peaks = _dense_rejected_peaks(entry)
                 if _dense_pool_cache_usable(entry, cached_peaks, min_clips):
                     dense_peaks = cached_peaks
                     dense_reason = f"cached_pool_{len(cached_peaks)}"
+                    scan_funnel = ScanFunnel()
+                    scan_funnel.picked = len(cached_peaks)
+                    scan_funnel.feature_cache_hit = True
                     log.info(
                         "fast-montage reuse cached peaks vod=%s n=%s",
                         vod.name,
@@ -1937,12 +2006,14 @@ def _scan_vod_with_adaptive(
                     )
                 else:
                     probe_pass = _dense_probe_pass_index(entry)
+                    scan_funnel = ScanFunnel()
                     dense_peaks, dense_reason = discover_montage_gun_peaks(
                         vod,
                         _profile(game),
                         min_clips=min_clips,
                         gap_sec=gap_sec,
                         probe_pass=probe_pass,
+                        funnel=scan_funnel,
                     )
                     if entry is not None:
                         entry["dense_pool_version"] = DENSE_POOL_VERSION
@@ -1953,6 +2024,7 @@ def _scan_vod_with_adaptive(
                         pool_target,
                         probe_pass,
                     )
+                    scan_funnel.mark("discovery_done")
                 # Owner-good fight times first (gold labels) — PANNs alone often
                 # picks cruise SFX that fail impact/flash gates.
                 try:
@@ -2153,11 +2225,16 @@ def _scan_vod_with_adaptive(
 
                 if total_sent > 0:
                     if entry is not None:
+                        if scan_funnel is not None:
+                            scan_funnel.sent = total_sent
+                            scan_funnel.presend_pass = total_sent
+                            scan_funnel.mark("sent")
                         record_vod_scan(
                             entry,
                             sent=total_sent,
                             pool_peaks=dense_peaks,
                             blocked=False,
+                            funnel=scan_funnel.to_dict() if scan_funnel else None,
                         )
                         entry["dense_pool_version"] = DENSE_POOL_VERSION
                         entry.pop("reject_reason", None)
@@ -2184,11 +2261,16 @@ def _scan_vod_with_adaptive(
                             delete_file=False,
                         )
                     elif entry is not None:
+                        if scan_funnel is not None:
+                            scan_funnel.presend_fail += 1
+                            scan_funnel.note_reject("fast_montage_presend_reject_retry")
+                            scan_funnel.mark("presend_fail")
                         record_vod_scan(
                             entry,
                             sent=0,
                             pool_peaks=dense_peaks,
                             blocked=False,
+                            funnel=scan_funnel.to_dict() if scan_funnel else None,
                         )
                         entry["dense_pool_version"] = DENSE_POOL_VERSION
                         entry["reject_reason"] = "fast_montage_presend_reject_retry"
@@ -2518,6 +2600,15 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     used = set(state.get("used_youtube_ids", []))
     inbox = _paths(game)["inbox"]
     inbox.mkdir(parents=True, exist_ok=True)
+    bg_dl = ShooterVodBgDownloader(
+        game,
+        env,
+        discover_fn=_discover_candidates,
+        download_fn=_download_vod,
+    )
+    if inbox_files := sorted(_inbox_mp4_files(inbox), key=lambda p: _inbox_order_key(p, registry, game=game)):
+        if bg_dl.enabled() and inbox_files:
+            bg_dl.start_if_idle(used)
     purged = _purge_junk_inbox_vods(game, inbox)
     if purged:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
@@ -2713,7 +2804,24 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         pick = candidates[0]
     if os.environ.get("SHOOTER_VOD_DOWNLOAD_NOTIFY", "0") == "1":
         send_message(token, chat_id, f"📥 Качаю {game.upper()} VOD с YouTube…")
-    vod = _download_vod(game, pick, env)
+    vod, bg_pick = (None, None)
+    if bg_dl.enabled():
+        vod, bg_pick = bg_dl.pop_ready()
+    if vod is None:
+        vod = _download_vod(game, pick, env)
+    else:
+        log.info("using bg-downloaded vod=%s game=%s", vod.name, game)
+        pick = bg_pick or pick
+        _upsert_vod_registry(
+            state,
+            vid=str(pick.get("id") or vod_youtube_id(vod)),
+            path=str(vod),
+            title=str(pick.get("title") or ""),
+            exhausted=False,
+        )
+        used.add(str(pick.get("id") or vod_youtube_id(vod)))
+        state["used_youtube_ids"] = sorted(used)
+        _save_state(game, state)
     if not vod:
         print(f"pipeline done sent=0 vods=0 game={game}")
         return 0

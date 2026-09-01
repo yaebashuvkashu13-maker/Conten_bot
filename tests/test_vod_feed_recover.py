@@ -186,3 +186,23 @@ def test_estimate_eta_exhausted_inbox(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 600.0)
     msg = estimate_video_wait_eta("pubg")
     assert "/reset pubg" in msg
+
+
+def test_estimate_eta_pubg_only_skips_other_games(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_root = tmp_path / "mlbb"
+    data_root.mkdir()
+    (data_root / "EU_PUBG_ONLY").write_text("", encoding="utf-8")
+    monkeypatch.setenv("MLBB_DATA_ROOT", str(data_root))
+    monkeypatch.setattr("vod_feed_recover.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 30.0)
+
+    msg = estimate_video_wait_eta("all")
+
+    assert "⏱ PUBG:" in msg
+    assert "MLBB" not in msg
+    assert "STANDOFF" not in msg
+    assert "GENSHIN" not in msg
+    assert "WOT" not in msg
+    assert "склейка сейчас в работе" in msg

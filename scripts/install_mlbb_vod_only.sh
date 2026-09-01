@@ -189,9 +189,15 @@ pairs = {
     "SHOOTER_VOD_FAST_MONTAGE": "1",
     "PUBG_VOD_MONTAGE": "1",
     "PUBG_VOD_MONTAGE_ONLY": "1",
-    "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "2",
+    "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "3",
     "PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS": "2",
     "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "3",
+    "SHOOTER_VOD_MONTAGE_MAX_SEC": "55",
+    "SHOOTER_VOD_MONTAGE_PART_MAX_SEC": "22",
+    "SHOOTER_VOD_MONTAGE_PREFER_PARTS": "3",
+    "SHOOTER_VOD_VARIABLE_LENGTH": "1",
+    "SHOOTER_FIGHT_MAX_SEC": "20",
+    "SHOOTER_FIGHT_HARD_MAX_SEC": "24",
     "SHOOTER_VOD_MONTAGE_GAP_SEC": "55",
     "SHOOTER_VOD_MONTAGE_SHIP_PARTIAL": "0",
     "SHOOTER_VOD_MONTAGE_EARLY_SHIP": "0",
@@ -201,7 +207,7 @@ pairs = {
     "SHOOTER_VOD_MIN_SEC": "180",
     "SHOOTER_VOD_MAX_SEC": "14400",
     "SHOOTER_VOD_MONTAGE_MIN_VOD_SEC": "120",
-    "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "24",
+    "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "40",
     "SHOOTER_VOD_ZERO_STREAK_SOFTEN": "0",
     "SHOOTER_VOD_DENSE_PANN_MIN": "0.16",
     "SHOOTER_VOD_DENSE_PROBE_MAX": "48",
@@ -210,6 +216,10 @@ pairs = {
     "SHOOTER_VOD_CANDIDATE_POOL_TARGET": "256",
     "SHOOTER_VOD_AUDIO_GENERATOR": "1",
     "SHOOTER_VOD_AUDIO_CANDIDATE_MAX": "256",
+    "SHOOTER_VOD_AUDIO_BATCH": "1",
+    "SHOOTER_VOD_PANN_TOP_N": "40",
+    "SHOOTER_VOD_PANN_WORKERS": "4",
+    "VOD_PEAK_FEATURE_CACHE": "1",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
     "PUBG_RANKER_MAX_PROBES": "128",
@@ -297,6 +307,11 @@ install -m 755 \
   "$REPO/scripts/pubg_fight_segment.py" \
   "$REPO/scripts/pubg_regression_benchmark.py" \
   "$REPO/scripts/benchmark_panns_workers.py" \
+  "$REPO/scripts/vod_audio_batch.py" \
+  "$REPO/scripts/vod_peak_feature_cache.py" \
+  "$REPO/scripts/vod_scan_funnel.py" \
+  "$REPO/scripts/shooter_fight_segment.py" \
+  "$REPO/scripts/shooter_vod_bg_download.py" \
   "$REPO/scripts/shooter_vod_segment_store.py" \
   "$REPO/scripts/shooter_vod_adaptive_gate.py" \
   "$REPO/scripts/shooter_vod_fast_scan.py" \
