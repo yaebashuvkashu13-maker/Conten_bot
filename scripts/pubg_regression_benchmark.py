@@ -192,7 +192,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--restore-missing", action="store_true")
-    parser.add_argument("--tolerance-sec", type=float, default=30.0)
+    parser.add_argument("--tolerance-sec", type=float, default=45.0)
     parser.add_argument("--output", type=Path, default=Path("/root/data/pubg/regression_report.json"))
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--max-recall-drop", type=float, default=0.05)

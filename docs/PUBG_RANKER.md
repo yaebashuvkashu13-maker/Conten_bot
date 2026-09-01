@@ -29,3 +29,5 @@ Server benchmark on `n97cHIR9Qow` (first 5400 seconds, 88 windows):
 
 `data/pubg_regression_labels.json` is immutable. Online owner feedback may
 override old labels for training, but must not rewrite the regression set.
+Generator recall uses a ±45 second event tolerance; exact clip boundaries are
+evaluated after `pubg_fight_segment.py`.
