@@ -302,16 +302,19 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
             "negative": negatives,
         }
 
-    X = np.asarray(
-        [
-            feature_vector(
-                row.features
-                or extract_features(row.video_path, max(0.0, row.peak_sec - 7.0), 14.0)
-            )
-            for row in samples
-        ],
-        dtype=np.float32,
-    )
+    def sample_vector(row: TrainingSample) -> list[float]:
+        return feature_vector(
+            row.features
+            or extract_features(row.video_path, max(0.0, row.peak_sec - 7.0), 14.0)
+        )
+
+    train_workers = max(1, int(os.environ.get("PUBG_RANKER_TRAIN_WORKERS", "4")))
+    if train_workers == 1:
+        vectors = [sample_vector(row) for row in samples]
+    else:
+        with ThreadPoolExecutor(max_workers=min(train_workers, len(samples))) as pool:
+            vectors = list(pool.map(sample_vector, samples))
+    X = np.asarray(vectors, dtype=np.float32)
     y = np.asarray([row.label for row in samples], dtype=np.int32)
     groups = np.asarray([row.video_id for row in samples])
     weights = np.asarray([row.weight for row in samples], dtype=np.float32)
