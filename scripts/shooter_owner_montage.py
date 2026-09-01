@@ -227,6 +227,14 @@ def _reject_radius_for_reason(reason: str, *, default: float = 20.0) -> float:
 def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: float = 20.0) -> bool:
     if game != "pubg":
         return False
+    try:
+        from pubg_owner_style import style_avoid_peaks
+
+        for t in style_avoid_peaks(vod):
+            if abs(float(peak_sec) - float(t)) <= max(radius, 25.0):
+                return True
+    except ImportError:
+        pass
     vid = _video_id(vod)
     for t in PUBG_OWNER_REJECTED_PEAKS.get(vid, []):
         if abs(float(peak_sec) - float(t)) <= radius:
@@ -251,6 +259,12 @@ def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
     peaks: list[float] = []
     vid = _video_id(vod)
     if game == "pubg":
+        try:
+            from pubg_owner_style import style_reference_peaks
+
+            peaks.extend(style_reference_peaks(vod))
+        except ImportError:
+            pass
         peaks.extend(PUBG_BRAWL_ANCHORS_BY_VOD.get(vid, []))
         peaks.extend(_peaks_from_pubg_calibration(vod))
     peaks.extend(_peaks_from_highlight_labels(vod, profile))

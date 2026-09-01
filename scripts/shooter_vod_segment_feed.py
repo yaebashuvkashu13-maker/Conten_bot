@@ -917,15 +917,33 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "2")))
 
 
-def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_sec: float) -> list[dict]:
-    """Pick montage parts — sequential clusters by default, spread mode when disabled."""
+def _pick_montage_rows(
+    rows: list[dict],
+    *,
+    min_clips: int,
+    max_clips: int,
+    gap_sec: float,
+    game: str = "",
+    vod: Path | None = None,
+) -> list[dict]:
+    """Pick montage parts — sequential clusters, biased to owner style reference."""
     from vod_montage_cluster import pick_montage_rows
+
+    anchor_peaks: list[float] = []
+    if game == "pubg" and vod is not None:
+        try:
+            from pubg_owner_style import style_reference_peaks
+
+            anchor_peaks = style_reference_peaks(vod)
+        except ImportError:
+            pass
 
     return pick_montage_rows(
         rows,
         min_clips=min_clips,
         max_clips=max_clips,
         gap_sec=gap_sec,
+        anchor_peaks=anchor_peaks,
     )
 
 
@@ -1103,10 +1121,14 @@ def _send_montage(
         len(rows),
     )
     # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
-    picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
+    picked = _pick_montage_rows(
+        rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec, game=game, vod=vod
+    )
     if len(picked) < min_clips:
         tight = max(18.0, gap_sec * 0.45)
-        picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=tight)
+        picked = _pick_montage_rows(
+            rows, min_clips=min_clips, max_clips=max_clips, gap_sec=tight, game=game, vod=vod
+        )
         if len(picked) >= min_clips:
             log.info("montage tight-gap ok game=%s gap=%.0f→%.0f peaks=%s", game, gap_sec, tight, len(picked))
             gap_sec = tight
@@ -1232,7 +1254,12 @@ def _send_montage(
                         if str(r.get("segment_id") or "") not in rejected_sids
                     ]
                     remaining = _pick_montage_rows(
-                        remaining, min_clips=soft_min, max_clips=max_clips, gap_sec=gap_sec
+                        remaining,
+                        min_clips=soft_min,
+                        max_clips=max_clips,
+                        gap_sec=gap_sec,
+                        game=game,
+                        vod=vod,
                     )
                 continue
 
@@ -2069,6 +2096,7 @@ def _scan_vod_with_adaptive(
                     dense_peaks = dedup_by_audio_signature(vod, dense_peaks)
                 except Exception:
                     pass
+                style_sims: dict[float, float] = {}
                 if game == "pubg" and dense_peaks:
                     try:
                         from pubg_fast_peak_rank import rank_peaks_fast
@@ -2117,6 +2145,17 @@ def _scan_vod_with_adaptive(
                         dense_reason = f"{dense_reason} {ranker_reason}"
                     except Exception as exc:
                         log.warning("pubg ranker fallback vod=%s: %s", vod.name, exc)
+                    try:
+                        from pubg_owner_style import rank_peaks_by_style
+
+                        dense_peaks, style_reason, style_sims = rank_peaks_by_style(
+                            vod,
+                            dense_peaks,
+                            part_sec=part_max,
+                        )
+                        dense_reason = f"{dense_reason} {style_reason}"
+                    except Exception as exc:
+                        log.warning("style rank fallback vod=%s: %s", vod.name, exc)
                 try:
                     from vod_ranked_pool_cache import put_ranked_pool
 
@@ -2167,20 +2206,25 @@ def _scan_vod_with_adaptive(
                         sid = segment_id(vid, start)
                         if sid in blocked:
                             continue
-                        out_rows.append(
-                            {
-                                "segment_id": sid,
+                        style_match = style_sims.get(float(peak))
+                        score = max(0.2, 0.95 - idx * 0.03)
+                        if style_match is not None:
+                            score = max(score, 0.30 + float(style_match) * 0.65)
+                        row = {
+                            "segment_id": sid,
+                            "start": start,
+                            "peak_start": float(peak),
+                            "score": score,
+                            "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
-                                "score": max(0.2, 0.95 - idx * 0.03),
-                                "clip": {
-                                    "start": start,
-                                    "peak_start": float(peak),
-                                    "input_duration": part_sec,
-                                    "output_duration": part_sec,
-                                },
-                            }
-                        )
+                                "input_duration": part_sec,
+                                "output_duration": part_sec,
+                            },
+                        }
+                        if style_match is not None:
+                            row["style_sim"] = float(style_match)
+                        out_rows.append(row)
                     return out_rows
 
                 def _shortlist_rows(used: list[float], blocked: set[str]) -> list[dict]:

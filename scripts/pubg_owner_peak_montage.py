@@ -97,9 +97,27 @@ def main() -> int:
         return 2
 
     peaks = _parse_peaks(args.peaks)
+    from pubg_owner_style import style_avoid_peaks
+
+    avoid = style_avoid_peaks(vod)
+    if avoid:
+        peaks = [
+            peak
+            for peak in peaks
+            if not any(abs(float(peak) - float(bad)) <= 25.0 for bad in avoid)
+        ]
     if len(peaks) < 2:
-        print("REFUSED need>=2 peaks for PUBG montage")
-        return 2
+        from pubg_owner_style import style_reference_peaks
+
+        refs = style_reference_peaks(vod)
+        if len(refs) >= 1:
+            span = float(os.environ.get("SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC", "240"))
+            gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_GAP_SEC", "20"))
+            peaks = sorted(set(refs))
+            log.info("style_ref_only peaks=%s — add nearby fights in cluster span %.0fs", peaks, span)
+        if len(peaks) < 2:
+            print("REFUSED need>=2 peaks for PUBG montage (or set style_ref + cluster fights)")
+            return 2
 
     os.environ.setdefault("PUBG_FIGHT_SEGMENTER", "1")
     os.environ.setdefault("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "2")

@@ -31,7 +31,12 @@ def _row_peak(row: dict[str, Any]) -> float:
 
 
 def _row_score(row: dict[str, Any]) -> float:
-    return float(row.get("score", 0) or 0)
+    base = float(row.get("score", 0) or 0)
+    style = row.get("style_sim")
+    if style is None:
+        return base
+    blend = float(os.environ.get("PUBG_STYLE_ROW_BLEND", "0.55"))
+    return base * (1.0 - blend) + float(style) * blend
 
 
 def pick_spread_montage_rows(
@@ -61,6 +66,7 @@ def pick_sequential_montage_rows(
     max_clips: int,
     part_gap_sec: float | None = None,
     cluster_span_sec: float | None = None,
+    anchor_peaks: list[float] | None = None,
 ) -> list[dict]:
     """Pick the best dense fight streak — parts stay close in time and play in order."""
     if not rows:
@@ -70,6 +76,7 @@ def pick_sequential_montage_rows(
         cluster_span_sec if cluster_span_sec is not None else montage_cluster_span_sec()
     )
     pool_cap = max(max_clips * 3, min_clips + 3)
+    anchors = [float(p) for p in (anchor_peaks or [])]
 
     indexed = sorted(
         ((_row_peak(row), _row_score(row), row) for row in rows),
@@ -126,6 +133,17 @@ def pick_sequential_montage_rows(
         if len(selected) < min_clips:
             continue
         run_score = sum(s for _, s, _ in selected) + 0.05 * len(selected)
+        if anchors:
+            try:
+                from pubg_owner_style import cluster_anchor_bonus
+
+                run_score += cluster_anchor_bonus(
+                    [p for p, _, _ in selected],
+                    anchors,
+                    cluster_span_sec=cluster_span,
+                )
+            except ImportError:
+                pass
         if run_score > best_run_score:
             best_run_score = run_score
             best_run = selected
@@ -164,6 +182,7 @@ def pick_montage_rows(
     min_clips: int,
     max_clips: int,
     gap_sec: float,
+    anchor_peaks: list[float] | None = None,
 ) -> list[dict]:
     if sequential_montage_enabled():
         return pick_sequential_montage_rows(
@@ -171,6 +190,7 @@ def pick_montage_rows(
             min_clips=min_clips,
             max_clips=max_clips,
             part_gap_sec=min(gap_sec * 0.4, montage_part_gap_sec()) if gap_sec > 0 else None,
+            anchor_peaks=anchor_peaks,
         )
     return pick_spread_montage_rows(
         rows,
