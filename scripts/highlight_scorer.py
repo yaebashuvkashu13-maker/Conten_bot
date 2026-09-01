@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -21,6 +22,9 @@ from typing import Any
 import numpy as np
 
 log = logging.getLogger("highlight_scorer")
+
+_MODEL_INIT_LOCK = threading.Lock()
+
 
 def _repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
@@ -471,17 +475,18 @@ def _extract_audio_32k(video_path: Path, start_sec: float, duration_sec: float) 
 
 @lru_cache(maxsize=1)
 def _panns_tagger():
-    from panns_inference import AudioTagging
+    with _MODEL_INIT_LOCK:
+        from panns_inference import AudioTagging
 
-    device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
-    try:
-        import torch
+        device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
+        try:
+            import torch
 
-        if device == "cuda" and not torch.cuda.is_available():
+            if device == "cuda" and not torch.cuda.is_available():
+                device = "cpu"
+        except ImportError:
             device = "cpu"
-    except ImportError:
-        device = "cpu"
-    return AudioTagging(device=device)
+        return AudioTagging(device=device)
 
 
 def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
@@ -532,18 +537,58 @@ def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -
     return out
 
 
+def score_panns_audio_batch(
+    video_path: Path,
+    windows: list[tuple[float, float]],
+) -> list[dict[str, float]]:
+    """Batch PANNs inference for multiple (start, duration) windows on one VOD."""
+    if not windows:
+        return []
+    tagger = _panns_tagger()
+    results: list[dict[str, float]] = []
+    for start_sec, duration_sec in windows:
+        audio = _extract_audio_32k(video_path, start_sec, duration_sec)
+        out = {
+            "panns_gunshot": 0.0,
+            "panns_machine_gun": 0.0,
+            "panns_explosion": 0.0,
+            "panns_artillery": 0.0,
+            "panns_speech": 0.0,
+            "panns_music": 0.0,
+            "panns_gun_max": 0.0,
+        }
+        if audio.size > 0:
+            clipwise, _emb = tagger.inference(audio[None, :])
+            scores = clipwise[0]
+            out["panns_gunshot"] = float(scores[PANN_GUN_IDX["gunshot"]])
+            out["panns_machine_gun"] = float(scores[PANN_GUN_IDX["machine_gun"]])
+            out["panns_explosion"] = float(scores[PANN_GUN_IDX["explosion"]])
+            out["panns_artillery"] = float(scores[PANN_GUN_IDX["artillery"]])
+            out["panns_speech"] = float(scores[PANN_GUN_IDX["speech"]])
+            out["panns_music"] = float(scores[PANN_GUN_IDX["music"]])
+            out["panns_gun_max"] = max(
+                out["panns_gunshot"],
+                out["panns_machine_gun"],
+                out["panns_explosion"],
+                out["panns_artillery"],
+            )
+        results.append(out)
+    return results
+
+
 @lru_cache(maxsize=1)
 def _clip_bundle():
-    import open_clip
-    import torch
+    with _MODEL_INIT_LOCK:
+        import open_clip
+        import torch
 
-    model_name = os.environ.get("HIGHLIGHT_CLIP_MODEL", "ViT-B-32")
-    pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "laion2b_s34b_b79k")
-    device = "cuda" if torch.cuda.is_available() and os.environ.get("HIGHLIGHT_CLIP_DEVICE") == "cuda" else "cpu"
-    model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
-    model = model.to(device).eval()
-    tokenizer = open_clip.get_tokenizer(model_name)
-    return model, preprocess, tokenizer, device
+        model_name = os.environ.get("HIGHLIGHT_CLIP_MODEL", "ViT-B-32")
+        pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "laion2b_s34b_b79k")
+        device = "cuda" if torch.cuda.is_available() and os.environ.get("HIGHLIGHT_CLIP_DEVICE") == "cuda" else "cpu"
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+        model = model.to(device).eval()
+        tokenizer = open_clip.get_tokenizer(model_name)
+        return model, preprocess, tokenizer, device
 
 
 def _frame_to_pil(frame: np.ndarray):

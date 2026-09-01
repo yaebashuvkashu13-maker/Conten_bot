@@ -23,7 +23,12 @@ def batch_enabled() -> bool:
 
 
 def panns_top_n() -> int:
-    return max(8, int(os.environ.get("SHOOTER_VOD_PANN_TOP_N", "40")))
+    try:
+        from vod_scan_cascade import cascade_limits
+
+        return max(8, cascade_limits().panns)
+    except Exception:
+        return max(8, int(os.environ.get("SHOOTER_VOD_PANN_TOP_N", "40")))
 
 
 def extract_vod_pcm_s16(

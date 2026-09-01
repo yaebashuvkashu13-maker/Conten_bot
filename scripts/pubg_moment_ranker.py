@@ -34,6 +34,12 @@ def _repo_root() -> Path:
 
 
 def model_path() -> Path:
+    champion = os.environ.get("PUBG_RANKER_CHAMPION_PATH", "").strip()
+    if champion:
+        return Path(champion)
+    default_champion = Path("/root/data/pubg/ranker_models/champion.joblib")
+    if default_champion.is_file():
+        return default_champion
     return Path(
         os.environ.get(
             "PUBG_RANKER_MODEL",
@@ -52,6 +58,12 @@ def feature_cache_root() -> Path:
 
 
 def owner_labels_path() -> Path:
+    if os.environ.get("VOD_RUNTIME_LABELS", "1") == "1":
+        from runtime_labels import ensure_runtime_labels
+
+        path = ensure_runtime_labels("pubg")
+        if path is not None:
+            return path
     override = os.environ.get("PUBG_OWNER_LABELS_PATH", "").strip()
     if override:
         return Path(override)

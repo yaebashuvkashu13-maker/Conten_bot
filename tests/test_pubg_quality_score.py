@@ -60,16 +60,27 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
     )
 
 
-def test_no_kill_is_penalty_not_hard_reject(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_kill_fails_payoff_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
     monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "off")
     patches = _base_patches(author_kill=False)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
+    assert ok is False
+    assert reason.startswith("payoff_low")
+    assert report["payoff_score"] < report["payoff_threshold"]
+
+
+def test_kill_passes_fight_and_payoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
+    monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "off")
+    patches = _base_patches(author_kill=True)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
     assert ok is True
     assert reason.startswith("quality_ok")
-    assert report["penalties"]["no_author_kill"] > 0
-    assert "hard_reject" not in report
+    assert report["fight_score"] >= report["fight_threshold"]
+    assert report["payoff_score"] >= report["payoff_threshold"]
 
 
 def test_owner_bad_remains_hard_reject() -> None:

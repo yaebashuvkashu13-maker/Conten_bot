@@ -193,6 +193,56 @@ def score_pubg_window(
     }
     heuristic = _clip(sum(components.values()) - sum(penalties.values()))
 
+    fight_components = {
+        "gun": _clip(gun / 0.080) * 0.28,
+        "burst": _clip(burst / 8.0) * 0.14,
+        "motion": _clip(motion / 0.060) * 0.22,
+        "panns": _clip(panns_gun / 0.45) * 0.18,
+        "visual": (0.12 if visual_ok else 0.0),
+        "audio_presence": _clip(rms / 0.050) * 0.06,
+    }
+    fight_penalties = {
+        "loot_walk": 0.22 if loot_walk else 0.0,
+        "speech_music": _clip(
+            max(float(panns.get("panns_speech", 0.0)), float(panns.get("panns_music", 0.0)))
+            - panns_gun
+        )
+        * 0.10,
+        "visual_fail": 0.08 if not visual_ok else 0.0,
+    }
+    fight_score = _clip(sum(fight_components.values()) - sum(fight_penalties.values()))
+
+    payoff_components = {
+        "kill_notification": _clip(notification_score) * 0.34,
+        "killfeed": _clip(effective_killfeed) * 0.26,
+        "author_kill": (0.28 if has_kill else 0.0),
+        "hit_flash": _clip(best_flash / max(float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004")), 1e-6)) * 0.12,
+    }
+    payoff_penalties = {
+        "no_author_kill": 0.18 if not has_kill else 0.0,
+        "author_death": 0.40 if author_death and not has_kill else 0.0,
+        "missing_kill_notification": (
+            0.12 if notification_mode == "prefer" and not notification_hit else 0.0
+        ),
+    }
+    payoff_score = _clip(sum(payoff_components.values()) - sum(payoff_penalties.values()))
+    fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.42"))
+    payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.38"))
+    report["fight_score"] = round(fight_score, 4)
+    report["payoff_score"] = round(payoff_score, 4)
+    report["fight_threshold"] = fight_min
+    report["payoff_threshold"] = payoff_min
+    report["fight_components"] = {k: round(v, 4) for k, v in fight_components.items()}
+    report["payoff_components"] = {k: round(v, 4) for k, v in payoff_components.items()}
+    if fight_score < fight_min:
+        report["quality_score"] = round(min(heuristic, fight_score), 4)
+        report["quality_threshold"] = fight_min
+        return False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}", report
+    if payoff_score < payoff_min:
+        report["quality_score"] = round(min(heuristic, payoff_score), 4)
+        report["quality_threshold"] = payoff_min
+        return False, f"payoff_low={payoff_score:.3f}:min{payoff_min:.2f}", report
+
     ranker_score = None
     try:
         from pubg_moment_ranker import predict_from_features

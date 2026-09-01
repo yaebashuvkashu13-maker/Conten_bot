@@ -470,6 +470,16 @@ def discover_montage_gun_peaks(
         )
 
     scored.sort(key=lambda x: -x[0])
+    try:
+        from vod_scan_cascade import apply_cascade_to_pool, cascade_limits
+
+        limits = cascade_limits()
+        scored = scored[: limits.fast_ranker]
+        if funnel is not None:
+            funnel.fast_ranker_pass = len(scored)
+            funnel.note_stage("fast_ranker", len(scored))
+    except Exception:
+        pass
     pool_cap = candidate_pool_target(min_clips)
     shortlist: list[tuple[float, float]] = []
     for panns_g, center in scored:

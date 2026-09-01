@@ -12,18 +12,25 @@ from typing import Any
 class ScanFunnel:
     offsets_probed: int = 0
     dsp_pass: int = 0
+    fast_ranker_pass: int = 0
     panns_pass: int = 0
     shortlist: int = 0
+    clip_pass: int = 0
+    kill_pass: int = 0
     snapped: int = 0
     picked: int = 0
     presend_pass: int = 0
     presend_fail: int = 0
     sent: int = 0
+    approved: int = 0
+    rejected: int = 0
     panns_windows: int = 0
     cache_hits: int = 0
     feature_cache_hit: bool = False
+    ranked_pool_cache_hit: bool = False
     timings_ms: dict[str, float] = field(default_factory=dict)
     reject_reasons: list[str] = field(default_factory=list)
+    stage_counts: dict[str, int] = field(default_factory=dict)
 
     _t0: float = field(default=0.0, repr=False)
 
@@ -33,6 +40,9 @@ class ScanFunnel:
 
     def mark(self, stage: str) -> None:
         self.timings_ms[stage] = round((time.perf_counter() - self._t0) * 1000.0, 1)
+
+    def note_stage(self, stage: str, count: int) -> None:
+        self.stage_counts[stage] = int(count)
 
     def note_reject(self, reason: str) -> None:
         if reason and reason not in self.reject_reasons:
@@ -63,12 +73,18 @@ class ScanFunnel:
         parts = [
             f"probe={self.offsets_probed}",
             f"dsp={self.dsp_pass}",
+            f"rank={self.fast_ranker_pass}",
             f"panns={self.panns_pass or self.panns_windows}",
+            f"clip={self.clip_pass}",
+            f"kill={self.kill_pass}",
             f"pick={self.picked}",
             f"send={self.sent}",
+            f"ok={self.approved}",
         ]
         if self.feature_cache_hit:
             parts.append("feat_cache=1")
+        if self.ranked_pool_cache_hit:
+            parts.append("pool_cache=1")
         if self.cache_hits:
             parts.append(f"pann_cache={self.cache_hits}")
         if self.presend_fail:

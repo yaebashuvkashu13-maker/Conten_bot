@@ -2003,12 +2003,23 @@ def _scan_vod_with_adaptive(
                 cached_peaks = peak_values_from_entry(entry)
                 pool_target = candidate_pool_target(min_clips)
                 rejected_peaks = _dense_rejected_peaks(entry)
+                pool_hit = None
+                try:
+                    from vod_ranked_pool_cache import get_ranked_pool
+
+                    pool_hit = get_ranked_pool(vod)
+                    if pool_hit and not cached_peaks:
+                        cached_peaks = [float(p) for p in pool_hit.get("ranked_peaks") or []]
+                except Exception:
+                    pass
                 if _dense_pool_cache_usable(entry, cached_peaks, min_clips):
                     dense_peaks = cached_peaks
                     dense_reason = f"cached_pool_{len(cached_peaks)}"
                     scan_funnel = ScanFunnel()
                     scan_funnel.picked = len(cached_peaks)
                     scan_funnel.feature_cache_hit = True
+                    if pool_hit:
+                        scan_funnel.ranked_pool_cache_hit = True
                     log.info(
                         "fast-montage reuse cached peaks vod=%s n=%s",
                         vod.name,
@@ -2058,6 +2069,13 @@ def _scan_vod_with_adaptive(
                         owner_peaks[:6],
                     )
                 if game == "pubg" and dense_peaks:
+                    try:
+                        from vod_scan_cascade import apply_cascade_to_pool
+
+                        dense_peaks = apply_cascade_to_pool(dense_peaks, "fast_ranker")
+                        scan_funnel.fast_ranker_pass = len(dense_peaks)
+                    except Exception:
+                        pass
                     from pubg_killfeed_ocr import rank_peaks_by_killfeed
 
                     dense_peaks, kf_reason = rank_peaks_by_killfeed(
@@ -2067,6 +2085,13 @@ def _scan_vod_with_adaptive(
                         part_sec=part_max,
                     )
                     dense_reason = f"{dense_reason} {kf_reason}"
+                    try:
+                        from vod_scan_cascade import apply_cascade_to_pool
+
+                        dense_peaks = apply_cascade_to_pool(dense_peaks, "kill")
+                        scan_funnel.kill_pass = len(dense_peaks)
+                    except Exception:
+                        pass
                     try:
                         from pubg_moment_ranker import rank_peaks_with_model
 
@@ -2078,6 +2103,17 @@ def _scan_vod_with_adaptive(
                         dense_reason = f"{dense_reason} {ranker_reason}"
                     except Exception as exc:
                         log.warning("pubg ranker fallback vod=%s: %s", vod.name, exc)
+                try:
+                    from vod_ranked_pool_cache import put_ranked_pool
+
+                    put_ranked_pool(
+                        vod,
+                        ranked_peaks=dense_peaks or [],
+                        reason=dense_reason,
+                        funnel=scan_funnel.to_dict() if scan_funnel else None,
+                    )
+                except Exception:
+                    pass
                 log.info(
                     "fast-montage probe vod=%s reason=%s peaks=%s",
                     vod.name,

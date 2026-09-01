@@ -219,6 +219,15 @@ pairs = {
     "SHOOTER_VOD_PANN_TOP_N": "40",
     "SHOOTER_VOD_PANN_WORKERS": "4",
     "VOD_PEAK_FEATURE_CACHE": "1",
+    "VOD_FEATURE_STORE": "1",
+    "VOD_RANKED_POOL_CACHE": "1",
+    "VOD_RUNTIME_LABELS": "1",
+    "PUBG_OWNER_LABELS_PATH": "/root/data/pubg/pubg_owner_labels.json",
+    "VOD_CASCADE_DSP_MAX": "256",
+    "VOD_CASCADE_FAST_RANKER_MAX": "50",
+    "VOD_CASCADE_PANN_MAX": "25",
+    "VOD_CASCADE_CLIP_MAX": "12",
+    "VOD_CASCADE_KILL_MAX": "8",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
     "PUBG_RANKER_MAX_PROBES": "128",
@@ -229,6 +238,8 @@ pairs = {
     "PUBG_PRESEND_SCORE_MODE": "1",
     "PUBG_SCORE_REQUIRE_RANKER": "1",
     "PUBG_QUALITY_SCORE_MIN": "0.48",
+    "PUBG_FIGHT_SCORE_MIN": "0.42",
+    "PUBG_PAYOFF_SCORE_MIN": "0.38",
     "PUBG_QUALITY_RANKER_WEIGHT": "0.70",
     "PUBG_KILL_NOTIFICATION_AUTO": "1",
     "PUBG_KILL_NOTIFICATION_ENABLED": "1",
@@ -314,6 +325,13 @@ install -m 755 \
   "$REPO/scripts/vod_audio_batch.py" \
   "$REPO/scripts/vod_peak_feature_cache.py" \
   "$REPO/scripts/vod_scan_funnel.py" \
+  "$REPO/scripts/vod_scan_cascade.py" \
+  "$REPO/scripts/vod_feature_store.py" \
+  "$REPO/scripts/vod_ranked_pool_cache.py" \
+  "$REPO/scripts/runtime_labels.py" \
+  "$REPO/scripts/pubg_ranker_champion.py" \
+  "$REPO/scripts/vod_config.py" \
+  "$REPO/scripts/vps_deploy_check.sh" \
   "$REPO/scripts/shooter_fight_segment.py" \
   "$REPO/scripts/shooter_vod_bg_download.py" \
   "$REPO/scripts/shooter_vod_segment_store.py" \
