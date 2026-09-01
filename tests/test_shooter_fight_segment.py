@@ -71,20 +71,39 @@ def test_prepare_montage_clip_variable_length(tmp_path: Path, monkeypatch: pytes
     assert float(clip["fight_end"]) > 102.0
 
 
-def test_montage_part_budget_three_parts_fits_55s() -> None:
-    from shooter_vod_segment_feed import _montage_part_budget, _montage_limits, _montage_prefer_parts
+def test_montage_try_up_to_three_soft_min_two() -> None:
+    from shooter_vod_segment_feed import _montage_limits, _montage_part_budget, _montage_try_parts
 
     _min, max_clips, _gap, _part_max, final_max = _montage_limits()
-    assert final_max == 55.0
-    prefer = _montage_prefer_parts("pubg", max_clips, soft_min=2)
-    assert prefer == 3
-    budget = _montage_part_budget(prefer, final_max)
-    assert 17.0 <= budget <= 20.0
-    est = budget * 3 - 0.28 * 2
-    assert est <= 55.5
+    assert _min == 2
+    assert max_clips == 3
+    try_n = _montage_try_parts(max_clips, soft_min=2)
+    assert try_n == 3
+    ceiling = _montage_part_budget(2, final_max)
+    assert ceiling > 27.0
+    assert ceiling * 2 - 0.28 <= 55.5
 
 
-def test_montage_part_budget_two_parts() -> None:
+def test_fight_bounds_keeps_natural_end_when_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"fake")
+    analysis = _fake_analysis(peak_sec=95.0)
+    # Long sustain ~80-120s
+    for i in range(int(40 / 2), int(120 / 2)):
+        analysis["gunfire"][i] = 0.3
+        analysis["center_motion"][i] = 0.2
+
+    with patch("shooter_fight_segment._analysis_for", return_value=analysis):
+        from shooter_fight_segment import detect_shooter_fight_bounds
+
+        start, end, dur = detect_shooter_fight_bounds(vod, 95.0, part_cap=28.0)
+
+    assert end >= 109.0
+    assert dur <= 28.5
+    assert 95.0 >= start and 95.0 <= end
+
     from shooter_vod_segment_feed import _montage_part_budget
 
     budget = _montage_part_budget(2, 55.0)

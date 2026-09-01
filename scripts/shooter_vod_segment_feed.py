@@ -820,21 +820,20 @@ def _montage_part_budget(num_parts: int, final_max: float) -> float:
     return (float(final_max) + _montage_xfade_sec() * (n - 1)) / n
 
 
-def _montage_prefer_parts(game: str | None, max_clips: int, soft_min: int) -> int:
-    """Target part count — default 3 for PUBG when available."""
+def _montage_try_parts(max_clips: int, soft_min: int) -> int:
+    """How many parts to attempt — up to max_clips, ship with soft_min if fewer pass."""
     raw = os.environ.get("SHOOTER_VOD_MONTAGE_PREFER_PARTS", "").strip()
-    prefer = int(raw) if raw else max_clips
-    if game == "pubg" and not raw:
-        prefer = max(prefer, 3)
-    return max(soft_min, min(max_clips, prefer))
+    if raw:
+        return max(soft_min, min(max_clips, int(raw)))
+    return max_clips
 
 
 def _montage_limits() -> tuple[int, int, float, float, float]:
     """min_clips, max_clips, gap_sec, part_max_sec, final_max_sec."""
-    min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3")))
+    min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "2")))
     max_clips = max(min_clips, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55"))
-    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "22"))
+    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
     final_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "55"))
     return min_clips, max_clips, gap, part_max, final_max
 
@@ -904,12 +903,11 @@ def _prepare_montage_clip(row: dict, vod: Path, *, part_max: float) -> dict:
         from shooter_fight_segment import detect_shooter_fight_bounds, variable_length_enabled
 
         if variable_length_enabled():
-            f_start, f_end, f_dur = detect_shooter_fight_bounds(vod, peak)
+            f_start, f_end, f_dur = detect_shooter_fight_bounds(vod, peak, part_cap=part_max)
             if f_dur >= max(10.0, fixed_want * 0.85):
                 start = f_start
-                dur = min(part_max, f_dur)
-                fight_end = min(f_end, start + dur)
-                dur = max(10.0, fight_end - start)
+                dur = f_dur
+                fight_end = f_end
     except Exception:
         pass
 
@@ -983,8 +981,18 @@ def _send_montage(
 
     min_clips, max_clips, gap_sec, part_max, final_max = _montage_limits()
     soft_min = _montage_soft_min_clips(game)
-    prefer_parts = _montage_prefer_parts(game, max_clips, soft_min)
-    part_budget = min(part_max, _montage_part_budget(prefer_parts, final_max))
+    try_parts = _montage_try_parts(max_clips, soft_min)
+    # Generous per-fight ceiling (2-part budget) — full sustain; trim montage if 3 won't fit.
+    part_ceiling = min(part_max, _montage_part_budget(soft_min, final_max))
+    log.info(
+        "montage start game=%s try_up_to=%s soft_min=%s ceiling=%.1fs/part final_max=%.0fs rows=%s",
+        game,
+        try_parts,
+        soft_min,
+        part_ceiling,
+        final_max,
+        len(rows),
+    )
     # If few peaks, retry with tighter spacing before giving up (still need distinct fights).
     picked = _pick_montage_rows(rows, min_clips=min_clips, max_clips=max_clips, gap_sec=gap_sec)
     if len(picked) < min_clips:
@@ -1055,7 +1063,7 @@ def _send_montage(
                 sid = str(row.get("segment_id") or "")
                 if sid in rejected_sids:
                     continue
-                clip = _prepare_montage_clip(row, vod, part_max=part_budget)
+                clip = _prepare_montage_clip(row, vod, part_max=part_ceiling)
                 part = temp_dir / f"part_{idx:02d}.mp4"
                 work_row = {**row, "clip": clip, "start": clip["start"], "peak_start": clip["peak_start"]}
                 if not render_single_segment(vod, clip, part):
@@ -1078,16 +1086,12 @@ def _send_montage(
                 segment_paths.append(part)
                 durations.append(dur)
                 accepted_rows.append(work_row)
-                strict_pubg = game == "pubg" and pubg_quality_strict()
-                if strict_pubg:
-                    ship_target = min_clips
-                elif os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "0") == "1":
-                    ship_target = max(soft_min, 1)
-                else:
-                    ship_target = prefer_parts
-                if len(segment_paths) >= ship_target:
-                    break
                 if len(segment_paths) >= max_clips:
+                    break
+                if (
+                    os.environ.get("SHOOTER_VOD_MONTAGE_EARLY_SHIP", "0") == "1"
+                    and len(segment_paths) >= soft_min
+                ):
                     break
 
             need_parts = min_clips if (game == "pubg" and pubg_quality_strict()) else soft_min
@@ -1178,7 +1182,7 @@ def _send_montage(
                 if len(segment_paths) >= 3:
                     min_final = max(
                         float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "42")),
-                        len(segment_paths) * part_budget * 0.82,
+                        len(segment_paths) * part_ceiling * 0.82,
                     )
                 elif len(segment_paths) >= 2:
                     min_final = max(
@@ -1190,10 +1194,10 @@ def _send_montage(
                         min_final,
                         float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
                     )
-            elif game == "pubg" and len(segment_paths) >= 3:
+            elif game == "pubg" and len(segment_paths) >= 2:
                 min_final = max(
-                    float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "40")),
-                    len(segment_paths) * part_budget * 0.80,
+                    float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "35")),
+                    sum(durations) * 0.85,
                 )
             if len(segment_paths) == 1:
                 min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
