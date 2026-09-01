@@ -27,6 +27,10 @@
     "Tovruh33adY": [
       {"tc": "25:33", "time_sec": 1533, "label": "bad", "role": "anti_style", "note": "long intro / cut before fight"},
       {"tc": "1:27:46", "time_sec": 5266, "label": "good", "role": "style_ref", "note": "target fight style — part 2 reference"}
+    ],
+    "bMn-6uTsDBg": [
+      {"tc": "2:21", "time_sec": 141, "label": "bad", "role": "anti_style", "note": "long intro / fight at end of clip"},
+      {"tc": "4:03", "time_sec": 243, "label": "good", "role": "style_ref", "note": "target fight style — part 2 reference"}
     ]
   }
 }

@@ -51,7 +51,7 @@ def test_segmenter_expands_from_contact_through_finale(
             file_duration=300.0,
         )
 
-    assert start < 92
+    assert start <= 95
     assert start + duration >= 110
     assert 10 <= duration <= 28
     assert report["kill_sec"] is not None
@@ -99,6 +99,50 @@ def test_segmenter_extends_past_notification_before_gunfire(
     assert start + duration >= 114.0
     assert report["kill_sec"] is not None
     assert report["fight_end"] >= 114.0
+
+
+def test_segmenter_trims_long_prefight_before_late_gunfire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Peak/notification early; sustained gunfire starts late — no 15s loot intro."""
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"vod")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_BEFORE", "18")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_AFTER", "24")
+    monkeypatch.setenv("PUBG_SEGMENT_BIN_SEC", "2")
+    monkeypatch.setenv("PUBG_SEGMENT_SAMPLE_SEC", "3")
+    monkeypatch.setenv("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "6")
+    segmenter.clear_segment_cache()
+
+    def timeline(_path: Path, scan_start: float, scan_end: float, *, step: float, sample: float):
+        rows = []
+        start = scan_start
+        while start + sample <= scan_end:
+            gunfire = 134 <= start <= 158
+            rows.append(
+                {
+                    "start": start,
+                    "score": 0.82 if gunfire else (0.22 if 126 <= start < 134 else 0.04),
+                    "gun": 0.09 if gunfire else 0.01,
+                }
+            )
+            start += step
+        return rows
+
+    monkeypatch.setattr(segmenter, "_activity_timeline", timeline)
+
+    with patch("pubg_killfeed_ocr.score_killfeed_segment", return_value=(0.7, {})):
+        start, duration, report = segmenter.resolve_pubg_fight_bounds(
+            vod,
+            141.0,
+            file_duration=600.0,
+        )
+
+    assert start >= 131.0
+    assert (start - 141.0) / max(duration, 1.0) > -0.35
+    assert start + duration >= 150.0
+    assert report["shooting_start"] >= 133.0
 
 
 def test_segmenter_falls_back_when_no_timeline(tmp_path: Path) -> None:

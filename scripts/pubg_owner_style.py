@@ -11,6 +11,7 @@ from typing import Any
 # Explicit style anchors when labels not yet synced on VPS.
 PUBG_STYLE_REF_BY_VOD: dict[str, list[float]] = {
     "Tovruh33adY": [5266.0],
+    "bMn-6uTsDBg": [243.0],
 }
 
 _STYLE_KEYS = (
@@ -68,6 +69,8 @@ def style_avoid_peaks(vod: Path) -> list[float]:
     avoid: list[float] = []
     if vid == "Tovruh33adY":
         avoid.append(1533.0)
+    if vid == "bMn-6uTsDBg":
+        avoid.append(141.0)
     try:
         from pubg_owner_calibration import labels_for_video
 
