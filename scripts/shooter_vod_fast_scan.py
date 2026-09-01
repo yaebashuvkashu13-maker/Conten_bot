@@ -15,7 +15,7 @@ import numpy as np
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 log = logging.getLogger("shooter_vod_fast_scan")
-AUDIO_GENERATOR_VERSION = 3
+AUDIO_GENERATOR_VERSION = 4
 
 
 def candidate_pool_target(min_clips: int = 2) -> int:
@@ -372,12 +372,13 @@ def discover_montage_gun_peaks(
     if not offsets:
         return [], "dense_probe_too_short"
 
-    try:
-        from panns_audio_cache import prewarm_grid
+    if not audio_generator:
+        try:
+            from panns_audio_cache import prewarm_grid
 
-        prewarm_grid(video_path, offsets, WINDOW_SEC)
-    except Exception:
-        pass
+            prewarm_grid(video_path, offsets, WINDOW_SEC)
+        except Exception:
+            pass
 
     log.info(
         "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
@@ -388,13 +389,13 @@ def discover_montage_gun_peaks(
     )
     scored: list[tuple[float, float]] = []  # fused generator score, center_hint
     for index, t in enumerate(offsets):
-        panns = score_panns_audio(video_path, t, WINDOW_SEC)
-        gmax = float(panns.get("panns_gun_max", 0))
         if audio_generator:
             audio_prior = 1.0 - index / max(len(offsets), 1)
-            fused = gmax * 0.55 + audio_prior * 0.45
-            scored.append((fused, t + WINDOW_SEC * 0.5))
-        elif gmax >= gun_min:
+            scored.append((audio_prior, t + WINDOW_SEC * 0.5))
+            continue
+        panns = score_panns_audio(video_path, t, WINDOW_SEC)
+        gmax = float(panns.get("panns_gun_max", 0))
+        if gmax >= gun_min:
             scored.append((gmax, t + WINDOW_SEC * 0.5))
 
     if len(scored) < min_clips:

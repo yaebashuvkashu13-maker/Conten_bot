@@ -479,8 +479,30 @@ def rank_peaks_with_model(
     if artifact is None or os.environ.get("PUBG_RANKER_ENABLED", "1") != "1":
         return list(peaks), "ranker_unavailable"
     cap = max_probes or int(os.environ.get("PUBG_RANKER_MAX_PROBES", "16"))
+    cap = min(len(peaks), max(1, cap))
+    selected_indices: list[int] = list(range(min(len(peaks), max(1, cap // 2))))
+    selected_set = set(selected_indices)
+    # Reserve half the budget for timeline diversity. Global audio rank alone
+    # repeatedly omitted quieter fights from later VOD chapters.
+    seen_chunks: set[int] = set()
+    for index in sorted(range(len(peaks)), key=lambda idx: float(peaks[idx])):
+        chunk = int(float(peaks[index]) // 300.0)
+        if chunk in seen_chunks or index in selected_set:
+            continue
+        seen_chunks.add(chunk)
+        selected_indices.append(index)
+        selected_set.add(index)
+        if len(selected_indices) >= cap:
+            break
+    for index in range(len(peaks)):
+        if len(selected_indices) >= cap:
+            break
+        if index not in selected_set:
+            selected_indices.append(index)
+            selected_set.add(index)
     scored: list[tuple[float, int, float]] = []
-    for index, peak in enumerate(peaks[: max(1, cap)]):
+    for index in selected_indices:
+        peak = peaks[index]
         start = max(0.0, float(peak) - part_sec * 0.5)
         try:
             score = predict_score(video_path, start, part_sec)
@@ -489,7 +511,7 @@ def rank_peaks_with_model(
         scored.append((float(score) if score is not None else -1.0, index, float(peak)))
     scored.sort(key=lambda row: (-row[0], row[1]))
     ranked = [peak for _score, _index, peak in scored]
-    ranked.extend(float(peak) for peak in peaks[len(scored) :])
+    ranked.extend(float(peak) for index, peak in enumerate(peaks) if index not in selected_set)
     top = scored[0][0] if scored else -1.0
     return ranked, f"ranker top={top:.3f} n={len(scored)}"
 

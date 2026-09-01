@@ -92,3 +92,25 @@ def test_quality_report_reuses_training_features() -> None:
     assert features is not None
     assert features["panns_gun_max"] == 0.5
     assert features["gunfire_density"] == 0.08
+
+
+def test_ranker_budget_includes_timeline_diversity(monkeypatch: pytest.MonkeyPatch) -> None:
+    peaks = [float(index * 10) for index in range(20)] + [900.0]
+    monkeypatch.setattr(ranker, "_load_artifact", lambda: {"model": object()})
+    seen: list[float] = []
+
+    def predict(_path: Path, start: float, _duration: float):
+        peak = start + 7.0
+        seen.append(peak)
+        return 0.99 if peak == 900.0 else 0.1
+
+    monkeypatch.setattr(ranker, "predict_score", predict)
+    ranked, _ = ranker.rank_peaks_with_model(
+        Path("/tmp/vod.mp4"),
+        peaks,
+        part_sec=14.0,
+        max_probes=6,
+    )
+    assert 900.0 in seen
+    assert ranked[0] == 900.0
+    assert set(ranked) == set(peaks)
