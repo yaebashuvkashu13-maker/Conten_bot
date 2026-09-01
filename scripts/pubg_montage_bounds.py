@@ -187,8 +187,8 @@ def peak_shape_ok(
     *,
     file_dur: float | None = None,
 ) -> bool:
+    from pubg_clip_shape_gate import validate_clip_fight_shape
     from pubg_fight_segment import resolve_pubg_fight_bounds
-    from pubg_montage_bounds import tighten_pubg_clip_bounds
 
     if file_dur is None:
         from shooter_vod_segment_feed import _ffprobe_duration
