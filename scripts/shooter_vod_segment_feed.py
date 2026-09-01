@@ -64,6 +64,7 @@ from vod_scan_state import (
     should_skip_vod_rescan,
     used_peaks_for_vod,
 )
+from vod_game_registry import VOD_PIPELINE_REV, trim_used_youtube_ids
 from vod_scan_funnel import ScanFunnel
 from vod_quality import dense_probe_passes, montages_per_vod, pubg_quality_strict
 from youtube_download import load_env

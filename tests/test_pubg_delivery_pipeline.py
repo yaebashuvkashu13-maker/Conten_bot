@@ -15,6 +15,13 @@ sys.path.insert(0, str(SCRIPTS))
 from vod_quality import pubg_quality_strict  # noqa: E402
 
 
+def test_feed_runtime_registry_symbols_are_imported() -> None:
+    import shooter_vod_segment_feed as feed  # noqa: E402
+
+    assert isinstance(feed.VOD_PIPELINE_REV, str)
+    assert callable(feed.trim_used_youtube_ids)
+
+
 def test_pubg_quality_strict_opt_in_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VOD_PUBG_QUALITY_STRICT", raising=False)
     monkeypatch.setenv("VOD_PUBG_ONLY", "1")
