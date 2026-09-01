@@ -56,6 +56,8 @@ def owner_labels_path() -> Path:
     if override:
         return Path(override)
     for path in (
+        Path(os.environ.get("SHOOTER_PUBG_DATA_ROOT", "/root/data/pubg"))
+        / "pubg_owner_labels.json",
         _repo_root() / "data" / "pubg_owner_labels.json",
         Path("/root/data/mlbb/pubg_owner_labels.json"),
     ):

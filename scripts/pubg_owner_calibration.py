@@ -7,7 +7,8 @@ import json
 import os
 from pathlib import Path
 
-LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
+LABELS_PATH = Path("/root/data/pubg/pubg_owner_labels.json")
+LEGACY_LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
 # n97cHIR9Qow — owner review 2026-06-06
@@ -39,7 +40,8 @@ def _read_labels_file(path: Path) -> dict:
 
 def load_owner_labels() -> dict[str, list[dict]]:
     merged = {vid: list(rows) for vid, rows in DEFAULT_LABELS.items()}
-    for path in (LABELS_PATH, REPO_LABELS_PATH):
+    runtime = Path(os.environ.get("PUBG_OWNER_LABELS_PATH", str(LABELS_PATH)))
+    for path in (REPO_LABELS_PATH, LEGACY_LABELS_PATH, runtime):
         for vid, rows in _read_labels_file(path).items():
             merged.setdefault(vid, [])
             seen = {(r.get("time_sec"), r.get("label")) for r in merged[vid]}

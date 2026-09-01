@@ -47,12 +47,17 @@ def exemplar_root() -> Path:
 
 
 def owner_labels_path(profile: str, *, create: bool = False) -> Path | None:
-    """Path to {profile}_owner_labels.json (repo data/ by default)."""
+    """Path to mutable owner labels (PUBG runtime data, repo seed for others)."""
     p = normalize_profile(profile)
     if p not in _OWNER_JSON_NAMES:
         return None
     env_key = _OWNER_ENV_KEYS[p]
-    default = _repo_root() / "data" / _OWNER_JSON_NAMES[p]
+    default = (
+        Path(os.environ.get("SHOOTER_PUBG_DATA_ROOT", "/root/data/pubg"))
+        / _OWNER_JSON_NAMES[p]
+        if p == "pubg"
+        else _repo_root() / "data" / _OWNER_JSON_NAMES[p]
+    )
     path = Path(os.environ.get(env_key, str(default)))
     if create or path.exists():
         return path

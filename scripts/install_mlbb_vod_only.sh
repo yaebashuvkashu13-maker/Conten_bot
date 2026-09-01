@@ -14,7 +14,7 @@ PAUSE=/root/data/mlbb/PAUSED_PIPELINES
 MARK="# mlbb-vod-only-mode"
 BIN=/usr/local/bin
 
-mkdir -p /root/data/mlbb /root/datasets/mlbb/vod_segments /root/data/mlbb/logs \
+mkdir -p /root/data/mlbb /root/data/pubg /root/datasets/mlbb/vod_segments /root/data/mlbb/logs \
   /root/data/mlbb/youtube_nightly/inbox
 
 cat >"$PAUSE" <<'EOF'
@@ -221,6 +221,7 @@ pairs = {
     "VOD_PEAK_FEATURE_CACHE": "1",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
+    "PUBG_OWNER_LABELS_PATH": "/root/data/pubg/pubg_owner_labels.json",
     "PUBG_RANKER_MAX_PROBES": "128",
     "PUBG_RANKER_WORKERS": "4",
     "PUBG_RANKER_TRAIN_WORKERS": "4",
@@ -267,6 +268,7 @@ PY
 
 if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
   _apply_pubg_only_env
+  python3 "$REPO/scripts/migrate_pubg_runtime_labels.py" 2>/dev/null || true
 fi
 
 if [[ "$ENV_ONLY" == "1" ]]; then
@@ -307,6 +309,7 @@ install -m 755 \
   "$REPO/scripts/shooter_owner_montage.py" \
   "$REPO/scripts/shooter_author_kill_gate.py" \
   "$REPO/scripts/pubg_moment_ranker.py" \
+  "$REPO/scripts/migrate_pubg_runtime_labels.py" \
   "$REPO/scripts/pubg_quality_score.py" \
   "$REPO/scripts/pubg_fight_segment.py" \
   "$REPO/scripts/pubg_regression_benchmark.py" \

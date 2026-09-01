@@ -56,9 +56,17 @@ def _owner_labels_path(profile: str) -> Path | None:
     if profile not in OWNER_LABEL_PROFILES:
         return None
     env_key, default_name = _OWNER_LABEL_FILES[profile]
-    path = Path(os.environ.get(env_key, str(REPO_ROOT / "data" / default_name)))
+    default_path = (
+        Path(os.environ.get("SHOOTER_PUBG_DATA_ROOT", "/root/data/pubg")) / default_name
+        if profile == "pubg"
+        else REPO_ROOT / "data" / default_name
+    )
+    path = Path(os.environ.get(env_key, str(default_path)))
     if path.exists():
         return path
+    repo_seed = REPO_ROOT / "data" / default_name
+    if repo_seed.exists():
+        return repo_seed
     fallback = Path(f"/root/data/mlbb/{default_name}")
     if fallback.exists():
         return fallback
