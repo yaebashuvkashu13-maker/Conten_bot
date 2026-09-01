@@ -545,20 +545,34 @@ def discover_montage_gun_peaks(
         funnel.snapped = len(snapped)
 
     snapped.sort(key=lambda x: -(x[1] * 2.0 + x[2]))
+    scored_centers = [
+        (float(panns_g) * 2.0 + float(gun_d), float(center)) for center, gun_d, panns_g in snapped
+    ]
     picked: list[float] = []
     picked_scores: list[float] = []
-    pick_gap = gap_sec * 0.85
-    for center, gun_d, panns_g in snapped:
-        if any(abs(center - p) < pick_gap for p in picked):
-            continue
-        picked.append(center)
-        picked_scores.append(float(gun_d) * 2.0 + float(panns_g))
-        if len(picked) >= pool_cap:
-            break
+    from vod_montage_cluster import pool_peak_gap_sec, sequential_montage_enabled, sequential_pool_peaks
+
+    if sequential_montage_enabled():
+        picked = sequential_pool_peaks(scored_centers, pool_cap=pool_cap)
+        picked_scores = [0.0] * len(picked)
+        pick_gap = pool_peak_gap_sec()
+    else:
+        pick_gap = gap_sec * 0.85
+        for center, gun_d, panns_g in snapped:
+            if any(abs(center - p) < pick_gap for p in picked):
+                continue
+            picked.append(center)
+            picked_scores.append(float(gun_d) * 2.0 + float(panns_g))
+            if len(picked) >= pool_cap:
+                break
 
     if len(picked) < min_clips and snapped:
-        ultra = max(14.0, gap_sec * 0.35)
-        if ultra < pick_gap:
+        ultra = max(12.0, gap_sec * 0.35)
+        if sequential_montage_enabled():
+            picked = sequential_pool_peaks(scored_centers, pool_cap=pool_cap, part_gap_sec=ultra)
+            picked_scores = [0.0] * len(picked)
+            pick_gap = ultra
+        elif ultra < pick_gap:
             picked = []
             picked_scores = []
             for center, gun_d, panns_g in snapped:
@@ -576,6 +590,7 @@ def discover_montage_gun_peaks(
 
     top = scored[0][0] if scored else 0.0
     reason = (
+        f"{'sequential' if sequential_montage_enabled() else 'spread'} "
         f"{'audio_generator' if audio_generator else 'dense_panns'} "
         f"hits={len(scored)}/{len(offsets)} shortlist={len(shortlist)} "
         f"snapped={len(snapped)} picked={len(picked)} gap={pick_gap:.0f} top={top:.3f} pass={probe_pass}"

@@ -918,21 +918,15 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
 
 
 def _pick_montage_rows(rows: list[dict], *, min_clips: int, max_clips: int, gap_sec: float) -> list[dict]:
-    """Greedy highest-score peaks spaced by montage gap.
+    """Pick montage parts — sequential clusters by default, spread mode when disabled."""
+    from vod_montage_cluster import pick_montage_rows
 
-    Returns up to max_clips * 3 candidates so rejected parts can be replaced
-    without failing the whole склейка. May return fewer than min_clips — caller decides.
-    """
-    pool_cap = max(max_clips * 3, min_clips + 3)
-    picked: list[dict] = []
-    for row in sorted(rows, key=lambda r: float(r.get("score", 0)), reverse=True):
-        peak = float(row.get("peak_start", row.get("start", 0)))
-        if any(abs(peak - float(p.get("peak_start", p.get("start", 0)))) < gap_sec for p in picked):
-            continue
-        picked.append(row)
-        if len(picked) >= pool_cap:
-            break
-    return picked
+    return pick_montage_rows(
+        rows,
+        min_clips=min_clips,
+        max_clips=max_clips,
+        gap_sec=gap_sec,
+    )
 
 
 def _prepare_montage_clip(
