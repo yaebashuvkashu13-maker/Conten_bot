@@ -31,3 +31,16 @@ Server benchmark on `n97cHIR9Qow` (first 5400 seconds, 88 windows):
 override old labels for training, but must not rewrite the regression set.
 Generator recall uses a ±45 second event tolerance; exact clip boundaries are
 evaluated after `pubg_fight_segment.py`.
+
+Release validation (2026-09-01):
+
+- generator recall: `10/10` current/immutable good events;
+- candidate ranker: 295 augmented windows, 26 VOD groups;
+- leave-one-VOD-out balanced accuracy: `0.638`;
+- conflict-aware accepted recall: `5/9` known good events;
+- conflict-aware bad accept rate: `0/9`;
+- one immutable `good` timestamp was superseded by later owner `bad` feedback.
+
+The timestamp set is intentionally sparse and does not claim that all other
+top-10 windows are bad. Ranker quality is gated primarily by held-out grouped
+accuracy and bad-accept regression, not by sparse-label precision@10.
