@@ -31,6 +31,10 @@
     "bMn-6uTsDBg": [
       {"tc": "2:21", "time_sec": 141, "label": "bad", "role": "anti_style", "note": "long intro / fight at end of clip"},
       {"tc": "4:03", "time_sec": 243, "label": "good", "role": "style_ref", "note": "target fight style — part 2 reference"}
+    ],
+    "Z7wR4vZkn5E": [
+      {"tc": "14:18", "time_sec": 858, "label": "good", "note": "owner peak"},
+      {"tc": "19:24", "time_sec": 1164, "label": "good", "role": "style_ref", "note": "target fight style"}
     ]
   }
 }

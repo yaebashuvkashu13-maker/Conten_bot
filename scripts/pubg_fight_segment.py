@@ -157,6 +157,65 @@ def _sustained_gunfire_onset_near_peak(
     return hot[0] if hot else None
 
 
+def _last_gunfire_index(gun_active: list[bool], *, from_index: int = 0) -> int | None:
+    last: int | None = None
+    for index in range(max(0, from_index), len(gun_active)):
+        if gun_active[index]:
+            last = index
+    return last
+
+
+def _fit_window_to_gunfire_span(
+    timeline: list[dict[str, Any]],
+    gun_active: list[bool],
+    *,
+    gun_onset: int | None,
+    start: float,
+    end: float,
+    peak_sec: float,
+    sample: float,
+    contact_lead: float,
+    finale_tail: float,
+    min_duration: float,
+    max_duration: float,
+    file_duration: float,
+) -> tuple[float, float]:
+    """Snap clip to [first sustained shot .. last shot + tail], then cap by max_duration."""
+    if gun_onset is None:
+        return start, end
+    last_gun = _last_gunfire_index(gun_active, from_index=gun_onset)
+    if last_gun is None:
+        return start, end
+
+    fight_start = max(0.0, float(timeline[gun_onset]["start"]) - contact_lead)
+    fight_end = min(
+        file_duration,
+        float(timeline[last_gun]["start"]) + sample + finale_tail,
+    )
+    if fight_end - fight_start < min_duration:
+        pad = min_duration - (fight_end - fight_start)
+        fight_start = max(0.0, fight_start - pad * 0.12)
+        fight_end = min(file_duration, fight_end + pad * 0.88)
+
+    start = fight_start
+    end = fight_end
+    if end - start > max_duration:
+        # Keep the full payoff — trim pre-fight lead only.
+        start = max(0.0, end - max_duration)
+        onset_t = float(timeline[gun_onset]["start"]) - contact_lead
+        start = max(start, onset_t)
+
+    start, end = _rebalance_backloaded_window(
+        start,
+        end,
+        peak_sec,
+        max_duration=max_duration,
+        file_duration=file_duration,
+        gun_onset_t=float(timeline[gun_onset]["start"]),
+    )
+    return start, end
+
+
 def _rebalance_backloaded_window(
     start: float,
     end: float,
@@ -164,17 +223,19 @@ def _rebalance_backloaded_window(
     *,
     max_duration: float,
     file_duration: float,
+    gun_onset_t: float | None = None,
 ) -> tuple[float, float]:
     """If the fight sits in the last third, slide the window forward."""
     span = end - start
     if span <= 1.0:
         return start, end
-    rel = (float(peak_sec) - start) / span
-    trigger = float(os.environ.get("PUBG_SEGMENT_BACKLOAD_REL", "0.52"))
+    anchor = float(gun_onset_t if gun_onset_t is not None else peak_sec)
+    rel = (anchor - start) / span
+    trigger = float(os.environ.get("PUBG_SEGMENT_BACKLOAD_REL", "0.45"))
     if rel < trigger:
         return start, end
-    target_rel = float(os.environ.get("PUBG_SEGMENT_TARGET_PEAK_REL", "0.36"))
-    want_start = float(peak_sec) - span * target_rel
+    target_rel = float(os.environ.get("PUBG_SEGMENT_TARGET_PEAK_REL", "0.28"))
+    want_start = anchor - span * target_rel
     start = max(start, want_start)
     if end - start > max_duration:
         start = max(0.0, end - max_duration)
@@ -212,17 +273,19 @@ def _extend_right_through_payoff(
     active_min: float,
 ) -> int:
     """Kill notifications often fire before sustained gunfire — extend past quiet gaps."""
-    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "14"))
-    forward_quiet = max(3, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "6")))
+    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "16"))
+    forward_quiet = max(3, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "8")))
     anchor = max(float(peak_sec), float(kill_sec) if kill_sec is not None else float(peak_sec))
     target_end = anchor + min_post
     extended = right
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
 
     for index, row in enumerate(timeline):
         t = float(row["start"])
         if t < anchor - 2.0:
             continue
-        if float(row["score"]) >= active_min:
+        hot = float(row["score"]) >= active_min or float(row.get("gun", 0.0)) >= gun_min
+        if hot:
             extended = max(extended, index)
         if t + sample >= target_end:
             break
@@ -232,7 +295,8 @@ def _extend_right_through_payoff(
         t = float(row["start"]) if (row := timeline[index]) else 0.0
         if t > target_end + sample:
             break
-        if float(row["score"]) >= active_min:
+        hot = float(row["score"]) >= active_min or float(row.get("gun", 0.0)) >= gun_min
+        if hot:
             extended, quiet = index, 0
         else:
             quiet += 1
@@ -271,8 +335,8 @@ def resolve_pubg_fight_bounds(
 
     step = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
     sample = float(os.environ.get("PUBG_SEGMENT_SAMPLE_SEC", "3"))
-    before = float(os.environ.get("PUBG_SEGMENT_SCAN_BEFORE", "18"))
-    after = float(os.environ.get("PUBG_SEGMENT_SCAN_AFTER", "24"))
+    before = float(os.environ.get("PUBG_SEGMENT_SCAN_BEFORE", "14"))
+    after = float(os.environ.get("PUBG_SEGMENT_SCAN_AFTER", "40"))
     active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
     max_quiet = max(0, int(os.environ.get("PUBG_SEGMENT_MAX_QUIET_BINS", "2")))
     scan_start = max(0.0, float(peak_sec) - before)
@@ -331,7 +395,13 @@ def resolve_pubg_fight_bounds(
     contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "2.0"))
     finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "3.5"))
     max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "6"))
-    gun_onset = _sustained_gunfire_onset_near_peak(timeline, gun_active, peak_sec)
+    gun_onset = _sustained_gunfire_onset_near_peak(
+        timeline,
+        gun_active,
+        peak_sec,
+        lookback=before,
+        lookahead=min(after, max(20.0, after * 0.9)),
+    )
     onset = _fight_onset_index(timeline, peak_sec, active_min=active_min)
     if gun_onset is not None:
         left = max(left, gun_onset)
@@ -425,6 +495,21 @@ def resolve_pubg_fight_bounds(
         peak_sec,
         max_duration=max_duration,
         file_duration=file_duration,
+        gun_onset_t=float(timeline[gun_onset]["start"]) if gun_onset is not None else None,
+    )
+    start, end = _fit_window_to_gunfire_span(
+        timeline,
+        gun_active,
+        gun_onset=gun_onset,
+        start=start,
+        end=end,
+        peak_sec=peak_sec,
+        sample=sample,
+        contact_lead=contact_lead,
+        finale_tail=finale_tail,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        file_duration=file_duration,
     )
     if end - start > max_duration:
         preferred_end = end
@@ -434,13 +519,6 @@ def resolve_pubg_fight_bounds(
         else:
             start = max(start, preferred_end - max_duration)
         end = min(file_duration, start + max_duration)
-    start, end = _rebalance_backloaded_window(
-        start,
-        end,
-        peak_sec,
-        max_duration=max_duration,
-        file_duration=file_duration,
-    )
     if peak_sec < start or peak_sec > end:
         end = min(file_duration, max(end, peak_sec + min_duration * 0.65))
         start = max(0.0, end - min_duration)

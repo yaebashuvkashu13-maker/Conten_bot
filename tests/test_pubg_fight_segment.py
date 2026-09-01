@@ -145,6 +145,50 @@ def test_segmenter_trims_long_prefight_before_late_gunfire(
     assert report["shooting_start"] >= 133.0
 
 
+def test_segmenter_fits_late_gunfire_span_not_cut_at_clip_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Notification at peak; gunfire starts late and runs past old 24s scan tail."""
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"vod")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_BEFORE", "14")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_AFTER", "40")
+    monkeypatch.setenv("PUBG_SEGMENT_BIN_SEC", "2")
+    monkeypatch.setenv("PUBG_SEGMENT_SAMPLE_SEC", "3")
+    segmenter.clear_segment_cache()
+
+    def timeline(_path: Path, scan_start: float, scan_end: float, *, step: float, sample: float):
+        rows = []
+        start = scan_start
+        while start + sample <= scan_end:
+            gunfire = 876 <= start <= 894
+            rows.append(
+                {
+                    "start": start,
+                    "score": 0.86 if gunfire else 0.05,
+                    "gun": 0.10 if gunfire else 0.0,
+                }
+            )
+            start += step
+        return rows
+
+    monkeypatch.setattr(segmenter, "_activity_timeline", timeline)
+
+    with patch("pubg_killfeed_ocr.score_killfeed_segment", return_value=(0.72, {})):
+        start, duration, report = segmenter.resolve_pubg_fight_bounds(
+            vod,
+            858.0,
+            file_duration=3600.0,
+        )
+
+    assert start >= 872.0
+    assert start + duration >= 896.0
+    rel = (876.0 - start) / max(duration, 1.0)
+    assert rel < 0.35
+    assert report["fight_end"] >= 896.0
+
+
 def test_segmenter_falls_back_when_no_timeline(tmp_path: Path) -> None:
     vod = tmp_path / "yt_abcdefghijk.mp4"
     vod.write_bytes(b"vod")
