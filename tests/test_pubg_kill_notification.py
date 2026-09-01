@@ -44,9 +44,11 @@ def test_segment_score_prefers_transient_notification() -> None:
     frames = [np.zeros((360, 640, 3), dtype=np.uint8) for _ in range(10)]
     calls = 0
 
-    def locate(_frame, **_kwargs):
+    def locate(_frame, **kwargs):
         nonlocal calls
         calls += 1
+        if kwargs.get("ocr"):
+            return [{"score": 0.8, "text": "A AKM B", "box": [0.2, 0.1, 0.3, 0.05]}]
         if calls in (3, 4, 5):
             return [{"score": 0.8, "text": "A AKM B", "box": [0.2, 0.1, 0.3, 0.05]}]
         return []

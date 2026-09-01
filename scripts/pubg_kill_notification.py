@@ -275,6 +275,18 @@ def _decode_sample_frames(
     return frames
 
 
+def _box_iou(left: list[float] | None, right: list[float] | None) -> float:
+    if not left or not right:
+        return 0.0
+    lx, ly, lw, lh = left
+    rx, ry, rw, rh = right
+    ix0, iy0 = max(lx, rx), max(ly, ry)
+    ix1, iy1 = min(lx + lw, rx + rw), min(ly + lh, ry + rh)
+    intersection = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    union = lw * lh + rw * rh - intersection
+    return intersection / max(union, 1e-9)
+
+
 def score_kill_notification_segment(
     video_path: Path,
     start_sec: float,
@@ -302,40 +314,96 @@ def score_kill_notification_segment(
     except Exception:
         viewport = None
     threshold = float(config.get("min_score", 0.34))
-    frame_rows: list[dict[str, Any]] = []
-    best_score = 0.0
-    best_text = ""
-    best_box: list[float] | None = None
-    hits = 0
-    for index, frame in enumerate(frames):
+    views: list[np.ndarray] = []
+    region_rows: list[list[dict[str, Any]]] = []
+    for frame in frames:
         if viewport is not None:
             x, y, width, height = (int(value) for value in viewport)
             if y + height <= frame.shape[0] and x + width <= frame.shape[1]:
                 frame = frame[y : y + height, x : x + width]
-        regions = locate_notification_regions(frame, config=config, ocr=True)
-        best = regions[0] if regions else {"score": 0.0, "text": "", "box": None}
-        score = float(best.get("score", 0.0))
-        is_hit = score >= threshold
-        hits += int(is_hit)
-        if score > best_score:
-            best_score = score
-            best_text = str(best.get("text") or "")
-            best_box = best.get("box")
+        views.append(frame)
+        region_rows.append(locate_notification_regions(frame, config=config, ocr=False))
+
+    best_event: dict[str, Any] | None = None
+    for index, regions in enumerate(region_rows):
+        if index == 0:
+            continue
+        if index + 1 >= len(region_rows):
+            break
+        previous = region_rows[index - 1] if index > 0 else []
+        following = region_rows[index + 1]
+        for region in regions:
+            box = region.get("box")
+            prev_iou = max(
+                (_box_iou(box, other.get("box")) for other in previous),
+                default=0.0,
+            )
+            next_matches = [
+                other for other in following if _box_iou(box, other.get("box")) >= 0.18
+            ]
+            if prev_iou >= 0.22 or not next_matches:
+                continue
+            next_region = max(next_matches, key=lambda row: float(row.get("score", 0.0)))
+            onset = (
+                float(region.get("score", 0.0)) * 0.48
+                + float(next_region.get("score", 0.0)) * 0.30
+                + (1.0 - prev_iou) * 0.22
+            )
+            event = {
+                "index": index,
+                "score": onset,
+                "box": box,
+                "next_box": next_region.get("box"),
+                "prev_iou": prev_iou,
+            }
+            if best_event is None or onset > float(best_event["score"]):
+                best_event = event
+
+    best_score = 0.0
+    best_text = ""
+    best_box: list[float] | None = None
+    event_index = None
+    if best_event is not None:
+        event_index = int(best_event["index"])
+        best_box = best_event.get("box")
+        ocr_regions = locate_notification_regions(
+            views[event_index],
+            config=config,
+            ocr=True,
+        )
+        matching = [
+            row for row in ocr_regions if _box_iou(best_box, row.get("box")) >= 0.18
+        ]
+        ocr_region = max(
+            matching or ocr_regions,
+            key=lambda row: float(row.get("score", 0.0)),
+            default={},
+        )
+        best_text = str(ocr_region.get("text") or "")
+        text_chars = len(re.sub(r"[^A-Za-z0-9А-Яа-я]", "", best_text))
+        text_score = min(1.0, text_chars / 10.0)
+        best_score = min(
+            1.0,
+            float(best_event["score"]) * 0.80 + text_score * 0.20,
+        )
+
+    frame_rows: list[dict[str, Any]] = []
+    hits = 0
+    for index, regions in enumerate(region_rows):
+        best = regions[0] if regions else {"score": 0.0, "box": None}
+        event_hit = event_index is not None and index in (event_index, event_index + 1)
+        hits += int(event_hit)
         frame_rows.append(
             {
                 "index": index,
-                "score": round(score, 4),
-                "hit": is_hit,
-                "text": str(best.get("text") or "")[:80],
+                "score": round(float(best.get("score", 0.0)), 4),
+                "hit": event_hit,
+                "text": best_text[:80] if index == event_index else "",
                 "box": best.get("box"),
             }
         )
     ratio = hits / max(len(frames), 1)
-    persistence = min(1.0, hits / 3.0)
-    transient = 1.0 if 0 < hits < len(frames) * 0.80 else 0.0
-    score = min(1.0, best_score * 0.68 + persistence * 0.20 + transient * 0.12)
-    if ratio >= 0.85:
-        score *= 0.60
+    score = best_score if best_score >= threshold else best_score * 0.75
     return score, {
         "notification_score": round(score, 4),
         "notification_best_frame_score": round(best_score, 4),
@@ -344,6 +412,8 @@ def score_kill_notification_segment(
         "notification_hit_ratio": round(ratio, 4),
         "notification_text": best_text,
         "notification_box": best_box,
+        "notification_event_index": event_index,
+        "notification_onset": best_event,
         "notification_samples": frame_rows,
     }
 
