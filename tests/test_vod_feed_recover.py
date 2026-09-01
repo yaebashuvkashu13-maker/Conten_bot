@@ -84,7 +84,7 @@ def test_clear_stale_owner_batch_lock(tmp_path: Path, monkeypatch: pytest.Monkey
     lock.write_text("", encoding="utf-8")
     old = time.time() - 7200
     os.utime(lock, (old, old))
-    monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_LOCK", lock)
+    monkeypatch.setenv("OWNER_BATCH_LOCK", str(lock))
     monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_STALE_SEC", 3600)
     note = clear_stale_owner_batch_lock()
     assert note and "снят" in note
