@@ -12,6 +12,24 @@ def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, float(value)))
 
 
+def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float) -> bool:
+    """Owner explicitly approved this fight window — skip automated hard rejects."""
+    if os.environ.get("PUBG_OWNER_REDO", "0") != "1":
+        return False
+    try:
+        from shooter_owner_montage import peak_near_owner_good
+
+        radius = float(os.environ.get("PUBG_OWNER_REDO_RADIUS_SEC", "45"))
+        probes = (
+            start_sec + duration_sec * 0.5,
+            start_sec + min(4.0, duration_sec * 0.2),
+            start_sec + max(duration_sec - 4.0, duration_sec * 0.8),
+        )
+        return any(peak_near_owner_good("pubg", video_path, float(t), radius_sec=radius) for t in probes)
+    except Exception:
+        return False
+
+
 def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
@@ -194,8 +212,11 @@ def score_pubg_window(
         return _finish(False, "hard_no_action")
 
     if loot_walk and os.environ.get("PUBG_REJECT_LOOT_WALK", "1") == "1":
-        report["hard_reject"] = "loot_walk"
-        return _finish(False, "hard_loot_walk")
+        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+            report["owner_redo_trusted"] = True
+        else:
+            report["hard_reject"] = "loot_walk"
+            return _finish(False, "hard_loot_walk")
 
     if center_text > 0.18 and gun < 0.030 and panns_gun < 0.18:
         training, training_text = _pubg_scan_training_ui(video_path, start_sec, duration_sec)
@@ -234,8 +255,11 @@ def score_pubg_window(
         and not notification_hit
         and not keyword_hit
     ):
-        report["hard_reject"] = "early_payoff_low"
-        return _finish(False, f"early_payoff_low={fast_payoff:.3f}:min{fast_payoff_min:.2f}")
+        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+            report["owner_redo_trusted"] = True
+        else:
+            report["hard_reject"] = "early_payoff_low"
+            return _finish(False, f"early_payoff_low={fast_payoff:.3f}:min{fast_payoff_min:.2f}")
 
     visual_ok, visual_reason, visual = pubg_combat_visual_strict(
         video_path,
@@ -322,13 +346,19 @@ def score_pubg_window(
     report["fight_components"] = {k: round(v, 4) for k, v in fc.items()}
     report["payoff_components"] = {k: round(v, 4) for k, v in pc.items()}
     if fight_score < fight_min:
-        report["quality_score"] = round(fight_score, 4)
-        report["quality_threshold"] = fight_min
-        return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
+        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+            report["owner_redo_trusted"] = True
+        else:
+            report["quality_score"] = round(fight_score, 4)
+            report["quality_threshold"] = fight_min
+            return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
     if payoff_score < payoff_min:
-        report["quality_score"] = round(payoff_score, 4)
-        report["quality_threshold"] = payoff_min
-        return _finish(False, f"payoff_low={payoff_score:.3f}:min{payoff_min:.2f}")
+        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+            report["owner_redo_trusted"] = True
+        else:
+            report["quality_score"] = round(payoff_score, 4)
+            report["quality_threshold"] = payoff_min
+            return _finish(False, f"payoff_low={payoff_score:.3f}:min{payoff_min:.2f}")
 
     components = {
         "panns": _clip(panns_gun / 0.45) * 0.20,
@@ -391,6 +421,10 @@ def score_pubg_window(
         }
     )
     if quality < threshold:
+        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+            report["owner_redo_trusted"] = True
+            report["quality_score"] = round(max(quality, threshold), 4)
+            return _finish(True, f"owner_redo_trusted={quality:.3f}")
         return _finish(False, f"quality_low={quality:.3f}:min{threshold:.2f}")
     return _finish(True, f"quality_ok={quality:.3f}")
 

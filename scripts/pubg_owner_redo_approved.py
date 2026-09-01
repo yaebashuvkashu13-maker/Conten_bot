@@ -219,10 +219,18 @@ def clear_vod_sent(vod: Path, game: str = "pubg") -> int:
     return len(drop)
 
 
+def _load_video_bot_env() -> None:
+    from vod_env import load_env
+
+    for key, val in load_env().items():
+        os.environ.setdefault(key, val)
+
+
 def _apply_redo_env() -> None:
     defaults = {
         "DAILY_GAME_CYCLE_ENABLED": "0",
         "PUBG_FIGHT_SEGMENTER": "1",
+        "PUBG_OWNER_REDO": "1",
         "SHOOTER_VOD_MONTAGE_SEQUENTIAL": "1",
         "SHOOTER_VOD_MONTAGE_MIN_CLIPS": "2",
         "SHOOTER_VOD_MONTAGE_MAX_CLIPS": "2",
@@ -231,7 +239,8 @@ def _apply_redo_env() -> None:
         "PUBG_OWNER_CLUSTER_SPAN_SEC": "120",
         "PUBG_SEGMENT_SCAN_AFTER": "40",
         "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "6",
-        "PUBG_REJECT_LOOT_WALK": "1",
+        "PUBG_REJECT_LOOT_WALK": "0",
+        "PUBG_EARLY_PAYOFF_REJECT": "0",
         "PUBG_STYLE_RANK_BLEND": "0.58",
     }
     for key, val in defaults.items():
@@ -313,6 +322,7 @@ def main() -> int:
     parser.add_argument("--merge-labels", action="store_true", default=True)
     args = parser.parse_args()
 
+    _load_video_bot_env()
     _apply_redo_env()
     if args.merge_labels:
         merge_seed_labels("pubg")
