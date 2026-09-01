@@ -227,7 +227,7 @@ def _load_video_bot_env() -> None:
 
 
 def _apply_redo_env() -> None:
-    defaults = {
+    overrides = {
         "DAILY_GAME_CYCLE_ENABLED": "0",
         "PUBG_FIGHT_SEGMENTER": "1",
         "PUBG_OWNER_REDO": "1",
@@ -242,10 +242,11 @@ def _apply_redo_env() -> None:
         "PUBG_REJECT_LOOT_WALK": "0",
         "PUBG_EARLY_PAYOFF_REJECT": "0",
         "VOD_PRESEND_CACHE": "0",
+        "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "30",
         "PUBG_STYLE_RANK_BLEND": "0.58",
     }
-    for key, val in defaults.items():
-        os.environ.setdefault(key, val)
+    for key, val in overrides.items():
+        os.environ[key] = val
 
 
 def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
