@@ -517,16 +517,23 @@ def rank_peaks_with_model(
     selected_set = set(selected_indices)
     # Reserve half the budget for timeline diversity. Global audio rank alone
     # repeatedly omitted quieter fights from later VOD chapters.
-    seen_chunks: set[int] = set()
-    for index in sorted(range(len(peaks)), key=lambda idx: float(peaks[idx])):
-        chunk = int(float(peaks[index]) // 300.0)
-        if chunk in seen_chunks or index in selected_set:
+    chunks: dict[int, list[int]] = {}
+    for index in range(len(peaks)):
+        if index in selected_set:
             continue
-        seen_chunks.add(chunk)
-        selected_indices.append(index)
-        selected_set.add(index)
-        if len(selected_indices) >= cap:
-            break
+        chunk = int(float(peaks[index]) // 300.0)
+        chunks.setdefault(chunk, []).append(index)
+    # Round-robin gives each chapter several candidates instead of only one.
+    # Lists preserve generator strength order within the chapter.
+    while len(selected_indices) < cap and any(chunks.values()):
+        for chunk in sorted(chunks):
+            if not chunks[chunk]:
+                continue
+            index = chunks[chunk].pop(0)
+            selected_indices.append(index)
+            selected_set.add(index)
+            if len(selected_indices) >= cap:
+                break
     for index in range(len(peaks)):
         if len(selected_indices) >= cap:
             break
