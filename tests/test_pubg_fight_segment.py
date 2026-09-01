@@ -58,6 +58,49 @@ def test_segmenter_expands_from_contact_through_finale(
     assert report["segmenter"] == "pubg_fight_v1"
 
 
+def test_segmenter_extends_past_notification_before_gunfire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kill notification at peak; gunfire starts several seconds later."""
+    vod = tmp_path / "yt_abcdefghijk.mp4"
+    vod.write_bytes(b"vod")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_BEFORE", "18")
+    monkeypatch.setenv("PUBG_SEGMENT_SCAN_AFTER", "24")
+    monkeypatch.setenv("PUBG_SEGMENT_BIN_SEC", "2")
+    monkeypatch.setenv("PUBG_SEGMENT_SAMPLE_SEC", "3")
+    monkeypatch.setenv("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "14")
+    monkeypatch.setenv("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "10")
+    segmenter.clear_segment_cache()
+
+    def timeline(_path: Path, scan_start: float, scan_end: float, *, step: float, sample: float):
+        rows = []
+        start = scan_start
+        while start + sample <= scan_end:
+            active = 108 <= start <= 118
+            score = 0.85 if active else 0.04
+            rows.append({"start": start, "score": score, "gun": 0.09 if active else 0.0})
+            start += step
+        return rows
+
+    monkeypatch.setattr(segmenter, "_activity_timeline", timeline)
+
+    def killfeed(_path: Path, start: float, duration: float, _profile: str):
+        return (0.75, {"notification_samples": [{"index": 0, "score": 0.8}]})
+
+    with patch("pubg_killfeed_ocr.score_killfeed_segment", side_effect=killfeed):
+        start, duration, report = segmenter.resolve_pubg_fight_bounds(
+            vod,
+            100.0,
+            file_duration=300.0,
+        )
+
+    assert start >= 90.0
+    assert start + duration >= 114.0
+    assert report["kill_sec"] is not None
+    assert report["fight_end"] >= 114.0
+
+
 def test_segmenter_falls_back_when_no_timeline(tmp_path: Path) -> None:
     vod = tmp_path / "yt_abcdefghijk.mp4"
     vod.write_bytes(b"vod")

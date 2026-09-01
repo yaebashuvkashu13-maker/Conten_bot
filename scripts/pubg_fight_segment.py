@@ -95,6 +95,66 @@ def _activity_timeline(
     return rows
 
 
+def _fight_onset_index(
+    timeline: list[dict[str, Any]],
+    peak_sec: float,
+    *,
+    active_min: float,
+    lookback: float = 18.0,
+) -> int | None:
+    """First gunfire bin at or before peak — avoids loot-walk left expansion."""
+    onset: int | None = None
+    for index, row in enumerate(timeline):
+        t = float(row["start"])
+        if t < peak_sec - lookback:
+            continue
+        if t > peak_sec + 4.0:
+            break
+        if float(row["score"]) >= active_min:
+            onset = index if onset is None else min(onset, index)
+    return onset
+
+
+def _extend_right_through_payoff(
+    timeline: list[dict[str, Any]],
+    right: int,
+    *,
+    peak_sec: float,
+    kill_sec: float | None,
+    sample: float,
+    active_min: float,
+) -> int:
+    """Kill notifications often fire before sustained gunfire — extend past quiet gaps."""
+    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "14"))
+    forward_quiet = max(3, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "6")))
+    anchor = max(float(peak_sec), float(kill_sec) if kill_sec is not None else float(peak_sec))
+    target_end = anchor + min_post
+    extended = right
+
+    for index, row in enumerate(timeline):
+        t = float(row["start"])
+        if t < anchor - 2.0:
+            continue
+        if float(row["score"]) >= active_min:
+            extended = max(extended, index)
+        if t + sample >= target_end:
+            break
+
+    quiet = 0
+    for index in range(right + 1, len(timeline)):
+        t = float(row["start"]) if (row := timeline[index]) else 0.0
+        if t > target_end + sample:
+            break
+        if float(row["score"]) >= active_min:
+            extended, quiet = index, 0
+        else:
+            quiet += 1
+            if quiet > forward_quiet:
+                break
+            extended = index
+    return extended
+
+
 def _activity_score(video_path: Path, start: float, duration: float) -> tuple[float, dict]:
     """Compatibility helper for focused tests/tools."""
     from gameplay_gate import score_pubg_gunfire_audio
@@ -176,11 +236,16 @@ def resolve_pubg_fight_bounds(
 
     contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "2.5"))
     finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "3.5"))
+    max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "10"))
+    onset = _fight_onset_index(timeline, peak_sec, active_min=active_min)
+    if onset is not None:
+        left = max(left, onset)
     start = max(0.0, float(timeline[left]["start"]) - contact_lead)
+    start = max(start, peak_sec - max_preflight)
     end = min(file_duration, float(timeline[right]["start"]) + sample + finale_tail)
 
     # Killfeed is sparse: probe only the likely payoff area and extend the finale.
-    kill_sec = None
+    kill_sec: float | None = None
     kill_score = 0.0
     try:
         from pubg_killfeed_ocr import score_killfeed_segment
@@ -208,7 +273,19 @@ def resolve_pubg_fight_bounds(
         pass
     if kill_sec is not None and kill_score >= 0.20:
         end = min(file_duration, max(end, kill_sec + finale_tail))
-        start = max(0.0, min(start, kill_sec - 6.0))
+        start = max(start, peak_sec - max_preflight)
+        if kill_sec >= peak_sec - 4.0:
+            start = max(0.0, min(start, kill_sec - 6.0))
+
+    right = _extend_right_through_payoff(
+        timeline,
+        right,
+        peak_sec=peak_sec,
+        kill_sec=kill_sec,
+        sample=sample,
+        active_min=active_min,
+    )
+    end = min(file_duration, max(end, float(timeline[right]["start"]) + sample + finale_tail))
 
     min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "10"))
     max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "28"))
@@ -219,28 +296,37 @@ def resolve_pubg_fight_bounds(
             for row in timeline
             if float(row["start"]) >= float(kill_sec) - 1.0
         ]
-        quiet_after = 0
-        trim_end = end
-        for row in post_kill:
-            if float(row.get("gun", 0.0)) < 0.020 and float(row.get("score", 0.0)) < 0.22:
+        saw_gunfire_after_kill = any(
+            float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= active_min
+            for row in post_kill
+        )
+        if saw_gunfire_after_kill:
+            quiet_after = 0
+            trim_end = end
+            seen_gun = False
+            for row in post_kill:
+                if float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= active_min:
+                    seen_gun = True
+                    quiet_after = 0
+                    continue
+                if not seen_gun:
+                    continue
                 quiet_after += float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
-            else:
-                quiet_after = 0.0
-            if quiet_after >= loot_tail_max:
-                trim_end = min(trim_end, float(row["start"]) + 1.5)
-                break
-        end = max(start + min_duration, trim_end)
+                if quiet_after >= loot_tail_max:
+                    trim_end = min(trim_end, float(row["start"]) + 1.5)
+                    break
+            end = max(start + min_duration, trim_end)
     if end - start < min_duration:
         need = min_duration - (end - start)
         start = max(0.0, start - need * 0.45)
         end = min(file_duration, end + need * 0.55)
     if end - start > max_duration:
-        preferred_end = min(end, max(peak_sec + finale_tail, (kill_sec or peak_sec) + finale_tail))
+        preferred_end = end
         start = max(start, preferred_end - max_duration)
         end = min(file_duration, start + max_duration)
     if peak_sec < start or peak_sec > end:
-        start = max(0.0, peak_sec - min_duration * 0.55)
-        end = min(file_duration, start + min_duration)
+        end = min(file_duration, max(end, peak_sec + min_duration * 0.65))
+        start = max(0.0, end - min_duration)
 
     duration = max(1.0, end - start)
     report = {

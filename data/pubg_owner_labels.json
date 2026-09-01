@@ -23,6 +23,10 @@
       {"tc": "38:07", "time_sec": 2287, "label": "bad"},
       {"tc": "41:10", "time_sec": 2470, "label": "good"},
       {"tc": "42:01", "time_sec": 2521, "label": "bad"}
+    ],
+    "Tovruh33adY": [
+      {"tc": "25:33", "time_sec": 1533, "label": "good", "note": "owner fight peak"},
+      {"tc": "1:27:46", "time_sec": 5266, "label": "good", "note": "owner fight peak"}
     ]
   }
 }
