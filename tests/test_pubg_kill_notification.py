@@ -59,7 +59,7 @@ def test_segment_score_prefers_transient_notification() -> None:
     ), patch("gameplay_gate.detect_game_viewport_crop", return_value=None):
         score, report = score_kill_notification_segment(Path("/tmp/vod.mp4"), 10, 14)
     assert score > 0.6
-    assert report["notification_hits"] == 2
+    assert report["notification_hits"] == 3
     assert report["notification_text"] == "A AKM B"
 
 

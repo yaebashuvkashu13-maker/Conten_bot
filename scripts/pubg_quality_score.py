@@ -150,10 +150,13 @@ def score_pubg_window(
             report["training_ui"] = training_text
             report["hard_reject"] = "training_ui"
             return False, f"hard_training_ui={training_text}", report
-    if (
-        os.environ.get("PUBG_REQUIRE_KILL_NOTIFICATION", "0") == "1"
-        and not notification_hit
-    ):
+    notification_mode = os.environ.get("PUBG_KILL_NOTIFICATION_MODE", "prefer").strip().lower()
+    notification_required = (
+        notification_mode == "required"
+        or os.environ.get("PUBG_REQUIRE_KILL_NOTIFICATION", "0") == "1"
+    )
+    report["kill_notification_mode"] = notification_mode
+    if notification_required and not notification_hit:
         report["quality_score"] = 0.0
         report["quality_threshold"] = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
         return False, (

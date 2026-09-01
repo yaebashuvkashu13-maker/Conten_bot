@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     "enabled": True,
     "sample_fps": 1.5,
     "max_frames": 18,
+    "min_persistence_frames": 3,
     "min_score": 0.42,
     "min_colored_pixels": 10,
     "min_width_ratio": 0.035,
@@ -341,17 +342,34 @@ def score_kill_notification_segment(
             if prev_iou >= 0.22 or not next_matches:
                 continue
             next_region = max(next_matches, key=lambda row: float(row.get("score", 0.0)))
+            track = [(index, region), (index + 1, next_region)]
+            track_box = next_region.get("box")
+            for future_index in range(index + 2, min(len(region_rows), index + 6)):
+                matches = [
+                    other
+                    for other in region_rows[future_index]
+                    if _box_iou(track_box, other.get("box")) >= 0.18
+                ]
+                if not matches:
+                    break
+                match = max(matches, key=lambda row: float(row.get("score", 0.0)))
+                track.append((future_index, match))
+                track_box = match.get("box")
+            if len(track) < int(config.get("min_persistence_frames", 3)):
+                continue
             onset = (
                 float(region.get("score", 0.0)) * 0.48
                 + float(next_region.get("score", 0.0)) * 0.30
                 + (1.0 - prev_iou) * 0.22
             )
+            onset = min(1.0, onset + min(0.08, (len(track) - 2) * 0.02))
             event = {
                 "index": index,
                 "score": onset,
                 "box": box,
                 "next_box": next_region.get("box"),
                 "prev_iou": prev_iou,
+                "track_frames": [frame_index for frame_index, _row in track],
             }
             if best_event is None or onset > float(best_event["score"]):
                 best_event = event
@@ -392,7 +410,10 @@ def score_kill_notification_segment(
     hits = 0
     for index, regions in enumerate(region_rows):
         best = regions[0] if regions else {"score": 0.0, "box": None}
-        event_hit = event_index is not None and index in (event_index, event_index + 1)
+        event_hit = (
+            best_event is not None
+            and index in (best_event.get("track_frames") or [])
+        )
         hits += int(event_hit)
         frame_rows.append(
             {

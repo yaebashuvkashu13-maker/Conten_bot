@@ -2,6 +2,7 @@
   "enabled": true,
   "sample_fps": 1.5,
   "max_frames": 18,
+  "min_persistence_frames": 3,
   "min_score": 0.42,
   "min_colored_pixels": 10,
   "min_width_ratio": 0.035,
