@@ -42,11 +42,34 @@ def test_part_feedback_overrides_owner_label(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setenv("CONTENT_BOT_REPO", str(repo))
     monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(owner))
     monkeypatch.setenv("PUBG_SEGMENT_LABELS_PATH", str(feedback))
+    monkeypatch.setenv("PUBG_RANKER_OWNER_AUGMENT_SEC", "0")
+    monkeypatch.setenv("PUBG_RANKER_FEEDBACK_AUGMENT_SEC", "0")
 
     loaded = ranker.load_training_samples()
     assert len(loaded) == 1
     assert loaded[0].label == 0
     assert loaded[0].source == "part_feedback"
+
+
+def test_owner_labels_are_time_augmented(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    samples = repo / "data" / "samples"
+    samples.mkdir(parents=True)
+    (samples / "yt_abcdefghijk.mp4").write_bytes(b"vod")
+    owner = repo / "data" / "pubg_owner_labels.json"
+    owner.write_text(
+        json.dumps({"videos": {"abcdefghijk": [{"time_sec": 100, "label": "good"}]}})
+    )
+    feedback = tmp_path / "feedback.json"
+    feedback.write_text("{}")
+    monkeypatch.setenv("CONTENT_BOT_REPO", str(repo))
+    monkeypatch.setenv("PUBG_OWNER_LABELS_PATH", str(owner))
+    monkeypatch.setenv("PUBG_SEGMENT_LABELS_PATH", str(feedback))
+    monkeypatch.setenv("PUBG_RANKER_OWNER_AUGMENT_SEC", "20")
+    monkeypatch.setenv("PUBG_RANKER_FEEDBACK_AUGMENT_SEC", "0")
+    loaded = ranker.load_training_samples()
+    assert [row.peak_sec for row in loaded] == [80.0, 100.0, 120.0]
+    assert loaded[1].weight > loaded[0].weight
 
 
 def test_train_and_rank_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

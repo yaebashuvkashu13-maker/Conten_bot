@@ -177,6 +177,37 @@ def features_from_quality_report(report: dict) -> dict[str, float] | None:
 def load_training_samples() -> list[TrainingSample]:
     """Owner labels first; newer per-part feedback overrides the same moment."""
     samples: dict[tuple[str, int], TrainingSample] = {}
+    owner_augment = max(0.0, float(os.environ.get("PUBG_RANKER_OWNER_AUGMENT_SEC", "20")))
+    feedback_augment = max(
+        0.0,
+        float(os.environ.get("PUBG_RANKER_FEEDBACK_AUGMENT_SEC", "10")),
+    )
+
+    def add(
+        video_id: str,
+        vod: Path,
+        peak: float,
+        label: int,
+        source: str,
+        weight: float,
+        features: dict[str, float] | None = None,
+        *,
+        augment: float = 0.0,
+    ) -> None:
+        offsets = (0.0,) if augment <= 0 else (-augment, 0.0, augment)
+        for offset in offsets:
+            sample_peak = max(0.0, peak + offset)
+            sample_weight = weight if offset == 0 else weight * 0.60
+            samples[(video_id, round(sample_peak))] = TrainingSample(
+                video_id,
+                vod,
+                sample_peak,
+                label,
+                source if offset == 0 else f"{source}_jitter",
+                sample_weight,
+                features if offset == 0 else None,
+            )
+
     owner = _read_json(owner_labels_path())
     for video_id, rows in (owner.get("videos") or {}).items():
         vod = resolve_vod(str(video_id))
@@ -187,8 +218,14 @@ def load_training_samples() -> list[TrainingSample]:
                 continue
             label = 1 if row.get("label") == "good" else 0
             peak = float(row["time_sec"])
-            samples[(str(video_id), round(peak))] = TrainingSample(
-                str(video_id), vod, peak, label, "owner_label", 2.0
+            add(
+                str(video_id),
+                vod,
+                peak,
+                label,
+                "owner_label",
+                2.0,
+                augment=owner_augment,
             )
 
     feedback = _read_json(feedback_path())
@@ -205,7 +242,7 @@ def load_training_samples() -> list[TrainingSample]:
             if not video_id or not vod:
                 continue
             peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-            samples[(video_id, round(peak))] = TrainingSample(
+            add(
                 video_id,
                 vod,
                 peak,
@@ -213,6 +250,7 @@ def load_training_samples() -> list[TrainingSample]:
                 "part_feedback",
                 1.0,
                 features_from_quality_report(row.get("quality_metrics") or {}),
+                augment=feedback_augment,
             )
     return sorted(samples.values(), key=lambda row: (row.video_id, row.peak_sec))
 
