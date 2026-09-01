@@ -92,9 +92,9 @@ def score_killfeed_segment(
     if profile.strip().lower() == "pubg" and os.environ.get(
         "PUBG_KILL_NOTIFICATION_AUTO", "1"
     ) == "1":
-        from pubg_kill_notification import score_kill_notification_segment
+        from pubg_notification_cache import cached_score_kill_notification_segment
 
-        notification_score, notification = score_kill_notification_segment(
+        notification_score, notification = cached_score_kill_notification_segment(
             video_path,
             start_sec,
             duration_sec,
@@ -149,6 +149,7 @@ def rank_peaks_by_killfeed(
     *,
     part_sec: float = 14.0,
     max_probes: int = 12,
+    meta: dict[float, dict] | None = None,
 ) -> tuple[list[float], str]:
     """Reorder peak shortlist — killfeed OCR first (cheap, before presend gates)."""
     if os.environ.get("PUBG_KILLFEED_RANK", "1") != "1":
@@ -163,14 +164,32 @@ def rank_peaks_by_killfeed(
     probe = list(peaks)[:cap]
     scored: list[tuple[float, float, float]] = []
     for i, peak in enumerate(probe):
+        cached = (meta or {}).get(float(peak))
+        if cached is not None:
+            notification = float(cached.get("notification_score", 0.0) or 0.0)
+            kf = float(cached.get("killfeed", notification) or 0.0)
+            rank_score = max(kf, notification) * 1.5 + notification * 0.75
+            if cached.get("notification_hit"):
+                rank_score += 0.35
+            scored.append((rank_score, -float(i), float(peak)))
+            continue
         start = max(0.0, float(peak) - part_sec * 0.5)
+        if profile == "pubg":
+            try:
+                from pubg_fast_peak_rank import payoff_probe_window
+
+                start, part_sec_probe = payoff_probe_window(float(peak), part_sec)
+            except Exception:
+                part_sec_probe = part_sec
+        else:
+            part_sec_probe = part_sec
         try:
-            kf, meta = score_killfeed_segment(video_path, start, part_sec, profile)
+            kf, kmeta = score_killfeed_segment(video_path, start, part_sec_probe, profile)
         except Exception:
-            kf, meta = 0.0, {}
-        notification = float(meta.get("notification_score", 0.0) or 0.0)
+            kf, kmeta = 0.0, {}
+        notification = float(kmeta.get("notification_score", 0.0) or 0.0)
         rank_score = max(float(kf), notification) * 1.5 + notification * 0.75
-        if meta.get("notification_hit"):
+        if kmeta.get("notification_hit"):
             rank_score += 0.35
         scored.append((rank_score, -float(i), float(peak)))
 

@@ -172,6 +172,47 @@ def filter_rows_distinct_fights(
     return kept
 
 
+def select_distinct_kill_peaks(
+    vod: Path,
+    pool: list[float],
+    *,
+    min_clips: int = 2,
+    max_clips: int = 2,
+    file_dur: float | None = None,
+    avoid: list[float] | None = None,
+) -> list[float]:
+    """Pick distinct fights with kill notification — gunfire first, payoff confirmed."""
+    from pubg_fast_peak_rank import rank_peaks_fast
+
+    avoid = avoid or []
+    filtered = [
+        float(p)
+        for p in pool
+        if not any(abs(float(p) - float(bad)) <= 25.0 for bad in avoid)
+    ]
+    if len(filtered) < min_clips:
+        return []
+    ranked, _reason, meta = rank_peaks_fast(vod, filtered, "pubg", part_sec=14.0)
+    with_hit = [
+        float(p)
+        for p in ranked
+        if meta.get(float(p), {}).get("notification_hit")
+        or peak_has_kill(vod, float(p), file_dur)
+    ]
+    candidates = with_hit or ranked
+    kept: list[float] = []
+    bounds: list[tuple[float, float]] = []
+    for peak in candidates:
+        window = fight_bounds(vod, peak, file_dur)
+        if any(not bounds_distinct(window, prev) for prev in bounds):
+            continue
+        kept.append(float(peak))
+        bounds.append(window)
+        if len(kept) >= max_clips:
+            break
+    return kept
+
+
 __all__ = [
     "bounds_distinct",
     "clip_post_kill_sec",
@@ -183,5 +224,6 @@ __all__ = [
     "peak_blocked_by_used_fights",
     "peak_fight_report",
     "peak_has_kill",
+    "select_distinct_kill_peaks",
     "tighten_pubg_clip_bounds",
 ]

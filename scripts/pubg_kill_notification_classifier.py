@@ -26,7 +26,8 @@ def _features(crop: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     blue = cv2.inRange(hsv, np.array([90, 40, 60]), np.array([135, 255, 255]))
     cyan = cv2.inRange(hsv, np.array([78, 40, 80]), np.array([105, 255, 255]))
-    colored = cv2.bitwise_or(blue, cyan)
+    gold = cv2.inRange(hsv, np.array([12, 80, 140]), np.array([38, 255, 255]))
+    colored = cv2.bitwise_or(cv2.bitwise_or(blue, cyan), gold)
     colored_ratio = float(np.count_nonzero(colored)) / max(colored.size, 1)
     aspect = w / max(h, 1)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -63,8 +64,8 @@ def heuristic_predict(crop: np.ndarray) -> tuple[str, float]:
         return "map_blue", 0.25
     if colored > 0.08 and aspect >= 3.0 and edge > 0.04:
         return "kill", min(0.92, 0.45 + colored * 2.0 + edge)
-    if colored > 0.05:
-        return "uncertain", 0.40 + colored
+    if colored > 0.06 and aspect >= 2.8:
+        return "knock", min(0.85, 0.38 + colored * 1.6 + edge * 0.5)
     return "hud_fp", 0.20
 
 

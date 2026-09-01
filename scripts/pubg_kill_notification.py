@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "hsv_ranges": [
         {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
         {"name": "blue", "low": [100, 45, 70], "high": [135, 255, 255]},
+        {"name": "gold", "low": [12, 80, 140], "high": [38, 255, 255]},
     ],
 }
 
@@ -472,8 +473,17 @@ def score_kill_notification_segment(
                 label, conf = predict(crop)
                 meta["notification_class"] = label
                 meta["notification_class_conf"] = round(conf, 4)
+                if label in ("kill", "knock", "teammate_kill"):
+                    score = min(1.0, score * 0.45 + float(conf) * 0.50 + 0.12)
+                    best_score = max(best_score, score)
+                elif label in ("hud_fp", "map_blue"):
+                    score *= max(0.12, 1.0 - float(conf) * 0.88)
+                    best_score = min(best_score, score)
     except Exception:
         pass
+    meta["notification_score"] = round(score, 4)
+    meta["notification_best_frame_score"] = round(best_score, 4)
+    meta["notification_hit"] = score >= threshold
     return score, meta
 
 

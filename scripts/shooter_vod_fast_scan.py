@@ -415,10 +415,38 @@ def discover_montage_gun_peaks(
     batch_stats: dict[str, float | int] = {}
     scored: list[tuple[float, float]] = []
     if audio_generator:
-        scored = [
-            (1.0 - index / max(len(offsets), 1), t + WINDOW_SEC * 0.5)
-            for index, t in enumerate(offsets)
-        ]
+        try:
+            from vod_audio_batch import VodPcmCache, extract_vod_pcm_s16, pcm_to_float
+
+            pcm = extract_vod_pcm_s16(video_path, skip, max(0.0, dur - skip - 12.0))
+            pcm_float = pcm_to_float(pcm)
+            if pcm_float.size > 0:
+                pcm_cache = VodPcmCache(pcm_float, base_sec=skip)
+        except Exception:
+            pcm_cache = None
+        for index, t in enumerate(offsets):
+            center = float(t) + WINDOW_SEC * 0.5
+            gun_d = dens_min
+            if pcm_cache is not None:
+                try:
+                    gun_d, _, _ = pcm_cache.gunfire_metrics(max(0.0, center - 2.0), 4.0)
+                except Exception:
+                    gun_d = dens_min
+            rank = float(gun_d) + (1.0 - index / max(len(offsets), 1)) * 0.01
+            scored.append((rank, center))
+        scored.sort(key=lambda item: -item[0])
+        panns_cap = int(os.environ.get("PUBG_AUDIO_GEN_PANN_TOP", "25"))
+        if panns_cap > 0 and scored:
+            enriched: list[tuple[float, float]] = []
+            for rank, center in scored[:panns_cap]:
+                pmax = 0.0
+                try:
+                    panns = score_panns_audio(video_path, max(0.0, center - 7.0), WINDOW_SEC)
+                    pmax = float(panns.get("panns_gun_max", 0) or 0.0)
+                except Exception:
+                    pmax = 0.0
+                enriched.append((max(rank, pmax * 0.35), center))
+            scored = enriched + scored[panns_cap:]
         if funnel is not None:
             funnel.dsp_pass = len(scored)
     else:
@@ -519,18 +547,15 @@ def discover_montage_gun_peaks(
 
     snapped: list[tuple[float, float, float]] = []
     for panns_g, center in shortlist:
-        if audio_generator:
-            c2, gun_d, pmax = center, dens_min, 0.0
-        else:
-            c2, gun_d, pmax = snap_peak_to_gunfire(
-                video_path,
-                center,
-                duration=dur,
-                confirm_panns=False,
-                pcm_cache=pcm_cache,
-            )
+        c2, gun_d, pmax = snap_peak_to_gunfire(
+            video_path,
+            center,
+            duration=dur,
+            confirm_panns=not audio_generator,
+            pcm_cache=pcm_cache,
+        )
         panns_use = max(panns_g, pmax)
-        if not audio_generator and gun_d < dens_min and panns_use < gun_min * 1.15:
+        if gun_d < dens_min and panns_use < gun_min * 1.05:
             log.info(
                 "dense snap drop center=%.0f→%.0f gun=%.3f panns=%.3f",
                 center,

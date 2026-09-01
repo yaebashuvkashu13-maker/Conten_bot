@@ -8,6 +8,15 @@ from pathlib import Path
 from typing import Any
 
 
+def payoff_probe_window(peak_sec: float, part_sec: float = 14.0) -> tuple[float, float]:
+    """Narrow window after gunfire peak — kill UI usually appears shortly after contact."""
+    pre = float(os.environ.get("PUBG_PAYOFF_PRE_SEC", "1.5"))
+    post = float(os.environ.get("PUBG_PAYOFF_POST_SEC", "11.0"))
+    start = max(0.0, float(peak_sec) - pre)
+    dur = min(float(part_sec), pre + post)
+    return start, max(4.0, dur)
+
+
 def score_peak_fast(
     video_path: Path,
     peak_sec: float,
@@ -30,14 +39,26 @@ def score_peak_fast(
     notification_score = 0.0
     notification_hit = False
     killfeed = 0.0
+    nmeta: dict[str, Any] = {}
     if profile == "pubg" and os.environ.get("PUBG_KILL_NOTIFICATION_ENABLED", "1") == "1":
         try:
-            from pubg_kill_notification import score_kill_notification_segment
+            from pubg_notification_cache import cached_score_kill_notification_segment
 
-            notification_score, nmeta = score_kill_notification_segment(video_path, start, dur)
+            n_start, n_dur = payoff_probe_window(peak_sec, part_sec)
+            notification_score, nmeta = cached_score_kill_notification_segment(
+                video_path, n_start, n_dur
+            )
             notification_hit = float(notification_score) >= float(
                 os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.50")
             )
+            nclass = str(nmeta.get("notification_class") or "")
+            nconf = float(nmeta.get("notification_class_conf", 0.0) or 0.0)
+            if nclass in ("kill", "knock") and nconf >= 0.45:
+                notification_hit = True
+                notification_score = max(notification_score, nconf * 0.85)
+            elif nclass in ("hud_fp", "map_blue") and nconf >= 0.55:
+                notification_hit = False
+                notification_score *= 0.35
             killfeed = float(nmeta.get("notification_score", notification_score) or 0.0)
         except Exception:
             pass
@@ -72,6 +93,7 @@ def score_peak_fast(
         "fast_score": round(composite, 4),
         "notification_score": round(float(notification_score), 4),
         "notification_hit": notification_hit,
+        "notification_class": nmeta.get("notification_class") if profile == "pubg" else None,
         "killfeed": round(float(killfeed), 4),
         "gunfire_density": round(gun, 4),
         "panns_gun_max": round(panns_gun, 4),
@@ -99,6 +121,8 @@ def rank_peaks_fast(
         row = score_peak_fast(video_path, peak, part_sec=part_sec, profile=profile)
         meta[float(peak)] = row
         score = float(row["fast_score"])
+        if row.get("notification_hit"):
+            score += 0.22
         if float(row["payoff_fast"]) < min_payoff:
             score *= 0.55
         if row.get("loot_walk"):
@@ -112,4 +136,4 @@ def rank_peaks_fast(
     return ranked, f"fast_rank top={top:.3f} n={len(probe)}", meta
 
 
-__all__ = ["rank_peaks_fast", "score_peak_fast"]
+__all__ = ["payoff_probe_window", "rank_peaks_fast", "score_peak_fast"]

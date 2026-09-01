@@ -283,10 +283,28 @@ def resolve_montage_peaks(vod: Path, *, min_clips: int = 2, max_clips: int = 2) 
 
     refs = style_reference_peaks(vod) or owner
     if not refs:
+        from pubg_montage_bounds import select_distinct_kill_peaks
         from pubg_owner_style import style_avoid_peaks
 
         avoid = style_avoid_peaks(vod)
         pool, pool_reason = _full_vod_peak_pool(vod, min_clips=min_clips)
+        picked = select_distinct_kill_peaks(
+            vod,
+            pool,
+            min_clips=min_clips,
+            max_clips=max_clips,
+            file_dur=file_dur,
+            avoid=avoid,
+        )
+        if len(picked) >= min_clips:
+            log.info(
+                "redo kill peaks vod=%s peaks=%s avoid=%s %s",
+                vod.name,
+                picked,
+                avoid,
+                pool_reason,
+            )
+            return picked[:max_clips]
         for peak in pool:
             p = float(peak)
             if any(abs(p - float(bad)) <= 25.0 for bad in avoid):

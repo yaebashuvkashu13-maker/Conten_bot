@@ -2130,11 +2130,12 @@ def _scan_vod_with_adaptive(
                 except Exception:
                     pass
                 style_sims: dict[float, float] = {}
+                peak_meta: dict[float, dict] = {}
                 if game == "pubg" and dense_peaks:
                     try:
                         from pubg_fast_peak_rank import rank_peaks_fast
 
-                        dense_peaks, fast_reason, _peak_meta = rank_peaks_fast(
+                        dense_peaks, fast_reason, peak_meta = rank_peaks_fast(
                             vod,
                             dense_peaks,
                             _profile(game),
@@ -2158,6 +2159,7 @@ def _scan_vod_with_adaptive(
                         dense_peaks,
                         _profile(game),
                         part_sec=part_max,
+                        meta=peak_meta,
                     )
                     dense_reason = f"{dense_reason} {kf_reason}"
                     try:
@@ -2185,6 +2187,7 @@ def _scan_vod_with_adaptive(
                             vod,
                             dense_peaks,
                             part_sec=part_max,
+                            meta=peak_meta,
                         )
                         dense_reason = f"{dense_reason} {style_reason}"
                     except Exception as exc:
