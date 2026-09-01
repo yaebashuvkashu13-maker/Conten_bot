@@ -311,6 +311,7 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
         return result
 
     log.info("redo send vod=%s chat_id=%s", vid, chat_id)
+    clear_vod_sent(vod)
     rows = _peak_rows(vod, peaks, sig)
     for row, bound in zip(rows, bounds):
         dur = float(bound["duration"])
