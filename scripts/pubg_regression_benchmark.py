@@ -64,6 +64,77 @@ def _nearest(peaks: list[float], target: float, tolerance: float) -> float | Non
     return min(nearby, key=lambda peak: abs(float(peak) - target)) if nearby else None
 
 
+def apply_online_overrides(
+    labels: dict[str, list[dict]],
+    online_path: Path | None,
+) -> tuple[dict[str, list[dict]], list[dict]]:
+    if online_path is None or not online_path.is_file():
+        return labels, []
+    online = _labels(online_path)
+    adjusted: dict[str, list[dict]] = {}
+    conflicts: list[dict] = []
+    for video_id, rows in labels.items():
+        latest: dict[int, str] = {}
+        for row in online.get(video_id, []):
+            if "time_sec" in row and row.get("label") in ("good", "bad"):
+                latest[round(float(row["time_sec"]))] = str(row["label"])
+        adjusted[video_id] = []
+        for source in rows:
+            row = dict(source)
+            current = latest.get(round(float(row.get("time_sec", -999))))
+            if current and current != row.get("label"):
+                conflicts.append(
+                    {
+                        "video_id": video_id,
+                        "time_sec": row.get("time_sec"),
+                        "immutable_label": row.get("label"),
+                        "online_label": current,
+                    }
+                )
+                row["immutable_label"] = row.get("label")
+                row["label"] = current
+                row["online_override"] = True
+            adjusted[video_id].append(row)
+    return adjusted, conflicts
+
+
+def rescore_vod_result(
+    result: dict,
+    rows: list[dict],
+    *,
+    tolerance: float,
+) -> dict:
+    updated = dict(result)
+    peaks = [float(value) for value in result.get("peaks") or []]
+    ranked = [float(value) for value in result.get("ranked_peaks") or []]
+    accepted = [
+        float(row["peak"])
+        for row in result.get("quality") or []
+        if row.get("accepted")
+    ]
+    good = [float(row["time_sec"]) for row in rows if row.get("label") == "good"]
+    bad = [float(row["time_sec"]) for row in rows if row.get("label") == "bad"]
+    updated.update(
+        {
+            "good_total": len(good),
+            "good_generator_hits": sum(
+                _nearest(peaks, target, tolerance) is not None for target in good
+            ),
+            "good_top10_hits": sum(
+                _nearest(ranked[:10], target, tolerance) is not None for target in good
+            ),
+            "good_accepted_hits": sum(
+                _nearest(accepted, target, tolerance) is not None for target in good
+            ),
+            "bad_total": len(bad),
+            "bad_accepted_hits": sum(
+                _nearest(accepted, target, tolerance) is not None for target in bad
+            ),
+        }
+    )
+    return updated
+
+
 def benchmark_vod(
     video_id: str,
     rows: list[dict],
@@ -195,10 +266,16 @@ def main() -> int:
     parser.add_argument("--tolerance-sec", type=float, default=45.0)
     parser.add_argument("--output", type=Path, default=Path("/root/data/pubg/regression_report.json"))
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--online-labels", type=Path)
+    parser.add_argument("--rescore", type=Path)
     parser.add_argument("--max-recall-drop", type=float, default=0.05)
     args = parser.parse_args()
 
-    labels = _labels(args.labels)
+    immutable_labels = _labels(args.labels)
+    labels, label_conflicts = apply_online_overrides(
+        immutable_labels,
+        args.online_labels,
+    )
     if args.restore_missing:
         restore_report = restore_missing(list(labels), args.vod_root)
     else:
@@ -206,26 +283,39 @@ def main() -> int:
     results: list[dict] = []
     missing: list[str] = []
     started = time.monotonic()
-    for video_id, label_rows in labels.items():
-        vod = resolve_vod(video_id, args.vod_root)
-        if vod is None:
-            missing.append(video_id)
-            continue
-        results.append(
-            benchmark_vod(
-                video_id,
-                label_rows,
-                vod,
-                tolerance=max(1.0, args.tolerance_sec),
+    if args.rescore and args.rescore.is_file():
+        previous = json.loads(args.rescore.read_text(encoding="utf-8"))
+        for row in previous.get("vods") or []:
+            video_id = str(row.get("video_id") or "")
+            results.append(
+                rescore_vod_result(
+                    row,
+                    labels.get(video_id, []),
+                    tolerance=max(1.0, args.tolerance_sec),
+                )
             )
-        )
+    else:
+        for video_id, label_rows in labels.items():
+            vod = resolve_vod(video_id, args.vod_root)
+            if vod is None:
+                missing.append(video_id)
+                continue
+            results.append(
+                benchmark_vod(
+                    video_id,
+                    label_rows,
+                    vod,
+                    tolerance=max(1.0, args.tolerance_sec),
+                )
+            )
     summary = aggregate(results)
     report = {
         "benchmark": "pubg_owner_regression_v1",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "elapsed_sec": round(time.monotonic() - started, 2),
         "labels_file": str(args.labels),
-        "expected_labels": sum(len(rows) for rows in labels.values()),
+        "expected_labels": sum(len(rows) for rows in immutable_labels.values()),
+        "online_label_conflicts": label_conflicts,
         "missing_vods": missing,
         "restore": restore_report,
         "summary": summary,
