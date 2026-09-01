@@ -62,6 +62,7 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
 
 def test_no_kill_is_penalty_not_hard_reject(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
+    monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "off")
     patches = _base_patches(author_kill=False)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)

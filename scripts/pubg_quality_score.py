@@ -94,16 +94,19 @@ def score_pubg_window(
     report["killfeed_density"] = round(float(killfeed), 4)
     report["killfeed"] = killfeed_row
     notification_score = float(killfeed_row.get("notification_score", 0.0) or 0.0)
-    notification_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.45"))
+    notification_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.50"))
     notification_hit = notification_score >= notification_min
+    keyword_hit = bool(killfeed_row.get("killfeed_hits"))
+    effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
     report["kill_notification_hit"] = notification_hit
+    report["kill_notification_keyword_hit"] = keyword_hit
 
     best_flash = float(visual.get("best_hit_flash", 0.0))
     best_weapon = float(visual.get("best_weapon_edge", 0.0))
     has_kill = (
         notification_hit
-        or float(killfeed) >= 0.30
+        or (keyword_hit and float(killfeed) >= 0.30)
         or best_flash >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004"))
         or (
             best_weapon >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_WEAPON_EDGE", "0.030"))
@@ -169,7 +172,7 @@ def score_pubg_window(
         "gun": _clip(gun / 0.080) * 0.16,
         "burst": _clip(burst / 8.0) * 0.08,
         "motion": _clip(motion / 0.060) * 0.10,
-        "killfeed": _clip(float(killfeed)) * 0.14,
+        "killfeed": _clip(effective_killfeed) * 0.14,
         "author_kill": (0.18 if has_kill else 0.0),
         "visual": (0.09 if visual_ok else 0.0),
         "audio_presence": _clip(rms / 0.050) * 0.05,
@@ -179,6 +182,9 @@ def score_pubg_window(
         "no_author_kill": 0.12 if not has_kill else 0.0,
         "visual_fail": 0.08 if not visual_ok else 0.0,
         "legacy_gate": 0.06 if not gate_ok else 0.0,
+        "missing_kill_notification": (
+            0.14 if notification_mode == "prefer" and not notification_hit else 0.0
+        ),
         "speech_music": _clip(
             max(float(panns.get("panns_speech", 0.0)), float(panns.get("panns_music", 0.0)))
             - panns_gun
