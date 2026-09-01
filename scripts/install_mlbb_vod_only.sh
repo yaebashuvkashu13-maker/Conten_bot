@@ -227,6 +227,10 @@ pairs = {
     "PUBG_RANKER_TRAIN_WORKERS": "4",
     "PUBG_RANKER_OWNER_AUGMENT_SEC": "20",
     "PUBG_RANKER_FEEDBACK_AUGMENT_SEC": "10",
+    "PUBG_RANKER_AUTO_PROMOTE": "1",
+    "PUBG_RANKER_BASELINE": "/root/data/pubg/regression_baseline.json",
+    "PUBG_RANKER_MAX_RECALL_DROP": "0.05",
+    "PUBG_RANKER_MAX_BAD_GROWTH": "0.02",
     "PUBG_PRESEND_SCORE_MODE": "1",
     "PUBG_SCORE_REQUIRE_RANKER": "1",
     "PUBG_QUALITY_SCORE_MIN": "0.48",
@@ -309,6 +313,7 @@ install -m 755 \
   "$REPO/scripts/shooter_owner_montage.py" \
   "$REPO/scripts/shooter_author_kill_gate.py" \
   "$REPO/scripts/pubg_moment_ranker.py" \
+  "$REPO/scripts/pubg_ranker_promote.py" \
   "$REPO/scripts/migrate_pubg_runtime_labels.py" \
   "$REPO/scripts/pubg_quality_score.py" \
   "$REPO/scripts/pubg_fight_segment.py" \
@@ -507,7 +512,7 @@ Type=oneshot
 EnvironmentFile=-/root/.video_bot.env
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
-ExecStart=/usr/bin/python3 /usr/local/bin/pubg_moment_ranker.py --train-if-changed
+ExecStart=/usr/bin/python3 /usr/local/bin/pubg_ranker_promote.py
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=4h
