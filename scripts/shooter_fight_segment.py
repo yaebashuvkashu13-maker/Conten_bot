@@ -14,11 +14,11 @@ def _fight_min_sec() -> float:
 
 
 def _fight_max_sec() -> float:
-    return float(os.environ.get("SHOOTER_FIGHT_MAX_SEC", "28"))
+    return float(os.environ.get("SHOOTER_FIGHT_MAX_SEC", "20"))
 
 
 def _fight_hard_max_sec() -> float:
-    return float(os.environ.get("SHOOTER_FIGHT_HARD_MAX_SEC", "36"))
+    return float(os.environ.get("SHOOTER_FIGHT_HARD_MAX_SEC", "24"))
 
 
 def _lead_sec() -> float:

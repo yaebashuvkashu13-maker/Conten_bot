@@ -71,6 +71,27 @@ def test_prepare_montage_clip_variable_length(tmp_path: Path, monkeypatch: pytes
     assert float(clip["fight_end"]) > 102.0
 
 
+def test_montage_part_budget_three_parts_fits_55s() -> None:
+    from shooter_vod_segment_feed import _montage_part_budget, _montage_limits, _montage_prefer_parts
+
+    _min, max_clips, _gap, _part_max, final_max = _montage_limits()
+    assert final_max == 55.0
+    prefer = _montage_prefer_parts("pubg", max_clips, soft_min=2)
+    assert prefer == 3
+    budget = _montage_part_budget(prefer, final_max)
+    assert 17.0 <= budget <= 20.0
+    est = budget * 3 - 0.28 * 2
+    assert est <= 55.5
+
+
+def test_montage_part_budget_two_parts() -> None:
+    from shooter_vod_segment_feed import _montage_part_budget
+
+    budget = _montage_part_budget(2, 55.0)
+    assert budget > 27.0
+    assert budget * 2 - 0.28 <= 55.5
+
+
 def test_fixed_length_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"fake")
