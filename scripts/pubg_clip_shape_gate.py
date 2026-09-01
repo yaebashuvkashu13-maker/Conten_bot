@@ -115,12 +115,16 @@ def aggressive_tighten_for_shape(
     dur = max(8.0, end - start)
     ok, _reason = validate_clip_fight_shape(start, dur, peak, report)
     if not ok:
-        # Last resort: minimal window around gunfire.
-        start = float(shoot) - 0.6
-        end = float(shoot) + min(18.0, float(os.environ.get("PUBG_CLIP_MIN_FIGHT_SEC", "12")))
+        want = min(float(dur), float(os.environ.get("PUBG_CLIP_TARGET_FIGHT_SEC", "16")))
+        start = max(0.0, float(shoot) - want * 0.35)
+        end = start + want
         if kill is not None:
             end = min(end, float(kill) + post)
         dur = max(8.0, end - start)
+        rel_peak = (float(peak) - start) / max(dur, 1.0)
+        if rel_peak > max_peak_position_frac():
+            start = max(0.0, float(peak) - dur * 0.42)
+            dur = max(8.0, end - start)
     return float(start), float(dur)
 
 

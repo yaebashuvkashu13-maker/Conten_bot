@@ -181,6 +181,25 @@ def filter_rows_distinct_fights(
     return kept
 
 
+def peak_shape_ok(
+    vod: Path,
+    peak: float,
+    *,
+    file_dur: float | None = None,
+) -> bool:
+    from pubg_fight_segment import resolve_pubg_fight_bounds
+    from pubg_montage_bounds import tighten_pubg_clip_bounds
+
+    if file_dur is None:
+        from shooter_vod_segment_feed import _ffprobe_duration
+
+        file_dur = _ffprobe_duration(vod)
+    start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
+    start, dur = tighten_pubg_clip_bounds(start, dur, report, peak=float(peak))
+    ok, _reason = validate_clip_fight_shape(start, dur, float(peak), report)
+    return ok
+
+
 def select_distinct_kill_peaks(
     vod: Path,
     pool: list[float],
@@ -205,9 +224,15 @@ def select_distinct_kill_peaks(
     with_hit = [
         float(p)
         for p in ranked
-        if meta.get(float(p), {}).get("notification_hit")
-        or peak_has_kill(vod, float(p), file_dur)
+        if (
+            meta.get(float(p), {}).get("notification_hit")
+            or peak_has_kill(vod, float(p), file_dur)
+        )
+        and peak_shape_ok(vod, float(p), file_dur=file_dur)
     ]
+    if len(with_hit) < min_clips:
+        shaped = [float(p) for p in ranked if peak_shape_ok(vod, float(p), file_dur=file_dur)]
+        with_hit = shaped or with_hit
     candidates = with_hit or ranked
     kept: list[float] = []
     bounds: list[tuple[float, float]] = []
@@ -233,6 +258,7 @@ __all__ = [
     "peak_blocked_by_used_fights",
     "peak_fight_report",
     "peak_has_kill",
+    "peak_shape_ok",
     "select_distinct_kill_peaks",
     "tighten_pubg_clip_bounds",
 ]
