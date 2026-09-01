@@ -111,7 +111,12 @@ def score_killfeed_segment(
         }
 
     crop = killfeed_crop(profile)
-    viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    if os.environ.get("VOD_VIEWPORT_CACHE", "1") == "1":
+        from vod_viewport_cache import detect_viewport_cached
+
+        viewport = detect_viewport_cached(video_path, start_sec, duration_sec)
+    else:
+        viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     merged = ""
     density = 0.0
     tags: list[str] = []

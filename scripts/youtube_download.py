@@ -291,6 +291,16 @@ def run_ytdlp(
 
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     env = {**os.environ, **(env or load_env())}
+    try:
+        from youtube_source_health import classify_download_error, is_blocked, record_download_result
+    except ImportError:
+        classify_download_error = None
+        is_blocked = None
+        record_download_result = None
+    if is_blocked is not None:
+        blocked, reason = is_blocked(url=url)
+        if blocked:
+            raise RuntimeError(f"youtube_source_blocked: {reason}")
     if is_twitch_vod_url(url):
         url = normalize_twitch_url(url)
         prefix = "tw"
@@ -330,10 +340,18 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
             continue
         if _ytdlp_should_retry_clients(proc):
             continue
+        if record_download_result is not None and classify_download_error is not None:
+            record_download_result(url=url, ok=False, error_kind=classify_download_error(last_err))
         raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {last_err}")
     else:
+        if record_download_result is not None and classify_download_error is not None:
+            record_download_result(url=url, ok=False, error_kind=classify_download_error(last_err))
         raise RuntimeError(f"yt-dlp download failed: {last_err}")
     files = sorted(dest_dir.glob(f"{prefix}_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
+        if record_download_result is not None:
+            record_download_result(url=url, ok=False, error_kind="quality")
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
+    if record_download_result is not None:
+        record_download_result(url=url, ok=True)
     return files[0]

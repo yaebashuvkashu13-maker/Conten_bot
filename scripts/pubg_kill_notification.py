@@ -306,9 +306,14 @@ def score_kill_notification_segment(
     if not frames:
         return 0.0, {"notification_frames": 0, "notification_hits": 0}
     try:
-        from gameplay_gate import detect_game_viewport_crop
+        if os.environ.get("VOD_VIEWPORT_CACHE", "1") == "1":
+            from vod_viewport_cache import detect_viewport_cached
 
-        viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+            viewport = detect_viewport_cached(video_path, start_sec, duration_sec)
+        else:
+            from gameplay_gate import detect_game_viewport_crop
+
+            viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     except Exception:
         viewport = None
     threshold = float(config.get("min_score", 0.34))

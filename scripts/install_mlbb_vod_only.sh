@@ -228,6 +228,8 @@ pairs = {
     "VOD_CASCADE_PANN_MAX": "25",
     "VOD_CASCADE_CLIP_MAX": "12",
     "VOD_CASCADE_KILL_MAX": "8",
+    "VOD_VIEWPORT_CACHE": "1",
+    "VOD_CONFIG_VALIDATE": "1",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
     "PUBG_RANKER_MAX_PROBES": "128",
@@ -331,6 +333,12 @@ install -m 755 \
   "$REPO/scripts/runtime_labels.py" \
   "$REPO/scripts/pubg_ranker_champion.py" \
   "$REPO/scripts/vod_config.py" \
+  "$REPO/scripts/vod_viewport_cache.py" \
+  "$REPO/scripts/vod_event_dedup.py" \
+  "$REPO/scripts/vod_metrics_report.py" \
+  "$REPO/scripts/youtube_source_health.py" \
+  "$REPO/scripts/pubg_label_audit.py" \
+  "$REPO/scripts/pubg_nightly_ranker_deploy.py" \
   "$REPO/scripts/vps_deploy_check.sh" \
   "$REPO/scripts/shooter_fight_segment.py" \
   "$REPO/scripts/shooter_vod_bg_download.py" \

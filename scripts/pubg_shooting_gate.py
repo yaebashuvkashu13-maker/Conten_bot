@@ -76,7 +76,12 @@ def pubg_probe_segment(
 ) -> dict:
     """Collect gunfire/motion metrics for logging and gate checks."""
     if crop_box is None:
-        crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        if os.environ.get("VOD_VIEWPORT_CACHE", "1") == "1":
+            from vod_viewport_cache import detect_viewport_cached
+
+            crop_box = detect_viewport_cached(video_path, start_sec, duration_sec)
+        else:
+            crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     gun, burst, rms = score_pubg_gunfire_audio(video_path, start_sec, duration_sec)
     motion, _mini, _skill, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5

@@ -199,12 +199,15 @@ def record_vod_scan(
     pool: list[dict] | None = None,
     analysis_cache_key: str = "",
     funnel: dict[str, Any] | None = None,
+    timings: dict[str, float] | None = None,
 ) -> None:
     entry["last_scan_at"] = time.time()
     entry["last_scan_sent"] = int(sent)
     entry["last_scan_blocked"] = bool(blocked)
     if funnel:
         entry["last_scan_funnel"] = funnel
+    if timings:
+        entry["last_scan_timings_ms"] = timings
     if pool:
         detail: list[dict[str, Any]] = []
         for clip in pool[:24]:

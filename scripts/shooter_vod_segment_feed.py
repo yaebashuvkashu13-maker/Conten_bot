@@ -2068,6 +2068,12 @@ def _scan_vod_with_adaptive(
                         len(owner_peaks),
                         owner_peaks[:6],
                     )
+                try:
+                    from vod_event_dedup import merge_nearby_peaks
+
+                    dense_peaks = merge_nearby_peaks(dense_peaks or [])
+                except Exception:
+                    pass
                 if game == "pubg" and dense_peaks:
                     try:
                         from vod_scan_cascade import apply_cascade_to_pool
@@ -2928,6 +2934,15 @@ def main() -> int:
     game = _game()
     file_env = load_env(ENV_PATH)
     os.environ.update({k: str(v) for k, v in file_env.items()})
+    if os.environ.get("VOD_CONFIG_VALIDATE", "1") == "1":
+        try:
+            from vod_config import print_effective_config, validate_startup
+
+            validate_startup()
+            print_effective_config()
+        except SystemExit as exc:
+            log.error("config validation failed: %s", exc)
+            return 1
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")

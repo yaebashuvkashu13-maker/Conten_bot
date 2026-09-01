@@ -95,6 +95,23 @@ def test_champion_compare_rejects_bad_accept():
     assert any("bad_accept" in r for r in reasons)
 
 
+def test_event_dedup_merge():
+    from vod_event_dedup import merge_nearby_peaks
+
+    peaks = merge_nearby_peaks([100.0, 110.0, 200.0], merge_gap_sec=25.0)
+    assert peaks == [100.0, 200.0]
+
+
+def test_youtube_source_health_block(tmp_path, monkeypatch):
+    monkeypatch.setenv("YOUTUBE_SOURCE_HEALTH_PATH", str(tmp_path / "health.json"))
+    from youtube_source_health import is_blocked, record_download_result
+
+    for _ in range(5):
+        record_download_result(url="bad-channel", ok=False, error_kind="auth")
+    blocked, _ = is_blocked(url="bad-channel")
+    assert blocked is True
+
+
 def test_config_status_ok(monkeypatch):
     monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "prefer")
     monkeypatch.delenv("PUBG_REQUIRE_KILL_NOTIFICATION", raising=False)

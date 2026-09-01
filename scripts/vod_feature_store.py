@@ -161,6 +161,15 @@ class VodFeatureStore:
         self._pcm_array = pcm
         return True
 
+    def slice_pcm_float(self, start_sec: float, duration_sec: float) -> np.ndarray:
+        pcm = self.get_pcm_float()
+        if pcm.size == 0:
+            return pcm
+        rel_start = float(start_sec) - self.skip_intro
+        i0 = max(0, int(rel_start * GUN_SAMPLE_RATE))
+        i1 = min(len(pcm), int((rel_start + float(duration_sec)) * GUN_SAMPLE_RATE))
+        return pcm[i0:i1]
+
     def close(self) -> None:
         if self._pcm_mmap is not None:
             try:

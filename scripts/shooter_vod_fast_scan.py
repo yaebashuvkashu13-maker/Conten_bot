@@ -123,34 +123,45 @@ def discover_audio_candidate_offsets(
 
     sample_rate = 11025
     scan_duration = max(0.0, float(duration) - float(skip_intro) - 5.0)
-    command = [
-        "ffmpeg",
-        "-v",
-        "error",
-        "-hwaccel",
-        "none",
-        "-ss",
-        f"{skip_intro:.3f}",
-        "-t",
-        f"{scan_duration:.3f}",
-        "-i",
-        str(video_path),
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        str(sample_rate),
-        "-f",
-        "s16le",
-        "-",
-    ]
+    pcm = None
     try:
-        proc = subprocess.run(command, capture_output=True, timeout=900, check=False)
-    except subprocess.TimeoutExpired:
-        return []
-    if proc.returncode != 0 or not proc.stdout:
-        return []
-    pcm = np.frombuffer(proc.stdout, dtype=np.int16)
+        from vod_feature_store import open_store
+
+        store = open_store(video_path, skip_intro=skip_intro)
+        if store is not None and store.ensure_pcm(scan_duration):
+            pcm = store.get_pcm_s16()
+            store.close()
+    except Exception:
+        pcm = None
+    if pcm is None or pcm.size == 0:
+        command = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-hwaccel",
+            "none",
+            "-ss",
+            f"{skip_intro:.3f}",
+            "-t",
+            f"{scan_duration:.3f}",
+            "-i",
+            str(video_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-f",
+            "s16le",
+            "-",
+        ]
+        try:
+            proc = subprocess.run(command, capture_output=True, timeout=900, check=False)
+        except subprocess.TimeoutExpired:
+            return []
+        if proc.returncode != 0 or not proc.stdout:
+            return []
+        pcm = np.frombuffer(proc.stdout, dtype=np.int16)
     peaks = _rank_audio_windows(
         pcm,
         sample_rate=sample_rate,
