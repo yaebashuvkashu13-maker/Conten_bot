@@ -24,7 +24,6 @@ from vod_game_registry import (
 DEFAULT_SUPERVISOR = "/usr/local/bin/mlbb_vod_segment_feed.sh"
 DEFAULT_FEED_LOG = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
 DEFAULT_SUPERVISOR_LOG = Path("/root/data/mlbb/vod_only_supervisor.log")
-OWNER_BATCH_LOCK = Path("/root/data/mlbb/OWNER_BATCH_RUNNING")
 OWNER_BATCH_STALE_SEC = max(300, int(os.environ.get("OWNER_BATCH_STALE_SEC", "3600")))
 
 
@@ -147,16 +146,18 @@ def feed_process_alive() -> bool:
 
 
 def clear_stale_owner_batch_lock() -> str | None:
-    if not OWNER_BATCH_LOCK.is_file():
-        return None
+    data_root = Path(os.environ.get("MLBB_DATA_ROOT", "/root/data/mlbb"))
+    lock = Path(os.environ.get("OWNER_BATCH_LOCK", str(data_root / "OWNER_BATCH_RUNNING")))
     try:
-        age = time.time() - OWNER_BATCH_LOCK.stat().st_mtime
+        if not lock.is_file():
+            return None
+        age = time.time() - lock.stat().st_mtime
     except OSError:
-        age = OWNER_BATCH_STALE_SEC + 1
+        return None
     if age < OWNER_BATCH_STALE_SEC:
         return f"owner batch lock свежий ({int(age // 60)} мин) — не трогаю"
     try:
-        OWNER_BATCH_LOCK.unlink()
+        lock.unlink()
     except OSError:
         return "owner batch lock — не удалось снять"
     return f"снят зависший owner batch lock ({int(age // 3600)}ч)"

@@ -23,7 +23,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest numpy opencv-python-headless yt-dlp pyyaml
+          python -m pip install -e ".[dev]"
       - name: Run tests
         env:
           CONTENT_BOT_REPO: ${{ github.workspace }}

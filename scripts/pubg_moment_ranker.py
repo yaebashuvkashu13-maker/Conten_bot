@@ -59,7 +59,7 @@ def owner_labels_path() -> Path:
         _repo_root() / "data" / "pubg_owner_labels.json",
         Path("/root/data/mlbb/pubg_owner_labels.json"),
     ):
-        if path.exists():
+        if _is_file(path):
             return path
     return _repo_root() / "data" / "pubg_owner_labels.json"
 
@@ -96,7 +96,7 @@ def resolve_vod(video_id: str, *, hinted_path: str = "") -> Path | None:
         ]
     )
     for path in candidates:
-        if path.is_file():
+        if _is_file(path):
             return path
     return None
 
@@ -104,6 +104,13 @@ def resolve_vod(video_id: str, *, hinted_path: str = "") -> Path | None:
 def _video_id(path: Path) -> str:
     stem = path.stem
     return stem[3:14] if stem.startswith("yt_") else stem[:11]
+
+
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _feature_key(video_path: Path, start_sec: float, duration_sec: float) -> str:
@@ -454,7 +461,7 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
 def _load_artifact() -> dict | None:
     global _MODEL_CACHE
     path = model_path()
-    if not path.is_file():
+    if not _is_file(path):
         return None
     try:
         mtime_ns = path.stat().st_mtime_ns

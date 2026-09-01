@@ -20,11 +20,11 @@ def health_row(game: str) -> dict:
     exh = exhausted_summary(game, state)
     sent_path = s.feed_sent_path()
     sent_count_file = 0
-    if sent_path.exists():
-        try:
+    try:
+        if sent_path.exists():
             sent_count_file = len(json.loads(sent_path.read_text(encoding="utf-8")).get("sent", []))
-        except (json.JSONDecodeError, OSError):
-            pass
+    except (json.JSONDecodeError, OSError):
+        pass
 
     row = {
         **exh,

@@ -111,9 +111,9 @@ def is_shooter_game(game: str) -> bool:
 
 def load_state(game: str) -> dict:
     path = spec(game).state_path()
-    if not path.exists():
-        return {"vods": [], "vod_outcomes": [], "zero_cut_streak": 0}
     try:
+        if not path.exists():
+            return {"vods": [], "vod_outcomes": [], "zero_cut_streak": 0}
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"vods": [], "vod_outcomes": [], "zero_cut_streak": 0}
@@ -127,9 +127,12 @@ def save_state(game: str, state: dict) -> None:
 
 def inbox_video_ids(game: str) -> set[str]:
     inbox = spec(game).inbox()
-    if not inbox.is_dir():
+    try:
+        if not inbox.is_dir():
+            return set()
+        return {p.stem.replace("yt_", "") for p in inbox.glob("yt_*.mp4")}
+    except OSError:
         return set()
-    return {p.stem.replace("yt_", "") for p in inbox.glob("yt_*.mp4")}
 
 
 def trim_used_youtube_ids(

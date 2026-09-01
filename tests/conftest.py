@@ -21,6 +21,10 @@ def _layout(root: Path) -> dict[str, Path]:
     paths = {
         "root": root,
         "mlbb": mlbb,
+        "pubg": root / "data" / "pubg",
+        "standoff": root / "data" / "standoff",
+        "genshin": root / "data" / "genshin",
+        "wot": root / "data" / "wot",
         "inbox": mlbb / "youtube_nightly" / "inbox",
         "segments": Path(os.environ.get("CONTENT_BOT_REPO", str(WORKSPACE))) / "data" / "mlbb",
         "vod_cache": root / "data" / "vod_analysis_cache",
@@ -31,7 +35,18 @@ def _layout(root: Path) -> dict[str, Path]:
         "reject_examples": mlbb / "reject_examples",
         "calibration": mlbb / "calibration_labels.json",
     }
-    for key in ("mlbb", "inbox", "vod_cache", "exemplars", "analysis_cache", "reject_examples"):
+    for key in (
+        "mlbb",
+        "pubg",
+        "standoff",
+        "genshin",
+        "wot",
+        "inbox",
+        "vod_cache",
+        "exemplars",
+        "analysis_cache",
+        "reject_examples",
+    ):
         paths[key].mkdir(parents=True, exist_ok=True)
     if not paths["env"].exists():
         paths["env"].write_text(
@@ -44,6 +59,11 @@ def _layout(root: Path) -> dict[str, Path]:
 def _apply_env(paths: dict[str, Path]) -> None:
     os.environ["CONTENT_BOT_REPO"] = str(WORKSPACE)
     os.environ["MLBB_DATA_ROOT"] = str(paths["mlbb"])
+    os.environ["SHOOTER_PUBG_DATA_ROOT"] = str(paths["pubg"])
+    os.environ["SHOOTER_STANDOFF_DATA_ROOT"] = str(paths["standoff"])
+    os.environ["VOD_GENSHIN_DATA_ROOT"] = str(paths["genshin"])
+    os.environ["VOD_WOT_DATA_ROOT"] = str(paths["wot"])
+    os.environ["OWNER_BATCH_LOCK"] = str(paths["mlbb"] / "OWNER_BATCH_RUNNING")
     os.environ["VIDEO_BOT_ENV"] = str(paths["env"])
     os.environ["ENV_FILE"] = str(paths["env"])
     os.environ["VOD_ANALYSIS_CACHE_DIR"] = str(paths["vod_cache"])
@@ -80,6 +100,11 @@ def _ci_path_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for key, val in (
         ("CONTENT_BOT_REPO", str(WORKSPACE)),
         ("MLBB_DATA_ROOT", str(paths["mlbb"])),
+        ("SHOOTER_PUBG_DATA_ROOT", str(paths["pubg"])),
+        ("SHOOTER_STANDOFF_DATA_ROOT", str(paths["standoff"])),
+        ("VOD_GENSHIN_DATA_ROOT", str(paths["genshin"])),
+        ("VOD_WOT_DATA_ROOT", str(paths["wot"])),
+        ("OWNER_BATCH_LOCK", str(paths["mlbb"] / "OWNER_BATCH_RUNNING")),
         ("VIDEO_BOT_ENV", str(paths["env"])),
         ("ENV_FILE", str(paths["env"])),
         ("VOD_ANALYSIS_CACHE_DIR", str(paths["vod_cache"])),
