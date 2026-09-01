@@ -381,7 +381,7 @@ def _apply_redo_env() -> None:
         "PUBG_REJECT_LOOT_WALK": "0",
         "PUBG_EARLY_PAYOFF_REJECT": "0",
         "VOD_PRESEND_CACHE": "0",
-        "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "30",
+        "PUBG_VOD_MONTAGE_MIN_FINAL_SEC": "25",
         "PUBG_STYLE_RANK_BLEND": "0.58",
     }
     for key, val in overrides.items():
