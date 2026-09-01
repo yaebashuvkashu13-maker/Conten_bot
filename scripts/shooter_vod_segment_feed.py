@@ -36,6 +36,7 @@ from shooter_vod_segment_store import (
     load_feed_sent,
     load_index,
     mark_feed_sent,
+    peak_label_sec,
     segment_id,
     stats,
     upsert_segment,
@@ -1413,7 +1414,10 @@ def _send_montage(
                 out.unlink(missing_ok=True)
                 continue
 
-            peaks = ",".join(str(int(r.get("peak_start", r["start"]))) for r in accepted_rows)
+            peaks = ",".join(
+                str(peak_label_sec(float(r.get("peak_start", r["start"]))))
+                for r in accepted_rows
+            )
             caption = (
                 f"{game.upper()} склейка ×{len(accepted_rows)} · {final_dur:.0f}s\n"
                 f"{vod_youtube_id(vod)} peaks {peaks}\n"
@@ -1448,23 +1452,29 @@ def _send_montage(
                 log.error("montage telegram send failed game=%s file=%s bytes=%s", game, out.name, size)
                 return 0
 
-            for row in accepted_rows:
+            seg_root = _paths(game)["segments"]
+            seg_root.mkdir(parents=True, exist_ok=True)
+            for row, part_path in zip(accepted_rows, segment_paths):
                 sid = row["segment_id"]
+                part_dur = _ffprobe_duration(part_path)
+                hq_path = seg_root / f"seg_{sid}.mp4"
+                shutil.copy2(part_path, hq_path)
                 upsert_segment(
                     game,
                     {
                         "segment_id": sid,
-                        "path": str(out),
+                        "path": str(hq_path),
                         "vod": str(vod),
                         "vod_id": vod_youtube_id(vod),
                         "start": row["start"],
-                        "duration": final_dur,
+                        "duration": part_dur,
                         "peak_start": row.get("peak_start", row["start"]),
                         "score": row.get("score", 0),
                         "quality_metrics": row.get("quality_report", {}),
                         "segment_report": (row.get("clip") or {}).get("segment_report", {}),
                         "sig": sig,
                         "montage_id": montage_id,
+                        "montage_combined_path": str(out),
                         "montage_parts": [str(r["segment_id"]) for r in accepted_rows],
                         "montage_part_count": len(accepted_rows),
                         "montage_peaks": [

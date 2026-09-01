@@ -37,9 +37,11 @@ def _parse_peaks(raw: list[str]) -> list[float]:
 
 
 def _peak_rows(vod: Path, peaks: list[float], sig: str) -> list[dict]:
+    from shooter_vod_segment_store import peak_label_sec
+
     rows: list[dict] = []
     for peak in peaks:
-        sid = f"owner_{vod.stem}_{int(round(peak))}"
+        sid = f"owner_{vod.stem}_{peak_label_sec(peak)}"
         rows.append(
             {
                 "segment_id": sid,
@@ -57,10 +59,10 @@ def _peak_rows(vod: Path, peaks: list[float], sig: str) -> list[dict]:
 
 
 def _clear_montage_sent(game: str, vod: Path, peaks: list[float]) -> None:
-    from shooter_vod_segment_store import _paths, load_feed_sent, mark_feed_sent
+    from shooter_vod_segment_store import _paths, load_feed_sent, mark_feed_sent, peak_label_sec
 
     vid = vod.stem[3:] if vod.stem.startswith("yt_") else vod.stem
-    peaks_rounded = {int(round(p)) for p in peaks}
+    peaks_rounded = {peak_label_sec(p) for p in peaks}
     sent = load_feed_sent(game)
     drop = {f"{vid}_{p}" for p in peaks_rounded}
     kept = sent - drop

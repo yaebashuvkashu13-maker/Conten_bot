@@ -57,6 +57,11 @@ def vod_youtube_id(path: Path) -> str:
     return stem[:11]
 
 
+def peak_label_sec(peak: float) -> int:
+    """Consistent peak second for segment_id, captions, and HQ filenames."""
+    return int(round(float(peak)))
+
+
 def segment_id(vod_id: str, start_sec: float) -> str:
     return f"{vod_id}_{int(start_sec)}"
 
@@ -294,7 +299,7 @@ def montage_keyboard_markup(game: str, parts: list[dict]) -> dict:
         sid = str(row.get("segment_id", "")).strip()
         if not sid:
             continue
-        peak = int(float(row.get("peak_start", row.get("start", 0))))
+        peak = peak_label_sec(float(row.get("peak_start", row.get("start", 0))))
         rows.append(
             [
                 {"text": f"👍 {i}·{peak}s", "callback_data": f"{prefix}_yes:{sid}"},
@@ -317,7 +322,7 @@ def montage_labeled_keyboard_markup(game: str, parts: list[dict], *, reason: str
         if not sid:
             continue
         status = _part_label_status(game, sid)
-        peak = int(float(row.get("peak_start", row.get("start", 0))))
+        peak = peak_label_sec(float(row.get("peak_start", row.get("start", 0))))
         if status == "good":
             part_row = [{"text": f"✅ {i}·{peak}s", "callback_data": "mlbb_noop"}]
             part_row.append({"text": "📁 HQ", "callback_data": f"{prefix}_hq:{sid}"})
