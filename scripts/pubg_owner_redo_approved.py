@@ -116,6 +116,109 @@ def _probe_anchor_vicinity(
     return out
 
 
+def _min_window_gap_sec() -> float:
+    return float(os.environ.get("PUBG_OWNER_REDO_MIN_WINDOW_GAP_SEC", "30"))
+
+
+def _fight_bounds(vod: Path, peak: float, file_dur: float | None = None) -> tuple[float, float]:
+    from pubg_fight_segment import resolve_pubg_fight_bounds
+    from shooter_vod_segment_feed import _ffprobe_duration
+
+    if file_dur is None:
+        file_dur = _ffprobe_duration(vod)
+    start, dur, _report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
+    return float(start), float(start + dur)
+
+
+def _bounds_distinct(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    gap = _min_window_gap_sec()
+    if a[1] + gap <= b[0] or b[1] + gap <= a[0]:
+        return True
+    pad = float(os.environ.get("PUBG_OWNER_REDO_OVERLAP_PAD_SEC", "4"))
+    return a[1] + pad <= b[0] or b[1] + pad <= a[0]
+
+
+def _dedupe_peak_windows(
+    vod: Path,
+    peaks: list[float],
+    *,
+    file_dur: float | None = None,
+) -> list[float]:
+    """Drop peaks whose trimmed fight windows overlap — keep earlier / higher owner order."""
+    kept: list[float] = []
+    bounds: list[tuple[float, float]] = []
+    for peak in sorted(peaks):
+        window = _fight_bounds(vod, peak, file_dur)
+        if any(not _bounds_distinct(window, prev) for prev in bounds):
+            continue
+        kept.append(float(peak))
+        bounds.append(window)
+    return kept
+
+
+def _full_vod_peak_pool(vod: Path, *, min_clips: int) -> tuple[list[float], str]:
+    from shooter_vod_fast_scan import discover_montage_gun_peaks
+
+    gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_POOL_PART_GAP_SEC", "45"))
+    return discover_montage_gun_peaks(vod, "pubg", min_clips=min_clips, gap_sec=gap)
+
+
+def _pair_distinct_peaks(
+    vod: Path,
+    anchor: float,
+    *,
+    min_clips: int,
+    max_clips: int,
+    file_dur: float | None = None,
+) -> list[float]:
+    """Anchor fight + one more distinct fight from the VOD (not the same engagement)."""
+    from pubg_owner_style import rank_peaks_by_style, style_avoid_peaks
+    from shooter_vod_segment_feed import _ffprobe_duration
+
+    if file_dur is None:
+        file_dur = _ffprobe_duration(vod)
+    avoid = style_avoid_peaks(vod)
+    pool, pool_reason = _full_vod_peak_pool(vod, min_clips=min_clips)
+    anchor_bounds = _fight_bounds(vod, anchor, file_dur)
+    candidates: list[float] = []
+    for peak in pool:
+        p = float(peak)
+        if any(abs(p - float(bad)) <= 25.0 for bad in avoid):
+            continue
+        if abs(p - float(anchor)) <= 4.0:
+            continue
+        if not _bounds_distinct(anchor_bounds, _fight_bounds(vod, p, file_dur)):
+            continue
+        candidates.append(p)
+    if not candidates:
+        log.warning("pair distinct: no second fight for anchor=%.0f vod=%s", anchor, vod.name)
+        return [float(anchor)]
+
+    ranked, style_reason, _sims = rank_peaks_by_style(vod, candidates, part_sec=14.0)
+    after = [p for p in ranked if p > float(anchor) + 8.0]
+    before = [p for p in ranked if p < float(anchor) - 8.0]
+    second: float | None = None
+    if os.environ.get("PUBG_OWNER_REDO_PREFER_AFTER_ANCHOR", "1") == "1" and after:
+        second = float(after[0])
+    elif before:
+        second = float(before[0])
+    elif after:
+        second = float(after[0])
+    else:
+        second = float(ranked[0])
+
+    peaks = _dedupe_peak_windows(vod, [float(anchor), second], file_dur=file_dur)
+    log.info(
+        "pair vod=%s anchor=%.0f peaks=%s pool=%s %s",
+        vod.name,
+        anchor,
+        peaks,
+        pool_reason,
+        style_reason,
+    )
+    return peaks[:max_clips]
+
+
 def _discover_cluster_peaks(
     vod: Path,
     anchor: float,
@@ -183,25 +286,34 @@ def _discover_cluster_peaks(
 
 def resolve_montage_peaks(vod: Path, *, min_clips: int = 2, max_clips: int = 2) -> list[float]:
     from pubg_owner_style import style_reference_peaks
+    from shooter_vod_segment_feed import _ffprobe_duration
 
+    file_dur = _ffprobe_duration(vod)
     owner = _owner_good_peaks(vod)
     if len(owner) >= min_clips:
-        span = max(
-            float(os.environ.get("SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC", "240")),
-            (owner[-1] - owner[0]) + 30.0,
-        )
-        if owner[-1] - owner[0] > float(os.environ.get("SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC", "240")):
-            os.environ["SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC"] = str(int(span))
-        return owner[:max_clips]
+        peaks = _dedupe_peak_windows(vod, owner, file_dur=file_dur)
+        if len(peaks) >= min_clips:
+            return peaks[:max_clips]
 
     refs = style_reference_peaks(vod) or owner
     if not refs:
         return []
     anchor = float(refs[0])
+    paired = _pair_distinct_peaks(
+        vod,
+        anchor,
+        min_clips=min_clips,
+        max_clips=max_clips,
+        file_dur=file_dur,
+    )
+    if len(paired) >= min_clips:
+        return paired
+
     cluster = _discover_cluster_peaks(vod, anchor, min_clips=min_clips, max_clips=max_clips)
+    cluster = _dedupe_peak_windows(vod, cluster, file_dur=file_dur)
     if len(cluster) >= min_clips:
-        return cluster
-    merged = sorted(set(owner + cluster))
+        return cluster[:max_clips]
+    merged = _dedupe_peak_windows(vod, sorted(set(owner + cluster)), file_dur=file_dur)
     return merged[:max_clips] if len(merged) >= min_clips else merged
 
 
@@ -237,6 +349,9 @@ def _apply_redo_env() -> None:
         "SHOOTER_VOD_MONTAGE_PREFER_PARTS": "2",
         "SHOOTER_VOD_MONTAGE_CLUSTER_SPAN_SEC": "360",
         "PUBG_OWNER_CLUSTER_SPAN_SEC": "120",
+        "SHOOTER_VOD_MONTAGE_PART_GAP_SEC": "55",
+        "SHOOTER_VOD_MONTAGE_POOL_PART_GAP_SEC": "45",
+        "PUBG_OWNER_REDO_MIN_WINDOW_GAP_SEC": "30",
         "PUBG_SEGMENT_SCAN_AFTER": "40",
         "PUBG_SEGMENT_MAX_PREFLIGHT_SEC": "6",
         "PUBG_REJECT_LOOT_WALK": "0",
