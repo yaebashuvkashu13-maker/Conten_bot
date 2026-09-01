@@ -55,6 +55,26 @@ def bounds_distinct(a: tuple[float, float], b: tuple[float, float]) -> bool:
     return a[1] + gap <= b[0] or b[1] + gap <= a[0]
 
 
+def _ensure_payoff_in_clip(
+    start: float,
+    dur: float,
+    peak: float,
+    report: dict[str, Any],
+) -> tuple[float, float]:
+    """Expand/shift clip so kill notification stays inside after tighten."""
+    kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
+    post = clip_post_kill_sec()
+    end = start + dur
+    if kill is not None:
+        k = float(kill)
+        if k + post > end:
+            end = k + post
+        if k < start:
+            start = max(0.0, k - clip_pre_shoot_sec())
+        dur = max(8.0, end - start)
+    return float(start), float(dur)
+
+
 def tighten_pubg_clip_bounds(
     start: float,
     dur: float,
@@ -83,6 +103,7 @@ def tighten_pubg_clip_bounds(
         ok, _reason = validate_clip_fight_shape(start, dur, float(peak), report)
         if not ok:
             start, dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
+        start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
     return float(start), float(dur)
 
 
@@ -224,10 +245,7 @@ def select_distinct_kill_peaks(
     with_hit = [
         float(p)
         for p in ranked
-        if (
-            meta.get(float(p), {}).get("notification_hit")
-            or peak_has_kill(vod, float(p), file_dur)
-        )
+        if meta.get(float(p), {}).get("notification_hit")
         and peak_shape_ok(vod, float(p), file_dur=file_dur)
     ]
     if len(with_hit) < min_clips:
