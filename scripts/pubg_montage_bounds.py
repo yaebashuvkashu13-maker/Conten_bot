@@ -59,13 +59,18 @@ def tighten_pubg_clip_bounds(
     start: float,
     dur: float,
     report: dict[str, Any],
+    *,
+    peak: float | None = None,
 ) -> tuple[float, float]:
     """Start at gunfire, end soon after kill — no loot-walk tail."""
+    from pubg_clip_shape_gate import aggressive_tighten_for_shape, validate_clip_fight_shape
+
     pre_pad = clip_pre_shoot_sec()
     post_kill = clip_post_kill_sec()
+    max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2"))
     shoot = report.get("shooting_start")
     if shoot is not None:
-        start = float(shoot) - pre_pad
+        start = float(shoot) - min(pre_pad, max_lead)
     kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
     end = float(start) + float(dur)
     if kill is not None:
@@ -73,7 +78,11 @@ def tighten_pubg_clip_bounds(
     fight_end = report.get("fight_end")
     if fight_end is not None:
         end = min(end, float(fight_end))
-    dur = max(10.0, end - float(start))
+    dur = max(8.0, end - float(start))
+    if peak is not None:
+        ok, _reason = validate_clip_fight_shape(start, dur, float(peak), report)
+        if not ok:
+            start, dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
     return float(start), float(dur)
 
 

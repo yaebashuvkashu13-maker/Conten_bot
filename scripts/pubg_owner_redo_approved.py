@@ -22,6 +22,7 @@ DEFAULT_VODS = (
     "bMn-6uTsDBg",
     "Z7wR4vZkn5E",
     "3hDKNrY4sGU",
+    "oVKSI-HFr2E",
 )
 
 
@@ -424,7 +425,7 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     bounds = []
     for peak in peaks:
         start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
-        start, dur = _tighten_owner_clip_bounds(start, dur, report)
+        start, dur = _tighten_owner_clip_bounds(start, dur, report, peak=float(peak))
         bounds.append(
             {
                 "peak": peak,

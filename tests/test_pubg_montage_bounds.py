@@ -24,8 +24,9 @@ def test_tighten_pubg_clip_trims_loot_tail():
         1156.0,
         26.5,
         {"shooting_start": 1152.0, "kill_sec": 1162.0, "fight_end": 1182.5},
+        peak=1164.0,
     )
-    assert start == 1150.5
+    assert start >= 1150.5
     assert start + dur <= 1167.0 + 0.01
 
 

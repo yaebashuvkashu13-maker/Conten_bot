@@ -666,8 +666,16 @@ def _validate_shooter_presend(
         if not ok_metro:
             return False, metro_reason, {"metro": metro_reason}
     if game == "pubg" and _pubg_score_mode_ready():
+        from pubg_clip_shape_gate import validate_clip_fight_shape
         from pubg_quality_score import score_pubg_window
 
+        peak = float(row.get("peak_start") or start)
+        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+        report = clip.get("segment_report") if isinstance(clip.get("segment_report"), dict) else {}
+        if report:
+            ok_shape, shape_reason = validate_clip_fight_shape(start, dur, peak, report)
+            if not ok_shape:
+                return False, f"shape_{shape_reason}", {"shape_reject": shape_reason}
         return score_pubg_window(vod, start, dur)
     if game in EXTENDED_GAMES:
         # WoT: never use PUBG gunfire shooting gate — tank cannon scores as
@@ -1039,8 +1047,23 @@ def _prepare_montage_clip(
             try:
                 from pubg_montage_bounds import tighten_pubg_clip_bounds
 
-                start, dur = tighten_pubg_clip_bounds(start, dur, segment_report)
+                peak_val = float(row.get("peak_start", peak) or peak)
+                start, dur = tighten_pubg_clip_bounds(
+                    start, dur, segment_report, peak=peak_val
+                )
                 dur = min(float(dur), part_max)
+                from pubg_clip_shape_gate import validate_clip_fight_shape
+
+                ok_shape, shape_reason = validate_clip_fight_shape(
+                    start, dur, peak_val, segment_report
+                )
+                if not ok_shape:
+                    log.warning(
+                        "pubg clip shape reject peak=%.1f: %s — drop part",
+                        peak_val,
+                        shape_reason,
+                    )
+                    clip["shape_reject"] = shape_reason
             except Exception:
                 pass
         except Exception as exc:
@@ -1234,6 +1257,15 @@ def _send_montage(
                     part_max=part_ceiling,
                     game=game,
                 )
+                if clip.get("shape_reject"):
+                    log.warning(
+                        "montage part shape reject idx=%s sid=%s reason=%s",
+                        idx,
+                        sid,
+                        clip.get("shape_reject"),
+                    )
+                    rejected_sids.add(sid)
+                    continue
                 part = temp_dir / f"part_{idx:02d}.mp4"
                 work_row = {**row, "clip": clip, "start": clip["start"], "peak_start": clip["peak_start"]}
                 if not render_single_segment(vod, clip, part):

@@ -39,6 +39,10 @@
     "3hDKNrY4sGU": [
       {"tc": "20:04", "time_sec": 1204, "label": "bad", "role": "anti_style", "note": "fight at end / cut before payoff"},
       {"tc": "33:51", "time_sec": 2031, "label": "bad", "role": "anti_style", "note": "empty part / no fight content"}
+    ],
+    "oVKSI-HFr2E": [
+      {"tc": "6:29", "time_sec": 389, "label": "bad", "role": "anti_style", "note": "80% running / no fight"},
+      {"tc": "20:21", "time_sec": 1221, "label": "bad", "role": "anti_style", "note": "gunfire only at end of clip"}
     ]
   }
 }

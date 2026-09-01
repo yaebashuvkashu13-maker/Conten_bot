@@ -394,7 +394,7 @@ def resolve_pubg_fight_bounds(
 
     contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "2.0"))
     finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "3.5"))
-    max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "6"))
+    max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "3"))
     gun_onset = _sustained_gunfire_onset_near_peak(
         timeline,
         gun_active,

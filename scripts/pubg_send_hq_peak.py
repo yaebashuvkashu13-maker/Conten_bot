@@ -56,7 +56,7 @@ def main() -> int:
     peak = float(args.peak)
     file_dur = _ffprobe_duration(vod)
     start, dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
-    start, dur = tighten_pubg_clip_bounds(start, dur, report)
+    start, dur = tighten_pubg_clip_bounds(start, dur, report, peak=float(peak))
     _min, _max, _gap, part_max, _final = _montage_limits()
     row = {
         "segment_id": f"owner_{vod.stem}_{peak_label_sec(peak)}",
