@@ -208,9 +208,28 @@ def resolve_pubg_fight_bounds(
         pass
     if kill_sec is not None and kill_score >= 0.20:
         end = min(file_duration, max(end, kill_sec + finale_tail))
+        start = max(0.0, min(start, kill_sec - 6.0))
 
     min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "10"))
     max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "28"))
+    loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "4.0"))
+    if kill_sec is not None and timeline:
+        post_kill = [
+            row
+            for row in timeline
+            if float(row["start"]) >= float(kill_sec) - 1.0
+        ]
+        quiet_after = 0
+        trim_end = end
+        for row in post_kill:
+            if float(row.get("gun", 0.0)) < 0.020 and float(row.get("score", 0.0)) < 0.22:
+                quiet_after += float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+            else:
+                quiet_after = 0.0
+            if quiet_after >= loot_tail_max:
+                trim_end = min(trim_end, float(row["start"]) + 1.5)
+                break
+        end = max(start + min_duration, trim_end)
     if end - start < min_duration:
         need = min_duration - (end - start)
         start = max(0.0, start - need * 0.45)

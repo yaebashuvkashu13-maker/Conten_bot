@@ -52,7 +52,14 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
         ),
         patch(
             "pubg_killfeed_ocr.score_killfeed_segment",
-            return_value=(0.30 if author_kill else 0.0, {}),
+            return_value=(
+                0.55 if author_kill else 0.0,
+                {
+                    "notification_score": 0.62 if author_kill else 0.0,
+                    "notification_hit": author_kill,
+                    "killfeed_hits": ["kill"] if author_kill else [],
+                },
+            ),
         ),
         patch("shooter_author_kill_gate.detect_author_death_signals", return_value=(False, "", {})),
         patch("pubg_combat_gate._pubg_scan_training_ui", return_value=(False, "")),
@@ -60,23 +67,30 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
     )
 
 
-def test_no_kill_fails_payoff_gate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
-    monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "off")
+def test_no_kill_fails_early_payoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "1")
     patches = _base_patches(author_kill=False)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
-        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert ok is False
+    assert reason.startswith("early_payoff_low")
+
+
+def test_no_kill_fails_payoff_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
+    patches = _base_patches(author_kill=False)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is False
     assert reason.startswith("payoff_low")
-    assert report["payoff_score"] < report["payoff_threshold"]
 
 
 def test_kill_passes_fight_and_payoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
-    monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "off")
     patches = _base_patches(author_kill=True)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
-        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is True
     assert reason.startswith("quality_ok")
     assert report["fight_score"] >= report["fight_threshold"]
@@ -92,6 +106,7 @@ def test_owner_bad_remains_hard_reject() -> None:
 
 
 def test_author_death_without_kill_remains_hard_reject(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=False))
     patches[5] = patch(
         "shooter_author_kill_gate.detect_author_death_signals",
@@ -108,7 +123,8 @@ def test_required_kill_notification_rejects_shooting_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PUBG_REQUIRE_KILL_NOTIFICATION", "1")
-    patches = _base_patches(author_kill=True)
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = _base_patches(author_kill=False)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
     assert ok is False

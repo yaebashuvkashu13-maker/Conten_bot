@@ -232,6 +232,12 @@ pairs = {
     "VOD_CASCADE_KILL_MAX": "8",
     "VOD_EVENT_AUDIO_DEDUP": "1",
     "PUBG_KILL_NOTIFICATION_SAVE_CROPS": "1",
+    "VOD_PRESEND_CACHE": "1",
+    "PUBG_EARLY_PAYOFF_REJECT": "1",
+    "PUBG_FAST_PAYOFF_MIN": "0.18",
+    "PUBG_FAST_RANK_MIN_PAYOFF": "0.12",
+    "PUBG_REJECT_LOOT_WALK": "1",
+    "PUBG_SEGMENT_LOOT_TAIL_MAX_SEC": "4",
     "VOD_CONFIG_VALIDATE": "1",
     "PANN_PREWARM_WORKERS": "4",
     "PUBG_RANKER_ENABLED": "1",
@@ -341,7 +347,8 @@ install -m 755 \
   "$REPO/scripts/vod_metrics_report.py" \
   "$REPO/scripts/youtube_source_health.py" \
   "$REPO/scripts/pubg_label_audit.py" \
-  "$REPO/scripts/pubg_nightly_ranker_deploy.py" \
+  "$REPO/scripts/pubg_fast_peak_rank.py" \
+  "$REPO/scripts/vod_presend_cache.py" \
   "$REPO/scripts/pubg_kill_notification_dataset.py" \
   "$REPO/scripts/pubg_kill_notification_classifier.py" \
   "$REPO/scripts/benchmark_model_backends.py" \

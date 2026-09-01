@@ -161,14 +161,18 @@ def rank_peaks_by_killfeed(
 
     cap = max(2, int(os.environ.get("PUBG_KILLFEED_RANK_MAX", str(max_probes))))
     probe = list(peaks)[:cap]
-    scored: list[tuple[float, float, float]] = []  # killfeed, panns_order, peak
+    scored: list[tuple[float, float, float]] = []
     for i, peak in enumerate(probe):
         start = max(0.0, float(peak) - part_sec * 0.5)
         try:
-            kf, _meta = score_killfeed_segment(video_path, start, part_sec, profile)
+            kf, meta = score_killfeed_segment(video_path, start, part_sec, profile)
         except Exception:
-            kf = 0.0
-        scored.append((float(kf), -float(i), float(peak)))
+            kf, meta = 0.0, {}
+        notification = float(meta.get("notification_score", 0.0) or 0.0)
+        rank_score = max(float(kf), notification) * 1.5 + notification * 0.75
+        if meta.get("notification_hit"):
+            rank_score += 0.35
+        scored.append((rank_score, -float(i), float(peak)))
 
     scored.sort(key=lambda x: (-x[0], x[1]))
     ranked = [p for _kf, _ord, p in scored]

@@ -2077,6 +2077,19 @@ def _scan_vod_with_adaptive(
                     pass
                 if game == "pubg" and dense_peaks:
                     try:
+                        from pubg_fast_peak_rank import rank_peaks_fast
+
+                        dense_peaks, fast_reason, _peak_meta = rank_peaks_fast(
+                            vod,
+                            dense_peaks,
+                            _profile(game),
+                            part_sec=part_max,
+                        )
+                        scan_funnel.note_stage("fast_rank", len(dense_peaks))
+                        dense_reason = f"{dense_reason} {fast_reason}"
+                    except Exception as exc:
+                        log.warning("fast peak rank fallback vod=%s: %s", vod.name, exc)
+                    try:
                         from vod_scan_cascade import apply_cascade_to_pool
 
                         dense_peaks = apply_cascade_to_pool(dense_peaks, "fast_ranker")
