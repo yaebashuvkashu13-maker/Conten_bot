@@ -162,9 +162,13 @@ def main() -> int:
         return 0
 
     token = os.environ.get("TG_BOT_TOKEN", "")
-    chat_id = os.environ.get("PUBG_CHAT_IDS", "").split(",")[0].strip() or os.environ.get("TG_CHAT_ID", "")
+    chat_id = (
+        os.environ.get("PUBG_OWNER_REDO_CHAT_ID", "").strip()
+        or os.environ.get("TG_CHAT_ID", "").strip()
+        or os.environ.get("PUBG_CHAT_IDS", "").split(",")[0].strip()
+    )
     if not token or not chat_id:
-        print("REFUSED missing TG_BOT_TOKEN or PUBG_CHAT_IDS/TG_CHAT_ID")
+        print("REFUSED missing TG_BOT_TOKEN or TG_CHAT_ID/PUBG_OWNER_REDO_CHAT_ID")
         return 2
 
     if args.clear_sent:

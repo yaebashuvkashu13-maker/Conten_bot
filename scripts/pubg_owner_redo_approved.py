@@ -249,6 +249,17 @@ def _apply_redo_env() -> None:
         os.environ[key] = val
 
 
+def _redo_chat_id() -> str:
+    """Owner-approved redo goes to the owner, not the PUBG colleague queue."""
+    explicit = os.environ.get("PUBG_OWNER_REDO_CHAT_ID", "").strip()
+    if explicit:
+        return explicit
+    owner = os.environ.get("TG_CHAT_ID", "").strip()
+    if owner:
+        return owner
+    return os.environ.get("PUBG_CHAT_IDS", "").split(",")[0].strip()
+
+
 def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
     from pubg_fight_segment import clear_segment_cache, resolve_pubg_fight_bounds
     from pubg_owner_peak_montage import _peak_rows, file_sha256
@@ -294,12 +305,12 @@ def redo_vod(vid: str, *, dry_run: bool = False, send: bool = True) -> dict:
         return result
 
     token = os.environ.get("TG_BOT_TOKEN", "")
-    chat_id = os.environ.get("PUBG_CHAT_IDS", "").split(",")[0].strip() or os.environ.get("TG_CHAT_ID", "")
+    chat_id = _redo_chat_id()
     if not token or not chat_id:
         result["status"] = "no_telegram"
         return result
 
-    clear_vod_sent(vod)
+    log.info("redo send vod=%s chat_id=%s", vid, chat_id)
     rows = _peak_rows(vod, peaks, sig)
     for row, bound in zip(rows, bounds):
         dur = float(bound["duration"])
