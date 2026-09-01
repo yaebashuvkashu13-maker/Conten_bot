@@ -16,16 +16,29 @@ def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float)
     """Owner explicitly approved this fight window — skip automated hard rejects."""
     if os.environ.get("PUBG_OWNER_REDO", "0") != "1":
         return False
+    pad = float(os.environ.get("PUBG_OWNER_REDO_RADIUS_SEC", "45"))
+    end = float(start_sec) + float(duration_sec)
     try:
+        from pubg_owner_calibration import labels_for_video
+
+        for row in labels_for_video(video_path):
+            if str(row.get("label") or "") != "good":
+                continue
+            if str(row.get("role") or "").lower() == "anti_style":
+                continue
+            t = float(row["time_sec"])
+            if (float(start_sec) - pad) <= t <= (end + pad):
+                return True
         from shooter_owner_montage import peak_near_owner_good
 
-        radius = float(os.environ.get("PUBG_OWNER_REDO_RADIUS_SEC", "45"))
         probes = (
             start_sec + duration_sec * 0.5,
             start_sec + min(4.0, duration_sec * 0.2),
             start_sec + max(duration_sec - 4.0, duration_sec * 0.8),
         )
-        return any(peak_near_owner_good("pubg", video_path, float(t), radius_sec=radius) for t in probes)
+        return any(
+            peak_near_owner_good("pubg", video_path, float(t), radius_sec=pad) for t in probes
+        )
     except Exception:
         return False
 
