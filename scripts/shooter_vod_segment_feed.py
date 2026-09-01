@@ -917,6 +917,27 @@ def _montage_soft_min_clips(game: str | None = None) -> int:
     return max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_SOFT_MIN_CLIPS", "2")))
 
 
+def _pubg_fight_segmenter_enabled() -> bool:
+    return os.environ.get("PUBG_FIGHT_SEGMENTER", "1") == "1"
+
+
+def _filter_pubg_montage_rows(
+    vod: Path,
+    rows: list[dict],
+    *,
+    max_clips: int,
+) -> list[dict]:
+    if not rows or not _pubg_fight_segmenter_enabled():
+        return rows
+    try:
+        from pubg_montage_bounds import filter_rows_distinct_fights
+
+        return filter_rows_distinct_fights(vod, rows, max_clips=max_clips)
+    except Exception as exc:
+        log.warning("pubg fight-window dedup fallback vod=%s: %s", vod.name, exc)
+        return rows
+
+
 def _pick_montage_rows(
     rows: list[dict],
     *,
@@ -938,13 +959,16 @@ def _pick_montage_rows(
         except ImportError:
             pass
 
-    return pick_montage_rows(
+    picked = pick_montage_rows(
         rows,
         min_clips=min_clips,
         max_clips=max_clips,
         gap_sec=gap_sec,
         anchor_peaks=anchor_peaks,
     )
+    if game == "pubg" and vod is not None:
+        picked = _filter_pubg_montage_rows(vod, picked, max_clips=max_clips)
+    return picked
 
 
 def _prepare_montage_clip(
@@ -1011,6 +1035,13 @@ def _prepare_montage_clip(
                 file_duration=file_dur,
             )
             dur = min(float(dur), part_max)
+            try:
+                from pubg_montage_bounds import tighten_pubg_clip_bounds
+
+                start, dur = tighten_pubg_clip_bounds(start, dur, segment_report)
+                dur = min(float(dur), part_max)
+            except Exception:
+                pass
         except Exception as exc:
             log.warning("pubg fight segmenter fallback peak=%.1f: %s", peak, exc)
     if file_dur > 1.0 and start + dur > file_dur:
@@ -2191,6 +2222,14 @@ def _scan_vod_with_adaptive(
                 max_montages = montages_per_vod(game)
                 total_sent = 0
                 presend_reject = False
+                pubg_avoid_peaks: list[float] = []
+                if game == "pubg":
+                    try:
+                        from pubg_owner_style import style_avoid_peaks
+
+                        pubg_avoid_peaks = style_avoid_peaks(vod)
+                    except Exception:
+                        pubg_avoid_peaks = []
 
                 def _build_rows(
                     peak_gap: float,
@@ -2199,12 +2238,45 @@ def _scan_vod_with_adaptive(
                     blocked: set[str],
                 ) -> list[dict]:
                     out_rows: list[dict] = []
+                    pubg_bounds = game == "pubg" and _pubg_fight_segmenter_enabled()
                     for idx, peak in enumerate(dense_peaks):
                         if any(abs(float(peak) - bad) <= 4.0 for bad in rejected_peaks):
                             continue
-                        if _peak_too_close(float(peak), used, peak_gap):
+                        if pubg_avoid_peaks and any(
+                            abs(float(peak) - float(bad)) <= 25.0 for bad in pubg_avoid_peaks
+                        ):
                             continue
-                        start = max(0.0, float(peak) - part_sec * 0.5)
+                        report = None
+                        if pubg_bounds:
+                            try:
+                                from pubg_montage_bounds import (
+                                    fight_bounds,
+                                    peak_blocked_by_used_fights,
+                                    peak_fight_report,
+                                    tighten_pubg_clip_bounds,
+                                )
+
+                                if peak_blocked_by_used_fights(
+                                    vod, float(peak), used, peak_gap_sec=peak_gap
+                                ):
+                                    continue
+                                report = peak_fight_report(vod, float(peak))
+                                window_start, window_end = fight_bounds(vod, float(peak))
+                                start, clip_dur = tighten_pubg_clip_bounds(
+                                    window_start,
+                                    window_end - window_start,
+                                    report,
+                                )
+                            except Exception:
+                                if _peak_too_close(float(peak), used, peak_gap):
+                                    continue
+                                start = max(0.0, float(peak) - part_sec * 0.5)
+                                clip_dur = part_sec
+                        elif _peak_too_close(float(peak), used, peak_gap):
+                            continue
+                        else:
+                            start = max(0.0, float(peak) - part_sec * 0.5)
+                            clip_dur = part_sec
                         sid = segment_id(vid, start)
                         if sid in blocked:
                             continue
@@ -2220,10 +2292,12 @@ def _scan_vod_with_adaptive(
                             "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
-                                "input_duration": part_sec,
-                                "output_duration": part_sec,
+                                "input_duration": clip_dur,
+                                "output_duration": clip_dur,
                             },
                         }
+                        if report is not None:
+                            row["clip"]["segment_report"] = report
                         if style_match is not None:
                             row["style_sim"] = float(style_match)
                         out_rows.append(row)

@@ -21,6 +21,7 @@ DEFAULT_VODS = (
     "Tovruh33adY",
     "bMn-6uTsDBg",
     "Z7wR4vZkn5E",
+    "3hDKNrY4sGU",
 )
 
 
@@ -116,41 +117,14 @@ def _probe_anchor_vicinity(
     return out
 
 
-def _min_window_gap_sec() -> float:
-    return float(os.environ.get("PUBG_OWNER_REDO_MIN_WINDOW_GAP_SEC", "30"))
-
-
-def _fight_bounds(vod: Path, peak: float, file_dur: float | None = None) -> tuple[float, float]:
-    from pubg_fight_segment import resolve_pubg_fight_bounds
-    from shooter_vod_segment_feed import _ffprobe_duration
-
-    if file_dur is None:
-        file_dur = _ffprobe_duration(vod)
-    start, dur, _report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
-    return float(start), float(start + dur)
-
-
-def _bounds_distinct(a: tuple[float, float], b: tuple[float, float]) -> bool:
-    gap = _min_window_gap_sec()
-    return a[1] + gap <= b[0] or b[1] + gap <= a[0]
-
-
-def _dedupe_peak_windows(
-    vod: Path,
-    peaks: list[float],
-    *,
-    file_dur: float | None = None,
-) -> list[float]:
-    """Drop peaks whose trimmed fight windows overlap — keep earlier / higher owner order."""
-    kept: list[float] = []
-    bounds: list[tuple[float, float]] = []
-    for peak in sorted(peaks):
-        window = _fight_bounds(vod, peak, file_dur)
-        if any(not _bounds_distinct(window, prev) for prev in bounds):
-            continue
-        kept.append(float(peak))
-        bounds.append(window)
-    return kept
+from pubg_montage_bounds import (  # noqa: E402
+    bounds_distinct as _bounds_distinct,
+    dedupe_peaks_by_fight_window as _dedupe_peak_windows,
+    fight_bounds as _fight_bounds,
+    peak_fight_report as _peak_fight_report,
+    peak_has_kill as _peak_has_kill,
+    tighten_pubg_clip_bounds as _tighten_owner_clip_bounds,
+)
 
 
 def _full_vod_peak_pool(vod: Path, *, min_clips: int) -> tuple[list[float], str]:
@@ -158,45 +132,6 @@ def _full_vod_peak_pool(vod: Path, *, min_clips: int) -> tuple[list[float], str]
 
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_POOL_PART_GAP_SEC", "45"))
     return discover_montage_gun_peaks(vod, "pubg", min_clips=min_clips, gap_sec=gap)
-
-
-def _peak_fight_report(vod: Path, peak: float, file_dur: float | None = None) -> dict:
-    from pubg_fight_segment import resolve_pubg_fight_bounds
-    from shooter_vod_segment_feed import _ffprobe_duration
-
-    if file_dur is None:
-        file_dur = _ffprobe_duration(vod)
-    _start, _dur, report = resolve_pubg_fight_bounds(vod, peak, file_duration=file_dur)
-    return report
-
-
-def _peak_has_kill(vod: Path, peak: float, file_dur: float | None = None) -> bool:
-    report = _peak_fight_report(vod, peak, file_dur)
-    if report.get("kill_sec") is not None or report.get("kill_time") is not None:
-        return True
-    return float(report.get("killfeed_score", 0.0) or 0.0) >= 0.35
-
-
-def _tighten_owner_clip_bounds(
-    start: float,
-    dur: float,
-    report: dict,
-) -> tuple[float, float]:
-    """Owner redo: start at gunfire, end soon after kill — no loot walk tail."""
-    pre_pad = float(os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "1.5"))
-    post_kill = float(os.environ.get("PUBG_OWNER_POST_KILL_SEC", "5.0"))
-    shoot = report.get("shooting_start")
-    if shoot is not None:
-        start = float(shoot) - pre_pad
-    kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
-    end = float(start) + float(dur)
-    if kill is not None:
-        end = min(end, float(kill) + post_kill)
-    fight_end = report.get("fight_end")
-    if fight_end is not None:
-        end = min(end, float(fight_end))
-    dur = max(10.0, end - float(start))
-    return float(start), float(dur)
 
 
 def _pick_pair_second(
@@ -347,6 +282,24 @@ def resolve_montage_peaks(vod: Path, *, min_clips: int = 2, max_clips: int = 2) 
             return peaks[:max_clips]
 
     refs = style_reference_peaks(vod) or owner
+    if not refs:
+        from pubg_owner_style import style_avoid_peaks
+
+        avoid = style_avoid_peaks(vod)
+        pool, pool_reason = _full_vod_peak_pool(vod, min_clips=min_clips)
+        for peak in pool:
+            p = float(peak)
+            if any(abs(p - float(bad)) <= 25.0 for bad in avoid):
+                continue
+            refs = [p]
+            log.info(
+                "redo pool anchor vod=%s peak=%.0f avoid=%s %s",
+                vod.name,
+                p,
+                avoid,
+                pool_reason,
+            )
+            break
     if not refs:
         return []
     anchor = float(refs[0])

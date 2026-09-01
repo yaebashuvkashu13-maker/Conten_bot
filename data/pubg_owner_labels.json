@@ -35,6 +35,10 @@
     "Z7wR4vZkn5E": [
       {"tc": "14:18", "time_sec": 858, "label": "good", "note": "owner peak"},
       {"tc": "19:24", "time_sec": 1164, "label": "good", "role": "style_ref", "note": "target fight style"}
+    ],
+    "3hDKNrY4sGU": [
+      {"tc": "20:04", "time_sec": 1204, "label": "bad", "role": "anti_style", "note": "fight at end / cut before payoff"},
+      {"tc": "33:51", "time_sec": 2031, "label": "bad", "role": "anti_style", "note": "empty part / no fight content"}
     ]
   }
 }
