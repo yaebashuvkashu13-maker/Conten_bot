@@ -1387,27 +1387,12 @@ def _send_montage(
             final_dur = _ffprobe_duration(out)
             min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_FINAL_SEC", "18"))
             if game == "pubg" and pubg_quality_strict():
-                per_part = float(
-                    os.environ.get(
-                        "SHOOTER_VOD_MONTAGE_PART_SEC",
-                        str(float(os.environ.get("SHOOTER_VOD_MONTAGE_GATE_CORE_SEC", "10")) + 4.0),
-                    )
-                )
-                if len(segment_paths) >= 3:
-                    min_final = max(
-                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "42")),
-                        len(segment_paths) * part_ceiling * 0.82,
-                    )
-                elif len(segment_paths) >= 2:
-                    min_final = max(
-                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "24")),
-                        len(segment_paths) * per_part * 0.82,
-                    )
+                pubg_min = float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "35"))
+                if len(segment_paths) >= 2:
+                    # Use rendered part lengths — part_ceiling×N heuristic exceeded final_max (55s).
+                    min_final = max(pubg_min, sum(durations) * 0.78)
                 else:
-                    min_final = max(
-                        min_final,
-                        float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "32")),
-                    )
+                    min_final = max(min_final, pubg_min)
             elif game == "pubg" and len(segment_paths) >= 2:
                 min_final = max(
                     float(os.environ.get("PUBG_VOD_MONTAGE_MIN_FINAL_SEC", "35")),
@@ -1415,7 +1400,9 @@ def _send_montage(
                 )
             if len(segment_paths) == 1:
                 min_final = float(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_PARTIAL_SEC", "10"))
-            if final_dur < min_final:
+            # Never require longer than the montage cap (3×part heuristic could exceed final_max).
+            min_final = min(min_final, final_max - 0.25)
+            if final_dur + 0.35 < min_final:
                 log.warning("montage too short game=%s dur=%.1f need>=%.0f", game, final_dur, min_final)
                 out.unlink(missing_ok=True)
                 continue

@@ -19,13 +19,13 @@ ENV_PATH = Path(os.environ.get("VIDEO_BOT_ENV", "/root/.video_bot.env"))
 _PIPELINE_RE = re.compile(
     r"pipeline done sent=(\d+)(?:\s+vods=\d+\s+game=\w+)?(?:\s+(?P<flags>\S+))?"
 )
-_FEED_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("mlbb", ("mlbb_vod_segment_feed.py",)),
-    ("pubg", ("shooter_vod_segment_feed.py",)),
-    ("standoff", ("shooter_vod_segment_feed.py",)),
-    ("genshin", ("shooter_vod_segment_feed.py",)),
-    ("wot", ("shooter_vod_segment_feed.py",)),
-)
+_FEED_PATTERNS: dict[str, tuple[str, ...]] = {
+    "mlbb": ("mlbb_vod_segment_feed.py",),
+    "pubg": ("shooter_vod_segment_feed.py",),
+    "standoff": ("shooter_vod_segment_feed.py",),
+    "genshin": ("shooter_vod_segment_feed.py",),
+    "wot": ("shooter_vod_segment_feed.py",),
+}
 
 
 def _target_games(game: str) -> list[str]:
@@ -48,8 +48,8 @@ def _load_runtime_env() -> dict[str, str]:
 
 
 def _stop_game_feed(game: str) -> None:
-    patterns = list(_FEED_PATTERNS.get(game, ("shooter_vod_segment_feed.py",))[0:1])
-    if game != "mlbb":
+    patterns = list(_FEED_PATTERNS.get(game, ("shooter_vod_segment_feed.py",)))
+    if game != "mlbb" and "shooter_vod_segment_feed.py" not in patterns:
         patterns.append("shooter_vod_segment_feed.py")
     for pat in patterns:
         subprocess.run(["pkill", "-9", "-f", pat], check=False, timeout=5)
