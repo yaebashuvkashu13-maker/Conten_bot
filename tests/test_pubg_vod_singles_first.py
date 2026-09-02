@@ -13,8 +13,14 @@ from pubg_vod_singles_first import (  # noqa: E402
     pubg_singles_first_enabled,
     should_show_assemble_button,
     singles_keyboard,
-    singles_sent_for_vod,
 )
+
+
+def _mock_good_rows(monkeypatch, rows: list[dict]) -> None:
+    monkeypatch.setattr(
+        "pubg_vod_singles_first.good_rows_for_vod",
+        lambda _game, _vod: list(rows),
+    )
 
 
 def test_singles_first_enabled_by_default(monkeypatch):
@@ -54,29 +60,23 @@ def test_pick_next_single_marks_final_when_one_left():
     assert is_final2 is True
 
 
-def test_assemble_keyboard_on_final(monkeypatch):
+def test_assemble_keyboard_when_two_ok(monkeypatch):
     monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
-    monkeypatch.setattr(
-        "shooter_vod_segment_store.load_feed_sent",
-        lambda _game: {"vid_100", "vid_200"},
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
     )
-    markup = singles_keyboard("pubg", "vid_100", "vid", show_assemble=True)
+    markup = singles_keyboard("pubg", "vid_200", "vid", show_assemble=True)
     texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
     assert "🔧 Собрать склейку" in texts
-    assert "⏭ Пропустить" in texts
 
 
-def test_no_assemble_when_only_one_single_sent(monkeypatch):
+def test_no_assemble_when_only_one_ok(monkeypatch):
     monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
-
-    def _one_sent(_game):
-        return {"vid_100"}
-
-    monkeypatch.setattr(
-        "shooter_vod_segment_store.load_feed_sent",
-        _one_sent,
-    )
-    assert singles_sent_for_vod("pubg", "vid") == 1
+    _mock_good_rows(monkeypatch, [{"segment_id": "vid_100", "peak_start": 100.0}])
     assert assemble_eligible("pubg", "vid") is False
     assert should_show_assemble_button("pubg", "vid", singles_final=True) is False
     markup = singles_keyboard("pubg", "vid_100", "vid", show_assemble=True)
@@ -84,16 +84,19 @@ def test_no_assemble_when_only_one_single_sent(monkeypatch):
     assert "🔧 Собрать склейку" not in texts
 
 
-def test_assemble_after_label_when_two_singles_and_final(monkeypatch):
+def test_assemble_after_label_when_two_ok_and_final(monkeypatch):
     monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
-
-    def _two_sent(_game):
-        return {"vid_100", "vid_200"}
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
+    )
 
     def _find(_game, sid):
         return {"segment_id": sid, "vod_id": "vid", "singles_final": sid == "vid_200"}
 
-    monkeypatch.setattr("shooter_vod_segment_store.load_feed_sent", _two_sent)
     monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
     markup = after_owner_label_keyboard("pubg", "vid_200", "good")
     texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
@@ -102,16 +105,32 @@ def test_assemble_after_label_when_two_singles_and_final(monkeypatch):
 
 def test_no_assemble_after_label_on_non_final(monkeypatch):
     monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
-
-    def _two_sent(_game):
-        return {"vid_100", "vid_200"}
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
+    )
 
     def _find(_game, sid):
         return {"segment_id": sid, "vod_id": "vid", "singles_final": False}
 
-    monkeypatch.setattr("shooter_vod_segment_store.load_feed_sent", _two_sent)
     monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
     markup = after_owner_label_keyboard("pubg", "vid_100", "good")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
+
+
+def test_no_assemble_after_bad_when_only_one_ok_left(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(monkeypatch, [{"segment_id": "vid_100", "peak_start": 100.0}])
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": True}
+
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_200", "bad", reason="loot_walk")
     texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
     assert "🔧 Собрать склейку" not in texts
 

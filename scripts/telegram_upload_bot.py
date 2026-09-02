@@ -718,7 +718,7 @@ def _handle_shooter_vseg_callback(
             {'callback_query_id': query_id, 'text': 'Собираю склейку…'},
             timeout=15,
         )
-        send_message(chat_id, f'🔧 {game.upper()} {vod_id}: собираю склейку из 👍…')
+        send_message(chat_id, f'🔧 {game.upper()} {vod_id}: пересобираю склейку из 👍 (повторная обрезка)…')
 
         def _run_assemble() -> None:
             try:

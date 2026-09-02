@@ -103,17 +103,13 @@ def vod_id_from_segment_id(segment_id: str) -> str:
     return sid
 
 
-def singles_sent_for_vod(game: str, vod_id: str) -> int:
-    """How many singles were Telegram-delivered for this YouTube VOD."""
-    from shooter_vod_segment_store import load_feed_sent
-
-    prefix = f"{vod_id.strip()}_"
-    return sum(1 for sid in load_feed_sent(game) if str(sid).startswith(prefix))
+def good_count_for_vod(game: str, vod_id: str) -> int:
+    return len(good_rows_for_vod(game, vod_id))
 
 
 def assemble_eligible(game: str, vod_id: str) -> bool:
-    """Montage needs at least two delivered singles from the same VOD."""
-    return singles_sent_for_vod(game, vod_id) >= 2
+    """Montage only when owner marked ≥2 singles 👍 from the same VOD."""
+    return good_count_for_vod(game, vod_id) >= 2
 
 
 def should_show_assemble_button(game: str, vod_id: str, *, singles_final: bool) -> bool:
@@ -153,7 +149,7 @@ def singles_final_labeled_keyboard(
     *,
     reason: str = "",
 ) -> dict:
-    """After 👍/👎 on the last single — keep assemble row."""
+    """After 👍/👎 on the last single — keep assemble row when ≥2 👍 on this VOD."""
     from shooter_vod_segment_store import labeled_keyboard_markup
 
     base = labeled_keyboard_markup(
@@ -181,7 +177,7 @@ def after_owner_label_keyboard(
     *,
     reason: str = "",
 ) -> dict:
-    """Keyboard after 👍/👎 — keep assemble row on last single when 2+ clips sent."""
+    """Keyboard after 👍/👎 — assemble when ≥2 👍 and this was the last single."""
     from shooter_vod_segment_store import (
         find_segment,
         labeled_keyboard_markup,
@@ -293,18 +289,71 @@ def pick_next_single_row(
     return chosen, len(rest) == 0
 
 
+def prepare_pubg_assemble_row(vod: Path, peak: float) -> dict | None:
+    """Fresh segmenter + presend on each 👍 peak — not a blind concat of sent files."""
+    from pubg_clip_shape_gate import validate_clip_fight_shape
+    from pubg_fight_segment import resolve_pubg_fight_bounds
+    from pubg_montage_bounds import pubg_clip_has_gunfire, tighten_pubg_assemble_bounds
+    from pubg_quality_score import score_pubg_window
+    from shooter_vod_segment_feed import _ffprobe_duration
+    from shooter_vod_segment_store import segment_id, vod_youtube_id
+
+    peak_val = float(peak)
+    file_dur = _ffprobe_duration(vod)
+    start, dur, report = resolve_pubg_fight_bounds(vod, peak_val, file_duration=file_dur)
+    start, dur = tighten_pubg_assemble_bounds(
+        start,
+        dur,
+        report,
+        peak=peak_val,
+        file_dur=file_dur,
+    )
+    ok_shape, shape_reason = validate_clip_fight_shape(start, dur, peak_val, report)
+    if not ok_shape:
+        log.warning("assemble shape reject peak=%.1f: %s", peak_val, shape_reason)
+        return None
+    gun_ok, gun_reason = pubg_clip_has_gunfire(vod, start, dur, peak_val, single=True)
+    if not gun_ok:
+        log.warning("assemble gun reject peak=%.1f: %s", peak_val, gun_reason)
+        return None
+    ok, presend_reason, quality_report = score_pubg_window(
+        vod,
+        start,
+        dur,
+        use_cache=False,
+        single=True,
+    )
+    if not ok:
+        log.warning("assemble presend reject peak=%.1f: %s", peak_val, presend_reason)
+        return None
+
+    vid = vod_youtube_id(vod)
+    clip = {
+        "start": start,
+        "peak_start": peak_val,
+        "input_duration": dur,
+        "bounds_locked": True,
+        "segment_report": report,
+    }
+    return {
+        "segment_id": segment_id(vid, start),
+        "vod_id": vid,
+        "peak_start": peak_val,
+        "start": start,
+        "score": float(quality_report.get("quality_score", 0.0) or 0.0),
+        "clip": clip,
+        "quality_report": quality_report,
+    }
+
+
 def run_assemble_montage(
     game: str,
     vod_id: str,
     token: str,
     chat_id: str,
 ) -> tuple[bool, str]:
-    """Build montage from owner 👍 singles for this VOD (re-trim each part)."""
-    from shooter_vod_segment_feed import (
-        _prepare_pubg_row_for_send,
-        _send_montage,
-        file_sha256,
-    )
+    """Build montage from owner 👍 singles — re-probe VOD, re-trim gunfire ±4s, presend each part."""
+    from shooter_vod_segment_feed import _send_montage, file_sha256
 
     vod = resolve_vod_path(vod_id)
     if vod is None:
@@ -312,23 +361,17 @@ def run_assemble_montage(
 
     good_rows = good_rows_for_vod(game, vod_id)
     if len(good_rows) < 2:
-        return False, f"need_2_good_have_{len(good_rows)}"
+        return False, f"need_2_ok_have_{len(good_rows)}"
 
     prepared: list[dict] = []
     for row in good_rows:
-        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
-        work = {
-            **row,
-            "clip": dict(clip),
-            "peak_start": float(row.get("peak_start", row.get("start", 0)) or 0),
-            "start": float(row.get("start", clip.get("start", 0)) or 0),
-        }
-        ready = _prepare_pubg_row_for_send(work, vod, single=False)
+        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+        ready = prepare_pubg_assemble_row(vod, peak)
         if ready is not None:
             prepared.append(ready)
 
     if len(prepared) < 2:
-        return False, f"after_retrim_need_2_have_{len(prepared)}"
+        return False, f"after_recheck_need_2_ok_have_{len(prepared)}"
 
     n = _send_montage(game, token, chat_id, vod, prepared, file_sha256(vod))
     if n > 0:

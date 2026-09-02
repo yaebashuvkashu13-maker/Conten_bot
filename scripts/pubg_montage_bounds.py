@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("pubg_montage_bounds")
 
 
 def min_fight_window_gap_sec() -> float:
@@ -33,6 +36,11 @@ def clip_post_kill_sec() -> float:
             os.environ.get("PUBG_OWNER_POST_KILL_SEC", "5.0"),
         )
     )
+
+
+def assemble_gun_pad_sec() -> float:
+    """Padding before/after sustained gunfire when owner assembles 👍 singles."""
+    return float(os.environ.get("PUBG_ASSEMBLE_GUN_PAD_SEC", "4.0"))
 
 
 def fight_bounds(
@@ -133,6 +141,57 @@ def tighten_pubg_clip_bounds(
         if ok:
             start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
             dur = max(min_dur, dur)
+    return float(start), float(dur)
+
+
+def _gunfire_end_from_report(report: dict[str, Any], *, fallback: float) -> float:
+    timeline = report.get("timeline") or []
+    gun_times: list[float] = []
+    for row in timeline:
+        try:
+            if float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= 0.020:
+                gun_times.append(float(row["start"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+    if gun_times:
+        sample = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+        return max(gun_times) + sample
+    for key in ("fight_end", "fight_end_sec"):
+        if report.get(key) is not None:
+            return float(report[key])
+    return float(fallback)
+
+
+def tighten_pubg_assemble_bounds(
+    start: float,
+    dur: float,
+    report: dict[str, Any],
+    *,
+    peak: float,
+    file_dur: float,
+) -> tuple[float, float]:
+    """Re-trim 👍 singles for montage: drop loot-walk, keep gunfire ± pad sec."""
+    from pubg_clip_shape_gate import aggressive_tighten_for_shape, validate_clip_fight_shape
+
+    pad = assemble_gun_pad_sec()
+    min_dur = max(8.0, float(os.environ.get("PUBG_ASSEMBLE_MIN_SEC", "10")))
+    shoot = report.get("shooting_start")
+    core_start = float(shoot) if shoot is not None else float(peak)
+    core_end = _gunfire_end_from_report(report, fallback=float(start) + float(dur))
+    start = max(0.0, core_start - pad)
+    end = min(float(file_dur), core_end + pad)
+    dur = max(min_dur, end - start)
+
+    ok, reason = validate_clip_fight_shape(start, dur, float(peak), report)
+    if not ok:
+        alt_start, alt_dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
+        if alt_dur >= min_dur:
+            alt_ok, _ = validate_clip_fight_shape(alt_start, alt_dur, float(peak), report)
+            if alt_ok:
+                start, dur = alt_start, alt_dur
+                ok = True
+        if not ok:
+            log.warning("assemble tighten shape reject peak=%.1f: %s", peak, reason)
     return float(start), float(dur)
 
 
