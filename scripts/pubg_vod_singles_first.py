@@ -289,8 +289,13 @@ def pick_next_single_row(
     return chosen, len(rest) == 0
 
 
-def prepare_pubg_assemble_row(vod: Path, peak: float) -> dict | None:
-    """Fresh segmenter + presend on each 👍 peak — not a blind concat of sent files."""
+def prepare_pubg_assemble_row(
+    vod: Path,
+    peak: float,
+    *,
+    owner_row: dict | None = None,
+) -> dict | None:
+    """Re-trim owner 👍 peak on full VOD; re-gates only trim bounds, not owner approval."""
     from pubg_clip_shape_gate import validate_clip_fight_shape
     from pubg_fight_segment import resolve_pubg_fight_bounds
     from pubg_montage_bounds import pubg_clip_has_gunfire, tighten_pubg_assemble_bounds
@@ -299,6 +304,7 @@ def prepare_pubg_assemble_row(vod: Path, peak: float) -> dict | None:
     from shooter_vod_segment_store import segment_id, vod_youtube_id
 
     peak_val = float(peak)
+    owner_approved = owner_row is not None
     file_dur = _ffprobe_duration(vod)
     start, dur, report = resolve_pubg_fight_bounds(vod, peak_val, file_duration=file_dur)
     start, dur = tighten_pubg_assemble_bounds(
@@ -309,23 +315,60 @@ def prepare_pubg_assemble_row(vod: Path, peak: float) -> dict | None:
         file_dur=file_dur,
     )
     ok_shape, shape_reason = validate_clip_fight_shape(start, dur, peak_val, report)
-    if not ok_shape:
+    if not ok_shape and not owner_approved:
         log.warning("assemble shape reject peak=%.1f: %s", peak_val, shape_reason)
         return None
+    if not ok_shape and owner_approved:
+        log.info(
+            "assemble owner-trust shape peak=%.1f: %s — keep re-trim",
+            peak_val,
+            shape_reason,
+        )
+
     gun_ok, gun_reason = pubg_clip_has_gunfire(vod, start, dur, peak_val, single=True)
-    if not gun_ok:
+    if not gun_ok and not owner_approved:
         log.warning("assemble gun reject peak=%.1f: %s", peak_val, gun_reason)
         return None
-    ok, presend_reason, quality_report = score_pubg_window(
-        vod,
-        start,
-        dur,
-        use_cache=False,
-        single=True,
-    )
-    if not ok:
+    if not gun_ok and owner_approved:
+        log.info(
+            "assemble owner-trust gun peak=%.1f: %s — keep re-trim",
+            peak_val,
+            gun_reason,
+        )
+
+    presend_env = {}
+    if owner_approved:
+        presend_env["PUBG_OWNER_REDO"] = "1"
+        presend_env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
+    prev: dict[str, str | None] = {k: os.environ.get(k) for k in presend_env}
+    try:
+        for key, value in presend_env.items():
+            os.environ[key] = value
+        ok, presend_reason, quality_report = score_pubg_window(
+            vod,
+            start,
+            dur,
+            use_cache=False,
+            single=True,
+        )
+    finally:
+        for key, old in prev.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+    if not ok and not owner_approved:
         log.warning("assemble presend reject peak=%.1f: %s", peak_val, presend_reason)
         return None
+    if not ok and owner_approved:
+        log.info(
+            "assemble owner-trust presend peak=%.1f: %s — ship re-trim",
+            peak_val,
+            presend_reason,
+        )
+        quality_report = dict(quality_report or {})
+        quality_report.setdefault("owner_assemble_trusted", True)
 
     vid = vod_youtube_id(vod)
     clip = {
@@ -335,8 +378,9 @@ def prepare_pubg_assemble_row(vod: Path, peak: float) -> dict | None:
         "bounds_locked": True,
         "segment_report": report,
     }
+    sid = str((owner_row or {}).get("segment_id") or segment_id(vid, start))
     return {
-        "segment_id": segment_id(vid, start),
+        "segment_id": sid,
         "vod_id": vid,
         "peak_start": peak_val,
         "start": start,
@@ -364,14 +408,20 @@ def run_assemble_montage(
         return False, f"need_2_ok_have_{len(good_rows)}"
 
     prepared: list[dict] = []
+    failed_peaks: list[float] = []
     for row in good_rows:
         peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-        ready = prepare_pubg_assemble_row(vod, peak)
+        ready = prepare_pubg_assemble_row(vod, peak, owner_row=row)
         if ready is not None:
             prepared.append(ready)
+        else:
+            failed_peaks.append(peak)
 
     if len(prepared) < 2:
-        return False, f"after_recheck_need_2_ok_have_{len(prepared)}"
+        if failed_peaks:
+            peaks_s = ", ".join(f"{p:.0f}s" for p in failed_peaks[:4])
+            return False, f"не удалось обрезать 👍 пики ({peaks_s}) — VOD недоступен?"
+        return False, f"need_2_ok_have_{len(good_rows)}"
 
     n = _send_montage(game, token, chat_id, vod, prepared, file_sha256(vod))
     if n > 0:
