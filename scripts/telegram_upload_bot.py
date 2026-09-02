@@ -683,6 +683,60 @@ def _handle_shooter_vseg_callback(
     if not data.startswith(f'{prefix}_'):
         return False
 
+    if data.startswith(f'{prefix}_assemble_skip:'):
+        vod_id = data.split(':', 1)[1].strip()
+        try:
+            from pubg_vod_singles_first import assemble_skip_keyboard
+
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Пропущено'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': assemble_skip_keyboard(game),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('%s assemble_skip failed vod=%s', game, vod_id)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_assemble:'):
+        vod_id = data.split(':', 1)[1].strip()
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': 'Собираю склейку…'},
+            timeout=15,
+        )
+        send_message(chat_id, f'🔧 {game.upper()} {vod_id}: собираю склейку из 👍…')
+
+        def _run_assemble() -> None:
+            try:
+                from pubg_vod_singles_first import run_assemble_montage
+
+                token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+                ok, reason = run_assemble_montage(game, vod_id, token, str(chat_id))
+                if ok:
+                    send_message(chat_id, f'✅ {game.upper()} {vod_id}: склейка отправлена ({reason})')
+                else:
+                    send_message(chat_id, f'⚠️ {game.upper()} {vod_id}: склейка не собрана — {reason}')
+            except Exception as exc:
+                logging.exception('%s assemble failed vod=%s', game, vod_id)
+                send_message(chat_id, f'❌ {game.upper()} {vod_id}: ошибка сборки — {exc}')
+
+        threading.Thread(target=_run_assemble, daemon=True).start()
+        return True
+
     if data.startswith(f'{prefix}_hq:'):
         item_id = data.split(':', 1)[1].strip()
         try:
@@ -795,6 +849,7 @@ def _handle_shooter_vseg_callback(
             game, chat_id, item_id, is_good=is_good, reason=reason
         )
         from shooter_vod_segment_store import (
+            find_segment,
             labeled_keyboard_markup as shooter_markup,
             montage_labeled_keyboard_markup,
             montage_parts_from_segment,
@@ -804,12 +859,27 @@ def _handle_shooter_vseg_callback(
         if parts:
             markup = montage_labeled_keyboard_markup(game, parts, reason=reason)
         else:
-            markup = shooter_markup(
-                game,
-                'good' if is_good else 'bad',
-                reason=reason,
-                segment_id=item_id if is_good else '',
-            )
+            seg_row = find_segment(game, item_id) or {}
+            vod_id = str(seg_row.get("vod_id") or "")
+            if not vod_id and "_" in item_id:
+                vod_id = item_id.rsplit("_", 1)[0]
+            if seg_row.get("singles_final"):
+                from pubg_vod_singles_first import singles_final_labeled_keyboard
+
+                markup = singles_final_labeled_keyboard(
+                    game,
+                    item_id,
+                    vod_id,
+                    "good" if is_good else "bad",
+                    reason=reason,
+                )
+            else:
+                markup = shooter_markup(
+                    game,
+                    'good' if is_good else 'bad',
+                    reason=reason,
+                    segment_id=item_id if is_good else '',
+                )
         alert = '✅ Ок' if is_good else '❌ Не ок'
         if not ok:
             api_call(

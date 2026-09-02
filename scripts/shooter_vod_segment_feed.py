@@ -996,6 +996,12 @@ def _pubg_single_fallback_enabled() -> bool:
     return os.environ.get("PUBG_VOD_SINGLE_FALLBACK", "1") == "1"
 
 
+def _pubg_singles_first_enabled() -> bool:
+    from pubg_vod_singles_first import pubg_singles_first_enabled
+
+    return pubg_singles_first_enabled()
+
+
 def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | None:
     """Tight fight bounds + shape gate; None when clip is mostly running/menu."""
     from pubg_clip_shape_gate import validate_clip_fight_shape
@@ -1591,16 +1597,27 @@ def _game_lead_sec(game: str) -> float:
     return float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
 
 
-def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
+def _send_batch(
+    game: str,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    to_send: list[dict],
+    sig: str,
+    *,
+    skip_montage: bool = False,
+    reply_markup: dict | None = None,
+    singles_final: bool = False,
+) -> int:
     soft_min = _montage_soft_min_clips(game)
-    if _montage_enabled(game) and len(to_send) >= soft_min:
+    if not skip_montage and _montage_enabled(game) and len(to_send) >= soft_min:
         n = _send_montage(game, token, chat_id, vod, to_send, sig)
         if n > 0:
             return n
     pubg_single = (
         game == "pubg"
         and len(to_send) == 1
-        and _pubg_single_fallback_enabled()
+        and (_pubg_single_fallback_enabled() or skip_montage or _pubg_singles_first_enabled())
     )
     if pubg_single:
         prepared = _prepare_pubg_row_for_send(to_send[0], vod, single=True)
@@ -1709,7 +1726,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             caption,
             seg_id=sid,
             record_learning=False,
-            reply_markup=keyboard(game, sid),
+            reply_markup=reply_markup or keyboard(game, sid),
             cycle_game=game,
         ):
             upsert_segment(
@@ -1725,6 +1742,7 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
                     "score": row.get("score", 0),
                     "sig": sig,
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "singles_final": bool(singles_final),
                 },
             )
             mark_feed_sent(game, [sid])
@@ -1815,6 +1833,9 @@ def _scan_vod(
     used_peaks = used_peaks_for_vod(game, vid, sent_set, index_segments)
     blocked_ids = labeled | sent_set
     montage = _montage_enabled(game)
+    pubg_singles = game == "pubg" and _pubg_singles_first_enabled()
+    if pubg_singles:
+        montage = False
     min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
     owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0)) if montage else []
     owner_hints = [
@@ -2000,6 +2021,50 @@ def _scan_vod(
                 record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=blocked, pool=pool)
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
+        if pubg_singles:
+            from pubg_vod_singles_first import pick_next_single_row, singles_keyboard
+
+            row, is_final = pick_next_single_row(
+                rows,
+                blocked_ids=blocked_ids,
+                rejected_peaks=[],
+                gap_sec=cand_gap,
+                used_peaks=used_peaks,
+                peak_too_close=_peak_too_close,
+            )
+            if row is None:
+                if entry is not None:
+                    record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=True, pool=pool)
+                    entry["exhausted"] = True
+                    entry["reject_reason"] = "pubg_singles_exhausted"
+                return 0
+            markup = singles_keyboard(
+                game,
+                str(row["segment_id"]),
+                vid,
+                show_assemble=is_final,
+            )
+            n = _send_batch(
+                game,
+                token,
+                chat_id,
+                vod,
+                [row],
+                sig,
+                skip_montage=True,
+                reply_markup=markup,
+                singles_final=is_final,
+            )
+            if n > 0:
+                if entry is not None:
+                    record_vod_scan(entry, sent=n, pool_peaks=pool_peaks, blocked=False, pool=pool)
+                    if is_final:
+                        entry["exhausted"] = True
+                        entry["reject_reason"] = "pubg_singles_complete"
+                return n
+            skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+            peak_tries += 1
+            continue
         # Montage path needs several spaced peaks; singles take the top one.
         batch = rows if montage else rows[:1]
         if montage and len(batch) < min_clips:
@@ -2444,6 +2509,35 @@ def _scan_vod_with_adaptive(
                             )
                             rows = expanded
                     return rows
+
+                if game == "pubg" and _pubg_singles_first_enabled():
+                    from pubg_vod_singles_first import singles_first_send_cycle
+
+                    sent_set = load_feed_sent(game)
+                    used_peaks = _used_peak_times(game, vid, sent_set)
+                    blocked_ids = labeled_ids(game) | sent_set
+                    all_rows = _build_rows(max(12.0, gap_sec * 0.9), used=used_peaks, blocked=blocked_ids)
+                    n_sf = singles_first_send_cycle(
+                        game=game,
+                        token=token,
+                        chat_id=chat_id,
+                        vod=vod,
+                        vid=vid,
+                        state=state,
+                        entry=entry,
+                        rows=all_rows,
+                        gap_sec=gap_sec,
+                        rejected_peaks=rejected_peaks,
+                        sig=file_sha256(vod),
+                        mark_exhausted_fn=_mark_vod_exhausted,
+                        save_state_fn=_save_state,
+                        record_scan_fn=record_vod_scan,
+                        scan_funnel=scan_funnel,
+                    )
+                    _save_state(game, state)
+                    if clear_fast_seeds:
+                        clear_fast_seeds()
+                    return n_sf
 
                 for montage_idx in range(max_montages):
                     sent_set = load_feed_sent(game)

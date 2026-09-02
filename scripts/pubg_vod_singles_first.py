@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""PUBG singles-first VOD mode: send all fights one-by-one, assemble montage at end."""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Any, Callable
+
+log = logging.getLogger("pubg_vod_singles_first")
+
+
+def pubg_singles_first_enabled() -> bool:
+    return os.environ.get("PUBG_VOD_SINGLES_FIRST", "1") == "1"
+
+
+def _callback_prefix(game: str) -> str:
+    return f"{game.strip().lower()}_vseg"
+
+
+def singles_keyboard(
+    game: str,
+    segment_id: str,
+    vod_id: str,
+    *,
+    show_assemble: bool,
+) -> dict:
+    from shooter_vod_segment_store import inline_keyboard_markup
+
+    markup = inline_keyboard_markup(game, segment_id)
+    if show_assemble:
+        prefix = _callback_prefix(game)
+        markup["inline_keyboard"].append(
+            [
+                {"text": "🔧 Собрать склейку", "callback_data": f"{prefix}_assemble:{vod_id}"},
+                {"text": "⏭ Пропустить", "callback_data": f"{prefix}_assemble_skip:{vod_id}"},
+            ]
+        )
+    return markup
+
+
+def singles_final_labeled_keyboard(
+    game: str,
+    segment_id: str,
+    vod_id: str,
+    label: str,
+    *,
+    reason: str = "",
+) -> dict:
+    """After 👍/👎 on the last single — keep assemble row."""
+    from shooter_vod_segment_store import labeled_keyboard_markup
+
+    base = labeled_keyboard_markup(
+        game,
+        label,
+        reason=reason,
+        segment_id=segment_id if label == "good" else "",
+    )
+    prefix = _callback_prefix(game)
+    base["inline_keyboard"].append(
+        [
+            {"text": "🔧 Собрать склейку", "callback_data": f"{prefix}_assemble:{vod_id}"},
+            {"text": "⏭ Пропустить", "callback_data": f"{prefix}_assemble_skip:{vod_id}"},
+        ]
+    )
+    return base
+
+
+def assemble_skip_keyboard(game: str) -> dict:
+    return {"inline_keyboard": [[{"text": "—", "callback_data": "mlbb_noop"}]]}
+
+
+def resolve_vod_path(vod_id: str) -> Path | None:
+    vid = vod_id.strip()
+    if not vid:
+        return None
+    name = vid if vid.endswith(".mp4") else f"yt_{vid}.mp4"
+    for base in (
+        Path(os.environ.get("PUBG_VOD_INBOX", "/root/data/pubg/youtube_nightly/inbox")),
+        Path("/root/data/pubg/youtube_nightly/inbox"),
+        Path("/root/data/mlbb/youtube_nightly/inbox"),
+    ):
+        candidate = base / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def good_rows_for_vod(game: str, vod_id: str) -> list[dict]:
+    from shooter_vod_segment_store import find_segment, load_labels
+
+    vid = vod_id.strip()
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entry in load_labels(game).get("good", []):
+        sid = str(entry.get("segment_id") or "").strip()
+        if not sid or not sid.startswith(f"{vid}_"):
+            continue
+        if sid in seen:
+            continue
+        seen.add(sid)
+        row = find_segment(game, sid) or dict(entry)
+        row["segment_id"] = sid
+        out.append(row)
+    out.sort(key=lambda r: float(r.get("peak_start", r.get("start", 0)) or 0))
+    return out
+
+
+def count_remaining_rows(
+    rows: list[dict],
+    *,
+    after_peak: float,
+    gap_sec: float,
+    peak_too_close,
+) -> int:
+    remaining = 0
+    for row in rows[1:]:
+        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+        if peak_too_close(peak, [after_peak], gap_sec):
+            continue
+        remaining += 1
+    return remaining
+
+
+def pick_next_single_row(
+    rows: list[dict],
+    *,
+    blocked_ids: set[str],
+    rejected_peaks: list[float],
+    gap_sec: float,
+    used_peaks: list[float],
+    peak_too_close,
+) -> tuple[dict | None, bool]:
+    """Return (row, is_vod_final). is_vod_final=True when no more sendable peaks after this one."""
+    candidates: list[dict] = []
+    for row in rows:
+        sid = str(row.get("segment_id") or "")
+        if sid and sid in blocked_ids:
+            continue
+        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+        if any(abs(peak - float(bad)) <= 4.0 for bad in rejected_peaks):
+            continue
+        if peak_too_close(peak, used_peaks, gap_sec):
+            continue
+        candidates.append(row)
+    if not candidates:
+        return None, True
+    candidates.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
+    chosen = candidates[0]
+    peak = float(chosen.get("peak_start", chosen.get("start", 0)) or 0)
+    rest = [
+        r
+        for r in candidates[1:]
+        if not peak_too_close(
+            float(r.get("peak_start", r.get("start", 0)) or 0),
+            [peak],
+            gap_sec,
+        )
+    ]
+    return chosen, len(rest) == 0
+
+
+def run_assemble_montage(
+    game: str,
+    vod_id: str,
+    token: str,
+    chat_id: str,
+) -> tuple[bool, str]:
+    """Build montage from owner 👍 singles for this VOD (re-trim each part)."""
+    from shooter_vod_segment_feed import (
+        _prepare_pubg_row_for_send,
+        _send_montage,
+        file_sha256,
+    )
+
+    vod = resolve_vod_path(vod_id)
+    if vod is None:
+        return False, "vod_not_found"
+
+    good_rows = good_rows_for_vod(game, vod_id)
+    if len(good_rows) < 2:
+        return False, f"need_2_good_have_{len(good_rows)}"
+
+    prepared: list[dict] = []
+    for row in good_rows:
+        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+        work = {
+            **row,
+            "clip": dict(clip),
+            "peak_start": float(row.get("peak_start", row.get("start", 0)) or 0),
+            "start": float(row.get("start", clip.get("start", 0)) or 0),
+        }
+        ready = _prepare_pubg_row_for_send(work, vod, single=False)
+        if ready is not None:
+            prepared.append(ready)
+
+    if len(prepared) < 2:
+        return False, f"after_retrim_need_2_have_{len(prepared)}"
+
+    n = _send_montage(game, token, chat_id, vod, prepared, file_sha256(vod))
+    if n > 0:
+        return True, f"montage_x{len(prepared)}"
+    return False, "montage_send_failed"
+
+
+def singles_first_send_cycle(
+    *,
+    game: str,
+    token: str,
+    chat_id: str,
+    vod: Path,
+    vid: str,
+    state: dict,
+    entry: dict | None,
+    rows: list[dict],
+    gap_sec: float,
+    rejected_peaks: list[float],
+    sig: str,
+    mark_exhausted_fn: Callable[..., None],
+    save_state_fn: Callable[[str, dict], None],
+    record_scan_fn: Callable[..., None],
+    scan_funnel: Any | None = None,
+) -> int:
+    """Send one single from pre-built rows; exhaust VOD on last clip."""
+    from shooter_vod_segment_feed import (
+        _peak_too_close,
+        _remember_dense_rejections,
+        _send_batch,
+        _used_peak_times,
+        labeled_ids,
+        load_feed_sent,
+    )
+
+    sent_set = load_feed_sent(game)
+    used_peaks = _used_peak_times(game, vid, sent_set)
+    blocked_ids = labeled_ids(game) | sent_set
+
+    row, is_final = pick_next_single_row(
+        rows,
+        blocked_ids=blocked_ids,
+        rejected_peaks=rejected_peaks,
+        gap_sec=gap_sec,
+        used_peaks=used_peaks,
+        peak_too_close=_peak_too_close,
+    )
+    if row is None:
+        mark_exhausted_fn(state, vod, reason="pubg_singles_exhausted", delete_file=False)
+        save_state_fn(game, state)
+        log.info("pubg singles-first exhaust vod=%s — no sendable peaks", vod.name)
+        return 0
+
+    markup = singles_keyboard(game, str(row["segment_id"]), vid, show_assemble=is_final)
+    peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+    n = _send_batch(
+        game,
+        token,
+        chat_id,
+        vod,
+        [row],
+        sig,
+        skip_montage=True,
+        reply_markup=markup,
+        singles_final=is_final,
+    )
+    if n <= 0:
+        _remember_dense_rejections(entry, [peak])
+        if entry is not None:
+            record_scan_fn(
+                entry,
+                sent=0,
+                pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
+                blocked=False,
+            )
+            entry["reject_reason"] = "pubg_singles_presend_reject"
+        save_state_fn(game, state)
+        return 0
+
+    if entry is not None:
+        if scan_funnel is not None:
+            scan_funnel.sent = n
+            scan_funnel.presend_pass = n
+            scan_funnel.mark("sent")
+        record_scan_fn(
+            entry,
+            sent=n,
+            pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
+            blocked=False,
+            funnel=scan_funnel.to_dict() if scan_funnel else None,
+        )
+        entry.pop("reject_reason", None)
+
+    if is_final:
+        mark_exhausted_fn(state, vod, reason="pubg_singles_complete", delete_file=False)
+        log.info(
+            "pubg singles-first FINAL vod=%s peak=%.1f sent=%s — assemble button",
+            vod.name,
+            peak,
+            n,
+        )
+    else:
+        log.info(
+            "pubg singles-first vod=%s peak=%.1f sent=%s — more peaks remain",
+            vod.name,
+            peak,
+            n,
+        )
+
+    save_state_fn(game, state)
+    return n
