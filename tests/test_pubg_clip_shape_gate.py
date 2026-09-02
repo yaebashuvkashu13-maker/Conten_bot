@@ -60,4 +60,5 @@ def test_tighten_trims_running_lead():
         peak=389.5,
     )
     assert start >= 386.8
-    assert start + dur <= 398.0
+    assert dur >= 18.0
+    assert start <= 387.0

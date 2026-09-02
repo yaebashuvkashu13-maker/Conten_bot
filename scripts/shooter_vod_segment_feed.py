@@ -999,6 +999,7 @@ def _pubg_single_fallback_enabled() -> bool:
 def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | None:
     """Tight fight bounds + shape gate; None when clip is mostly running/menu."""
     from pubg_clip_shape_gate import validate_clip_fight_shape
+    from pubg_montage_bounds import pubg_clip_has_gunfire
 
     prepared = dict(row)
     clip = _prepare_montage_clip(prepared, vod, part_max=999.0, game="pubg", single=single)
@@ -1013,6 +1014,10 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
         if not ok:
             log.warning("pubg send shape reject peak=%.1f: %s", peak, reason)
             return None
+    gun_ok, gun_reason = pubg_clip_has_gunfire(vod, start, dur, peak, single=single)
+    if not gun_ok:
+        log.warning("pubg send gun reject peak=%.1f: %s", peak, gun_reason)
+        return None
     sid = segment_id(vod_youtube_id(vod), start)
     prepared["segment_id"] = sid
     prepared["start"] = start
@@ -1092,7 +1097,7 @@ def _prepare_montage_clip(
 
                 peak_val = float(row.get("peak_start", peak) or peak)
                 start, dur = tighten_pubg_clip_bounds(
-                    start, dur, segment_report, peak=peak_val
+                    start, dur, segment_report, peak=peak_val, single=single
                 )
                 dur = min(float(dur), _pubg_duration_cap(float(dur), single=single))
                 from pubg_clip_shape_gate import validate_clip_fight_shape
@@ -1604,10 +1609,8 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
                 "pubg single fallback rejected peak=%.1f",
                 float(to_send[0].get("peak_start", 0) or 0),
             )
-            if _montage_only(game):
-                return 0
-        else:
-            to_send = [prepared]
+            return 0
+        to_send = [prepared]
     elif _montage_only(game):
         log.warning("montage-only: refuse single-clip fallback game=%s", game)
         return 0

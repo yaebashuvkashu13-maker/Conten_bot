@@ -130,3 +130,39 @@ def test_required_kill_notification_rejects_shooting_only(
     assert ok is False
     assert reason.startswith("kill_notification_missing")
     assert report["kill_notification_hit"] is False
+
+
+def test_notification_without_gunfire_not_treated_as_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """False OCR kill banner (ACCvn55IvVw) must not pass as author kill."""
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "0")
+    monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
+    patches = list(_base_patches(author_kill=False))
+    patches[1] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.025,
+            "burst_ratio": 1.0,
+            "audio_rms": 0.02,
+            "center_motion": 0.06,
+            "center_text": 0.0,
+            "crop_box": None,
+        },
+    )
+    patches[4] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.0,
+            {
+                "notification_score": 0.59,
+                "notification_hit": True,
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 123, 11, use_cache=False)
+    assert ok is False
+    assert report["author"]["has_author_kill"] is False

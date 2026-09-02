@@ -74,6 +74,9 @@ def _primary_has_kill(
 ) -> bool:
     """Kill from notification/killfeed first; flash/weapon only as weak backup."""
     if notification_hit:
+        min_gun = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_GUN", "0.04"))
+        if not keyword_hit and gun < min_gun:
+            return False
         return True
     if keyword_hit and float(killfeed) >= 0.30:
         return True

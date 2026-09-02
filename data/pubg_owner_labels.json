@@ -43,6 +43,10 @@
     "oVKSI-HFr2E": [
       {"tc": "6:29", "time_sec": 389, "label": "bad", "role": "anti_style", "note": "80% running / no fight"},
       {"tc": "20:21", "time_sec": 1221, "label": "bad", "role": "anti_style", "note": "gunfire only at end of clip"}
+    ],
+    "ACCvn55IvVw": [
+      {"tc": "2:03", "time_sec": 123, "label": "bad", "role": "anti_style", "note": "tightened kill-tail only / no gunfire"},
+      {"tc": "2:09", "time_sec": 129, "label": "good", "note": "owner peak — full gunfight"}
     ]
   }
 }

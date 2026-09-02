@@ -27,7 +27,27 @@ def test_tighten_pubg_clip_trims_loot_tail():
         peak=1164.0,
     )
     assert start >= 1150.5
-    assert start + dur <= 1167.0 + 0.01
+    assert dur >= 18.0
+    assert start + dur <= 1182.5 + 0.01
+
+
+def test_single_tighten_keeps_full_fight_not_kill_tail():
+    """ACCvn55IvVw: single mode must not crush 52s fight into ~10s running tail."""
+    report = {
+        "shooting_start": 118.0,
+        "kill_sec": 125.0,
+        "fight_end": 170.5,
+    }
+    start, dur = tighten_pubg_clip_bounds(
+        118.0,
+        52.5,
+        report,
+        peak=128.9,
+        single=True,
+    )
+    assert dur >= 20.0
+    assert start <= 119.0
+    assert start + dur >= 128.9
 
 
 def test_dedupe_peaks_by_fight_window_drops_same_fight(monkeypatch):

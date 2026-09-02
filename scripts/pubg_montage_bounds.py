@@ -81,30 +81,87 @@ def tighten_pubg_clip_bounds(
     report: dict[str, Any],
     *,
     peak: float | None = None,
+    single: bool = False,
 ) -> tuple[float, float]:
     """Start at gunfire, end soon after kill — no loot-walk tail."""
-    from pubg_clip_shape_gate import aggressive_tighten_for_shape, validate_clip_fight_shape
+    from pubg_clip_shape_gate import (
+        aggressive_tighten_for_shape,
+        max_peak_position_frac,
+        validate_clip_fight_shape,
+    )
 
     pre_pad = clip_pre_shoot_sec()
     post_kill = clip_post_kill_sec()
     max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2"))
+    min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "18"))
+    if single:
+        min_dur = max(min_dur, float(os.environ.get("PUBG_SINGLE_MIN_SEC", "20")))
+
     shoot = report.get("shooting_start")
     if shoot is not None:
         start = float(shoot) - min(pre_pad, max_lead)
     kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
+    fight_end = report.get("fight_end") or report.get("fight_end_sec")
     end = float(start) + float(dur)
-    if kill is not None:
+
+    if kill is not None and not single:
         end = min(end, float(kill) + post_kill)
-    fight_end = report.get("fight_end")
     if fight_end is not None:
         end = min(end, float(fight_end))
-    dur = max(10.0, end - float(start))
+    dur = max(min_dur, end - float(start))
+
     if peak is not None:
-        ok, _reason = validate_clip_fight_shape(start, dur, float(peak), report)
+        ok, reason = validate_clip_fight_shape(start, dur, float(peak), report)
+        if not ok and "fight_at_end" in reason and shoot is not None:
+            max_frac = max_peak_position_frac()
+            need_span = (float(peak) - float(shoot) + max_lead) / max(max_frac, 0.05)
+            start = max(0.0, float(shoot) - max_lead)
+            end = max(end, start + max(min_dur, need_span))
+            if fight_end is not None:
+                end = min(end, float(fight_end))
+            dur = max(min_dur, end - start)
+            ok, reason = validate_clip_fight_shape(start, dur, float(peak), report)
         if not ok:
-            start, dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
-        start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
+            alt_start, alt_dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
+            if alt_dur >= min_dur:
+                alt_ok, _alt_reason = validate_clip_fight_shape(
+                    alt_start, alt_dur, float(peak), report
+                )
+                if alt_ok:
+                    start, dur = alt_start, alt_dur
+                    ok = True
+        if ok:
+            start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
+            dur = max(min_dur, dur)
     return float(start), float(dur)
+
+
+def pubg_clip_has_gunfire(
+    vod: Path,
+    start: float,
+    dur: float,
+    peak: float,
+    *,
+    single: bool = False,
+) -> tuple[bool, str]:
+    """Reject running/menu clips — require audible gunfire in the fight core."""
+    from gameplay_gate import score_pubg_gunfire_audio
+
+    min_gun = float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.055"))
+    if not single:
+        min_gun = float(os.environ.get("PUBG_CLIP_MIN_GUN_DENSITY", "0.045"))
+
+    gun, burst, _rms = score_pubg_gunfire_audio(vod, start, dur)
+    if gun >= min_gun and burst >= 2.0:
+        return True, "gun_ok"
+
+    core_start = max(start, float(peak) - 10.0)
+    core_dur = min(float(dur), max(8.0, float(peak) - core_start + 8.0))
+    gun_core, burst_core, _ = score_pubg_gunfire_audio(vod, core_start, core_dur)
+    if gun_core >= min_gun and burst_core >= 2.0:
+        return True, "gun_core_ok"
+
+    return False, f"low_gun whole={gun:.3f} core={gun_core:.3f} need>={min_gun:.3f}"
 
 
 def peak_fight_report(
