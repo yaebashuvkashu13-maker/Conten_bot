@@ -120,6 +120,25 @@ def has_owner_labels(video_path: Path) -> bool:
     return bool(labels_for_video(video_path))
 
 
+def apply_owner_send_policy() -> None:
+    """Apply owner-label-bank send criteria to the current process.
+
+    Send only clips where the streamer is actually shooting (gun+burst), not run/loot/fly.
+    Ground truth: data/pubg_owner_labels.json and runtime Telegram 👍/👎 labels.
+    """
+    os.environ.setdefault("PUBG_PRESEND_SHOOTING_GATE", "1")
+    os.environ.setdefault("PUBG_PRESEND_SCORE_MODE", "1")
+    os.environ.setdefault("PUBG_REJECT_LOOT_WALK", "1")
+    os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
+    os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "1")
+    os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.055")
+    os.environ.setdefault("PUBG_CLIP_MIN_BURST_RATIO", "4.8")
+    os.environ.setdefault("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "0")
+    os.environ.setdefault("SHOOTER_REQUIRE_AUTHOR_KILL", "0")
+    os.environ.setdefault("PUBG_OWNER_BAD_PAD_SEC", "12")
+    os.environ.setdefault("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")
+
+
 def pubg_passes_tiktok_combat_gate(
     video_path: Path,
     start_sec: float,

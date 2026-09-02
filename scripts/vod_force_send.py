@@ -115,10 +115,26 @@ def force_send_game(
     if game == "pubg":
         env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
         env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "6")
-        env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.042")
-        env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
         env.setdefault("PUBG_SINGLES_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"))
         env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
+        try:
+            from pubg_owner_calibration import apply_owner_send_policy
+
+            apply_owner_send_policy()
+            for key in (
+                "PUBG_PRESEND_SHOOTING_GATE",
+                "PUBG_PRESEND_SCORE_MODE",
+                "PUBG_REJECT_LOOT_WALK",
+                "PUBG_FAST_RANK_DROP_LOOT_WALK",
+                "PUBG_EARLY_PAYOFF_REJECT_SINGLES",
+                "PUBG_SINGLE_MIN_GUN_DENSITY",
+                "PUBG_CLIP_MIN_BURST_RATIO",
+                "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY",
+            ):
+                if key in os.environ:
+                    env[key] = os.environ[key]
+        except ImportError:
+            pass
 
     try:
         proc = subprocess.run(

@@ -3408,6 +3408,13 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_SKIP_INTELLICLIP", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_PANN_PROBE", "24")
     os.environ.setdefault("HIGHLIGHT_MAX_STAGE1", "32")
+    if game == "pubg":
+        try:
+            from pubg_owner_calibration import apply_owner_send_policy
+
+            apply_owner_send_policy()
+        except ImportError:
+            pass
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
     else:
