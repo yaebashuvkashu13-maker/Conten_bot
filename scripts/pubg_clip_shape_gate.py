@@ -9,11 +9,11 @@ from typing import Any
 
 
 def max_prefight_lead_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MAX_LEAD_FRAC", "0.20"))
+    return float(os.environ.get("PUBG_CLIP_MAX_LEAD_FRAC", "0.12"))
 
 
 def max_peak_position_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MAX_PEAK_FRAC", "0.78"))
+    return float(os.environ.get("PUBG_CLIP_MAX_PEAK_FRAC", "0.65"))
 
 
 def min_gunfire_coverage_frac() -> float:

@@ -980,12 +980,54 @@ def _pick_montage_rows(
     return picked
 
 
+def _pubg_duration_cap(raw_dur: float, *, single: bool) -> float:
+    """Long sustained fights may ship longer; short scraps stay capped."""
+    if single:
+        return min(float(os.environ.get("PUBG_SINGLE_MAX_SEC", "90")), max(8.0, raw_dur))
+    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
+    long_max = float(os.environ.get("PUBG_MONTAGE_PART_LONG_MAX_SEC", "45"))
+    long_min = float(os.environ.get("PUBG_LONG_FIGHT_MIN_SEC", "20"))
+    if raw_dur >= long_min:
+        return min(long_max, raw_dur)
+    return min(part_max, raw_dur)
+
+
+def _pubg_single_fallback_enabled() -> bool:
+    return os.environ.get("PUBG_VOD_SINGLE_FALLBACK", "1") == "1"
+
+
+def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | None:
+    """Tight fight bounds + shape gate; None when clip is mostly running/menu."""
+    from pubg_clip_shape_gate import validate_clip_fight_shape
+
+    prepared = dict(row)
+    clip = _prepare_montage_clip(prepared, vod, part_max=999.0, game="pubg", single=single)
+    if clip.get("shape_reject"):
+        return None
+    peak = float(prepared.get("peak_start", clip.get("peak_start", 0)) or 0)
+    start = float(clip.get("start", 0))
+    dur = float(clip.get("input_duration", 0))
+    report = clip.get("segment_report") if isinstance(clip.get("segment_report"), dict) else {}
+    if report:
+        ok, reason = validate_clip_fight_shape(start, dur, peak, report)
+        if not ok:
+            log.warning("pubg send shape reject peak=%.1f: %s", peak, reason)
+            return None
+    sid = segment_id(vod_youtube_id(vod), start)
+    prepared["segment_id"] = sid
+    prepared["start"] = start
+    prepared["peak_start"] = peak
+    prepared["clip"] = clip
+    return prepared
+
+
 def _prepare_montage_clip(
     row: dict,
     vod: Path,
     *,
     part_max: float,
     game: str = "",
+    single: bool = False,
 ) -> dict:
     """Peak-center montage parts on the fight sustain — not a fixed 14s window.
 
@@ -1043,7 +1085,8 @@ def _prepare_montage_clip(
                 peak,
                 file_duration=file_dur,
             )
-            dur = min(float(dur), part_max)
+            cap = _pubg_duration_cap(float(dur), single=single)
+            dur = min(float(dur), cap, part_max if not single else cap)
             try:
                 from pubg_montage_bounds import tighten_pubg_clip_bounds
 
@@ -1051,7 +1094,7 @@ def _prepare_montage_clip(
                 start, dur = tighten_pubg_clip_bounds(
                     start, dur, segment_report, peak=peak_val
                 )
-                dur = min(float(dur), part_max)
+                dur = min(float(dur), _pubg_duration_cap(float(dur), single=single))
                 from pubg_clip_shape_gate import validate_clip_fight_shape
 
                 ok_shape, shape_reason = validate_clip_fight_shape(
@@ -1066,6 +1109,8 @@ def _prepare_montage_clip(
                     clip["shape_reject"] = shape_reason
             except Exception:
                 pass
+            if segment_report:
+                clip["segment_report"] = segment_report
         except Exception as exc:
             log.warning("pubg fight segmenter fallback peak=%.1f: %s", peak, exc)
     if file_dur > 1.0 and start + dur > file_dur:
@@ -1542,13 +1587,30 @@ def _game_lead_sec(game: str) -> float:
 
 
 def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[dict], sig: str) -> int:
-    if _montage_enabled(game):
+    soft_min = _montage_soft_min_clips(game)
+    if _montage_enabled(game) and len(to_send) >= soft_min:
         n = _send_montage(game, token, chat_id, vod, to_send, sig)
         if n > 0:
             return n
-        if _montage_only(game):
-            log.warning("montage-only: refuse single-clip fallback game=%s", game)
-            return 0
+    pubg_single = (
+        game == "pubg"
+        and len(to_send) == 1
+        and _pubg_single_fallback_enabled()
+    )
+    if pubg_single:
+        prepared = _prepare_pubg_row_for_send(to_send[0], vod, single=True)
+        if prepared is None:
+            log.warning(
+                "pubg single fallback rejected peak=%.1f",
+                float(to_send[0].get("peak_start", 0) or 0),
+            )
+            if _montage_only(game):
+                return 0
+        else:
+            to_send = [prepared]
+    elif _montage_only(game):
+        log.warning("montage-only: refuse single-clip fallback game=%s", game)
+        return 0
     ok_cycle, cycle_reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("cycle block game=%s reason=%s", game, cycle_reason)
@@ -1625,9 +1687,10 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
             log.warning("presend REJECT %s: %s", sid, presend_reason)
             continue
         peak = int(row.get("peak_start", row["start"]))
+        out_dur = _ffprobe_duration(out)
         caption = (
             f"{game.upper()} Metro Royale #{sid}\n"
-            f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
+            f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s, {out_dur:.0f}s)\n"
             f"Metro ✓ | {presend_reason}\n"
             f"👍 Ок / 👎 Не ок"
         ) if game == "pubg" else (
@@ -2298,7 +2361,15 @@ def _scan_vod_with_adaptive(
                                     window_start,
                                     window_end - window_start,
                                     report,
+                                    peak=float(peak),
                                 )
+                                from pubg_clip_shape_gate import validate_clip_fight_shape
+
+                                ok_shape, shape_reason = validate_clip_fight_shape(
+                                    start, clip_dur, float(peak), report
+                                )
+                                if not ok_shape:
+                                    continue
                             except Exception:
                                 if _peak_too_close(float(peak), used, peak_gap):
                                     continue
@@ -2508,6 +2579,26 @@ def _scan_vod_with_adaptive(
                     len(used_peaks),
                     " — keep long vod" if long_vod else " — exhaust for discovery",
                 )
+                if game == "pubg" and len(rows) == 1 and _pubg_single_fallback_enabled():
+                    n_single = _send_batch(
+                        game, token, chat_id, vod, rows, file_sha256(vod)
+                    )
+                    if n_single > 0:
+                        if scan_funnel is not None:
+                            scan_funnel.sent = n_single
+                            scan_funnel.presend_pass = n_single
+                            scan_funnel.mark("sent")
+                        record_vod_scan(
+                            entry,
+                            sent=n_single,
+                            pool_peaks=dense_peaks,
+                            blocked=False,
+                            funnel=scan_funnel.to_dict() if scan_funnel else None,
+                        )
+                        _save_state(game, state)
+                        if clear_fast_seeds:
+                            clear_fast_seeds()
+                        return n_single
                 if long_vod:
                     # 90min+ streams still have fights outside the used gap window;
                     # exhausting them left the feed thrashing 3–5min junk for hours.

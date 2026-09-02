@@ -457,7 +457,7 @@ def resolve_pubg_fight_bounds(
     end = min(file_duration, max(end, float(timeline[right]["start"]) + sample + finale_tail))
 
     min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "10"))
-    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "28"))
+    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "55"))
     loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "4.0"))
     if kill_sec is not None and timeline:
         post_kill = [
