@@ -378,6 +378,7 @@ def run_recover(
     *,
     restart: Callable[..., tuple[bool, str]] = restart_supervisor,
     probe: Callable[[], dict[str, bool]] = running_processes,
+    force_send: bool = True,
 ) -> str:
     games = _recover_games(game)
     lock_note = clear_stale_owner_batch_lock()
@@ -394,6 +395,13 @@ def run_recover(
         reset_total += reset_inbox_exhausted(g)
         parked += park_exhausted_inbox(g)
         trimmed_used += trim_discovery_used_ids(g)
+
+    send_results: list[dict[str, object]] = []
+    if force_send and os.environ.get("VOD_RECOVER_FORCE_SEND", "1") == "1":
+        from vod_force_send import force_send_game
+
+        for g in games:
+            send_results.append(force_send_game(g, stop_running=True))
 
     restarted, restart_note = restart(force=True)
 
@@ -417,6 +425,23 @@ def run_recover(
         lines.append(f"• discovery: очищено used YouTube ID {trimmed_used}")
     else:
         lines.append("• discovery: used YouTube ID без изменений")
+    if send_results:
+        any_sent = False
+        for row in send_results:
+            g = str(row.get("game") or "?").upper()
+            sent = int(row.get("sent") or 0)
+            if sent > 0:
+                any_sent = True
+                lines.append(f"• отправка {g}: {sent} клип(ов) ✅")
+            else:
+                hint = str(row.get("hint") or row.get("flags") or row.get("error") or "").strip()
+                lines.append(f"• отправка {g}: 0 — {hint or 'гейты не прошли'}")
+        if any_sent:
+            lines.append("Видео должно прийти в этот чат в течение ~1 мин.")
+        else:
+            lines.append(estimate_video_wait_eta(game))
+    else:
+        lines.append(estimate_video_wait_eta(game))
     lines.append(f"• supervisor: {'перезапущен' if restarted else 'без перезапуска'} — {restart_note}")
     lines.append(
         "• процессы: "
@@ -425,8 +450,8 @@ def run_recover(
             for name in ("vod_supervisor", "daily_cycle", "shooter_feed", "telegram_bot")
         )
     )
-    lines.append(estimate_video_wait_eta(game))
-    lines.append("Через 1–2 мин проверь /process. Если снова тишина — /reset pubg.")
+    if not send_results or not any(int(r.get("sent") or 0) > 0 for r in send_results):
+        lines.append("Если снова тишина — /reset pubg или кнопка «Отправить сейчас».")
     return "\n".join(lines)
 
 

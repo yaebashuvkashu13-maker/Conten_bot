@@ -128,6 +128,7 @@ def test_run_recover_message(
         encoding="utf-8",
     )
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+    monkeypatch.setenv("VOD_RECOVER_FORCE_SEND", "0")
     msg = run_recover(
         "pubg",
         restart=lambda **_: (True, "test restart"),
@@ -142,6 +143,33 @@ def test_run_recover_message(
     assert state["vods"][0]["exhausted"] is False
     assert "discovery_pause_until" not in state
     assert state.get("used_youtube_ids") == []
+
+
+def test_run_recover_includes_force_send_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pubg"
+    inbox = root / "youtube_nightly" / "inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "yt_abc123xyz00.mp4").write_bytes(b"x")
+    state_path = root / "vod_segment_state.json"
+    state_path.write_text(json.dumps({"vods": [{"id": "abc123xyz00"}]}), encoding="utf-8")
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+
+    import vod_force_send
+
+    monkeypatch.setattr(
+        vod_force_send,
+        "force_send_game",
+        lambda game, **_: {"game": game, "sent": 1},
+    )
+
+    msg = run_recover(
+        "pubg",
+        restart=lambda **_: (True, "test restart"),
+        probe=lambda: {"vod_supervisor": True, "daily_cycle": True, "shooter_feed": True, "telegram_bot": True},
+    )
+    assert "отправка PUBG: 1" in msg
 
 
 def test_estimate_eta_pool_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

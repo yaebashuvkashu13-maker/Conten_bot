@@ -448,10 +448,17 @@ def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
-def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = False):
-    """Owner ops replies as plain text only (no reply/inline keyboards)."""
-    del with_inline  # call-site compat; keyboards intentionally unused
-    send_message(chat_id, text)
+def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = True):
+    """Owner ops reply with actionable inline keyboard."""
+    markup = None
+    if with_inline:
+        try:
+            from telegram_owner_controls import owner_controls_keyboard
+
+            markup = owner_controls_keyboard()
+        except Exception:
+            logging.exception("owner_controls_keyboard failed")
+    send_message(chat_id, text, reply_markup=markup)
 
 
 def remove_owner_reply_keyboard(chat_id: str | int, text: str) -> None:
@@ -1124,16 +1131,24 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
-    if data in ('ops_process', 'ops_reset', 'ops_recover'):
+    if data in ('ops_process', 'ops_reset', 'ops_recover', 'ops_send_now'):
         try:
-            from telegram_owner_controls import format_process_report, run_recover, run_reset
+            from telegram_owner_controls import (
+                format_process_report,
+                run_recover,
+                run_reset,
+                run_send_now,
+            )
 
             if data == 'ops_process':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
                 send_owner_controls(chat_id, format_process_report())
             elif data == 'ops_recover':
-                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover'}, timeout=15)
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover…'}, timeout=15)
                 send_owner_controls(chat_id, run_recover('all'))
+            elif data == 'ops_send_now':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Отправка…'}, timeout=15)
+                send_owner_controls(chat_id, run_send_now('all'))
             else:
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
                 send_owner_controls(chat_id, run_reset('all'))
@@ -2978,8 +2993,9 @@ def handle_message(message: dict):
             start_text = (
                 'Владелец. По необходимости текстом:\n'
                 '/process — что сейчас ищет пайплайн\n'
-                '/recover — починить feed, если видео не идут\n'
+                '/recover — починить feed и отправить клип\n'
                 '/reset — снова открыть исчерпанные VOD\n'
+                'Кнопки: Процесс · Recover · Отправить · Сброс\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
             )

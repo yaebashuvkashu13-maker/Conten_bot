@@ -10,10 +10,11 @@ from reset_vod_inbox_exhausted import reset_game
 from vod_game_registry import VOD_GAMES, VOD_PIPELINE_REV, load_state, save_state
 from vod_pipeline_health import health_row
 
-# Legacy callback ids (old inline messages); no keyboards are attached anymore.
+# Inline callback ids for owner control buttons.
 CALLBACK_RESET = "ops_reset"
 CALLBACK_PROCESS = "ops_process"
 CALLBACK_RECOVER = "ops_recover"
+CALLBACK_SEND_NOW = "ops_send_now"
 
 PROCESS_PATTERNS: tuple[tuple[str, str], ...] = (
     ("telegram_bot", "telegram_upload_bot.py"),
@@ -49,6 +50,22 @@ GAME_ALIASES = {
 
 DEFAULT_VOD_SEARCH_LIMIT = 80
 DEFAULT_VOD_SEARCH_BATCH = 10
+
+
+def owner_controls_keyboard() -> dict:
+    """Inline buttons under owner status / recover replies."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Процесс", "callback_data": CALLBACK_PROCESS},
+                {"text": "🔧 Recover", "callback_data": CALLBACK_RECOVER},
+            ],
+            [
+                {"text": "📤 Отправить", "callback_data": CALLBACK_SEND_NOW},
+                {"text": "🔄 Сброс", "callback_data": CALLBACK_RESET},
+            ],
+        ],
+    }
 
 
 def _norm_text(text: str) -> str:
@@ -199,7 +216,7 @@ def format_process_report(
         running.get("daily_cycle") or running.get("shooter_feed") or running.get("mlbb_feed")
     ):
         lines.append("Feed не работает — напиши /recover.")
-    lines.append("Команды: /process · /recover · /reset")
+    lines.append("Команды: /process · /recover · /reset · кнопки ниже")
     return "\n".join(lines)
 
 
@@ -215,6 +232,12 @@ def run_recover(game: str = "all") -> str:
     from vod_feed_recover import run_recover as _run_recover
 
     return _run_recover(game)
+
+
+def run_send_now(game: str = "all") -> str:
+    from vod_force_send import force_send, format_force_send_report
+
+    return format_force_send_report(force_send(game))
 
 
 def run_reset(game: str = "all") -> str:

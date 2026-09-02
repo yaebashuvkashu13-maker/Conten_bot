@@ -15,6 +15,7 @@ from telegram_owner_controls import (  # noqa: E402
     CALLBACK_PROCESS,
     CALLBACK_RECOVER,
     CALLBACK_RESET,
+    CALLBACK_SEND_NOW,
     DEFAULT_VOD_SEARCH_BATCH,
     DEFAULT_VOD_SEARCH_LIMIT,
     discovery_start_text,
@@ -22,10 +23,12 @@ from telegram_owner_controls import (  # noqa: E402
     is_process_command,
     is_recover_command,
     is_reset_command,
+    owner_controls_keyboard,
     parse_recover_game,
     parse_reset_game,
     run_recover,
     run_reset,
+    run_send_now,
     scan_start_text,
 )
 
@@ -34,6 +37,13 @@ def test_legacy_callback_ids_stable() -> None:
     assert CALLBACK_PROCESS == "ops_process"
     assert CALLBACK_RESET == "ops_reset"
     assert CALLBACK_RECOVER == "ops_recover"
+    assert CALLBACK_SEND_NOW == "ops_send_now"
+
+
+def test_owner_controls_keyboard_has_four_actions() -> None:
+    kb = owner_controls_keyboard()
+    buttons = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    assert buttons == ["ops_process", "ops_recover", "ops_send_now", "ops_reset"]
 
 
 def test_text_process_command() -> None:
@@ -133,6 +143,18 @@ def test_search_defaults_are_high_enough_to_find_vods() -> None:
     assert "80 результатов" in text
     assert "Ищу" in text
     assert "Сканирую MLBB" in scan_start_text("mlbb", "abc123xyz00")
+
+
+def test_run_send_now_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vod_force_send
+
+    monkeypatch.setattr(
+        vod_force_send,
+        "force_send",
+        lambda game: [{"game": "pubg", "sent": 0, "hint": "test_hint"}],
+    )
+    msg = run_send_now("pubg")
+    assert "test_hint" in msg
 
 
 def test_shooter_default_search_limit() -> None:
