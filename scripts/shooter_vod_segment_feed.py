@@ -3175,6 +3175,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             print(f"pipeline done sent={n} vods=1 game={game}")
             return 0
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
+        if game == "pubg" and _pubg_singles_first_enabled():
+            from pubg_vod_singles_first import clear_active_vod, get_active_vod_id
+
+            if get_active_vod_id(state) == vod_youtube_id(mp4):
+                clear_active_vod(state, reason="zero_send_try_next_vod")
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
     # All inbox files on rescan cooldown — skip re-scan this tick but still discover
