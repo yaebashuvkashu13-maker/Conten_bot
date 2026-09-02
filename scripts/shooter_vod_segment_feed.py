@@ -664,6 +664,7 @@ def _validate_shooter_presend(
     rendered: Path,
     *,
     montage_part: bool = False,
+    single: bool = False,
 ) -> tuple[bool, str, dict]:
     profile = _profile(game)
     # Gate the same window that was rendered (peak-centered clip start), not peak_start.
@@ -689,7 +690,7 @@ def _validate_shooter_presend(
             ok_shape, shape_reason = validate_clip_fight_shape(start, dur, peak, report)
             if not ok_shape:
                 return False, f"shape_{shape_reason}", {"shape_reject": shape_reason}
-        return score_pubg_window(vod, start, dur)
+        return score_pubg_window(vod, start, dur, single=single)
     if game in EXTENDED_GAMES:
         # WoT: never use PUBG gunfire shooting gate — tank cannon scores as
         # talk_low_gun (gun~0.01) and starved the SLA hour. Soft cruise impact
@@ -1717,7 +1718,9 @@ def _send_batch(
         ):
             log.warning("presend CLIP REJECT %s: clip=%.3f < %.2f", sid, clip_s, clip_min)
             continue
-        presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
+        presend_ok, presend_reason, presend_report = _validate_shooter_presend(
+            game, vod, row, out, single=pubg_single
+        )
         if not presend_ok:
             log.warning("presend REJECT %s: %s", sid, presend_reason)
             continue
@@ -3079,7 +3082,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         inbox_files = pinned
     max_vods = max(1, int(os.environ.get("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")))
     if game == "pubg" and _pubg_singles_first_enabled():
-        max_vods = 1
+        max_vods = max(1, int(os.environ.get("PUBG_SINGLES_MAX_VODS_PER_RUN", "4")))
     tried = 0
     for mp4 in inbox_files:
         if tried >= max_vods:
@@ -3104,8 +3107,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         ):
             from pubg_vod_singles_first import get_active_vod_id
 
-            if get_active_vod_id(state) == vod_youtube_id(mp4):
+            vid = vod_youtube_id(mp4)
+            if get_active_vod_id(state) == vid:
                 skip_cd = False
+            elif entry and len(entry.get("last_pool_peaks") or []) >= 1:
+                reason = str(entry.get("reject_reason") or "")
+                if reason.startswith("pubg_singles") or reason.startswith("early_payoff"):
+                    skip_cd = False
         if skip_cd:
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue

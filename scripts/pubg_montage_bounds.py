@@ -147,9 +147,10 @@ def pubg_clip_has_gunfire(
     """Reject running/menu clips — require audible gunfire in the fight core."""
     from gameplay_gate import score_pubg_gunfire_audio
 
-    min_gun = float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.055"))
-    if not single:
-        min_gun = float(os.environ.get("PUBG_CLIP_MIN_GUN_DENSITY", "0.045"))
+    min_gun = float(os.environ.get("PUBG_CLIP_MIN_GUN_DENSITY", "0.045"))
+    if single:
+        # Singles used to default stricter (0.055) than montage — that starved delivery.
+        min_gun = float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", str(min_gun)))
 
     gun, burst, _rms = score_pubg_gunfire_audio(vod, start, dur)
     if gun >= min_gun and burst >= 2.0:

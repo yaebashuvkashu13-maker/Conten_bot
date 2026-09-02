@@ -441,6 +441,11 @@ cat >"$WRAPPER_VOD" <<'EOF'
 #!/usr/bin/env bash
 # One VOD feed at a time — continuous loop, flock prevents duplicates.
 set -Eeuo pipefail
+exec 9>/tmp/mlbb_vod_supervisor.lock
+if ! flock -n 9; then
+  echo "$(date -Is) another mlbb_vod supervisor running — exit" >&2
+  exit 0
+fi
 # Do NOT `source /root/.video_bot.env` here — yt-dlp format strings contain []
 # which bash glob-expands and kills the supervisor. Python feeds load env safely.
 export CONTENT_BOT_REPO=/root/content_bot_ml

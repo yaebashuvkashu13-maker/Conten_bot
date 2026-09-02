@@ -114,7 +114,11 @@ def force_send_game(
     env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
     if game == "pubg":
         env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
-        env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "4")
+        env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "6")
+        env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.042")
+        env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+        env.setdefault("PUBG_SINGLES_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"))
+        env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
 
     try:
         proc = subprocess.run(

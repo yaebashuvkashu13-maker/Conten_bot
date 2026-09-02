@@ -159,6 +159,7 @@ def score_pubg_window(
     duration_sec: float,
     *,
     use_cache: bool = True,
+    single: bool = False,
 ) -> tuple[bool, str, dict[str, Any]]:
     """Return acceptance, reason and complete feature/penalty report."""
     if use_cache:
@@ -265,8 +266,11 @@ def score_pubg_window(
     fast_payoff_min = float(os.environ.get("PUBG_FAST_PAYOFF_MIN", "0.18"))
     fast_payoff = _clip(notification_score) * 0.65 + _clip(effective_killfeed) * 0.35
     report["fast_payoff"] = round(fast_payoff, 4)
+    early_reject = os.environ.get("PUBG_EARLY_PAYOFF_REJECT", "1") == "1"
+    if single and os.environ.get("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0") != "1":
+        early_reject = False
     if (
-        os.environ.get("PUBG_EARLY_PAYOFF_REJECT", "1") == "1"
+        early_reject
         and fast_payoff < fast_payoff_min
         and not notification_hit
         and not keyword_hit
