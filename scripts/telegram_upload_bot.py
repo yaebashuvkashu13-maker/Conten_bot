@@ -461,6 +461,36 @@ def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = Tr
     send_message(chat_id, text, reply_markup=markup)
 
 
+def _schedule_owner_recover(chat_id: str | int, game: str = 'all') -> None:
+    """Run /recover in background — feed scan can take several minutes."""
+
+    def _run() -> None:
+        try:
+            from telegram_owner_controls import run_recover
+
+            send_owner_controls(chat_id, run_recover(game))
+        except Exception as exc:
+            logging.exception('owner recover failed')
+            send_owner_controls(chat_id, f'Recover: {exc}')
+
+    threading.Thread(target=_run, daemon=True, name=f'owner-recover-{game}').start()
+
+
+def _schedule_owner_send_now(chat_id: str | int, game: str = 'all') -> None:
+    """Force one feed send cycle without blocking Telegram polling."""
+
+    def _run() -> None:
+        try:
+            from telegram_owner_controls import run_send_now
+
+            send_owner_controls(chat_id, run_send_now(game))
+        except Exception as exc:
+            logging.exception('owner send_now failed')
+            send_owner_controls(chat_id, f'Отправка: {exc}')
+
+    threading.Thread(target=_run, daemon=True, name=f'owner-send-{game}').start()
+
+
 def remove_owner_reply_keyboard(chat_id: str | int, text: str) -> None:
     """Drop any previously pinned reply keyboard."""
     send_message(
@@ -1135,9 +1165,7 @@ def handle_callback_query(query: dict) -> None:
         try:
             from telegram_owner_controls import (
                 format_process_report,
-                run_recover,
                 run_reset,
-                run_send_now,
             )
 
             if data == 'ops_process':
@@ -1145,10 +1173,15 @@ def handle_callback_query(query: dict) -> None:
                 send_owner_controls(chat_id, format_process_report())
             elif data == 'ops_recover':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover…'}, timeout=15)
-                send_owner_controls(chat_id, run_recover('all'))
+                send_owner_controls(
+                    chat_id,
+                    '🔧 Recover запущен — снимаю lock, сканирую inbox и отправляю клип…',
+                )
+                _schedule_owner_recover(chat_id, 'all')
             elif data == 'ops_send_now':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Отправка…'}, timeout=15)
-                send_owner_controls(chat_id, run_send_now('all'))
+                send_owner_controls(chat_id, '📤 Отправка запущена — один цикл feed…')
+                _schedule_owner_send_now(chat_id, 'all')
             else:
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
                 send_owner_controls(chat_id, run_reset('all'))
@@ -2959,8 +2992,6 @@ def handle_message(message: dict):
             is_reset_command,
             parse_recover_game,
             parse_reset_game,
-            run_recover,
-            run_reset,
         )
 
         if is_process_command(text):
@@ -2972,7 +3003,11 @@ def handle_message(message: dict):
             except ValueError as exc:
                 send_owner_controls(chat_id, f'Recover: {exc}')
                 return
-            send_owner_controls(chat_id, run_recover(game))
+            send_owner_controls(
+                chat_id,
+                '🔧 Recover запущен — снимаю lock, сканирую inbox и отправляю клип…',
+            )
+            _schedule_owner_recover(chat_id, game)
             return
         if is_reset_command(text) or cmd == '/reset':
             try:

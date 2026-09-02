@@ -56,6 +56,11 @@ done
 if ! pgrep -f 'telegram_upload_bot.py' >/dev/null 2>&1; then
   log "restart telegram_upload_bot"
   restart_telegram_bot
+elif [[ "$(pgrep -fc 'telegram_upload_bot.py' || echo 0)" -gt 1 ]]; then
+  log "duplicate telegram_upload_bot — keep one instance"
+  pkill -9 -f 'telegram_upload_bot.py' 2>/dev/null || true
+  sleep 1
+  restart_telegram_bot
 fi
 
 if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
