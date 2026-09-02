@@ -75,6 +75,9 @@ def test_refuse_pin_steal_while_active():
     set_active_vod(state, "AAA111aaa11")
     set_active_vod(state, "BBB222bbb22")
     assert get_active_vod_id(state) == "AAA111aaa11"
+
+
+def test_clear_active_when_exhausted():
     from pubg_vod_singles_first import get_active_vod_id, pin_inbox_to_active_vod, set_active_vod
 
     state: dict = {}
