@@ -849,7 +849,9 @@ def _dense_pool_cache_usable(entry: dict | None, cached_peaks: list[float], min_
     if int((entry or {}).get("dense_pool_version") or 0) != DENSE_POOL_VERSION:
         return False
     reason = str((entry or {}).get("reject_reason") or "")
-    return not reason.startswith("fast_montage_presend_reject")
+    if reason.startswith("fast_montage_presend_reject"):
+        return False
+    return True
 
 
 def _montage_enabled(game: str) -> bool:
@@ -2251,6 +2253,11 @@ def _scan_vod_with_adaptive(
                 )
 
                 min_clips, _max_c, gap_sec, part_max, _final = _montage_limits()
+                cache_min = (
+                    1
+                    if game == "pubg" and _pubg_singles_first_enabled()
+                    else min_clips
+                )
                 scan_funnel: ScanFunnel | None = None
                 cached_peaks = peak_values_from_entry(entry)
                 pool_target = candidate_pool_target(min_clips)
@@ -2264,7 +2271,7 @@ def _scan_vod_with_adaptive(
                         cached_peaks = [float(p) for p in pool_hit.get("ranked_peaks") or []]
                 except Exception:
                     pass
-                if _dense_pool_cache_usable(entry, cached_peaks, min_clips):
+                if _dense_pool_cache_usable(entry, cached_peaks, cache_min):
                     dense_peaks = cached_peaks
                     dense_reason = f"cached_pool_{len(cached_peaks)}"
                     scan_funnel = ScanFunnel()
@@ -3089,7 +3096,17 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             )
             continue
         entry = entries[0] if entries else None
-        if should_skip_vod_rescan(entry, game=game):
+        skip_cd = should_skip_vod_rescan(entry, game=game)
+        if (
+            skip_cd
+            and game == "pubg"
+            and _pubg_singles_first_enabled()
+        ):
+            from pubg_vod_singles_first import get_active_vod_id
+
+            if get_active_vod_id(state) == vod_youtube_id(mp4):
+                skip_cd = False
+        if skip_cd:
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
         if _ffprobe_duration(mp4) < _vod_min_sec():

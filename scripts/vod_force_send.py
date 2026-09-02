@@ -110,7 +110,11 @@ def force_send_game(
 
     env = _load_runtime_env()
     env["VOD_SEGMENT_GAME"] = game
-    env.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "3"))
+    env.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "1"))
+    env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
+    if game == "pubg":
+        env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
+        env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "4")
 
     try:
         proc = subprocess.run(

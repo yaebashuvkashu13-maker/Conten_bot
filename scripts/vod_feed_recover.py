@@ -80,6 +80,7 @@ def bump_scan_cooldowns(game: str) -> int:
             "last_scan_blocked",
             "last_pool_at",
             "reject_reason",
+            "singles_zero_send_streak",
         )
         if any(k in row for k in keys):
             for k in keys:
@@ -401,7 +402,16 @@ def run_recover(
         from vod_force_send import force_send_game
 
         for g in games:
-            send_results.append(force_send_game(g, stop_running=True))
+            send_results.append(
+                force_send_game(
+                    g,
+                    stop_running=True,
+                    timeout_sec=max(
+                        120,
+                        int(os.environ.get("VOD_RECOVER_FORCE_SEND_TIMEOUT_SEC", "1200")),
+                    ),
+                )
+            )
 
     restarted, restart_note = restart(force=True)
 
