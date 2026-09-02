@@ -27,6 +27,9 @@ def set_active_vod(state: dict, vod_id: str) -> None:
     if not vid:
         return
     prev = get_active_vod_id(state)
+    if prev and prev != vid:
+        log.warning("pubg singles refuse pin steal vod=%s while active=%s", vid, prev)
+        return
     state[ACTIVE_VOD_KEY] = vid
     if prev != vid:
         log.info("pubg singles pin vod=%s (was %s)", vid, prev or "none")
