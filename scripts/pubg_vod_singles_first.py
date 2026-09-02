@@ -184,22 +184,6 @@ def good_rows_for_vod(game: str, vod_id: str) -> list[dict]:
     return out
 
 
-def count_remaining_rows(
-    rows: list[dict],
-    *,
-    after_peak: float,
-    gap_sec: float,
-    peak_too_close,
-) -> int:
-    remaining = 0
-    for row in rows[1:]:
-        peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-        if peak_too_close(peak, [after_peak], gap_sec):
-            continue
-        remaining += 1
-    return remaining
-
-
 def pick_next_single_row(
     rows: list[dict],
     *,
@@ -345,18 +329,51 @@ def singles_first_send_cycle(
     )
     if n <= 0:
         _remember_dense_rejections(entry, [peak])
+        merged_rejected = list(rejected_peaks)
         if entry is not None:
+            for value in entry.get("dense_rejected_peaks") or []:
+                try:
+                    merged_rejected.append(float(value))
+                except (TypeError, ValueError):
+                    continue
+        row_next, _ = pick_next_single_row(
+            rows,
+            blocked_ids=blocked_ids,
+            rejected_peaks=merged_rejected,
+            gap_sec=gap_sec,
+            used_peaks=used_peaks,
+            peak_too_close=_peak_too_close,
+        )
+        if entry is not None:
+            streak = int(entry.get("singles_zero_send_streak") or 0) + 1
+            entry["singles_zero_send_streak"] = streak
+            entry["reject_reason"] = "pubg_singles_presend_reject"
             record_scan_fn(
                 entry,
                 sent=0,
                 pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
                 blocked=False,
             )
-            entry["reject_reason"] = "pubg_singles_presend_reject"
+            exhaust_streak = int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "6"))
+            if row_next is None or streak >= exhaust_streak:
+                reason = (
+                    "pubg_singles_presend_exhausted"
+                    if row_next is None
+                    else f"pubg_singles_zero_send_streak_{streak}"
+                )
+                clear_active_vod(state, reason=reason)
+                mark_exhausted_fn(state, vod, reason=reason, delete_file=False)
+                log.warning(
+                    "pubg singles give up vod=%s reason=%s rejected=%s",
+                    vod.name,
+                    reason,
+                    len(merged_rejected),
+                )
         save_state_fn(game, state)
         return 0
 
     if entry is not None:
+        entry["singles_zero_send_streak"] = 0
         if scan_funnel is not None:
             scan_funnel.sent = n
             scan_funnel.presend_pass = n

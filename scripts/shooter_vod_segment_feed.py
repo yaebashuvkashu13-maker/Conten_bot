@@ -229,6 +229,18 @@ def _bootstrap_owner_exemplars(game: str) -> dict:
 
 def _feed_lock(game: str):
     lock_path = Path(f"/tmp/{game}_vod_segment_feed.lock")
+    pid_path = Path(f"/tmp/{game}_vod_segment_feed.pid")
+    try:
+        if pid_path.exists():
+            old_pid = int(pid_path.read_text().strip() or "0")
+            if old_pid > 1:
+                os.kill(old_pid, 0)
+    except (ProcessLookupError, ValueError, OSError):
+        try:
+            lock_path.unlink(missing_ok=True)
+            pid_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     handle = lock_path.open("w")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -236,6 +248,7 @@ def _feed_lock(game: str):
         handle.close()
         log.warning("another %s feed running — exit", game)
         return None
+    pid_path.write_text(str(os.getpid()))
     return handle
 
 
@@ -3408,6 +3421,7 @@ def main() -> int:
     finally:
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         lock.close()
+        Path(f"/tmp/{game}_vod_segment_feed.pid").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
