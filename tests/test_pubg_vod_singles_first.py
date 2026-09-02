@@ -7,9 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from pubg_vod_singles_first import (  # noqa: E402
+    after_owner_label_keyboard,
+    assemble_eligible,
     pick_next_single_row,
     pubg_singles_first_enabled,
+    should_show_assemble_button,
     singles_keyboard,
+    singles_sent_for_vod,
 )
 
 
@@ -50,11 +54,66 @@ def test_pick_next_single_marks_final_when_one_left():
     assert is_final2 is True
 
 
-def test_assemble_keyboard_on_final():
+def test_assemble_keyboard_on_final(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    monkeypatch.setattr(
+        "shooter_vod_segment_store.load_feed_sent",
+        lambda _game: {"vid_100", "vid_200"},
+    )
     markup = singles_keyboard("pubg", "vid_100", "vid", show_assemble=True)
     texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
     assert "🔧 Собрать склейку" in texts
     assert "⏭ Пропустить" in texts
+
+
+def test_no_assemble_when_only_one_single_sent(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+
+    def _one_sent(_game):
+        return {"vid_100"}
+
+    monkeypatch.setattr(
+        "shooter_vod_segment_store.load_feed_sent",
+        _one_sent,
+    )
+    assert singles_sent_for_vod("pubg", "vid") == 1
+    assert assemble_eligible("pubg", "vid") is False
+    assert should_show_assemble_button("pubg", "vid", singles_final=True) is False
+    markup = singles_keyboard("pubg", "vid_100", "vid", show_assemble=True)
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
+
+
+def test_assemble_after_label_when_two_singles_and_final(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+
+    def _two_sent(_game):
+        return {"vid_100", "vid_200"}
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": sid == "vid_200"}
+
+    monkeypatch.setattr("shooter_vod_segment_store.load_feed_sent", _two_sent)
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_200", "good")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" in texts
+
+
+def test_no_assemble_after_label_on_non_final(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+
+    def _two_sent(_game):
+        return {"vid_100", "vid_200"}
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": False}
+
+    monkeypatch.setattr("shooter_vod_segment_store.load_feed_sent", _two_sent)
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_100", "good")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
 
 
 def test_pin_inbox_to_active_vod():

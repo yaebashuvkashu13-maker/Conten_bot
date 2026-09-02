@@ -96,6 +96,34 @@ def _callback_prefix(game: str) -> str:
     return f"{game.strip().lower()}_vseg"
 
 
+def vod_id_from_segment_id(segment_id: str) -> str:
+    sid = segment_id.strip()
+    if "_" in sid:
+        return sid.rsplit("_", 1)[0]
+    return sid
+
+
+def singles_sent_for_vod(game: str, vod_id: str) -> int:
+    """How many singles were Telegram-delivered for this YouTube VOD."""
+    from shooter_vod_segment_store import load_feed_sent
+
+    prefix = f"{vod_id.strip()}_"
+    return sum(1 for sid in load_feed_sent(game) if str(sid).startswith(prefix))
+
+
+def assemble_eligible(game: str, vod_id: str) -> bool:
+    """Montage needs at least two delivered singles from the same VOD."""
+    return singles_sent_for_vod(game, vod_id) >= 2
+
+
+def should_show_assemble_button(game: str, vod_id: str, *, singles_final: bool) -> bool:
+    if game.strip().lower() != "pubg" or not pubg_singles_first_enabled():
+        return False
+    if not singles_final:
+        return False
+    return assemble_eligible(game, vod_id)
+
+
 def singles_keyboard(
     game: str,
     segment_id: str,
@@ -106,7 +134,7 @@ def singles_keyboard(
     from shooter_vod_segment_store import inline_keyboard_markup
 
     markup = inline_keyboard_markup(game, segment_id)
-    if show_assemble:
+    if show_assemble and assemble_eligible(game, vod_id):
         prefix = _callback_prefix(game)
         markup["inline_keyboard"].append(
             [
@@ -134,6 +162,8 @@ def singles_final_labeled_keyboard(
         reason=reason,
         segment_id=segment_id if label == "good" else "",
     )
+    if not assemble_eligible(game, vod_id):
+        return base
     prefix = _callback_prefix(game)
     base["inline_keyboard"].append(
         [
@@ -142,6 +172,47 @@ def singles_final_labeled_keyboard(
         ]
     )
     return base
+
+
+def after_owner_label_keyboard(
+    game: str,
+    segment_id: str,
+    label: str,
+    *,
+    reason: str = "",
+) -> dict:
+    """Keyboard after 👍/👎 — keep assemble row on last single when 2+ clips sent."""
+    from shooter_vod_segment_store import (
+        find_segment,
+        labeled_keyboard_markup,
+        montage_labeled_keyboard_markup,
+        montage_parts_from_segment,
+    )
+
+    parts = montage_parts_from_segment(game, segment_id)
+    if parts:
+        return montage_labeled_keyboard_markup(game, parts, reason=reason)
+
+    seg_row = find_segment(game, segment_id) or {}
+    vod_id = str(seg_row.get("vod_id") or vod_id_from_segment_id(segment_id))
+    if should_show_assemble_button(
+        game,
+        vod_id,
+        singles_final=bool(seg_row.get("singles_final")),
+    ):
+        return singles_final_labeled_keyboard(
+            game,
+            segment_id,
+            vod_id,
+            label,
+            reason=reason,
+        )
+    return labeled_keyboard_markup(
+        game,
+        label,
+        reason=reason,
+        segment_id=segment_id if label == "good" else "",
+    )
 
 
 def assemble_skip_keyboard(game: str) -> dict:
@@ -325,7 +396,12 @@ def singles_first_send_cycle(
 
         set_active_vod(state, vid)
 
-        markup = singles_keyboard(game, str(row["segment_id"]), vid, show_assemble=is_final)
+        markup = singles_keyboard(
+            game,
+            str(row["segment_id"]),
+            vid,
+            show_assemble=should_show_assemble_button(game, vid, singles_final=is_final),
+        )
         peak = float(row.get("peak_start", row.get("start", 0)) or 0)
         n = _send_batch(
             game,
