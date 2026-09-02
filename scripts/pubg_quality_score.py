@@ -47,7 +47,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
     try:
-        from pubg_owner_calibration import segment_overlaps_owner_label
+        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
 
         return bool(
             segment_overlaps_owner_label(
@@ -55,7 +55,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
                 start_sec,
                 duration_sec,
                 label="bad",
-                pad_sec=8.0,
+                pad_sec=owner_bad_pad_sec(),
             )
         )
     except Exception:
@@ -216,11 +216,45 @@ def score_pubg_window(
     panns_gun = float(panns.get("panns_gun_max", 0.0))
     center_text = float(shoot.get("center_text", 0.0))
 
+    if os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1") == "1":
+        from pubg_shooting_gate import pubg_passes_shooting_gate
+
+        shoot_ok, shoot_reason, shoot_row = pubg_passes_shooting_gate(
+            video_path,
+            start_sec,
+            duration_sec,
+            panns_gun_max=panns_gun,
+        )
+        report["shooting_gate"] = shoot_row
+        if not shoot_ok:
+            if _owner_redo_trusted(video_path, start_sec, duration_sec):
+                report["owner_redo_trusted"] = True
+            else:
+                report["hard_reject"] = shoot_reason.split("=", 1)[0]
+                return _finish(False, shoot_reason)
+
     loot_walk = (
         (motion >= 0.030 and gun < 0.040)
         or (motion < 0.014 and gun < 0.028)
         or (center_text > 0.14 and gun < 0.040)
     )
+    try:
+        from gameplay_gate import segment_looks_like_pubg_loot_or_walk
+
+        crop = tuple(shoot["crop_box"]) if shoot.get("crop_box") else None
+        if crop is not None:
+            crop = tuple(int(v) for v in crop)
+        if segment_looks_like_pubg_loot_or_walk(
+            video_path,
+            start_sec,
+            duration_sec,
+            crop_box=crop,
+            gunfire_density=gun,
+            burst_ratio=burst,
+        ):
+            loot_walk = True
+    except Exception:
+        pass
     report["loot_walk"] = bool(loot_walk)
     report["legacy_gate_ok"] = not loot_walk
 

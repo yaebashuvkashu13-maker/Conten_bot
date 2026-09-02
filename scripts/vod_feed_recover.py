@@ -396,6 +396,10 @@ def run_recover(
         reset_total += reset_inbox_exhausted(g)
         parked += park_exhausted_inbox(g)
         trimmed_used += trim_discovery_used_ids(g)
+        if g == "pubg":
+            state = load_state(g)
+            if state.pop("pubg_singles_active_vod", None):
+                save_state(g, state)
 
     send_results: list[dict[str, object]] = []
     if force_send and os.environ.get("VOD_RECOVER_FORCE_SEND", "1") == "1":

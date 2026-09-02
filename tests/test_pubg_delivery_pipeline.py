@@ -43,9 +43,12 @@ def test_montage_part_skips_metro_segment_gate(monkeypatch: pytest.MonkeyPatch) 
     row = {"clip": {"start": 10.0, "output_duration": 14.0}, "peak_start": 12.0, "start": 10.0}
 
     with patch("pubg_metro_royale_gate.segment_looks_metro_royale") as seg_metro:
-        with patch("pubg_shooting_gate.pubg_passes_shooting_gate", return_value=(True, "ok", {})):
-            with patch("highlight_scorer.score_panns_audio", return_value={"panns_gun_max": 0.5}):
-                with patch("shooter_author_kill_gate.author_kill_window_ok", return_value=(True, "ok", {})):
+        with patch("shooter_vod_segment_feed.pubg_passes_combat_gate", return_value=(True, "ok", {})):
+            with patch("shooter_vod_segment_feed._ffprobe_duration", return_value=14.0):
+                with patch(
+                    "shooter_author_kill_gate.author_kill_window_ok",
+                    return_value=(True, "ok", {}),
+                ):
                     seg_metro.return_value = (False, "classic_outdoor_sky=2/3")
                     ok, reason, _ = _validate_shooter_presend(
                         "pubg", vod, row, rendered, montage_part=True

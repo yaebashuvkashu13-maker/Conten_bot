@@ -13,14 +13,28 @@ from pubg_owner_calibration import pubg_passes_owner_heuristics  # noqa: E402
 def test_panns_trust_overrides_talk_menu(monkeypatch) -> None:
     monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
     ok, reason = pubg_passes_owner_heuristics(
-        0.0,
-        0.0,
+        0.042,
+        4.0,
         0.26,
         0.18,
         panns_gun_max=0.52,
     )
     assert ok is True
     assert reason.startswith("panns_trust=")
+
+
+def test_panns_trust_rejects_run_without_gunfire(monkeypatch) -> None:
+    """PANNs alone must not pass empty run — owner bank zv3JymSZOb0 run-no-shots."""
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
+    ok, reason = pubg_passes_owner_heuristics(
+        0.0,
+        0.0,
+        0.26,
+        0.18,
+        panns_gun_max=0.52,
+    )
+    assert ok is False
+    assert reason.startswith("panns_no_gun=")
 
 
 def test_talk_menu_when_panns_weak(monkeypatch) -> None:

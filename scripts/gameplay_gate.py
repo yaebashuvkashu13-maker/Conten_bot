@@ -957,13 +957,15 @@ def segment_looks_like_pubg_loot_or_walk(
     *,
     crop_box: tuple[int, int, int, int] | None = None,
     gunfire_density: float,
+    burst_ratio: float = 0.0,
 ) -> bool:
-    """Running/looting/inventory — motion without gunfire transients."""
+    """Running/looting/inventory/sky — motion without sustained gunfire."""
     center_motion, _mini_delta, _skill_delta, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
     )
     min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
-    if gunfire_density >= min_gun:
+    min_burst = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "4.8"))
+    if gunfire_density >= min_gun and burst_ratio >= min_burst * 0.85:
         return False
     if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
         return True
@@ -1228,6 +1230,7 @@ def segment_is_valid_for_montage(
                 duration_sec,
                 crop_box=crop_box,
                 gunfire_density=gunfire_density,
+                burst_ratio=burst_ratio,
             )
             and gunfire_density < loot_cap
         ):

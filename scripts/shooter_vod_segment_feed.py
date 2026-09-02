@@ -725,7 +725,11 @@ def _validate_shooter_presend(
     # Quality-strict PUBG requires the same presend stack as single sends.
     shooting_only = (
         montage_part
-        and os.environ.get("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "1") == "1"
+        and os.environ.get(
+            "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY",
+            "0" if game == "pubg" else "1",
+        )
+        == "1"
         and not (game == "pubg" and pubg_quality_strict())
     )
     if shooting_only and game in ("pubg", "standoff", "wot"):

@@ -422,6 +422,7 @@ def pubg_passes_combat_gate(
         duration_sec,
         crop_box=crop,
         gunfire_density=gun_density,
+        burst_ratio=float(shoot_row.get("burst_ratio", 0.0)),
     ):
         return False, f"loot_walk=density{gun_density:.3f}", out
 

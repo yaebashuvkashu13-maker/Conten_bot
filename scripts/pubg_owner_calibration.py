@@ -91,16 +91,29 @@ def segment_overlaps_owner_label(
     duration_sec: float,
     *,
     label: str,
-    pad_sec: float = 8.0,
+    pad_sec: float | None = None,
 ) -> bool:
     end_sec = start_sec + duration_sec
     for row in labels_for_video(video_path):
         if row.get("label") != label:
             continue
         center = float(row["time_sec"])
-        if start_sec - pad_sec <= center <= end_sec + pad_sec:
+        note = str(row.get("note") or row.get("reason") or "")
+        pad = float(pad_sec) if pad_sec is not None else owner_bad_pad_sec(note if label == "bad" else "")
+        if label == "good" and pad_sec is None:
+            pad = float(os.environ.get("PUBG_OWNER_GOOD_PAD_SEC", "10"))
+        if start_sec - pad <= center <= end_sec + pad:
             return True
     return False
+
+
+def owner_bad_pad_sec(note: str = "") -> float:
+    """Block radius around owner 👎 — wider for run/empty/loot notes from label bank."""
+    base = float(os.environ.get("PUBG_OWNER_BAD_PAD_SEC", "12"))
+    text = note.strip().lower()
+    if any(token in text for token in ("run", "empty", "loot", "walk", "fly", "no fight", "no_combat")):
+        return max(base, float(os.environ.get("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")))
+    return base
 
 
 def has_owner_labels(video_path: Path) -> bool:
@@ -147,8 +160,14 @@ def pubg_passes_owner_heuristics(
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
     panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    min_gun_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_GUN", "0.040"))
+    min_burst_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_BURST", "3.0"))
     if panns_gun_max >= panns_trust:
-        return True, f"panns_trust={panns_gun_max:.3f}"
+        if gunfire_density >= min_gun_panns and (
+            burst_ratio >= min_burst_panns or gunfire_density >= 0.055
+        ):
+            return True, f"panns_trust={panns_gun_max:.3f}"
+        return False, f"panns_no_gun=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
     if relax in ("1", "2"):
         if panns_gun_max >= max(0.22, panns_trust - 0.08) and gunfire_density >= 0.020:

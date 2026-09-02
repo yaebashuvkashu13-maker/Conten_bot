@@ -117,9 +117,21 @@ def rank_peaks_fast(
     meta: dict[float, dict[str, Any]] = {}
     scored: list[tuple[float, float, float]] = []
     min_payoff = float(os.environ.get("PUBG_FAST_RANK_MIN_PAYOFF", "0.12"))
+    drop_loot = os.environ.get("PUBG_FAST_RANK_DROP_LOOT_WALK", "1") == "1"
     for i, peak in enumerate(probe):
+        if profile == "pubg":
+            try:
+                from shooter_owner_montage import _is_owner_rejected_peak
+
+                if _is_owner_rejected_peak("pubg", video_path, float(peak)):
+                    meta[float(peak)] = {"owner_bad_block": True, "fast_score": 0.0}
+                    continue
+            except Exception:
+                pass
         row = score_peak_fast(video_path, peak, part_sec=part_sec, profile=profile)
         meta[float(peak)] = row
+        if drop_loot and row.get("loot_walk") and not row.get("notification_hit"):
+            continue
         score = float(row["fast_score"])
         if row.get("notification_hit"):
             score += 0.22

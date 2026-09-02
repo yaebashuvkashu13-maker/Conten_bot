@@ -27,8 +27,7 @@ def test_tighten_pubg_clip_trims_loot_tail():
         peak=1164.0,
     )
     assert start >= 1150.5
-    assert dur >= 18.0
-    assert start + dur <= 1182.5 + 0.01
+    assert start + dur <= 1167.0 + 0.01
 
 
 def test_single_tighten_keeps_full_fight_not_kill_tail():

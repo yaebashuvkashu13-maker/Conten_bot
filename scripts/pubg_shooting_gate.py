@@ -113,10 +113,10 @@ def pubg_passes_shooting_gate(
     Reject sniper_hold without visible aim motion, and all forbidden gate reasons.
     """
     try:
-        from pubg_owner_calibration import segment_overlaps_owner_label
+        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
 
         if segment_overlaps_owner_label(
-            video_path, start_sec, duration_sec, label="bad", pad_sec=14.0
+            video_path, start_sec, duration_sec, label="bad", pad_sec=owner_bad_pad_sec()
         ):
             metrics = pubg_probe_segment(video_path, start_sec, duration_sec, crop_box=crop_box)
             return False, "owner_bad_window", metrics
@@ -175,6 +175,7 @@ def pubg_passes_shooting_gate(
         duration_sec,
         crop_box=crop,
         gunfire_density=gun,
+        burst_ratio=burst,
     ):
         # Strong PANNs gunfire: don't call continuous auto-fire "loot".
         # Spike-density alone under-counts sprays; require audible energy too.
@@ -204,18 +205,22 @@ def pubg_passes_shooting_gate(
 
     if reason_is_forbidden(gate_reason):
         base = str(gate_reason).split("=", 1)[0]
-        # Visual run/loot/fake-gun must not override clear gunfire evidence —
-        # but weak PANNs (0.28) was shipping trash walk segments.
-        panns_floor = float(
-            os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", os.environ.get("PUBG_PANNS_TRUST_MIN", "0.40"))
-        )
-        panns_ok = panns_gun_max >= panns_floor
-        if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"} and (
-            strict_audio
-            or (heuristic_audio and gun >= min_gun * 0.85)
-            or (panns_ok and gun >= min_gun * 0.85)
-        ):
-            metrics["visual_override"] = gate_reason
+        try:
+            from pubg_owner_calibration import segment_overlaps_owner_label
+
+            owner_good = segment_overlaps_owner_label(
+                video_path, start_sec, duration_sec, label="good", pad_sec=10.0
+            )
+        except ImportError:
+            owner_good = False
+        # Never forgive run/loot/fake-gun without real sustained shots — unless owner 👍 on this window.
+        if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"}:
+            if owner_good and strict_audio:
+                metrics["visual_override"] = gate_reason
+            elif strict_audio and burst >= min_burst and gun >= min_gun:
+                metrics["visual_override"] = gate_reason
+            else:
+                return False, gate_reason, metrics
         else:
             return False, gate_reason, metrics
 
