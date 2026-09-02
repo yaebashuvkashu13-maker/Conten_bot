@@ -1753,10 +1753,22 @@ def _send_batch(
     return sent
 
 
-def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> tuple:
+def _inbox_order_key(
+    mp4: Path,
+    registry: list[dict],
+    *,
+    game: str = "pubg",
+    state: dict | None = None,
+) -> tuple:
     """Pool-ready VODs first (skip re-probe); else long combat; zombie blocked last."""
     from pubg_metro_royale_gate import title_metro_hint
     from youtube_game_prefs import russian_score
+
+    singles_pin = 1
+    if game == "pubg" and state is not None:
+        from pubg_vod_singles_first import inbox_active_vod_priority
+
+        singles_pin = inbox_active_vod_priority(state, mp4)
 
     entry = next((r for r in registry if r.get("path") == str(mp4)), None)
     scanned = float((entry or {}).get("last_scan_at") or 0)
@@ -1796,6 +1808,7 @@ def _inbox_order_key(mp4: Path, registry: list[dict], *, game: str = "pubg") -> 
     # Ready: more cached peaks first (almost-montage), then shorter VOD for faster retry.
     dur_sort = int(dur) if pool_ready == 0 else -int(dur)
     return (
+        singles_pin,
         pool_ready,
         zombie_blocked,
         1 if scanned else 0,
@@ -1821,6 +1834,7 @@ def _scan_vod(
     *,
     soften_level: int = 0,
     entry: dict | None = None,
+    state: dict | None = None,
 ) -> int:
     profile = _profile(game)
     sig = file_sha256(vod)
@@ -2022,7 +2036,12 @@ def _scan_vod(
             return 0
         rows.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
         if pubg_singles:
-            from pubg_vod_singles_first import pick_next_single_row, singles_keyboard
+            from pubg_vod_singles_first import (
+                clear_active_vod,
+                pick_next_single_row,
+                set_active_vod,
+                singles_keyboard,
+            )
 
             row, is_final = pick_next_single_row(
                 rows,
@@ -2033,11 +2052,15 @@ def _scan_vod(
                 peak_too_close=_peak_too_close,
             )
             if row is None:
+                if state is not None:
+                    clear_active_vod(state, reason="pubg_singles_exhausted")
                 if entry is not None:
                     record_vod_scan(entry, sent=0, pool_peaks=pool_peaks, blocked=True, pool=pool)
                     entry["exhausted"] = True
                     entry["reject_reason"] = "pubg_singles_exhausted"
                 return 0
+            if state is not None:
+                set_active_vod(state, vid)
             markup = singles_keyboard(
                 game,
                 str(row["segment_id"]),
@@ -2061,6 +2084,8 @@ def _scan_vod(
                     if is_final:
                         entry["exhausted"] = True
                         entry["reject_reason"] = "pubg_singles_complete"
+                        if state is not None:
+                            clear_active_vod(state, reason="pubg_singles_complete")
                 return n
             skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
             peak_tries += 1
@@ -2810,7 +2835,7 @@ def _scan_vod_with_adaptive(
 
     if pubg_quality_strict() and game == "pubg":
         try:
-            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=0, entry=entry)
+            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=0, entry=entry, state=state)
         finally:
             if clear_fast_seeds is not None:
                 clear_fast_seeds()
@@ -2858,7 +2883,7 @@ def _scan_vod_with_adaptive(
                     level,
                     vod.name,
                 )
-            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
+            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry, state=state)
             if game == "pubg":
                 os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
     finally:
@@ -3006,15 +3031,35 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         discover_fn=_discover_candidates,
         download_fn=_download_vod,
     )
-    if inbox_files := sorted(_inbox_mp4_files(inbox), key=lambda p: _inbox_order_key(p, registry, game=game)):
+    if inbox_files := sorted(
+        _inbox_mp4_files(inbox),
+        key=lambda p: _inbox_order_key(p, registry, game=game, state=state),
+    ):
         if bg_dl.enabled() and inbox_files:
             bg_dl.start_if_idle(used)
     purged = _purge_junk_inbox_vods(game, inbox)
     if purged:
         log.info("purged short inbox vods game=%s count=%s", game, purged)
 
-    inbox_files = sorted(_inbox_mp4_files(inbox), key=lambda p: _inbox_order_key(p, registry, game=game))
+    inbox_files = sorted(
+        _inbox_mp4_files(inbox),
+        key=lambda p: _inbox_order_key(p, registry, game=game, state=state),
+    )
+    if game == "pubg" and _pubg_singles_first_enabled():
+        from pubg_vod_singles_first import get_active_vod_id, pin_inbox_to_active_vod
+
+        pinned = pin_inbox_to_active_vod(state, inbox_files, registry)
+        if len(pinned) < len(inbox_files):
+            log.info(
+                "pubg singles inbox pin active=%s files=%s→%s",
+                get_active_vod_id(state),
+                len(inbox_files),
+                len(pinned),
+            )
+        inbox_files = pinned
     max_vods = max(1, int(os.environ.get("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")))
+    if game == "pubg" and _pubg_singles_first_enabled():
+        max_vods = 1
     tried = 0
     for mp4 in inbox_files:
         if tried >= max_vods:

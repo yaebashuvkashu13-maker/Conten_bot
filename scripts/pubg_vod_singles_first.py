@@ -15,6 +15,80 @@ def pubg_singles_first_enabled() -> bool:
     return os.environ.get("PUBG_VOD_SINGLES_FIRST", "1") == "1"
 
 
+ACTIVE_VOD_KEY = "pubg_singles_active_vod"
+
+
+def get_active_vod_id(state: dict) -> str:
+    return str(state.get(ACTIVE_VOD_KEY) or "").strip()
+
+
+def set_active_vod(state: dict, vod_id: str) -> None:
+    vid = vod_id.strip()
+    if not vid:
+        return
+    prev = get_active_vod_id(state)
+    state[ACTIVE_VOD_KEY] = vid
+    if prev != vid:
+        log.info("pubg singles pin vod=%s (was %s)", vid, prev or "none")
+
+
+def clear_active_vod(state: dict, *, reason: str = "") -> None:
+    prev = get_active_vod_id(state)
+    if prev:
+        state.pop(ACTIVE_VOD_KEY, None)
+        log.info("pubg singles unpin vod=%s reason=%s", prev, reason or "done")
+
+
+def _vod_registry_entries_for_id(registry: list[dict], vod_id: str) -> list[dict]:
+    out: list[dict] = []
+    for row in registry:
+        rid = str(row.get("id") or "").strip()
+        path = str(row.get("path") or "")
+        stem = _vod_id_from_path(Path(path)) if path else ""
+        if rid == vod_id or stem == vod_id:
+            out.append(row)
+    return out
+
+
+def pin_inbox_to_active_vod(
+    state: dict,
+    inbox_files: list[Path],
+    registry: list[dict],
+) -> list[Path]:
+    """While a VOD is in progress, scan/send only that file — no inbox interleaving."""
+    if not pubg_singles_first_enabled():
+        return inbox_files
+    active = get_active_vod_id(state)
+    if not active:
+        return inbox_files
+    matching = [p for p in inbox_files if _vod_id_from_path(p) == active]
+    if not matching:
+        clear_active_vod(state, reason="file_missing")
+        return inbox_files
+    entries = _vod_registry_entries_for_id(registry, active)
+    if entries and any(r.get("exhausted") for r in entries):
+        clear_active_vod(state, reason="exhausted")
+        return inbox_files
+    log.debug("pubg singles inbox pinned to %s (skip %s others)", active, len(inbox_files) - 1)
+    return matching
+
+
+def _vod_id_from_path(mp4: Path) -> str:
+    from shooter_vod_segment_store import vod_youtube_id
+
+    return vod_youtube_id(mp4)
+
+
+def inbox_active_vod_priority(state: dict, mp4: Path) -> int:
+    """Sort key fragment: active VOD always first when pinning not yet set."""
+    if not pubg_singles_first_enabled():
+        return 1
+    active = get_active_vod_id(state)
+    if not active:
+        return 1
+    return 0 if _vod_id_from_path(mp4) == active else 2
+
+
 def _callback_prefix(game: str) -> str:
     return f"{game.strip().lower()}_vseg"
 
@@ -245,10 +319,13 @@ def singles_first_send_cycle(
         peak_too_close=_peak_too_close,
     )
     if row is None:
+        clear_active_vod(state, reason="pubg_singles_exhausted")
         mark_exhausted_fn(state, vod, reason="pubg_singles_exhausted", delete_file=False)
         save_state_fn(game, state)
         log.info("pubg singles-first exhaust vod=%s — no sendable peaks", vod.name)
         return 0
+
+    set_active_vod(state, vid)
 
     markup = singles_keyboard(game, str(row["segment_id"]), vid, show_assemble=is_final)
     peak = float(row.get("peak_start", row.get("start", 0)) or 0)
@@ -291,6 +368,7 @@ def singles_first_send_cycle(
         entry.pop("reject_reason", None)
 
     if is_final:
+        clear_active_vod(state, reason="pubg_singles_complete")
         mark_exhausted_fn(state, vod, reason="pubg_singles_complete", delete_file=False)
         log.info(
             "pubg singles-first FINAL vod=%s peak=%.1f sent=%s — assemble button",

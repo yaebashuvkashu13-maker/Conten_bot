@@ -55,3 +55,26 @@ def test_assemble_keyboard_on_final():
     texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
     assert "🔧 Собрать склейку" in texts
     assert "⏭ Пропустить" in texts
+
+
+def test_pin_inbox_to_active_vod():
+    from pubg_vod_singles_first import pin_inbox_to_active_vod, set_active_vod
+
+    state: dict = {}
+    files = [Path("yt_AAA111aaa11.mp4"), Path("yt_BBB222bbb22.mp4")]
+    registry = [{"id": "AAA111aaa11", "path": str(files[0]), "exhausted": False}]
+    set_active_vod(state, "AAA111aaa11")
+    pinned = pin_inbox_to_active_vod(state, files, registry)
+    assert pinned == [files[0]]
+
+
+def test_clear_active_when_exhausted():
+    from pubg_vod_singles_first import get_active_vod_id, pin_inbox_to_active_vod, set_active_vod
+
+    state: dict = {}
+    files = [Path("yt_AAA111aaa11.mp4"), Path("yt_BBB222bbb22.mp4")]
+    registry = [{"id": "AAA111aaa11", "path": str(files[0]), "exhausted": True}]
+    set_active_vod(state, "AAA111aaa11")
+    pinned = pin_inbox_to_active_vod(state, files, registry)
+    assert len(pinned) == 2
+    assert get_active_vod_id(state) == ""
