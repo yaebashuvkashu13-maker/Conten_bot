@@ -325,9 +325,14 @@ def resolve_pubg_fight_bounds(
     video_path: Path,
     peak_sec: float,
     *,
-    file_duration: float,
+    file_duration: float | None = None,
 ) -> tuple[float, float, dict[str, Any]]:
     """Resolve adaptive clip start/duration around one detected combat peak."""
+    if file_duration is None or float(file_duration) <= 1.0:
+        from shooter_vod_segment_feed import _ffprobe_duration
+
+        file_duration = float(_ffprobe_duration(video_path))
+    file_duration = float(file_duration)
     stat = video_path.stat()
     key = (str(video_path.resolve()), stat.st_mtime_ns, round(float(peak_sec)), round(file_duration))
     if key in _CACHE:

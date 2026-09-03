@@ -83,6 +83,116 @@ def _ensure_payoff_in_clip(
     return float(start), float(dur)
 
 
+def _gun_bin_active(row: dict[str, Any]) -> bool:
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
+    active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
+    try:
+        return float(row.get("gun", 0.0) or 0.0) >= gun_min or float(row.get("score", 0.0) or 0.0) >= active_min
+    except (TypeError, ValueError):
+        return False
+
+
+def clip_ends_on_gunfire(
+    start: float,
+    dur: float,
+    report: dict[str, Any],
+    *,
+    tail_sec: float | None = None,
+) -> bool:
+    """True when the last seconds of the clip are still mid-burst."""
+    timeline = report.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return False
+    tail = float(tail_sec if tail_sec is not None else os.environ.get("PUBG_CLIP_END_GUN_TAIL_SEC", "2.5"))
+    end = float(start) + float(dur)
+    tail_start = end - tail
+    for row in timeline:
+        try:
+            t = float(row["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t < tail_start - 0.5 or t > end + 1.0:
+            continue
+        if _gun_bin_active(row):
+            return True
+    return False
+
+
+def extend_end_past_active_gunfire(
+    start: float,
+    dur: float,
+    report: dict[str, Any],
+    *,
+    max_dur: float,
+    single: bool = False,
+) -> tuple[float, float]:
+    """Do not cut while the player is still shooting — extend to quiet (or max)."""
+    timeline = report.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return float(start), float(dur)
+    if not clip_ends_on_gunfire(start, dur, report):
+        return float(start), float(dur)
+
+    bin_sec = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+    quiet_need = float(os.environ.get("PUBG_CLIP_END_QUIET_SEC", "2.5"))
+    start_f = float(start)
+    end = start_f + float(dur)
+    hard_cap = start_f + max(8.0, float(max_dur))
+    fight_end = report.get("fight_end") or report.get("fight_end_sec")
+    if fight_end is not None:
+        hard_cap = min(hard_cap, float(fight_end) + quiet_need)
+
+    rows = sorted(timeline, key=lambda r: float(r.get("start") or 0))
+    new_end = end
+    quiet = 0.0
+    for row in rows:
+        try:
+            t = float(row["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t < end - bin_sec:
+            continue
+        if t > hard_cap:
+            break
+        if _gun_bin_active(row):
+            quiet = 0.0
+            new_end = max(new_end, min(hard_cap, t + bin_sec))
+            continue
+        if t >= end - bin_sec:
+            quiet += bin_sec
+            new_end = max(new_end, min(hard_cap, t + 0.5))
+            if quiet >= quiet_need:
+                break
+
+    new_dur = max(float(dur), new_end - start_f)
+    # If still ends hot at hard cap, shift window forward to land on quiet when possible.
+    if clip_ends_on_gunfire(start_f, new_dur, report) and single:
+        quiet_t = None
+        quiet = 0.0
+        for row in rows:
+            try:
+                t = float(row["start"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if t < start_f:
+                continue
+            if _gun_bin_active(row):
+                quiet = 0.0
+                continue
+            quiet += bin_sec
+            if quiet >= quiet_need:
+                quiet_t = t + 0.5
+                break
+        if quiet_t is not None and quiet_t > start_f + 8.0:
+            new_end = min(hard_cap, quiet_t)
+            new_start = max(0.0, new_end - float(max_dur))
+            shoot = report.get("shooting_start")
+            if shoot is not None:
+                new_start = min(new_start, float(shoot))
+            return float(new_start), float(max(8.0, new_end - new_start))
+    return float(start_f), float(new_dur)
+
+
 def tighten_pubg_clip_bounds(
     start: float,
     dur: float,
@@ -91,7 +201,10 @@ def tighten_pubg_clip_bounds(
     peak: float | None = None,
     single: bool = False,
 ) -> tuple[float, float]:
-    """Start at gunfire, end soon after kill — no loot-walk tail."""
+    """Start at gunfire, end soon after kill — no loot-walk tail.
+
+    Never end mid-burst: if the tail is still gunfire, extend through the fight.
+    """
     from pubg_clip_shape_gate import (
         aggressive_tighten_for_shape,
         max_peak_position_frac,
@@ -104,6 +217,11 @@ def tighten_pubg_clip_bounds(
     min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "18"))
     if single:
         min_dur = max(min_dur, float(os.environ.get("PUBG_SINGLE_MIN_SEC", "20")))
+    max_dur = float(
+        os.environ.get("PUBG_SINGLE_MAX_SEC", "90")
+        if single
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")
+    )
 
     shoot = report.get("shooting_start")
     if shoot is not None:
@@ -112,7 +230,23 @@ def tighten_pubg_clip_bounds(
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     end = float(start) + float(dur)
 
-    if kill is not None and not single:
+    # Montage: prefer end soon after kill unless gunfire continues hard after kill.
+    gun_continues_after_kill = False
+    if kill is not None and isinstance(report.get("timeline"), list):
+        for row in report["timeline"]:
+            try:
+                t = float(row["start"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if t < float(kill) + 1.0:
+                continue
+            if t > float(kill) + 8.0:
+                break
+            if _gun_bin_active(row):
+                gun_continues_after_kill = True
+                break
+
+    if kill is not None and not single and not gun_continues_after_kill:
         end = min(end, float(kill) + post_kill)
     if fight_end is not None:
         end = min(end, float(fight_end))
@@ -121,6 +255,7 @@ def tighten_pubg_clip_bounds(
     long_loot_tail = (
         kill is not None
         and not single
+        and not gun_continues_after_kill
         and fight_end is not None
         and kill_end is not None
         and float(fight_end) > kill_end + 2.0
@@ -146,7 +281,9 @@ def tighten_pubg_clip_bounds(
                 dur = max(min_dur, end - start)
             ok, reason = validate_clip_fight_shape(start, dur, float(peak), report)
         if not ok:
-            alt_start, alt_dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
+            alt_start, alt_dur = aggressive_tighten_for_shape(
+                start, dur, float(peak), report, single=single
+            )
             if long_loot_tail and kill_end is not None:
                 alt_end = min(alt_start + alt_dur, float(kill_end))
                 alt_dur = max(0.0, alt_end - alt_start)
@@ -162,6 +299,11 @@ def tighten_pubg_clip_bounds(
             start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
             if not long_loot_tail:
                 dur = max(min_dur, dur)
+
+    start, dur = extend_end_past_active_gunfire(
+        start, dur, report, max_dur=max_dur, single=single
+    )
+    dur = min(float(dur), float(max_dur))
     return float(start), float(dur)
 
 

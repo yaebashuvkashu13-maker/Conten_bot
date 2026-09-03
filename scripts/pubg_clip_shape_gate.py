@@ -56,6 +56,15 @@ def validate_clip_fight_shape(
     if coverage is not None and 0.0 < coverage < min_gunfire_coverage_frac():
         return False, f"low_gun_coverage={coverage:.2f}"
 
+    # Reject clips that cut mid-burst (owner: ends on shooting).
+    try:
+        from pubg_montage_bounds import clip_ends_on_gunfire
+
+        if clip_ends_on_gunfire(start_f, dur_f, report):
+            return False, "ends_on_gunfire"
+    except Exception:
+        pass
+
     return True, "fight_shape_ok"
 
 
@@ -90,9 +99,16 @@ def aggressive_tighten_for_shape(
     dur: float,
     peak: float,
     report: dict[str, Any],
+    *,
+    single: bool = False,
 ) -> tuple[float, float]:
     """Trim to gunfire window when shape gate would fail."""
-    from pubg_montage_bounds import clip_post_kill_sec, clip_pre_shoot_sec
+    from pubg_montage_bounds import (
+        clip_post_kill_sec,
+        clip_pre_shoot_sec,
+        extend_end_past_active_gunfire,
+        _gun_bin_active,
+    )
 
     shoot = report.get("shooting_start")
     if shoot is None:
@@ -103,7 +119,18 @@ def aggressive_tighten_for_shape(
     kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     end = float(start) + float(dur)
-    if kill is not None:
+    gun_continues = False
+    if kill is not None and isinstance(report.get("timeline"), list):
+        for row in report["timeline"]:
+            try:
+                t = float(row["start"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if float(kill) + 1.0 <= t <= float(kill) + 10.0 and _gun_bin_active(row):
+                gun_continues = True
+                break
+    # Singles / continuing fights: keep full fight, never crush to kill+post mid-burst.
+    if kill is not None and not (single or gun_continues):
         end = min(end, float(kill) + post)
     if fight_end is not None:
         end = min(end, float(fight_end))
@@ -114,7 +141,7 @@ def aggressive_tighten_for_shape(
         end = float(peak) + post
     dur = max(8.0, end - start)
     ok, _reason = validate_clip_fight_shape(start, dur, peak, report)
-    if not ok:
+    if not ok and not single and not gun_continues:
         want = min(float(dur), float(os.environ.get("PUBG_CLIP_TARGET_FIGHT_SEC", "16")))
         start = max(0.0, float(shoot) - want * 0.35)
         end = start + want
@@ -125,6 +152,14 @@ def aggressive_tighten_for_shape(
         if rel_peak > max_peak_position_frac():
             start = max(0.0, float(peak) - dur * 0.42)
             dur = max(8.0, end - start)
+    max_dur = float(
+        os.environ.get("PUBG_SINGLE_MAX_SEC", "90")
+        if single
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")
+    )
+    start, dur = extend_end_past_active_gunfire(
+        start, dur, report, max_dur=max_dur, single=single
+    )
     return float(start), float(dur)
 
 
