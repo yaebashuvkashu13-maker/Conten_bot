@@ -18,6 +18,16 @@ log = logging.getLogger("shooter_vod_fast_scan")
 AUDIO_GENERATOR_VERSION = 4
 
 
+def dense_pcm_max_sec() -> float:
+    """Cap full-VOD PCM extract so a 2–3h file cannot freeze the feed."""
+    return max(600.0, float(os.environ.get("SHOOTER_VOD_DENSE_PCM_MAX_SEC", "4200")))
+
+
+def dense_scan_span(duration: float, skip: float) -> float:
+    raw = max(0.0, float(duration) - float(skip) - 12.0)
+    return min(raw, dense_pcm_max_sec())
+
+
 def candidate_pool_target(min_clips: int = 2) -> int:
     """Keep enough ranked moments to survive strict presend false positives."""
     raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
@@ -408,6 +418,11 @@ def discover_montage_gun_peaks(
     if not offsets:
         return [], "dense_probe_too_short"
 
+    scan_end = skip + dense_scan_span(dur, skip)
+    offsets = [t for t in offsets if float(t) <= max(skip, scan_end - WINDOW_SEC)]
+    if not offsets:
+        return [], "dense_probe_too_short"
+
     if funnel is not None:
         funnel.offsets_probed = len(offsets)
 
@@ -418,7 +433,7 @@ def discover_montage_gun_peaks(
         try:
             from vod_audio_batch import VodPcmCache, extract_vod_pcm_s16, pcm_to_float
 
-            pcm = extract_vod_pcm_s16(video_path, skip, max(0.0, dur - skip - 12.0))
+            pcm = extract_vod_pcm_s16(video_path, skip, dense_scan_span(dur, skip))
             pcm_float = pcm_to_float(pcm)
             if pcm_float.size > 0:
                 pcm_cache = VodPcmCache(pcm_float, base_sec=skip)
@@ -461,7 +476,7 @@ def discover_montage_gun_peaks(
             )
 
             if batch_enabled():
-                pcm = extract_vod_pcm_s16(video_path, skip, max(0.0, dur - skip - 12.0))
+                pcm = extract_vod_pcm_s16(video_path, skip, dense_scan_span(dur, skip))
                 pcm_float = pcm_to_float(pcm)
                 if pcm_float.size > 0:
                     pcm_cache = VodPcmCache(pcm_float, base_sec=skip)

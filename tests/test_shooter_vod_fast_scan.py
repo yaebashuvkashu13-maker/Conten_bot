@@ -259,7 +259,7 @@ def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path)
         return_value={"panns_gun_max": 0.01},
     ), patch(
         "shooter_vod_fast_scan.snap_peak_to_gunfire",
-        side_effect=lambda _path, center, **_kwargs: (center, 0.03, 0.01),
+        side_effect=lambda _path, center, **_kwargs: (center, 0.08, 0.05),
     ):
         peaks, reason = discover_montage_gun_peaks(
             vod,
@@ -269,3 +269,13 @@ def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path)
         )
     assert len(peaks) == 10
     assert "audio_generator" in reason
+
+
+def test_dense_scan_span_caps_long_vod(monkeypatch):
+    from shooter_vod_fast_scan import dense_scan_span
+
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PCM_MAX_SEC", "4200")
+    # 2.7h VOD would previously extract ~9974s of PCM and freeze the feed.
+    assert dense_scan_span(10034.0, 60.0) == 4200.0
+    assert dense_scan_span(2400.0, 60.0) < 2400.0
+    assert dense_scan_span(2400.0, 60.0) == 2400.0 - 60.0 - 12.0
