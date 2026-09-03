@@ -448,23 +448,35 @@ def prepare_pubg_assemble_row(
     if owner_approved:
         presend_env["PUBG_OWNER_REDO"] = "1"
         presend_env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
-    prev: dict[str, str | None] = {k: os.environ.get(k) for k in presend_env}
-    try:
-        for key, value in presend_env.items():
-            os.environ[key] = value
-        ok, presend_reason, quality_report = score_pubg_window(
-            vod,
-            start,
-            dur,
-            use_cache=False,
-            single=True,
+    if owner_approved:
+        # Owner already 👍'd this fight. Do not re-run CLIP/PANNs (10+ min per
+        # peak on CPU) — re-trim bounds + gunfire only, then ship.
+        quality_report = dict((owner_row or {}).get("quality_metrics") or {})
+        quality_report["owner_assemble_trusted"] = True
+        quality_report.setdefault(
+            "quality_score",
+            float((owner_row or {}).get("score") or 0.5),
         )
-    finally:
-        for key, old in prev.items():
-            if old is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = old
+        ok, presend_reason = True, "owner_assemble_skip_presend"
+        log.info("assemble skip CLIP presend peak=%.1f — owner 👍", peak_val)
+    else:
+        prev: dict[str, str | None] = {k: os.environ.get(k) for k in presend_env}
+        try:
+            for key, value in presend_env.items():
+                os.environ[key] = value
+            ok, presend_reason, quality_report = score_pubg_window(
+                vod,
+                start,
+                dur,
+                use_cache=False,
+                single=True,
+            )
+        finally:
+            for key, old in prev.items():
+                if old is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old
 
     if not ok and not owner_approved:
         log.warning("assemble presend reject peak=%.1f: %s", peak_val, presend_reason)
