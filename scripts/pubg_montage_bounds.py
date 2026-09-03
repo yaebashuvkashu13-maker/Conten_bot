@@ -325,6 +325,28 @@ def _gunfire_end_from_report(report: dict[str, Any], *, fallback: float) -> floa
     return float(fallback)
 
 
+def _assemble_gun_bins(
+    report: dict[str, Any],
+    *,
+    min_gun: float = 0.020,
+) -> list[float]:
+    times: list[float] = []
+    for row in report.get("timeline") or []:
+        try:
+            gun = float(row.get("gun", 0.0) or 0.0)
+            score = float(row.get("score", 0.0) or 0.0)
+            if gun >= min_gun or score >= max(0.35, min_gun * 10.0):
+                times.append(float(row["start"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return times
+
+
+def assemble_max_part_sec() -> float:
+    """Hard cap for one 👍 part in owner montage — long windows = loot/run padding."""
+    return max(14.0, float(os.environ.get("PUBG_ASSEMBLE_MAX_SEC", "28")))
+
+
 def tighten_pubg_assemble_bounds(
     start: float,
     dur: float,
@@ -332,30 +354,96 @@ def tighten_pubg_assemble_bounds(
     *,
     peak: float,
     file_dur: float,
+    owner_start: float | None = None,
+    owner_dur: float | None = None,
 ) -> tuple[float, float]:
-    """Re-trim 👍 singles for montage: drop loot-walk, keep gunfire ± pad sec."""
+    """Re-trim 👍 singles for montage: drop loot-walk, keep gunfire ± pad, hard-cap length.
+
+    Tovruh 5266 shipped ~38–60s of quiet run because shooting_start/fight_end came from a
+    zero-gun timeline and bounds_locked skipped the montage part ceiling. Prefer real gun
+    bins; if none, fall back to the owner's labeled window or a tight peak pocket.
+    """
     from pubg_clip_shape_gate import aggressive_tighten_for_shape, validate_clip_fight_shape
 
     pad = assemble_gun_pad_sec()
     min_dur = max(8.0, float(os.environ.get("PUBG_ASSEMBLE_MIN_SEC", "10")))
-    shoot = report.get("shooting_start")
-    core_start = float(shoot) if shoot is not None else float(peak)
-    core_end = _gunfire_end_from_report(report, fallback=float(start) + float(dur))
-    start = max(0.0, core_start - pad)
-    end = min(float(file_dur), core_end + pad)
+    max_dur = assemble_max_part_sec()
+    peak_f = float(peak)
+    file_d = float(file_dur)
+
+    gun_bins = _assemble_gun_bins(report)
+    kill = report.get("kill_sec")
+    if kill is None:
+        kill = report.get("kill_time")
+    kill_f = float(kill) if kill is not None else None
+
+    if gun_bins:
+        # Drop leading/trailing silence: only first→last audible gun + pad.
+        core_start = min(gun_bins)
+        core_end = max(gun_bins) + float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+        if kill_f is not None:
+            core_end = max(core_end, kill_f + clip_post_kill_sec())
+        start = max(0.0, core_start - pad)
+        end = min(file_d, core_end + pad)
+    elif owner_start is not None and owner_dur is not None and float(owner_dur) >= min_dur:
+        # Segmenter lied (all-zero timeline) — keep the window the owner actually 👍'd.
+        start = max(0.0, float(owner_start))
+        end = min(file_d, start + min(float(owner_dur), max_dur))
+        dur = max(min_dur, end - start)
+        log.info(
+            "assemble tighten peak=%.1f: no gun bins — use owner window %.1f+%.1f",
+            peak_f,
+            start,
+            dur,
+        )
+        return float(start), float(min(dur, max_dur))
+    else:
+        # Quiet fallback: short pocket around peak, not a 55s resolve window of running.
+        pre = float(os.environ.get("PUBG_ASSEMBLE_QUIET_PRE_SEC", "6"))
+        post = float(os.environ.get("PUBG_ASSEMBLE_QUIET_POST_SEC", "12"))
+        start = max(0.0, peak_f - pre)
+        end = min(file_d, peak_f + post)
+        log.info(
+            "assemble tighten peak=%.1f: no gun bins / no owner window — tight pocket %.1f→%.1f",
+            peak_f,
+            start,
+            end,
+        )
+
     dur = max(min_dur, end - start)
 
-    ok, reason = validate_clip_fight_shape(start, dur, float(peak), report)
+    # Cap long fights: keep the gun-dense / kill side of the window, drop run-in/loot.
+    if dur > max_dur:
+        end = start + dur
+        # Prefer ending on kill+post when present; else keep the last max_dur ending at core_end.
+        if kill_f is not None and start <= kill_f <= end:
+            end = min(file_d, max(kill_f + clip_post_kill_sec(), peak_f + pad))
+            start = max(0.0, end - max_dur)
+            if start > peak_f - 3.0:
+                start = max(0.0, peak_f - 3.0)
+                end = min(file_d, start + max_dur)
+        else:
+            # Slide window to cover peak, bias toward the end of gunfire (payoff).
+            end = min(file_d, max(end, peak_f + pad))
+            start = max(0.0, end - max_dur)
+            if peak_f < start:
+                start = max(0.0, peak_f - pad)
+                end = min(file_d, start + max_dur)
+        dur = max(min_dur, end - start)
+        dur = min(dur, max_dur)
+
+    ok, reason = validate_clip_fight_shape(start, dur, peak_f, report)
     if not ok:
-        alt_start, alt_dur = aggressive_tighten_for_shape(start, dur, float(peak), report)
+        alt_start, alt_dur = aggressive_tighten_for_shape(start, dur, peak_f, report)
+        alt_dur = min(float(alt_dur), max_dur)
         if alt_dur >= min_dur:
-            alt_ok, _ = validate_clip_fight_shape(alt_start, alt_dur, float(peak), report)
+            alt_ok, _ = validate_clip_fight_shape(alt_start, alt_dur, peak_f, report)
             if alt_ok:
                 start, dur = alt_start, alt_dur
                 ok = True
         if not ok:
-            log.warning("assemble tighten shape reject peak=%.1f: %s", peak, reason)
-    return float(start), float(dur)
+            log.warning("assemble tighten shape reject peak=%.1f: %s", peak_f, reason)
+    return float(start), float(min(dur, max_dur))
 
 
 def pubg_clip_has_gunfire(

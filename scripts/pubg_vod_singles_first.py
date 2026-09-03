@@ -414,6 +414,19 @@ def prepare_pubg_assemble_row(
     peak_val = float(peak)
     owner_approved = owner_row is not None
     file_dur = _ffprobe_duration(vod)
+    owner_start = None
+    owner_dur = None
+    if owner_row is not None:
+        try:
+            if owner_row.get("start") is not None:
+                owner_start = float(owner_row.get("start"))
+            qm = owner_row.get("quality_metrics") or {}
+            if owner_row.get("duration") is not None:
+                owner_dur = float(owner_row.get("duration"))
+            elif qm.get("duration") is not None:
+                owner_dur = float(qm.get("duration"))
+        except (TypeError, ValueError):
+            owner_start = owner_dur = None
     start, dur, report = resolve_pubg_fight_bounds(vod, peak_val, file_duration=file_dur)
     start, dur = tighten_pubg_assemble_bounds(
         start,
@@ -421,6 +434,8 @@ def prepare_pubg_assemble_row(
         report,
         peak=peak_val,
         file_dur=file_dur,
+        owner_start=owner_start,
+        owner_dur=owner_dur,
     )
     ok_shape, shape_reason = validate_clip_fight_shape(start, dur, peak_val, report)
     if not ok_shape and not owner_approved:

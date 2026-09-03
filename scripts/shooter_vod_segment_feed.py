@@ -1067,6 +1067,37 @@ def _prepare_montage_clip(
     """
     clip = dict(row.get("clip") or {})
     if clip.get("bounds_locked"):
+        # Owner assemble locks fight bounds, but still clamp runaway loot/run padding
+        # so a 60s quiet window cannot bypass the montage part ceiling.
+        peak = float(row.get("peak_start", clip.get("peak_start", clip.get("start", 0))) or 0)
+        start = float(clip.get("start", row.get("start", 0)) or 0)
+        dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 0)
+        if dur <= 0:
+            return clip
+        if dur > float(part_max) + 0.25:
+            end = start + dur
+            # Keep the peak inside the capped window; bias toward the end (payoff).
+            new_end = min(end, max(peak + 4.0, start + float(part_max)))
+            new_start = max(0.0, new_end - float(part_max))
+            if peak < new_start:
+                new_start = max(0.0, peak - 4.0)
+                new_end = new_start + float(part_max)
+            clip = {
+                **clip,
+                "start": round(new_start, 2),
+                "peak_start": peak,
+                "fight_end": round(new_start + float(part_max), 2),
+                "input_duration": round(min(dur, float(part_max)), 2),
+                "output_duration": round(min(dur, float(part_max)), 2),
+                "bounds_locked_clamped": True,
+            }
+            log.info(
+                "montage clamp locked bounds peak=%.1f %.1fs → %.1fs (part_max=%.1f)",
+                peak,
+                dur,
+                float(clip["input_duration"]),
+                float(part_max),
+            )
         return clip
     start_hint = float(row.get("start", clip.get("start", 0)) or 0)
     peak = float(row.get("peak_start", clip.get("peak_start", start_hint)) or start_hint)

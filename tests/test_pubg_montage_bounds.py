@@ -124,3 +124,70 @@ def test_dedupe_peaks_by_fight_window_drops_same_fight(monkeypatch):
     assert 334.0 in out
     assert len(out) == 2
     assert not (231.0 in out and 243.0 in out)
+
+
+def test_assemble_tighten_strips_loot_and_caps_length():
+    """Tovruh 1534: resolve gave 60s including post-kill run — assemble must cut to gun+kill."""
+    from pubg_montage_bounds import tighten_pubg_assemble_bounds
+
+    timeline = []
+    for t in range(1519, 1572, 2):
+        gun = 0.08 if t <= 1565 else 0.0
+        timeline.append({"start": float(t), "gun": gun, "score": 0.8 if gun else 0.0})
+    report = {
+        "shooting_start": 1519.7,
+        "kill_sec": 1566.46,
+        "fight_end": 1576.2,
+        "timeline": timeline,
+    }
+    start, dur = tighten_pubg_assemble_bounds(
+        1521.2,
+        55.0,
+        report,
+        peak=1533.7,
+        file_dur=11642.0,
+    )
+    assert dur <= 28.0 + 0.01
+    assert start >= 1515.0
+    assert start + dur <= 1572.0
+    assert start <= 1533.7 <= start + dur
+
+
+def test_assemble_tighten_zero_gun_uses_owner_window():
+    """Tovruh 5266: all-zero timeline must not ship a 38s quiet run — use owner 👍 window."""
+    from pubg_montage_bounds import tighten_pubg_assemble_bounds
+
+    timeline = [{"start": float(t), "gun": 0.0, "score": 0.0} for t in range(5250, 5292, 2)]
+    report = {
+        "shooting_start": 5254.0,
+        "fight_end": 5284.5,
+        "timeline": timeline,
+    }
+    start, dur = tighten_pubg_assemble_bounds(
+        5263.0,
+        21.5,
+        report,
+        peak=5266.0,
+        file_dur=11642.0,
+        owner_start=5245.5,
+        owner_dur=27.64,
+    )
+    assert abs(start - 5245.5) < 0.05
+    assert abs(dur - 27.64) < 0.05
+
+
+def test_assemble_tighten_zero_gun_without_owner_uses_peak_pocket():
+    from pubg_montage_bounds import tighten_pubg_assemble_bounds
+
+    report = {"timeline": [{"start": 100.0, "gun": 0.0, "score": 0.0}], "fight_end": 160.0}
+    start, dur = tighten_pubg_assemble_bounds(
+        100.0,
+        55.0,
+        report,
+        peak=120.0,
+        file_dur=500.0,
+    )
+    assert dur <= 28.0
+    assert start <= 120.0 <= start + dur
+    assert start >= 120.0 - 8.0
+
