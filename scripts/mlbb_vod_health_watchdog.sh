@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Keep VPS in VOD-only shape: kill Shorts/zombies, ensure one VOD feed alive.
 # Hang detection + auto-recover: scripts/vod_hang_detector.py --tick
-set -Eeuo pipefail
+set -uo pipefail
 ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 LOG=/root/data/mlbb/logs/mlbb_vod_health.log
 BIN=/usr/local/bin
@@ -89,10 +89,11 @@ if [[ ! -f "$DETECTOR" ]]; then
   DETECTOR="$BIN/vod_hang_detector.py"
 fi
 if [[ -f "$DETECTOR" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE" 2>/dev/null || true
-  set +a
+  # Load only safe key=value lines — skip yt-dlp format strings with [] that bash glob-expands
+  while IFS='=' read -r key val; do
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    export "$key"="$val"
+  done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" 2>/dev/null | grep -v 'FORMAT\|YTDL\|yt_dlp\|YT_DLP' || true)
   export CONTENT_BOT_REPO="$REPO"
   export VOD_SILENCE_WARN_SEC="${VOD_SILENCE_WARN_SEC:-3600}"
   export VOD_SILENCE_HEAL_SEC="${VOD_SILENCE_HEAL_SEC:-5400}"
