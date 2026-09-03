@@ -360,7 +360,7 @@ def detect_hang() -> HangReport:
 
 
 def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
-    min_sec = min_sec or max(600, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "1800")))
+    min_sec = min_sec or max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
     stamp = DEFAULT_HEAL_STAMP
     if not stamp.is_file():
         return True
@@ -397,6 +397,56 @@ def _send_tg(text: str) -> bool:
         return False
 
 
+def _recover_lock_path() -> Path:
+    return Path(os.environ.get("VOD_HANG_RECOVER_LOCK", "/tmp/vod_hang_recover.lock"))
+
+
+def _recover_already_running() -> bool:
+    """True if a previous --recover / force_send is still alive."""
+    lock = _recover_lock_path()
+    if not lock.is_file():
+        return False
+    try:
+        pid = int(lock.read_text(encoding="utf-8").strip() or "0")
+    except (OSError, ValueError):
+        return False
+    if pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        lock.unlink(missing_ok=True)
+        return False
+
+
+def _acquire_recover_lock() -> bool:
+    if _recover_already_running():
+        return False
+    path = _recover_lock_path()
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    return True
+
+
+def _release_recover_lock() -> None:
+    path = _recover_lock_path()
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _start_systemd_feed() -> None:
+    for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
+        subprocess.run(
+            ["systemctl", "start", unit],
+            check=False,
+            timeout=20,
+            capture_output=True,
+        )
+
+
 def auto_unload_and_recover(
     report: HangReport,
     *,
@@ -404,16 +454,21 @@ def auto_unload_and_recover(
     force: bool = False,
     background: bool = False,
 ) -> dict:
-    """Execute recovery ladder based on hang class."""
+    """Execute recovery ladder based on hang class.
+
+    Critical: always respect heal cooldown. Spamming recover every 5 minutes
+    kills in-progress downloads and guarantees silence forever.
+    """
     if report.ok and not force:
         return {"action": "none", "ok": True}
 
-    critical = any(
-        r.startswith(("silence_", "zero_send_streak_", "stuck_child_", "heartbeat_stuck_"))
-        for r in report.reasons
-    )
-    if not force and not critical and not _heal_cooldown_ok():
-        return {"action": "cooldown", "reasons": report.reasons}
+    # NEVER bypass cooldown for silence — that caused the heal storm.
+    cooldown_sec = max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
+    if not force and not _heal_cooldown_ok(cooldown_sec):
+        return {"action": "cooldown", "reasons": report.reasons, "cooldown_sec": cooldown_sec}
+
+    if not force and _recover_already_running():
+        return {"action": "recover_in_progress", "reasons": report.reasons}
 
     actions: list[str] = []
 
@@ -435,7 +490,7 @@ def auto_unload_and_recover(
         clear_discovery_pauses(g)
         bump_scan_cooldowns(g)
         park_exhausted_inbox(g)
-        unparked = unpark_ready_vods(g, limit=max(2, int(os.environ.get("VOD_RECOVER_UNPARK", "3"))))
+        unparked = unpark_ready_vods(g, limit=max(2, int(os.environ.get("VOD_RECOVER_UNPARK", "4"))))
         if unparked:
             actions.append(f"unpark_{g}={unparked}")
 
@@ -445,10 +500,13 @@ def auto_unload_and_recover(
     ) or report.zero_send_streak >= int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6"))
 
     if need_full_recover:
+        # Mark heal FIRST so concurrent cron ticks see cooldown immediately.
+        _mark_heal("full_recover_pending")
         clear_stale_owner_batch_lock()
         clear_feed_locks()
-        stop_feed_processes(game)
         if background and os.environ.get("VOD_HEAL_BACKGROUND", "1") == "1":
+            if _recover_already_running():
+                return {"action": "recover_in_progress", "actions": actions, "reasons": report.reasons}
             script = Path(__file__).resolve()
             subprocess.Popen(
                 [sys.executable, str(script), "--recover", "--game", game],
@@ -463,25 +521,34 @@ def auto_unload_and_recover(
                 "actions": actions,
                 "reasons": report.reasons,
             }
-        msg = run_recover(game, force_send=True)
-        restarted, _ = restart_supervisor(force=True)
-        actions.append("full_recover")
-        if restarted:
-            actions.append("supervisor_restarted")
-        _mark_heal("full_recover")
-        return {
-            "action": "full_recover",
-            "actions": actions,
-            "reasons": report.reasons,
-            "recover_tail": msg.splitlines()[-6:],
-        }
+        if not _acquire_recover_lock():
+            return {"action": "recover_in_progress", "actions": actions, "reasons": report.reasons}
+        try:
+            # Prefer inbox scan: only stop competing feeds, then force_send once.
+            stop_feed_processes(game)
+            msg = run_recover(game, force_send=True)
+            _start_systemd_feed()
+            restarted, _ = restart_supervisor(force=True)
+            actions.append("full_recover")
+            if restarted:
+                actions.append("supervisor_restarted")
+            _mark_heal("full_recover")
+            return {
+                "action": "full_recover",
+                "actions": actions,
+                "reasons": report.reasons,
+                "recover_tail": msg.splitlines()[-6:],
+            }
+        finally:
+            _release_recover_lock()
 
-    # Light heal: restart feed only
+    # Light heal: restart feed only — never spam this either.
+    _mark_heal("light_restart")
     clear_feed_locks()
     stop_feed_processes(game)
+    _start_systemd_feed()
     restarted, note = restart_supervisor(force=True)
     actions.append(f"light_restart:{note}")
-    _mark_heal("light_restart")
     return {"action": "light_restart", "actions": actions, "reasons": report.reasons}
 
 
@@ -497,6 +564,7 @@ def maybe_silence_alert(report: HangReport) -> bool:
         except (json.JSONDecodeError, OSError):
             state = {}
     last = float(state.get("last_alert_ts") or 0)
+    # Don't spam: at most once per alert_sec window.
     if now - last < alert_sec:
         return False
     hours = int(report.last_send_age_sec // 3600)
@@ -506,7 +574,8 @@ def maybe_silence_alert(report: HangReport) -> bool:
         f"⚠️ VOD feed: тишина ~{hours}ч {mins}м\n"
         f"Причины: {reasons}\n"
         f"zero_send_streak={report.zero_send_streak}\n"
-        f"Автовосстановление запущено."
+        f"Автовосстановление запущено (следующее не раньше чем через "
+        f"{int(os.environ.get('VOD_HEAL_COOLDOWN_SEC', '2700')) // 60} мин)."
     )
     if _send_tg(text):
         DEFAULT_ALERT_STAMP.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
@@ -527,9 +596,11 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
         "stuck_parts": len(report.stuck_parts),
     }
     if not report.ok or force:
-        maybe_silence_alert(report)
+        # Alert only when we actually heal (not on cooldown spam).
         heal = auto_unload_and_recover(report, game=game, force=force, background=not force)
         out["heal"] = heal
+        if heal.get("action") not in ("none", "cooldown", "recover_in_progress"):
+            maybe_silence_alert(report)
     return out
 
 
@@ -564,7 +635,7 @@ def main() -> int:
 
     if args.recover:
         report = detect_hang()
-        result = auto_unload_and_recover(report, game=args.game, force=True)
+        result = auto_unload_and_recover(report, game=args.game, force=True, background=False)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
