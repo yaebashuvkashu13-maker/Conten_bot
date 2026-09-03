@@ -165,3 +165,35 @@ def test_clear_active_when_exhausted():
     pinned = pin_inbox_to_active_vod(state, files, registry)
     assert len(pinned) == 2
     assert get_active_vod_id(state) == ""
+
+
+def test_resolve_vod_path_finds_parked(tmp_path, monkeypatch):
+    from pubg_vod_singles_first import resolve_vod_path
+
+    inbox = tmp_path / "inbox"
+    parked = tmp_path / "parked"
+    inbox.mkdir()
+    parked.mkdir()
+    vod = parked / "yt_Tovruh33adY.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("PUBG_VOD_INBOX", str(inbox))
+    assert resolve_vod_path("Tovruh33adY") == vod
+
+
+def test_segment_belongs_to_vod_owner_prefix():
+    from pubg_vod_singles_first import segment_belongs_to_vod
+
+    assert segment_belongs_to_vod("Tovruh33adY_1526", "Tovruh33adY")
+    assert segment_belongs_to_vod("owner_yt_Tovruh33adY_6604", "Tovruh33adY")
+    assert not segment_belongs_to_vod("6tBEG4XXXP8_1065", "Tovruh33adY")
+
+
+def test_enqueue_assemble_dedupes(tmp_path, monkeypatch):
+    from pubg_vod_singles_first import enqueue_assemble_job, load_pending_assemble
+
+    path = tmp_path / "pending.json"
+    monkeypatch.setattr("pubg_vod_singles_first.PENDING_ASSEMBLE_PATH", path)
+    first = enqueue_assemble_job("pubg", "Tovruh33adY", "1")
+    second = enqueue_assemble_job("pubg", "Tovruh33adY", "1")
+    assert first["id"] == second["id"]
+    assert len(load_pending_assemble()) == 1

@@ -138,7 +138,7 @@ def last_send_age_sec() -> float:
     return best
 
 
-def zero_send_streak(max_lines: int = 8000) -> int:
+def zero_send_streak(max_lines: int = 40000) -> int:
     log_path = feed_log_path()
     if not log_path.is_file():
         return 0
@@ -365,7 +365,86 @@ def detect_hang() -> HangReport:
     if report.stuck_parts:
         report.add(f"stuck_part_{len(report.stuck_parts)}")
 
+    mined_drought = max(900, int(os.environ.get("VOD_MINED_INBOX_DROUGHT_SEC", "1800")))
+    if report.last_send_age_sec is not None and report.last_send_age_sec >= mined_drought:
+        try:
+            mined = inbox_mined_out("pubg")
+        except Exception:
+            mined = False
+        if mined:
+            report.add(f"mined_inbox_drought_{int(report.last_send_age_sec)}s")
+
     return report
+
+
+def _entry_remaining_peaks(game: str, vid: str, row: dict) -> int | None:
+    peaks = row.get("last_pool_peaks") or []
+    if not peaks or not vid:
+        return None
+    try:
+        from shooter_vod_segment_store import load_feed_sent, load_index
+        from vod_peak_gap import used_peak_times_shooter
+
+        sent_set = load_feed_sent(game)
+        used = used_peak_times_shooter(vid, sent_set, load_index(game).get("segments", []))
+    except Exception:
+        return None
+    left = 0
+    for peak in peaks:
+        try:
+            p = float(peak)
+        except (TypeError, ValueError):
+            continue
+        if not any(abs(p - u) <= 8.0 for u in used):
+            left += 1
+    return left
+
+
+def inbox_mined_out(game: str = "pubg") -> bool:
+    """True when every inbox VOD has a known peak pool and zero unsent peaks."""
+    inbox = spec(game).inbox()
+    if not inbox.is_dir():
+        return False
+    mp4s = [p for p in inbox.glob("yt_*.mp4") if p.is_file()]
+    if not mp4s:
+        return False
+    state = load_state(game)
+    registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+    mined = 0
+    for mp4 in mp4s:
+        vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+        row = registry.get(vid) or {}
+        left = _entry_remaining_peaks(game, vid, row)
+        if left is None or left > 0:
+            return False
+        mined += 1
+    return mined > 0
+
+
+def mark_mined_inbox_exhausted(game: str = "pubg") -> list[str]:
+    """Stamp mined-out inbox VODs exhausted so recover can park + unpark."""
+    inbox = spec(game).inbox()
+    if not inbox.is_dir():
+        return []
+    state = load_state(game)
+    registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+    marked: list[str] = []
+    changed = False
+    for mp4 in list(inbox.glob("yt_*.mp4")):
+        vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+        row = registry.get(vid)
+        if row is None:
+            continue
+        left = _entry_remaining_peaks(game, vid, row)
+        if left != 0:
+            continue
+        row["exhausted"] = True
+        row["reject_reason"] = "pubg_mined_out"
+        marked.append(mp4.name)
+        changed = True
+    if changed:
+        save_state(game, state)
+    return marked
 
 
 def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
@@ -494,6 +573,10 @@ def auto_unload_and_recover(
     unloaded = unload_stuck_inbox_vod(game)
     if unloaded:
         actions.append(f"unloaded_inbox={unloaded}")
+
+    mined_marked = mark_mined_inbox_exhausted(game)
+    if mined_marked:
+        actions.append(f"mined_exhausted={','.join(mined_marked)}")
 
     for g in ([game] if game != "all" else list(VOD_GAMES)):
         clear_discovery_pauses(g)

@@ -3,12 +3,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 log = logging.getLogger("pubg_vod_singles_first")
+
+ASSEMBLE_LOG = Path(os.environ.get("PUBG_ASSEMBLE_LOG", "/root/data/mlbb/assemble_montage.log"))
+PENDING_ASSEMBLE_PATH = Path(
+    os.environ.get("PUBG_PENDING_ASSEMBLE", "/root/data/pubg/pending_assemble.json")
+)
 
 
 def pubg_singles_first_enabled() -> bool:
@@ -215,20 +222,118 @@ def assemble_skip_keyboard(game: str) -> dict:
     return {"inline_keyboard": [[{"text": "—", "callback_data": "mlbb_noop"}]]}
 
 
+def _assemble_log(msg: str) -> None:
+    log.info("%s", msg)
+    try:
+        ASSEMBLE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with ASSEMBLE_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
+
+
+def segment_belongs_to_vod(segment_id: str, vod_id: str) -> bool:
+    sid = segment_id.strip()
+    vid = vod_id.strip()
+    if not sid or not vid:
+        return False
+    return sid.startswith((f"{vid}_", f"yt_{vid}_", f"owner_yt_{vid}_"))
+
+
 def resolve_vod_path(vod_id: str) -> Path | None:
     vid = vod_id.strip()
     if not vid:
         return None
     name = vid if vid.endswith(".mp4") else f"yt_{vid}.mp4"
-    for base in (
-        Path(os.environ.get("PUBG_VOD_INBOX", "/root/data/pubg/youtube_nightly/inbox")),
+    inbox = Path(os.environ.get("PUBG_VOD_INBOX", "/root/data/pubg/youtube_nightly/inbox"))
+    bases = [
+        inbox,
+        inbox.parent / "parked",
         Path("/root/data/pubg/youtube_nightly/inbox"),
+        Path("/root/data/pubg/youtube_nightly/parked"),
         Path("/root/data/mlbb/youtube_nightly/inbox"),
-    ):
+        Path("/root/data/mlbb/youtube_nightly/parked"),
+    ]
+    seen: set[Path] = set()
+    for base in bases:
+        if base in seen:
+            continue
+        seen.add(base)
         candidate = base / name
         if candidate.is_file():
             return candidate
     return None
+
+
+def load_pending_assemble() -> list[dict]:
+    if not PENDING_ASSEMBLE_PATH.is_file():
+        return []
+    try:
+        data = json.loads(PENDING_ASSEMBLE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def save_pending_assemble(jobs: list[dict]) -> None:
+    PENDING_ASSEMBLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PENDING_ASSEMBLE_PATH.write_text(
+        json.dumps(jobs, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def enqueue_assemble_job(game: str, vod_id: str, chat_id: str) -> dict:
+    jobs = load_pending_assemble()
+    for job in jobs:
+        if (
+            str(job.get("game") or "") == game
+            and str(job.get("vod_id") or "") == vod_id
+            and str(job.get("status") or "") in {"pending", "running"}
+        ):
+            return job
+    job = {
+        "id": f"{game}:{vod_id}:{int(time.time())}",
+        "game": game,
+        "vod_id": vod_id,
+        "chat_id": str(chat_id),
+        "status": "pending",
+        "ts": time.time(),
+    }
+    jobs.append(job)
+    save_pending_assemble(jobs[-20:])
+    _assemble_log(f"enqueue assemble game={game} vod={vod_id} chat={chat_id}")
+    return job
+
+
+def update_assemble_job(job_id: str, **fields: object) -> None:
+    jobs = load_pending_assemble()
+    for job in jobs:
+        if str(job.get("id") or "") == job_id:
+            job.update(fields)
+            job["updated_at"] = time.time()
+            break
+    save_pending_assemble(jobs)
+
+
+def bot_token_from_env() -> str:
+    token = (
+        os.environ.get("TG_BOT_TOKEN", "").strip()
+        or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    )
+    if token:
+        return token
+    env_file = Path(os.environ.get("VIDEO_BOT_ENV", "/root/.video_bot.env"))
+    if not env_file.is_file():
+        return ""
+    try:
+        for raw in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("TG_BOT_TOKEN="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        return ""
+    return ""
 
 
 def good_rows_for_vod(game: str, vod_id: str) -> list[dict]:
@@ -239,7 +344,7 @@ def good_rows_for_vod(game: str, vod_id: str) -> list[dict]:
     seen: set[str] = set()
     for entry in load_labels(game).get("good", []):
         sid = str(entry.get("segment_id") or "").strip()
-        if not sid or not sid.startswith(f"{vid}_"):
+        if not sid or not segment_belongs_to_vod(sid, vid):
             continue
         if sid in seen:
             continue
@@ -247,6 +352,9 @@ def good_rows_for_vod(game: str, vod_id: str) -> list[dict]:
         row = find_segment(game, sid) or dict(entry)
         row["segment_id"] = sid
         out.append(row)
+    max_parts = max(2, int(os.environ.get("PUBG_ASSEMBLE_MAX_PARTS", "6")))
+    out.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    out = out[:max_parts]
     out.sort(key=lambda r: float(r.get("peak_start", r.get("start", 0)) or 0))
     return out
 
@@ -399,11 +507,18 @@ def run_assemble_montage(
     """Build montage from owner 👍 singles — re-probe VOD, re-trim gunfire ±4s, presend each part."""
     from shooter_vod_segment_feed import _send_montage, file_sha256
 
+    token = (token or "").strip() or bot_token_from_env()
+    if not token:
+        _assemble_log(f"assemble fail vod={vod_id} reason=missing_token")
+        return False, "missing_token"
+
     vod = resolve_vod_path(vod_id)
     if vod is None:
+        _assemble_log(f"assemble fail vod={vod_id} reason=vod_not_found")
         return False, "vod_not_found"
 
     good_rows = good_rows_for_vod(game, vod_id)
+    _assemble_log(f"assemble start vod={vod_id} path={vod} likes={len(good_rows)}")
     if len(good_rows) < 2:
         return False, f"need_2_ok_have_{len(good_rows)}"
 
@@ -420,12 +535,17 @@ def run_assemble_montage(
     if len(prepared) < 2:
         if failed_peaks:
             peaks_s = ", ".join(f"{p:.0f}s" for p in failed_peaks[:4])
-            return False, f"не удалось обрезать 👍 пики ({peaks_s}) — VOD недоступен?"
+            reason = f"не удалось обрезать 👍 пики ({peaks_s}) — VOD недоступен?"
+            _assemble_log(f"assemble fail vod={vod_id} reason={reason}")
+            return False, reason
         return False, f"need_2_ok_have_{len(good_rows)}"
 
     n = _send_montage(game, token, chat_id, vod, prepared, file_sha256(vod))
     if n > 0:
-        return True, f"montage_x{len(prepared)}"
+        reason = f"montage_x{len(prepared)}"
+        _assemble_log(f"assemble ok vod={vod_id} {reason}")
+        return True, reason
+    _assemble_log(f"assemble fail vod={vod_id} reason=montage_send_failed")
     return False, "montage_send_failed"
 
 
@@ -591,3 +711,179 @@ def singles_first_send_cycle(
 
     save_state_fn(game, state)
     return 0
+
+
+def _cli_send_text(token: str, chat_id: str, text: str) -> None:
+    import urllib.parse
+    import urllib.request
+
+    if not token or not chat_id:
+        return
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+    try:
+        urllib.request.urlopen(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data,
+            timeout=20,
+        )
+    except Exception as exc:
+        _assemble_log(f"assemble notify failed: {exc}")
+
+
+def assemble_lock_path(vod_id: str) -> Path:
+    safe = "".join(ch if ch.isalnum() else "_" for ch in vod_id.strip())[:32]
+    return Path(f"/tmp/pubg_assemble_{safe}.lock")
+
+
+def assemble_already_running(vod_id: str) -> bool:
+    path = assemble_lock_path(vod_id)
+    if not path.is_file():
+        return False
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip() or "0")
+    except (OSError, ValueError):
+        return False
+    if pid <= 1:
+        path.unlink(missing_ok=True)
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        path.unlink(missing_ok=True)
+        return False
+
+
+def _acquire_assemble_lock(vod_id: str) -> bool:
+    if assemble_already_running(vod_id):
+        return False
+    assemble_lock_path(vod_id).write_text(str(os.getpid()), encoding="utf-8")
+    return True
+
+
+def _release_assemble_lock(vod_id: str) -> None:
+    path = assemble_lock_path(vod_id)
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def spawn_assemble_subprocess(game: str, vod_id: str, chat_id: str, token: str = "") -> None:
+    """Detached assemble so a bot restart cannot kill the job."""
+    import subprocess
+    import sys
+
+    token = (token or "").strip() or bot_token_from_env()
+    if assemble_already_running(vod_id):
+        _assemble_log(f"assemble already running vod={vod_id} — skip spawn")
+        return
+    script = Path("/usr/local/bin/pubg_vod_singles_first.py")
+    if not script.is_file():
+        script = Path(__file__).resolve()
+    ASSEMBLE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = ASSEMBLE_LOG.open("a", encoding="utf-8")
+    env = os.environ.copy()
+    if token:
+        env["TG_BOT_TOKEN"] = token
+    env["TG_CHAT_ID"] = str(chat_id)
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            str(script),
+            "--assemble",
+            "--game",
+            game,
+            "--vod",
+            vod_id,
+            "--chat-id",
+            str(chat_id),
+        ],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        env=env,
+        close_fds=True,
+    )
+    _assemble_log(f"spawn assemble subprocess vod={vod_id} script={script}")
+
+
+def retry_pending_assemble_jobs(token: str = "") -> int:
+    """Re-launch pending/stale assemble jobs after bot restart."""
+    now = time.time()
+    launched = 0
+    for job in load_pending_assemble():
+        status = str(job.get("status") or "")
+        age = now - float(job.get("updated_at") or job.get("ts") or 0)
+        if status == "ok":
+            continue
+        if status == "running" and age < 1800:
+            continue
+        if status not in {"pending", "running"}:
+            continue
+        vod_id = str(job.get("vod_id") or "").strip()
+        chat_id = str(job.get("chat_id") or "").strip()
+        game = str(job.get("game") or "pubg")
+        if not vod_id or not chat_id:
+            continue
+        update_assemble_job(str(job.get("id") or ""), status="pending")
+        spawn_assemble_subprocess(game, vod_id, chat_id, token=token)
+        launched += 1
+    return launched
+
+
+def main_cli() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="PUBG singles-first helpers")
+    parser.add_argument("--assemble", action="store_true")
+    parser.add_argument("--game", default="pubg")
+    parser.add_argument("--vod", default="")
+    parser.add_argument("--chat-id", default="")
+    parser.add_argument("--retry-pending", action="store_true")
+    args = parser.parse_args()
+    token = bot_token_from_env()
+    if args.retry_pending:
+        n = retry_pending_assemble_jobs(token=token)
+        print(f"retry_pending={n}")
+        return 0
+    if not args.assemble:
+        parser.error("pass --assemble or --retry-pending")
+    vod_id = args.vod.strip()
+    chat_id = str(args.chat_id).strip()
+    if not vod_id or not chat_id:
+        parser.error("--vod and --chat-id required")
+    job = enqueue_assemble_job(args.game, vod_id, chat_id)
+    if not _acquire_assemble_lock(vod_id):
+        _assemble_log(f"assemble lock busy vod={vod_id}")
+        print("busy")
+        return 0
+    try:
+        update_assemble_job(str(job.get("id") or ""), status="running")
+        _cli_send_text(
+            token,
+            chat_id,
+            f"🔧 {args.game.upper()} {vod_id}: собираю склейку из 👍…",
+        )
+        ok, reason = run_assemble_montage(args.game, vod_id, token, chat_id)
+        update_assemble_job(
+            str(job.get("id") or ""),
+            status="ok" if ok else "error",
+            reason=reason,
+        )
+        if ok:
+            _cli_send_text(token, chat_id, f"✅ {args.game.upper()} {vod_id}: склейка отправлена ({reason})")
+            print(f"ok {reason}")
+            return 0
+        _cli_send_text(token, chat_id, f"⚠️ {args.game.upper()} {vod_id}: склейка не собрана — {reason}")
+        print(f"fail {reason}")
+        return 1
+    finally:
+        _release_assemble_lock(vod_id)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main_cli())
+

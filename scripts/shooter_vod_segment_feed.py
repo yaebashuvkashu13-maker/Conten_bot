@@ -1775,6 +1775,32 @@ def _send_batch(
     return sent
 
 
+def _entry_unsent_peak_count(game: str, entry: dict | None) -> int | None:
+    """How many cached pool peaks are still unsent. None = unknown (no pool)."""
+    if entry is None:
+        return None
+    peaks = entry.get("last_pool_peaks") or []
+    if not peaks:
+        return None
+    vid = str(entry.get("id") or "")
+    if not vid:
+        return None
+    try:
+        sent_set = load_feed_sent(game)
+        used = _used_peak_times(game, vid, sent_set)
+    except Exception:
+        return None
+    left = 0
+    for peak in peaks:
+        try:
+            p = float(peak)
+        except (TypeError, ValueError):
+            continue
+        if not any(abs(p - u) <= 8.0 for u in used):
+            left += 1
+    return left
+
+
 def _inbox_order_key(
     mp4: Path,
     registry: list[dict],
@@ -1829,23 +1855,10 @@ def _inbox_order_key(
     pool_ready = 0 if peaks_n >= _montage_soft_min_clips(game) else 1
     # Fully mined VODs (all peaks already sent) go last — don't burn minutes on them.
     mined_out = 0
-    if game == "pubg" and peaks_n > 0 and entry is not None:
-        try:
-            vid = str(entry.get("id") or "")
-            if vid:
-                sent_set = load_feed_sent(game)
-                used = _used_peak_times(game, vid, sent_set)
-                left = 0
-                for peak in entry.get("last_pool_peaks") or []:
-                    try:
-                        p = float(peak)
-                    except (TypeError, ValueError):
-                        continue
-                    if not any(abs(p - u) <= 8.0 for u in used):
-                        left += 1
-                mined_out = 0 if left > 0 else 1
-        except Exception:
-            mined_out = 0
+    if game == "pubg":
+        left = _entry_unsent_peak_count(game, entry)
+        if left == 0:
+            mined_out = 1
     # Ready: more cached peaks first (almost-montage), then shorter VOD for faster retry.
     dur_sort = int(dur) if pool_ready == 0 else -int(dur)
     return (
@@ -3129,6 +3142,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             )
             continue
         entry = entries[0] if entries else None
+        if game == "pubg" and entry is not None and _entry_unsent_peak_count(game, entry) == 0:
+            log.info("skip mined-out inbox vod=%s — park for recycle", mp4.name)
+            _mark_vod_exhausted(state, mp4, reason="pubg_mined_out", delete_file=False)
+            _save_state(game, state)
+            continue
         skip_cd = should_skip_vod_rescan(entry, game=game)
         if (
             skip_cd
@@ -3159,6 +3177,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             )
             continue
         tried += 1
+        try:
+            from vod_hang_detector import write_heartbeat
+
+            write_heartbeat(game, "scanning", vod=mp4.name)
+        except Exception:
+            pass
         if entry is None:
             entry = _upsert_vod_registry(
                 state,

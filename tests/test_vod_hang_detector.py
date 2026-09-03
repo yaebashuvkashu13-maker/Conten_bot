@@ -98,6 +98,7 @@ def test_working_feed_not_false_silence(tmp_path: Path, monkeypatch: pytest.Monk
         "vod_hang_detector.read_heartbeat",
         lambda: {"ts": time.time() - 60, "phase": "scan_done"},
     )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
     report = detect_hang()
     assert report.ok
     assert not any(r.startswith("silence_") for r in report.reasons)
@@ -148,3 +149,24 @@ def test_unload_stuck_inbox_vod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert name == mp4.name
     assert not mp4.exists()
     assert (parked / mp4.name).exists()
+
+
+def test_mined_inbox_drought_despite_fresh_heartbeat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "feed.log"
+    log.write_text("2026-09-03 12:00:00 pipeline done sent=1 vods=1 game=pubg\n", encoding="utf-8")
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_MINED_INBOX_DROUGHT_SEC", "1800")
+    monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 2400.0)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 30, "phase": "scanning", "vod": "yt_3hDKNrY4sGU.mp4"},
+    )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: True)
+    report = detect_hang()
+    assert not report.ok
+    assert any(r.startswith("mined_inbox_drought_") for r in report.reasons)

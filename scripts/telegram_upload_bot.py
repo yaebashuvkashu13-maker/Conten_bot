@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-09-03-hang-detector-v1'
+BOT_VERSION = '2026-09-03-assemble-persist-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -397,6 +397,8 @@ def safe_label(text: str | None) -> str:
 
 env = load_env(ENV_FILE)
 BOT_TOKEN = env['TG_BOT_TOKEN']
+os.environ.setdefault('TG_BOT_TOKEN', BOT_TOKEN)
+os.environ.setdefault('TELEGRAM_BOT_TOKEN', BOT_TOKEN)
 DEFAULT_CHAT_ID = env.get('TG_CHAT_ID', '')
 ALLOWED_CHAT_IDS = {item.strip() for item in env.get('TG_ALLOWED_CHAT_IDS', '').split(',') if item.strip()}
 AUTO_MAKE_CHAT_IDS = {item.strip() for item in env.get('AUTO_MAKE_CHAT_IDS', '').split(',') if item.strip()}
@@ -723,23 +725,15 @@ def _handle_shooter_vseg_callback(
             {'callback_query_id': query_id, 'text': 'Собираю склейку…'},
             timeout=15,
         )
-        send_message(chat_id, f'🔧 {game.upper()} {vod_id}: пересобираю склейку из 👍 (повторная обрезка)…')
+        try:
+            from pubg_vod_singles_first import enqueue_assemble_job, spawn_assemble_subprocess
 
-        def _run_assemble() -> None:
-            try:
-                from pubg_vod_singles_first import run_assemble_montage
-
-                token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
-                ok, reason = run_assemble_montage(game, vod_id, token, str(chat_id))
-                if ok:
-                    send_message(chat_id, f'✅ {game.upper()} {vod_id}: склейка отправлена ({reason})')
-                else:
-                    send_message(chat_id, f'⚠️ {game.upper()} {vod_id}: склейка не собрана — {reason}')
-            except Exception as exc:
-                logging.exception('%s assemble failed vod=%s', game, vod_id)
-                send_message(chat_id, f'❌ {game.upper()} {vod_id}: ошибка сборки — {exc}')
-
-        threading.Thread(target=_run_assemble, daemon=True).start()
+            enqueue_assemble_job(game, vod_id, str(chat_id))
+            spawn_assemble_subprocess(game, vod_id, str(chat_id), token=BOT_TOKEN)
+            logging.info('%s assemble queued vod=%s chat=%s', game, vod_id, chat_id)
+        except Exception as exc:
+            logging.exception('%s assemble spawn failed vod=%s', game, vod_id)
+            send_message(chat_id, f'❌ {game.upper()} {vod_id}: не удалось запустить склейку — {exc}')
         return True
 
     if data.startswith(f'{prefix}_hq:'):
@@ -3843,6 +3837,14 @@ def main():
         DEFAULT_CHAT_ID or '(empty)',
         sorted(ALLOWED_CHAT_IDS),
     )
+    try:
+        from pubg_vod_singles_first import retry_pending_assemble_jobs
+
+        n = retry_pending_assemble_jobs(token=BOT_TOKEN)
+        if n:
+            logging.info('retried pending assemble jobs n=%s', n)
+    except Exception:
+        logging.exception('pending assemble retry failed')
     while True:
         try:
             updates = api_call(
