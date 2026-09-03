@@ -191,6 +191,78 @@ def park_exhausted_inbox(game: str) -> int:
     return moved
 
 
+def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
+    """Pull parked VODs back into inbox when recover finds nothing to send."""
+    s = spec(game)
+    inbox = s.inbox()
+    parked = inbox.parent / "parked"
+    if not parked.is_dir():
+        return 0
+    inbox.mkdir(parents=True, exist_ok=True)
+    ready = [p for p in inbox.glob("yt_*.mp4") if p.is_file()]
+    need = max(0, int(limit) - len(ready))
+    if need <= 0:
+        return 0
+
+    state = load_state(game)
+    registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+    cands: list[tuple[int, Path, str]] = []
+    for mp4 in parked.glob("yt_*.mp4"):
+        try:
+            size = mp4.stat().st_size
+        except OSError:
+            continue
+        if size < 40_000_000:
+            continue
+        vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+        row = registry.get(vid) or {}
+        reason = str(row.get("reject_reason") or "").lower()
+        if any(token in reason for token in ("classic_outdoor", "not_metro", "metro_vod_reject", "classic_map")):
+            continue
+        cands.append((size, mp4, vid))
+    cands.sort(key=lambda row: -row[0])
+
+    moved = 0
+    for _size, mp4, vid in cands[:need]:
+        dest = inbox / mp4.name
+        try:
+            if dest.exists():
+                continue
+            mp4.rename(dest)
+        except OSError:
+            continue
+        found = False
+        for row in state.get("vods") or []:
+            if str(row.get("id") or "") != vid:
+                continue
+            row["path"] = str(dest)
+            row["exhausted"] = False
+            row["recycle_count"] = 0
+            row.pop("reject_reason", None)
+            row.pop("last_scan_at", None)
+            row.pop("last_scan_blocked", None)
+            row["last_recycle_at"] = time.time()
+            found = True
+            break
+        if not found:
+            state.setdefault("vods", []).append(
+                {
+                    "id": vid,
+                    "path": str(dest),
+                    "exhausted": False,
+                    "recycle_count": 0,
+                    "last_recycle_at": time.time(),
+                }
+            )
+        moved += 1
+    if moved:
+        state.pop("discovery_pause_until", None)
+        if game == "pubg":
+            state.pop("pubg_singles_active_vod", None)
+        save_state(game, state)
+    return moved
+
+
 def restart_supervisor(*, force: bool = False) -> tuple[bool, str]:
     lock_note = clear_stale_owner_batch_lock()
     if OWNER_BATCH_LOCK.is_file():
@@ -389,6 +461,7 @@ def run_recover(
     reset_total = 0
     parked = 0
     trimmed_used = 0
+    unparked = 0
     for g in games:
         if clear_discovery_pauses(g):
             pauses += 1
@@ -396,6 +469,7 @@ def run_recover(
         reset_total += reset_inbox_exhausted(g)
         parked += park_exhausted_inbox(g)
         trimmed_used += trim_discovery_used_ids(g)
+        unparked += unpark_ready_vods(g, limit=max(1, int(os.environ.get("VOD_RECOVER_UNPARK", "3"))))
         if g == "pubg":
             state = load_state(g)
             if state.pop("pubg_singles_active_vod", None):
@@ -423,6 +497,8 @@ def run_recover(
     lines = ["🔧 Восстановление VOD feed"]
     if lock_note:
         lines.append(f"• owner lock: {lock_note}")
+    if unparked:
+        lines.append(f"• unpark: вернул в inbox {unparked} VOD")
     if parked:
         lines.append(f"• parked: убрано исчерпанных из inbox {parked}")
     if locks:

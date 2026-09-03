@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-08-28-tg-recover-v1'
+BOT_VERSION = '2026-09-03-tg-single-instance-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -3815,6 +3815,18 @@ def handle_message(message: dict):
 
 
 def main():
+    import fcntl
+
+    lock_path = Path(os.environ.get('TELEGRAM_BOT_LOCK', '/tmp/telegram_upload_bot.lock'))
+    lock_fh = lock_path.open('w', encoding='utf-8')
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logging.error('another telegram_upload_bot already holds %s — exit', lock_path)
+        return
+    lock_fh.write(str(os.getpid()))
+    lock_fh.flush()
+
     api_call('deleteWebhook', {'drop_pending_updates': False}, timeout=30)
     register_bot_commands()
     state = _bot_state()

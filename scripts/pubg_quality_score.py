@@ -393,6 +393,8 @@ def score_pubg_window(
     )
     fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.42"))
     payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.38"))
+    if single:
+        payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"))
     report["fight_score"] = round(fight_score, 4)
     report["payoff_score"] = round(payoff_score, 4)
     report["fight_threshold"] = fight_min
@@ -407,7 +409,16 @@ def score_pubg_window(
             report["quality_threshold"] = fight_min
             return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
     if payoff_score < payoff_min:
-        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+        # Singles with clear gunfire: ship for owner 👍/👎 instead of drought on OCR miss.
+        if (
+            single
+            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1") == "1"
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
+            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and not loot_walk
+        ):
+            report["singles_gun_payoff_bypass"] = True
+        elif _owner_redo_trusted(video_path, start_sec, duration_sec):
             report["owner_redo_trusted"] = True
         else:
             report["quality_score"] = round(payoff_score, 4)
@@ -463,6 +474,8 @@ def score_pubg_window(
         quality = _clip(heuristic * (1.0 - blend) + float(ranker_score) * blend)
 
     threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
+    if single:
+        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28"))
     report.update(
         {
             "components": {key: round(value, 4) for key, value in components.items()},
@@ -479,6 +492,16 @@ def score_pubg_window(
             report["owner_redo_trusted"] = True
             report["quality_score"] = round(max(quality, threshold), 4)
             return _finish(True, f"owner_redo_trusted={quality:.3f}")
+        if (
+            single
+            and os.environ.get("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1") == "1"
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
+            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and not loot_walk
+            and fight_score >= fight_min
+        ):
+            report["singles_gun_quality_bypass"] = True
+            return _finish(True, f"quality_singles_gun={quality:.3f}:fight{fight_score:.3f}")
         return _finish(False, f"quality_low={quality:.3f}:min{threshold:.2f}")
     return _finish(True, f"quality_ok={quality:.3f}")
 

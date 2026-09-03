@@ -26,6 +26,16 @@ _FEED_PATTERNS: dict[str, tuple[str, ...]] = {
     "genshin": ("shooter_vod_segment_feed.py",),
     "wot": ("shooter_vod_segment_feed.py",),
 }
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _systemctl(*args: str) -> None:
+    _REAL_SUBPROCESS_RUN(
+        ["systemctl", *args],
+        check=False,
+        timeout=15,
+        capture_output=True,
+    )
 
 
 def _target_games(game: str) -> list[str]:
@@ -48,12 +58,46 @@ def _load_runtime_env() -> dict[str, str]:
 
 
 def _stop_game_feed(game: str) -> None:
+    """Stop feed processes by argv match — never use pkill -f (matches SSH/recover wrappers)."""
     patterns = list(_FEED_PATTERNS.get(game, ("shooter_vod_segment_feed.py",)))
     if game != "mlbb" and "shooter_vod_segment_feed.py" not in patterns:
         patterns.append("shooter_vod_segment_feed.py")
-    for pat in patterns:
-        subprocess.run(["pkill", "-9", "-f", pat], check=False, timeout=5)
-    time.sleep(0.4)
+    # Also pause supervisor so it cannot respawn mid-send.
+    for unit in (
+        "content-bot-vod-feed.service",
+        "mlbb-vod-feed.service",
+    ):
+        _systemctl("stop", unit)
+    killed = 0
+    for pid_name in os.listdir("/proc"):
+        if not pid_name.isdigit():
+            continue
+        try:
+            raw = Path(f"/proc/{pid_name}/cmdline").read_bytes()
+        except OSError:
+            continue
+        parts = [p.decode(errors="ignore") for p in raw.split(b"\0") if p]
+        if len(parts) < 2:
+            continue
+        # Match script path anywhere in argv (python -u script.py …).
+        if not any(any(pat in arg for pat in patterns) for arg in parts[1:]):
+            continue
+        if any("vod_force_send.py" in arg for arg in parts):
+            continue
+        try:
+            os.kill(int(pid_name), 9)
+            killed += 1
+        except OSError:
+            pass
+    # Clear flock/pid leftovers so the exclusive force-send can start.
+    for path in (
+        Path(f"/tmp/{game}_vod_segment_feed.lock"),
+        Path(f"/tmp/{game}_vod_segment_feed.pid"),
+        Path("/tmp/pubg_vod_segment_feed.lock"),
+        Path("/tmp/pubg_vod_segment_feed.pid"),
+    ):
+        path.unlink(missing_ok=True)
+    time.sleep(0.6 if killed else 0.2)
 
 
 def _parse_pipeline_line(line: str) -> dict[str, object]:
@@ -110,8 +154,23 @@ def force_send_game(
 
     env = _load_runtime_env()
     env["VOD_SEGMENT_GAME"] = game
+    scripts_path = str(SCRIPTS)
+    local_bin = "/usr/local/bin"
+    py_path = env.get("PYTHONPATH", "")
+    parts = [p for p in py_path.split(":") if p]
+    for path in (scripts_path, local_bin):
+        if path not in parts:
+            parts.insert(0, path)
+    env["PYTHONPATH"] = ":".join(parts)
     env.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "1"))
     env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
+    # Recover/force-send must re-scan inbox immediately.
+    env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
+    env["SHOOTER_VOD_SCAN_COOLDOWN_SEC"] = os.environ.get("VOD_FORCE_SCAN_COOLDOWN_SEC", "60")
+    from vod_feed_recover import bump_scan_cooldowns, unpark_ready_vods
+
+    unpark_ready_vods(game, limit=max(1, int(os.environ.get("VOD_RECOVER_UNPARK", "3"))))
+    bump_scan_cooldowns(game)
     if game == "pubg":
         env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
         env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "6")
@@ -127,6 +186,10 @@ def force_send_game(
                 "PUBG_REJECT_LOOT_WALK",
                 "PUBG_FAST_RANK_DROP_LOOT_WALK",
                 "PUBG_EARLY_PAYOFF_REJECT_SINGLES",
+                "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+                "PUBG_QUALITY_SCORE_MIN_SINGLES",
+                "PUBG_SINGLES_GUN_PAYOFF_BYPASS",
+                "PUBG_SINGLES_GUN_QUALITY_BYPASS",
                 "PUBG_SINGLE_MIN_GUN_DENSITY",
                 "PUBG_CLIP_MIN_BURST_RATIO",
                 "SHOOTER_VOD_MONTAGE_SHOOTING_ONLY",
@@ -134,8 +197,15 @@ def force_send_game(
                 if key in os.environ:
                     env[key] = os.environ[key]
         except ImportError:
-            pass
+            env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+            env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
+            env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
+            env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
+            env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
+            env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")
 
+    proc: subprocess.CompletedProcess[str] | None = None
+    timed_out = False
     try:
         proc = subprocess.run(
             _feed_command(game),
@@ -146,6 +216,13 @@ def force_send_game(
             check=False,
         )
     except subprocess.TimeoutExpired:
+        timed_out = True
+    finally:
+        # Resume supervisor after exclusive send (best-effort).
+        for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
+            _systemctl("start", unit)
+
+    if timed_out or proc is None:
         return {
             "game": game,
             "sent": 0,
@@ -155,7 +232,7 @@ def force_send_game(
 
     sent = 0
     flags = ""
-    for line in (proc.stdout or "").splitlines():
+    for line in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines():
         parsed = _parse_pipeline_line(line)
         if parsed:
             sent = int(parsed.get("sent") or 0)
