@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-09-03-tg-single-instance-v2'
+BOT_VERSION = '2026-09-03-hang-detector-v1'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -430,6 +430,11 @@ def api_call(method: str, payload: dict | None = None, timeout: int = 60):
     with telegram_urlopen(request, timeout=timeout) as response:
         result = json.loads(response.read().decode('utf-8'))
     if not result.get('ok'):
+        err = result.get('description') or result
+        err_s = str(err).lower()
+        if 'conflict' in err_s or result.get('error_code') == 409:
+            logging.error('Telegram 409 Conflict — exit for systemd restart: %s', err)
+            raise SystemExit(2)
         raise RuntimeError(f'Telegram API error for {method}: {result}')
     return result['result']
 

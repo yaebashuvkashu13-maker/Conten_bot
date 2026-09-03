@@ -419,6 +419,7 @@ install -m 755 \
   "$REPO/scripts/reset_vod_inbox_exhausted.py" \
   "$REPO/scripts/vod_feed_recover.py" \
   "$REPO/scripts/vod_force_send.py" \
+  "$REPO/scripts/vod_hang_detector.py" \
   "$REPO/scripts/extended_vod_fast_scan.py" \
   "$REPO/scripts/vod_owner_learning.py" \
   "$REPO/scripts/strict_montage_direct.py" \

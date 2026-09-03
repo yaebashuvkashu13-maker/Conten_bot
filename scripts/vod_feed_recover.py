@@ -294,13 +294,19 @@ def restart_supervisor(*, force: bool = False) -> tuple[bool, str]:
     if not script.is_file():
         return False, f"нет supervisor: {script}"
 
-    for pat in (
-        "mlbb_vod_segment_feed.py",
-        "shooter_vod_segment_feed.py",
-        "daily_cycle_runner.py",
-        "mlbb_vod_segment_feed.sh",
-    ):
-        subprocess.run(["pkill", "-9", "-f", pat], check=False, timeout=5)
+    try:
+        from vod_force_send import _stop_game_feed
+
+        for g in VOD_GAMES:
+            _stop_game_feed(g)
+    except Exception:
+        for pat in (
+            "mlbb_vod_segment_feed.py",
+            "shooter_vod_segment_feed.py",
+            "daily_cycle_runner.py",
+            "mlbb_vod_segment_feed.sh",
+        ):
+            subprocess.run(["pkill", "-9", "-f", pat], check=False, timeout=5)
     time.sleep(1.5)
     clear_feed_locks()
 

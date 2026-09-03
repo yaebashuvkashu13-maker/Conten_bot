@@ -3036,6 +3036,12 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
 
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
+    try:
+        from vod_hang_detector import write_heartbeat
+
+        write_heartbeat(game, "run_start")
+    except Exception:
+        pass
     ok_cycle, reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("skip feed game=%s reason=%s", game, reason)
@@ -3176,6 +3182,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 log.info("exhausted vod=%s reason=%s", mp4.name, reason)
         _save_state(game, state)
         if n > 0:
+            try:
+                from vod_hang_detector import write_heartbeat
+
+                write_heartbeat(game, "inbox_sent", sent=n)
+            except Exception:
+                pass
             print(f"pipeline done sent={n} vods=1 game={game}")
             return 0
         # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
@@ -3365,6 +3377,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     _save_state(game, state)
 
     n = _scan_vod_with_adaptive(game, token, chat_id, vod, env, state)
+    try:
+        from vod_hang_detector import write_heartbeat
+
+        write_heartbeat(game, "scan_done", sent=n, vod=str(vod.name))
+    except Exception:
+        pass
     print(f"pipeline done sent={n} vods=1 game={game}")
     return 0
 

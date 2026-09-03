@@ -117,7 +117,16 @@ def mark_feed_sent(game: str, segment_ids: list[str]) -> None:
     sent = load_feed_sent(game)
     sent.update(segment_ids)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"sent": sorted(sent)}, indent=2), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "sent": sorted(sent),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def upsert_segment(game: str, row: dict) -> None:

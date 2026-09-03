@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Keep VPS in VOD-only shape: kill Shorts/zombies, ensure one VOD feed alive.
+# Hang detection + auto-recover: scripts/vod_hang_detector.py --tick
 set -Eeuo pipefail
 ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 LOG=/root/data/mlbb/logs/mlbb_vod_health.log
 BIN=/usr/local/bin
+REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 mkdir -p "$(dirname "$LOG")"
 
 log() { echo "[$(date -Is)] $*" >>"$LOG"; }
@@ -68,150 +70,47 @@ if ! pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
   && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1 \
   && ! pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
   log "restart vod supervisor"
-  pkill -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  sleep 1
   rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
   restart_vod_feed
-fi
-
-# Supervisor died but left no child — common when .video_bot.env has unquoted yt-dlp formats.
-FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
-if [[ -f "$FEED_LOG" ]]; then
-  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
-  DEAD_SEC="${MLBB_VOD_FEED_DEAD_SEC:-900}"
-  if [[ "$LOG_AGE_SEC" -gt "$DEAD_SEC" ]] \
-    && ! pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
-    && ! pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; then
-    log "feed dead log_age=${LOG_AGE_SEC}s — restart supervisor"
-    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-    sleep 1
-    rm -f /tmp/pubg_vod_segment_feed.lock /tmp/mlbb_vod_segment_feed.lock
-    restart_vod_feed
-  fi
 fi
 
 # Disk emergency — inbox cleanup when root is nearly full (common silence cause).
 DISK_PCT="$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')"
 if [[ -n "$DISK_PCT" && "$DISK_PCT" -ge "${VOD_CLEANUP_MAX_USED_PCT:-88}" ]]; then
   log "disk critical ${DISK_PCT}% — run vps_disk_cleanup"
-  REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
   if [[ -x "$REPO/scripts/vps_disk_cleanup.sh" ]]; then
     bash "$REPO/scripts/vps_disk_cleanup.sh" >>"$LOG" 2>&1 || true
   fi
 fi
 
-# Crash-loop detector: repeated ValueError in banner discover kills every VOD scan.
-FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
-if [[ -f "$FEED_LOG" ]]; then
-  CRASH_N="$(grep -c 'ValueError: The truth value of an array' "$FEED_LOG" 2>/dev/null || echo 0)"
-  if [[ "$CRASH_N" -gt 3 ]]; then
-    log "detected banner discover crash loop (n=$CRASH_N) — need git pull + install"
-  fi
-  LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
-  STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
-  if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && \
-    { pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1 \
-      || pgrep -f 'daily_cycle_runner.py' >/dev/null 2>&1 \
-      || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; }; then
-    log "feed stuck log_age=${LOG_AGE_SEC}s — kill and restart"
-    pkill -9 -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
-    pkill -9 -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-    sleep 2
-    rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/pubg_vod_segment_feed.lock /tmp/standoff_vod_segment_feed.lock
-    restart_vod_feed
-  fi
+# Real hang detector: silence, zero-send drought, stuck ffmpeg/yt-dlp, bad inbox loop.
+DETECTOR="$REPO/scripts/vod_hang_detector.py"
+if [[ ! -f "$DETECTOR" ]]; then
+  DETECTOR="$BIN/vod_hang_detector.py"
 fi
-
-# Silence alert — notify if no clip sent in N hours (pattern from stream-clip ops tools).
-SILENCE_SEC="${MLBB_VOD_SILENCE_ALERT_SEC:-43200}"
-AUTO_HEAL_SEC="${MLBB_VOD_AUTO_HEAL_SEC:-7200}"
-if [[ "$SILENCE_SEC" -gt 0 ]]; then
-  TOKEN="$(env_val TG_BOT_TOKEN)"
-  CHAT="$(env_val TG_CHAT_ID)"
-  if [[ -n "$TOKEN" && -n "$CHAT" ]]; then
-    TG_BOT_TOKEN="$TOKEN" TG_CHAT_ID="$CHAT" AUTO_HEAL_SEC="$AUTO_HEAL_SEC" python3 - "$SILENCE_SEC" <<'PY' >>"$LOG" 2>&1 || true
-import json, os, re, sys, time, urllib.parse, urllib.request
-from pathlib import Path
-
-silence = int(sys.argv[1])
-auto_heal = int(os.environ.get("AUTO_HEAL_SEC", "7200"))
-token = os.environ.get("TG_BOT_TOKEN", "")
-chat = os.environ.get("TG_CHAT_ID", "")
-if not token or not chat:
-    raise SystemExit(0)
-stamp_path = Path("/root/data/mlbb/vod_silence_alert.json")
-heal_stamp = Path("/root/data/mlbb/vod_auto_heal.json")
-now = time.time()
-
-def last_sent_age() -> float:
-    best = silence + 1.0
-    for rel in (
-        "mlbb/vod_segment_feed_sent.json",
-        "pubg/vod_segment_feed_sent.json",
-    ):
-        sent_path = Path("/root/data") / rel
-        if not sent_path.exists():
-            continue
-        try:
-            data = json.loads(sent_path.read_text(encoding="utf-8"))
-            ts = data.get("updated_at", "")
-            if ts:
-                best = min(best, now - time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S")))
-        except Exception:
-            pass
-    log_path = Path("/root/data/mlbb/mlbb_vod_segment_feed.log")
-    if not log_path.exists():
-        return best
-    last = 0.0
-    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-12000:]:
-        if re.search(r"fast-montage SENT|sent=\d+ vod=1|SENT game=pubg", line):
-            last = now
-    if last:
-        best = min(best, now - last)
-    return best
-
-age = last_sent_age()
-if age >= auto_heal and age < silence:
-    last_heal = 0.0
-    if heal_stamp.exists():
-        try:
-            last_heal = float(json.loads(heal_stamp.read_text(encoding="utf-8")).get("last_heal_ts") or 0)
-        except Exception:
-            last_heal = 0.0
-    if now - last_heal >= auto_heal:
-        repo = Path(os.environ.get("CONTENT_BOT_REPO", "/root/content_bot_ml"))
-        recover = repo / "scripts" / "vod_feed_recover.py"
-        if recover.is_file():
-            import subprocess
-            subprocess.run([sys.executable, str(recover), "--game", "pubg"], check=False, timeout=120)
-            heal_stamp.write_text(json.dumps({"last_heal_ts": now}), encoding="utf-8")
-            print(f"auto-heal pubg age_sec={int(age)}")
-            raise SystemExit(0)
-if age < silence:
-    raise SystemExit(0)
-state = {}
-if stamp_path.exists():
-    try:
-        state = json.loads(stamp_path.read_text(encoding="utf-8"))
-    except Exception:
-        state = {}
-last_alert = float(state.get("last_alert_ts") or 0)
-if now - last_alert < silence:
-    raise SystemExit(0)
-hours = int(age // 3600)
-msg = (
-    f"⚠️ VOD feed: тишина ~{hours}ч — клипов не было.\n"
-    f"Проверь: feed, диск, лог mlbb_vod_segment_feed.log"
-)
-data = urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode()
-urllib.request.urlopen(
-    f"https://api.telegram.org/bot{token}/sendMessage",
-    data=data,
-    timeout=20,
-)
-stamp_path.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
-print(f"silence alert sent age_sec={int(age)}")
-PY
+if [[ -f "$DETECTOR" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE" 2>/dev/null || true
+  set +a
+  export CONTENT_BOT_REPO="$REPO"
+  export VOD_SILENCE_WARN_SEC="${VOD_SILENCE_WARN_SEC:-3600}"
+  export VOD_SILENCE_HEAL_SEC="${VOD_SILENCE_HEAL_SEC:-5400}"
+  export VOD_SILENCE_ALERT_SEC="${VOD_SILENCE_ALERT_SEC:-7200}"
+  export VOD_PROGRESS_STUCK_SEC="${VOD_PROGRESS_STUCK_SEC:-900}"
+  export VOD_ZERO_SEND_STREAK_HEAL="${VOD_ZERO_SEND_STREAK_HEAL:-6}"
+  export VOD_HEAL_COOLDOWN_SEC="${VOD_HEAL_COOLDOWN_SEC:-1800}"
+  python3 "$DETECTOR" --tick >>"$LOG" 2>&1 || log "hang detector tick failed"
+else
+  log "WARN: vod_hang_detector.py missing — legacy stuck check only"
+  FEED_LOG=/root/data/mlbb/mlbb_vod_segment_feed.log
+  if [[ -f "$FEED_LOG" ]]; then
+    LOG_AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$FEED_LOG" 2>/dev/null || echo 0) ))
+    STUCK_SEC="${MLBB_VOD_FEED_STUCK_SEC:-1800}"
+    if [[ "$LOG_AGE_SEC" -gt "$STUCK_SEC" ]] && pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1; then
+      log "feed stuck log_age=${LOG_AGE_SEC}s — restart"
+      systemctl restart content-bot-vod-feed.service 2>/dev/null || restart_vod_feed
+    fi
   fi
 fi
 
