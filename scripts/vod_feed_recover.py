@@ -192,7 +192,10 @@ def park_exhausted_inbox(game: str) -> int:
 
 
 def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
-    """Pull parked VODs back into inbox when recover finds nothing to send."""
+    """Pull parked VODs back into inbox when recover finds nothing to send.
+
+    Prefer VODs that still have unsent peaks (not already fully mined).
+    """
     s = spec(game)
     inbox = s.inbox()
     parked = inbox.parent / "parked"
@@ -206,7 +209,36 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
 
     state = load_state(game)
     registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
-    cands: list[tuple[int, Path, str]] = []
+    try:
+        from shooter_vod_segment_store import load_feed_sent, load_index
+        from vod_peak_gap import used_peak_times_shooter
+
+        sent_set = load_feed_sent(game)
+        segments = load_index(game).get("segments", [])
+    except Exception:
+        sent_set = set()
+        segments = []
+
+    def remaining_peaks(vid: str, row: dict) -> int:
+        peaks = row.get("last_pool_peaks") or []
+        if not peaks:
+            # Unknown pool — treat as medium priority (may still have content).
+            return 3
+        try:
+            used = used_peak_times_shooter(vid, sent_set, segments)
+        except Exception:
+            used = []
+        left = 0
+        for peak in peaks:
+            try:
+                p = float(peak)
+            except (TypeError, ValueError):
+                continue
+            if not any(abs(p - u) <= 8.0 for u in used):
+                left += 1
+        return left
+
+    cands: list[tuple[int, int, Path, str]] = []
     for mp4 in parked.glob("yt_*.mp4"):
         try:
             size = mp4.stat().st_size
@@ -219,11 +251,33 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
         reason = str(row.get("reject_reason") or "").lower()
         if any(token in reason for token in ("classic_outdoor", "not_metro", "metro_vod_reject", "classic_map")):
             continue
-        cands.append((size, mp4, vid))
-    cands.sort(key=lambda row: -row[0])
+        left = remaining_peaks(vid, row)
+        if left <= 0 and row.get("last_pool_peaks"):
+            # Fully mined — skip unless nothing else available.
+            continue
+        cands.append((left, size, mp4, vid))
+    # Prefer more remaining peaks, then larger files.
+    cands.sort(key=lambda row: (-row[0], -row[1]))
+
+    # If everything was fully mined, fall back to largest non-metro-reject files.
+    if not cands:
+        for mp4 in parked.glob("yt_*.mp4"):
+            try:
+                size = mp4.stat().st_size
+            except OSError:
+                continue
+            if size < 80_000_000:
+                continue
+            vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+            row = registry.get(vid) or {}
+            reason = str(row.get("reject_reason") or "").lower()
+            if any(token in reason for token in ("classic_outdoor", "not_metro", "metro_vod_reject", "classic_map")):
+                continue
+            cands.append((0, size, mp4, vid))
+        cands.sort(key=lambda row: -row[1])
 
     moved = 0
-    for _size, mp4, vid in cands[:need]:
+    for _left, _size, mp4, vid in cands[:need]:
         dest = inbox / mp4.name
         try:
             if dest.exists():
@@ -241,6 +295,7 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
             row.pop("reject_reason", None)
             row.pop("last_scan_at", None)
             row.pop("last_scan_blocked", None)
+            row.pop("singles_zero_send_streak", None)
             row["last_recycle_at"] = time.time()
             found = True
             break

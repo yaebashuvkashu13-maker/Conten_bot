@@ -333,12 +333,21 @@ def detect_hang() -> HangReport:
     report.stuck_parts = find_stuck_part_files("pubg")
 
     silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
-    silence_heal = max(silence_warn, int(os.environ.get("VOD_SILENCE_HEAL_SEC", "5400")))
     progress_stuck = max(300, int(os.environ.get("VOD_PROGRESS_STUCK_SEC", "900")))
     zero_streak_heal = max(3, int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6")))
+    # If feed is actively working (fresh heartbeat), silence alone is NOT a hang.
+    working = (
+        report.feed_alive
+        and report.heartbeat_age_sec is not None
+        and report.heartbeat_age_sec < progress_stuck
+    )
 
     if report.last_send_age_sec is not None and report.last_send_age_sec >= silence_warn:
-        report.add(f"silence_{int(report.last_send_age_sec)}s")
+        if working and report.zero_send_streak < zero_streak_heal and not report.stuck_children:
+            # Actively scanning/downloading — do not false-alarm heal.
+            pass
+        else:
+            report.add(f"silence_{int(report.last_send_age_sec)}s")
 
     if report.zero_send_streak >= zero_streak_heal:
         report.add(f"zero_send_streak_{report.zero_send_streak}")

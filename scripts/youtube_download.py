@@ -330,7 +330,7 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         proc = run_ytdlp(
             cmd,
             env,
-            timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
+            timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "2400")),
             label=f"download-{prefix}",
         )
         if proc.returncode == 0:

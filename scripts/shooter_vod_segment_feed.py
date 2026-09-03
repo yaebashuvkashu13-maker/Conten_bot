@@ -1827,10 +1827,30 @@ def _inbox_order_key(
     zombie_blocked = 1 if blocked and scanned <= 0 and not sent_ok else 0
     peaks_n = len((entry or {}).get("last_pool_peaks") or [])
     pool_ready = 0 if peaks_n >= _montage_soft_min_clips(game) else 1
+    # Fully mined VODs (all peaks already sent) go last — don't burn minutes on them.
+    mined_out = 0
+    if game == "pubg" and peaks_n > 0 and entry is not None:
+        try:
+            vid = str(entry.get("id") or "")
+            if vid:
+                sent_set = load_feed_sent(game)
+                used = _used_peak_times(game, vid, sent_set)
+                left = 0
+                for peak in entry.get("last_pool_peaks") or []:
+                    try:
+                        p = float(peak)
+                    except (TypeError, ValueError):
+                        continue
+                    if not any(abs(p - u) <= 8.0 for u in used):
+                        left += 1
+                mined_out = 0 if left > 0 else 1
+        except Exception:
+            mined_out = 0
     # Ready: more cached peaks first (almost-montage), then shorter VOD for faster retry.
     dur_sort = int(dur) if pool_ready == 0 else -int(dur)
     return (
         singles_pin,
+        mined_out,
         pool_ready,
         zombie_blocked,
         1 if scanned else 0,

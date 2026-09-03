@@ -76,10 +76,31 @@ def test_detect_hang_silence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
     monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
     monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    # No fresh heartbeat → silence counts as hang
+    monkeypatch.setattr("vod_hang_detector.read_heartbeat", lambda: {})
     report = detect_hang()
     assert not report.ok
     assert any(r.startswith("silence_") for r in report.reasons)
     assert report.zero_send_streak >= 6
+
+
+def test_working_feed_not_false_silence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "feed.log"
+    old_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 5000))
+    log.write_text(f"{old_ts} pipeline done sent=1 vods=1 game=pubg\n", encoding="utf-8")
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 60, "phase": "scan_done"},
+    )
+    report = detect_hang()
+    assert report.ok
+    assert not any(r.startswith("silence_") for r in report.reasons)
 
 
 def test_unload_stuck_inbox_vod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
