@@ -552,7 +552,9 @@ def run_assemble_montage(
             return False, reason
         return False, f"need_2_ok_have_{len(good_rows)}"
 
-    n = _send_montage(game, token, chat_id, vod, prepared, file_sha256(vod))
+    n = _send_montage(
+        game, token, chat_id, vod, prepared, file_sha256(vod), owner_assemble=True
+    )
     if n > 0:
         reason = f"montage_x{len(prepared)}"
         _assemble_log(f"assemble ok vod={vod_id} {reason}")

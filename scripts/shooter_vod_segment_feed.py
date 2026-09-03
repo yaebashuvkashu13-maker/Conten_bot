@@ -1227,6 +1227,7 @@ def _send_montage(
     sig: str,
     *,
     report: dict | None = None,
+    owner_assemble: bool = False,
 ) -> int:
     """Render N parts, xfade-merge, send one Telegram video."""
     import shutil
@@ -1284,22 +1285,26 @@ def _send_montage(
         )
 
     # Fast discovery (PANNs) + quality: CLIP ranks only this shortlist under a budget.
-    prev_clip_disabled = os.environ.get("HIGHLIGHT_CLIP_DISABLED")
-    os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
-    try:
-        from highlight_scorer import rank_shortlist_with_clip
+    # Owner 👍 assemble already chose the parts — CLIP here is a 20-minute stall.
+    if owner_assemble:
+        log.info("montage skip CLIP rank — owner assemble parts=%s", len(picked))
+    else:
+        prev_clip_disabled = os.environ.get("HIGHLIGHT_CLIP_DISABLED")
+        os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
+        try:
+            from highlight_scorer import rank_shortlist_with_clip
 
-        picked = rank_shortlist_with_clip(vod, picked, _profile(game))
-    except Exception as exc:
-        if game == "pubg" and pubg_quality_strict():
-            log.warning("montage CLIP rank required but failed: %s", exc)
-            return 0
-        log.warning("montage CLIP rank skipped: %s", exc)
-    finally:
-        if prev_clip_disabled is None:
-            os.environ.pop("HIGHLIGHT_CLIP_DISABLED", None)
-        else:
-            os.environ["HIGHLIGHT_CLIP_DISABLED"] = prev_clip_disabled
+            picked = rank_shortlist_with_clip(vod, picked, _profile(game))
+        except Exception as exc:
+            if game == "pubg" and pubg_quality_strict():
+                log.warning("montage CLIP rank required but failed: %s", exc)
+                return 0
+            log.warning("montage CLIP rank skipped: %s", exc)
+        finally:
+            if prev_clip_disabled is None:
+                os.environ.pop("HIGHLIGHT_CLIP_DISABLED", None)
+            else:
+                os.environ["HIGHLIGHT_CLIP_DISABLED"] = prev_clip_disabled
 
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
@@ -1348,9 +1353,12 @@ def _send_montage(
                     log.warning("montage part render fail idx=%s sid=%s", idx, sid)
                     rejected_sids.add(sid)
                     continue
-                ok, reason, _report = _validate_shooter_presend(
-                    game, vod, work_row, part, montage_part=True
-                )
+                if owner_assemble:
+                    ok, reason, _report = True, "owner_assemble", row.get("quality_report") or {}
+                else:
+                    ok, reason, _report = _validate_shooter_presend(
+                        game, vod, work_row, part, montage_part=True
+                    )
                 if not ok:
                     log.warning("montage part REJECT %s: %s", sid, reason)
                     if report is not None:
