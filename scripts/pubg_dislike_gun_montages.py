@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Trim last N owner-👎 PUBG clips to gunfire-only and send montages of 3 via Telegram."""
+"""Trim last N owner-labeled PUBG clips to gunfire-only and send montages of 3 via Telegram.
+
+Default label bucket is owner 👍 (good / ok). Pass --label bad for 👎.
+"""
 
 from __future__ import annotations
 
@@ -28,13 +31,20 @@ def _parse_at(row: dict) -> datetime:
     return datetime.min
 
 
-def load_recent_bad(labels_path: Path, *, limit: int) -> list[dict]:
+def load_recent_labeled(
+    labels_path: Path,
+    *,
+    limit: int,
+    label: str = "good",
+) -> list[dict]:
+    """Load newest owner labels from good/bad buckets (👍 default)."""
+    bucket = "good" if str(label).lower() in {"good", "ok", "yes", "up", "like"} else "bad"
     data = json.loads(labels_path.read_text(encoding="utf-8"))
-    bad = list(data.get("bad") or [])
-    bad.sort(key=_parse_at, reverse=True)
+    rows = list(data.get(bucket) or [])
+    rows.sort(key=_parse_at, reverse=True)
     out: list[dict] = []
     seen: set[str] = set()
-    for row in bad:
+    for row in rows:
         sid = str(row.get("segment_id") or "")
         path = Path(str(row.get("path") or ""))
         if not sid or sid in seen or not path.is_file():
@@ -44,6 +54,10 @@ def load_recent_bad(labels_path: Path, *, limit: int) -> list[dict]:
         if len(out) >= limit:
             break
     return out
+
+
+def load_recent_bad(labels_path: Path, *, limit: int) -> list[dict]:
+    return load_recent_labeled(labels_path, limit=limit, label="bad")
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -220,16 +234,30 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=30)
     ap.add_argument("--group", type=int, default=3)
     ap.add_argument(
+        "--label",
+        default="good",
+        choices=("good", "bad", "ok", "yes"),
+        help="Owner label bucket (default: good/👍/ok)",
+    )
+    ap.add_argument(
         "--labels",
         default="/root/data/pubg/vod_segment_labels.json",
     )
     ap.add_argument(
         "--out-dir",
-        default="/root/data/pubg/dislike_gun_montages",
+        default="",
     )
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--chat-id", default="")
     args = ap.parse_args()
+    label = "good" if args.label in {"good", "ok", "yes"} else "bad"
+    mark = "👍" if label == "good" else "👎"
+    if not args.out_dir:
+        args.out_dir = (
+            "/root/data/pubg/like_gun_montages"
+            if label == "good"
+            else "/root/data/pubg/dislike_gun_montages"
+        )
 
     env = {**os.environ, **load_env()}
     token = env.get("TG_BOT_TOKEN") or env.get("TELEGRAM_BOT_TOKEN") or ""
@@ -238,9 +266,9 @@ def main() -> int:
         print("TG_BOT_TOKEN / chat_id missing", file=sys.stderr)
         return 2
 
-    rows = load_recent_bad(Path(args.labels), limit=args.limit)
+    rows = load_recent_labeled(Path(args.labels), limit=args.limit, label=label)
     if not rows:
-        print("no bad segments found")
+        print(f"no {label} segments found")
         return 1
 
     out_dir = Path(args.out_dir)
@@ -283,7 +311,7 @@ def main() -> int:
         send_message(
             token,
             str(chat_id),
-            f"🔁 Перерезка последних {len(rows)} 👎 → {len(trimmed)} кусков со стрельбой "
+            f"🔁 Перерезка последних {len(rows)} {mark} → {len(trimmed)} кусков со стрельбой "
             f"(групп по {args.group}). Пропущено без стрельбы: {skipped}.",
         )
 
@@ -303,7 +331,7 @@ def main() -> int:
             print(f"concat fail batch={ids}")
             continue
         caption = (
-            f"👎→🔫 montage {i // group + 1} ({len(parts)} parts)\n"
+            f"{mark}→🔫 montage {i // group + 1} ({len(parts)} parts)\n"
             + "\n".join(ids)
         )
         if args.dry_run:
