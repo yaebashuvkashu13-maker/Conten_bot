@@ -472,8 +472,10 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
 
 def _load_artifact() -> dict | None:
     global _MODEL_CACHE
+    from path_safe import is_file as path_is_file
+
     path = model_path()
-    if not path.is_file():
+    if not path_is_file(path):
         return None
     try:
         mtime_ns = path.stat().st_mtime_ns
