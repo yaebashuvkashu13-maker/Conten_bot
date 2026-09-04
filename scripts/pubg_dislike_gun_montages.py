@@ -271,84 +271,118 @@ def main() -> int:
         print(f"no {label} segments found")
         return 1
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    trimmed: list[tuple[dict, Path, dict]] = []
-    skipped = 0
-    for row in rows:
-        src = Path(str(row["path"]))
-        sid = str(row["segment_id"])
-        try:
-            start, dur, probe = find_gun_window(src)
-        except Exception as exc:
-            print(f"probe fail {sid}: {exc}")
-            skipped += 1
-            continue
-        if float(probe.get("gunfire_density") or 0.0) < float(
-            os.environ.get("PUBG_DISLIKE_KEEP_MIN_GUN", "0.025")
-        ):
-            print(f"skip weak gun {sid} gun={probe.get('gunfire_density')}")
-            skipped += 1
-            continue
-        dest = out_dir / f"gun_{sid}.mp4"
-        if not ffmpeg_trim(src, start, dur, dest):
-            print(f"trim fail {sid}")
-            skipped += 1
-            continue
-        trimmed.append((row, dest, probe))
-        print(
-            f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} -> {dest.name}"
-        )
-
-    if not trimmed:
-        print("nothing trimmed")
-        return 1
-
     from mlbb_telegram_video import send_document_file
     from mlbb_vod_segment_feed import send_message
 
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    group = max(1, int(args.group))
     if not args.dry_run:
         send_message(
             token,
             str(chat_id),
-            f"🔁 Перерезка последних {len(rows)} {mark} → {len(trimmed)} кусков со стрельбой "
-            f"(групп по {args.group}). Пропущено без стрельбы: {skipped}.",
+            f"🔁 Перерезка последних {len(rows)} {mark} → стрельба, склейки по {group}. "
+            f"Буду слать по мере готовности.",
         )
 
+    trimmed: list[tuple[dict, Path, dict]] = []
+    pending: list[tuple[dict, Path, dict]] = []
+    skipped = 0
     sent = 0
-    group = max(1, int(args.group))
-    for i in range(0, len(trimmed), group):
-        batch = trimmed[i : i + group]
+    montage_idx = 0
+
+    def flush_pending() -> None:
+        nonlocal pending, sent, montage_idx
+        while len(pending) >= group:
+            batch = pending[:group]
+            pending = pending[group:]
+            montage_idx += 1
+            parts = [p for _, p, _ in batch]
+            ids = [str(r["segment_id"]) for r, _, _ in batch]
+            montage = out_dir / f"montage_{montage_idx:02d}_{int(time.time())}.mp4"
+            if len(parts) == 1:
+                montage = parts[0]
+                ok_concat = True
+            else:
+                ok_concat = ffmpeg_concat(parts, montage)
+            if not ok_concat:
+                print(f"concat fail batch={ids}")
+                continue
+            caption = f"{mark}→🔫 montage {montage_idx} ({len(parts)} parts)\n" + "\n".join(ids)
+            if args.dry_run:
+                print(f"dry-run would send {montage} :: {caption}")
+                sent += 1
+                continue
+            ok = send_document_file(
+                token, str(chat_id), montage, caption, force_file=True
+            )
+            print(
+                f"send {'ok' if ok else 'FAIL'} {montage.name} size={montage.stat().st_size}"
+            )
+            if ok:
+                sent += 1
+            time.sleep(1.0)
+
+    for row in rows:
+        src = Path(str(row["path"]))
+        sid = str(row["segment_id"])
+        dest = out_dir / f"gun_{sid}.mp4"
+        probe: dict = {}
+        if dest.is_file() and dest.stat().st_size > 50_000:
+            print(f"reuse {dest.name}")
+            probe = {"gunfire_density": 0.05, "reused": True}
+        else:
+            try:
+                start, dur, probe = find_gun_window(src)
+            except Exception as exc:
+                print(f"probe fail {sid}: {exc}")
+                skipped += 1
+                continue
+            if float(probe.get("gunfire_density") or 0.0) < float(
+                os.environ.get("PUBG_DISLIKE_KEEP_MIN_GUN", "0.025")
+            ):
+                print(f"skip weak gun {sid} gun={probe.get('gunfire_density')}")
+                skipped += 1
+                continue
+            if not ffmpeg_trim(src, start, dur, dest):
+                print(f"trim fail {sid}")
+                skipped += 1
+                continue
+            print(
+                f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} -> {dest.name}"
+            )
+        item = (row, dest, probe)
+        trimmed.append(item)
+        pending.append(item)
+        flush_pending()
+
+    # Remainder (< group)
+    if pending:
+        batch = pending
+        pending = []
+        montage_idx += 1
         parts = [p for _, p, _ in batch]
         ids = [str(r["segment_id"]) for r, _, _ in batch]
-        montage = out_dir / f"montage_{i // group + 1:02d}_{int(time.time())}.mp4"
+        montage = out_dir / f"montage_{montage_idx:02d}_{int(time.time())}.mp4"
         if len(parts) == 1:
             montage = parts[0]
             ok_concat = True
         else:
             ok_concat = ffmpeg_concat(parts, montage)
-        if not ok_concat:
-            print(f"concat fail batch={ids}")
-            continue
-        caption = (
-            f"{mark}→🔫 montage {i // group + 1} ({len(parts)} parts)\n"
-            + "\n".join(ids)
-        )
-        if args.dry_run:
-            print(f"dry-run would send {montage} :: {caption}")
-            sent += 1
-            continue
-        ok = send_document_file(
-            token,
-            str(chat_id),
-            montage,
-            caption,
-            force_file=True,
-        )
-        print(f"send {'ok' if ok else 'FAIL'} {montage.name} size={montage.stat().st_size}")
-        if ok:
-            sent += 1
-        time.sleep(1.0)
+        if ok_concat:
+            caption = f"{mark}→🔫 montage {montage_idx} ({len(parts)} parts)\n" + "\n".join(ids)
+            if args.dry_run:
+                print(f"dry-run would send {montage} :: {caption}")
+                sent += 1
+            else:
+                ok = send_document_file(
+                    token, str(chat_id), montage, caption, force_file=True
+                )
+                print(
+                    f"send {'ok' if ok else 'FAIL'} {montage.name} size={montage.stat().st_size}"
+                )
+                if ok:
+                    sent += 1
 
     print(f"done trimmed={len(trimmed)} skipped={skipped} sent={sent}")
     return 0 if sent else 1
