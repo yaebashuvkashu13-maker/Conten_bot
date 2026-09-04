@@ -156,42 +156,42 @@ def find_gun_window(path: Path) -> tuple[float, float, dict]:
             "reject": "no_fight_island",
         }
 
-    # Prefer densest fight, not the longest weak run.
-    i0, i1, _, _ = max(islands, key=lambda x: (x[2], x[3], x[1] - x[0]))
-    peak_idx = max(range(i0, i1), key=lambda k: (scores[k][1], scores[k][2]))
-    peak_t = scores[peak_idx][0]
-    # Keep a short window around the peak; expand only while bins stay hot.
-    left = peak_idx
-    right = peak_idx
-    while left > i0 and scores[left - 1][1] >= min_gun * 0.9:
-        left -= 1
-    while right + 1 < i1 and scores[right + 1][1] >= min_gun * 0.9:
-        right += 1
-    start = max(0.0, scores[left][0] - pad)
-    end = min(dur, scores[right][0] + win + pad)
-    # Hard-cap around peak so we never drag loot tails.
-    start = max(start, peak_t - max_out * 0.55)
-    end = min(end, peak_t + max_out * 0.55)
-    length = max(2.5, min(max_out, end - start))
-    mean_gun = sum(s[1] for s in scores[left : right + 1]) / max(1, right - left + 1)
-    mean_burst = sum(s[2] for s in scores[left : right + 1]) / max(1, right - left + 1)
-
-    ok, reason, metrics = pubg_passes_shooting_gate(path, start, length)
-    if not ok:
-        return 0.0, 0.0, {
+    # Try densest islands first until one passes the shooting gate.
+    ranked = sorted(islands, key=lambda x: (x[2], x[3], x[1] - x[0]), reverse=True)
+    last_reject = "no_fight_island"
+    last_probe: dict = {}
+    for i0, i1, _, _ in ranked:
+        peak_idx = max(range(i0, i1), key=lambda k: (scores[k][1], scores[k][2]))
+        peak_t = scores[peak_idx][0]
+        left = peak_idx
+        right = peak_idx
+        while left > i0 and scores[left - 1][1] >= min_gun * 0.9:
+            left -= 1
+        while right + 1 < i1 and scores[right + 1][1] >= min_gun * 0.9:
+            right += 1
+        start = max(0.0, scores[left][0] - pad)
+        end = min(dur, scores[right][0] + win + pad)
+        start = max(start, peak_t - max_out * 0.55)
+        end = min(end, peak_t + max_out * 0.55)
+        length = max(2.5, min(max_out, end - start))
+        mean_gun = sum(s[1] for s in scores[left : right + 1]) / max(1, right - left + 1)
+        mean_burst = sum(s[2] for s in scores[left : right + 1]) / max(1, right - left + 1)
+        ok, reason, metrics = pubg_passes_shooting_gate(path, start, length)
+        last_probe = {
             "gunfire_density": round(mean_gun, 4),
             "burst_ratio": round(mean_burst, 4),
-            "reject": reason,
+            "bins": right - left + 1,
             "peak_t": round(peak_t, 2),
         }
-    return start, length, {
-        "gunfire_density": round(mean_gun, 4),
-        "burst_ratio": round(mean_burst, 4),
-        "bins": right - left + 1,
-        "peak_t": round(peak_t, 2),
-        "gate": reason,
-        "loot_walk": bool(metrics.get("loot_walk")),
-    }
+        if not ok:
+            last_reject = reason
+            continue
+        return start, length, {
+            **last_probe,
+            "gate": reason,
+            "loot_walk": bool(metrics.get("loot_walk")),
+        }
+    return 0.0, 0.0, {**last_probe, "reject": last_reject}
 
 
 
