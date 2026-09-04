@@ -245,3 +245,47 @@ def test_mined_inbox_drought_despite_fresh_heartbeat(tmp_path: Path, monkeypatch
     report = detect_hang()
     assert not report.ok
     assert any(r.startswith("mined_inbox_drought_") for r in report.reasons)
+
+
+def test_apply_agent_recover_env_softens_after_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 4000.0)
+    env: dict[str, str] = {}
+    out = apply_agent_recover_env(env, escalation=0)
+    assert out["VOD_FORCE_SOFTEN"] == "1"
+    assert out["VOD_FORCE_SKIP_DISCOVERY"] == "1"
+
+
+def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 8000.0)
+    env: dict[str, str] = {}
+    out = apply_agent_recover_env(env, escalation=2)
+    assert out["VOD_FORCE_ESCALATION"] == "2"
+    assert float(out["VOD_FORCE_QUALITY_MIN"]) <= 0.05
+
+
+def test_parse_recover_sent() -> None:
+    from vod_hang_detector import _parse_recover_sent
+
+    assert _parse_recover_sent("• отправка PUBG: 1 клип(ов) ✅") == 1
+    assert _parse_recover_sent("• отправка PUBG: 0 — гейты") == 0
+
+
+def test_heal_cooldown_retries_when_previous_sent_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vod_hang_detector import _heal_cooldown_ok
+
+    stamp = tmp_path / "heal.json"
+    stamp.write_text(
+        json.dumps({"last_heal_ts": time.time() - 700, "action": "full_recover", "sent": 0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("vod_hang_detector.DEFAULT_HEAL_STAMP", stamp)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 5000.0)
+    monkeypatch.setenv("VOD_HEAL_RETRY_SEC", "600")
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    assert _heal_cooldown_ok(2700) is True

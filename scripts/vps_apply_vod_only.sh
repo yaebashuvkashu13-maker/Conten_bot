@@ -66,6 +66,28 @@ cp -f "$REPO/scripts/vod_hang_detector.py" /usr/local/bin/ 2>/dev/null || true
 cp -f "$REPO/scripts/mlbb_vod_health_watchdog.sh" /usr/local/bin/ 2>/dev/null || true
 cp -f "$REPO/scripts/vod_feed_recover.py" /usr/local/bin/ 2>/dev/null || true
 cp -f "$REPO/scripts/vod_force_send.py" /usr/local/bin/ 2>/dev/null || true
+
+# Persist keepalive agent knobs so cron ticks always soften/recover like the manual playbook.
+_upsert_env() {
+  local key="$1" val="$2"
+  [[ -f "$ENV_FILE" ]] || return 0
+  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE" || true
+  else
+    echo "${key}=${val}" >>"$ENV_FILE"
+  fi
+}
+_upsert_env VOD_SILENCE_HEAL_SEC 3600
+_upsert_env VOD_SILENCE_WARN_SEC 3600
+_upsert_env VOD_ABSOLUTE_SILENCE_SEC 5400
+_upsert_env VOD_FORCE_DROUGHT_SEC 3600
+_upsert_env VOD_HEAL_RETRY_SEC 600
+_upsert_env VOD_HEAL_RETRY_ON_SILENCE 1
+_upsert_env VOD_RECOVER_UNPARK 4
+_upsert_env VOD_FORCE_SEND_MAX_VODS 4
+_upsert_env VOD_RECOVER_FORCE_SEND_TIMEOUT_SEC 1800
+_upsert_env VOD_HEAL_BACKGROUND 1
+
 bash /usr/local/bin/mlbb_vod_health_watchdog.sh || true
 _verify_or_warn "full"
 # If feed service is down after install, start it — don't leave inactive.

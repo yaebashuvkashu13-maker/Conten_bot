@@ -259,24 +259,40 @@ def force_send_game(
         try:
             from vod_hang_detector import last_send_age_sec
 
+            # Default 1h — matches keepalive agent / silence warn (was 2h).
             drought = float(last_send_age_sec() or 0) >= float(
-                os.environ.get("VOD_FORCE_DROUGHT_SEC", "7200")
+                os.environ.get("VOD_FORCE_DROUGHT_SEC", "3600")
             )
         except Exception:
             drought = False
-        if drought or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+        try:
+            escalation = max(0, min(2, int(os.environ.get("VOD_FORCE_ESCALATION", "0"))))
+        except ValueError:
+            escalation = 0
+        if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
             env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "0")
             env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
+            quality_default = "0.22"
+            gun_default = "0.030"
+            payoff_default = "0.08"
+            if escalation >= 1:
+                quality_default = "0.12"
+                gun_default = "0.020"
+                payoff_default = "0.05"
+            if escalation >= 2:
+                quality_default = "0.05"
+                gun_default = "0.010"
+                payoff_default = "0.03"
             env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get(
-                "VOD_FORCE_PAYOFF_MIN", "0.08"
+                "VOD_FORCE_PAYOFF_MIN", payoff_default
             )
             env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get(
-                "VOD_FORCE_QUALITY_MIN", "0.22"
+                "VOD_FORCE_QUALITY_MIN", quality_default
             )
             env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
             env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
             env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get(
-                "VOD_FORCE_GUN_DENSITY", "0.030"
+                "VOD_FORCE_GUN_DENSITY", gun_default
             )
             env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get(
                 "VOD_FORCE_BURST_RATIO", "3.5"

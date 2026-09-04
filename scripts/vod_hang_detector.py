@@ -34,10 +34,13 @@ from vod_game_registry import VOD_GAMES, inbox_video_ids, load_state, save_state
 DEFAULT_HEARTBEAT = Path("/root/data/mlbb/vod_feed_heartbeat.json")
 DEFAULT_HEAL_STAMP = Path("/root/data/mlbb/vod_auto_heal.json")
 DEFAULT_ALERT_STAMP = Path("/root/data/mlbb/vod_silence_alert.json")
+DEFAULT_DETECT_STAMP = Path("/root/data/mlbb/vod_hang_detect_last.json")
+DEFAULT_AUTO_RECOVER_LOG = Path("/root/data/mlbb/hang_recover_auto.log")
 SEND_LINE_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*?"
     r"(?:pipeline done sent=([1-9]\d*)|PUBG sent=([1-9]\d*)|sent=([1-9]\d*) vods=1)",
 )
+_RECOVER_SENT_RE = re.compile(r"отправка\s+\w+:\s*([1-9]\d*)\s*клип")
 PIPELINE_DONE_RE = re.compile(
     r"(?:^|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[, ]\d*\s*\w*\s*)pipeline done sent=(\d+)"
 )
@@ -507,15 +510,33 @@ def mark_mined_inbox_exhausted(game: str = "pubg") -> list[str]:
     return marked
 
 
-def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
-    min_sec = min_sec or max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
+def _read_heal_stamp() -> dict:
     stamp = DEFAULT_HEAL_STAMP
     if not stamp.is_file():
-        return True
+        return {}
     try:
         data = json.loads(stamp.read_text(encoding="utf-8"))
-        last = float(data.get("last_heal_ts") or 0)
+        return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def _heal_escalation() -> int:
+    try:
+        return max(0, min(2, int(_read_heal_stamp().get("escalation") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
+    # Default 45m between *successful* heals; failed drought recovers retry faster.
+    min_sec = min_sec or max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
+    data = _read_heal_stamp()
+    if not data:
+        return True
+    try:
+        last = float(data.get("last_heal_ts") or 0)
+    except (TypeError, ValueError):
         return True
     age = _now() - last
     if age >= min_sec:
@@ -524,16 +545,23 @@ def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
     # otherwise drought + mined inbox looks like "auto-heal never starts".
     if os.environ.get("VOD_HEAL_RETRY_ON_SILENCE", "1") != "1":
         return False
-    # Absolute drought: retry every 10 minutes until a real send lands.
     try:
         send_age = last_send_age_sec()
     except Exception:
         send_age = None
-    absolute = max(3600, int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "7200")))
+    # Soften window (1h): retry every 10m. Absolute drought (default 1.5h): every 5–10m.
+    silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
+    absolute = max(silence_warn, int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400")))
+    prev_sent = int(data.get("sent") or 0)
     if send_age is not None and send_age >= absolute:
         retry_sec = max(300, int(os.environ.get("VOD_HEAL_RETRY_SEC", "600")))
-    else:
+    elif send_age is not None and send_age >= silence_warn:
+        retry_sec = max(600, int(os.environ.get("VOD_HEAL_RETRY_SEC", "600")))
+    elif prev_sent <= 0:
+        # Last auto-recover shipped nothing — do not sit on the long cooldown.
         retry_sec = max(600, int(os.environ.get("VOD_HEAL_RETRY_SEC", "900")))
+    else:
+        return False
     if age < retry_sec:
         return False
     if send_age is None:
@@ -542,12 +570,89 @@ def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
     return send_age > age + 30
 
 
-def _mark_heal(action: str) -> None:
+def _mark_heal(action: str, **extra: object) -> None:
     DEFAULT_HEAL_STAMP.parent.mkdir(parents=True, exist_ok=True)
-    DEFAULT_HEAL_STAMP.write_text(
-        json.dumps({"last_heal_ts": _now(), "action": action}),
-        encoding="utf-8",
+    payload = {"last_heal_ts": _now(), "action": action, **extra}
+    DEFAULT_HEAL_STAMP.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def apply_agent_recover_env(
+    env: dict[str, str] | None = None,
+    *,
+    escalation: int | None = None,
+) -> dict[str, str]:
+    """Env knobs matching the manual agent playbook (soften / skip discovery / escalate)."""
+    target: dict[str, str] = env if env is not None else os.environ  # type: ignore[assignment]
+    try:
+        silence = float(last_send_age_sec() or 0)
+    except Exception:
+        silence = 0.0
+    esc = _heal_escalation() if escalation is None else max(0, min(2, int(escalation)))
+    silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
+    drought_sec = max(600, int(os.environ.get("VOD_FORCE_DROUGHT_SEC", "3600")))
+    need_soft = (
+        silence >= float(drought_sec)
+        or silence >= float(silence_warn)
+        or esc > 0
+        or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
     )
+    if not need_soft:
+        return target
+    target["VOD_FORCE_SOFTEN"] = "1"
+    target["VOD_FORCE_SKIP_DISCOVERY"] = os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "1")
+    target.setdefault(
+        "VOD_FORCE_SEND_MAX_VODS",
+        os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"),
+    )
+    target.setdefault(
+        "VOD_RECOVER_FORCE_SEND_TIMEOUT_SEC",
+        os.environ.get("VOD_RECOVER_FORCE_SEND_TIMEOUT_SEC", "1800"),
+    )
+    target.setdefault(
+        "VOD_RECOVER_UNPARK",
+        os.environ.get("VOD_RECOVER_UNPARK", "4"),
+    )
+    target["VOD_FORCE_ESCALATION"] = str(esc)
+    if esc >= 1:
+        target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.12")
+        target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.020")
+        target["VOD_FORCE_PAYOFF_MIN"] = os.environ.get("VOD_FORCE_PAYOFF_MIN", "0.05")
+    if esc >= 2:
+        target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.05")
+        target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
+        target["VOD_FORCE_REJECT_LOOT"] = "0"
+        target["PUBG_REJECT_LOOT_WALK"] = "0"
+        target["PUBG_PRESEND_SHOOTING_GATE"] = "0"
+    return target
+
+
+def _parse_recover_sent(msg: str) -> int:
+    match = _RECOVER_SENT_RE.search(msg or "")
+    if match:
+        return int(match.group(1))
+    if "клип(ов) ✅" in (msg or ""):
+        return 1
+    return 0
+
+
+def _recover_process_alive() -> bool:
+    """True if a hang-detector --recover child is running (lock may lag)."""
+    me = os.getpid()
+    for pid_name in os.listdir("/proc"):
+        if not pid_name.isdigit():
+            continue
+        pid = int(pid_name)
+        if pid == me:
+            continue
+        try:
+            raw = Path(f"/proc/{pid_name}/cmdline").read_bytes()
+        except OSError:
+            continue
+        parts = [p.decode(errors="ignore") for p in raw.split(b"\0") if p]
+        joined = " ".join(parts)
+        if "vod_hang_detector.py" in joined and "--recover" in joined:
+            return True
+    return False
 
 
 def _send_tg(text: str) -> bool:
@@ -573,6 +678,8 @@ def _recover_lock_path() -> Path:
 
 def _recover_already_running() -> bool:
     """True if a previous --recover / force_send is still alive."""
+    if _recover_process_alive():
+        return True
     lock = _recover_lock_path()
     if not lock.is_file():
         return False
@@ -582,6 +689,9 @@ def _recover_already_running() -> bool:
         return False
     if pid <= 1:
         return False
+    # Parent may stamp our pid into the lock before we run — not another recover.
+    if pid == os.getpid():
+        return False
     try:
         os.kill(pid, 0)
         return True
@@ -590,10 +700,53 @@ def _recover_already_running() -> bool:
         return False
 
 
+def _spawn_background_recover(game: str) -> bool:
+    """Start --recover with agent env; log to hang_recover_auto.log (not /dev/null)."""
+    if _recover_already_running():
+        return False
+    script = Path(__file__).resolve()
+    log_path = Path(os.environ.get("VOD_AUTO_RECOVER_LOG", str(DEFAULT_AUTO_RECOVER_LOG)))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    esc = _heal_escalation()
+    env = apply_agent_recover_env(dict(os.environ), escalation=esc)
+    env["VOD_RECOVER_CHILD"] = "1"
+    header = (
+        f"\n===== auto recover {time.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"game={game} esc={esc} silence={int(last_send_age_sec() or 0)}s =====\n"
+    )
+    try:
+        log_fh = log_path.open("a", encoding="utf-8")
+    except OSError:
+        log_fh = subprocess.DEVNULL  # type: ignore[assignment]
+    if log_fh is not subprocess.DEVNULL:
+        try:
+            log_fh.write(header)
+            log_fh.flush()
+        except OSError:
+            pass
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(script), "--recover", "--game", game],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        _recover_lock_path().write_text(str(proc.pid), encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 def _acquire_recover_lock() -> bool:
     if _recover_already_running():
         return False
     path = _recover_lock_path()
+    try:
+        if path.is_file() and int(path.read_text(encoding="utf-8").strip() or "0") == os.getpid():
+            return True
+    except (OSError, ValueError):
+        pass
     path.write_text(str(os.getpid()), encoding="utf-8")
     return True
 
@@ -668,7 +821,8 @@ def auto_unload_and_recover(
         if unparked:
             actions.append(f"unpark_{g}={unparked}")
 
-    silence_heal = max(3600, int(os.environ.get("VOD_SILENCE_HEAL_SEC", "5400")))
+    # Full recover after 1h silence by default (was 90m) — same bar as manual agent work.
+    silence_heal = max(1800, int(os.environ.get("VOD_SILENCE_HEAL_SEC", "3600")))
     zero_streak_heal = max(3, int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6")))
     silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
     streak_counts = report.zero_send_streak >= zero_streak_heal and (
@@ -679,50 +833,58 @@ def auto_unload_and_recover(
     ) or streak_counts
 
     if need_full_recover:
+        esc = _heal_escalation()
         # Mark heal FIRST so concurrent cron ticks see cooldown immediately.
-        _mark_heal("full_recover_pending")
+        _mark_heal("full_recover_pending", sent=0, escalation=esc)
         clear_stale_owner_batch_lock()
         clear_feed_locks()
         if background and os.environ.get("VOD_HEAL_BACKGROUND", "1") == "1":
-            if _recover_already_running():
-                return {"action": "recover_in_progress", "actions": actions, "reasons": report.reasons}
-            script = Path(__file__).resolve()
-            subprocess.Popen(
-                [sys.executable, str(script), "--recover", "--game", game],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            actions.append("full_recover_bg")
-            _mark_heal("full_recover_bg")
+            if not _spawn_background_recover(game):
+                return {
+                    "action": "recover_in_progress",
+                    "actions": actions,
+                    "reasons": report.reasons,
+                }
+            actions.append(f"full_recover_bg esc={esc}")
+            _mark_heal("full_recover_bg", sent=0, escalation=esc)
             return {
                 "action": "full_recover_bg",
                 "actions": actions,
                 "reasons": report.reasons,
+                "escalation": esc,
             }
         if not _acquire_recover_lock():
             return {"action": "recover_in_progress", "actions": actions, "reasons": report.reasons}
         try:
-            # Prefer inbox scan: only stop competing feeds, then force_send once.
+            # Same knobs as the human/agent playbook: soften, skip Metro discovery, escalate.
+            apply_agent_recover_env(os.environ, escalation=esc)  # type: ignore[arg-type]
             stop_feed_processes(game)
             msg = run_recover(game, force_send=True)
+            sent = _parse_recover_sent(msg)
+            next_esc = 0 if sent > 0 else min(2, esc + 1)
             _start_systemd_feed()
             restarted, _ = restart_supervisor(force=True)
             actions.append("full_recover")
             if restarted:
                 actions.append("supervisor_restarted")
-            _mark_heal("full_recover")
+            if sent > 0:
+                actions.append(f"sent={sent}")
+            else:
+                actions.append(f"sent=0 next_esc={next_esc}")
+            _mark_heal("full_recover", sent=sent, escalation=next_esc)
             return {
                 "action": "full_recover",
                 "actions": actions,
                 "reasons": report.reasons,
-                "recover_tail": msg.splitlines()[-6:],
+                "sent": sent,
+                "escalation": next_esc,
+                "recover_tail": msg.splitlines()[-8:],
             }
         finally:
             _release_recover_lock()
 
     # Light heal: restart feed only — never spam this either.
-    _mark_heal("light_restart")
+    _mark_heal("light_restart", sent=0, escalation=_heal_escalation())
     clear_feed_locks()
     stop_feed_processes(game)
     _start_systemd_feed()
@@ -773,7 +935,13 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
         "feed_alive": report.feed_alive,
         "stuck_children": len(report.stuck_children),
         "stuck_parts": len(report.stuck_parts),
+        "ts": _now(),
     }
+    try:
+        DEFAULT_DETECT_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        DEFAULT_DETECT_STAMP.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
     if not report.ok or force:
         # Alert only when we actually heal (not on cooldown spam).
         heal = auto_unload_and_recover(report, game=game, force=force, background=not force)
