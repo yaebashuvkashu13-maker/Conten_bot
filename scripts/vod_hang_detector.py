@@ -365,7 +365,14 @@ def detect_hang() -> HangReport:
             report.add(f"silence_{int(report.last_send_age_sec)}s")
 
     if report.zero_send_streak >= zero_streak_heal:
-        report.add(f"zero_send_streak_{report.zero_send_streak}")
+        # Streak alone must not fire right after a real Telegram send — empty
+        # discovery loops still print sent=0 and would re-heal within minutes.
+        fresh_send = (
+            report.last_send_age_sec is not None
+            and report.last_send_age_sec < silence_warn
+        )
+        if not fresh_send:
+            report.add(f"zero_send_streak_{report.zero_send_streak}")
 
     if report.feed_alive:
         hb_age = report.heartbeat_age_sec
@@ -646,9 +653,14 @@ def auto_unload_and_recover(
             actions.append(f"unpark_{g}={unparked}")
 
     silence_heal = max(3600, int(os.environ.get("VOD_SILENCE_HEAL_SEC", "5400")))
+    zero_streak_heal = max(3, int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6")))
+    silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
+    streak_counts = report.zero_send_streak >= zero_streak_heal and (
+        report.last_send_age_sec is None or report.last_send_age_sec >= silence_warn
+    )
     need_full_recover = force or (
         report.last_send_age_sec is not None and report.last_send_age_sec >= silence_heal
-    ) or report.zero_send_streak >= int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6"))
+    ) or streak_counts
 
     if need_full_recover:
         # Mark heal FIRST so concurrent cron ticks see cooldown immediately.

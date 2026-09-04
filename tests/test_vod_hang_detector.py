@@ -146,6 +146,34 @@ def test_absolute_silence_heals_despite_fresh_heartbeat(
     assert not report.ok
     assert any(r.startswith("absolute_silence_") for r in report.reasons)
     assert report.zero_send_streak >= 6
+    assert any(r.startswith("zero_send_streak_") for r in report.reasons)
+
+
+def test_fresh_send_ignores_zero_send_streak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a real send, empty discovery loops must not re-trigger streak heal."""
+    log = tmp_path / "feed.log"
+    log.write_text(
+        "pipeline done sent=1 vods=1 game=pubg\n"
+        + "\n".join("pipeline done sent=0 vods=0 game=pubg" for _ in range(20)),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "7200")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 120.0)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 20, "phase": "scan_done"},
+    )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
+    report = detect_hang()
+    assert report.ok
+    assert not any(r.startswith("zero_send_streak_") for r in report.reasons)
 
 
 def test_unload_stuck_inbox_vod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
