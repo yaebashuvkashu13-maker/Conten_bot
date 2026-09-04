@@ -311,14 +311,18 @@ def force_send_game(
                 "VOD_FORCE_SKIP_DISCOVERY", "1"
             )
             if escalation >= 2:
-                # Score-mode hard_loot_walk / owner run_fake_gun still zero-send after soften.
+                # Keep score-mode; add explicit singles bypass so hard_loot_walk /
+                # run_fake_gun cannot keep the drought alive forever.
                 env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get(
-                    "VOD_FORCE_PRESEND_SCORE_MODE", "0"
+                    "VOD_FORCE_PRESEND_SCORE_MODE", "1"
                 )
                 env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
                     "VOD_FORCE_RELAX_OWNER", "2"
                 )
                 env["PUBG_PRESEND_SHOOTING_GATE"] = "0"
+                env["VOD_FORCE_PRESEND_BYPASS"] = os.environ.get(
+                    "VOD_FORCE_PRESEND_BYPASS", "1"
+                )
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
     captured = ""

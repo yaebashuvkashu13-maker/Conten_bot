@@ -624,11 +624,13 @@ def apply_agent_recover_env(
         target["PUBG_REJECT_LOOT_WALK"] = "0"
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
         target["PUBG_PRESEND_SHOOTING_GATE"] = "0"
-        # Bypass owner heuristic / score-mode hard rejects that still zero-send in drought.
-        target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "0")
+        # Keep score-mode ON (loot reject respects PUBG_REJECT_LOOT_WALK=0).
+        # Combat-gate fallback on SCORE_MODE=0 ignored soften and still zero-sent.
+        target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
         target["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
             "VOD_FORCE_RELAX_OWNER", "2"
         )
+        target["VOD_FORCE_PRESEND_BYPASS"] = os.environ.get("VOD_FORCE_PRESEND_BYPASS", "1")
     return target
 
 
