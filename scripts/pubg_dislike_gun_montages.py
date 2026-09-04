@@ -403,7 +403,6 @@ def main() -> int:
 
     force_retrim = os.environ.get("PUBG_DISLIKE_FORCE_RETRIM", "1") == "1"
     used_vods: set[str] = set()
-    from pubg_shooting_gate import pubg_passes_shooting_gate
 
     for row in rows:
         src = Path(str(row["path"]))
