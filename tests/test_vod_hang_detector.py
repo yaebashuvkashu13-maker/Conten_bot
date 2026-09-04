@@ -48,6 +48,19 @@ def test_zero_send_streak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert zero_send_streak() == 2
 
 
+def test_zero_send_streak_plain_print_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Feed uses print('pipeline done...') without logging timestamps."""
+    log = tmp_path / "feed.log"
+    log.write_text(
+        "pipeline done sent=1 vods=1 game=pubg\n"
+        + "\n".join("pipeline done sent=0 vods=0 game=pubg" for _ in range(8))
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    assert zero_send_streak() == 8
+
+
 def test_heartbeat_write_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     hb = tmp_path / "hb.json"
     monkeypatch.setattr("vod_hang_detector.heartbeat_path", lambda: hb)
@@ -89,6 +102,7 @@ def test_working_feed_not_false_silence(tmp_path: Path, monkeypatch: pytest.Monk
     old_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 5000))
     log.write_text(f"{old_ts} pipeline done sent=1 vods=1 game=pubg\n", encoding="utf-8")
     monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
     monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
     monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
     monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
@@ -102,6 +116,36 @@ def test_working_feed_not_false_silence(tmp_path: Path, monkeypatch: pytest.Monk
     report = detect_hang()
     assert report.ok
     assert not any(r.startswith("silence_") for r in report.reasons)
+    assert not any(r.startswith("absolute_silence_") for r in report.reasons)
+
+
+def test_absolute_silence_heals_despite_fresh_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery spam kept heartbeat fresh for 4h while zero_send_streak was blind."""
+    log = tmp_path / "feed.log"
+    log.write_text(
+        "pipeline done sent=1 vods=1 game=pubg\n"
+        + "\n".join("pipeline done sent=0 vods=0 game=pubg" for _ in range(20)),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "7200")
+    monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 15000.0)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 30, "phase": "run_start"},
+    )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
+    report = detect_hang()
+    assert not report.ok
+    assert any(r.startswith("absolute_silence_") for r in report.reasons)
+    assert report.zero_send_streak >= 6
 
 
 def test_unload_stuck_inbox_vod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -39,8 +39,9 @@ SEND_LINE_RE = re.compile(
     r"(?:pipeline done sent=([1-9]\d*)|PUBG sent=([1-9]\d*)|sent=([1-9]\d*) vods=1)",
 )
 PIPELINE_DONE_RE = re.compile(
-    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*pipeline done sent=(\d+)"
+    r"(?:^|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[, ]\d*\s*\w*\s*)pipeline done sent=(\d+)"
 )
+PIPELINE_DONE_PLAIN_RE = re.compile(r"pipeline done sent=(\d+)")
 LOG_TS = "%Y-%m-%d %H:%M:%S"
 CHILD_PATTERNS = ("ffmpeg", "yt-dlp", "youtube-dl")
 
@@ -139,6 +140,11 @@ def last_send_age_sec() -> float:
 
 
 def zero_send_streak(max_lines: int = 40000) -> int:
+    """Count consecutive pipeline done sent=0 from log tail.
+
+    Feed prints bare `pipeline done sent=N ...` via print() — no logging
+    timestamp — so matching must not require a leading datetime.
+    """
     log_path = feed_log_path()
     if not log_path.is_file():
         return 0
@@ -148,10 +154,10 @@ def zero_send_streak(max_lines: int = 40000) -> int:
         return 0
     streak = 0
     for line in reversed(lines):
-        m = PIPELINE_DONE_RE.search(line)
+        m = PIPELINE_DONE_PLAIN_RE.search(line)
         if not m:
             continue
-        sent = int(m.group(2))
+        sent = int(m.group(1))
         if sent > 0:
             break
         streak += 1
@@ -333,16 +339,25 @@ def detect_hang() -> HangReport:
     report.stuck_parts = find_stuck_part_files("pubg")
 
     silence_warn = max(600, int(os.environ.get("VOD_SILENCE_WARN_SEC", "3600")))
+    # Absolute drought: even a "busy" feed (fresh heartbeat / discovery spam)
+    # must heal after this — otherwise live/zero-duration YouTube loops look healthy
+    # for many hours while nothing ships.
+    absolute_silence = max(
+        silence_warn,
+        int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "7200")),
+    )
     progress_stuck = max(300, int(os.environ.get("VOD_PROGRESS_STUCK_SEC", "900")))
     zero_streak_heal = max(3, int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6")))
-    # If feed is actively working (fresh heartbeat), silence alone is NOT a hang.
+    # If feed is actively working (fresh heartbeat), short silence alone is NOT a hang.
     working = (
         report.feed_alive
         and report.heartbeat_age_sec is not None
         and report.heartbeat_age_sec < progress_stuck
     )
 
-    if report.last_send_age_sec is not None and report.last_send_age_sec >= silence_warn:
+    if report.last_send_age_sec is not None and report.last_send_age_sec >= absolute_silence:
+        report.add(f"absolute_silence_{int(report.last_send_age_sec)}s")
+    elif report.last_send_age_sec is not None and report.last_send_age_sec >= silence_warn:
         if working and report.zero_send_streak < zero_streak_heal and not report.stuck_children:
             # Actively scanning/downloading — do not false-alarm heal.
             pass
@@ -373,6 +388,34 @@ def detect_hang() -> HangReport:
             mined = False
         if mined:
             report.add(f"mined_inbox_drought_{int(report.last_send_age_sec)}s")
+
+    # Discovery-only loop: feed alive, heartbeat fresh, but no scannable VOD and
+    # silence past warn — treat as hang so recover can unpark / rediscover.
+    discovery_drought = max(silence_warn, int(os.environ.get("VOD_DISCOVERY_DROUGHT_SEC", "5400")))
+    if (
+        report.last_send_age_sec is not None
+        and report.last_send_age_sec >= discovery_drought
+        and report.feed_alive
+        and not any(r.startswith("absolute_silence_") for r in report.reasons)
+    ):
+        try:
+            inbox = spec("pubg").inbox()
+            mp4s = [p for p in inbox.glob("yt_*.mp4") if p.is_file()] if inbox.is_dir() else []
+            state = load_state("pubg")
+            usable = False
+            for mp4 in mp4s:
+                vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+                row = next((r for r in (state.get("vods") or []) if r.get("id") == vid), {}) or {}
+                if row.get("exhausted"):
+                    continue
+                left = _entry_remaining_peaks("pubg", vid, row)
+                if left is None or left > 0:
+                    usable = True
+                    break
+            if not usable:
+                report.add(f"discovery_drought_{int(report.last_send_age_sec)}s")
+        except Exception:
+            pass
 
     return report
 
