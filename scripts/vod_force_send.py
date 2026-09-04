@@ -134,6 +134,56 @@ def _reject_hint(game: str) -> str:
     return ""
 
 
+def _run_feed_streaming(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    log_path: Path,
+    header: str,
+    timeout_sec: int,
+) -> tuple[str, int | None, bool]:
+    """Run feed with stdout/stderr appended to log in real time.
+
+    Avoids subprocess.capture_output pipe deadlock when the feed is verbose.
+    Returns (captured_tail, returncode, timed_out).
+    """
+    timed_out = False
+    returncode: int | None = None
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    start_offset = 0
+    try:
+        start_offset = log_path.stat().st_size if log_path.is_file() else 0
+    except OSError:
+        start_offset = 0
+    with log_path.open("a", encoding="utf-8") as log_fh:
+        log_fh.write(header)
+        log_fh.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        try:
+            returncode = proc.wait(timeout=max(1, int(timeout_sec)))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            try:
+                returncode = proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                returncode = proc.returncode
+    captured = ""
+    try:
+        with log_path.open("r", encoding="utf-8", errors="ignore") as fh:
+            fh.seek(max(0, start_offset))
+            captured = fh.read()
+    except OSError:
+        captured = ""
+    return captured, returncode, timed_out
+
+
 def force_send_game(
     game: str,
     *,
@@ -239,37 +289,39 @@ def force_send_game(
             env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
                 "VOD_FORCE_SEND_ZERO_EXHAUST", "12"
             )
+            # Stay on unparked inbox — Metro live discovery burns the whole timeout.
+            env["SHOOTER_VOD_SKIP_DISCOVERY"] = os.environ.get(
+                "VOD_FORCE_SKIP_DISCOVERY", "1"
+            )
 
-    proc: subprocess.CompletedProcess[str] | None = None
-    timed_out = False
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
     captured = ""
+    returncode: int | None = None
+    timed_out = False
     try:
         header = f"\n===== force_send {game} {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n"
-        proc = subprocess.run(
+        # Stream stdout to the log as it arrives. capture_output=True deadlocks /
+        # blinds recover when the feed prints more than a pipe buffer (~64KiB).
+        captured, returncode, timed_out = _run_feed_streaming(
             _feed_command(game),
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
             env=env,
-            check=False,
+            log_path=log_path,
+            header=header,
+            timeout_sec=timeout_sec,
         )
-        captured = (proc.stdout or "") + (proc.stderr or "")
-        try:
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", encoding="utf-8") as log_fh:
-                log_fh.write(header)
-                log_fh.write(captured)
-        except OSError:
-            pass
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    except Exception as exc:
+        return {
+            "game": game,
+            "sent": 0,
+            "error": str(exc)[:240],
+            "hint": _reject_hint(game),
+        }
     finally:
         # Resume supervisor after exclusive send (best-effort).
         for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
             _systemctl("start", unit)
 
-    if timed_out or proc is None:
+    if timed_out:
         return {
             "game": game,
             "sent": 0,
@@ -298,13 +350,13 @@ def force_send_game(
             hint = flags.replace("=", " ")
 
     err_tail = ""
-    if proc.returncode not in (0, None) and sent <= 0:
+    if returncode not in (0, None) and sent <= 0:
         err_tail = (text[-240:] if text else "").strip()
 
     return {
         "game": game,
         "sent": sent,
-        "returncode": proc.returncode,
+        "returncode": returncode,
         "flags": flags,
         "hint": hint,
         "error": err_tail or None,

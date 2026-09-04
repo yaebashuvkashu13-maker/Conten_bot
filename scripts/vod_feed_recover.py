@@ -81,6 +81,7 @@ def bump_scan_cooldowns(game: str) -> int:
             "last_pool_at",
             "reject_reason",
             "singles_zero_send_streak",
+            "dense_rejected_peaks",
         )
         if any(k in row for k in keys):
             for k in keys:
@@ -411,6 +412,9 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
             row.pop("last_scan_at", None)
             row.pop("last_scan_blocked", None)
             row.pop("singles_zero_send_streak", None)
+            # Dense rejects were under prior (often stricter) gates — clear so
+            # drought/soften recover can retry the same unused pool peaks.
+            row.pop("dense_rejected_peaks", None)
             row["last_recycle_at"] = time.time()
             found = True
             break
