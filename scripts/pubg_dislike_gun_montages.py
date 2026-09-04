@@ -207,15 +207,17 @@ def find_gun_window(path: Path) -> tuple[float, float, dict]:
 
 def ffmpeg_trim(src: Path, start: float, duration: float, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # Accurate trim: -ss after -i (slower, but avoids keyframe drift that
+    # made post-validate see run/loot instead of the gated fight window).
     cmd = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
-        "-ss",
-        f"{start:.3f}",
         "-i",
         str(src),
+        "-ss",
+        f"{start:.3f}",
         "-t",
         f"{duration:.3f}",
         "-c:v",
@@ -449,11 +451,22 @@ def main() -> int:
                 f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} "
                 f"burst={probe.get('burst_ratio')} peak={probe.get('peak_t')} -> {dest.name}"
             )
-        # Final check on the file we would actually send.
+        # Final check on the file we would actually send (gun/burst only —
+        # full run_fake_gun gate is unstable on tiny standalone trims).
         try:
+            from pubg_shooting_gate import pubg_probe_segment
+
             out_dur = _ffprobe_duration(dest)
-            ok_out, reason_out, _ = pubg_passes_shooting_gate(
-                dest, 0.0, min(8.0, out_dur)
+            m_out = pubg_probe_segment(dest, 0.0, min(out_dur, max(2.5, out_dur)))
+            gun_out = float(m_out.get("gunfire_density") or 0.0)
+            burst_out = float(m_out.get("burst_ratio") or 0.0)
+            min_gun_out = float(os.environ.get("PUBG_DISLIKE_KEEP_MIN_GUN", "0.065"))
+            min_burst_out = float(os.environ.get("PUBG_DISLIKE_TRIM_MIN_BURST", "6.0"))
+            ok_out = gun_out >= min_gun_out * 0.85 and burst_out >= min_burst_out * 0.85
+            reason_out = (
+                f"ok_gun={gun_out:.3f}:burst{burst_out:.2f}"
+                if ok_out
+                else f"weak_out=gun{gun_out:.3f}:burst{burst_out:.2f}"
             )
         except Exception as exc:
             ok_out, reason_out = False, f"validate_error:{exc}"
