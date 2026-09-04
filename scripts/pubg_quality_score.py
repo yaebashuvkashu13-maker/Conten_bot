@@ -301,7 +301,8 @@ def score_pubg_window(
     fast_payoff = _clip(notification_score) * 0.65 + _clip(effective_killfeed) * 0.35
     report["fast_payoff"] = round(fast_payoff, 4)
     early_reject = os.environ.get("PUBG_EARLY_PAYOFF_REJECT", "1") == "1"
-    if single and os.environ.get("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0") != "1":
+    # Singles use the same early-payoff gate unless explicitly opted out.
+    if single and os.environ.get("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "1") != "1":
         early_reject = False
     if (
         early_reject
@@ -394,7 +395,8 @@ def score_pubg_window(
     fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.42"))
     payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.38"))
     if single:
-        payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"))
+        # Match montage bar by default — weak singles were shipping run/loot.
+        payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", str(payoff_min)))
     report["fight_score"] = round(fight_score, 4)
     report["payoff_score"] = round(payoff_score, 4)
     report["fight_threshold"] = fight_min
@@ -409,12 +411,13 @@ def score_pubg_window(
             report["quality_threshold"] = fight_min
             return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
     if payoff_score < payoff_min:
-        # Singles with clear gunfire: ship for owner 👍/👎 instead of drought on OCR miss.
+        # Opt-in only: gunfire alone is not a confirmed fight payoff.
         if (
             single
-            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1") == "1"
-            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
-            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0") == "1"
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.070"))
+            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "6.5"))
+            and notification_hit
             and not loot_walk
         ):
             report["singles_gun_payoff_bypass"] = True
@@ -436,11 +439,11 @@ def score_pubg_window(
         "audio_presence": _clip(rms / 0.050) * 0.05,
     }
     penalties = {
-        "loot_walk": 0.16 if loot_walk else 0.0,
-        "no_author_kill": 0.12 if not has_kill else 0.0,
-        "visual_fail": 0.08 if not visual_ok else 0.0,
+        "loot_walk": 0.28 if loot_walk else 0.0,
+        "no_author_kill": 0.20 if not has_kill else 0.0,
+        "visual_fail": 0.10 if not visual_ok else 0.0,
         "missing_kill_notification": (
-            0.14 if notification_mode == "prefer" and not notification_hit else 0.0
+            0.18 if notification_mode == "prefer" and not notification_hit else 0.0
         ),
         "speech_music": _clip(
             max(float(panns.get("panns_speech", 0.0)), float(panns.get("panns_music", 0.0)))
@@ -475,7 +478,7 @@ def score_pubg_window(
 
     threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
     if single:
-        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28"))
+        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN_SINGLES", str(threshold)))
     report.update(
         {
             "components": {key: round(value, 4) for key, value in components.items()},
@@ -494,11 +497,13 @@ def score_pubg_window(
             return _finish(True, f"owner_redo_trusted={quality:.3f}")
         if (
             single
-            and os.environ.get("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1") == "1"
-            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
-            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and os.environ.get("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0") == "1"
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.070"))
+            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "6.5"))
+            and notification_hit
             and not loot_walk
             and fight_score >= fight_min
+            and payoff_score >= payoff_min
         ):
             report["singles_gun_quality_bypass"] = True
             return _finish(True, f"quality_singles_gun={quality:.3f}:fight{fight_score:.3f}")

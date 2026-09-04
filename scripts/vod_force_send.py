@@ -247,14 +247,13 @@ def force_send_game(
                 if key in os.environ:
                     env[key] = os.environ[key]
         except ImportError:
-            env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
-            env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
-            env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
-            env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
-            env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
-            env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")
-        # Long silence: soften singles gates so recover can ship *something*
-        # instead of burning cooldown on endless zero-sends.
+            env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "1")
+            env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.38")
+            env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.48")
+            env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
+            env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
+            env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.070")
+        # Long silence: mild recover soften — never open loot/run floodgates.
         drought = False
         try:
             from vod_hang_detector import last_send_age_sec
@@ -270,35 +269,37 @@ def force_send_game(
         except ValueError:
             escalation = 0
         if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
-            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "0")
-            env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
-            quality_default = "0.22"
-            gun_default = "0.030"
-            payoff_default = "0.08"
+            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
+            env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = os.environ.get(
+                "VOD_FORCE_EARLY_PAYOFF", "1"
+            )
+            quality_default = "0.40"
+            gun_default = "0.055"
+            payoff_default = "0.30"
             if escalation >= 1:
-                quality_default = "0.12"
-                gun_default = "0.020"
-                payoff_default = "0.05"
+                quality_default = "0.36"
+                gun_default = "0.050"
+                payoff_default = "0.26"
             if escalation >= 2:
-                quality_default = "0.05"
-                gun_default = "0.010"
-                payoff_default = "0.03"
+                quality_default = "0.32"
+                gun_default = "0.045"
+                payoff_default = "0.22"
             env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get(
                 "VOD_FORCE_PAYOFF_MIN", payoff_default
             )
             env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get(
                 "VOD_FORCE_QUALITY_MIN", quality_default
             )
-            env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
-            env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
+            env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "0"
+            env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "0"
             env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get(
                 "VOD_FORCE_GUN_DENSITY", gun_default
             )
             env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get(
-                "VOD_FORCE_BURST_RATIO", "3.5"
+                "VOD_FORCE_BURST_RATIO", "5.5"
             )
-            env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
-            env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
+            env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
+            env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "1"
             env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get(
                 "VOD_FORCE_SEND_MAX_VODS", "4"
             )
