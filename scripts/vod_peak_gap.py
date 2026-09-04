@@ -13,6 +13,27 @@ def peak_too_close(peak: float, used_peaks: list[float], gap_sec: float) -> bool
     return any(abs(peak - p) <= gap_sec for p in used_peaks)
 
 
+def coerce_peak_sec(peak: object) -> float | None:
+    """Normalize pool peak entries (float or ``{"peak_sec": ...}``) to seconds."""
+    if isinstance(peak, dict):
+        raw = peak.get("peak_sec", peak.get("peak", peak.get("t")))
+    else:
+        raw = peak
+    try:
+        return float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def pool_peak_seconds(peaks: list | tuple | None) -> list[float]:
+    out: list[float] = []
+    for peak in peaks or []:
+        val = coerce_peak_sec(peak)
+        if val is not None:
+            out.append(val)
+    return out
+
+
 def segment_gap_sec(
     game: str,
     *,

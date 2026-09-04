@@ -21,7 +21,9 @@ from vod_feed_recover import (  # noqa: E402
     estimate_video_wait_eta,
     park_exhausted_inbox,
     run_recover,
+    unpark_ready_vods,
 )
+from vod_peak_gap import coerce_peak_sec, pool_peak_seconds  # noqa: E402
 
 
 def test_clear_feed_locks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +109,71 @@ def test_park_exhausted_inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert n == 1
     assert not mp4.exists()
     assert (root / "youtube_nightly" / "parked" / "yt_abc123xyz00.mp4").exists()
+
+
+def test_coerce_peak_sec_dict_and_float() -> None:
+    assert coerce_peak_sec(12.5) == 12.5
+    assert coerce_peak_sec({"peak_sec": 99.1}) == 99.1
+    assert pool_peak_seconds([{"peak_sec": 1.0}, 2.0, {"bad": 1}]) == [1.0, 2.0]
+
+
+def test_unpark_reads_dict_peaks_and_ignores_dead_inbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pubg"
+    inbox = root / "youtube_nightly" / "inbox"
+    parked = root / "youtube_nightly" / "parked"
+    inbox.mkdir(parents=True)
+    parked.mkdir(parents=True)
+    # Dead inbox blocker (fully used dict peaks) — must not consume unpark slots.
+    dead = inbox / "yt_dead0000000.mp4"
+    dead.write_bytes(b"dead")
+    good = parked / "yt_good0000001.mp4"
+    good.write_bytes(b"x" * 50_000_000)
+    state_path = root / "vod_segment_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "vods": [
+                    {
+                        "id": "dead0000000",
+                        "exhausted": False,
+                        "last_pool_peaks": [{"peak_sec": 100.0}],
+                        "last_scan_at": 1.0,
+                    },
+                    {
+                        "id": "good0000001",
+                        "exhausted": True,
+                        "reject_reason": "fast_montage_need_2_have_0",
+                        "last_pool_peaks": [
+                            {"peak_sec": 31.9},
+                            {"peak_sec": 74.8},
+                            {"peak_sec": 178.4},
+                        ],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sent_path = root / "vod_segment_feed_sent.json"
+    sent_path.write_text(
+        json.dumps({"sent": ["dead0000000_100"], "updated_at": "2026-09-04 05:00:00"}),
+        encoding="utf-8",
+    )
+    index_path = root / "vod_segment_index.json"
+    index_path.write_text(json.dumps({"segments": []}), encoding="utf-8")
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+
+    # Park dead first (as recover does), then unpark.
+    assert park_exhausted_inbox("pubg") == 1
+    assert not dead.exists()
+    n = unpark_ready_vods("pubg", limit=2)
+    assert n == 1
+    assert (inbox / "yt_good0000001.mp4").exists()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    good_row = next(r for r in state["vods"] if r["id"] == "good0000001")
+    assert good_row["exhausted"] is False
 
 
 def test_run_recover_message(

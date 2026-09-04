@@ -426,18 +426,17 @@ def _entry_remaining_peaks(game: str, vid: str, row: dict) -> int | None:
         return None
     try:
         from shooter_vod_segment_store import load_feed_sent, load_index
-        from vod_peak_gap import used_peak_times_shooter
+        from vod_peak_gap import pool_peak_seconds, used_peak_times_shooter
 
         sent_set = load_feed_sent(game)
         used = used_peak_times_shooter(vid, sent_set, load_index(game).get("segments", []))
+        secs = pool_peak_seconds(peaks)
     except Exception:
         return None
+    if not secs:
+        return None
     left = 0
-    for peak in peaks:
-        try:
-            p = float(peak)
-        except (TypeError, ValueError):
-            continue
+    for p in secs:
         if not any(abs(p - u) <= 8.0 for u in used):
             left += 1
     return left
@@ -500,7 +499,24 @@ def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
         last = float(data.get("last_heal_ts") or 0)
     except (json.JSONDecodeError, OSError, ValueError):
         return True
-    return (_now() - last) >= min_sec
+    age = _now() - last
+    if age >= min_sec:
+        return True
+    # Recover that did not advance last-send must not block the ladder for 45m —
+    # otherwise drought + mined inbox looks like "auto-heal never starts".
+    if os.environ.get("VOD_HEAL_RETRY_ON_SILENCE", "1") != "1":
+        return False
+    retry_sec = max(600, int(os.environ.get("VOD_HEAL_RETRY_SEC", "900")))
+    if age < retry_sec:
+        return False
+    try:
+        send_age = last_send_age_sec()
+    except Exception:
+        send_age = None
+    if send_age is None:
+        return True
+    # last_send still older than this heal → previous recover shipped nothing
+    return send_age > age + 30
 
 
 def _mark_heal(action: str) -> None:
