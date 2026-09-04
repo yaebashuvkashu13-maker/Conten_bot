@@ -83,15 +83,21 @@ def _ffprobe_duration(path: Path) -> float:
 
 
 def find_gun_window(path: Path) -> tuple[float, float, dict]:
-    """Return (start, duration, probe) covering the densest contiguous gunfire."""
-    from pubg_shooting_gate import pubg_probe_segment
+    """Return (start, duration, probe) for the densest real gunfight.
+
+    Prefers peak density over long weak islands. Returns duration<=0 when no
+    qualifying fight is found (caller must skip — never keep run/loot).
+    """
+    from pubg_shooting_gate import pubg_passes_shooting_gate, pubg_probe_segment
 
     dur = _ffprobe_duration(path)
     step = float(os.environ.get("PUBG_DISLIKE_TRIM_STEP", "1.0"))
-    win = float(os.environ.get("PUBG_DISLIKE_TRIM_PROBE", "2.5"))
-    min_gun = float(os.environ.get("PUBG_DISLIKE_TRIM_MIN_GUN", "0.035"))
-    pad = float(os.environ.get("PUBG_DISLIKE_TRIM_PAD", "0.6"))
-    max_out = float(os.environ.get("PUBG_DISLIKE_TRIM_MAX_SEC", "14"))
+    win = float(os.environ.get("PUBG_DISLIKE_TRIM_PROBE", "2.0"))
+    min_gun = float(os.environ.get("PUBG_DISLIKE_TRIM_MIN_GUN", "0.070"))
+    min_burst = float(os.environ.get("PUBG_DISLIKE_TRIM_MIN_BURST", "6.0"))
+    pad = float(os.environ.get("PUBG_DISLIKE_TRIM_PAD", "0.4"))
+    max_out = float(os.environ.get("PUBG_DISLIKE_TRIM_MAX_SEC", "8.0"))
+    min_bins = int(os.environ.get("PUBG_DISLIKE_TRIM_MIN_BINS", "2"))
 
     scores: list[tuple[float, float, float]] = []  # t, gun, burst
     t = 0.0
@@ -103,40 +109,90 @@ def find_gun_window(path: Path) -> tuple[float, float, dict]:
         t += step
 
     if not scores:
-        return 0.0, min(dur, max_out), {"gunfire_density": 0.0, "fallback": True}
+        return 0.0, 0.0, {"gunfire_density": 0.0, "reject": "no_bins"}
 
-    # Keep contiguous bins above min_gun; pick longest / densest island.
-    islands: list[tuple[int, int, float]] = []
+    def _active(row: tuple[float, float, float]) -> bool:
+        return row[1] >= min_gun and row[2] >= min_burst
+
+    islands: list[tuple[int, int, float, float]] = []  # i0, i1, dens_sum, peak
     i = 0
     while i < len(scores):
-        if scores[i][1] < min_gun:
+        if not _active(scores[i]):
             i += 1
             continue
         j = i
         dens = 0.0
-        while j < len(scores) and scores[j][1] >= min_gun:
-            dens += scores[j][1]
+        peak = 0.0
+        while j < len(scores) and _active(scores[j]):
+            dens += scores[j][1] * max(0.5, scores[j][2] / 8.0)
+            peak = max(peak, scores[j][1])
             j += 1
-        islands.append((i, j, dens))
-        i = j
-    if not islands:
-        # Fallback: densest single window.
-        best = max(scores, key=lambda x: (x[1], x[2]))
-        start = max(0.0, best[0] - pad)
-        length = min(max_out, max(3.0, win + 2 * pad), dur - start)
-        return start, length, {"gunfire_density": best[1], "burst_ratio": best[2], "fallback": True}
+        if j - i >= min_bins:
+            islands.append((i, j, dens, peak))
+        i = max(j, i + 1)
 
-    i0, i1, _ = max(islands, key=lambda x: (x[1] - x[0], x[2]))
-    start = max(0.0, scores[i0][0] - pad)
-    end = min(dur, scores[i1 - 1][0] + win + pad)
-    length = min(max_out, max(2.5, end - start))
-    mean_gun = sum(s[1] for s in scores[i0:i1]) / max(1, i1 - i0)
-    mean_burst = sum(s[2] for s in scores[i0:i1]) / max(1, i1 - i0)
+    if not islands:
+        # Single strong peak still allowed if very clear.
+        best_i, best = max(enumerate(scores), key=lambda x: (x[1][1], x[1][2]))
+        if best[1] >= min_gun * 1.15 and best[2] >= min_burst:
+            start = max(0.0, best[0] - pad)
+            length = min(max_out, max(3.0, win + 2 * pad), dur - start)
+            ok, reason, metrics = pubg_passes_shooting_gate(path, start, length)
+            if not ok:
+                return 0.0, 0.0, {
+                    "gunfire_density": best[1],
+                    "burst_ratio": best[2],
+                    "reject": reason,
+                }
+            return start, length, {
+                "gunfire_density": round(best[1], 4),
+                "burst_ratio": round(best[2], 4),
+                "bins": 1,
+                "gate": reason,
+            }
+        return 0.0, 0.0, {
+            "gunfire_density": best[1],
+            "burst_ratio": best[2],
+            "reject": "no_fight_island",
+        }
+
+    # Prefer densest fight, not the longest weak run.
+    i0, i1, _, _ = max(islands, key=lambda x: (x[2], x[3], x[1] - x[0]))
+    peak_idx = max(range(i0, i1), key=lambda k: (scores[k][1], scores[k][2]))
+    peak_t = scores[peak_idx][0]
+    # Keep a short window around the peak; expand only while bins stay hot.
+    left = peak_idx
+    right = peak_idx
+    while left > i0 and scores[left - 1][1] >= min_gun * 0.9:
+        left -= 1
+    while right + 1 < i1 and scores[right + 1][1] >= min_gun * 0.9:
+        right += 1
+    start = max(0.0, scores[left][0] - pad)
+    end = min(dur, scores[right][0] + win + pad)
+    # Hard-cap around peak so we never drag loot tails.
+    start = max(start, peak_t - max_out * 0.55)
+    end = min(end, peak_t + max_out * 0.55)
+    length = max(2.5, min(max_out, end - start))
+    mean_gun = sum(s[1] for s in scores[left : right + 1]) / max(1, right - left + 1)
+    mean_burst = sum(s[2] for s in scores[left : right + 1]) / max(1, right - left + 1)
+
+    ok, reason, metrics = pubg_passes_shooting_gate(path, start, length)
+    if not ok:
+        return 0.0, 0.0, {
+            "gunfire_density": round(mean_gun, 4),
+            "burst_ratio": round(mean_burst, 4),
+            "reject": reason,
+            "peak_t": round(peak_t, 2),
+        }
     return start, length, {
         "gunfire_density": round(mean_gun, 4),
         "burst_ratio": round(mean_burst, 4),
-        "bins": i1 - i0,
+        "bins": right - left + 1,
+        "peak_t": round(peak_t, 2),
+        "gate": reason,
+        "loot_walk": bool(metrics.get("loot_walk")),
     }
+
 
 
 def ffmpeg_trim(src: Path, start: float, duration: float, dest: Path) -> bool:
@@ -323,33 +379,47 @@ def main() -> int:
                 sent += 1
             time.sleep(1.0)
 
+    force_retrim = os.environ.get("PUBG_DISLIKE_FORCE_RETRIM", "1") == "1"
     for row in rows:
         src = Path(str(row["path"]))
         sid = str(row["segment_id"])
         dest = out_dir / f"gun_{sid}.mp4"
-        probe: dict = {}
-        if dest.is_file() and dest.stat().st_size > 50_000:
-            print(f"reuse {dest.name}")
-            probe = {"gunfire_density": 0.05, "reused": True}
-        else:
-            try:
-                start, dur, probe = find_gun_window(src)
-            except Exception as exc:
-                print(f"probe fail {sid}: {exc}")
-                skipped += 1
-                continue
-            if float(probe.get("gunfire_density") or 0.0) < float(
-                os.environ.get("PUBG_DISLIKE_KEEP_MIN_GUN", "0.025")
-            ):
-                print(f"skip weak gun {sid} gun={probe.get('gunfire_density')}")
-                skipped += 1
-                continue
-            if not ffmpeg_trim(src, start, dur, dest):
-                print(f"trim fail {sid}")
-                skipped += 1
-                continue
+        try:
+            start, dur, probe = find_gun_window(src)
+        except Exception as exc:
+            print(f"probe fail {sid}: {exc}")
+            skipped += 1
+            continue
+        if dur <= 0 or probe.get("reject"):
             print(
-                f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} -> {dest.name}"
+                f"skip no-fight {sid} gun={probe.get('gunfire_density')} "
+                f"burst={probe.get('burst_ratio')} reject={probe.get('reject')}"
+            )
+            skipped += 1
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            continue
+        if float(probe.get("gunfire_density") or 0.0) < float(
+            os.environ.get("PUBG_DISLIKE_KEEP_MIN_GUN", "0.065")
+        ):
+            print(f"skip weak gun {sid} gun={probe.get('gunfire_density')}")
+            skipped += 1
+            continue
+        if (
+            not force_retrim
+            and dest.is_file()
+            and dest.stat().st_size > 50_000
+            and abs(_ffprobe_duration(dest) - dur) < 0.75
+        ):
+            print(f"reuse {dest.name}")
+        elif not ffmpeg_trim(src, start, dur, dest):
+            print(f"trim fail {sid}")
+            skipped += 1
+            continue
+        else:
+            print(
+                f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} "
+                f"burst={probe.get('burst_ratio')} peak={probe.get('peak_t')} -> {dest.name}"
             )
         item = (row, dest, probe)
         trimmed.append(item)
