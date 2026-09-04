@@ -294,7 +294,11 @@ def _mark_vod_exhausted(
         entry["exhausted"] = True
         entry["reject_reason"] = reason
         entry["path"] = str(vod)
-        record_vod_scan(entry, sent=0, pool_peaks=[], blocked=True)
+        # Keep last_pool_peaks. Wiping them on false mined-out made recover
+        # permanently blind (dict peaks used to count as 0 remaining).
+        entry["last_scan_at"] = time.time()
+        entry["last_scan_sent"] = 0
+        entry["last_scan_blocked"] = True
     if delete_file:
         try:
             if vod.exists():
@@ -1818,7 +1822,9 @@ def _entry_unsent_peak_count(game: str, entry: dict | None) -> int | None:
     """How many cached pool peaks are still unsent. None = unknown (no pool)."""
     if entry is None:
         return None
-    peaks = entry.get("last_pool_peaks") or []
+    from vod_scan_state import peak_values_from_entry
+
+    peaks = peak_values_from_entry(entry)
     if not peaks:
         return None
     vid = str(entry.get("id") or "")
@@ -1830,11 +1836,7 @@ def _entry_unsent_peak_count(game: str, entry: dict | None) -> int | None:
     except Exception:
         return None
     left = 0
-    for peak in peaks:
-        try:
-            p = float(peak)
-        except (TypeError, ValueError):
-            continue
+    for p in peaks:
         if not any(abs(p - u) <= 8.0 for u in used):
             left += 1
     return left
