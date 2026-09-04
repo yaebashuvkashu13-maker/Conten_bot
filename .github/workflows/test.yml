@@ -35,11 +35,9 @@ jobs:
           echo '{}' > "$ROOT/pubg/vod_segment_state.json"
           echo '{}' > "$ROOT/standoff/vod_segment_state.json"
           echo '{}' > "$ROOT/mlbb/vod_segment_state.json"
-          echo -n > "$ROOT/mlbb/EU_PUBG_ONLY"
       - name: Run tests
         env:
           CONTENT_BOT_REPO: ${{ github.workspace }}
-          VOD_PUBG_ONLY: "1"
           VOD_RUNTIME_LABELS: "0"
           MLBB_DATA_ROOT: ${{ runner.temp }}/botdata/mlbb
           SHOOTER_PUBG_DATA_ROOT: ${{ runner.temp }}/botdata/pubg
