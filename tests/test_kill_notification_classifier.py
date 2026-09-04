@@ -17,7 +17,7 @@ def test_kill_notification_classifier_heuristic():
     crop = np.zeros((24, 180, 3), dtype=np.uint8)
     crop[:, :, 0] = 200  # blue bar
     label, conf = heuristic_predict(crop)
-    assert label in ("kill", "uncertain", "map_blue", "hud_fp")
+    assert label in ("kill", "knock", "uncertain", "map_blue", "hud_fp")
     assert conf >= 0.0
 
 

@@ -196,6 +196,7 @@ def test_run_recover_message(
     )
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
     monkeypatch.setenv("VOD_RECOVER_FORCE_SEND", "0")
+    monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_LOCK", tmp_path / "OWNER_BATCH_RUNNING")
     msg = run_recover(
         "pubg",
         restart=lambda **_: (True, "test restart"),
@@ -222,6 +223,7 @@ def test_run_recover_includes_force_send_result(
     state_path = root / "vod_segment_state.json"
     state_path.write_text(json.dumps({"vods": [{"id": "abc123xyz00"}]}), encoding="utf-8")
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
+    monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_LOCK", tmp_path / "OWNER_BATCH_RUNNING")
 
     import vod_force_send
 
@@ -289,7 +291,11 @@ def test_estimate_eta_pubg_only_skips_other_games(
     data_root = tmp_path / "mlbb"
     data_root.mkdir()
     (data_root / "EU_PUBG_ONLY").write_text("", encoding="utf-8")
+    pubg_root = tmp_path / "pubg"
+    (pubg_root / "youtube_nightly" / "inbox").mkdir(parents=True)
+    (pubg_root / "vod_segment_state.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("MLBB_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(pubg_root))
     monkeypatch.setattr("vod_feed_recover.feed_process_alive", lambda: True)
     monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 30.0)
 

@@ -86,11 +86,13 @@ def test_detect_hang_silence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
     monkeypatch.setenv("VOD_ZERO_SEND_STREAK_HEAL", "6")
     monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 4000.0)
     monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
     monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
     monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
     # No fresh heartbeat → silence counts as hang
     monkeypatch.setattr("vod_hang_detector.read_heartbeat", lambda: {})
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
     report = detect_hang()
     assert not report.ok
     assert any(r.startswith("silence_") for r in report.reasons)
@@ -105,6 +107,7 @@ def test_working_feed_not_false_silence(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
     monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
     monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 5000.0)
     monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
     monkeypatch.setattr("vod_hang_detector.find_stuck_children", lambda *a, **k: [])
     monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])

@@ -148,7 +148,10 @@ def feed_process_alive() -> bool:
 
 
 def clear_stale_owner_batch_lock() -> str | None:
-    if not OWNER_BATCH_LOCK.is_file():
+    try:
+        if not OWNER_BATCH_LOCK.is_file():
+            return None
+    except OSError:
         return None
     try:
         age = time.time() - OWNER_BATCH_LOCK.stat().st_mtime
@@ -229,7 +232,10 @@ def park_exhausted_inbox(game: str) -> int:
     s = spec(game)
     inbox = s.inbox()
     parked = inbox.parent / "parked"
-    if not inbox.is_dir():
+    try:
+        if not inbox.is_dir():
+            return 0
+    except OSError:
         return 0
     state = load_state(game)
     registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
@@ -246,8 +252,12 @@ def park_exhausted_inbox(game: str) -> int:
         used_peak_times_shooter = lambda *_a, **_k: []  # type: ignore[misc, assignment]
     moved = 0
     changed = False
-    parked.mkdir(parents=True, exist_ok=True)
-    for mp4 in sorted(inbox.glob("yt_*.mp4")):
+    try:
+        parked.mkdir(parents=True, exist_ok=True)
+        inbox_files = sorted(inbox.glob("yt_*.mp4"))
+    except OSError:
+        return 0
+    for mp4 in inbox_files:
         vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
         row = registry.get(vid) or {}
         reason = str(row.get("reject_reason") or "")
@@ -304,9 +314,12 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
     s = spec(game)
     inbox = s.inbox()
     parked = inbox.parent / "parked"
-    if not parked.is_dir():
+    try:
+        if not parked.is_dir():
+            return 0
+        inbox.mkdir(parents=True, exist_ok=True)
+    except OSError:
         return 0
-    inbox.mkdir(parents=True, exist_ok=True)
 
     state = load_state(game)
     registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
@@ -320,7 +333,12 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
         segments = []
 
     actionable = 0
-    for mp4 in inbox.glob("yt_*.mp4"):
+    try:
+        inbox_files = list(inbox.glob("yt_*.mp4"))
+        parked_files = list(parked.glob("yt_*.mp4"))
+    except OSError:
+        return 0
+    for mp4 in inbox_files:
         if not mp4.is_file():
             continue
         vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
@@ -336,7 +354,7 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
         return 0
 
     cands: list[tuple[int, int, Path, str]] = []
-    for mp4 in parked.glob("yt_*.mp4"):
+    for mp4 in parked_files:
         try:
             size = mp4.stat().st_size
         except OSError:
@@ -355,12 +373,12 @@ def unpark_ready_vods(game: str, *, limit: int = 3) -> int:
 
     # If everything was fully mined, fall back to largest non-metro-reject files.
     if not cands:
-        for mp4 in parked.glob("yt_*.mp4"):
+        for mp4 in parked_files:
             try:
                 size = mp4.stat().st_size
             except OSError:
                 continue
-            if size < 80_000_000:
+            if size < 40_000_000:
                 continue
             vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
             row = registry.get(vid) or {}

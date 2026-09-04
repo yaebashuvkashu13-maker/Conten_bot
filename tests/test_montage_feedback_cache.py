@@ -103,18 +103,18 @@ def test_pubg_killfeed_uses_movable_notification(monkeypatch: pytest.MonkeyPatch
     from pubg_killfeed_ocr import score_killfeed_segment
 
     monkeypatch.setenv("PUBG_KILL_NOTIFICATION_AUTO", "1")
-    with pytest.MonkeyPatch.context() as nested:
-        nested.setattr(
-            "pubg_kill_notification.score_kill_notification_segment",
-            lambda *_args, **_kwargs: (
-                0.72,
-                {
-                    "notification_score": 0.72,
-                    "notification_text": "PlayerA AKM PlayerB",
-                    "notification_box": [0.1, 0.2, 0.4, 0.05],
-                },
-            ),
-        )
-        score, report = score_killfeed_segment(Path("/tmp/vod.mp4"), 10, 14, "pubg")
+    fake = (
+        0.72,
+        {
+            "notification_score": 0.72,
+            "notification_text": "PlayerA AKM PlayerB",
+            "notification_box": [0.1, 0.2, 0.4, 0.05],
+        },
+    )
+    monkeypatch.setattr(
+        "pubg_notification_cache.cached_score_kill_notification_segment",
+        lambda *_args, **_kwargs: fake,
+    )
+    score, report = score_killfeed_segment(Path("/tmp/vod.mp4"), 10, 14, "pubg")
     assert score == pytest.approx(0.72)
     assert report["notification_box"][0] == 0.1

@@ -51,6 +51,8 @@ def test_force_send_game_parses_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vod_force_send.subprocess.run", lambda *a, **k: FakeProc())
     monkeypatch.setattr("vod_force_send._stop_game_feed", lambda _g: None)
     monkeypatch.setattr("vod_force_send.clear_feed_locks", lambda: [])
+    monkeypatch.setattr("vod_feed_recover.unpark_ready_vods", lambda *a, **k: 0)
+    monkeypatch.setattr("vod_feed_recover.bump_scan_cooldowns", lambda *a, **k: 0)
     row = force_send_game("pubg", stop_running=False)
     assert row["sent"] == 1
 
@@ -65,6 +67,8 @@ def test_force_send_game_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vod_force_send._stop_game_feed", lambda _g: None)
     monkeypatch.setattr("vod_force_send.clear_feed_locks", lambda: [])
     monkeypatch.setattr("vod_force_send._reject_hint", lambda _g: "inbox exhausted")
+    monkeypatch.setattr("vod_feed_recover.unpark_ready_vods", lambda *a, **k: 0)
+    monkeypatch.setattr("vod_feed_recover.bump_scan_cooldowns", lambda *a, **k: 0)
     row = force_send_game("pubg", timeout_sec=10, stop_running=False)
     assert row["sent"] == 0
     assert "timeout" in str(row.get("error"))

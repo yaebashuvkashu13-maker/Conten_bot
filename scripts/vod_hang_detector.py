@@ -106,22 +106,31 @@ def last_send_age_sec() -> float:
 
     for game in VOD_GAMES:
         sent_path = spec(game).feed_sent_path()
-        if sent_path.is_file():
+        try:
+            exists = sent_path.is_file()
+        except OSError:
+            continue
+        if not exists:
+            continue
+        try:
+            data = json.loads(sent_path.read_text(encoding="utf-8"))
+            ts = str(data.get("updated_at") or "").strip()
+            if ts:
+                best = min(best, now - time.mktime(time.strptime(ts, LOG_TS)))
+            else:
+                best = min(best, now - sent_path.stat().st_mtime)
+        except (json.JSONDecodeError, OSError, ValueError):
             try:
-                data = json.loads(sent_path.read_text(encoding="utf-8"))
-                ts = str(data.get("updated_at") or "").strip()
-                if ts:
-                    best = min(best, now - time.mktime(time.strptime(ts, LOG_TS)))
-                else:
-                    best = min(best, now - sent_path.stat().st_mtime)
-            except (json.JSONDecodeError, OSError, ValueError):
-                try:
-                    best = min(best, now - sent_path.stat().st_mtime)
-                except OSError:
-                    pass
+                best = min(best, now - sent_path.stat().st_mtime)
+            except OSError:
+                pass
 
     log_path = feed_log_path()
-    if log_path.is_file():
+    try:
+        log_exists = log_path.is_file()
+    except OSError:
+        log_exists = False
+    if log_exists:
         try:
             lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-20000:]
         except OSError:

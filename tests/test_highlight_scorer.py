@@ -104,6 +104,10 @@ def test_calibrated_pann_gun_min_has_inference_floor(monkeypatch, tmp_path: Path
         encoding="utf-8",
     )
     monkeypatch.setattr(
+        "vod_owner_learning.owner_labels_path",
+        lambda *_a, **_k: labels,
+    )
+    monkeypatch.setattr(
         "highlight_scorer._owner_labels_path",
         lambda _profile: labels,
     )
@@ -139,6 +143,10 @@ def test_owner_anchors_not_in_stage1_by_default(monkeypatch, tmp_path: Path) -> 
     )
     monkeypatch.setenv("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     monkeypatch.setenv("INTELLICLIP_STAGE1", "0")
+    monkeypatch.setattr(
+        "vod_owner_learning.owner_labels_path",
+        lambda *_a, **_k: labels,
+    )
     monkeypatch.setattr(
         "highlight_scorer._owner_labels_path",
         lambda _profile: labels,

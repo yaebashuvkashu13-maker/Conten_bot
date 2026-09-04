@@ -207,20 +207,25 @@ def force_send_game(
     proc: subprocess.CompletedProcess[str] | None = None
     timed_out = False
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
+    captured = ""
     try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as log_fh:
-            log_fh.write(f"\n===== force_send {game} {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
-            log_fh.flush()
-            proc = subprocess.run(
-                _feed_command(game),
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=timeout_sec,
-                env=env,
-                check=False,
-            )
+        header = f"\n===== force_send {game} {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n"
+        proc = subprocess.run(
+            _feed_command(game),
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env=env,
+            check=False,
+        )
+        captured = (proc.stdout or "") + (proc.stderr or "")
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as log_fh:
+                log_fh.write(header)
+                log_fh.write(captured)
+        except OSError:
+            pass
     except subprocess.TimeoutExpired:
         timed_out = True
     finally:
@@ -238,10 +243,12 @@ def force_send_game(
 
     sent = 0
     flags = ""
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="ignore")[-50000:]
-    except OSError:
-        text = ""
+    text = captured[-50000:] if captured else ""
+    if not text:
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="ignore")[-50000:]
+        except OSError:
+            text = ""
     for line in text.splitlines():
         parsed = _parse_pipeline_line(line)
         if parsed:
