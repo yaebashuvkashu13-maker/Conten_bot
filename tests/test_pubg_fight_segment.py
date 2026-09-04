@@ -56,6 +56,10 @@ def test_segmenter_expands_from_contact_through_finale(
     assert 10 <= duration <= 28
     assert report["kill_sec"] is not None
     assert report["segmenter"] == "pubg_fight_v1"
+    assert report.get("knock_time") is not None
+    assert float(report["knock_time"]) <= float(report["kill_sec"])
+    assert report.get("loot_start") is not None
+    assert float(report["loot_start"]) >= float(report["kill_sec"])
 
 
 def test_segmenter_extends_past_notification_before_gunfire(

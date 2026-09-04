@@ -5,7 +5,7 @@ set -euo pipefail
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 LOCK_FILE="${VOD_DEPLOY_LOCK_FILE:-/root/data/pubg/.deploy.lock}"
 REMOTE="${VOD_DEPLOY_REMOTE:-origin}"
-BRANCH="${VOD_DEPLOY_BRANCH:-cursor/vod-pipeline-p0-p1-a016}"
+BRANCH="${VOD_DEPLOY_BRANCH:-cursor/pubg-vod-quality-pipeline-a016}"
 EXPECTED="${VOD_DEPLOY_COMMIT:-}"
 
 cd "$REPO"
@@ -15,8 +15,18 @@ fail() {
   exit 1
 }
 
+# Pipeline holds the lock for the whole deploy; allow same-pid / explicit holder.
 if [[ -f "$LOCK_FILE" ]]; then
-  fail "deployment lock present at $LOCK_FILE"
+  if [[ "${VOD_DEPLOY_HOLDING_LOCK:-0}" == "1" ]]; then
+    echo "deploy-check: lock held by active deploy (ok)"
+  else
+    holder_pid="$(awk -F= '/^pid=/{print $2; exit}' "$LOCK_FILE" 2>/dev/null || true)"
+    if [[ -n "${holder_pid:-}" && "$holder_pid" == "$$" ]]; then
+      echo "deploy-check: lock owned by this process (ok)"
+    else
+      fail "deployment lock present at $LOCK_FILE"
+    fi
+  fi
 fi
 
 if ! git diff --quiet || ! git diff --cached --quiet; then

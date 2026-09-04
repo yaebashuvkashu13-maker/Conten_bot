@@ -70,6 +70,75 @@ def dedup_by_audio_signature(
     return kept
 
 
+def _frame_phash(video_path: Path, peak_sec: float) -> int | None:
+    """Cheap 64-bit perceptual hash from a single mid-fight frame (no CLIP)."""
+    import subprocess
+    import tempfile
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    with tempfile.TemporaryDirectory(prefix="vod_phash_") as tmp:
+        out = Path(tmp) / "f.jpg"
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{max(0.0, float(peak_sec)):.3f}",
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=32:32",
+            "-y",
+            str(out),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, check=False, timeout=20)
+        if proc.returncode != 0 or not out.is_file():
+            return None
+        img = Image.open(out).convert("L").resize((8, 8))
+        pixels = list(img.getdata())
+        avg = sum(pixels) / max(1, len(pixels))
+        bits = 0
+        for i, px in enumerate(pixels):
+            if px >= avg:
+                bits |= 1 << i
+        return bits
+
+
+def _hamming64(a: int, b: int) -> int:
+    return int((a ^ b).bit_count())
+
+
+def dedup_by_frame_phash(
+    video_path: Path,
+    peaks: Iterable[float],
+    *,
+    max_distance: int | None = None,
+) -> list[float]:
+    """Drop peaks whose mid-frame pHash is nearly identical (reuploads / same angle)."""
+    if os.environ.get("VOD_EVENT_PHASH_DEDUP", "1") != "1":
+        return list(peaks)
+    if not video_path.is_file():
+        return list(peaks)
+    limit = int(max_distance or os.environ.get("VOD_EVENT_PHASH_DEDUP_MAX", "6"))
+    ordered = sorted((float(p) for p in peaks))
+    kept: list[float] = []
+    hashes: list[int] = []
+    for peak in ordered:
+        ph = _frame_phash(video_path, peak)
+        if ph is not None and any(_hamming64(ph, old) <= limit for old in hashes):
+            continue
+        kept.append(peak)
+        if ph is not None:
+            hashes.append(ph)
+    return kept
+
+
 def filter_montage_peaks(
     peaks: Iterable[float],
     *,
@@ -83,6 +152,7 @@ def filter_montage_peaks(
     merged = merge_nearby_peaks(peaks, scores=scores)
     if video_path is not None and video_path.is_file():
         merged = dedup_by_audio_signature(video_path, merged)
+        merged = dedup_by_frame_phash(video_path, merged)
     out: list[float] = []
     for peak in merged:
         if any(abs(peak - u) < gap_sec for u in used_list):
@@ -104,6 +174,7 @@ def peaks_too_similar(
 
 __all__ = [
     "dedup_by_audio_signature",
+    "dedup_by_frame_phash",
     "filter_montage_peaks",
     "merge_nearby_peaks",
     "peaks_too_similar",

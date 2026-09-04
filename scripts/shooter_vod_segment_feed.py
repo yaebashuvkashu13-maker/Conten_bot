@@ -2061,6 +2061,7 @@ def _scan_vod_with_adaptive(
     title = _vod_title(state, vod)
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
+    sent_set = load_feed_sent(game)
 
     if game == "pubg":
         inbox_trust = os.environ.get("PUBG_METRO_INBOX_TRUST", "1") == "1"
@@ -2169,10 +2170,25 @@ def _scan_vod_with_adaptive(
                     scan_funnel.feature_cache_hit = True
                     if pool_hit:
                         scan_funnel.ranked_pool_cache_hit = True
+                        try:
+                            from vod_ranked_pool_cache import unused_peaks as ranked_unused
+
+                            used_cached = _used_peak_times(game, vid, sent_set)
+                            rest = ranked_unused(
+                                vod,
+                                used_cached,
+                                gap_sec=max(18.0, gap_sec * 0.4),
+                            )
+                            if rest:
+                                dense_peaks = rest
+                                dense_reason = f"cached_unused_{len(rest)}"
+                                scan_funnel.picked = len(rest)
+                        except Exception:
+                            pass
                     log.info(
                         "fast-montage reuse cached peaks vod=%s n=%s",
                         vod.name,
-                        len(cached_peaks),
+                        len(dense_peaks),
                     )
                 else:
                     probe_pass = _dense_probe_pass_index(entry)
@@ -2218,10 +2234,15 @@ def _scan_vod_with_adaptive(
                         owner_peaks[:6],
                     )
                 try:
-                    from vod_event_dedup import dedup_by_audio_signature, merge_nearby_peaks
+                    from vod_event_dedup import (
+                        dedup_by_audio_signature,
+                        dedup_by_frame_phash,
+                        merge_nearby_peaks,
+                    )
 
                     dense_peaks = merge_nearby_peaks(dense_peaks or [])
                     dense_peaks = dedup_by_audio_signature(vod, dense_peaks)
+                    dense_peaks = dedup_by_frame_phash(vod, dense_peaks)
                 except Exception:
                     pass
                 style_sims: dict[float, float] = {}
@@ -2245,8 +2266,15 @@ def _scan_vod_with_adaptive(
 
                         dense_peaks = apply_cascade_to_pool(dense_peaks, "fast_ranker")
                         scan_funnel.fast_ranker_pass = len(dense_peaks)
+                        # PANNs budget before OCR / visual (discovery may already be trimmed).
+                        dense_peaks = apply_cascade_to_pool(dense_peaks, "panns")
+                        scan_funnel.panns_pass = len(dense_peaks)
+                        # CLIP/visual budget before expensive OCR killfeed probes.
+                        dense_peaks = apply_cascade_to_pool(dense_peaks, "clip")
+                        scan_funnel.clip_pass = len(dense_peaks)
                     except Exception:
                         pass
+                    t_ocr = time.perf_counter()
                     from pubg_killfeed_ocr import rank_peaks_by_killfeed
 
                     dense_peaks, kf_reason = rank_peaks_by_killfeed(
@@ -2256,6 +2284,9 @@ def _scan_vod_with_adaptive(
                         part_sec=part_max,
                         meta=peak_meta,
                     )
+                    if scan_funnel is not None:
+                        scan_funnel.mark("ocr_done")
+                        scan_funnel.ocr_ms = round((time.perf_counter() - t_ocr) * 1000.0, 1)
                     dense_reason = f"{dense_reason} {kf_reason}"
                     try:
                         from vod_scan_cascade import apply_cascade_to_pool
@@ -2267,11 +2298,16 @@ def _scan_vod_with_adaptive(
                     try:
                         from pubg_moment_ranker import rank_peaks_with_model
 
+                        t_rank = time.perf_counter()
                         dense_peaks, ranker_reason = rank_peaks_with_model(
                             vod,
                             dense_peaks,
                             part_sec=min(14.0, part_max),
                         )
+                        if scan_funnel is not None:
+                            scan_funnel.ranker_ms = round(
+                                (time.perf_counter() - t_rank) * 1000.0, 1
+                            )
                         dense_reason = f"{dense_reason} {ranker_reason}"
                     except Exception as exc:
                         log.warning("pubg ranker fallback vod=%s: %s", vod.name, exc)
@@ -2290,11 +2326,17 @@ def _scan_vod_with_adaptive(
                 try:
                     from vod_ranked_pool_cache import put_ranked_pool
 
+                    used_for_pool: list[float] = []
+                    try:
+                        used_for_pool = _used_peak_times(game, vid, sent_set)
+                    except Exception:
+                        used_for_pool = []
                     put_ranked_pool(
                         vod,
                         ranked_peaks=dense_peaks or [],
                         reason=dense_reason,
                         funnel=scan_funnel.to_dict() if scan_funnel else None,
+                        used_peaks=used_for_pool,
                     )
                 except Exception:
                     pass
@@ -2488,6 +2530,25 @@ def _scan_vod_with_adaptive(
                                 rejected_peaks.append(peak)
                     if n_fast > 0:
                         total_sent += n_fast
+                        try:
+                            from vod_ranked_pool_cache import put_ranked_pool
+
+                            used_after = _used_peak_times(game, vid, sent_set)
+                            for row in rows:
+                                peak = float(row.get("peak_start") or 0.0)
+                                if peak > 0 and not any(
+                                    abs(peak - u) < 4.0 for u in used_after
+                                ):
+                                    used_after.append(peak)
+                            put_ranked_pool(
+                                vod,
+                                ranked_peaks=dense_peaks or [],
+                                reason=f"{dense_reason}:sent_{total_sent}",
+                                funnel=scan_funnel.to_dict() if scan_funnel else None,
+                                used_peaks=used_after,
+                            )
+                        except Exception:
+                            pass
                         log.info(
                             "fast-montage SENT game=%s vod=%s n=%s idx=%s/%s peaks=%s",
                             game,

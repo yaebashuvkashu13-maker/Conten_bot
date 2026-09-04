@@ -115,8 +115,95 @@ def test_youtube_source_health_block(tmp_path, monkeypatch):
 def test_config_status_ok(monkeypatch):
     monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "prefer")
     monkeypatch.delenv("PUBG_REQUIRE_KILL_NOTIFICATION", raising=False)
+    monkeypatch.delenv("SHOOTER_VOD_PANN_TOP_N", raising=False)
     from vod_config import config_status
 
     status = config_status()
     assert status["ok"] is True
     assert "cascade" in status
+    assert "warnings" in status
+
+
+def test_config_pann_top_is_warning_not_conflict(monkeypatch):
+    monkeypatch.setenv("PUBG_KILL_NOTIFICATION_MODE", "prefer")
+    monkeypatch.delenv("PUBG_REQUIRE_KILL_NOTIFICATION", raising=False)
+    monkeypatch.setenv("SHOOTER_VOD_PANN_TOP_N", "40")
+    monkeypatch.setenv("VOD_CASCADE_PANN_MAX", "25")
+    from vod_config import config_status
+
+    status = config_status()
+    assert status["ok"] is True
+    assert any("PANN_TOP_N" in w for w in status["warnings"])
+
+
+def test_feature_store_zero_copy_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOD_FEATURE_STORE_DIR", str(tmp_path / "store"))
+    vod = tmp_path / "vod.mp4"
+    vod.write_bytes(b"y" * 128)
+    from vod_feature_store import VodFeatureStore
+
+    store = VodFeatureStore(vod, skip_intro=0.0)
+    pcm = np.array([100, -100, 200, -200], dtype=np.int16)
+    pcm_file = tmp_path / "store" / "pcm" / f"{store.key}.s16le"
+    pcm_file.parent.mkdir(parents=True, exist_ok=True)
+    pcm_file.write_bytes(pcm.tobytes())
+    meta_file = tmp_path / "store" / "meta" / f"{store.key}.json"
+    meta_file.parent.mkdir(parents=True, exist_ok=True)
+    meta_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "saved_at": 9_999_999_999,
+                "pcm_duration_sec": 0.01,
+                "features": {},
+            }
+        )
+    )
+    view = store.get_pcm_s16(copy=False)
+    owned = store.get_pcm_s16(copy=True)
+    assert view.size == 4
+    assert owned.size == 4
+    assert owned.flags.writeable
+
+
+def test_cookies_preflight_missing_required(tmp_path, monkeypatch):
+    monkeypatch.setenv("YOUTUBE_COOKIES_PREFLIGHT", "1")
+    monkeypatch.setenv("YOUTUBE_COOKIES_REQUIRED", "1")
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.delenv("YTDLP_COOKIES", raising=False)
+    from youtube_download import cookies_preflight
+
+    ok, reason = cookies_preflight(
+        {
+            "YOUTUBE_COOKIES_PREFLIGHT": "1",
+            "YOUTUBE_COOKIES_REQUIRED": "1",
+        }
+    )
+    assert ok is False
+    assert "missing" in reason
+
+
+def test_cookies_preflight_ok_file(tmp_path, monkeypatch):
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".youtube.com\tTRUE\t/\tFALSE\t0\tA\tB\n"
+        ".youtube.com\tTRUE\t/\tFALSE\t0\tC\tD\n"
+    )
+    from youtube_download import cookies_preflight
+
+    ok, reason = cookies_preflight(
+        {
+            "YOUTUBE_COOKIES_PREFLIGHT": "1",
+            "YOUTUBE_COOKIES_FILE": str(cookies),
+            "YOUTUBE_COOKIES_MAX_AGE_HOURS": "720",
+        }
+    )
+    assert ok is True, reason
+    assert reason == "cookies_ok"
+
+
+def test_phash_hamming():
+    from vod_event_dedup import _hamming64
+
+    assert _hamming64(0b1010, 0b1000) == 1

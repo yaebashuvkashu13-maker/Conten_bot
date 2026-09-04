@@ -215,11 +215,34 @@ def discover_scored_windows(
 
     if batch_enabled() and pcm_float is None:
         t0 = time.perf_counter()
-        pcm = extract_vod_pcm_s16(
-            video_path,
-            pcm_base_sec,
-            max(0.0, offsets[-1] + window_sec + 4.0 - pcm_base_sec),
-        )
+        store = None
+        try:
+            from vod_feature_store import open_store
+
+            store = open_store(video_path, skip_intro=float(pcm_base_sec))
+        except Exception:
+            store = None
+        pcm = np.array([], dtype=np.int16)
+        if store is not None:
+            need = max(0.0, offsets[-1] + window_sec + 4.0 - pcm_base_sec)
+            if store.ensure_pcm(need):
+                pcm = store.get_pcm_s16(copy=False)
+                try:
+                    store.put_features(
+                        {
+                            "pcm_sample_rate": GUN_SAMPLE_RATE,
+                            "pcm_base_sec": float(pcm_base_sec),
+                            "dsp_offsets": int(len(offsets)),
+                        }
+                    )
+                except Exception:
+                    pass
+        if pcm.size == 0:
+            pcm = extract_vod_pcm_s16(
+                video_path,
+                pcm_base_sec,
+                max(0.0, offsets[-1] + window_sec + 4.0 - pcm_base_sec),
+            )
         stats["extract_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
         pcm_float = pcm_to_float(pcm)
 

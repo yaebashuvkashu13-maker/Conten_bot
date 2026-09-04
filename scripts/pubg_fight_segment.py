@@ -524,6 +524,33 @@ def resolve_pubg_fight_bounds(
         start = max(0.0, end - min_duration)
 
     duration = max(1.0, end - start)
+    knock_time = None
+    loot_start = None
+    if kill_sec is not None:
+        # Knock typically precedes kill by ~0.8–2.5s when we lack a dedicated detector.
+        knock_guess = float(kill_sec) - float(os.environ.get("PUBG_SEGMENT_KNOCK_LEAD_SEC", "1.4"))
+        if gun_onset is not None:
+            onset_t = float(timeline[gun_onset]["start"])
+            knock_guess = max(onset_t + 0.4, knock_guess)
+        knock_time = round(max(float(start), knock_guess), 2)
+        # Loot starts after quiet window following kill / finale.
+        quiet_need = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "4.0"))
+        quiet = 0.0
+        bin_sec = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+        for row in timeline:
+            t = float(row["start"])
+            if t < float(kill_sec):
+                continue
+            active_bin = float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= active_min
+            if active_bin:
+                quiet = 0.0
+                continue
+            quiet += bin_sec
+            if quiet >= quiet_need:
+                loot_start = round(t, 2)
+                break
+        if loot_start is None and end > float(kill_sec) + 1.0:
+            loot_start = round(min(float(end), float(kill_sec) + quiet_need), 2)
     report = {
         "segmenter": "pubg_fight_v1",
         "peak_sec": round(float(peak_sec), 2),
@@ -535,10 +562,10 @@ def resolve_pubg_fight_bounds(
         ),
         "fight_end": round(end, 2),
         "fight_end_sec": round(end, 2),
-        "knock_time": None,
+        "knock_time": knock_time,
         "kill_time": None if kill_sec is None else round(kill_sec, 2),
         "kill_sec": None if kill_sec is None else round(kill_sec, 2),
-        "loot_start": None,
+        "loot_start": loot_start,
         "killfeed_score": round(kill_score, 3),
         "active_bins": sum(active),
         "total_bins": len(timeline),

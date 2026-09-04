@@ -3030,6 +3030,7 @@ def handle_message(message: dict):
                 '/process — что сейчас ищет пайплайн\n'
                 '/recover — починить feed и отправить клип\n'
                 '/reset — снова открыть исчерпанные VOD\n'
+                '/config_status — effective VOD config\n'
                 'Кнопки: Процесс · Recover · Отправить · Сброс\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
@@ -3374,6 +3375,30 @@ def handle_message(message: dict):
             send_message(chat_id, mode_status())
         except Exception as exc:
             send_message(chat_id, f'mode error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/config_status', '/vod_config', '/cfg'):
+        try:
+            import json
+            from vod_config import config_status
+
+            status = config_status()
+            # Keep Telegram message compact — cascade + thresholds + health.
+            compact = {
+                "ok": status.get("ok"),
+                "kill_notification_mode": status.get("kill_notification_mode"),
+                "fight_score_min": status.get("fight_score_min"),
+                "payoff_score_min": status.get("payoff_score_min"),
+                "quality_score_min": status.get("quality_score_min"),
+                "cascade": status.get("cascade"),
+                "feature_store": status.get("feature_store"),
+                "ranked_pool_cache": status.get("ranked_pool_cache"),
+                "owner_labels": status.get("owner_labels"),
+                "conflicts": status.get("conflicts") or [],
+                "warnings": status.get("warnings") or [],
+            }
+            send_message(chat_id, "config_status:\n" + json.dumps(compact, ensure_ascii=False, indent=2))
+        except Exception as exc:
+            send_message(chat_id, f'config_status error: {exc}')
         return
     if is_owner(chat_id) and cmd in ('/shorts_mode', '/mode_shorts'):
         try:

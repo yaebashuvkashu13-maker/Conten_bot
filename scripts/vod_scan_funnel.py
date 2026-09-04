@@ -28,6 +28,10 @@ class ScanFunnel:
     cache_hits: int = 0
     feature_cache_hit: bool = False
     ranked_pool_cache_hit: bool = False
+    ocr_ms: float = 0.0
+    ranker_ms: float = 0.0
+    download_ms: float = 0.0
+    render_ms: float = 0.0
     timings_ms: dict[str, float] = field(default_factory=dict)
     reject_reasons: list[str] = field(default_factory=list)
     stage_counts: dict[str, int] = field(default_factory=dict)

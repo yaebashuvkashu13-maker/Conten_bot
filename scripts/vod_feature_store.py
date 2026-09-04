@@ -83,17 +83,21 @@ class VodFeatureStore:
         meta = self._load_meta() or self._meta
         return float(meta.get("pcm_duration_sec") or 0.0)
 
-    def get_pcm_s16(self) -> np.ndarray:
-        if self._pcm_array is not None:
+    def get_pcm_s16(self, *, copy: bool = False) -> np.ndarray:
+        """Return PCM samples. Default is a zero-copy mmap view; set copy=True to own memory."""
+        if self._pcm_array is not None and not copy:
             return self._pcm_array
+        if self._pcm_array is not None and copy:
+            return np.array(self._pcm_array, copy=True)
         pcm_file = _pcm_path(self.key)
         if not pcm_file.is_file():
             return np.array([], dtype=np.int16)
         with pcm_file.open("rb") as handle:
             mm = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
             self._pcm_mmap = mm
-            self._pcm_array = np.frombuffer(mm, dtype=np.int16).copy()
-        return self._pcm_array
+            view = np.frombuffer(mm, dtype=np.int16)
+            self._pcm_array = view
+            return np.array(view, copy=True) if copy else view
 
     def get_pcm_float(self) -> np.ndarray:
         pcm = self.get_pcm_s16()

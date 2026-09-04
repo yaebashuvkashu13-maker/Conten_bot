@@ -33,6 +33,45 @@ def ytdlp_bin(env: dict[str, str] | None = None) -> str:
     return "yt-dlp"
 
 
+def cookies_preflight(env: dict[str, str] | None = None) -> tuple[bool, str]:
+    """Validate YouTube cookies before a download attempt.
+
+    Returns (ok, reason). When cookies are not configured, ok=True (optional).
+    When configured but missing/empty/stale, ok=False so callers can fail early.
+    """
+    if env is None:
+        env = load_env()
+    if env.get("YOUTUBE_COOKIES_PREFLIGHT", "1") != "1":
+        return True, "preflight_disabled"
+    cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
+    if not cookies:
+        if env.get("YOUTUBE_COOKIES_REQUIRED", "0") == "1":
+            return False, "cookies_required_missing"
+        return True, "cookies_not_configured"
+    path = Path(cookies)
+    if not path.is_file():
+        return False, f"cookies_missing:{path}"
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return False, f"cookies_unreadable:{exc}"
+    if size < 32:
+        return False, "cookies_empty"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError as exc:
+        return False, f"cookies_unreadable:{exc}"
+    if "# Netscape HTTP Cookie File" not in text and "youtube.com" not in text.lower():
+        return False, "cookies_format_invalid"
+    max_age_h = float(env.get("YOUTUBE_COOKIES_MAX_AGE_HOURS", "336") or 336)
+    if max_age_h > 0:
+        age_h = (time.time() - path.stat().st_mtime) / 3600.0
+        if age_h > max_age_h:
+            return False, f"cookies_stale_hours={age_h:.0f}"
+    return True, "cookies_ok"
+
+
+
 def is_twitch_vod_url(url: str) -> bool:
     host = urlparse(url.strip()).netloc.lower().split(":", 1)[0]
     if host.startswith("www."):
@@ -301,6 +340,12 @@ def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) ->
         blocked, reason = is_blocked(url=url)
         if blocked:
             raise RuntimeError(f"youtube_source_blocked: {reason}")
+    if not is_twitch_vod_url(url):
+        ok_cookies, cookie_reason = cookies_preflight(env)
+        if not ok_cookies:
+            if record_download_result is not None:
+                record_download_result(url=url, ok=False, error_kind="auth")
+            raise RuntimeError(f"youtube_cookies_preflight_failed: {cookie_reason}")
     if is_twitch_vod_url(url):
         url = normalize_twitch_url(url)
         prefix = "tw"
