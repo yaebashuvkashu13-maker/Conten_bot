@@ -36,20 +36,30 @@ def load_recent_labeled(
     *,
     limit: int,
     label: str = "good",
+    unique_vod: bool = True,
 ) -> list[dict]:
-    """Load newest owner labels from good/bad buckets (👍 default)."""
+    """Load newest owner labels from good/bad buckets (👍 default).
+
+    When unique_vod=True, keep only the newest label per YouTube id so one VOD
+    does not flood a montage with near-duplicate moments.
+    """
     bucket = "good" if str(label).lower() in {"good", "ok", "yes", "up", "like"} else "bad"
     data = json.loads(labels_path.read_text(encoding="utf-8"))
     rows = list(data.get(bucket) or [])
     rows.sort(key=_parse_at, reverse=True)
     out: list[dict] = []
-    seen: set[str] = set()
+    seen_sid: set[str] = set()
+    seen_vod: set[str] = set()
     for row in rows:
         sid = str(row.get("segment_id") or "")
         path = Path(str(row.get("path") or ""))
-        if not sid or sid in seen or not path.is_file():
+        if not sid or sid in seen_sid or not path.is_file():
             continue
-        seen.add(sid)
+        vod_id = sid.rsplit("_", 1)[0] if "_" in sid else sid
+        if unique_vod and vod_id in seen_vod:
+            continue
+        seen_sid.add(sid)
+        seen_vod.add(vod_id)
         out.append(row)
         if len(out) >= limit:
             break
@@ -296,6 +306,11 @@ def main() -> int:
         help="Owner label bucket (default: good/👍/ok)",
     )
     ap.add_argument(
+        "--allow-duplicate-vod",
+        action="store_true",
+        help="Allow multiple clips from the same YouTube id (default: one per VOD)",
+    )
+    ap.add_argument(
         "--labels",
         default="/root/data/pubg/vod_segment_labels.json",
     )
@@ -322,7 +337,12 @@ def main() -> int:
         print("TG_BOT_TOKEN / chat_id missing", file=sys.stderr)
         return 2
 
-    rows = load_recent_labeled(Path(args.labels), limit=args.limit, label=label)
+    rows = load_recent_labeled(
+        Path(args.labels),
+        limit=args.limit,
+        label=label,
+        unique_vod=not args.allow_duplicate_vod,
+    )
     if not rows:
         print(f"no {label} segments found")
         return 1
@@ -380,9 +400,17 @@ def main() -> int:
             time.sleep(1.0)
 
     force_retrim = os.environ.get("PUBG_DISLIKE_FORCE_RETRIM", "1") == "1"
+    used_vods: set[str] = set()
+    from pubg_shooting_gate import pubg_passes_shooting_gate
+
     for row in rows:
         src = Path(str(row["path"]))
         sid = str(row["segment_id"])
+        vod_id = sid.rsplit("_", 1)[0] if "_" in sid else sid
+        if vod_id in used_vods:
+            print(f"skip duplicate-vod {sid}")
+            skipped += 1
+            continue
         dest = out_dir / f"gun_{sid}.mp4"
         try:
             start, dur, probe = find_gun_window(src)
@@ -421,6 +449,20 @@ def main() -> int:
                 f"trimmed {sid} {start:.1f}+{dur:.1f}s gun={probe.get('gunfire_density')} "
                 f"burst={probe.get('burst_ratio')} peak={probe.get('peak_t')} -> {dest.name}"
             )
+        # Final check on the file we would actually send.
+        try:
+            out_dur = _ffprobe_duration(dest)
+            ok_out, reason_out, _ = pubg_passes_shooting_gate(
+                dest, 0.0, min(8.0, out_dur)
+            )
+        except Exception as exc:
+            ok_out, reason_out = False, f"validate_error:{exc}"
+        if not ok_out:
+            print(f"skip post-validate {sid} reason={reason_out}")
+            skipped += 1
+            dest.unlink(missing_ok=True)
+            continue
+        used_vods.add(vod_id)
         item = (row, dest, probe)
         trimmed.append(item)
         pending.append(item)
