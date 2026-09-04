@@ -3101,6 +3101,7 @@ def handle_message(message: dict):
                 '/process — что сейчас ищет пайплайн\n'
                 '/recover — починить feed и отправить клип\n'
                 '/reset — снова открыть исчерпанные VOD\n'
+                '/kimi — спросить Kimi (ops-помощник по качеству)\n'
                 'Кнопки: Процесс · Recover · Отправить · Сброс\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
@@ -3356,7 +3357,7 @@ def handle_message(message: dict):
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
         if is_owner(chat_id):
-            ping_text += '\n\nПо необходимости: /process · /recover · /reset'
+            ping_text += '\n\nПо необходимости: /process · /recover · /reset · /kimi'
             remove_owner_reply_keyboard(chat_id, ping_text)
         else:
             send_message(chat_id, ping_text)
@@ -3445,6 +3446,33 @@ def handle_message(message: dict):
             send_message(chat_id, mode_status())
         except Exception as exc:
             send_message(chat_id, f'mode error: {exc}')
+        return
+    if is_owner(chat_id) and cmd in ('/kimi', '/moonshot', '/ask_kimi'):
+        # /kimi <вопрос> — ops assistant; never mutates production.
+        parts = text.split(maxsplit=1)
+        question = parts[1].strip() if len(parts) > 1 else (
+            'Кратко: статус качества PUBG-бота, что сейчас режется гейтами, '
+            'и что проверить по последним 👎.'
+        )
+        send_message(chat_id, 'Kimi думает…')
+
+        def _kimi_worker(cid: str | int, q: str) -> None:
+            try:
+                from kimi_ops_agent import chat as kimi_chat
+
+                answer = kimi_chat(q, with_context=True)
+            except Exception as exc:
+                answer = f'Kimi error: {exc}'
+            try:
+                send_message(cid, answer[:3500])
+            except Exception:
+                logging.exception('kimi reply failed')
+
+        threading.Thread(
+            target=_kimi_worker,
+            args=(chat_id, question),
+            daemon=True,
+        ).start()
         return
     if is_owner(chat_id) and cmd in ('/shorts_mode', '/mode_shorts'):
         try:
