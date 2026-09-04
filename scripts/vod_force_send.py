@@ -298,6 +298,7 @@ def force_send_game(
                 "VOD_FORCE_BURST_RATIO", "3.5"
             )
             env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
+            env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
             env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get(
                 "VOD_FORCE_SEND_MAX_VODS", "4"
             )
@@ -309,6 +310,15 @@ def force_send_game(
             env["SHOOTER_VOD_SKIP_DISCOVERY"] = os.environ.get(
                 "VOD_FORCE_SKIP_DISCOVERY", "1"
             )
+            if escalation >= 2:
+                # Score-mode hard_loot_walk / owner run_fake_gun still zero-send after soften.
+                env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get(
+                    "VOD_FORCE_PRESEND_SCORE_MODE", "0"
+                )
+                env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
+                    "VOD_FORCE_RELAX_OWNER", "2"
+                )
+                env["PUBG_PRESEND_SHOOTING_GATE"] = "0"
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
     captured = ""

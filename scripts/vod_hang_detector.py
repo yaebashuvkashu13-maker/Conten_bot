@@ -622,7 +622,13 @@ def apply_agent_recover_env(
         target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
         target["VOD_FORCE_REJECT_LOOT"] = "0"
         target["PUBG_REJECT_LOOT_WALK"] = "0"
+        target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
         target["PUBG_PRESEND_SHOOTING_GATE"] = "0"
+        # Bypass owner heuristic / score-mode hard rejects that still zero-send in drought.
+        target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "0")
+        target["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
+            "VOD_FORCE_RELAX_OWNER", "2"
+        )
     return target
 
 
@@ -770,6 +776,62 @@ def _start_systemd_feed() -> None:
         )
 
 
+def _ensure_telegram_bot() -> bool:
+    """Recover stop/restart can leave telegram dead — always bring it back."""
+    for pid_name in os.listdir("/proc"):
+        if not pid_name.isdigit():
+            continue
+        try:
+            raw = Path(f"/proc/{pid_name}/cmdline").read_bytes()
+        except OSError:
+            continue
+        joined = " ".join(p.decode(errors="ignore") for p in raw.split(b"\0") if p)
+        if "telegram_upload_bot.py" in joined:
+            return True
+    for unit in ("telegram-upload-bot.service", "content-bot-telegram.service"):
+        try:
+            proc = subprocess.run(
+                ["systemctl", "start", unit],
+                check=False,
+                timeout=20,
+                capture_output=True,
+            )
+            if proc.returncode == 0:
+                time.sleep(0.5)
+                # Fall through to verify via /proc below after start attempt.
+        except Exception:
+            continue
+    bot = Path("/usr/local/bin/telegram_upload_bot.py")
+    if not bot.is_file():
+        bot = Path(__file__).resolve().parent / "telegram_upload_bot.py"
+    if not bot.is_file():
+        return False
+    # Re-check after systemctl — may already be up.
+    for pid_name in os.listdir("/proc"):
+        if not pid_name.isdigit():
+            continue
+        try:
+            raw = Path(f"/proc/{pid_name}/cmdline").read_bytes()
+        except OSError:
+            continue
+        joined = " ".join(p.decode(errors="ignore") for p in raw.split(b"\0") if p)
+        if "telegram_upload_bot.py" in joined:
+            return True
+    log = Path("/root/data/mlbb/telegram_upload_bot.log")
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            subprocess.Popen(
+                [sys.executable, "-u", str(bot)],
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        return True
+    except OSError:
+        return False
+
+
 def auto_unload_and_recover(
     report: HangReport,
     *,
@@ -864,6 +926,8 @@ def auto_unload_and_recover(
             next_esc = 0 if sent > 0 else min(2, esc + 1)
             _start_systemd_feed()
             restarted, _ = restart_supervisor(force=True)
+            if _ensure_telegram_bot():
+                actions.append("telegram_ok")
             actions.append("full_recover")
             if restarted:
                 actions.append("supervisor_restarted")
@@ -882,6 +946,7 @@ def auto_unload_and_recover(
             }
         finally:
             _release_recover_lock()
+            _ensure_telegram_bot()
 
     # Light heal: restart feed only — never spam this either.
     _mark_heal("light_restart", sent=0, escalation=_heal_escalation())
@@ -889,6 +954,7 @@ def auto_unload_and_recover(
     stop_feed_processes(game)
     _start_systemd_feed()
     restarted, note = restart_supervisor(force=True)
+    _ensure_telegram_bot()
     actions.append(f"light_restart:{note}")
     return {"action": "light_restart", "actions": actions, "reasons": report.reasons}
 
