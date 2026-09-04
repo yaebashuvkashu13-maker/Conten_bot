@@ -172,12 +172,12 @@ _METRO_REJECT_TOKENS = (
     "metro_vod_reject",
     "classic_map",
 )
-_MINED_REJECT_TOKENS = (
-    "pubg_singles_exhausted",
-    "pubg_singles_complete",
+# Truly empty — no point unparking. Gate failures (presend/exhausted) may still
+# have unused peaks worth another force-send pass.
+_HARD_MINED_REJECT_TOKENS = (
     "pubg_mined_out",
     "all_peaks_blocked",
-    "pubg_singles_presend_exhausted",
+    "pubg_singles_complete",
 )
 
 
@@ -186,9 +186,9 @@ def _is_metro_reject_reason(reason: str) -> bool:
     return any(token in low for token in _METRO_REJECT_TOKENS)
 
 
-def _is_mined_reject_reason(reason: str) -> bool:
+def _is_hard_mined_reject_reason(reason: str) -> bool:
     low = str(reason or "").lower()
-    return any(token in low for token in _MINED_REJECT_TOKENS)
+    return any(token in low for token in _HARD_MINED_REJECT_TOKENS)
 
 
 def _remaining_peaks_for_row(
@@ -201,30 +201,31 @@ def _remaining_peaks_for_row(
     """How many unsent pool peaks remain for a VOD (0 = mined / known empty)."""
     from vod_peak_gap import pool_peak_seconds, used_peak_times_shooter
 
-    if _is_mined_reject_reason(str(row.get("reject_reason") or "")):
-        return 0
     peaks = pool_peak_seconds(row.get("last_pool_peaks") or [])
-    if not peaks:
-        # No cached pool — count index segment ids still unsent (vid_123 format).
-        prefix = f"{vid}_"
-        index_left = 0
-        for seg in segments:
-            sid = str(seg.get("segment_id") or "")
-            if not sid.startswith(prefix):
-                continue
-            if sid in sent_set:
-                continue
-            index_left += 1
-        return min(3, index_left) if index_left else 0
     try:
         used = used_peak_times_shooter(vid, sent_set, segments)
     except Exception:
         used = []
-    left = 0
-    for p in peaks:
-        if not any(abs(p - u) <= 8.0 for u in used):
-            left += 1
-    return left
+    if peaks:
+        left = 0
+        for p in peaks:
+            if not any(abs(p - u) <= 8.0 for u in used):
+                left += 1
+        return left
+    # No cached pool — hard mined reasons mean do not recycle blindly.
+    if _is_hard_mined_reject_reason(str(row.get("reject_reason") or "")):
+        return 0
+    # Count index segment ids still unsent (vid_123 format).
+    prefix = f"{vid}_"
+    index_left = 0
+    for seg in segments:
+        sid = str(seg.get("segment_id") or "")
+        if not sid.startswith(prefix):
+            continue
+        if sid in sent_set:
+            continue
+        index_left += 1
+    return min(3, index_left) if index_left else 0
 
 
 def park_exhausted_inbox(game: str) -> int:
@@ -267,7 +268,7 @@ def park_exhausted_inbox(game: str) -> int:
             used = used_peak_times_shooter(vid, sent_set, segments)
         except Exception:
             used = []
-        # Keep only VODs that still have unsent peaks, or brand-new files never scanned.
+        # Keep VODs that still have unsent peaks (retry after gate fails), or brand-new files.
         brand_new = (
             not row.get("exhausted")
             and not reason
@@ -276,12 +277,15 @@ def park_exhausted_inbox(game: str) -> int:
             and not row.get("last_scan_at")
             and not row.get("last_pool_at")
         )
-        dead = (
-            bool(row.get("exhausted"))
-            or _is_metro_reject_reason(reason)
-            or _is_mined_reject_reason(reason)
-            or (left <= 0 and not brand_new)
-        )
+        if left > 0:
+            dead = _is_metro_reject_reason(reason)
+        else:
+            dead = (
+                bool(row.get("exhausted"))
+                or _is_metro_reject_reason(reason)
+                or _is_hard_mined_reject_reason(reason)
+                or not brand_new
+            )
         if not dead:
             continue
         if row:

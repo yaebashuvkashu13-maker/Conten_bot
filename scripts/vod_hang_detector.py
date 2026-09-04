@@ -524,13 +524,18 @@ def _heal_cooldown_ok(min_sec: int | None = None) -> bool:
     # otherwise drought + mined inbox looks like "auto-heal never starts".
     if os.environ.get("VOD_HEAL_RETRY_ON_SILENCE", "1") != "1":
         return False
-    retry_sec = max(600, int(os.environ.get("VOD_HEAL_RETRY_SEC", "900")))
-    if age < retry_sec:
-        return False
+    # Absolute drought: retry every 10 minutes until a real send lands.
     try:
         send_age = last_send_age_sec()
     except Exception:
         send_age = None
+    absolute = max(3600, int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "7200")))
+    if send_age is not None and send_age >= absolute:
+        retry_sec = max(300, int(os.environ.get("VOD_HEAL_RETRY_SEC", "600")))
+    else:
+        retry_sec = max(600, int(os.environ.get("VOD_HEAL_RETRY_SEC", "900")))
+    if age < retry_sec:
+        return False
     if send_age is None:
         return True
     # last_send still older than this heal → previous recover shipped nothing

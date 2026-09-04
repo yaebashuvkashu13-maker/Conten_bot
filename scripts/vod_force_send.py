@@ -203,6 +203,42 @@ def force_send_game(
             env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
             env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
             env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")
+        # Long silence: soften singles gates so recover can ship *something*
+        # instead of burning cooldown on endless zero-sends.
+        drought = False
+        try:
+            from vod_hang_detector import last_send_age_sec
+
+            drought = float(last_send_age_sec() or 0) >= float(
+                os.environ.get("VOD_FORCE_DROUGHT_SEC", "7200")
+            )
+        except Exception:
+            drought = False
+        if drought or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "0")
+            env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
+            env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get(
+                "VOD_FORCE_PAYOFF_MIN", "0.08"
+            )
+            env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get(
+                "VOD_FORCE_QUALITY_MIN", "0.22"
+            )
+            env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
+            env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
+            env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get(
+                "VOD_FORCE_GUN_DENSITY", "0.030"
+            )
+            env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get(
+                "VOD_FORCE_BURST_RATIO", "3.5"
+            )
+            env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
+            env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get(
+                "VOD_FORCE_SEND_MAX_VODS", "4"
+            )
+            env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
+            env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
+                "VOD_FORCE_SEND_ZERO_EXHAUST", "12"
+            )
 
     proc: subprocess.CompletedProcess[str] | None = None
     timed_out = False

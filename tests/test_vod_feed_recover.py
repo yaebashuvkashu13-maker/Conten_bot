@@ -130,6 +130,9 @@ def test_unpark_reads_dict_peaks_and_ignores_dead_inbox(
     dead.write_bytes(b"dead")
     good = parked / "yt_good0000001.mp4"
     good.write_bytes(b"x" * 50_000_000)
+    # Exhausted-by-gates but still has unused peaks — must be unparkable.
+    retry = parked / "yt_retry000001.mp4"
+    retry.write_bytes(b"y" * 50_000_000)
     state_path = root / "vod_segment_state.json"
     state_path.write_text(
         json.dumps(
@@ -151,6 +154,15 @@ def test_unpark_reads_dict_peaks_and_ignores_dead_inbox(
                             {"peak_sec": 178.4},
                         ],
                     },
+                    {
+                        "id": "retry000001",
+                        "exhausted": True,
+                        "reject_reason": "pubg_singles_exhausted",
+                        "last_pool_peaks": [
+                            {"peak_sec": 165.8},
+                            {"peak_sec": 404.5},
+                        ],
+                    },
                 ]
             }
         ),
@@ -165,15 +177,17 @@ def test_unpark_reads_dict_peaks_and_ignores_dead_inbox(
     index_path.write_text(json.dumps({"segments": []}), encoding="utf-8")
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
 
-    # Park dead first (as recover does), then unpark.
     assert park_exhausted_inbox("pubg") == 1
     assert not dead.exists()
     n = unpark_ready_vods("pubg", limit=2)
-    assert n == 1
+    assert n == 2
     assert (inbox / "yt_good0000001.mp4").exists()
+    assert (inbox / "yt_retry000001.mp4").exists()
     state = json.loads(state_path.read_text(encoding="utf-8"))
     good_row = next(r for r in state["vods"] if r["id"] == "good0000001")
     assert good_row["exhausted"] is False
+    retry_row = next(r for r in state["vods"] if r["id"] == "retry000001")
+    assert retry_row["exhausted"] is False
 
 
 def test_run_recover_message(
