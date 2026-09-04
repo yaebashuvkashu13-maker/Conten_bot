@@ -154,8 +154,10 @@ def zero_send_streak(max_lines: int = 40000) -> int:
     Feed prints bare `pipeline done sent=N ...` via print() — no logging
     timestamp — so matching must not require a leading datetime.
     """
+    from path_safe import is_file as path_is_file
+
     log_path = feed_log_path()
-    if not log_path.is_file():
+    if not path_is_file(log_path):
         return 0
     try:
         lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-max_lines:]

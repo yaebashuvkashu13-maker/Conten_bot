@@ -24,7 +24,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest numpy opencv-python-headless yt-dlp pyyaml joblib scikit-learn
+      - name: Prepare writable data roots
+        run: |
+          ROOT="${RUNNER_TEMP}/botdata"
+          mkdir -p "$ROOT"/{mlbb,pubg,standoff,genshin,wot}/youtube_nightly/{inbox,parked}
+          mkdir -p "$ROOT/pubg/ranker_models" "$ROOT/pubg/ranker_features"
+          touch "$ROOT/mlbb/mlbb_vod_segment_feed.log"
+          echo '{"videos":{}}' > "$ROOT/pubg/pubg_owner_labels.json"
+          echo '{"videos":{}}' > "$ROOT/mlbb/pubg_owner_labels.json"
+          echo '{}' > "$ROOT/pubg/vod_segment_state.json"
+          echo '{}' > "$ROOT/standoff/vod_segment_state.json"
+          echo '{}' > "$ROOT/mlbb/vod_segment_state.json"
+          echo -n > "$ROOT/mlbb/EU_PUBG_ONLY"
       - name: Run tests
         env:
           CONTENT_BOT_REPO: ${{ github.workspace }}
+          VOD_PUBG_ONLY: "1"
+          VOD_RUNTIME_LABELS: "0"
+          MLBB_DATA_ROOT: ${{ runner.temp }}/botdata/mlbb
+          SHOOTER_PUBG_DATA_ROOT: ${{ runner.temp }}/botdata/pubg
+          SHOOTER_STANDOFF_DATA_ROOT: ${{ runner.temp }}/botdata/standoff
+          VOD_GENSHIN_DATA_ROOT: ${{ runner.temp }}/botdata/genshin
+          VOD_WOT_DATA_ROOT: ${{ runner.temp }}/botdata/wot
+          MLBB_VOD_FEED_LOG: ${{ runner.temp }}/botdata/mlbb/mlbb_vod_segment_feed.log
+          PUBG_OWNER_LABELS_PATH: ${{ runner.temp }}/botdata/pubg/pubg_owner_labels.json
+          PUBG_RANKER_MODEL: ${{ runner.temp }}/botdata/pubg/pubg_moment_ranker.joblib
+          PUBG_RANKER_FEATURE_CACHE: ${{ runner.temp }}/botdata/pubg/ranker_features
         run: python -m pytest tests/ -q

@@ -197,6 +197,8 @@ def test_run_recover_message(
     monkeypatch.setenv("SHOOTER_PUBG_DATA_ROOT", str(root))
     monkeypatch.setenv("VOD_RECOVER_FORCE_SEND", "0")
     monkeypatch.setattr("vod_feed_recover.OWNER_BATCH_LOCK", tmp_path / "OWNER_BATCH_RUNNING")
+    monkeypatch.setattr("vod_feed_recover.feed_log_path", lambda: tmp_path / "feed.log")
+    monkeypatch.setattr("vod_feed_recover._log_age_sec", lambda _p: 600.0)
     msg = run_recover(
         "pubg",
         restart=lambda **_: (True, "test restart"),

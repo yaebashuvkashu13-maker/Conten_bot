@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 
-LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
+LABELS_PATH = Path(
+    os.environ.get("PUBG_OWNER_LABELS_PATH", "/root/data/mlbb/pubg_owner_labels.json")
+)
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
 # n97cHIR9Qow — owner review 2026-06-06
@@ -26,7 +28,9 @@ DEFAULT_LABELS: dict[str, list[dict]] = {
 
 
 def _read_labels_file(path: Path) -> dict:
-    if not path.exists():
+    from path_safe import exists as path_exists
+
+    if not path_exists(path):
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

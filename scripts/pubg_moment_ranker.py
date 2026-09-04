@@ -37,8 +37,10 @@ def model_path() -> Path:
     champion = os.environ.get("PUBG_RANKER_CHAMPION_PATH", "").strip()
     if champion:
         return Path(champion)
+    from path_safe import is_file as path_is_file
+
     default_champion = Path("/root/data/pubg/ranker_models/champion.joblib")
-    if default_champion.is_file():
+    if path_is_file(default_champion):
         return default_champion
     return Path(
         os.environ.get(
@@ -67,11 +69,13 @@ def owner_labels_path() -> Path:
     override = os.environ.get("PUBG_OWNER_LABELS_PATH", "").strip()
     if override:
         return Path(override)
+    from path_safe import exists as path_exists
+
     for path in (
         _repo_root() / "data" / "pubg_owner_labels.json",
         Path("/root/data/mlbb/pubg_owner_labels.json"),
     ):
-        if path.exists():
+        if path_exists(path):
             return path
     return _repo_root() / "data" / "pubg_owner_labels.json"
 
@@ -94,21 +98,24 @@ def _read_json(path: Path) -> dict:
 
 
 def resolve_vod(video_id: str, *, hinted_path: str = "") -> Path | None:
+    from path_safe import is_file as path_is_file
+
     hinted = Path(hinted_path) if hinted_path else None
     candidates: list[Path] = []
     if hinted is not None:
         candidates.append(hinted)
+    pubg_root = Path(os.environ.get("SHOOTER_PUBG_DATA_ROOT", "/root/data/pubg"))
     candidates.extend(
         [
-            Path("/root/data/pubg/youtube_nightly/inbox") / f"yt_{video_id}.mp4",
-            Path("/root/data/pubg/youtube_nightly/parked") / f"yt_{video_id}.mp4",
-            Path("/root/data/pubg/youtube_nightly/park_timeout") / f"yt_{video_id}.mp4",
-            Path("/root/data/pubg/regression_vods") / f"yt_{video_id}.mp4",
+            pubg_root / "youtube_nightly" / "inbox" / f"yt_{video_id}.mp4",
+            pubg_root / "youtube_nightly" / "parked" / f"yt_{video_id}.mp4",
+            pubg_root / "youtube_nightly" / "park_timeout" / f"yt_{video_id}.mp4",
+            pubg_root / "regression_vods" / f"yt_{video_id}.mp4",
             _repo_root() / "data" / "samples" / f"yt_{video_id}.mp4",
         ]
     )
     for path in candidates:
-        if path.is_file():
+        if path_is_file(path):
             return path
     return None
 

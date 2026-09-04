@@ -32,6 +32,7 @@ def _repo_root() -> Path:
 
 def runtime_labels_path(profile: str, *, create: bool = False) -> Path | None:
     from highlight_scorer import normalize_profile
+    from path_safe import exists as path_exists
 
     p = normalize_profile(profile)
     if p not in _PROFILE_RUNTIME:
@@ -39,7 +40,7 @@ def runtime_labels_path(profile: str, *, create: bool = False) -> Path | None:
     env_key, default = _PROFILE_RUNTIME[p]
     override = os.environ.get(env_key, "").strip()
     path = Path(override) if override else Path(default)
-    if create or path.exists():
+    if create or path_exists(path):
         return path
     return path
 
@@ -54,30 +55,44 @@ def seed_labels_path(profile: str) -> Path:
 
 def ensure_runtime_labels(profile: str) -> Path | None:
     """Copy git seed into runtime path when runtime file is missing."""
+    from path_safe import is_file as path_is_file
+
     path = runtime_labels_path(profile, create=True)
     if path is None:
         return None
-    if path.is_file():
+    if path_is_file(path):
         return path
     seed = seed_labels_path(profile)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if seed.is_file():
-        shutil.copy2(seed, path)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        payload["seeded_from"] = str(seed)
-        payload["seeded_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # CI / non-root hosts cannot write under /root/data — fall back to seed.
+        return seed if path_is_file(seed) else path
+    if path_is_file(seed):
+        try:
+            shutil.copy2(seed, path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["seeded_from"] = str(seed)
+            payload["seeded_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            return seed
     else:
-        path.write_text(
-            json.dumps({"videos": {}, "seeded_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2),
-            encoding="utf-8",
-        )
+        try:
+            path.write_text(
+                json.dumps({"videos": {}, "seeded_at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            return path
     return path
 
 
 def load_runtime_labels(profile: str) -> dict:
+    from path_safe import is_file as path_is_file
+
     path = ensure_runtime_labels(profile)
-    if path is None or not path.is_file():
+    if path is None or not path_is_file(path):
         return {"videos": {}}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

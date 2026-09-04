@@ -98,9 +98,9 @@ def reset_inbox_exhausted(game: str) -> int:
 
 
 def _log_age_sec(path: Path) -> float | None:
-    if not path.is_file():
-        return None
     try:
+        if not path.is_file():
+            return None
         return max(0.0, time.time() - path.stat().st_mtime)
     except OSError:
         return None
