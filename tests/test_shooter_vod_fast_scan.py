@@ -76,6 +76,7 @@ def test_fast_probe_disabled(monkeypatch, tmp_path: Path) -> None:
 def test_dense_offsets_probe_pass_shifts_grid(monkeypatch) -> None:
     from shooter_vod_fast_scan import _dense_offsets
 
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "8")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40")
     a = _dense_offsets(7200.0, skip_intro=120.0, probe_pass=0)
@@ -87,12 +88,30 @@ def test_dense_offsets_probe_pass_shifts_grid(monkeypatch) -> None:
 def test_dense_offsets_have_unique_third_pass(monkeypatch) -> None:
     from shooter_vod_fast_scan import _dense_offsets
 
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
     grids = [
         _dense_offsets(1800.0, skip_intro=60.0, probe_pass=probe_pass)
         for probe_pass in range(3)
     ]
     assert len({tuple(grid) for grid in grids}) == 3
+
+
+def test_full_peak_scan_dense_grid_has_no_large_skips(monkeypatch) -> None:
+    """Full scan must cover the VOD with step ≤ WINDOW — no 40s holes."""
+    from highlight_scorer import WINDOW_SEC
+    from shooter_vod_fast_scan import _dense_offsets
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("SHOOTER_VOD_DENSE_PROBE_MAX", raising=False)
+    monkeypatch.delenv("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", raising=False)
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "5")
+    offsets = _dense_offsets(1800.0, skip_intro=0.0, probe_pass=0)
+    assert len(offsets) >= 300  # ~1800/5
+    gaps = [b - a for a, b in zip(offsets, offsets[1:])]
+    assert gaps and max(gaps) <= 5.01
+    assert offsets[0] <= 0.1
+    assert offsets[-1] >= 1800.0 - WINDOW_SEC - 15.0
 
 
 def test_candidate_pool_scales_beyond_fixed_top_n(monkeypatch, tmp_path: Path) -> None:
@@ -131,7 +150,10 @@ def test_full_peak_scan_keeps_all_dense_hits(monkeypatch, tmp_path: Path) -> Non
     """PUBG_FULL_PEAK_SCAN must not collapse dense hits to a top-8/16 shortlist."""
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
     monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
-    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    # Contiguous grid across the whole VOD (no silent max=48 head-only slice).
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "30")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "0")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", "0")
     monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
     monkeypatch.delenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", raising=False)
     vod = tmp_path / "yt_test.mp4"
@@ -162,6 +184,7 @@ def test_full_peak_scan_keeps_all_dense_hits(monkeypatch, tmp_path: Path) -> Non
 
 def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")  # isolate legacy spacing relax path
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
     monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")

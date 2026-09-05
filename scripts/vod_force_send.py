@@ -284,6 +284,15 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_FAST_RANK_MAX"] = "0"
     env["PUBG_KILLFEED_RANK_MAX"] = "0"
     env["PUBG_RANKER_MAX_PROBES"] = "0"
+    # Contiguous dense grid — no 40s probe skips / hard max truncation.
+    env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
+        "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "5"
+    )
+    env["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
+    env["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"
+    env["SHOOTER_VOD_FAST_SKIP_INTRO"] = os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "0")
+    env["SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC"] = "2"
+    env["SHOOTER_VOD_AUDIO_CANDIDATE_MAX"] = "0"
     # Force rediscovery — stale dense_pool_version caches replay loot/menu peaks.
     env["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).

@@ -15,7 +15,12 @@ import numpy as np
 from highlight_scorer import WINDOW_SEC, normalize_profile, score_panns_audio
 
 log = logging.getLogger("shooter_vod_fast_scan")
-AUDIO_GENERATOR_VERSION = 4
+AUDIO_GENERATOR_VERSION = 5
+
+
+def full_peak_scan_enabled() -> bool:
+    """PUBG_FULL_PEAK_SCAN=1 → contiguous full-VOD discovery (no probe skips)."""
+    return os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
 
 
 def dense_pcm_max_sec(duration: float | None = None) -> float:
@@ -65,12 +70,24 @@ def candidate_pool_target(min_clips: int = 2, duration: float | None = None) -> 
     return base
 
 
+def _audio_candidate_defaults() -> tuple[int, float]:
+    """max_candidates, gap_sec — under full scan keep every transient, no 10s gaps."""
+    if full_peak_scan_enabled():
+        raw_max = int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "0") or 0)
+        gap = float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "2") or 2)
+        return (raw_max if raw_max > 0 else 100_000, max(0.5, gap))
+    return (
+        int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "96")),
+        float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "10")),
+    )
+
+
 def _audio_candidate_cache_file(video_path: Path) -> Path:
     stat = video_path.stat()
+    max_c, gap = _audio_candidate_defaults()
     raw = (
         f"v{AUDIO_GENERATOR_VERSION}|{video_path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|"
-        f"{os.environ.get('SHOOTER_VOD_AUDIO_CANDIDATE_MAX', '96')}|"
-        f"{os.environ.get('SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC', '10')}"
+        f"{max_c}|{gap}|full={int(full_peak_scan_enabled())}"
     )
     key = hashlib.sha256(raw.encode()).hexdigest()[:32]
     root = Path(
@@ -203,15 +220,14 @@ def discover_audio_candidate_offsets(
         if proc.returncode != 0 or not proc.stdout:
             return []
         pcm = np.frombuffer(proc.stdout, dtype=np.int16)
+    max_c, gap = _audio_candidate_defaults()
     peaks = _rank_audio_windows(
         pcm,
         sample_rate=sample_rate,
         base_sec=skip_intro,
-        max_candidates=max(
-            candidate_pool_target() * 3,
-            int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "96")),
-        ),
-        gap_sec=float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "10")),
+        max_candidates=max(candidate_pool_target() * 3, max_c),
+        gap_sec=gap,
+        step_sec=1.0 if full_peak_scan_enabled() else 2.0,
     )
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_file.with_suffix(f".{os.getpid()}.tmp")
@@ -225,6 +241,12 @@ def discover_audio_candidate_offsets(
 
 def _skip_intro_sec(profile: str, *, duration: float | None = None) -> float:
     profile = normalize_profile(profile)
+    # Full peak scan: do not burn the first 1–2 minutes — scan the whole body.
+    if full_peak_scan_enabled():
+        skip = float(os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "0") or 0)
+        if duration is not None and duration > 0 and skip > 0:
+            skip = min(skip, max(0.0, float(duration) * 0.05))
+        return max(0.0, skip)
     if profile == "pubg":
         skip = float(
             os.environ.get(
@@ -259,39 +281,64 @@ def _probe_offsets(duration: float, *, skip_intro: float) -> list[float]:
 
 
 def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -> list[float]:
-    """Evenly spaced probes for montage (≥3 fights). Caps CPU via MAX.
+    """Probe grid across the VOD body for gun-peak discovery.
 
-    Critical: a fixed step+cap only covered the first ~20min of 90min streams,
-    so used early fights left have<3 while the rest of the VOD was never probed.
-    probe_pass shifts the grid so later visits scan different timeline slices.
+    Under PUBG_FULL_PEAK_SCAN=1 (default): contiguous/overlapping windows with
+    step ≤ WINDOW_SEC so no timeline slice is skipped. Caps of 0 mean unlimited.
+    Legacy mode keeps a coarser CPU-saving grid (step≈40s + hard max).
     """
     dur = max(0.0, float(duration))
-    # Short VODs: denser step, still probe (was empty at skip+180 threshold).
+    if full_peak_scan_enabled():
+        # Contiguous coverage: default step = half PANNs window (overlap, no gaps).
+        default_step = max(1.0, float(WINDOW_SEC) * 0.5)
+        step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", str(default_step)))
+        if step <= 0:
+            step = default_step
+        # Never stretch step upward — that recreates silent skips.
+        end = dur - 12.0 - WINDOW_SEC
+        if end <= skip_intro:
+            end = dur - WINDOW_SEC - 1.0
+        if end <= skip_intro:
+            return _probe_offsets(dur, skip_intro=skip_intro)
+        need = int((end - skip_intro) / step) + 2
+        raw_max = int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "0") or 0)
+        raw_hard = int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", "0") or 0)
+        cap = need
+        if raw_max > 0:
+            cap = min(cap, raw_max)
+        if raw_hard > 0:
+            cap = min(cap, raw_hard)
+        # Optional micro-phase still stays within one step (no large holes).
+        phase = 0.0
+        if probe_pass > 0:
+            phase = (probe_pass * step * 0.38196601125) % step
+        out: list[float] = []
+        t = skip_intro + phase
+        while t <= end + 1e-6 and len(out) < cap:
+            out.append(round(t, 1))
+            t += step
+        return out
+
+    # Legacy / PUBG_FULL_PEAK_SCAN=0: coarser CPU-saving grid.
     if dur < skip_intro + 120:
         return _probe_offsets(dur, skip_intro=skip_intro)
     step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40"))
     if dur < 600:
         step = min(step, 25.0)
-    # Probe count scales with VOD length — fixed caps previously clustered on the
-    # first ~20–70min and starved fights near the end of long streams.
     cap = max(
         10,
         candidate_pool_target(duration=dur) * 3,
         int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")),
         int(max(0.0, dur - skip_intro) / 45.0) + 8,
     )
-    # Soft safety only (not a quality "top-N scenes" limit).
     cap = min(cap, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", "240")))
     usable = max(0.0, dur - skip_intro - 12.0 - WINDOW_SEC)
     if usable > 0 and cap > 1:
-        # Stretch so probes span the whole VOD instead of clustering at the start.
         step = max(step, usable / float(cap - 1))
     phase_shift = 0.0
     if probe_pass > 0 and usable > 0:
-        # Irrational phase avoids pass 2 wrapping onto pass 0. The old 2.5×
-        # formula generated only two unique grids, regardless of configured passes.
         phase_shift = (probe_pass * step * 0.38196601125) % step
-    out: list[float] = []
+    out = []
     t = skip_intro + phase_shift
     while t + WINDOW_SEC < dur - 12 and len(out) < cap:
         out.append(round(t, 1))
@@ -348,7 +395,7 @@ def snap_peak_to_gunfire(
     *,
     duration: float,
     search_radius: float = 10.0,
-    step: float = 3.0,
+    step: float | None = None,
     sample_sec: float = 4.0,
     confirm_panns: bool = True,
     pcm_cache: object | None = None,
@@ -357,8 +404,12 @@ def snap_peak_to_gunfire(
     Re-center a probe on the loudest local gunfire using the same density metric
     as the shooting gate. Returns (center, gun_density, panns_gun_max).
 
-    Kept cheap: ~7 audio windows, not dozens.
+    Kept cheap: ~7 audio windows, not dozens. Under full peak scan the step is
+    finer (1s) so recenter does not skip past short bursts.
     """
+    if step is None:
+        step = 1.0 if full_peak_scan_enabled() else 3.0
+    step = float(step)
     from gameplay_gate import score_pubg_gunfire_audio
 
     best_c = float(approx_center)
