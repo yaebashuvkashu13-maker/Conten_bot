@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""PUBG singles-first VOD mode: send all fights one-by-one, assemble montage at end."""
+"""PUBG singles-first VOD mode: send all fights one-by-one, assemble montage at end.
+
+Inspect-all policy (PUBG_FULL_PEAK_SCAN=1, default):
+  Walk every ranked combat peak in the VOD through presend gates until one
+  ships or the pool is empty. Do NOT stop after a silent top-4/8 try budget.
+
+Send policy (unchanged): one good single per successful cycle — inspect-all
+is not spam-all. Quality gates (menu/loot/gun/hook) still reject junk.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,55 @@ from pathlib import Path
 from typing import Any, Callable
 
 log = logging.getLogger("pubg_vod_singles_first")
+
+
+def full_peak_scan_enabled() -> bool:
+    return os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
+
+
+def singles_peak_try_budget(n_rows: int) -> int:
+    """How many peaks to inspect this run.
+
+    Under full peak scan: 0 / unset → every row in the pool.
+    Explicit positive PUBG_SINGLES_PEAK_TRIES_PER_RUN still caps if set.
+    Legacy (FULL_PEAK_SCAN=0): default 4.
+    """
+    n = max(0, int(n_rows))
+    raw = os.environ.get("PUBG_SINGLES_PEAK_TRIES_PER_RUN")
+    if full_peak_scan_enabled():
+        if raw is None or str(raw).strip() == "":
+            return max(1, n) if n else 1
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            return max(1, n) if n else 1
+        if val <= 0:
+            return max(1, n) if n else 1
+        return max(1, min(val, n)) if n else max(1, val)
+    try:
+        val = int(raw if raw is not None else "4")
+    except (TypeError, ValueError):
+        val = 4
+    if val <= 0:
+        return max(1, n) if n else 1
+    return max(1, val)
+
+
+def singles_zero_send_exhaust_limit() -> int:
+    """Consecutive presend rejects before giving up on a VOD.
+
+    Under full peak scan default 0 = never abandon on streak alone; only when
+    no sendable peaks remain. Legacy default 6.
+    """
+    if full_peak_scan_enabled():
+        try:
+            return max(0, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "0")))
+        except (TypeError, ValueError):
+            return 0
+    try:
+        return max(1, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "6")))
+    except (TypeError, ValueError):
+        return 6
 
 ASSEMBLE_LOG = Path(os.environ.get("PUBG_ASSEMBLE_LOG", "/root/data/mlbb/assemble_montage.log"))
 PENDING_ASSEMBLE_PATH = Path(
@@ -617,8 +674,16 @@ def singles_first_send_cycle(
             except (TypeError, ValueError):
                 continue
 
-    max_tries = max(1, int(os.environ.get("PUBG_SINGLES_PEAK_TRIES_PER_RUN", "4")))
-    exhaust_streak = int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "6"))
+    max_tries = singles_peak_try_budget(len(rows))
+    exhaust_streak = singles_zero_send_exhaust_limit()
+    log.info(
+        "pubg singles inspect-all vod=%s rows=%s tries=%s exhaust_streak=%s full_scan=%s",
+        vod.name,
+        len(rows),
+        max_tries,
+        exhaust_streak,
+        int(full_peak_scan_enabled()),
+    )
 
     for attempt in range(max_tries):
         row, is_final = pick_next_single_row(
@@ -712,7 +777,9 @@ def singles_first_send_cycle(
                 pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
                 blocked=False,
             )
-            if row_next is None or streak >= exhaust_streak:
+            # Full scan: streak limit 0 means keep going until the pool is empty.
+            streak_give_up = exhaust_streak > 0 and streak >= exhaust_streak
+            if row_next is None or streak_give_up:
                 reason = (
                     "pubg_singles_presend_exhausted"
                     if row_next is None

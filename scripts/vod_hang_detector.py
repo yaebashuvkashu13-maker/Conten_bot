@@ -690,8 +690,12 @@ def apply_agent_recover_env(
     target["PUBG_KILLFEED_RANK_MAX"] = "0"
     target["PUBG_RANKER_MAX_PROBES"] = "0"
     target["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
+    # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
-        "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if esc >= 1 else "6"
+        "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
+    )
+    target["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
+        "VOD_FORCE_SEND_ZERO_EXHAUST", "0"
     )
     if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(

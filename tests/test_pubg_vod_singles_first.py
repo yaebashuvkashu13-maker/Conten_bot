@@ -197,3 +197,24 @@ def test_enqueue_assemble_dedupes(tmp_path, monkeypatch):
     second = enqueue_assemble_job("pubg", "Tovruh33adY", "1")
     assert first["id"] == second["id"]
     assert len(load_pending_assemble()) == 1
+
+
+def test_full_scan_inspects_all_peaks_budget(monkeypatch):
+    from pubg_vod_singles_first import (
+        singles_peak_try_budget,
+        singles_zero_send_exhaust_limit,
+    )
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_ZERO_SEND_EXHAUST", raising=False)
+    assert singles_peak_try_budget(40) == 40
+    assert singles_zero_send_exhaust_limit() == 0
+
+    monkeypatch.setenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", "0")
+    assert singles_peak_try_budget(25) == 25
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    assert singles_peak_try_budget(40) == 4
+    assert singles_zero_send_exhaust_limit() == 6

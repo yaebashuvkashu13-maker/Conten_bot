@@ -172,6 +172,16 @@ def telegram_exhaust_notice(
 
 
 def soft_max_peak_tries() -> int:
+    # Full peak scan: walk a large pool; 0 / huge = inspect-all for non-singles path.
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        raw = os.environ.get("SHOOTER_VOD_SOFT_MAX_PEAK_TRIES", "0")
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            val = 0
+        if val <= 0:
+            return 10_000
+        return max(1, val)
     return max(1, int(os.environ.get("SHOOTER_VOD_SOFT_MAX_PEAK_TRIES", "6")))
 
 

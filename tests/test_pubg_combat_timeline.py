@@ -81,6 +81,8 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
         assert env["PUBG_EARLY_ACTION_SHIFT"] == "1"
         assert env["PUBG_FULL_PEAK_SCAN"] == "1"
         assert env["VOD_CASCADE_KILL_MAX"] == "0"
+        assert env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] == "0"
+        assert env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] == "0"
         assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) == pytest.approx(0.30)
         assert env["PUBG_HARD_REJECT_MENU_OVERLAY"] == "1"
         assert float(env["DISLIKE_GUN_DENSITY_MIN"]) <= 0.015

@@ -286,12 +286,14 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_RANKER_MAX_PROBES"] = "0"
     # Force rediscovery — stale dense_pool_version caches replay loot/menu peaks.
     env["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
+    # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
-        "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if escalation >= 1 else "6"
+        "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
     )
     env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4")
     env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
-    env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "12")
+    # 0 = never abandon VOD on reject streak alone under full peak scan.
+    env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "0")
     env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
     if escalation >= 2:
         env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
@@ -343,7 +345,11 @@ def force_send_game(
     bump_scan_cooldowns(game)
     if game == "pubg":
         env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
-        env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "6")
+        # Prefer inspect-all (0) — do not re-tighten to legacy 6 after drought env.
+        env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
+            "VOD_FORCE_SEND_ZERO_EXHAUST",
+            env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "0"),
+        )
         env.setdefault("PUBG_SINGLES_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"))
         env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
         try:
