@@ -239,6 +239,17 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     else:
         env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
     env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
+    # Hook gate stays ON. Soften only HUD false-positives (Metro bright UI);
+    # never disable CLIP_HOOK_GATE / menu reject entirely.
+    env["CLIP_HOOK_GATE"] = "1"
+    hook_menu, hook_rms, hook_ydelta = "0.62", "0.08", "1.5"
+    if escalation >= 1:
+        hook_menu, hook_rms, hook_ydelta = "0.70", "0.05", "1.0"
+    if escalation >= 2:
+        hook_menu, hook_rms, hook_ydelta = "0.78", "0.03", "0.5"
+    env["CLIP_HOOK_MAX_MENU"] = hook_menu
+    env["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
+    env["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
     env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4")
     env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
     env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "12")

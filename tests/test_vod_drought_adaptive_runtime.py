@@ -109,6 +109,22 @@ def test_hang_recover_esc2_caps_owner_relax(monkeypatch: pytest.MonkeyPatch) -> 
     assert out["VOD_FORCE_PRESEND_BYPASS"] == "0"
 
 
+def test_soften_relaxes_hook_menu_not_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drought must soften HUD false-positives without disabling hook gate."""
+    from vod_force_send import apply_drought_pubg_env
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    force = apply_drought_pubg_env({}, escalation=2)
+    hang = apply_agent_recover_env({}, escalation=2)
+    for env in (force, hang):
+        assert env["CLIP_HOOK_GATE"] == "1"
+        assert float(env["CLIP_HOOK_MAX_MENU"]) == pytest.approx(0.78)
+        assert float(env["CLIP_HOOK_MIN_AUDIO_RMS"]) == pytest.approx(0.03)
+        assert env["PUBG_REJECT_LOOT_WALK"] == "1"
+        assert env["PUBG_PRESEND_SHOOTING_GATE"] == "1"
+
+
 def test_entry_hard_bad_without_peaks() -> None:
     from vod_inbox_recover import entry_is_hard_bad_without_peaks
 

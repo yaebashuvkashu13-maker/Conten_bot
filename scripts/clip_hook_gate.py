@@ -17,7 +17,41 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _rms_db_to_unit(db: float) -> float:
+    """Map dBFS (~-60..0) to a 0..1 activity unit used by the hook gate."""
+    return max(0.0, min(1.0, (db + 60.0) / 60.0))
+
+
+def _parse_rms_db(text: str) -> float | None:
+    """Parse ffmpeg astats RMS from ametadata print or human stderr lines."""
+    best: float | None = None
+    for line in text.splitlines():
+        db: float | None = None
+        # ametadata=print → lavfi.astats.1.RMS_level=-23.39
+        if "RMS_level" in line and "=" in line:
+            try:
+                db = float(line.split("=")[-1].strip().split()[0])
+            except (TypeError, ValueError, IndexError):
+                db = None
+        # human stderr → "RMS level dB: -23.395175"
+        elif "RMS level dB" in line or "RMS level db" in line.lower():
+            try:
+                tail = line.split("dB", 1)[-1] if "dB" in line else line.split("db", 1)[-1]
+                db = float(tail.lstrip(": ").strip().split()[0])
+            except (TypeError, ValueError, IndexError):
+                db = None
+        if db is None:
+            continue
+        # Prefer the loudest window sample (contact, not silence trough).
+        if best is None or db > best:
+            best = db
+    return best
+
+
 def _audio_rms(path: Path, start: float, dur: float) -> float:
+    # ametadata=print is required: with -loglevel error, astats human lines are
+    # suppressed and the old "RMS_level=" parser always returned 0.0 → false
+    # hook_silent / hook_no_contact rejects on every clip.
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -30,7 +64,7 @@ def _audio_rms(path: Path, start: float, dur: float) -> float:
         "-i",
         str(path),
         "-af",
-        "astats=metadata=1:reset=1",
+        "astats=metadata=1:reset=1,ametadata=print:file=-",
         "-f",
         "null",
         "-",
@@ -40,14 +74,10 @@ def _audio_rms(path: Path, start: float, dur: float) -> float:
     except (OSError, subprocess.TimeoutExpired):
         return 0.0
     text = (proc.stderr or "") + (proc.stdout or "")
-    for line in text.splitlines():
-        if "RMS_level" in line and "=" in line:
-            try:
-                db = float(line.split("=")[-1].strip().split()[0])
-                return max(0.0, min(1.0, (db + 60.0) / 60.0))
-            except (TypeError, ValueError):
-                continue
-    return 0.0
+    db = _parse_rms_db(text)
+    if db is None:
+        return 0.0
+    return _rms_db_to_unit(db)
 
 
 def _frame_yavg(path: Path, at_sec: float) -> float:

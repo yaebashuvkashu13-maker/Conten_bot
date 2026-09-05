@@ -651,6 +651,16 @@ def apply_agent_recover_env(
     # Keep loot reject ON at every escalation — garbage menu/loot > silence.
     target["VOD_FORCE_REJECT_LOOT"] = "1"
     target["PUBG_REJECT_LOOT_WALK"] = "1"
+    # Hook gate stays ON; only soften HUD false-positive menu score under drought.
+    target["CLIP_HOOK_GATE"] = "1"
+    hook_menu, hook_rms, hook_ydelta = "0.62", "0.08", "1.5"
+    if esc >= 1:
+        hook_menu, hook_rms, hook_ydelta = "0.70", "0.05", "1.0"
+    if esc >= 2:
+        hook_menu, hook_rms, hook_ydelta = "0.78", "0.03", "0.5"
+    target["CLIP_HOOK_MAX_MENU"] = hook_menu
+    target["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
+    target["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
     if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
             "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
