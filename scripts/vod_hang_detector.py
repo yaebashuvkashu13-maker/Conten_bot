@@ -599,7 +599,10 @@ def apply_agent_recover_env(
     if not need_soft:
         return target
     target["VOD_FORCE_SOFTEN"] = "1"
-    target["VOD_FORCE_SKIP_DISCOVERY"] = os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "1")
+    # Never auto-skip discovery or bypass presend — that shipped menu/loot as "keepalive".
+    # Soften thresholds only; quality gates stay on.
+    target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+    target["VOD_FORCE_PRESEND_BYPASS"] = "0"
     target.setdefault(
         "VOD_FORCE_SEND_MAX_VODS",
         os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"),
@@ -620,17 +623,22 @@ def apply_agent_recover_env(
     if esc >= 2:
         target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.05")
         target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
-        target["VOD_FORCE_REJECT_LOOT"] = "0"
-        target["PUBG_REJECT_LOOT_WALK"] = "0"
-        target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
-        target["PUBG_PRESEND_SHOOTING_GATE"] = "0"
-        # Keep score-mode ON (loot reject respects PUBG_REJECT_LOOT_WALK=0).
-        # Combat-gate fallback on SCORE_MODE=0 ignored soften and still zero-sent.
+        # Soften loot-walk filters under drought, but keep shooting/menu gates alive.
+        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
+        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "0")
+        target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
+            "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
+        )
+        # Keep score-mode ON; never disable shooting gate via recover escalation.
         target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
         target["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
             "VOD_FORCE_RELAX_OWNER", "2"
         )
-        target["VOD_FORCE_PRESEND_BYPASS"] = os.environ.get("VOD_FORCE_PRESEND_BYPASS", "1")
+        target["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
+            "PUBG_PRESEND_SHOOTING_GATE", "1"
+        )
+        target["VOD_FORCE_PRESEND_BYPASS"] = "0"
+        target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
     return target
 
 

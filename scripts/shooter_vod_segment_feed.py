@@ -128,14 +128,22 @@ def _inbox_mp4_files(inbox: Path) -> list[Path]:
 
 
 def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
-    """Park only too-short inbox files. Never park long VODs for exceeding max."""
+    """Park too-short / tiny / zero-duration inbox stubs (often failed live grabs)."""
     parked = inbox.parent / "parked"
     parked.mkdir(parents=True, exist_ok=True)
     min_sec = _vod_min_sec()
+    min_bytes = int(os.environ.get("SHOOTER_VOD_INBOX_MIN_BYTES", str(8_000_000)))
     removed = 0
     for mp4 in list(_inbox_mp4_files(inbox)):
+        try:
+            size = mp4.stat().st_size
+        except OSError:
+            continue
         dur = _ffprobe_duration(mp4)
-        if dur >= min_sec:
+        too_small = size < min_bytes
+        too_short = dur >= 0 and dur < min_sec
+        zero_dur = dur == 0
+        if not (too_small or too_short or zero_dur):
             continue
         dest = parked / mp4.name
         try:
@@ -144,9 +152,15 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
             else:
                 mp4.rename(dest)
             removed += 1
-            log.info("parked short inbox vod=%s dur=%.0fs min=%.0fs", mp4.name, dur, min_sec)
+            log.info(
+                "parked junk inbox vod=%s size=%s dur=%.0fs min=%.0fs",
+                mp4.name,
+                size,
+                dur,
+                min_sec,
+            )
         except OSError as exc:
-            log.warning("park short inbox fail %s: %s", mp4.name, exc)
+            log.warning("park junk inbox fail %s: %s", mp4.name, exc)
     return removed
 
 
@@ -689,7 +703,7 @@ def _validate_shooter_presend(
         and not montage_part
         and esc >= 2
         and os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
-        and os.environ.get("VOD_FORCE_PRESEND_BYPASS", "1") == "1"
+        and os.environ.get("VOD_FORCE_PRESEND_BYPASS", "0") == "1"
         and float(dur) >= 5.0
     ):
         return True, "keepalive_esc2_pass", {"keepalive_bypass": True, "dur": round(float(dur), 2)}
@@ -1787,6 +1801,50 @@ def _send_batch(
         if not presend_ok:
             log.warning("presend REJECT %s: %s", sid, presend_reason)
             continue
+
+        deliver = out
+        if os.environ.get("TELEGRAM_ENCODE", "1") == "1":
+            try:
+                from telegram_delivery import encode_telegram_mp4
+                deliver = encode_telegram_mp4(out, out.with_name(out.stem + "_tg.mp4"))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("telegram encode failed sid=%s: %s", sid, exc)
+                deliver = out
+
+        if os.environ.get("CLIP_HOOK_GATE", "1") == "1":
+            try:
+                from clip_hook_gate import hook_gate_clip
+                hook_ok, hook_reason, hook_report = hook_gate_clip(deliver)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("hook gate error sid=%s: %s", sid, exc)
+                hook_ok, hook_reason, hook_report = True, "hook_error", {}
+            if not hook_ok:
+                log.warning("hook gate REJECT %s: %s", sid, hook_reason)
+                continue
+
+        if os.environ.get("DISLIKE_REASON_GATES", "1") == "1":
+            try:
+                from dislike_reason_gates import evaluate_reason_gates, recent_dislike_reasons
+                pr = presend_report if isinstance(presend_report, dict) else {}
+                reason_metrics = {
+                    **pr,
+                    "gun_density": float(pr.get("gunfire_density") or pr.get("gun_density") or 0.0),
+                    "burst_ratio": float(pr.get("burst_ratio") or pr.get("gun_burst_ratio") or 0.0),
+                    "center_motion": float(pr.get("center_motion") or pr.get("motion") or 0.0),
+                    "menu_overlay": float(pr.get("center_text") or pr.get("menu_overlay") or 0.0),
+                }
+                rg_ok, rg_reason, rg_report = evaluate_reason_gates(
+                    reason_metrics,
+                    active_reasons=recent_dislike_reasons(game),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("dislike reason gates error sid=%s: %s", sid, exc)
+                rg_ok, rg_reason, rg_report = True, "reason_gates_error", {}
+            if not rg_ok:
+                log.warning("dislike reason REJECT %s: %s", sid, rg_reason)
+                continue
+
+        out = deliver
         peak = int(row.get("peak_start", row["start"]))
         out_dur = _ffprobe_duration(out)
         caption = (
@@ -1909,6 +1967,20 @@ def _inbox_order_key(
     sent_ok = int((entry or {}).get("last_scan_sent") or 0) > 0
     zombie_blocked = 1 if blocked and scanned <= 0 and not sent_ok else 0
     peaks_n = len((entry or {}).get("last_pool_peaks") or [])
+    # Prefer VODs that already have cached gun/fight peaks (avoid dry rediscover).
+    gunish = 0
+    for peak in (entry or {}).get("last_pool_peaks") or []:
+        try:
+            score = float(
+                (peak.get("gun_score") if isinstance(peak, dict) else 0)
+                or (peak.get("score") if isinstance(peak, dict) else 0)
+                or 0
+            )
+        except (TypeError, ValueError, AttributeError):
+            score = 0.0
+        if score >= 0.08:
+            gunish += 1
+    gun_ready = 0 if gunish > 0 else 1
     pool_ready = 0 if peaks_n >= _montage_soft_min_clips(game) else 1
     # Fully mined VODs (all peaks already sent) go last — don't burn minutes on them.
     mined_out = 0
@@ -1921,9 +1993,11 @@ def _inbox_order_key(
     return (
         singles_pin,
         mined_out,
+        gun_ready,
         pool_ready,
         zombie_blocked,
         1 if scanned else 0,
+        -gunish,
         -peaks_n if pool_ready == 0 else 0,
         dur_tier if pool_ready else 0,
         dur_sort,
@@ -1994,6 +2068,17 @@ def _scan_vod(
             record_vod_scan(entry, sent=0, pool_peaks=cached, blocked=True)
             return 0
 
+
+    if os.environ.get("VOD_AUDIO_PREFLIGHT", "1") == "1":
+        try:
+            from vod_media_cache import audio_preflight_ok
+            ok_pf, pf_reason, pf_meta = audio_preflight_ok(vod)
+            if not ok_pf:
+                log.warning("audio preflight REJECT vod=%s: %s %s", vod.name, pf_reason, pf_meta)
+                return 0
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audio preflight skipped vod=%s: %s", vod.name, exc)
+
     # Normal pool: cache first. Full rediscover on long VODs is a known multi-hour hang —
     # only do it when forced, short enough, or genshin/wot need fresh boss/brawl peaks.
     if entry and pool_cache_valid(entry) and os.environ.get("SHOOTER_VOD_FORCE_REDISCOVER", "0") != "1":
@@ -2013,6 +2098,28 @@ def _scan_vod(
         )
     else:
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+
+    if pool and os.environ.get("VOD_CHEAP_CASCADE", "1") == "1":
+        try:
+            from vod_cheap_cascade import rank_peaks_cheap, should_run_heavy
+            peaks = [float(c.get("start") or c.get("peak_start") or 0.0) for c in pool]
+            ranked = rank_peaks_cheap(vod, peaks)
+            keep = {
+                round(float(r["peak_sec"]), 1)
+                for i, r in enumerate(ranked)
+                if should_run_heavy(r, rank=i)
+            }
+            if keep:
+                filtered = [
+                    c for c in pool
+                    if round(float(c.get("start") or c.get("peak_start") or 0.0), 1) in keep
+                ]
+                if filtered:
+                    log.info("cheap cascade vod=%s pool=%s -> %s", vod.name, len(pool), len(filtered))
+                    pool = filtered
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cheap cascade skipped vod=%s: %s", vod.name, exc)
+
 
     if montage and owner_hints:
         pool = merge_owner_hints_into_pool(pool, owner_hints)

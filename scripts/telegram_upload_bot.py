@@ -600,7 +600,7 @@ def _shooter_apply_vseg_label(
     reason: str = '',
 ) -> tuple[bool, str]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from shooter_vod_segment_store import apply_owner_label, stats
+    from shooter_vod_segment_store import apply_owner_label, find_segment, stats
 
     game = game.strip().lower()
     sid = segment_id.strip()
@@ -611,6 +611,19 @@ def _shooter_apply_vseg_label(
         reason=reason,
         by_chat=str(chat_id),
     )
+    try:
+        from vod_owner_feedback_bridge import apply_owner_feedback
+
+        row = find_segment(game, sid) or {}
+        apply_owner_feedback(
+            game,
+            clip_id=sid,
+            is_good=is_good,
+            reason=reason,
+            vod_id=str(row.get("vod_id") or ""),
+        )
+    except Exception:
+        logging.exception("owner feedback bridge failed game=%s sid=%s", game, sid)
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'

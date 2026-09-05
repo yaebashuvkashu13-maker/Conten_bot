@@ -307,22 +307,22 @@ def force_send_game(
                 "VOD_FORCE_SEND_ZERO_EXHAUST", "12"
             )
             # Stay on unparked inbox — Metro live discovery burns the whole timeout.
-            env["SHOOTER_VOD_SKIP_DISCOVERY"] = os.environ.get(
-                "VOD_FORCE_SKIP_DISCOVERY", "1"
-            )
+            # Soften drought recovery without skipping discovery or bypassing presend
+            # (bypass shipped menu/loot clips). Inbox recover unparks VODs instead.
+            env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
             if escalation >= 2:
-                # Keep score-mode; add explicit singles bypass so hard_loot_walk /
-                # run_fake_gun cannot keep the drought alive forever.
                 env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get(
                     "VOD_FORCE_PRESEND_SCORE_MODE", "1"
                 )
                 env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
                     "VOD_FORCE_RELAX_OWNER", "2"
                 )
-                env["PUBG_PRESEND_SHOOTING_GATE"] = "0"
-                env["VOD_FORCE_PRESEND_BYPASS"] = os.environ.get(
-                    "VOD_FORCE_PRESEND_BYPASS", "1"
+                # Keep shooting gate on — never auto-bypass menu/loot under drought.
+                env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
+                    "PUBG_PRESEND_SHOOTING_GATE", "1"
                 )
+                env["VOD_FORCE_PRESEND_BYPASS"] = "0"
+                env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
     captured = ""
