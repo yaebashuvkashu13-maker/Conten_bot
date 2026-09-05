@@ -796,12 +796,17 @@ def _release_recover_lock() -> None:
 
 def _start_systemd_feed() -> None:
     for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
-        subprocess.run(
-            ["systemctl", "start", unit],
-            check=False,
-            timeout=20,
-            capture_output=True,
-        )
+        for args in (
+            ["enable", unit],
+            ["reset-failed", unit],
+            ["start", unit],
+        ):
+            subprocess.run(
+                ["systemctl", *args],
+                check=False,
+                timeout=20,
+                capture_output=True,
+            )
 
 
 def _ensure_telegram_bot() -> bool:

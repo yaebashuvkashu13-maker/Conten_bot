@@ -3730,7 +3730,26 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     game = _game()
     file_env = load_env(ENV_PATH)
+    # Drought recover / force_send pass VOD_FORCE_* via exec env. Blindly
+    # updating from .video_bot.env (SOFTEN=0, RELAX=0, PRESEND gun 0.045)
+    # wiped soften in-process while /proc/environ still showed the exec values
+    # — workers then evaluated steady-state gates and rejected every clip.
+    preserve: dict[str, str] = {}
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1" or int(
+        os.environ.get("VOD_FORCE_ESCALATION", "0") or 0
+    ) > 0:
+        keep_prefixes = ("VOD_FORCE_", "PUBG_", "SMART_PUBG_", "SHOOTER_VOD_")
+        keep_exact = {
+            "VOD_PUBG_QUALITY_STRICT",
+            "VOD_RECOVER_HOLD_SYSTEMD",
+            "PYTHONPATH",
+        }
+        for key, val in list(os.environ.items()):
+            if key.startswith(keep_prefixes) or key in keep_exact:
+                preserve[key] = val
     os.environ.update({k: str(v) for k, v in file_env.items()})
+    if preserve:
+        os.environ.update(preserve)
     if os.environ.get("VOD_CONFIG_VALIDATE", "1") == "1":
         try:
             from vod_config import print_effective_config, validate_startup
