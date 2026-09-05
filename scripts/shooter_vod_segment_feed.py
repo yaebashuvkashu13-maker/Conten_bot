@@ -1911,16 +1911,123 @@ def _send_batch(
                 log.warning("hook gate error sid=%s: %s", sid, exc)
                 hook_ok, hook_reason, hook_report = False, f"hook_error:{exc}", {}
             if not hook_ok:
-                log.warning("hook gate REJECT %s: %s", sid, hook_reason)
-                _ledger_record_decision(
-                    game,
-                    vod=vod,
-                    row=row,
-                    decision="reject",
-                    reason=f"hook_gate:{hook_reason}",
-                    metrics=hook_report if isinstance(hook_report, dict) else {},
-                )
-                continue
+                # Early-hook authority is the RENDERED file @ 0-2s. Try shift
+                # re-renders (+1/+2/+3s): each attempt must pass full presend
+                # hard gates again, then hook on the new rendered mp4.
+                recovered = False
+                if (
+                    game == "pubg"
+                    and os.environ.get("PUBG_EARLY_HOOK_RENDERED", "1") == "1"
+                    and os.environ.get("PUBG_EARLY_ACTION_SHIFT", "1") == "1"
+                ):
+                    try:
+                        from pubg_combat_timeline import (
+                            REASON_SHIFT_RENDER_ALL_FAILED,
+                            early_action_start_candidates,
+                            score_early_hook_on_rendered,
+                        )
+
+                        base_start = float(clip.get("start") or row.get("start") or 0.0)
+                        shift_attempts = []
+                        for cand in early_action_start_candidates(base_start):
+                            if abs(cand - base_start) < 0.05:
+                                continue  # already tried at base render
+                            shift_clip = dict(clip)
+                            # Preserve duration: slide the window forward.
+                            dur = float(
+                                shift_clip.get("input_duration")
+                                or shift_clip.get("duration")
+                                or row.get("duration")
+                                or 0.0
+                            )
+                            shift_clip["start"] = float(cand)
+                            if dur > 0:
+                                shift_clip["input_duration"] = dur
+                            shift_out = seg_root / f"seg_{sid}_s{int(cand)}.mp4"
+                            if not render_single_segment(vod, shift_clip, shift_out):
+                                shift_attempts.append({"start": cand, "reason": "render_failed"})
+                                continue
+                            p_ok, p_reason, p_report = _validate_shooter_presend(
+                                game, vod, {**row, "clip": shift_clip, "start": cand}, shift_out, single=pubg_single
+                            )
+                            if not p_ok:
+                                shift_attempts.append(
+                                    {
+                                        "start": cand,
+                                        "reason": f"presend:{p_reason}",
+                                        "presend": p_report if isinstance(p_report, dict) else {},
+                                    }
+                                )
+                                continue
+                            shift_deliver = shift_out
+                            if os.environ.get("TELEGRAM_ENCODE", "1") == "1":
+                                try:
+                                    from telegram_delivery import encode_telegram_mp4
+
+                                    shift_deliver = encode_telegram_mp4(
+                                        shift_out, shift_out.with_name(shift_out.stem + "_tg.mp4")
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    log.warning("telegram encode failed shift sid=%s: %s", sid, exc)
+                                    shift_deliver = shift_out
+                            h_score, h_reason, h_report = score_early_hook_on_rendered(shift_deliver)
+                            shift_attempts.append(
+                                {
+                                    "start": cand,
+                                    "early_hook_score": h_score,
+                                    "early_hook_reason": h_reason,
+                                    "early_hook_report": h_report,
+                                }
+                            )
+                            if h_reason == "early_hook_ok":
+                                log.info(
+                                    "early-hook shift recovered sid=%s base=%.1f -> %.1f score=%.3f",
+                                    sid,
+                                    base_start,
+                                    cand,
+                                    h_score,
+                                )
+                                out = shift_out
+                                deliver = shift_deliver
+                                clip = shift_clip
+                                row = {**row, "clip": shift_clip, "start": cand}
+                                presend_ok, presend_reason, presend_report = True, p_reason, p_report
+                                hook_ok, hook_reason, hook_report = True, h_reason, h_report
+                                recovered = True
+                                break
+                        if not recovered:
+                            log.warning(
+                                "hook gate REJECT %s after shifts: %s attempts=%s",
+                                sid,
+                                hook_reason,
+                                shift_attempts,
+                            )
+                            _ledger_record_decision(
+                                game,
+                                vod=vod,
+                                row=row,
+                                decision="reject",
+                                reason=f"{REASON_SHIFT_RENDER_ALL_FAILED}:{hook_reason}",
+                                metrics={
+                                    "base_hook": hook_report if isinstance(hook_report, dict) else {},
+                                    "shift_attempts": shift_attempts,
+                                },
+                            )
+                            continue
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("early-hook shift loop error sid=%s: %s", sid, exc)
+                        recovered = False
+                if not recovered:
+                    log.warning("hook gate REJECT %s: %s", sid, hook_reason)
+                    _ledger_record_decision(
+                        game,
+                        vod=vod,
+                        row=row,
+                        decision="reject",
+                        reason=f"hook_gate:{hook_reason}",
+                        metrics=hook_report if isinstance(hook_report, dict) else {},
+                    )
+                    continue
 
         if os.environ.get("DISLIKE_REASON_GATES", "1") == "1":
             try:

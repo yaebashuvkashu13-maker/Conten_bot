@@ -28,7 +28,7 @@ fi
 
 cd "$REPO"
 git fetch origin
-git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git checkout main
+git checkout cursor/vod-unified-production-a016 2>/dev/null || git checkout main
 git pull --ff-only
 
 bash scripts/install_mlbb_only_mode.sh

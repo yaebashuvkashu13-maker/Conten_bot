@@ -5,7 +5,7 @@ set -euo pipefail
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 LOCK_FILE="${VOD_DEPLOY_LOCK_FILE:-/root/data/pubg/.deploy.lock}"
 REMOTE="${VOD_DEPLOY_REMOTE:-origin}"
-BRANCH="${VOD_DEPLOY_BRANCH:-cursor/vod-pipeline-p0-p1-a016}"
+BRANCH="${VOD_DEPLOY_BRANCH:-cursor/vod-unified-production-a016}"
 EXPECTED="${VOD_DEPLOY_COMMIT:-}"
 
 cd "$REPO"

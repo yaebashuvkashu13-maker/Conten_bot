@@ -5,7 +5,7 @@
 # One-time on NEW server:
 #   apt-get update && apt-get install -y git
 #   git clone https://github.com/yaebashuvkashu13-maker/Conten_bot.git /root/content_bot_ml
-#   cd /root/content_bot_ml && git checkout cursor/mlbb-video-pipeline-e712
+#   cd /root/content_bot_ml && git checkout cursor/vod-unified-production-a016
 #   cp config/video_bot.env.example /root/.video_bot.env && nano /root/.video_bot.env
 #   bash scripts/bootstrap_eu_vod_server.sh
 #
@@ -15,7 +15,7 @@
 set -Eeuo pipefail
 
 REPO="${REPO:-/root/content_bot_ml}"
-BRANCH="${VPS_BRANCH:-cursor/mlbb-video-pipeline-e712}"
+BRANCH="${VPS_BRANCH:-cursor/vod-unified-production-a016}"
 ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
 
 echo "===== bootstrap_eu_vod_server $(date -Is) ====="

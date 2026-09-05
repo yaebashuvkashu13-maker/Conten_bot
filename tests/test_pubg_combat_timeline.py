@@ -123,3 +123,81 @@ def test_dislike_rejects_junk_menu_at_drought_cap(monkeypatch: pytest.MonkeyPatc
     )
     assert ok is False
     assert "menu" in reason
+
+
+def test_timeline_score_cannot_authorize_send() -> None:
+    from pubg_combat_timeline import hard_gates_required, timeline_cannot_authorize_send
+
+    assert timeline_cannot_authorize_send(0.99) is True
+    gates = hard_gates_required()
+    assert "rendered_mp4_presend" in gates
+    assert "early_hook_rendered_0_2s" in gates
+    assert "panns_gun_threshold" in gates
+
+
+def test_cost_limits_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pubg_combat_timeline import timeline_cost_limits
+
+    monkeypatch.setenv("PUBG_TIMELINE_MAX_ZONES", "15")
+    monkeypatch.setenv("PUBG_TIMELINE_MAX_DENSE_SECONDS", "120")
+    monkeypatch.setenv("PUBG_TIMELINE_OCR_TOP_N", "8")
+    monkeypatch.setenv("PUBG_TIMELINE_RENDER_TOP_N", "1")
+    monkeypatch.setenv("PUBG_EARLY_HOOK_MAX_SHIFT_ATTEMPTS", "2")
+    limits = timeline_cost_limits()
+    assert limits.max_zones == 15
+    assert limits.max_dense_seconds == 120.0
+    assert limits.ocr_top_n == 8
+    assert limits.render_top_n == 1
+    assert limits.early_hook_max_shift_attempts == 2
+
+
+def test_cluster_collapses_near_peaks() -> None:
+    from pubg_combat_timeline import (
+        TimelinePoint,
+        combat_score_point,
+        merge_combat_events,
+    )
+
+    # One fight sampled every 2s should become a single cluster.
+    points = [
+        TimelinePoint(t=120.0 + i * 2.0, combat=combat_score_point(gunfire=0.7), gunfire=0.7)
+        for i in range(6)
+    ]
+    # Second fight far away.
+    points += [
+        TimelinePoint(t=400.0 + i * 2.0, combat=combat_score_point(gunfire=0.75), gunfire=0.75)
+        for i in range(4)
+    ]
+    events = merge_combat_events(points, duration_sec=600.0, merge_gap_sec=6.0)
+    assert len(events) == 2
+    assert events[0].start <= 122.0
+    assert events[0].end >= 130.0
+    assert events[0].gunfire_seconds >= 3.0
+    assert events[1].peak >= 400.0
+
+
+def test_early_hook_scores_rendered_not_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pubg_combat_timeline import REASON_EARLY_HOOK_LOW, score_early_hook_on_rendered
+
+    rendered = tmp_path / "clip.mp4"
+    rendered.write_bytes(b"fake")
+
+    def fake_hook(path, *, window_sec=None):
+        assert path == rendered or Path(path) == rendered
+        assert window_sec == 2.0 or window_sec is None or window_sec == 2.0
+        return False, "hook_silent:rms=0.01", {"max_rms": 0.01, "y_delta": 0.2, "max_menu": 0.1}
+
+    monkeypatch.setattr("clip_hook_gate.hook_gate_clip", fake_hook, raising=False)
+    import clip_hook_gate as chg
+
+    monkeypatch.setattr(chg, "hook_gate_clip", fake_hook)
+    score, reason, report = score_early_hook_on_rendered(rendered, window_sec=2.0)
+    assert report.get("early_hook_on") == "rendered_mp4"
+    assert REASON_EARLY_HOOK_LOW in reason or reason.startswith("hook_")
+    assert score >= 0.0
+
+
+def test_shadow_mode_default_off_enforce() -> None:
+    from pubg_combat_timeline import timeline_enforce_enabled
+
+    assert timeline_enforce_enabled() is False

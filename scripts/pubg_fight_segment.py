@@ -528,9 +528,19 @@ def resolve_pubg_fight_bounds(
         end = min(file_duration, max(end, peak_sec + min_duration * 0.65))
         start = max(0.0, end - min_duration)
 
-    # Early-action start shift: if the opening ~2s is quiet, nudge into the fight
-    # (+1/+2/+3s) instead of shipping run-up / loot lead-in.
-    if os.environ.get("PUBG_EARLY_ACTION_SHIFT", "1") == "1" and timeline:
+    # Source-timeline early-action is a RANKING HINT only.
+    # Authority for send is early_hook on the RENDERED mp4 @ 0–2s (feed shift loop).
+    # When PUBG_EARLY_HOOK_RENDERED=1 (default), skip source seek shifts here so
+    # ffmpeg seek drift cannot "pass" a hook that the delivered file fails.
+    early_action_meta = {
+        "source_hint_applied": False,
+        "authority": "rendered_mp4_0_2s",
+    }
+    if (
+        os.environ.get("PUBG_EARLY_ACTION_SHIFT", "1") == "1"
+        and os.environ.get("PUBG_EARLY_HOOK_RENDERED", "1") != "1"
+        and timeline
+    ):
         try:
             from pubg_combat_timeline import early_action_start_candidates, pick_early_action_start
 
@@ -549,12 +559,15 @@ def resolve_pubg_fight_bounds(
             new_start, _score, _reason = pick_early_action_start(start, window_scores)
             if start < new_start < end - max(4.0, min_duration * 0.45):
                 start = float(new_start)
+                early_action_meta["source_hint_applied"] = True
+                early_action_meta["source_hint_reason"] = _reason
         except Exception:
             pass
 
     duration = max(1.0, end - start)
     report = {
         "segmenter": "pubg_fight_v1",
+        "early_action": early_action_meta,
         "peak_sec": round(float(peak_sec), 2),
         "contact_start": round(start, 2),
         "contact_sec": round(start, 2),
