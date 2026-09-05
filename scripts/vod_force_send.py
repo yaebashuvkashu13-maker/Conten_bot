@@ -196,6 +196,7 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     """
     escalation = max(0, min(2, int(escalation)))
     env["VOD_FORCE_SOFTEN"] = "1"
+    env["VOD_PRESEND_CACHE"] = "0"
     env["VOD_FORCE_ESCALATION"] = str(escalation)
     env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
     env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"

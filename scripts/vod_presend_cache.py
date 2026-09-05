@@ -10,11 +10,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 DEFAULT_ROOT = "/root/data/pubg/presend_cache"
 
 
 def cache_enabled() -> bool:
+    # Drought soften changes floors — never reuse steady-state rejects.
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+        return False
+    try:
+        if int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0:
+            return False
+    except ValueError:
+        pass
     return os.environ.get("VOD_PRESEND_CACHE", "1") == "1"
 
 
@@ -26,12 +34,28 @@ def cache_ttl_sec() -> int:
     return max(1800, int(os.environ.get("VOD_PRESEND_CACHE_TTL_SEC", str(6 * 3600))))
 
 
+def _threshold_fingerprint() -> str:
+    keys = (
+        "VOD_FORCE_SOFTEN",
+        "VOD_FORCE_ESCALATION",
+        "PUBG_FAST_PAYOFF_MIN",
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "PUBG_QUALITY_SCORE_MIN_SINGLES",
+        "PUBG_RELAX_OWNER_HEURISTICS",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY",
+        "PUBG_SINGLE_MIN_GUN_DENSITY",
+    )
+    return "|".join(f"{k}={os.environ.get(k, '')}" for k in keys)
+
+
 def _window_key(video_path: Path, start_sec: float, duration_sec: float) -> str:
     p = video_path.resolve()
     st = p.stat()
     blob = (
         f"v{CACHE_VERSION}|{p}|{st.st_mtime_ns}|{st.st_size}|"
-        f"{round(float(start_sec), 2)}|{round(float(duration_sec), 2)}"
+        f"{round(float(start_sec), 2)}|{round(float(duration_sec), 2)}|"
+        f"{_threshold_fingerprint()}"
     )
     return hashlib.sha256(blob.encode("utf-8", errors="replace")).hexdigest()[:32]
 

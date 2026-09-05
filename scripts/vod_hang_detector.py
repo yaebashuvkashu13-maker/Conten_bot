@@ -598,6 +598,7 @@ def apply_agent_recover_env(
     if not need_soft:
         return target
     target["VOD_FORCE_SOFTEN"] = "1"
+    target["VOD_PRESEND_CACHE"] = "0"
     # Enable singles gun bypass only while drought soften is active.
     # Hard-assign under soften — setdefault is a no-op when deploy pinned 0.
     target["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
