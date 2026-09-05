@@ -46,6 +46,7 @@ def test_peak_feature_cache_roundtrip(tmp_path: Path, monkeypatch: pytest.Monkey
     vod.write_bytes(b"fake")
     cache_dir = tmp_path / "feat"
     monkeypatch.setenv("VOD_PEAK_FEATURE_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1")
 
     from vod_peak_feature_cache import get_cached, put_cached
 
@@ -54,6 +55,22 @@ def test_peak_feature_cache_roundtrip(tmp_path: Path, monkeypatch: pytest.Monkey
     assert hit is not None
     assert hit["peaks"] == [100.0, 200.0]
     assert hit["funnel"]["picked"] == 2
+
+
+def test_peak_feature_cache_misses_when_probe_step_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vod = tmp_path / "yt_stepchange0001.mp4"
+    vod.write_bytes(b"fake")
+    cache_dir = tmp_path / "feat"
+    monkeypatch.setenv("VOD_PEAK_FEATURE_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "5")
+
+    from vod_peak_feature_cache import get_cached, put_cached
+
+    put_cached(vod, 0, peaks=[100.0, 200.0], reason="step5")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1")
+    assert get_cached(vod, 0) is None
 
 
 def test_scan_funnel_summary() -> None:

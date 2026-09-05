@@ -169,7 +169,8 @@ EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
 # Bump when peak discovery semantics change (combat timeline, full-VOD recall).
 # Stale cached_pool peaks were blocking the new search and replaying loot/menu.
-DENSE_POOL_VERSION = 4
+# Bumped when dense probe grid changed 5s→1s (invalidate stale peak pools).
+DENSE_POOL_VERSION = 5
 
 
 def _game() -> str:

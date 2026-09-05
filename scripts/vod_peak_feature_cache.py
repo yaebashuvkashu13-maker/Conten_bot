@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_ROOT = "/root/data/vod_peak_feature_cache"
-CACHE_VERSION = 2
+# v3: key includes dense probe step so 5s→1s grids do not reuse stale peaks.
+CACHE_VERSION = 3
 
 
 def cache_enabled() -> bool:
@@ -26,6 +27,17 @@ def cache_ttl_sec() -> int:
     return max(3600, int(os.environ.get("VOD_PEAK_FEATURE_CACHE_TTL_SEC", str(6 * 3600))))
 
 
+def _probe_step_token() -> str:
+    raw = os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1")
+    try:
+        step = float(raw)
+    except (TypeError, ValueError):
+        step = 1.0
+    if step <= 0:
+        step = 1.0
+    return f"{step:.3f}"
+
+
 def _vod_key(path: Path) -> tuple[str, int, int]:
     p = path.resolve()
     st = p.stat()
@@ -34,7 +46,10 @@ def _vod_key(path: Path) -> tuple[str, int, int]:
 
 def cache_key(path: Path, probe_pass: int) -> str:
     path_s, mtime_ns, size = _vod_key(path)
-    blob = f"v{CACHE_VERSION}|{path_s}|{mtime_ns}|{size}|pass={probe_pass}"
+    blob = (
+        f"v{CACHE_VERSION}|{path_s}|{mtime_ns}|{size}"
+        f"|pass={probe_pass}|step={_probe_step_token()}"
+    )
     return hashlib.sha256(blob.encode("utf-8", errors="replace")).hexdigest()[:32]
 
 
