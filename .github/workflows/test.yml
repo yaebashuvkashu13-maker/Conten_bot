@@ -48,4 +48,6 @@ jobs:
           PUBG_OWNER_LABELS_PATH: ${{ runner.temp }}/botdata/pubg/pubg_owner_labels.json
           PUBG_RANKER_MODEL: ${{ runner.temp }}/botdata/pubg/pubg_moment_ranker.joblib
           PUBG_RANKER_FEATURE_CACHE: ${{ runner.temp }}/botdata/pubg/ranker_features
-        run: python -m pytest tests/ -q
+        run: |
+          python scripts/check_prod_safety.py
+          python -m pytest tests/ -q

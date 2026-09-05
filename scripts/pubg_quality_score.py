@@ -297,10 +297,11 @@ def score_pubg_window(
     notification_mode = os.environ.get("PUBG_KILL_NOTIFICATION_MODE", "prefer").strip().lower()
     report["kill_notification_mode"] = notification_mode
 
-    fast_payoff_min = float(os.environ.get("PUBG_FAST_PAYOFF_MIN", "0.18"))
+    fast_payoff_min = float(os.environ.get("PUBG_FAST_PAYOFF_MIN", "0.12"))
     fast_payoff = _clip(notification_score) * 0.65 + _clip(effective_killfeed) * 0.35
     report["fast_payoff"] = round(fast_payoff, 4)
     early_reject = os.environ.get("PUBG_EARLY_PAYOFF_REJECT", "1") == "1"
+    # Singles: default OFF — killfeed OCR misses caused drought with bypass disabled.
     if single and os.environ.get("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0") != "1":
         early_reject = False
     if (
@@ -309,7 +310,17 @@ def score_pubg_window(
         and not notification_hit
         and not keyword_hit
     ):
-        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+        # Strong gun audio can still pass early gate when OCR killfeed is blind.
+        gun_rescue = (
+            single
+            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1") == "1"
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
+            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and not loot_walk
+        )
+        if gun_rescue:
+            report["singles_gun_early_payoff_rescue"] = True
+        elif _owner_redo_trusted(video_path, start_sec, duration_sec):
             report["owner_redo_trusted"] = True
         else:
             report["hard_reject"] = "early_payoff_low"
@@ -391,8 +402,8 @@ def score_pubg_window(
         author_death=author_death,
         best_flash=best_flash,
     )
-    fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.42"))
-    payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.38"))
+    fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.38"))
+    payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.28"))
     if single:
         payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"))
     report["fight_score"] = round(fight_score, 4)

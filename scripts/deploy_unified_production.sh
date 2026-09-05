@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# ONLY supported production deploy path.
+# Supersedes parallel branches/PRs: vod-quality-ops-suite, vod-ffprobe-hang-fix,
+# pubg-fight-only-gates, vod-hang-autounload, pubg-owner-combat-gates, etc.
+# Always deploy from: cursor/vod-unified-production-a016 (#94)
 # Deploy the unified production branch onto the VPS hang-fix tree safely.
 # Usage: CONTENT_BOT_REPO=/root/content_bot_ml ./scripts/deploy_unified_production.sh
 set -euo pipefail
@@ -34,6 +38,14 @@ wanted = {
     "VOD_QUALITY_LEDGER": "1",
     "VOD_DROUGHT_AUTO_RECOVER": "1",
     "VOD_DROUGHT_HOURS": "2",
+    # Payoff calibration: stop OCR-miss drought without re-enabling menu bypass
+    "PUBG_EARLY_PAYOFF_REJECT_SINGLES": "0",
+    "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "1",
+    "PUBG_FAST_PAYOFF_MIN": "0.12",
+    "PUBG_PAYOFF_SCORE_MIN": "0.28",
+    "PUBG_PAYOFF_SCORE_MIN_SINGLES": "0.10",
+    "PUBG_FIGHT_SCORE_MIN": "0.38",
+    "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.28",
 }
 text = p.read_text() if p.exists() else ""
 lines = text.splitlines(); keys=set(); out=[]
