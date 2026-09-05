@@ -378,11 +378,24 @@ def score_pubg_window(
         and menu_hit
         and not _owner_redo_trusted(video_path, start_sec, duration_sec)
     ):
-        report["hard_reject"] = "menu_overlay"
-        return _finish(
-            False,
-            f"hard_menu_overlay={visual_reason or ','.join(frame_reasons) or 'menu_overlay'}",
+        # ADS scope / handcam PiP / combat HUD often trip menu_overlay while
+        # gun audio is clearly a fight (Wg9qrAzWTLU ~471.5). Real lobbies stay
+        # low on PANNs+DSP gun — keep those blocked.
+        menu_gun_rescue = (
+            single
+            and panns_gun
+            >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_PANNS", "0.45"))
+            and gun >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_DENSITY", "0.055"))
+            and not loot_walk
         )
+        if menu_gun_rescue:
+            report["singles_menu_gun_rescue"] = True
+        else:
+            report["hard_reject"] = "menu_overlay"
+            return _finish(
+                False,
+                f"hard_menu_overlay={visual_reason or ','.join(frame_reasons) or 'menu_overlay'}",
+            )
     best_flash = float(visual.get("best_hit_flash", 0.0))
     best_weapon = float(visual.get("best_weapon_edge", 0.0))
 
