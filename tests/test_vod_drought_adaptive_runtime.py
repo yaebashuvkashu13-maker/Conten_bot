@@ -121,6 +121,8 @@ def test_soften_relaxes_hook_menu_not_gate(monkeypatch: pytest.MonkeyPatch) -> N
         assert env["CLIP_HOOK_GATE"] == "1"
         assert float(env["CLIP_HOOK_MAX_MENU"]) == pytest.approx(0.78)
         assert float(env["CLIP_HOOK_MIN_AUDIO_RMS"]) == pytest.approx(0.03)
+        assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) >= 0.36
+        assert env["PUBG_COMBAT_TIMELINE"] == "1"
         assert env["PUBG_REJECT_LOOT_WALK"] == "1"
         assert env["PUBG_PRESEND_SHOOTING_GATE"] == "1"
 

@@ -528,6 +528,30 @@ def resolve_pubg_fight_bounds(
         end = min(file_duration, max(end, peak_sec + min_duration * 0.65))
         start = max(0.0, end - min_duration)
 
+    # Early-action start shift: if the opening ~2s is quiet, nudge into the fight
+    # (+1/+2/+3s) instead of shipping run-up / loot lead-in.
+    if os.environ.get("PUBG_EARLY_ACTION_SHIFT", "1") == "1" and timeline:
+        try:
+            from pubg_combat_timeline import early_action_start_candidates, pick_early_action_start
+
+            window_scores: dict[float, float] = {}
+            for cand in early_action_start_candidates(start):
+                score = 0.0
+                for row in timeline:
+                    t = float(row["start"])
+                    if cand - 0.05 <= t < cand + 2.0:
+                        score = max(
+                            score,
+                            float(row.get("gun", 0.0) or 0.0),
+                            float(row.get("score", 0.0) or 0.0) * 0.55,
+                        )
+                window_scores[round(cand, 2)] = score
+            new_start, _score, _reason = pick_early_action_start(start, window_scores)
+            if start < new_start < end - max(4.0, min_duration * 0.45):
+                start = float(new_start)
+        except Exception:
+            pass
+
     duration = max(1.0, end - start)
     report = {
         "segmenter": "pubg_fight_v1",

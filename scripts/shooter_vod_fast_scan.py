@@ -18,20 +18,47 @@ log = logging.getLogger("shooter_vod_fast_scan")
 AUDIO_GENERATOR_VERSION = 4
 
 
-def dense_pcm_max_sec() -> float:
-    """Cap full-VOD PCM extract so a 2–3h file cannot freeze the feed."""
-    return max(600.0, float(os.environ.get("SHOOTER_VOD_DENSE_PCM_MAX_SEC", "4200")))
+def dense_pcm_max_sec(duration: float | None = None) -> float:
+    """PCM extract budget — prefers full-VOD coverage; soft safety cap only.
+
+    Old default 4200s quietly dropped fights after ~70min. Duration-aware budget
+    keeps the tail in play; set SHOOTER_VOD_DENSE_PCM_MAX_SEC>0 to force a hard cap.
+    """
+    forced = float(os.environ.get("SHOOTER_VOD_DENSE_PCM_MAX_SEC", "0") or 0)
+    if forced > 0:
+        return max(600.0, forced)
+    if duration is not None and duration > 0:
+        try:
+            from pubg_combat_timeline import dense_scan_span_for_duration
+
+            return max(600.0, dense_scan_span_for_duration(float(duration), 0.0))
+        except Exception:
+            return max(600.0, float(duration))
+    # No duration known yet — generous default (3h) instead of 70min.
+    return max(600.0, float(os.environ.get("SHOOTER_VOD_DENSE_PCM_FALLBACK_SEC", "10800")))
 
 
 def dense_scan_span(duration: float, skip: float) -> float:
     raw = max(0.0, float(duration) - float(skip) - 12.0)
-    return min(raw, dense_pcm_max_sec())
+    return min(raw, dense_pcm_max_sec(duration))
 
 
-def candidate_pool_target(min_clips: int = 2) -> int:
-    """Keep enough ranked moments to survive strict presend false positives."""
+def candidate_pool_target(min_clips: int = 2, duration: float | None = None) -> int:
+    """Keep enough ranked moments to survive strict presend false positives.
+
+    Scales with VOD length so end-of-VOD fights are not truncated by a fixed top-N.
+    """
     raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
-    return max(10, int(raw), int(min_clips) * 4)
+    base = max(10, int(raw), int(min_clips) * 4)
+    if duration is not None and duration > 0:
+        try:
+            from pubg_combat_timeline import adaptive_candidate_pool
+
+            return max(base, adaptive_candidate_pool(float(duration), min_clips=min_clips))
+        except Exception:
+            # ~1 candidate / 90s body as a local fallback.
+            return max(base, int(float(duration) / 90.0) + 6)
+    return base
 
 
 def _audio_candidate_cache_file(video_path: Path) -> Path:
@@ -241,13 +268,16 @@ def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -
     step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "40"))
     if dur < 600:
         step = min(step, 25.0)
-    # A 2-part montage used to cap the ranked pool at 8 moments. Keep at least
-    # three coarse probes per desired candidate so a 10+ moment pool is possible.
+    # Probe count scales with VOD length — fixed caps previously clustered on the
+    # first ~20–70min and starved fights near the end of long streams.
     cap = max(
         10,
-        candidate_pool_target() * 3,
+        candidate_pool_target(duration=dur) * 3,
         int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_MAX", "32")),
+        int(max(0.0, dur - skip_intro) / 45.0) + 8,
     )
+    # Soft safety only (not a quality "top-N scenes" limit).
+    cap = min(cap, int(os.environ.get("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", "240")))
     usable = max(0.0, dur - skip_intro - 12.0 - WINDOW_SEC)
     if usable > 0 and cap > 1:
         # Stretch so probes span the whole VOD instead of clustering at the start.
@@ -534,7 +564,7 @@ def discover_montage_gun_peaks(
             funnel.note_stage("fast_ranker", len(scored))
     except Exception:
         pass
-    pool_cap = candidate_pool_target(min_clips)
+    pool_cap = candidate_pool_target(min_clips, duration=dur)
     shortlist: list[tuple[float, float]] = []
     for panns_g, center in scored:
         if any(abs(center - c) < gap_sec for _g, c in shortlist):
@@ -640,6 +670,35 @@ def discover_montage_gun_peaks(
             f" batch=dsp{batch_stats.get('dsp_pass', 0)}"
             f"/panns{batch_stats.get('panns_windows', 0)}"
         )
+    # Combat timeline: merge seeds into duration-scaled events (no fixed top-3).
+    # Keeps fights across the whole VOD, including the tail.
+    try:
+        from pubg_combat_timeline import refine_peaks_with_timeline, summarize_events, timeline_enabled
+
+        if timeline_enabled() and picked:
+            before_n = len(picked)
+            refined = refine_peaks_with_timeline(
+                picked,
+                duration_sec=dur,
+                scores=picked_scores or None,
+            )
+            if refined:
+                picked = refined
+                # Scores optional after merge — keep length aligned for cache.
+                if len(picked_scores) != len(picked):
+                    picked_scores = [0.0] * len(picked)
+                reason += f" timeline={len(picked)}/{before_n}"
+                log.info(
+                    "combat timeline refine vod=%s before=%s after=%s span=%.0f-%.0f",
+                    video_path.name,
+                    before_n,
+                    len(picked),
+                    picked[0] if picked else -1,
+                    picked[-1] if picked else -1,
+                )
+    except Exception:
+        log.exception("combat timeline refine failed vod=%s", video_path.name)
+
     log.info("dense gun peaks vod=%s %s peaks=%s", video_path.name, reason, picked[:8])
 
     try:

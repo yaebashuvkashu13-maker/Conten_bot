@@ -148,6 +148,14 @@ def evaluate_reason_gates(
     motion_max = min(t.motion_max for t in chosen)
     menu_max = min(t.menu_overlay_max for t in chosen)
     visual_min = max(t.visual_min for t in chosen)
+    # Drought / ops may raise menu_overlay_max (HUD false positives) without
+    # disabling the gate. Loot/gun floors stay at reason-table values.
+    override = os.environ.get("DISLIKE_MENU_OVERLAY_MAX", "").strip()
+    if override:
+        try:
+            menu_max = max(menu_max, float(override))
+        except ValueError:
+            pass
 
     gun = _f(metrics, "gun_density", "gunfire_density", "gunshot_density")
     burst = _f(metrics, "burst_ratio", "gun_burst_ratio")

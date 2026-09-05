@@ -661,6 +661,18 @@ def apply_agent_recover_env(
     target["CLIP_HOOK_MAX_MENU"] = hook_menu
     target["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
     target["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
+    dislike_menu = "0.28"
+    if esc >= 1:
+        dislike_menu = "0.32"
+    if esc >= 2:
+        dislike_menu = "0.36"
+    target["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    target["DISLIKE_REASON_GATES"] = "1"
+    target["PUBG_COMBAT_TIMELINE"] = "1"
+    target["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
+        "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if esc >= 1 else "6"
+    )
     if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
             "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"

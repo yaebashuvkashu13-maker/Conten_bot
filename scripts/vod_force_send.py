@@ -250,6 +250,20 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["CLIP_HOOK_MAX_MENU"] = hook_menu
     env["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
     env["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
+    # Soften HUD false-positive menu overlay under drought (loot reject stays ON).
+    dislike_menu = "0.28"
+    if escalation >= 1:
+        dislike_menu = "0.32"
+    if escalation >= 2:
+        dislike_menu = "0.36"
+    env["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    env["DISLIKE_REASON_GATES"] = "1"
+    # Combat timeline path: duration-scaled events, early-action shift, no tiny top-N.
+    env["PUBG_COMBAT_TIMELINE"] = "1"
+    env["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
+        "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if escalation >= 1 else "6"
+    )
     env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4")
     env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
     env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "12")

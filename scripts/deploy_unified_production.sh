@@ -45,7 +45,7 @@ PY
 
 # Mirror hot scripts into /usr/local/bin for PYTHONPATH consumers.
 for f in \
-  clip_hook_gate.py dislike_reason_gates.py vod_cheap_cascade.py telegram_delivery.py \
+  clip_hook_gate.py dislike_reason_gates.py pubg_combat_timeline.py vod_cheap_cascade.py telegram_delivery.py \
   vod_media_cache.py vod_clip_quality_ledger.py vod_weekly_quality_report.py \
   vod_inbox_recover.py vod_owner_feedback_bridge.py vod_send_drought_watch.py \
   game_adaptive_thresholds.py vod_hang_detector.py vod_force_send.py \
