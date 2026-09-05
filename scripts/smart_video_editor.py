@@ -145,10 +145,43 @@ def run_command(
 
 
 def ffprobe_json(path: Path) -> dict:
-    result = run_command([
-        'ffprobe', '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', str(path)
-    ], capture_output=True)
-    return json.loads(result.stdout)
+    """Return ffprobe metadata. Never raises on corrupt/missing media (returns {})."""
+    p = Path(path)
+
+    def _probe(target: Path) -> dict:
+        try:
+            result = run_command(
+                [
+                    'ffprobe',
+                    '-v',
+                    'error',
+                    '-print_format',
+                    'json',
+                    '-show_format',
+                    '-show_streams',
+                    str(target),
+                ],
+                capture_output=True,
+            )
+        except Exception:
+            return {}
+        try:
+            raw = result.stdout if isinstance(result.stdout, str) else (result.stdout or b'').decode(
+                'utf-8', errors='replace'
+            )
+            data = json.loads(raw or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    if os.environ.get('VOD_FFPROBE_CACHE', '1') == '1':
+        try:
+            from vod_media_cache import cached_ffprobe
+
+            return cached_ffprobe(p, _probe)
+        except Exception:
+            pass
+    return _probe(p)
 
 
 def first_nonempty(lines: list[str], max_lines: int) -> list[str]:

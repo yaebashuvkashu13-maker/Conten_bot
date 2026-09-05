@@ -557,6 +557,29 @@ def _shooter_apply_vseg_label(
 
     profile = profile_for_game(game)
     good_n, bad_n = exemplar_counts(profile)
+
+    try:
+        from vod_clip_quality_ledger import record_feedback
+        from shooter_vod_segment_store import find_segment
+
+        row = find_segment(game, sid) or {}
+        record_feedback(
+            game,
+            clip_id=sid,
+            label="good" if is_good else "bad",
+            reason=reason or "",
+            vod_id=str(row.get("vod_id") or ""),
+        )
+    except Exception:
+        logging.exception("quality ledger feedback failed seg=%s", sid)
+    if not is_good:
+        try:
+            from game_adaptive_thresholds import note_negative_feedback
+
+            note_negative_feedback(game, reason or "")
+        except Exception:
+            logging.exception("adaptive threshold update failed game=%s", game)
+
     if is_good:
         return True, (
             f'✅ Ок — {game.upper()} #{sid}\n'

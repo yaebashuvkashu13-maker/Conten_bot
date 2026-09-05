@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Per-game adaptive shooting/motion thresholds learned from owner 👎 on run/menu."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+GAMES = ("pubg", "standoff", "wot")
+
+# Base floors — fight-oriented; never auto-soften below these without explicit env.
+BASE: dict[str, dict[str, float]] = {
+    "pubg": {
+        "gun_density_min": 0.070,
+        "burst_ratio_min": 6.5,
+        "motion_max_run": 0.18,
+        "menu_overlay_max": 0.35,
+    },
+    "standoff": {
+        "gun_density_min": 0.065,
+        "burst_ratio_min": 6.0,
+        "motion_max_run": 0.20,
+        "menu_overlay_max": 0.32,
+    },
+    "wot": {
+        "gun_density_min": 0.040,
+        "burst_ratio_min": 3.5,
+        "motion_max_run": 0.22,
+        "menu_overlay_max": 0.40,
+    },
+}
+
+RUN_MENU_REASONS = {
+    "run",
+    "loot_run",
+    "running",
+    "беготня",
+    "explore",  # genshin run/explore
+    "menu",
+    "меню",
+    "menu_lobby",
+    "menu_garage",
+    "lobby",
+    "garage",
+}
+
+
+def store_path() -> Path:
+    root = Path(os.environ.get("VOD_ADAPTIVE_THRESH_DIR", "/root/data/vod_adaptive_thresholds"))
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        root = Path(os.environ.get("TMPDIR", "/tmp")) / "vod_adaptive_thresholds"
+        root.mkdir(parents=True, exist_ok=True)
+    return root / "game_thresholds.json"
+
+
+def _load() -> dict[str, Any]:
+    path = store_path()
+    if not path.exists():
+        return {"games": {}, "updated_at": None}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"games": {}, "updated_at": None}
+    return data if isinstance(data, dict) else {"games": {}, "updated_at": None}
+
+
+def _save(data: dict[str, Any]) -> None:
+    path = store_path()
+    tmp = path.with_suffix(".tmp")
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def thresholds_for(game: str) -> dict[str, float]:
+    g = (game or "pubg").strip().lower()
+    if g in {"pubg_mobile", "bgmi"}:
+        g = "pubg"
+    if g in {"standoff2", "standoff_2"}:
+        g = "standoff"
+    if g not in BASE:
+        g = "pubg"
+    base = dict(BASE[g])
+    data = _load()
+    overrides = (data.get("games") or {}).get(g) or {}
+    for key, val in overrides.items():
+        try:
+            base[key] = float(val)
+        except (TypeError, ValueError):
+            continue
+    return base
+
+
+def apply_to_environ(game: str) -> dict[str, float]:
+    """Push current thresholds into process env for gate modules."""
+    t = thresholds_for(game)
+    g = (game or "pubg").strip().lower()
+    os.environ["PUBG_CLIP_MIN_GUN_DENSITY"] = f"{t['gun_density_min']:.4f}"
+    os.environ["PUBG_SINGLE_MIN_GUN_DENSITY"] = f"{t['gun_density_min']:.4f}"
+    os.environ["PUBG_CLIP_MIN_BURST_RATIO"] = f"{t['burst_ratio_min']:.2f}"
+    os.environ["VISUAL_MENU_OVERLAY_MAX"] = f"{t['menu_overlay_max']:.3f}"
+    if g == "pubg":
+        os.environ["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+        os.environ["SMART_PUBG_MAX_RUN_MOTION"] = f"{t['motion_max_run']:.3f}"
+    elif g == "standoff":
+        os.environ["SMART_STANDOFF_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+        os.environ["SMART_STANDOFF_MIN_CENTER_MOTION"] = f"{max(0.008, t['motion_max_run'] * 0.08):.4f}"
+    elif g == "wot":
+        os.environ["SMART_WOT_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+    return t
+
+
+def note_negative_feedback(game: str, reason: str = "") -> dict[str, float]:
+    """Tighten gates after 👎 labeled as running/menu/loot."""
+    g = (game or "pubg").strip().lower()
+    if g not in BASE:
+        g = "pubg"
+    reason_l = (reason or "").strip().lower()
+    tokens = {t for t in reason_l.replace("-", "_").replace(" ", "_").split("_") if t}
+    hit = bool(tokens & RUN_MENU_REASONS) or any(
+        r in reason_l for r in ("loot_run", "menu_lobby", "menu_garage", "беготн", "меню")
+    )
+    data = _load()
+    games = dict(data.get("games") or {})
+    cur = dict(BASE[g])
+    cur.update({k: float(v) for k, v in (games.get(g) or {}).items() if k != "neg_run_menu"})
+    if not hit:
+        return apply_to_environ(g)
+    cur["gun_density_min"] = min(0.12, float(cur["gun_density_min"]) + 0.005)
+    cur["burst_ratio_min"] = min(10.0, float(cur["burst_ratio_min"]) + 0.15)
+    cur["motion_max_run"] = max(0.08, float(cur["motion_max_run"]) - 0.01)
+    cur["menu_overlay_max"] = max(0.15, float(cur["menu_overlay_max"]) - 0.02)
+    cur["neg_run_menu"] = float(cur.get("neg_run_menu", 0) + 1)
+    games[g] = cur
+    data["games"] = games
+    _save(data)
+    return apply_to_environ(g)

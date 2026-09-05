@@ -22,6 +22,7 @@ GAME_DISLIKE_REASONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("no_combat", "🔇 Нет перестрелки"),
         ("no_kill", "💀 Килл не виден"),
         ("loot_run", "🎒 Бег / лут без боя"),
+        ("menu_lobby", "📋 Меню / лобби"),
         ("promo", "📢 Реклама"),
         ("boring", "😴 Скучно"),
         ("other", "🗑 Другое"),

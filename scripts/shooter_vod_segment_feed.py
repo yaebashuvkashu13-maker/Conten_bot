@@ -311,37 +311,135 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
     seg_root = _paths(game)["segments"]
     seg_root.mkdir(parents=True, exist_ok=True)
     sent = 0
+    nl = chr(10)
     for row in to_send[:1]:
         sid = row["segment_id"]
         out = seg_root / f"seg_{sid}.mp4"
+        peak_f = float(row.get("peak_start", row["start"]))
         if not render_single_segment(vod, row["clip"], out):
+            if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                try:
+                    from vod_clip_quality_ledger import record_decision
+
+                    record_decision(
+                        game,
+                        clip_id=sid,
+                        vod_id=vod_youtube_id(vod),
+                        vod_path=str(vod),
+                        decision="reject",
+                        reason="render_failed",
+                        peak_sec=peak_f,
+                    )
+                except Exception as exc:
+                    log.warning("quality ledger reject failed: %s", exc)
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(game, vod, row, out)
         if not presend_ok:
             log.warning("presend REJECT %s: %s", sid, presend_reason)
+            if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                try:
+                    from vod_clip_quality_ledger import record_decision
+
+                    record_decision(
+                        game,
+                        clip_id=sid,
+                        vod_id=vod_youtube_id(vod),
+                        vod_path=str(vod),
+                        decision="reject",
+                        reason=presend_reason,
+                        metrics=presend_report if isinstance(presend_report, dict) else {},
+                        peak_sec=peak_f,
+                    )
+                except Exception as exc:
+                    log.warning("quality ledger reject failed: %s", exc)
             continue
-        peak = int(row.get("peak_start", row["start"]))
-        caption = (
-            f"{game.upper()} Metro Royale #{sid}\n"
-            f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
-            f"Metro ✓ | {presend_reason}\n"
-            f"👍 Ок / 👎 Не ок"
-        ) if game == "pubg" else (
-            f"{game.upper()} кусок #{sid}\n"
-            f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)\n"
-            f"{'Boss' if game == 'genshin' else 'Combat' if game == 'wot' else 'POV combat'} ✓ | {presend_reason}\n"
-            f"👍 Ок / 👎 Не ок"
-        )
-        if send_video(
-            token,
-            chat_id,
-            out,
-            caption,
-            seg_id=sid,
-            record_learning=False,
-            reply_markup=keyboard(game, sid),
-            cycle_game=game,
-        ):
+
+        deliver = out
+        if os.environ.get("TELEGRAM_DELIVERY_ENCODE", "1") == "1":
+            try:
+                from telegram_delivery import encode_telegram_mp4
+
+                deliver = encode_telegram_mp4(out, out.with_name(out.stem + "_tg.mp4"))
+            except Exception as exc:
+                log.warning("telegram encode skipped: %s", exc)
+                deliver = out
+
+        if os.environ.get("ENCODED_CLIP_SPOTCHECK", "1") == "1":
+            try:
+                from encoded_clip_spotcheck import spotcheck_encoded_clip
+
+                spot_ok, spot_reason, spot_report = spotcheck_encoded_clip(deliver)
+            except Exception as exc:
+                log.warning("encoded spotcheck error sid=%s: %s", sid, exc)
+                spot_ok, spot_reason, spot_report = True, "spotcheck_error", {}
+            if not spot_ok:
+                log.warning("encoded spotcheck REJECT %s: %s", sid, spot_reason)
+                if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                    try:
+                        from vod_clip_quality_ledger import record_decision
+
+                        record_decision(
+                            game,
+                            clip_id=sid,
+                            vod_id=vod_youtube_id(vod),
+                            vod_path=str(vod),
+                            decision="reject",
+                            reason=f"spotcheck:{spot_reason}",
+                            metrics=spot_report if isinstance(spot_report, dict) else {},
+                            peak_sec=peak_f,
+                        )
+                    except Exception as exc:
+                        log.warning("quality ledger reject failed: %s", exc)
+                continue
+
+        peak = int(peak_f)
+        if game == "pubg":
+            caption = (
+                f"{game.upper()} Metro Royale #{sid}" + nl
+                + f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)" + nl
+                + f"Metro ✓ | {presend_reason}" + nl
+                + "👍 Ок / 👎 Не ок"
+            )
+        else:
+            kind = "Boss" if game == "genshin" else "Combat" if game == "wot" else "POV combat"
+            caption = (
+                f"{game.upper()} кусок #{sid}" + nl
+                + f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s)" + nl
+                + f"{kind} ✓ | {presend_reason}" + nl
+                + "👍 Ок / 👎 Не ок"
+            )
+
+        def _do_send() -> bool:
+            return bool(
+                send_video(
+                    token,
+                    chat_id,
+                    deliver,
+                    caption,
+                    seg_id=sid,
+                    record_learning=False,
+                    reply_markup=keyboard(game, sid),
+                    cycle_game=game,
+                )
+            )
+
+        send_ok = False
+        if os.environ.get("TELEGRAM_UPLOAD_QUEUE", "1") == "1":
+            try:
+                from telegram_delivery import get_upload_queue
+
+                send_ok = bool(
+                    get_upload_queue().submit(_do_send).result(
+                        timeout=float(os.environ.get("TELEGRAM_UPLOAD_TIMEOUT_SEC", "300"))
+                    )
+                )
+            except Exception as exc:
+                log.warning("upload queue failed sid=%s: %s — direct send", sid, exc)
+                send_ok = _do_send()
+        else:
+            send_ok = _do_send()
+
+        if send_ok:
             upsert_segment(
                 game,
                 {
@@ -350,14 +448,40 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
                     "vod": str(vod),
                     "vod_id": vod_youtube_id(vod),
                     "start": row["start"],
-                    "duration": _ffprobe_duration(out),
+                    "duration": _ffprobe_duration(deliver if Path(deliver).exists() else out),
                     "peak_start": peak,
                     "score": row.get("score", 0),
                     "sig": sig,
+                    "admit_reason": presend_reason,
+                    "render_metrics": {
+                        **(presend_report if isinstance(presend_report, dict) else {}),
+                        "bytes": Path(deliver).stat().st_size if Path(deliver).exists() else 0,
+                        "delivered": str(deliver),
+                    },
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 },
             )
             mark_feed_sent(game, [sid])
+            if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                try:
+                    from vod_clip_quality_ledger import record_send
+
+                    record_send(
+                        game,
+                        clip_id=sid,
+                        vod_id=vod_youtube_id(vod),
+                        rendered_path=str(deliver),
+                        metrics={
+                            "vod_path": str(vod),
+                            "sig": sig,
+                            **(presend_report if isinstance(presend_report, dict) else {}),
+                            "bytes": Path(deliver).stat().st_size if Path(deliver).exists() else 0,
+                        },
+                        admit_reason=presend_reason,
+                        peak_sec=peak_f,
+                    )
+                except Exception as exc:
+                    log.warning("quality ledger send failed: %s", exc)
             sent += 1
     st = stats(game)
     if sent:
@@ -522,6 +646,39 @@ def _scan_vod_with_adaptive(
     streak_in = gate.streak_from_state(state)
     entry = _vod_registry_entry(state, vod)
 
+    try:
+        from vod_worker_guard import VodBudget, is_quarantined, note_vod_failure, write_heartbeat
+
+        write_heartbeat(f"{game}_feed", vod=str(vod), vid=vid)
+        if is_quarantined(vid) or is_quarantined(str(vod)):
+            log.warning("quarantine skip vod=%s", vod.name)
+            return 0
+        budget = VodBudget.start()
+    except Exception as exc:
+        log.warning("worker guard init failed: %s", exc)
+        budget = None
+
+    if os.environ.get("VOD_AUDIO_PREFLIGHT", "1") == "1":
+        try:
+            from vod_media_cache import audio_preflight_ok
+
+            ok_pf, pf_reason, pf_meta = audio_preflight_ok(vod)
+            if not ok_pf:
+                log.info("audio preflight reject vod=%s reason=%s meta=%s", vod.name, pf_reason, pf_meta)
+                if entry is not None:
+                    entry["reject_reason"] = f"preflight:{pf_reason}"
+                    _save_state(game, state)
+                try:
+                    from vod_worker_guard import note_vod_failure
+
+                    note_vod_failure(vid, reason=f"preflight:{pf_reason}")
+                except Exception:
+                    pass
+                return 0
+        except Exception as exc:
+            log.warning("audio preflight error vod=%s: %s", vod.name, exc)
+
+
     if game == "pubg":
         ok_metro, metro_reason = _pubg_metro_vod_ok(vod, title=title, streak=streak_in)
         if not ok_metro:
@@ -641,6 +798,17 @@ def _scan_vod_with_adaptive(
                     level,
                     vod.name,
                 )
+            if budget is not None:
+                ok_budget, budget_reason = budget.check()
+                if not ok_budget:
+                    log.warning("vod budget before scan vod=%s reason=%s", vod.name, budget_reason)
+                    try:
+                        from vod_worker_guard import note_vod_failure
+                        note_vod_failure(vid, reason=budget_reason)
+                    except Exception:
+                        pass
+                    return 0
+
             sent = _scan_vod(game, token, chat_id, vod, env, soften_level=level, entry=entry)
             if game == "pubg":
                 os.environ.pop("PUBG_METRO_SEGMENT_TRUST_VOD", None)
@@ -649,6 +817,22 @@ def _scan_vod_with_adaptive(
             clear_fast_seeds()
 
     new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
+
+    if sent > 0:
+        try:
+            from vod_worker_guard import clear_vod_failures, write_heartbeat
+            clear_vod_failures(vid)
+            write_heartbeat(f"{game}_feed", vod=str(vod), vid=vid, sent=sent)
+        except Exception as exc:
+            log.warning("worker guard success update failed: %s", exc)
+    elif budget is not None:
+        try:
+            ok_budget, budget_reason = budget.check()
+            if not ok_budget:
+                from vod_worker_guard import note_vod_failure
+                note_vod_failure(vid, reason=budget_reason)
+        except Exception:
+            pass
     state["last_adaptive_level"] = active_level
     _save_state(game, state)
 
@@ -672,6 +856,17 @@ def _scan_vod_with_adaptive(
 
 def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
     log.info("shooter feed start game=%s rev=%s", game, VOD_PIPELINE_REV)
+    try:
+        from game_adaptive_thresholds import apply_to_environ
+        th = apply_to_environ(game)
+        log.info("adaptive thresholds game=%s %s", game, th)
+    except Exception as exc:
+        log.warning("adaptive thresholds apply failed: %s", exc)
+    try:
+        from vod_worker_guard import write_heartbeat
+        write_heartbeat(f"{game}_feed", phase="start")
+    except Exception as exc:
+        log.warning("heartbeat start failed: %s", exc)
     ok_cycle, reason = can_send_for_game(game, 1)
     if not ok_cycle:
         log.info("skip feed game=%s reason=%s", game, reason)
@@ -687,6 +882,13 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         entry = next((r for r in registry if r.get("path") == str(mp4)), None)
         if entry and entry.get("exhausted"):
             continue
+        try:
+            from vod_worker_guard import is_quarantined
+            if is_quarantined(vod_youtube_id(mp4)) or is_quarantined(str(mp4)):
+                log.warning("quarantine skip inbox vod=%s", mp4.name)
+                continue
+        except Exception:
+            pass
         if should_skip_vod_rescan(entry, game=game):
             log.info("skip scan cooldown vod=%s", mp4.name)
             continue
