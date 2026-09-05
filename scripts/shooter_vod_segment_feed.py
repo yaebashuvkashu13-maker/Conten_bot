@@ -3818,7 +3818,10 @@ def main() -> int:
         # Non-zero so systemd Restart=on-failure / owner-health see contention
         # instead of a silent "success" loop that ships nothing.
         return 1
-    env = {**os.environ, **file_env}
+    # os.environ already has file_env applied then drought preserve.
+    # Do NOT merge file_env on top again — that re-wipes VOD_FORCE_*/RELAX
+    # and _run(game, env, ...) would score clips under steady-state gates.
+    env = dict(os.environ)
     for key in (
         "SHOOTER_VOD_FEED",
         "SHOOTER_VOD_FAST_PROBE",
