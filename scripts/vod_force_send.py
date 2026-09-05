@@ -184,6 +184,60 @@ def _run_feed_streaming(
     return captured, returncode, timed_out
 
 
+
+def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[str, str]:
+    """Apply drought soften knobs for PUBG force-send / recover child feed.
+
+    Safety rules:
+    - shooting/menu gate stays ON
+    - loot reject stays ON at esc0/1
+    - owner-relax capped at 1 on esc2
+    - pin VOD_FORCE_* so feed adaptive apply_to_environ cannot overwrite floors
+    """
+    escalation = max(0, min(2, int(escalation)))
+    env["VOD_FORCE_SOFTEN"] = "1"
+    env["VOD_FORCE_ESCALATION"] = str(escalation)
+    env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
+    env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
+    quality_default = "0.22"
+    gun_default = "0.030"
+    payoff_default = "0.08"
+    if escalation >= 1:
+        quality_default = "0.12"
+        gun_default = "0.020"
+        payoff_default = "0.05"
+    if escalation >= 2:
+        quality_default = "0.05"
+        gun_default = "0.010"
+        payoff_default = "0.03"
+    env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get("VOD_FORCE_PAYOFF_MIN", payoff_default)
+    env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get("VOD_FORCE_QUALITY_MIN", quality_default)
+    env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
+    env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
+    env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", gun_default)
+    env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
+    env["VOD_FORCE_GUN_DENSITY"] = env["PUBG_SINGLE_MIN_GUN_DENSITY"]
+    env["VOD_FORCE_BURST_RATIO"] = env["PUBG_CLIP_MIN_BURST_RATIO"]
+    env["VOD_FORCE_QUALITY_MIN"] = env["PUBG_QUALITY_SCORE_MIN_SINGLES"]
+    env["VOD_FORCE_PAYOFF_MIN"] = env["PUBG_PAYOFF_SCORE_MIN_SINGLES"]
+    if escalation >= 2:
+        env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
+    else:
+        env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
+    env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
+    env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4")
+    env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
+    env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "12")
+    env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+    if escalation >= 2:
+        env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
+        env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get("VOD_FORCE_RELAX_OWNER", "1")
+        env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1")
+        env["VOD_FORCE_PRESEND_BYPASS"] = "0"
+        env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+    return env
+
+
 def force_send_game(
     game: str,
     *,
@@ -270,60 +324,8 @@ def force_send_game(
         except ValueError:
             escalation = 0
         if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
-            # Keep shooting/menu gate ON under drought — default was "0" and shipped junk.
-            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
-            env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
-            quality_default = "0.22"
-            gun_default = "0.030"
-            payoff_default = "0.08"
-            if escalation >= 1:
-                quality_default = "0.12"
-                gun_default = "0.020"
-                payoff_default = "0.05"
-            if escalation >= 2:
-                quality_default = "0.05"
-                gun_default = "0.010"
-                payoff_default = "0.03"
-            env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get(
-                "VOD_FORCE_PAYOFF_MIN", payoff_default
-            )
-            env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get(
-                "VOD_FORCE_QUALITY_MIN", quality_default
-            )
-            env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
-            env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
-            env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get(
-                "VOD_FORCE_GUN_DENSITY", gun_default
-            )
-            env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get(
-                "VOD_FORCE_BURST_RATIO", "3.5"
-            )
-            env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
-            env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"
-            env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get(
-                "VOD_FORCE_SEND_MAX_VODS", "4"
-            )
-            env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
-            env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
-                "VOD_FORCE_SEND_ZERO_EXHAUST", "12"
-            )
-            # Stay on unparked inbox — Metro live discovery burns the whole timeout.
-            # Soften drought recovery without skipping discovery or bypassing presend
-            # (bypass shipped menu/loot clips). Inbox recover unparks VODs instead.
-            env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
-            if escalation >= 2:
-                env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get(
-                    "VOD_FORCE_PRESEND_SCORE_MODE", "1"
-                )
-                env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
-                    "VOD_FORCE_RELAX_OWNER", "2"
-                )
-                # Keep shooting gate on — never auto-bypass menu/loot under drought.
-                env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
-                    "PUBG_PRESEND_SHOOTING_GATE", "1"
-                )
-                env["VOD_FORCE_PRESEND_BYPASS"] = "0"
-                env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+            apply_drought_pubg_env(env, escalation=escalation)
+
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
     captured = ""

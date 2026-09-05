@@ -55,6 +55,19 @@ bad = re.findall(r'os\.environ\.get\("VOD_FORCE_PRESEND_BYPASS",\s*"1"\)', hang 
 if bad:
     errors.append(f"found PRESEND_BYPASS default 1 ({len(bad)} times)")
 
+
+force = (SCRIPTS / "vod_force_send.py").read_text(encoding="utf-8")
+if 'VOD_FORCE_RELAX_OWNER", "1"' not in force and "VOD_FORCE_RELAX_OWNER', '1'" not in force:
+    errors.append("vod_force_send must default VOD_FORCE_RELAX_OWNER to 1 on esc2")
+if 'VOD_FORCE_REJECT_LOOT", "1"' not in force and "VOD_FORCE_REJECT_LOOT', '1'" not in force:
+    errors.append("vod_force_send must default loot reject ON for esc0/1 drought")
+if "apply_drought_pubg_env" not in force:
+    errors.append("vod_force_send must use apply_drought_pubg_env helper")
+if "entry_is_hard_bad_without_peaks" not in (SCRIPTS / "shooter_vod_segment_feed.py").read_text(encoding="utf-8"):
+    errors.append("feed recycle must skip hard-bad VODs without peaks")
+if "_drought_floor_cap" not in (SCRIPTS / "game_adaptive_thresholds.py").read_text(encoding="utf-8"):
+    errors.append("game_adaptive_thresholds must cap floors under drought soften")
+
 if errors:
     print("PROD SAFETY CHECK FAILED:")
     for e in errors:

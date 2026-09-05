@@ -622,14 +622,23 @@ def apply_agent_recover_env(
         os.environ.get("VOD_RECOVER_UNPARK", "4"),
     )
     target["VOD_FORCE_ESCALATION"] = str(esc)
+    # Esc0/1 drought: keep loot reject ON so soften does not re-open menu/loot.
+    if esc < 2:
+        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
+        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "1")
+        target.setdefault("VOD_FORCE_GUN_DENSITY", os.environ.get("VOD_FORCE_GUN_DENSITY", "0.030"))
+        target.setdefault("VOD_FORCE_BURST_RATIO", os.environ.get("VOD_FORCE_BURST_RATIO", "3.5"))
+        target.setdefault("VOD_FORCE_QUALITY_MIN", os.environ.get("VOD_FORCE_QUALITY_MIN", "0.22"))
+        target.setdefault("VOD_FORCE_PAYOFF_MIN", os.environ.get("VOD_FORCE_PAYOFF_MIN", "0.08"))
     if esc >= 1:
         target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.12")
         target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.020")
         target["VOD_FORCE_PAYOFF_MIN"] = os.environ.get("VOD_FORCE_PAYOFF_MIN", "0.05")
+        target["VOD_FORCE_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
     if esc >= 2:
         target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.05")
         target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
-        # Soften loot-walk filters under drought, but keep shooting/menu gates alive.
+        # Esc2 may soften loot-walk, but keep shooting/menu gates alive.
         target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
         target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "0")
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
@@ -637,8 +646,9 @@ def apply_agent_recover_env(
         )
         # Keep score-mode ON; never disable shooting gate via recover escalation.
         target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
+        # Cap owner-relax at 1 while shooting gate stays on (was 2 → menu leak).
         target["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get(
-            "VOD_FORCE_RELAX_OWNER", "2"
+            "VOD_FORCE_RELAX_OWNER", "1"
         )
         target["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
             "PUBG_PRESEND_SHOOTING_GATE", "1"

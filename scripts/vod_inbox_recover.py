@@ -60,6 +60,17 @@ def _vod_entries(state: dict, name: str) -> list[dict]:
     return out
 
 
+def entry_is_hard_bad_without_peaks(entry: dict | None) -> bool:
+    """True when a registry/state row is sticky menu/loot with no usable peaks."""
+    if not isinstance(entry, dict):
+        return False
+    reason = str(entry.get("reject_reason") or "").lower()
+    if not any(m in reason for m in HARD_BAD_REJECT_MARKERS):
+        return False
+    peaks = entry.get("last_pool_peaks") or entry.get("peaks") or []
+    return not (isinstance(peaks, list) and len(peaks) >= 1)
+
+
 def is_hard_bad_without_peaks(state: dict, name: str) -> bool:
     """True when VOD was hard-rejected for menu/loot and has no usable peak pool."""
     for row in _vod_entries(state, name):

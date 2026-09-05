@@ -100,22 +100,60 @@ def thresholds_for(game: str) -> dict[str, float]:
     return base
 
 
+def _drought_floor_cap(current: float, *env_keys: str) -> float:
+    """Under drought soften, never raise floors above VOD_FORCE_* recovery knobs."""
+    soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+    try:
+        esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
+    except ValueError:
+        esc = 0
+    if not soften and esc <= 0:
+        return current
+    for key in env_keys:
+        raw = os.environ.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return min(current, float(raw))
+        except ValueError:
+            continue
+    return current
+
+
 def apply_to_environ(game: str) -> dict[str, float]:
-    """Push current thresholds into process env for gate modules."""
+    """Push current thresholds into process env for gate modules.
+
+    Owner 👎 floors tighten quality, but drought recover (VOD_FORCE_*) must still
+    be able to soften gun/burst floors — otherwise apply_to_environ overwrites
+    force_send soften and drought stays stuck at zero-send.
+    """
     t = thresholds_for(game)
     g = (game or "pubg").strip().lower()
-    os.environ["PUBG_CLIP_MIN_GUN_DENSITY"] = f"{t['gun_density_min']:.4f}"
-    os.environ["PUBG_SINGLE_MIN_GUN_DENSITY"] = f"{t['gun_density_min']:.4f}"
-    os.environ["PUBG_CLIP_MIN_BURST_RATIO"] = f"{t['burst_ratio_min']:.2f}"
+    gun = _drought_floor_cap(
+        float(t["gun_density_min"]),
+        "VOD_FORCE_GUN_DENSITY",
+        "PUBG_SINGLE_MIN_GUN_DENSITY",
+        "PUBG_CLIP_MIN_GUN_DENSITY",
+    )
+    burst = _drought_floor_cap(
+        float(t["burst_ratio_min"]),
+        "VOD_FORCE_BURST_RATIO",
+        "PUBG_CLIP_MIN_BURST_RATIO",
+    )
+    t["gun_density_min"] = gun
+    t["burst_ratio_min"] = burst
+    os.environ["PUBG_CLIP_MIN_GUN_DENSITY"] = f"{gun:.4f}"
+    os.environ["PUBG_SINGLE_MIN_GUN_DENSITY"] = f"{gun:.4f}"
+    os.environ["PUBG_CLIP_MIN_BURST_RATIO"] = f"{burst:.2f}"
     os.environ["VISUAL_MENU_OVERLAY_MAX"] = f"{t['menu_overlay_max']:.3f}"
     if g == "pubg":
-        os.environ["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+        os.environ["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = f"{gun:.4f}"
         os.environ["SMART_PUBG_MAX_RUN_MOTION"] = f"{t['motion_max_run']:.3f}"
     elif g == "standoff":
-        os.environ["SMART_STANDOFF_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+        os.environ["SMART_STANDOFF_MIN_GUNFIRE_DENSITY"] = f"{gun:.4f}"
         os.environ["SMART_STANDOFF_MIN_CENTER_MOTION"] = f"{max(0.008, t['motion_max_run'] * 0.08):.4f}"
     elif g == "wot":
-        os.environ["SMART_WOT_MIN_GUNFIRE_DENSITY"] = f"{t['gun_density_min']:.4f}"
+        os.environ["SMART_WOT_MIN_GUNFIRE_DENSITY"] = f"{gun:.4f}"
     return t
 
 

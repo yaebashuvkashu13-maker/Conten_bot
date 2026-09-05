@@ -3165,6 +3165,14 @@ def _recycle_parked_vod(game: str, state: dict, inbox: Path) -> Path | None:
         reason = str(entry.get("reject_reason") or "")
         reason_base = reason.split("=", 1)[0]
         reason_low = reason.lower()
+        # Same sticky menu/loot skip as inbox recover — recycle must not bypass it.
+        try:
+            from vod_inbox_recover import entry_is_hard_bad_without_peaks
+
+            if entry_is_hard_bad_without_peaks(entry):
+                continue
+        except Exception:
+            pass
         if any(k in reason_low for k in ("classic_outdoor", "metro_vod_reject", "not_metro", "classic_map")):
             continue
         if reason_base in dead_reasons or reason.startswith("fast_panns_0"):
