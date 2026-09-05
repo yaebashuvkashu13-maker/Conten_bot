@@ -30,6 +30,10 @@ def test_gun_bypass_only_under_drought(monkeypatch) -> None:
 
     monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
     monkeypatch.delenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", raising=False)
+    # Missing key defaults OFF — drought paths must pin 1 explicitly.
+    assert pqs._singles_gun_bypass_enabled() is False
+
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
     assert pqs._singles_gun_bypass_enabled() is True
 
     monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
@@ -37,7 +41,7 @@ def test_gun_bypass_only_under_drought(monkeypatch) -> None:
 
     monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
     monkeypatch.setenv("VOD_FORCE_ESCALATION", "1")
-    monkeypatch.delenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", raising=False)
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
     assert pqs._singles_gun_bypass_enabled() is True
 
 

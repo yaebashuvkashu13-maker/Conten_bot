@@ -117,6 +117,32 @@ if bad:
 if "_drought_floor_cap" not in (SCRIPTS / "game_adaptive_thresholds.py").read_text(encoding="utf-8"):
     errors.append("game_adaptive_thresholds must cap floors under drought soften")
 
+
+# Ops alert credentials must accept TG_* (prod) aliases.
+for alert_script in ("vod_feed_owner_health.py", "vod_send_drought_watch.py", "vod_weekly_quality_report.py"):
+    body = (SCRIPTS / alert_script).read_text(encoding="utf-8")
+    if "vod_telegram_env" not in body and "TG_BOT_TOKEN" not in body:
+        errors.append(f"{alert_script} must resolve TG_BOT_TOKEN / vod_telegram_env")
+
+hang_body = (SCRIPTS / "vod_hang_detector.py").read_text(encoding="utf-8")
+if "restart_supervisor(force=True)" in hang_body:
+    errors.append("vod_hang_detector must not dual-start nohup via restart_supervisor")
+
+recover_body = (SCRIPTS / "vod_feed_recover.py").read_text(encoding="utf-8")
+if "VOD_FEED_ALLOW_NOHUP" not in recover_body:
+    errors.append("vod_feed_recover must gate nohup behind VOD_FEED_ALLOW_NOHUP")
+
+unit_body = (SCRIPTS / "content_bot_vod_feed.service").read_text(encoding="utf-8")
+if "Restart=on-failure" not in unit_body:
+    errors.append("content_bot_vod_feed.service must use Restart=on-failure")
+
+deploy_body = (SCRIPTS / "deploy_unified_production.sh").read_text(encoding="utf-8")
+if "mlbb_vod_health_watchdog" not in deploy_body and "continuous_worker_watchdog" not in deploy_body:
+    errors.append("deploy_unified_production.sh must purge legacy watchdog crons")
+
+if 'os.environ.get(env_key, "1") == "1"' in (SCRIPTS / "pubg_quality_score.py").read_text(encoding="utf-8"):
+    errors.append("gun bypass missing-key default must not be 1")
+
 if errors:
     print("PROD SAFETY CHECK FAILED:")
     for e in errors:

@@ -119,6 +119,33 @@ def iter_events(game: str) -> list[dict[str, Any]]:
             out.append(row)
     return out
 
+def iter_events_tail(game: str, *, limit: int = 800, max_bytes: int = 512_000) -> list[dict[str, Any]]:
+    """Read roughly the last `limit` events without loading multi-GB ledgers whole."""
+    path = ledger_path(game)
+    if not path.exists():
+        return []
+    size = path.stat().st_size
+    take = min(size, max(65_536, int(max_bytes)))
+    with path.open("rb") as fh:
+        if size > take:
+            fh.seek(size - take)
+            fh.readline()  # drop partial first line
+        data = fh.read().decode("utf-8", errors="replace")
+    out: list[dict[str, Any]] = []
+    for line in data.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out[-max(1, int(limit)) :]
+
+
+
 
 def feedback_stats_for_vod(game: str, vod_id: str) -> dict[str, int]:
     good = bad = sent = 0
@@ -135,8 +162,20 @@ def feedback_stats_for_vod(game: str, vod_id: str) -> dict[str, int]:
     return {"sent": sent, "good": good, "bad": bad}
 
 
+_last_heartbeat_ts: dict[str, float] = {}
+
+
 def record_heartbeat(game: str, *, reason: str = "feed_tick", metrics: dict[str, Any] | None = None) -> None:
     """Ops pulse so silence monitors know the feed path is writing the ledger."""
+    try:
+        min_gap = float(os.environ.get("VOD_LEDGER_HEARTBEAT_MIN_SEC", "300") or 300)
+    except ValueError:
+        min_gap = 300.0
+    now = time.time()
+    last = _last_heartbeat_ts.get(game, 0.0)
+    if min_gap > 0 and (now - last) < min_gap and reason != "feed_main_start":
+        return
+    _last_heartbeat_ts[game] = now
     append_event(
         game,
         {
@@ -155,7 +194,7 @@ def latest_gate_event_age_sec(game: str, *, limit: int = 800) -> float | None:
 
     now = time.time()
     newest: float | None = None
-    for row in iter_events(game)[-max(1, int(limit)) :]:
+    for row in iter_events_tail(game, limit=limit):
         if str(row.get("decision") or "") not in {"reject", "sent", "heartbeat"}:
             continue
         ts = str(row.get("ts") or "")
@@ -177,7 +216,7 @@ def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
     sent = 0
     rejected = 0
     heartbeats = 0
-    for row in iter_events(game)[-max(1, int(limit)) :]:
+    for row in iter_events_tail(game, limit=limit):
         decision = str(row.get("decision") or "")
         reason = str(row.get("reason") or "")
         metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}

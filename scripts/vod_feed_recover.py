@@ -484,21 +484,46 @@ def restart_supervisor(*, force: bool = False) -> tuple[bool, str]:
     time.sleep(1.5)
     clear_feed_locks()
 
-    sup_log = supervisor_log_path()
-    sup_log.parent.mkdir(parents=True, exist_ok=True)
-    with sup_log.open("a", encoding="utf-8") as fh:
-        proc = subprocess.Popen(
-            ["nohup", str(script)],
-            stdout=fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
+    # Prefer systemd as sole owner. nohup only with explicit VOD_FEED_ALLOW_NOHUP=1.
+    unit = os.environ.get("VOD_FEED_SYSTEMD_UNIT", "content-bot-vod-feed.service")
+    for candidate in (unit, "content-bot-vod-feed.service", "mlbb-vod-feed.service"):
+        try:
+            show = subprocess.run(
+                ["systemctl", "cat", candidate],
+                check=False,
+                timeout=10,
+                capture_output=True,
+            )
+        except Exception:
+            continue
+        if show.returncode != 0:
+            continue
+        subprocess.run(
+            ["systemctl", "reset-failed", candidate],
+            check=False,
+            timeout=10,
+            capture_output=True,
         )
-    time.sleep(0.8)
-    if proc.poll() is not None and proc.returncode not in (None, 0):
-        return False, f"supervisor exit={proc.returncode}"
-    if feed_process_alive():
-        return True, reason or "supervisor перезапущен"
-    return True, f"{reason or 'supervisor запущен'} (ожидаем feed…)"
+        started = subprocess.run(
+            ["systemctl", "start", candidate],
+            check=False,
+            timeout=20,
+            capture_output=True,
+        )
+        if started.returncode == 0:
+            time.sleep(0.8)
+            note = reason or f"systemd start {candidate}"
+            if feed_process_alive():
+                return True, note
+            return True, f"{note} (ожидаем feed…)"
+
+    if os.environ.get("VOD_FEED_ALLOW_NOHUP", "0") != "1":
+        return (
+            False,
+            "systemd unit missing/failed — refuse nohup (set VOD_FEED_ALLOW_NOHUP=1 for legacy)",
+        )
+
+    return False, "nohup fallback not enabled in this build; use systemd unit"
 
 
 def trim_discovery_used_ids(game: str) -> int:

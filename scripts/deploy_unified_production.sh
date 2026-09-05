@@ -50,7 +50,7 @@ for f in \
   vod_inbox_recover.py vod_owner_feedback_bridge.py vod_send_drought_watch.py \
   game_adaptive_thresholds.py vod_hang_detector.py vod_force_send.py \
   smart_video_editor.py shooter_vod_segment_feed.py daily_cycle_runner.py \
-  vod_feed_owner_health.py; do
+  vod_feed_owner_health.py vod_telegram_env.py; do
   [[ -f "scripts/$f" ]] && cp -f "scripts/$f" "/usr/local/bin/$f"
 done
 
@@ -63,10 +63,10 @@ if [[ -f /etc/systemd/system/content-bot-vod-feed.service && "$UNIT" != content-
 fi
 systemctl daemon-reload
 
-bash scripts/install_vod_weekly_quality_report.sh || true
-bash scripts/install_vod_send_drought_watch.sh || true
-bash scripts/install_vod_daily_quality_digest.sh || true
-bash scripts/install_vod_feed_owner_health.sh || true
+bash scripts/install_vod_weekly_quality_report.sh || { echo "WARN: install_vod_weekly_quality_report.sh failed" >&2; INSTALL_WARN=1; }
+bash scripts/install_vod_send_drought_watch.sh || { echo "WARN: install_vod_send_drought_watch.sh failed" >&2; INSTALL_WARN=1; }
+bash scripts/install_vod_daily_quality_digest.sh || { echo "WARN: install_vod_daily_quality_digest.sh failed" >&2; INSTALL_WARN=1; }
+bash scripts/install_vod_feed_owner_health.sh || { echo "WARN: install_vod_feed_owner_health.sh failed" >&2; INSTALL_WARN=1; }
 
 # Pin safe defaults in env
 python3 - <<PY
@@ -119,6 +119,19 @@ p.write_text("\\n".join(out) + "\\n")
 print("env pinned", sorted(wanted))
 PY
 
+
+# --- Purge legacy nohup watchdogs that fight systemd ownership ---
+if command -v crontab >/dev/null 2>&1; then
+  tmp_cron="$(mktemp)"
+  crontab -l 2>/dev/null | grep -Ev 'continuous_worker_watchdog|mlbb_vod_health_watchdog|mlbb_vod_only_watchdog' >"$tmp_cron" || true
+  crontab "$tmp_cron" || true
+  rm -f "$tmp_cron"
+  echo "purged legacy nohup watchdog cron lines (if any)"
+fi
+# Also stop/disable any leftover timer units if present.
+systemctl disable --now mlbb-vod-health-watchdog.timer 2>/dev/null || true
+systemctl disable --now mlbb-continuous-worker-watchdog.timer 2>/dev/null || true
+
 # --- Single owner restart: stop unit, kill orphans, clear stale lock, start unit ---
 systemctl stop "$UNIT" 2>/dev/null || true
 systemctl stop content-bot-vod-feed.service 2>/dev/null || true
@@ -133,5 +146,5 @@ systemctl enable --now "$UNIT"
 sleep 5
 systemctl is-active "$UNIT"
 pgrep -af 'mlbb_vod_segment_feed.sh|shooter_vod_segment_feed.py' || echo "WARN: feed process not visible yet"
-python3 /usr/local/bin/vod_feed_owner_health.py --game pubg || true
+python3 /usr/local/bin/vod_feed_owner_health.py vod_telegram_env.py --game pubg || true
 echo "deployed $BRANCH @ $(git rev-parse --short HEAD) unit=$UNIT"

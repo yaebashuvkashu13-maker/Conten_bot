@@ -167,7 +167,7 @@ def _singles_gun_bypass_enabled(env_key: str = "PUBG_SINGLES_GUN_PAYOFF_BYPASS")
         esc = 0
     if not (soften or esc > 0):
         return False
-    return os.environ.get(env_key, "1") == "1"
+    return os.environ.get(env_key, "0") == "1"
 
 
 def score_pubg_window(

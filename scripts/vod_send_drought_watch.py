@@ -7,8 +7,6 @@ import argparse
 import json
 import os
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 def _env(name: str, default: str = "") -> str:
@@ -42,10 +40,13 @@ def last_send_age_sec(game: str = "pubg") -> float | None:
     return None
 
 def telegram_send(text: str) -> bool:
-    token = _env("TELEGRAM_BOT_TOKEN") or _env("BOT_TOKEN")
-    chat = _env("TELEGRAM_CHAT_ID") or _env("OWNER_CHAT_ID") or _env("CHAT_ID")
-    if not token or not chat:
+    try:
+        from vod_telegram_env import send_message
+
+        return send_message(text)
+    except Exception:
         return False
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = urllib.parse.urlencode(
         {"chat_id": chat, "text": text[:3500], "disable_web_page_preview": "1"}
@@ -115,24 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         "age_sec": age,
         "limit_sec": limit,
     }
-    if age is None:
-        report["status"] = "unknown_last_send"
-        print(json.dumps(report, ensure_ascii=False))
-        return 0
-    if age < limit:
-        report["status"] = "ok"
-        summary, _line = _reject_ops_line(args.game)
-        report["reject_summary"] = summary
-        state_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(report, ensure_ascii=False))
-        return 0
 
-    recover = maybe_recover(args.game)
-    report["status"] = "drought"
-    report["recover"] = recover
-    summary, ops_line = _reject_ops_line(args.game)
-    report["reject_summary"] = summary
-    # Live monitoring: alert when feed is up but ledger has no reject/sent/heartbeat.
     try:
         from vod_clip_quality_ledger import latest_gate_event_age_sec
 
@@ -143,32 +127,74 @@ def main(argv: list[str] | None = None) -> int:
     silence_h = float(_env("VOD_LEDGER_SILENCE_HOURS", "3") or 3)
     ledger_silent = gate_age is None or gate_age >= silence_h * 3600.0
     report["ledger_silent"] = bool(ledger_silent)
-    hours = age / 3600.0
+
+    drought = age is not None and age >= limit
+    unknown = age is None
+    if unknown:
+        report["status"] = "unknown_last_send"
+    elif drought:
+        report["status"] = "drought"
+    else:
+        report["status"] = "ok"
+
+    summary, ops_line = _reject_ops_line(args.game)
+    report["reject_summary"] = summary
+
+    recover = {}
+    if drought and not unknown:
+        recover = maybe_recover(args.game)
+        report["recover"] = recover
+
     last_alert = float(prev.get("last_alert_age") or 0)
-    # Avoid spam: alert at most once per half-window unless age grew a lot.
-    should_alert = (age - last_alert) >= (limit * 0.5)
-    if should_alert or (ledger_silent and (time.time() - float(prev.get("last_ledger_alert_ts") or 0) > 1800)):
+    last_ledger_alert = float(prev.get("last_ledger_alert_ts") or 0)
+    should_alert = False
+    parts: list[str] = []
+
+    if drought:
+        should_alert = (age - last_alert) >= (limit * 0.5)
         parts = [
             f"⚠️ VOD drought [{args.game}]",
-            f"no sends for {hours:.1f}h (limit {args.hours:.1f}h)",
+            f"no sends for {age / 3600.0:.1f}h (limit {args.hours:.1f}h)",
             ops_line or "rejects=n/a",
             f"recover={json.dumps(recover, ensure_ascii=False)}",
         ]
-        if ledger_silent:
-            age_s = "none" if gate_age is None else f"{gate_age/3600:.1f}h"
-            parts.append(f"ledger_gate_age={age_s} (silence>{silence_h:.0f}h)")
-        text = "\n".join(parts)
-        report["alerted"] = telegram_send(text)
-        report["last_alert_age"] = age
+    elif unknown:
+        should_alert = (time.time() - float(prev.get("last_unknown_alert_ts") or 0)) > 1800
+        parts = [
+            f"⚠️ VOD drought watch [{args.game}]",
+            "last_send unknown (no stamp / hang detector miss)",
+            ops_line or "rejects=n/a",
+        ]
+    elif ledger_silent:
+        should_alert = (time.time() - last_ledger_alert) > 1800
+        parts = [
+            f"⚠️ VOD ledger silence [{args.game}]",
+            f"sends ok (age={age/3600:.1f}h) but ledger gate silent",
+            ops_line or "rejects=n/a",
+        ]
+
+    if ledger_silent and parts:
+        age_s = "none" if gate_age is None else f"{gate_age/3600:.1f}h"
+        parts.append(f"ledger_gate_age={age_s} (silence>{silence_h:.0f}h)")
+
+    if should_alert and parts:
+        report["alerted"] = telegram_send("\n".join(parts))
+        if drought and age is not None:
+            report["last_alert_age"] = age
+        if unknown:
+            report["last_unknown_alert_ts"] = time.time()
         if ledger_silent:
             report["last_ledger_alert_ts"] = time.time()
     else:
         report["alerted"] = False
         report["last_alert_age"] = last_alert
         report["last_ledger_alert_ts"] = prev.get("last_ledger_alert_ts")
+        report["last_unknown_alert_ts"] = prev.get("last_unknown_alert_ts")
+
     state_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

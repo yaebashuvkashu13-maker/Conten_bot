@@ -180,18 +180,15 @@ def write_report(
 
 
 def _telegram_send(text: str) -> bool:
-    import urllib.parse
-    import urllib.request
-
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN") or "").strip()
-    chat = (
-        os.environ.get("TELEGRAM_CHAT_ID")
-        or os.environ.get("OWNER_CHAT_ID")
-        or os.environ.get("CHAT_ID")
-        or ""
-    ).strip()
-    if not token or not chat or os.environ.get("VOD_QUALITY_REPORT_TELEGRAM", "1") != "1":
+    if os.environ.get("VOD_QUALITY_REPORT_TELEGRAM", "1") != "1":
         return False
+    try:
+        from vod_telegram_env import send_message
+
+        return send_message(text)
+    except Exception:
+        return False
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = urllib.parse.urlencode(
         {"chat_id": chat, "text": text[:3500], "disable_web_page_preview": "1"}

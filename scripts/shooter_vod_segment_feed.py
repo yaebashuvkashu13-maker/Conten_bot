@@ -3604,7 +3604,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 return 0
             log.info("inbox exhausted parked — fall through discovery game=%s", game)
 
-    if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1":
+    if os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1" or os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "0") == "1":
         log.info("skip discovery — inbox exhausted game=%s", game)
         print(f"pipeline done sent=0 vods=0 game={game} skip_discovery=1")
         return 0
@@ -3708,6 +3708,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
         from vod_hang_detector import write_heartbeat
 
         write_heartbeat(game, "scan_done", sent=n, vod=str(vod.name))
+    except Exception:
+        pass
+    try:
+        from vod_clip_quality_ledger import record_heartbeat
+
+        record_heartbeat(game, reason="feed_pipeline_done", metrics={"sent": n})
     except Exception:
         pass
     print(f"pipeline done sent={n} vods=1 game={game}")

@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # One VOD feed supervisor — systemd is the only owner.
-# flock prevents a second copy; exit 0 on contention so RestartSec backs off.
+# flock prevents a second copy; on contention try orphan cleanup then fail
+# (Restart=on-failure backs off without burning StartLimit on exit 0 loops).
 set -Eeuo pipefail
-exec 9>/tmp/mlbb_vod_supervisor.lock
-if ! flock -n 9; then
-  echo "$(date -Is) another mlbb_vod supervisor running — exit" >&2
-  exit 0
+LOCK=/tmp/mlbb_vod_supervisor.lock
+exec 9>"$LOCK"
+acquire() { flock -n 9; }
+if ! acquire; then
+  echo "$(date -Is) lock busy — orphan cleanup" >&2
+  while read -r pid; do
+    [[ -z "$pid" || "$pid" == "$$" ]] && continue
+    kill -TERM "$pid" 2>/dev/null || true
+  done < <(pgrep -f 'mlbb_vod_segment_feed\.sh' || true)
+  sleep 2
+  if ! acquire; then
+    echo "$(date -Is) FATAL: cannot acquire supervisor lock" >&2
+    exit 1
+  fi
 fi
-# Do NOT source /root/.video_bot.env here — yt-dlp format strings contain []
-# which bash glob-expands and kills the supervisor. Python loads env safely.
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 export CONTENT_BOT_REPO="$REPO"
 export PYTHONPATH="/usr/local/bin:${REPO}/scripts${PYTHONPATH:+:$PYTHONPATH}"

@@ -24,6 +24,15 @@ def _conflicts() -> list[str]:
             issues.append("SHOOTER_VOD_AUDIO_BATCH without SHOOTER_VOD_AUDIO_GENERATOR on PUBG")
     if _flag("PUBG_RANKER_AUTO_PROMOTE") and not _flag("PUBG_RANKER_BENCHMARK_REQUIRED", "1"):
         issues.append("PUBG_RANKER_AUTO_PROMOTE without PUBG_RANKER_BENCHMARK_REQUIRED")
+
+    if _flag("VOD_FORCE_PRESEND_BYPASS"):
+        issues.append("VOD_FORCE_PRESEND_BYPASS=1 is forbidden in production")
+    if _flag("SHOOTER_VOD_SKIP_DISCOVERY"):
+        issues.append("SHOOTER_VOD_SKIP_DISCOVERY=1 blocks discovery (drought risk)")
+    if _flag("VOD_FORCE_SKIP_DISCOVERY"):
+        issues.append("VOD_FORCE_SKIP_DISCOVERY=1 alias armed (drought risk)")
+    if not _flag("VOD_QUALITY_LEDGER", "1") and _flag("VOD_QUALITY_LEDGER_REQUIRED", "1"):
+        issues.append("VOD_QUALITY_LEDGER disabled while VOD_QUALITY_LEDGER_REQUIRED=1")
     return issues
 
 

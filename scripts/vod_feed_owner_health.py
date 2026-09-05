@@ -10,8 +10,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -47,21 +45,13 @@ def _load_env_file(path: Path) -> None:
 
 
 def telegram_send(text: str) -> bool:
-    token = _env("TELEGRAM_BOT_TOKEN") or _env("BOT_TOKEN")
-    chat = _env("TELEGRAM_CHAT_ID") or _env("OWNER_CHAT_ID") or _env("CHAT_ID")
-    if not token or not chat:
-        return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = urllib.parse.urlencode(
-        {"chat_id": chat, "text": text[:3500], "disable_web_page_preview": "1"}
-    ).encode()
     try:
-        urllib.request.urlopen(
-            urllib.request.Request(url, data=body, method="POST"), timeout=20
-        )
-        return True
+        from vod_telegram_env import send_message
+
+        return send_message(text)
     except Exception:
         return False
+
 
 
 def _systemctl(*args: str) -> str:
@@ -92,23 +82,12 @@ def n_restarts() -> int:
 def ledger_gate_age_sec(game: str) -> float | None:
     """Age of newest reject/sent/heartbeat ledger event (seconds), or None."""
     try:
-        from vod_clip_quality_ledger import iter_events
+        from vod_clip_quality_ledger import latest_gate_event_age_sec
+
+        return latest_gate_event_age_sec(game)
     except Exception:
         return None
-    now = time.time()
-    newest: float | None = None
-    for row in iter_events(game)[-800:]:
-        decision = str(row.get("decision") or "")
-        if decision not in {"reject", "sent", "heartbeat"}:
-            continue
-        ts = str(row.get("ts") or "")
-        try:
-            age = now - calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
-        except ValueError:
-            continue
-        if newest is None or age < newest:
-            newest = age
-    return newest
+
 
 
 def maybe_heal_duplicates() -> dict:
@@ -203,13 +182,29 @@ def main(argv: list[str] | None = None) -> int:
 
     last_alert = float(prev.get("last_alert_ts") or 0)
     cooldown = float(_env("VOD_FEED_HEALTH_ALERT_COOLDOWN_SEC", "1800") or 1800)
+    try:
+        from vod_telegram_env import credentials_ok
+
+        tg_ok = credentials_ok()
+    except Exception:
+        tg_ok = False
+    report["telegram_creds_ok"] = tg_ok
     if problems and (time.time() - last_alert) >= cooldown:
         text = (
             f"⚠️ VOD feed health [{args.game}]\n"
             + "\n".join(f"• {p}" for p in problems)
             + f"\nunit={active} restarts={restarts} supers={len(supers)} feeds={len(feeds)}"
         )
-        report["alerted"] = telegram_send(text)
+        if not tg_ok:
+            report["alerted"] = False
+            report["alert_error"] = "missing_telegram_creds"
+            problems.append("cannot_page_missing_TG_BOT_TOKEN_or_TG_CHAT_ID")
+            report["problems"] = problems
+            report["status"] = "degraded"
+        else:
+            report["alerted"] = telegram_send(text)
+            if not report["alerted"]:
+                report["alert_error"] = "telegram_send_failed"
         report["last_alert_ts"] = time.time()
     else:
         report["alerted"] = False

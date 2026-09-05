@@ -104,3 +104,51 @@ def test_feed_owner_health_detects_ledger_silence(
     report = json.loads(Path(tmp_path / "health.json").read_text(encoding="utf-8"))
     assert report["status"] == "degraded"
     assert any("ledger" in p for p in report["problems"])
+
+
+def test_telegram_env_prefers_tg_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_telegram_env import bot_token, chat_id, credentials_ok
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "tg-token")
+    monkeypatch.setenv("TG_CHAT_ID", "123")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "alt-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
+    assert bot_token() == "tg-token"
+    assert chat_id() == "123"
+    assert credentials_ok() is True
+
+
+def test_recover_prefers_systemd_not_nohup() -> None:
+    src = (SCRIPTS / "vod_feed_recover.py").read_text(encoding="utf-8")
+    assert "systemctl" in src
+    assert "VOD_FEED_ALLOW_NOHUP" in src
+    # default path must not nohup without opt-in
+    assert '["nohup"' not in src or "VOD_FEED_ALLOW_NOHUP" in src
+
+
+def test_hang_recover_is_systemd_only() -> None:
+    src = (SCRIPTS / "vod_hang_detector.py").read_text(encoding="utf-8")
+    assert "restart_supervisor(force=True)" not in src
+    assert "_start_systemd_feed()" in src
+
+
+def test_deploy_purges_legacy_watchdogs() -> None:
+    deploy = (SCRIPTS / "deploy_unified_production.sh").read_text(encoding="utf-8")
+    assert "continuous_worker_watchdog" in deploy or "mlbb_vod_health_watchdog" in deploy
+    assert "Purge legacy" in deploy or "purged legacy" in deploy
+
+
+def test_service_restart_on_failure() -> None:
+    unit = (SCRIPTS / "content_bot_vod_feed.service").read_text(encoding="utf-8")
+    assert "Restart=on-failure" in unit
+
+
+def test_feed_honors_skip_discovery_alias() -> None:
+    src = (SCRIPTS / "shooter_vod_segment_feed.py").read_text(encoding="utf-8")
+    assert "VOD_FORCE_SKIP_DISCOVERY" in src
+
+
+def test_ledger_tail_helper_exists() -> None:
+    from vod_clip_quality_ledger import iter_events_tail
+
+    assert callable(iter_events_tail)

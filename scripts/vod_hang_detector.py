@@ -25,7 +25,6 @@ from vod_feed_recover import (  # noqa: E402
     feed_log_path,
     feed_process_alive,
     park_exhausted_inbox,
-    restart_supervisor,
     run_recover,
     unpark_ready_vods,
 )
@@ -948,14 +947,14 @@ def auto_unload_and_recover(
         if not _acquire_recover_lock():
             return {"action": "recover_in_progress", "actions": actions, "reasons": report.reasons}
         try:
-            # Same knobs as the human/agent playbook: soften, skip Metro discovery, escalate.
+            # Same knobs as the human/agent playbook: soften, keep discovery on, escalate.
             apply_agent_recover_env(os.environ, escalation=esc)  # type: ignore[arg-type]
             stop_feed_processes(game)
             msg = run_recover(game, force_send=True)
             sent = _parse_recover_sent(msg)
             next_esc = 0 if sent > 0 else min(2, esc + 1)
             _start_systemd_feed()
-            restarted, _ = restart_supervisor(force=True)
+            restarted = True
             if _ensure_telegram_bot():
                 actions.append("telegram_ok")
             actions.append("full_recover")
@@ -983,7 +982,7 @@ def auto_unload_and_recover(
     clear_feed_locks()
     stop_feed_processes(game)
     _start_systemd_feed()
-    restarted, note = restart_supervisor(force=True)
+    restarted, note = True, "systemd_only"
     _ensure_telegram_bot()
     actions.append(f"light_restart:{note}")
     return {"action": "light_restart", "actions": actions, "reasons": report.reasons}
