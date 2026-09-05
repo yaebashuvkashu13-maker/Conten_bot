@@ -696,7 +696,9 @@ def apply_agent_recover_env(
     target["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
     target["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"
     target["SHOOTER_VOD_FAST_SKIP_INTRO"] = os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "0")
-    target["SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC"] = "2"
+    target["SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC"] = os.environ.get(
+        "SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1"
+    )
     target["SHOOTER_VOD_AUDIO_CANDIDATE_MAX"] = "0"
     target["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).

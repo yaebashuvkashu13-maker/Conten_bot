@@ -74,7 +74,7 @@ def _audio_candidate_defaults() -> tuple[int, float]:
     """max_candidates, gap_sec — under full scan keep every transient, no 10s gaps."""
     if full_peak_scan_enabled():
         raw_max = int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "0") or 0)
-        gap = float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "2") or 2)
+        gap = float(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1") or 1)
         return (raw_max if raw_max > 0 else 100_000, max(0.5, gap))
     return (
         int(os.environ.get("SHOOTER_VOD_AUDIO_CANDIDATE_MAX", "96")),
@@ -489,8 +489,13 @@ def discover_montage_gun_peaks(
     skip = _skip_intro_sec(profile, duration=dur)
     gun_min = float(os.environ.get("SHOOTER_VOD_DENSE_PANN_MIN", "0.16"))
     dens_min = float(os.environ.get("SHOOTER_VOD_DENSE_GUN_MIN", "0.045"))
+    # Full-peak scan must walk a contiguous dense grid (default 1s). The
+    # audio-generator shortlist (~chunk quota) jumps between loud moments and
+    # silently skips fights between candidates — keep it for legacy mode only.
     audio_generator = (
-        profile == "pubg" and os.environ.get("SHOOTER_VOD_AUDIO_GENERATOR", "1") == "1"
+        profile == "pubg"
+        and os.environ.get("SHOOTER_VOD_AUDIO_GENERATOR", "1") == "1"
+        and not full_peak_scan_enabled()
     )
     if audio_generator:
         audio_centers = discover_audio_candidate_offsets(
@@ -615,7 +620,7 @@ def discover_montage_gun_peaks(
 
     scored.sort(key=lambda x: -x[0])
     try:
-        from vod_scan_cascade import cascade_limits, full_peak_scan_enabled
+        from vod_scan_cascade import cascade_limits
 
         limits = cascade_limits()
         # Cap 0 / full-peak scan must NOT slice to scored[:0] (empty pool).

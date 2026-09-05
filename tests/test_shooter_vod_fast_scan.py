@@ -114,6 +114,53 @@ def test_full_peak_scan_dense_grid_has_no_large_skips(monkeypatch) -> None:
     assert offsets[-1] >= 1800.0 - WINDOW_SEC - 15.0
 
 
+def test_full_peak_scan_ignores_audio_generator_shortlist(monkeypatch, tmp_path: Path) -> None:
+    """With full scan + AUDIO_GENERATOR=1, still probe the contiguous dense grid."""
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "1")
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_BATCH", "0")
+    monkeypatch.setenv("VOD_PEAK_FEATURE_CACHE", "0")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "0")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", "0")
+    monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
+    vod = tmp_path / "yt_densefull0001.mp4"
+    vod.write_bytes(b"vod")
+    sve = _mock_smart_video_editor(120.0)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("audio_generator shortlist must not run under full peak scan")
+
+    with patch.dict(sys.modules, {"smart_video_editor": sve}), patch(
+        "shooter_vod_fast_scan.discover_audio_candidate_offsets",
+        side_effect=_boom,
+    ), patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        return_value={"panns_gun_max": 0.50},
+    ), patch(
+        "shooter_vod_fast_scan.snap_peak_to_gunfire",
+        side_effect=lambda _path, center, **_kwargs: (center, 0.08, 0.50),
+    ):
+        peaks, reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=8.0,
+        )
+    assert "audio_generator" not in reason
+    assert "dense_panns" in reason or "feature_cache" in reason or len(peaks) >= 2
+    # 120s body @ 1s step → well above the old ~102 sparse shortlist density.
+    assert reason  # non-empty
+
+
+def test_panns_top_n_unlimited_under_full_peak_scan(monkeypatch) -> None:
+    from vod_audio_batch import panns_top_n
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("SHOOTER_VOD_PANN_TOP_N", raising=False)
+    assert panns_top_n() >= 10**6
+
+
 def test_candidate_pool_scales_beyond_fixed_top_n(monkeypatch, tmp_path: Path) -> None:
     """Long VODs must keep more than a fixed top-16 so tail fights survive."""
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
@@ -304,6 +351,7 @@ def test_audio_generator_preserves_quiet_timeline_chunks() -> None:
 
 
 def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")  # legacy sparse generator path
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "1")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "10")
     monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
