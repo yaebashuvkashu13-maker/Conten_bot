@@ -303,8 +303,8 @@ def force_send_game(
                     env[key] = os.environ[key]
         except ImportError:
             env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
-            env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
-            env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
+            env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
+            env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.32")
             env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
             env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
             env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")

@@ -15,7 +15,7 @@ def test_payoff_defaults_rescue_singles_ocr_miss() -> None:
     assert 'PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0"' in src
     assert "_singles_gun_bypass_enabled" in src
     assert 'PUBG_PAYOFF_SCORE_MIN", "0.28"' in src
-    assert 'PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"' in src
+    assert 'PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16"' in src
     assert "singles_gun_early_payoff_rescue" in src
 
 

@@ -136,8 +136,8 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
     # Singles: owner rates kill/payoff — do not hard-block gunfights missing OCR kill banner.
     os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
-    os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
-    os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
+    os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
+    os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.32")
     os.environ.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
     os.environ.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
     os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")

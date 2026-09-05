@@ -79,7 +79,8 @@ def test_main_min_sec_not_600(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     import shooter_vod_segment_feed as feed  # noqa: E402
 
     rc = feed.main()
-    assert rc == 0
+    # Lock contention must be non-zero so systemd Restart=on-failure sees it.
+    assert rc == 1
     assert os.environ.get("SHOOTER_VOD_MIN_SEC") != "600"
 
 
