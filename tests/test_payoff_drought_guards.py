@@ -13,10 +13,32 @@ def test_payoff_defaults_rescue_singles_ocr_miss() -> None:
     src = (SCRIPTS / "pubg_quality_score.py").read_text(encoding="utf-8")
     assert 'PUBG_FAST_PAYOFF_MIN", "0.12"' in src
     assert 'PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0"' in src
-    assert 'PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1"' in src
+    assert "_singles_gun_bypass_enabled" in src
     assert 'PUBG_PAYOFF_SCORE_MIN", "0.28"' in src
     assert 'PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"' in src
     assert "singles_gun_early_payoff_rescue" in src
+
+
+def test_gun_bypass_only_under_drought(monkeypatch) -> None:
+    import pubg_quality_score as pqs
+
+    monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
+    monkeypatch.delenv("VOD_FORCE_ESCALATION", raising=False)
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
+    # Stale pin must not enable bypass outside drought.
+    assert pqs._singles_gun_bypass_enabled() is False
+
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    monkeypatch.delenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", raising=False)
+    assert pqs._singles_gun_bypass_enabled() is True
+
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
+    assert pqs._singles_gun_bypass_enabled() is False
+
+    monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
+    monkeypatch.setenv("VOD_FORCE_ESCALATION", "1")
+    monkeypatch.delenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", raising=False)
+    assert pqs._singles_gun_bypass_enabled() is True
 
 
 def test_feedback_bridge_moves_floors(tmp_path, monkeypatch) -> None:

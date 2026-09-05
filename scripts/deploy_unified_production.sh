@@ -46,7 +46,8 @@ wanted = {
     "VOD_DROUGHT_HOURS": "2",
     # Payoff calibration: stop OCR-miss drought without re-enabling menu bypass
     "PUBG_EARLY_PAYOFF_REJECT_SINGLES": "0",
-    "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "1",
+    "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0",
+    "PUBG_SINGLES_GUN_QUALITY_BYPASS": "0",
     "PUBG_FAST_PAYOFF_MIN": "0.12",
     "PUBG_PAYOFF_SCORE_MIN": "0.28",
     "PUBG_PAYOFF_SCORE_MIN_SINGLES": "0.10",

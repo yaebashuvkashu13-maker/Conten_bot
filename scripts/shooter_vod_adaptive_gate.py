@@ -18,7 +18,6 @@ DEFAULT_STREAK_THRESHOLD = 2
 
 # Level 1: relax menu/HUD overlay + slightly lower gun/combat bars.
 SHOOTER_SOFTEN_L1: dict[str, str] = {
-    "VISUAL_MENU_OVERLAY_MAX": "0.58",
     "VISUAL_PUBG_MIN_FRAMES_PASS": "2",
     "HIGHLIGHT_PANN_GUN_MIN": "0.22",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.15",
@@ -26,8 +25,6 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
     "SMART_STANDOFF_MAX_CENTER_TEXT": "0.22",
     "SMART_PUBG_MIN_CENTER_MOTION": "0.014",
     "SMART_STANDOFF_MIN_CENTER_MOTION": "0.012",
-    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.048",
-    "SMART_STANDOFF_MIN_GUNFIRE_DENSITY": "0.048",
     "PUBG_POV_MIN_CENTER_MOTION": "0.020",
     "PUBG_PVP_MIN_ACTIVE_QUARTERS": "1",
     "VISUAL_PUBG_MIN_CENTER_EDGE": "0.022",
@@ -37,7 +34,6 @@ SHOOTER_SOFTEN_L1: dict[str, str] = {
 # Level 2: allow Metro highlight HUD, one good frame enough, POV gate off.
 SHOOTER_SOFTEN_L2: dict[str, str] = {
     **SHOOTER_SOFTEN_L1,
-    "VISUAL_MENU_OVERLAY_MAX": "0.78",
     "VISUAL_PUBG_MIN_FRAMES_PASS": "1",
     "HIGHLIGHT_PANN_GUN_MIN": "0.18",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.12",
@@ -68,10 +64,7 @@ def streak_threshold() -> int:
 # Level 3: long zero streak — trust gun audio, skip run/loot owner heuristics.
 SHOOTER_SOFTEN_L3: dict[str, str] = {
     **SHOOTER_SOFTEN_L2,
-    "VISUAL_MENU_OVERLAY_MAX": "0.85",
     "PUBG_RELAX_OWNER_HEURISTICS": "1",
-    "SMART_PUBG_MAX_RUN_MOTION": "0.30",
-    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.040",
     "PUBG_METRO_SEGMENT_TRUST_VOD": "1",
     "PUBG_METRO_TITLE_TRUST": "1",
     "PUBG_REJECT_BOT_FARM": "0",
@@ -97,8 +90,6 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
     "PUBG_RELAX_OWNER_HEURISTICS": "2",
     "PUBG_COMBAT_PANN_MIN": "0.12",
     "PUBG_COMBAT_FRAMES_REQUIRED": "1",
-    "SMART_PUBG_MIN_GUNFIRE_DENSITY": "0.032",
-    "SMART_PUBG_MAX_RUN_MOTION": "0.35",
     "VIRAL_SEGMENT_HOOK_MIN": "0.04",
     "VIRAL_COMBAT_HOOK_MIN": "0.02",
     "SHOOTER_VOD_MIN_CLIP_SCORE": "0.02",
@@ -147,12 +138,12 @@ def soften_summary(level: int) -> str:
     if level <= 0:
         return "strict"
     ov = overrides_for_level(level)
-    menu = ov.get("VISUAL_MENU_OVERLAY_MAX", "?")
     frames = ov.get("VISUAL_PUBG_MIN_FRAMES_PASS", "?")
+    text = ov.get("SMART_PUBG_MAX_CENTER_TEXT", "?")
     pov = "off" if ov.get("PUBG_POV_GATE") == "0" else "on"
     panns = ov.get("SHOOTER_VOD_MAX_PANN_PROBE", "")
     extra = f" panns={panns}" if panns else ""
-    return f"soft L{level} menu<={menu} frames>={frames} pov_gate={pov}{extra}"
+    return f"soft L{level} text<={text} frames>={frames} pov_gate={pov}{extra}"
 
 
 def telegram_soften_notice(game: str, streak: int, level: int) -> str:
@@ -192,6 +183,17 @@ def adaptive_env(streak: int) -> Iterator[int]:
     saved = {k: os.environ.get(k) for k in overrides}
     try:
         os.environ.update(overrides)
+        # Floor knobs owned by game_adaptive_thresholds — re-apply so soften cannot fight drought.
+        try:
+            from game_adaptive_thresholds import apply_to_environ
+
+            apply_to_environ(
+                os.environ.get("VOD_SEGMENT_GAME")
+                or os.environ.get("SHOOTER_VOD_GAME")
+                or "pubg"
+            )
+        except Exception:
+            pass
         yield level
     finally:
         for key, prev in saved.items():

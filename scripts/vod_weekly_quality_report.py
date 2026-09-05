@@ -108,6 +108,16 @@ def build_weekly_report(
             "top_reject_reasons": reject_reasons.most_common(12),
             "metric_medians": {k: _median(v) for k, v in sorted(metric_bags.items())},
         }
+
+        try:
+            from vod_clip_quality_ledger import reject_reason_summary
+            rs = reject_reason_summary(game, limit=2000)
+            report["games"][game]["gun_bypass_admits"] = rs.get("gun_bypass_admits", 0)
+            report["games"][game]["early_payoff_low"] = rs.get("early_payoff_low", 0)
+            report["games"][game]["payoff_low"] = rs.get("payoff_low", 0)
+        except Exception:
+            report["games"][game].setdefault("gun_bypass_admits", 0)
+
     return report
 
 
@@ -128,6 +138,15 @@ def format_report_text(report: dict[str, Any]) -> str:
             f"👎{block.get('feedback_bad')} ({dislike_s})  "
             f"rejects={block.get('rejects')}"
         )
+        gb = block.get("gun_bypass_admits")
+        if gb is not None:
+            sent_n = int(block.get("sent") or 0)
+            share = (gb / sent_n) if sent_n else 0.0
+            lines.append(
+                f"  gun_bypass={gb}/{sent_n} ({share:.0%})"
+                f"  early_payoff={block.get('early_payoff_low', 0)}"
+                f"  payoff_low={block.get('payoff_low', 0)}"
+            )
         top = block.get("top_dislike_reasons") or []
         if top:
             lines.append("  dislike reasons: " + ", ".join(f"{k}×{v}" for k, v in top[:6]))

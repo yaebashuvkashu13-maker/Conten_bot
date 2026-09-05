@@ -153,6 +153,23 @@ def _compute_fight_payoff(
     )
 
 
+def _singles_gun_bypass_enabled(env_key: str = "PUBG_SINGLES_GUN_PAYOFF_BYPASS") -> bool:
+    """Gun-payoff bypass only under drought soften (or explicit force-on).
+
+    Normal path defaults OFF (deploy pins 0). Drought/force_send sets the env
+    key to 1; hang recover also pins 1 while VOD_FORCE_SOFTEN=1.
+    Outside drought the bypass stays OFF even if a stale env pin remains.
+    """
+    soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+    try:
+        esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
+    except ValueError:
+        esc = 0
+    if not (soften or esc > 0):
+        return False
+    return os.environ.get(env_key, "1") == "1"
+
+
 def score_pubg_window(
     video_path: Path,
     start_sec: float,
@@ -313,7 +330,7 @@ def score_pubg_window(
         # Strong gun audio can still pass early gate when OCR killfeed is blind.
         gun_rescue = (
             single
-            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1") == "1"
+            and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
             and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
             and not loot_walk
@@ -423,7 +440,7 @@ def score_pubg_window(
         # Singles with clear gunfire: ship for owner 👍/👎 instead of drought on OCR miss.
         if (
             single
-            and os.environ.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1") == "1"
+            and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
             and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
             and not loot_walk
@@ -505,7 +522,7 @@ def score_pubg_window(
             return _finish(True, f"owner_redo_trusted={quality:.3f}")
         if (
             single
-            and os.environ.get("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1") == "1"
+            and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_QUALITY_BYPASS")
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
             and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
             and not loot_walk

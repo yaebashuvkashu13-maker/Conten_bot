@@ -599,6 +599,9 @@ def apply_agent_recover_env(
     if not need_soft:
         return target
     target["VOD_FORCE_SOFTEN"] = "1"
+    # Enable singles gun bypass only while drought soften is active.
+    target.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
+    target.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
     # Never auto-skip discovery or bypass presend — that shipped menu/loot as "keepalive".
     # Soften thresholds only; quality gates stay on.
     # Feed reads SHOOTER_VOD_SKIP_DISCOVERY; also pin the VOD_FORCE_* alias.

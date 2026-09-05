@@ -149,7 +149,11 @@ def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
         metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
         if decision == "sent":
             sent += 1
-            if metrics.get("singles_gun_early_payoff_rescue") or metrics.get("singles_gun_payoff_bypass"):
+            if (
+                metrics.get("singles_gun_early_payoff_rescue")
+                or metrics.get("singles_gun_payoff_bypass")
+                or metrics.get("singles_gun_quality_bypass")
+            ):
                 gun_bypass += 1
             continue
         if decision != "reject":

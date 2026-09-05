@@ -72,6 +72,8 @@ def test_hang_recover_esc0_keeps_loot_reject(monkeypatch: pytest.MonkeyPatch) ->
     assert out["PUBG_REJECT_LOOT_WALK"] == "1"
     assert out["VOD_FORCE_REJECT_LOOT"] == "1"
     assert out["VOD_FORCE_PRESEND_BYPASS"] == "0"
+    assert out.get("PUBG_SINGLES_GUN_PAYOFF_BYPASS") == "1"
+    assert out.get("PUBG_SINGLES_GUN_QUALITY_BYPASS") == "1"
 
 
 def test_hang_recover_esc2_caps_owner_relax(monkeypatch: pytest.MonkeyPatch) -> None:

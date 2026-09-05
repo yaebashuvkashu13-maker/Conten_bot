@@ -11,10 +11,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
-
 
 def _load_env_file(path: Path) -> None:
     if not path.exists():
@@ -27,7 +25,6 @@ def _load_env_file(path: Path) -> None:
         key = key.strip()
         if key and key not in os.environ:
             os.environ[key] = val.strip().strip('"').strip("'")
-
 
 def last_send_age_sec(game: str = "pubg") -> float | None:
     try:
@@ -44,7 +41,6 @@ def last_send_age_sec(game: str = "pubg") -> float | None:
             return None
     return None
 
-
 def telegram_send(text: str) -> bool:
     token = _env("TELEGRAM_BOT_TOKEN") or _env("BOT_TOKEN")
     chat = _env("TELEGRAM_CHAT_ID") or _env("OWNER_CHAT_ID") or _env("CHAT_ID")
@@ -60,6 +56,26 @@ def telegram_send(text: str) -> bool:
     except Exception:
         return False
 
+def _reject_ops_line(game: str) -> tuple[dict, str]:
+    try:
+        from vod_clip_quality_ledger import reject_reason_summary
+
+        summary = reject_reason_summary(game, limit=int(_env("VOD_DROUGHT_LEDGER_LIMIT", "500") or 500))
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}, ""
+    sent = int(summary.get("sent") or 0)
+    rejected = int(summary.get("rejected") or 0)
+    bypass = int(summary.get("gun_bypass_admits") or 0)
+    denom = sent + rejected
+    reject_pct = (100.0 * rejected / denom) if denom else 0.0
+    bypass_pct = (100.0 * bypass / sent) if sent else 0.0
+    top = summary.get("top_rejects") or []
+    top_s = ",".join(f"{k}×{v}" for k, v in top[:3]) or "-"
+    line = (
+        f"rejects={rejected}/{denom} ({reject_pct:.0f}%) "
+        f"gun_bypass={bypass}/{sent} ({bypass_pct:.0f}%) top={top_s}"
+    )
+    return summary, line
 
 def maybe_recover(game: str) -> dict:
     if _env("VOD_DROUGHT_AUTO_RECOVER", "1") != "1":
@@ -73,7 +89,6 @@ def maybe_recover(game: str) -> dict:
         return {"removed_stubs": removed, "unparked": moved, "cleared": cleared}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
-
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -106,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if age < limit:
         report["status"] = "ok"
+        summary, _line = _reject_ops_line(args.game)
+        report["reject_summary"] = summary
         state_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False))
         return 0
@@ -113,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     recover = maybe_recover(args.game)
     report["status"] = "drought"
     report["recover"] = recover
+    summary, ops_line = _reject_ops_line(args.game)
+    report["reject_summary"] = summary
     hours = age / 3600.0
     last_alert = float(prev.get("last_alert_age") or 0)
     # Avoid spam: alert at most once per half-window unless age grew a lot.
@@ -121,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         text = (
             f"⚠️ VOD drought [{args.game}]\n"
             f"no sends for {hours:.1f}h (limit {args.hours:.1f}h)\n"
+            f"{ops_line}\n"
             f"recover={json.dumps(recover, ensure_ascii=False)}"
         )
         report["alerted"] = telegram_send(text)
@@ -131,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
     state_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

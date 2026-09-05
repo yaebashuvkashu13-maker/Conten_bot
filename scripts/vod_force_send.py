@@ -304,8 +304,8 @@ def force_send_game(
             env.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
             env.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
             env.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
-            env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
-            env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
+            env.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
+            env.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
             env.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")
         # Long silence: soften singles gates so recover can ship *something*
         # instead of burning cooldown on endless zero-sends.

@@ -675,6 +675,73 @@ def _pubg_score_mode_ready() -> bool:
         return False
 
 
+def _ledger_enabled() -> bool:
+    return os.environ.get("VOD_QUALITY_LEDGER", "0") == "1"
+
+
+def _ledger_record_decision(
+    game: str,
+    *,
+    vod: Path,
+    row: dict,
+    decision: str,
+    reason: str,
+    metrics: dict | None = None,
+) -> None:
+    if not _ledger_enabled():
+        return
+    try:
+        from vod_clip_quality_ledger import record_decision
+
+        vid = vod_youtube_id(vod)
+        start = float(row.get("start") or 0)
+        sid = str(row.get("segment_id") or segment_id(vid, start))
+        record_decision(
+            game,
+            clip_id=sid,
+            vod_id=vid,
+            vod_path=str(vod),
+            decision=decision,
+            reason=reason,
+            metrics=metrics or {},
+            peak_sec=float(row.get("peak_start") or start),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("quality ledger decision failed: %s", exc)
+
+
+def _ledger_record_send(
+    game: str,
+    *,
+    vod: Path,
+    row: dict,
+    rendered: Path,
+    admit_reason: str,
+    metrics: dict | None = None,
+) -> None:
+    if not _ledger_enabled():
+        return
+    try:
+        from vod_clip_quality_ledger import record_send
+
+        vid = vod_youtube_id(vod)
+        start = float(row.get("start") or 0)
+        sid = str(row.get("segment_id") or segment_id(vid, start))
+        payload = dict(metrics or {})
+        payload.setdefault("vod_path", str(vod))
+        record_send(
+            game,
+            clip_id=sid,
+            vod_id=vid,
+            rendered_path=str(rendered),
+            metrics=payload,
+            admit_reason=admit_reason,
+            peak_sec=float(row.get("peak_start") or start),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("quality ledger send failed: %s", exc)
+
+
 def _validate_shooter_presend(
     game: str,
     vod: Path,
@@ -1414,6 +1481,14 @@ def _send_montage(
                     log.warning("montage part REJECT %s: %s", sid, reason)
                     if report is not None:
                         report.setdefault("rejected_sids", []).append(sid)
+                    _ledger_record_decision(
+                        game,
+                        vod=vod,
+                        row=work_row,
+                        decision="reject",
+                        reason=str(reason),
+                        metrics=_report if isinstance(_report, dict) else {},
+                    )
                     part.unlink(missing_ok=True)
                     rejected_sids.add(sid)
                     continue
@@ -1638,6 +1713,15 @@ def _send_montage(
                     },
                 )
             mark_feed_sent(game, [r["segment_id"] for r in accepted_rows])
+            for row in accepted_rows:
+                _ledger_record_send(
+                    game,
+                    vod=vod,
+                    row=row,
+                    rendered=out,
+                    admit_reason="montage_sent",
+                    metrics=row.get("quality_report") if isinstance(row.get("quality_report"), dict) else {},
+                )
             st = stats(game)
             send_message(
                 token,
@@ -1780,12 +1864,28 @@ def _send_batch(
             and clip_s < clip_min
         ):
             log.warning("presend CLIP REJECT %s: clip=%.3f < %.2f", sid, clip_s, clip_min)
+            _ledger_record_decision(
+                game,
+                vod=vod,
+                row=row,
+                decision="reject",
+                reason=f"clip_off_score={clip_s:.3f}:min{clip_min:.2f}",
+                metrics={"clip_score": clip_s},
+            )
             continue
         presend_ok, presend_reason, presend_report = _validate_shooter_presend(
             game, vod, row, out, single=pubg_single
         )
         if not presend_ok:
             log.warning("presend REJECT %s: %s", sid, presend_reason)
+            _ledger_record_decision(
+                game,
+                vod=vod,
+                row=row,
+                decision="reject",
+                reason=str(presend_reason),
+                metrics=presend_report if isinstance(presend_report, dict) else {},
+            )
             continue
 
         deliver = out
@@ -1806,6 +1906,14 @@ def _send_batch(
                 hook_ok, hook_reason, hook_report = True, "hook_error", {}
             if not hook_ok:
                 log.warning("hook gate REJECT %s: %s", sid, hook_reason)
+                _ledger_record_decision(
+                    game,
+                    vod=vod,
+                    row=row,
+                    decision="reject",
+                    reason=f"hook_gate:{hook_reason}",
+                    metrics=hook_report if isinstance(hook_report, dict) else {},
+                )
                 continue
 
         if os.environ.get("DISLIKE_REASON_GATES", "1") == "1":
@@ -1828,6 +1936,14 @@ def _send_batch(
                 rg_ok, rg_reason, rg_report = True, "reason_gates_error", {}
             if not rg_ok:
                 log.warning("dislike reason REJECT %s: %s", sid, rg_reason)
+                _ledger_record_decision(
+                    game,
+                    vod=vod,
+                    row=row,
+                    decision="reject",
+                    reason=f"dislike_reason:{rg_reason}",
+                    metrics=rg_report if isinstance(rg_report, dict) else {},
+                )
                 continue
 
         out = deliver
@@ -1871,6 +1987,14 @@ def _send_batch(
                 },
             )
             mark_feed_sent(game, [sid])
+            _ledger_record_send(
+                game,
+                vod=vod,
+                row={**row, "segment_id": sid},
+                rendered=out,
+                admit_reason=str(presend_reason),
+                metrics=presend_report if isinstance(presend_report, dict) else {},
+            )
             sent += 1
     st = stats(game)
     if sent:
