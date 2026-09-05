@@ -79,7 +79,8 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
     for env in (force, hang):
         assert env["PUBG_COMBAT_TIMELINE"] == "1"
         assert env["PUBG_EARLY_ACTION_SHIFT"] == "1"
-        assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) >= 0.36
+        assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) == pytest.approx(0.30)
+        assert env["PUBG_HARD_REJECT_MENU_OVERLAY"] == "1"
         assert float(env["DISLIKE_GUN_DENSITY_MIN"]) <= 0.015
         assert env["SHOOTER_VOD_DENSE_POOL_BUST"] == "1"
         assert env["PUBG_REJECT_LOOT_WALK"] == "1"
@@ -90,7 +91,7 @@ def test_dislike_gun_floor_respects_drought_override(monkeypatch: pytest.MonkeyP
     from dislike_reason_gates import evaluate_reason_gates
 
     monkeypatch.setenv("DISLIKE_GUN_DENSITY_MIN", "0.015")
-    monkeypatch.setenv("DISLIKE_MENU_OVERLAY_MAX", "0.36")
+    monkeypatch.setenv("DISLIKE_MENU_OVERLAY_MAX", "0.30")
     ok, reason, report = evaluate_reason_gates(
         {
             "gun_density": 0.086,
@@ -103,3 +104,22 @@ def test_dislike_gun_floor_respects_drought_override(monkeypatch: pytest.MonkeyP
     )
     assert ok is True, reason
     assert report["floors"]["gun_density_min"] <= 0.015
+
+
+def test_dislike_rejects_junk_menu_at_drought_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """6tBEG4XXXP8_1783 had center_text=0.324 — must die at esc2 menu cap 0.30."""
+    from dislike_reason_gates import evaluate_reason_gates
+
+    monkeypatch.setenv("DISLIKE_MENU_OVERLAY_MAX", "0.30")
+    monkeypatch.setenv("DISLIKE_GUN_DENSITY_MIN", "0.015")
+    ok, reason, _report = evaluate_reason_gates(
+        {
+            "gun_density": 0.053,
+            "burst_ratio": 19.0,
+            "center_motion": 0.25,
+            "menu_overlay": 0.324,
+        },
+        active_reasons=["menu"],
+    )
+    assert ok is False
+    assert "menu" in reason

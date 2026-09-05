@@ -629,11 +629,12 @@ def apply_agent_recover_env(
     # Soften ladder (hard-assign). Must match apply_drought_pubg_env.
     # Do NOT read VOD_FORCE_QUALITY_MIN / PAYOFF_MIN from pinned env — stale
     # strict pins (0.40/0.30) made drought recover stricter than steady state.
-    q_min, p_min, gun = "0.22", "0.08", "0.030"
+    # Keep a real quality floor under drought (0.05 shipped menu junk).
+    q_min, p_min, gun = "0.28", "0.08", "0.030"
     if esc >= 1:
-        q_min, p_min, gun = "0.12", "0.05", "0.020"
+        q_min, p_min, gun = "0.24", "0.05", "0.020"
     if esc >= 2:
-        q_min, p_min, gun = "0.05", "0.03", "0.010"
+        q_min, p_min, gun = "0.20", "0.03", "0.010"
     target["VOD_FORCE_QUALITY_MIN"] = q_min
     target["VOD_FORCE_PAYOFF_MIN"] = p_min
     target["VOD_FORCE_GUN_DENSITY"] = gun
@@ -661,12 +662,13 @@ def apply_agent_recover_env(
     target["CLIP_HOOK_MAX_MENU"] = hook_menu
     target["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
     target["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
-    dislike_menu = "0.28"
+    dislike_menu = "0.26"
     if esc >= 1:
-        dislike_menu = "0.32"
+        dislike_menu = "0.28"
     if esc >= 2:
-        dislike_menu = "0.36"
+        dislike_menu = "0.30"
     target["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    target["PUBG_HARD_REJECT_MENU_OVERLAY"] = "1"
     dislike_gun = "0.040"
     dislike_burst = "4.0"
     if esc >= 1:

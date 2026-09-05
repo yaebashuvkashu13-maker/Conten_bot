@@ -200,15 +200,17 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["VOD_FORCE_ESCALATION"] = str(escalation)
     env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
     env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
-    quality_default = "0.22"
+    # Absolute floors: esc2 used to drop quality to 0.05 and ship menu/run junk
+    # (6tBEG4XXXP8_1783). Soften gun/payoff only — never collapse quality that far.
+    quality_default = "0.28"
     gun_default = "0.030"
     payoff_default = "0.08"
     if escalation >= 1:
-        quality_default = "0.12"
+        quality_default = "0.24"
         gun_default = "0.020"
         payoff_default = "0.05"
     if escalation >= 2:
-        quality_default = "0.05"
+        quality_default = "0.20"
         gun_default = "0.010"
         payoff_default = "0.03"
     # Hard-assign soften floors. Never inherit VOD_FORCE_QUALITY_MIN /
@@ -251,12 +253,14 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["CLIP_HOOK_MIN_AUDIO_RMS"] = hook_rms
     env["CLIP_HOOK_MIN_YAVG_DELTA"] = hook_ydelta
     # Soften HUD false-positive menu overlay under drought (loot reject stays ON).
-    dislike_menu = "0.28"
+    # Keep menu overlay tight — 0.36 let center_text=0.324 (junk) through.
+    dislike_menu = "0.26"
     if escalation >= 1:
-        dislike_menu = "0.32"
+        dislike_menu = "0.28"
     if escalation >= 2:
-        dislike_menu = "0.36"
+        dislike_menu = "0.30"
     env["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    env["PUBG_HARD_REJECT_MENU_OVERLAY"] = "1"
     # Align dislike gun floor with soften shoot gates (was stuck at 0.09 while
     # VOD_FORCE_GUN_DENSITY=0.01 → every borderline fight died as reason_low_gun).
     dislike_gun = "0.040"

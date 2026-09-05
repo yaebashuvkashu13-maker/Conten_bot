@@ -1906,8 +1906,10 @@ def _send_batch(
                 from clip_hook_gate import hook_gate_clip
                 hook_ok, hook_reason, hook_report = hook_gate_clip(deliver)
             except Exception as exc:  # noqa: BLE001
+                # Fail closed — a broken hook must not ship menu/junk (fail-open
+                # previously let escapes through when CLIP/deps blipped).
                 log.warning("hook gate error sid=%s: %s", sid, exc)
-                hook_ok, hook_reason, hook_report = True, "hook_error", {}
+                hook_ok, hook_reason, hook_report = False, f"hook_error:{exc}", {}
             if not hook_ok:
                 log.warning("hook gate REJECT %s: %s", sid, hook_reason)
                 _ledger_record_decision(
@@ -1937,7 +1939,7 @@ def _send_batch(
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("dislike reason gates error sid=%s: %s", sid, exc)
-                rg_ok, rg_reason, rg_report = True, "reason_gates_error", {}
+                rg_ok, rg_reason, rg_report = False, f"reason_gates_error:{exc}", {}
             if not rg_ok:
                 log.warning("dislike reason REJECT %s: %s", sid, rg_reason)
                 _ledger_record_decision(

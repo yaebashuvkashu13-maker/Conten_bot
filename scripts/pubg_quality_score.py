@@ -305,6 +305,17 @@ def score_pubg_window(
     notification_score = float(killfeed_row.get("notification_score", 0.0) or 0.0)
     notification_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.50"))
     notification_hit = notification_score >= notification_min
+    # HUD/map false-positives must never count as kill payoff (6tBEG4XXXP8_1783).
+    nclass = str(
+        killfeed_row.get("notification_class")
+        or (killfeed_row.get("kill_notification") or {}).get("notification_class")
+        or ""
+    ).strip().lower()
+    report["kill_notification_class"] = nclass or None
+    if nclass in {"hud_fp", "map_blue", "hud_false_positive"}:
+        notification_hit = False
+        notification_score = min(notification_score, notification_min * 0.45)
+        report["kill_notification_hud_fp_ignored"] = True
     keyword_hit = bool(killfeed_row.get("killfeed_hits"))
     effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
@@ -352,6 +363,15 @@ def score_pubg_window(
     report["visual_ok"] = visual_ok
     report["visual_reason"] = visual_reason
     report["visual"] = visual
+    # Menu/lobby frames are never shippable — drought soften must not override this.
+    if (
+        os.environ.get("PUBG_HARD_REJECT_MENU_OVERLAY", "1") == "1"
+        and (not visual_ok)
+        and "menu_overlay" in str(visual_reason or "")
+        and not _owner_redo_trusted(video_path, start_sec, duration_sec)
+    ):
+        report["hard_reject"] = "menu_overlay"
+        return _finish(False, f"hard_menu_overlay={visual_reason}")
     best_flash = float(visual.get("best_hit_flash", 0.0))
     best_weapon = float(visual.get("best_weapon_edge", 0.0))
 

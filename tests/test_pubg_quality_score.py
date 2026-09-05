@@ -175,3 +175,47 @@ def test_notification_without_gunfire_not_treated_as_kill(
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 123, 11, use_cache=False)
     assert ok is False
     assert report.get("hard_reject") == "no_shots"
+
+
+def test_menu_overlay_hard_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drought must not ship lobby/menu windows (6tBEG4XXXP8_1783)."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(author_kill=True))
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            False,
+            "visual_frames=1/2:start:menu_overlay,end:run_no_shots",
+            {"best_hit_flash": 0.0, "best_weapon_edge": 0.0},
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 1783, 43, single=True, use_cache=False)
+    assert ok is False
+    assert "menu_overlay" in reason
+    assert report.get("hard_reject") == "menu_overlay"
+
+
+def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HUD false-positive kill banner must not count as author kill/payoff."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.60,
+            {
+                "notification_score": 0.60,
+                "notification_hit": True,
+                "notification_class": "hud_fp",
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+        _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
+    assert report.get("kill_notification_hit") is False
+    assert report.get("kill_notification_class") == "hud_fp"
+    assert report.get("kill_notification_hud_fp_ignored") is True

@@ -89,9 +89,9 @@ def test_soften_hard_assigns_over_stale_strict_pins(monkeypatch: pytest.MonkeyPa
     }
     force = apply_drought_pubg_env(dict(stale), escalation=1)
     hang = apply_agent_recover_env(dict(stale), escalation=1)
-    assert float(force["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.12)
+    assert float(force["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.24)
     assert float(force["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
-    assert float(hang["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.12)
+    assert float(hang["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.24)
     assert float(hang["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
     assert float(force["PUBG_FAST_PAYOFF_MIN"]) == pytest.approx(0.05)
     assert float(hang["PUBG_FAST_PAYOFF_MIN"]) == pytest.approx(0.05)
@@ -121,7 +121,9 @@ def test_soften_relaxes_hook_menu_not_gate(monkeypatch: pytest.MonkeyPatch) -> N
         assert env["CLIP_HOOK_GATE"] == "1"
         assert float(env["CLIP_HOOK_MAX_MENU"]) == pytest.approx(0.78)
         assert float(env["CLIP_HOOK_MIN_AUDIO_RMS"]) == pytest.approx(0.03)
-        assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) >= 0.36
+        assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) == pytest.approx(0.30)
+        assert env["PUBG_HARD_REJECT_MENU_OVERLAY"] == "1"
+        assert float(env["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.20)
         assert env["PUBG_COMBAT_TIMELINE"] == "1"
         assert env["PUBG_REJECT_LOOT_WALK"] == "1"
         assert env["PUBG_PRESEND_SHOOTING_GATE"] == "1"

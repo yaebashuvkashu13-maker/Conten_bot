@@ -477,13 +477,21 @@ def score_kill_notification_segment(
                     score = min(1.0, score * 0.45 + float(conf) * 0.50 + 0.12)
                     best_score = max(best_score, score)
                 elif label in ("hud_fp", "map_blue"):
-                    score *= max(0.12, 1.0 - float(conf) * 0.88)
+                    # Crush FP scores so they cannot satisfy notification_hit
+                    # (weak conf used to leave score above threshold).
+                    score = min(score * 0.12, threshold * 0.40)
                     best_score = min(best_score, score)
+                    meta["notification_hud_fp"] = True
     except Exception:
         pass
     meta["notification_score"] = round(score, 4)
     meta["notification_best_frame_score"] = round(best_score, 4)
-    meta["notification_hit"] = score >= threshold
+    # Never mark HUD/map false-positives as a kill hit.
+    if str(meta.get("notification_class") or "").lower() in {"hud_fp", "map_blue"}:
+        meta["notification_hit"] = False
+        meta["notification_score"] = round(min(float(meta["notification_score"]), threshold * 0.40), 4)
+    else:
+        meta["notification_hit"] = score >= threshold
     return score, meta
 
 

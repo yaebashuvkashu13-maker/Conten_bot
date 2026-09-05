@@ -267,7 +267,7 @@ def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.M
     env: dict[str, str] = {}
     out = apply_agent_recover_env(env, escalation=2)
     assert out["VOD_FORCE_ESCALATION"] == "2"
-    assert float(out["VOD_FORCE_QUALITY_MIN"]) <= 0.05
+    assert float(out["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.20)
     assert out["PUBG_PRESEND_SCORE_MODE"] == "1"
     assert out["PUBG_RELAX_OWNER_HEURISTICS"] == "1"
     # Never auto-bypass menu/loot gates under drought escalation.
