@@ -357,7 +357,7 @@ def detect_hang() -> HangReport:
     # for many hours while nothing ships.
     absolute_silence = max(
         silence_warn,
-        int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "7200")),
+        int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400")),
     )
     progress_stuck = max(300, int(os.environ.get("VOD_PROGRESS_STUCK_SEC", "900")))
     zero_streak_heal = max(3, int(os.environ.get("VOD_ZERO_SEND_STREAK_HEAL", "6")))
@@ -642,8 +642,8 @@ def apply_agent_recover_env(
         target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.05")
         target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
         # Esc2 may soften loot-walk, but keep shooting/menu gates alive.
-        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
-        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "0")
+        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
+        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "1")
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
             "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
         )
@@ -1042,7 +1042,33 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
     return out
 
 
+def _load_env_file(path: Path) -> None:
+    try:
+        if not path.is_file():
+            return
+    except OSError:
+        return
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key and key not in os.environ:
+            os.environ[key] = val.strip().strip('"').strip("'")
+
+
 def main() -> int:
+    env_file = Path(
+        os.environ.get("VOD_BOT_ENV_FILE")
+        or os.environ.get("VOD_FEED_ENV_FILE")
+        or "/root/.video_bot.env"
+    )
+    _load_env_file(env_file)
     parser = argparse.ArgumentParser(description="VOD hang detector and auto-recover")
     parser.add_argument("--tick", action="store_true", help="Run one watchdog tick (cron)")
     parser.add_argument("--detect", action="store_true", help="Print hang report JSON only")

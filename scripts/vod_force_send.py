@@ -221,7 +221,8 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["VOD_FORCE_QUALITY_MIN"] = env["PUBG_QUALITY_SCORE_MIN_SINGLES"]
     env["VOD_FORCE_PAYOFF_MIN"] = env["PUBG_PAYOFF_SCORE_MIN_SINGLES"]
     if escalation >= 2:
-        env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "0")
+        # Keep loot reject ON by default even at esc2 — garbage menu/loot is worse than silence.
+        env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
     else:
         env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
     env["PUBG_FAST_RANK_DROP_LOOT_WALK"] = "0"

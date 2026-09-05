@@ -15,6 +15,7 @@ StartLimitBurst=20
 KillMode=control-group
 TimeoutStopSec=45
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+EnvironmentFile=-/root/.video_bot.env
 
 [Install]
 WantedBy=multi-user.target

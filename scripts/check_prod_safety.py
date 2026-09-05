@@ -244,6 +244,57 @@ if "install_mlbb_vod_only.sh" in import_tip and "deploy_unified_production.sh" n
     errors.append("import_vod_state_bundle.sh must recommend deploy_unified_production.sh")
 
 
+
+# Hang healer must be reinstalled after legacy watchdog cron purge.
+deploy = (SCRIPTS / "deploy_unified_production.sh").read_text(encoding="utf-8")
+if "install_vod_hang_watch.sh" not in deploy:
+    errors.append("deploy_unified_production.sh must install content-bot-vod-hang.timer")
+if '"VOD_PUBG_ONLY": "1"' not in deploy and "VOD_PUBG_ONLY" not in deploy:
+    errors.append("deploy must pin VOD_PUBG_ONLY=1")
+hang_unit = (SCRIPTS / "content_bot_vod_hang.service").read_text(encoding="utf-8")
+if "--tick" not in hang_unit or "vod_hang_detector.py" not in hang_unit:
+    errors.append("content_bot_vod_hang.service must run vod_hang_detector --tick")
+if "VOD_FEED_ALLOW_NOHUP=0" not in hang_unit and "VOD_FEED_ALLOW_NOHUP" not in hang_unit:
+    # allow either spelling used in unit
+    if "ALLOW_NOHUP=0" not in hang_unit:
+        errors.append("hang oneshot must keep VOD_FEED_ALLOW_NOHUP=0")
+if not (SCRIPTS / "content_bot_vod_hang.timer").is_file():
+    errors.append("content_bot_vod_hang.timer must exist")
+if not (SCRIPTS / "install_vod_hang_watch.sh").is_file():
+    errors.append("install_vod_hang_watch.sh must exist")
+
+drought = (SCRIPTS / "vod_send_drought_watch.py").read_text(encoding="utf-8")
+if "_age(game)" in drought or "float(_age(game)" in drought:
+    errors.append("vod_send_drought_watch must call last_send_age_sec() without game arg")
+if "run_tick" not in drought and "content-bot-vod-hang.service" not in drought:
+    errors.append("vod_send_drought_watch must escalate to hang tick on drought")
+
+owner = (SCRIPTS / "vod_feed_owner_health.py").read_text(encoding="utf-8")
+if "maybe_heal_unit" not in owner:
+    errors.append("vod_feed_owner_health must soft-heal dead unit / hang on silence")
+
+hang = (SCRIPTS / "vod_hang_detector.py").read_text(encoding="utf-8")
+if 'VOD_ABSOLUTE_SILENCE_SEC", "7200"' in hang:
+    errors.append("vod_hang_detector absolute silence default must be unified (5400)")
+if "_load_env_file" not in hang:
+    errors.append("vod_hang_detector must load env file before TG alerts")
+
+feed = (SCRIPTS / "shooter_vod_segment_feed.py").read_text(encoding="utf-8")
+# lock miss must exit non-zero
+if "if lock is None:\n        return 0" in feed.replace("\r",""):
+    errors.append("shooter feed lock miss must exit non-zero")
+# softer check
+import re
+m = re.search(r"if lock is None:\n(\s+)return (\d+)", feed)
+if m and m.group(2) == "0":
+    errors.append("shooter feed lock miss must exit non-zero")
+
+score = (SCRIPTS / "pubg_quality_score.py").read_text(encoding="utf-8")
+if 'PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"' in score:
+    errors.append("permanent singles payoff floor must be >0.10 (anti-garbage)")
+if 'PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28"' in score:
+    errors.append("permanent singles quality floor must be >0.28 (anti-garbage)")
+
 if errors:
     print("PROD SAFETY CHECK FAILED:")
     for e in errors:

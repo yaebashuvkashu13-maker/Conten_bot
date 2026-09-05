@@ -117,6 +117,45 @@ def maybe_heal_duplicates() -> dict:
     return {"supervisors": len(pids), "kept": keep, "killed": killed}
 
 
+def maybe_heal_unit(*, active: str, ledger_age: float | None, silence_limit: float) -> dict:
+    """Soft recover: restart dead unit; escalate hang oneshot on ledger silence."""
+    out: dict = {"unit_restart": False, "hang_tick": False}
+    if _env("VOD_FEED_AUTO_HEAL_UNIT", "1") == "1" and active not in {"active", "activating"}:
+        _systemctl("reset-failed", SERVICE)
+        _systemctl("start", SERVICE)
+        out["unit_restart"] = True
+        time.sleep(2)
+        out["active_after"] = _systemctl("is-active", SERVICE) or "unknown"
+    silence = ledger_age is None or (silence_limit > 0 and ledger_age > silence_limit)
+    if silence and _env("VOD_FEED_AUTO_HANG_ON_SILENCE", "1") == "1":
+        hang_unit = _env("VOD_HANG_SYSTEMD_UNIT", "content-bot-vod-hang.service")
+        out["hang_unit"] = hang_unit
+        try:
+            proc = subprocess.run(
+                ["systemctl", "start", hang_unit],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            out["hang_tick"] = proc.returncode == 0
+            if proc.returncode != 0:
+                out["hang_err"] = (proc.stderr or proc.stdout or "").strip()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            out["hang_err"] = str(exc)
+        if not out["hang_tick"]:
+            try:
+                from vod_hang_detector import run_tick
+
+                out["hang_inline"] = run_tick(
+                    game=_env("VOD_FEED_HEALTH_GAME", "pubg"), force=False
+                )
+                out["hang_tick"] = True
+            except Exception as exc2:  # noqa: BLE001
+                out["hang_inline_err"] = str(exc2)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--game", default=_env("VOD_FEED_HEALTH_GAME", "pubg"))
@@ -150,6 +189,13 @@ def main(argv: list[str] | None = None) -> int:
     feeds = _pgrep("shooter_vod_segment_feed\\.py")
     heal = maybe_heal_duplicates() if len(supers) > 1 else {"supervisors": len(supers)}
     ledger_age = ledger_gate_age_sec(args.game)
+    silence_limit = max(0.0, float(args.ledger_silence_hours)) * 3600.0
+    soft = maybe_heal_unit(active=active, ledger_age=ledger_age, silence_limit=silence_limit)
+    if soft.get("unit_restart"):
+        active = soft.get("active_after") or _systemctl("is-active", SERVICE) or active
+        supers = _pgrep("mlbb_vod_segment_feed\\.sh")
+        feeds = _pgrep("shooter_vod_segment_feed\\.py")
+    heal = {**heal, "soft": soft}
 
     problems: list[str] = []
     if active not in {"active", "activating"}:
@@ -160,7 +206,6 @@ def main(argv: list[str] | None = None) -> int:
         problems.append(f"duplicate_supervisors={len(supers)} heal={heal}")
     if not feeds and active == "active":
         problems.append("no shooter_vod_segment_feed.py while unit active")
-    silence_limit = max(0.0, float(args.ledger_silence_hours)) * 3600.0
     if ledger_age is None:
         problems.append("ledger_no_reject_sent_or_heartbeat")
     elif ledger_age > silence_limit:

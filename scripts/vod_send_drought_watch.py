@@ -28,7 +28,9 @@ def last_send_age_sec(game: str = "pubg") -> float | None:
     try:
         from vod_hang_detector import last_send_age_sec as _age
 
-        return float(_age(game) or 0) or None
+        # Hang API is global (no game arg). Passing game raised TypeError and
+        # forced age=None forever → drought never auto-recovered.
+        return float(_age())
     except Exception:
         pass
     stamp = Path(f"/root/data/{game}/last_send_ts")
@@ -68,18 +70,49 @@ def _reject_ops_line(game: str) -> tuple[dict, str]:
     )
     return summary, line
 
+def _trigger_hang_tick(game: str) -> dict:
+    """Escalate drought to hang heal (systemd oneshot, else in-process tick)."""
+    if _env("VOD_DROUGHT_TRIGGER_HANG", "1") != "1":
+        return {"skipped": True}
+    import subprocess
+
+    unit = _env("VOD_HANG_SYSTEMD_UNIT", "content-bot-vod-hang.service")
+    try:
+        proc = subprocess.run(
+            ["systemctl", "start", unit],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return {"via": "systemd", "unit": unit}
+        systemd_err = (proc.stderr or proc.stdout or "").strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        systemd_err = str(exc)
+    try:
+        from vod_hang_detector import run_tick
+
+        return {"via": "inline", "result": run_tick(game=game, force=False)}
+    except Exception as exc:  # noqa: BLE001
+        return {"via": "failed", "systemd_err": systemd_err, "error": str(exc)}
+
+
 def maybe_recover(game: str) -> dict:
     if _env("VOD_DROUGHT_AUTO_RECOVER", "1") != "1":
         return {"skipped": True}
+    out: dict = {}
     try:
         from vod_inbox_recover import clear_exhausted, drop_live_stubs, unpark_recent
 
         removed = drop_live_stubs(game)
         moved = unpark_recent(game, limit=int(_env("VOD_DROUGHT_UNPARK", "5") or 5))
         cleared = clear_exhausted(game, moved or None)
-        return {"removed_stubs": removed, "unparked": moved, "cleared": cleared}
+        out.update({"removed_stubs": removed, "unparked": moved, "cleared": cleared})
     except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc)}
+        out["inbox_error"] = str(exc)
+    out["hang"] = _trigger_hang_tick(game)
+    return out
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -131,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     report["reject_summary"] = summary
 
     recover = {}
-    if drought and not unknown:
+    if drought or (unknown and _env("VOD_DROUGHT_RECOVER_ON_UNKNOWN", "1") == "1"):
         recover = maybe_recover(args.game)
         report["recover"] = recover
 

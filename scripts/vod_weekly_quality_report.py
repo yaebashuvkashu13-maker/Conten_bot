@@ -193,7 +193,7 @@ def _telegram_send(text: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--days", type=int, default=7)
-    ap.add_argument("--games", default="pubg,standoff,wot,mlbb")
+    ap.add_argument("--games", default="pubg")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--telegram", action="store_true", help="force Telegram send")
     args = ap.parse_args(argv)

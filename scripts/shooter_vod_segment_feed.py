@@ -3796,7 +3796,9 @@ def main() -> int:
         os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
     lock = _feed_lock(game)
     if lock is None:
-        return 0
+        # Non-zero so systemd Restart=on-failure / owner-health see contention
+        # instead of a silent "success" loop that ships nothing.
+        return 1
     env = {**os.environ, **file_env}
     for key in (
         "SHOOTER_VOD_FEED",

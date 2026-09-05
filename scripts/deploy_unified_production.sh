@@ -78,6 +78,18 @@ python3 - <<PY
 from pathlib import Path
 p = Path("${ENV_FILE}")
 wanted = {
+    # PUBG-only production: ignore other game streams / finite quotas.
+    "VOD_PUBG_ONLY": "1",
+    "EU_PUBG_ONLY": "1",
+    "DAILY_PUBG_QUOTA": "-1",
+    "DAILY_MLBB_QUOTA": "0",
+    "DAILY_STANDOFF_QUOTA": "0",
+    "DAILY_GENSHIN_QUOTA": "0",
+    "DAILY_WOT_QUOTA": "0",
+    "DAILY_GAME_CYCLE_ENABLED": "0",
+    "VOD_FORCE_SOFTEN": "0",
+    "VOD_ABSOLUTE_SILENCE_SEC": "5400",
+    "VOD_SILENCE_WARN_SEC": "3600",
     "VOD_FORCE_PRESEND_BYPASS": "0",
     "VOD_FORCE_SKIP_DISCOVERY": "0",
     "SHOOTER_VOD_SKIP_DISCOVERY": "0",
@@ -96,15 +108,15 @@ wanted = {
     "VOD_DROUGHT_AUTO_RECOVER": "1",
     "VOD_DROUGHT_HOURS": "2",
     "VOD_LEDGER_SILENCE_HOURS": "3",
-    # Payoff calibration: stop OCR-miss drought without re-enabling menu bypass
+    # Permanent singles floors (anti-garbage). Drought soften may lower temporarily.
     "PUBG_EARLY_PAYOFF_REJECT_SINGLES": "0",
     "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0",
     "PUBG_SINGLES_GUN_QUALITY_BYPASS": "0",
     "PUBG_FAST_PAYOFF_MIN": "0.12",
     "PUBG_PAYOFF_SCORE_MIN": "0.28",
-    "PUBG_PAYOFF_SCORE_MIN_SINGLES": "0.10",
+    "PUBG_PAYOFF_SCORE_MIN_SINGLES": "0.16",
     "PUBG_FIGHT_SCORE_MIN": "0.38",
-    "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.28",
+    "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.32",
 }
 text = p.read_text() if p.exists() else ""
 lines = text.splitlines(); keys=set(); out=[]
@@ -136,6 +148,10 @@ fi
 # Also stop/disable any leftover timer units if present.
 systemctl disable --now mlbb-vod-health-watchdog.timer 2>/dev/null || true
 systemctl disable --now mlbb-continuous-worker-watchdog.timer 2>/dev/null || true
+
+# Reinstall systemd-only hang healer (replaces purged mlbb_vod_health_watchdog cron).
+CONTENT_BOT_REPO="$REPO" VOD_BOT_ENV_FILE="$ENV_FILE" \
+  bash scripts/install_vod_hang_watch.sh || { echo "WARN: install_vod_hang_watch.sh failed" >&2; INSTALL_WARN=1; }
 
 # --- Single owner restart: stop unit, kill orphans, clear stale lock, start unit ---
 systemctl stop "$UNIT" 2>/dev/null || true

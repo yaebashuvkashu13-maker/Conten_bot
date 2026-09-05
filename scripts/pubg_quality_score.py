@@ -422,7 +422,7 @@ def score_pubg_window(
     fight_min = float(os.environ.get("PUBG_FIGHT_SCORE_MIN", "0.38"))
     payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN", "0.28"))
     if single:
-        payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10"))
+        payoff_min = float(os.environ.get("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16"))
     report["fight_score"] = round(fight_score, 4)
     report["payoff_score"] = round(payoff_score, 4)
     report["fight_threshold"] = fight_min
@@ -503,7 +503,7 @@ def score_pubg_window(
 
     threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN", "0.48"))
     if single:
-        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28"))
+        threshold = float(os.environ.get("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.32"))
     report.update(
         {
             "components": {key: round(value, 4) for key, value in components.items()},
