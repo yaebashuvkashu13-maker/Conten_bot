@@ -129,8 +129,10 @@ def overrides_for_level(level: int) -> dict[str, str]:
         ov = dict(SHOOTER_SOFTEN_L2)
     else:
         ov = dict(SHOOTER_SOFTEN_L1)
-    # Never let soften re-enable owner-heuristic relax (talk/loot path).
-    ov["PUBG_RELAX_OWNER_HEURISTICS"] = "0"
+    # Never let streak-soften re-enable owner-heuristic relax (talk/loot path).
+    # Drought recover (VOD_FORCE_SOFTEN) owns RELAX — do not clobber it.
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") != "1":
+        ov["PUBG_RELAX_OWNER_HEURISTICS"] = "0"
     return ov
 
 

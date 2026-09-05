@@ -41,13 +41,28 @@ FORBIDDEN_REASONS = frozenset(
 ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
 
 
+def _drought_soften_active() -> bool:
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+        return True
+    try:
+        return int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0
+    except ValueError:
+        return False
+
+
 def _min_gunfire() -> float:
     raw = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    # Steady-state keeps the absolute quality floor. Drought soften must be
+    # allowed to use VOD_FORCE_GUN_DENSITY / SMART floors or recover stays mute.
+    if _drought_soften_active():
+        return max(0.0, raw)
     return max(raw, QUALITY_FLOOR_GUNFIRE)
 
 
 def _min_burst() -> float:
     raw = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    if _drought_soften_active():
+        return max(0.0, raw)
     return max(raw, QUALITY_FLOOR_BURST)
 
 

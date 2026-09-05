@@ -367,8 +367,15 @@ def force_send_game(
         # (avoids dual-owner: orphan feed + unit Start).
         _stop_game_feed(game)
         clear_feed_locks()
-        for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
-            _systemctl("start", unit)
+        # Drought recover owns the systemd hand-off. Resuming the unit here
+        # reloads EnvironmentFile without soften and wipes VOD_FORCE_* mid-heal.
+        hold = (
+            os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+            and os.environ.get("VOD_RECOVER_HOLD_SYSTEMD", "1") == "1"
+        )
+        if not hold:
+            for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
+                _systemctl("start", unit)
 
     if timed_out:
         return {
