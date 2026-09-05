@@ -625,25 +625,25 @@ def apply_agent_recover_env(
         os.environ.get("VOD_RECOVER_UNPARK", "4"),
     )
     target["VOD_FORCE_ESCALATION"] = str(esc)
-    # Esc0/1 drought: keep loot reject ON so soften does not re-open menu/loot.
-    if esc < 2:
-        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
-        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "1")
-        target.setdefault("VOD_FORCE_GUN_DENSITY", os.environ.get("VOD_FORCE_GUN_DENSITY", "0.030"))
-        target.setdefault("VOD_FORCE_BURST_RATIO", os.environ.get("VOD_FORCE_BURST_RATIO", "3.5"))
-        target.setdefault("VOD_FORCE_QUALITY_MIN", os.environ.get("VOD_FORCE_QUALITY_MIN", "0.22"))
-        target.setdefault("VOD_FORCE_PAYOFF_MIN", os.environ.get("VOD_FORCE_PAYOFF_MIN", "0.08"))
+    # Soften ladder (hard-assign). Must match apply_drought_pubg_env.
+    # Do NOT read VOD_FORCE_QUALITY_MIN / PAYOFF_MIN from pinned env — stale
+    # strict pins (0.40/0.30) made drought recover stricter than steady state.
+    q_min, p_min, gun = "0.22", "0.08", "0.030"
     if esc >= 1:
-        target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.12")
-        target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.020")
-        target["VOD_FORCE_PAYOFF_MIN"] = os.environ.get("VOD_FORCE_PAYOFF_MIN", "0.05")
-        target["VOD_FORCE_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
+        q_min, p_min, gun = "0.12", "0.05", "0.020"
     if esc >= 2:
-        target["VOD_FORCE_QUALITY_MIN"] = os.environ.get("VOD_FORCE_QUALITY_MIN", "0.05")
-        target["VOD_FORCE_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", "0.010")
-        # Esc2 may soften loot-walk, but keep shooting/menu gates alive.
-        target["VOD_FORCE_REJECT_LOOT"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
-        target["PUBG_REJECT_LOOT_WALK"] = os.environ.get("PUBG_REJECT_LOOT_WALK", "1")
+        q_min, p_min, gun = "0.05", "0.03", "0.010"
+    target["VOD_FORCE_QUALITY_MIN"] = q_min
+    target["VOD_FORCE_PAYOFF_MIN"] = p_min
+    target["VOD_FORCE_GUN_DENSITY"] = gun
+    target["VOD_FORCE_BURST_RATIO"] = "3.5"
+    target["PUBG_QUALITY_SCORE_MIN_SINGLES"] = q_min
+    target["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = p_min
+    target["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun
+    # Keep loot reject ON at every escalation — garbage menu/loot > silence.
+    target["VOD_FORCE_REJECT_LOOT"] = "1"
+    target["PUBG_REJECT_LOOT_WALK"] = "1"
+    if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
             "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
         )

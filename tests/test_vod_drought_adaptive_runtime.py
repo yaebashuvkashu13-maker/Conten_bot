@@ -76,6 +76,25 @@ def test_hang_recover_esc0_keeps_loot_reject(monkeypatch: pytest.MonkeyPatch) ->
     assert out.get("PUBG_SINGLES_GUN_QUALITY_BYPASS") == "1"
 
 
+def test_soften_hard_assigns_over_stale_strict_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pinned VOD_FORCE_* must not make drought stricter than steady state."""
+    from vod_force_send import apply_drought_pubg_env
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    stale = {
+        "VOD_FORCE_QUALITY_MIN": "0.40",
+        "VOD_FORCE_PAYOFF_MIN": "0.30",
+        "VOD_FORCE_GUN_DENSITY": "0.08",
+    }
+    force = apply_drought_pubg_env(dict(stale), escalation=1)
+    hang = apply_agent_recover_env(dict(stale), escalation=1)
+    assert float(force["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.12)
+    assert float(force["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
+    assert float(hang["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.12)
+    assert float(hang["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
+
+
 def test_hang_recover_esc2_caps_owner_relax(monkeypatch: pytest.MonkeyPatch) -> None:
     from vod_hang_detector import apply_agent_recover_env
 

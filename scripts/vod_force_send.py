@@ -210,16 +210,19 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         quality_default = "0.05"
         gun_default = "0.010"
         payoff_default = "0.03"
-    env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = os.environ.get("VOD_FORCE_PAYOFF_MIN", payoff_default)
-    env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = os.environ.get("VOD_FORCE_QUALITY_MIN", quality_default)
+    # Hard-assign soften floors. Never inherit VOD_FORCE_QUALITY_MIN /
+    # VOD_FORCE_PAYOFF_MIN from the pinned env file — those keys were left at
+    # *stricter* values (0.40/0.30) and made drought worse than steady state.
+    env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = payoff_default
+    env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = quality_default
     env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
     env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
-    env["PUBG_SINGLE_MIN_GUN_DENSITY"] = os.environ.get("VOD_FORCE_GUN_DENSITY", gun_default)
+    env["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun_default
     env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
-    env["VOD_FORCE_GUN_DENSITY"] = env["PUBG_SINGLE_MIN_GUN_DENSITY"]
+    env["VOD_FORCE_GUN_DENSITY"] = gun_default
     env["VOD_FORCE_BURST_RATIO"] = env["PUBG_CLIP_MIN_BURST_RATIO"]
-    env["VOD_FORCE_QUALITY_MIN"] = env["PUBG_QUALITY_SCORE_MIN_SINGLES"]
-    env["VOD_FORCE_PAYOFF_MIN"] = env["PUBG_PAYOFF_SCORE_MIN_SINGLES"]
+    env["VOD_FORCE_QUALITY_MIN"] = quality_default
+    env["VOD_FORCE_PAYOFF_MIN"] = payoff_default
     if escalation >= 2:
         # Keep loot reject ON by default even at esc2 — garbage menu/loot is worse than silence.
         env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
@@ -351,7 +354,10 @@ def force_send_game(
             "hint": _reject_hint(game),
         }
     finally:
-        # Resume supervisor after exclusive send (best-effort).
+        # Ensure exclusive force-send child is gone before systemd resumes
+        # (avoids dual-owner: orphan feed + unit Start).
+        _stop_game_feed(game)
+        clear_feed_locks()
         for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
             _systemctl("start", unit)
 

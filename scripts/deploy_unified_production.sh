@@ -118,12 +118,22 @@ wanted = {
     "PUBG_FIGHT_SCORE_MIN": "0.38",
     "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.32",
 }
+# Stale drought pins that previously inverted soften (stricter than steady).
+# Recover hard-assigns these; they must not linger in the env file.
+drop_keys = {
+    "VOD_FORCE_QUALITY_MIN",
+    "VOD_FORCE_PAYOFF_MIN",
+    "VOD_FORCE_GUN_DENSITY",
+    "VOD_FORCE_ESCALATION",
+}
 text = p.read_text() if p.exists() else ""
 lines = text.splitlines(); keys=set(); out=[]
 for line in lines:
     if not line or line.lstrip().startswith("#") or "=" not in line:
         out.append(line); continue
     k = line.split("=", 1)[0].strip()
+    if k in drop_keys:
+        continue
     if k in wanted:
         out.append(f"{k}={wanted[k]}"); keys.add(k)
     else:
@@ -134,6 +144,7 @@ for k,v in wanted.items():
 p.parent.mkdir(parents=True, exist_ok=True)
 p.write_text("\\n".join(out) + "\\n")
 print("env pinned", sorted(wanted))
+print("env dropped", sorted(drop_keys))
 PY
 
 
