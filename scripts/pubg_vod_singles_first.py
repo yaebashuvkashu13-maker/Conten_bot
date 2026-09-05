@@ -2,11 +2,13 @@
 """PUBG singles-first VOD mode: send all fights one-by-one, assemble montage at end.
 
 Inspect-all policy (PUBG_FULL_PEAK_SCAN=1, default):
-  Walk every ranked combat peak in the VOD through presend gates until one
-  ships or the pool is empty. Do NOT stop after a silent top-4/8 try budget.
+  Walk every ranked combat peak in the VOD through presend gates.
+  Do NOT stop after a silent top-4/8 try budget.
 
-Send policy (unchanged): one good single per successful cycle — inspect-all
-is not spam-all. Quality gates (menu/loot/gun/hook) still reject junk.
+Send policy (PUBG_FULL_PEAK_SCAN=1): ship every peak that passes quality gates
+in the same cycle (flood OK). Junk still dies on menu/loot/gun/hook gates.
+Cap with PUBG_SINGLES_MAX_SENDS_PER_CYCLE (0 = unlimited). Legacy FULL=0
+keeps one good send per cycle.
 """
 
 from __future__ import annotations
@@ -68,6 +70,29 @@ def singles_zero_send_exhaust_limit() -> int:
         return max(1, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "6")))
     except (TypeError, ValueError):
         return 6
+
+
+def singles_max_sends_per_cycle() -> int:
+    """How many quality singles to ship in one feed cycle.
+
+    Full peak scan default 0 = unlimited (keep sending while gates pass).
+    Legacy FULL=0 default 1 (stop after first good send).
+    Explicit positive PUBG_SINGLES_MAX_SENDS_PER_CYCLE always caps.
+    """
+    raw = os.environ.get("PUBG_SINGLES_MAX_SENDS_PER_CYCLE")
+    if full_peak_scan_enabled():
+        if raw is None or str(raw).strip() == "":
+            return 0
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return 0
+    if raw is None or str(raw).strip() == "":
+        return 1
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1
 
 ASSEMBLE_LOG = Path(os.environ.get("PUBG_ASSEMBLE_LOG", "/root/data/mlbb/assemble_montage.log"))
 PENDING_ASSEMBLE_PATH = Path(
@@ -653,7 +678,11 @@ def singles_first_send_cycle(
     record_scan_fn: Callable[..., None],
     scan_funnel: Any | None = None,
 ) -> int:
-    """Send one single from pre-built rows; exhaust VOD on last clip."""
+    """Send quality singles from pre-built rows; exhaust VOD when pool is done.
+
+    Under full peak scan: keep shipping every gate-pass until the pool is empty
+    (or PUBG_SINGLES_MAX_SENDS_PER_CYCLE). Legacy: stop after first good send.
+    """
     from shooter_vod_segment_feed import (
         _peak_too_close,
         _remember_dense_rejections,
@@ -676,12 +705,16 @@ def singles_first_send_cycle(
 
     max_tries = singles_peak_try_budget(len(rows))
     exhaust_streak = singles_zero_send_exhaust_limit()
+    max_sends = singles_max_sends_per_cycle()
+    total_sent = 0
     log.info(
-        "pubg singles inspect-all vod=%s rows=%s tries=%s exhaust_streak=%s full_scan=%s",
+        "pubg singles inspect-all vod=%s rows=%s tries=%s exhaust_streak=%s "
+        "max_sends=%s full_scan=%s",
         vod.name,
         len(rows),
         max_tries,
         exhaust_streak,
+        max_sends if max_sends > 0 else "unlimited",
         int(full_peak_scan_enabled()),
     )
 
@@ -695,6 +728,16 @@ def singles_first_send_cycle(
             peak_too_close=_peak_too_close,
         )
         if row is None:
+            if total_sent > 0:
+                clear_active_vod(state, reason="pubg_singles_complete")
+                mark_exhausted_fn(state, vod, reason="pubg_singles_complete", delete_file=False)
+                log.info(
+                    "pubg singles-first pool done vod=%s total_sent=%s",
+                    vod.name,
+                    total_sent,
+                )
+                save_state_fn(game, state)
+                return total_sent
             clear_active_vod(state, reason="pubg_singles_exhausted")
             mark_exhausted_fn(state, vod, reason="pubg_singles_exhausted", delete_file=False)
             save_state_fn(game, state)
@@ -722,15 +765,28 @@ def singles_first_send_cycle(
             singles_final=is_final,
         )
         if n > 0:
+            total_sent += n
+            sid = str(row.get("segment_id") or "")
+            if sid:
+                blocked_ids.add(sid)
+                sent_set.add(sid)
+            used_peaks.append(peak)
+            # Refresh from disk so later picks skip anything already shipped.
+            sent_set = load_feed_sent(game)
+            used_peaks = _used_peak_times(game, vid, sent_set)
+            blocked_ids = labeled_ids(game) | sent_set
+
             if entry is not None:
                 entry["singles_zero_send_streak"] = 0
                 if scan_funnel is not None:
-                    scan_funnel.sent = n
-                    scan_funnel.presend_pass = n
+                    scan_funnel.sent = total_sent
+                    scan_funnel.presend_pass = max(
+                        int(getattr(scan_funnel, "presend_pass", 0) or 0), total_sent
+                    )
                     scan_funnel.mark("sent")
                 record_scan_fn(
                     entry,
-                    sent=n,
+                    sent=total_sent,
                     pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
                     blocked=False,
                     funnel=scan_funnel.to_dict() if scan_funnel else None,
@@ -741,21 +797,28 @@ def singles_first_send_cycle(
                 clear_active_vod(state, reason="pubg_singles_complete")
                 mark_exhausted_fn(state, vod, reason="pubg_singles_complete", delete_file=False)
                 log.info(
-                    "pubg singles-first FINAL vod=%s peak=%.1f sent=%s — assemble button",
+                    "pubg singles-first FINAL vod=%s peak=%.1f sent=%s total=%s — assemble button",
                     vod.name,
                     peak,
                     n,
+                    total_sent,
                 )
-            else:
-                log.info(
-                    "pubg singles-first vod=%s peak=%.1f sent=%s — more peaks remain",
-                    vod.name,
-                    peak,
-                    n,
-                )
+                save_state_fn(game, state)
+                return total_sent
 
+            hit_cap = max_sends > 0 and total_sent >= max_sends
+            log.info(
+                "pubg singles-first vod=%s peak=%.1f sent=%s total=%s — %s",
+                vod.name,
+                peak,
+                n,
+                total_sent,
+                "cycle cap" if hit_cap else "continue quality flood",
+            )
             save_state_fn(game, state)
-            return n
+            if hit_cap:
+                return total_sent
+            continue
 
         _remember_dense_rejections(entry, [peak])
         merged_rejected.append(peak)
@@ -773,13 +836,26 @@ def singles_first_send_cycle(
             entry["reject_reason"] = "pubg_singles_presend_reject"
             record_scan_fn(
                 entry,
-                sent=0,
+                sent=total_sent,
                 pool_peaks=[float(r.get("peak_start", 0)) for r in rows],
                 blocked=False,
             )
             # Full scan: streak limit 0 means keep going until the pool is empty.
             streak_give_up = exhaust_streak > 0 and streak >= exhaust_streak
             if row_next is None or streak_give_up:
+                if total_sent > 0:
+                    clear_active_vod(state, reason="pubg_singles_complete")
+                    mark_exhausted_fn(
+                        state, vod, reason="pubg_singles_complete", delete_file=False
+                    )
+                    log.info(
+                        "pubg singles stop after quality sends vod=%s total=%s "
+                        "remaining_reject_or_empty=1",
+                        vod.name,
+                        total_sent,
+                    )
+                    save_state_fn(game, state)
+                    return total_sent
                 reason = (
                     "pubg_singles_presend_exhausted"
                     if row_next is None
@@ -797,16 +873,17 @@ def singles_first_send_cycle(
                 return 0
             save_state_fn(game, state)
         log.info(
-            "pubg singles retry peak vod=%s rejected=%.1f attempt=%s/%s next=%s",
+            "pubg singles retry peak vod=%s rejected=%.1f attempt=%s/%s next=%s total_sent=%s",
             vod.name,
             peak,
             attempt + 1,
             max_tries,
             "yes" if row_next else "no",
+            total_sent,
         )
 
     save_state_fn(game, state)
-    return 0
+    return total_sent
 
 
 def _cli_send_text(token: str, chat_id: str, text: str) -> None:

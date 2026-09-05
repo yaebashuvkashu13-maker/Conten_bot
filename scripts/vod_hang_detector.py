@@ -706,6 +706,10 @@ def apply_agent_recover_env(
     target["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
         "VOD_FORCE_SEND_ZERO_EXHAUST", "0"
     )
+    # 0 = ship every gate-pass in one cycle (quality flood OK; junk still gated).
+    target["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
+        "VOD_FORCE_MAX_SENDS_PER_CYCLE", "0"
+    )
     if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
             "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"

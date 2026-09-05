@@ -303,6 +303,10 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
     # 0 = never abandon VOD on reject streak alone under full peak scan.
     env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "0")
+    # 0 = ship every gate-pass in one cycle (quality flood OK).
+    env["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
+        "VOD_FORCE_MAX_SENDS_PER_CYCLE", "0"
+    )
     env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
     if escalation >= 2:
         env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
@@ -358,6 +362,10 @@ def force_send_game(
         env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
             "VOD_FORCE_SEND_ZERO_EXHAUST",
             env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "0"),
+        )
+        env["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
+            "VOD_FORCE_MAX_SENDS_PER_CYCLE",
+            env.get("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", "0"),
         )
         env.setdefault("PUBG_SINGLES_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"))
         env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"

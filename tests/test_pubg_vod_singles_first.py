@@ -201,6 +201,7 @@ def test_enqueue_assemble_dedupes(tmp_path, monkeypatch):
 
 def test_full_scan_inspects_all_peaks_budget(monkeypatch):
     from pubg_vod_singles_first import (
+        singles_max_sends_per_cycle,
         singles_peak_try_budget,
         singles_zero_send_exhaust_limit,
     )
@@ -208,13 +209,171 @@ def test_full_scan_inspects_all_peaks_budget(monkeypatch):
     monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
     monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
     monkeypatch.delenv("PUBG_SINGLES_ZERO_SEND_EXHAUST", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", raising=False)
     assert singles_peak_try_budget(40) == 40
     assert singles_zero_send_exhaust_limit() == 0
+    assert singles_max_sends_per_cycle() == 0
 
     monkeypatch.setenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", "0")
     assert singles_peak_try_budget(25) == 25
 
+    monkeypatch.setenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", "3")
+    assert singles_max_sends_per_cycle() == 3
+
     monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
     monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", raising=False)
     assert singles_peak_try_budget(40) == 4
     assert singles_zero_send_exhaust_limit() == 6
+    assert singles_max_sends_per_cycle() == 1
+
+
+def test_quality_flood_sends_multiple_gate_passes(monkeypatch, tmp_path):
+    """Full scan ships every gate-pass in one cycle (not stop-after-first)."""
+    import pubg_vod_singles_first as sf
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_ZERO_SEND_EXHAUST", raising=False)
+
+    rows = [
+        {"segment_id": "vid_100", "peak_start": 100.0, "start": 95.0, "score": 0.9},
+        {"segment_id": "vid_200", "peak_start": 200.0, "start": 195.0, "score": 0.8},
+        {"segment_id": "vid_300", "peak_start": 300.0, "start": 295.0, "score": 0.7},
+    ]
+    sent_ids: list[str] = []
+
+    def _send_batch(_game, _token, _chat, _vod, batch, *_a, **_k):
+        sid = str(batch[0]["segment_id"])
+        sent_ids.append(sid)
+        return 1
+
+    class _Mod:
+        @staticmethod
+        def _peak_too_close(peak, used, gap):
+            return any(abs(peak - u) <= gap for u in used)
+
+        @staticmethod
+        def _remember_dense_rejections(*_a, **_k):
+            return None
+
+        @staticmethod
+        def _send_batch(*a, **k):
+            return _send_batch(*a, **k)
+
+        @staticmethod
+        def _used_peak_times(_game, _vid, sent_set):
+            peaks = []
+            for sid in sent_set:
+                if sid.endswith("_100"):
+                    peaks.append(100.0)
+                elif sid.endswith("_200"):
+                    peaks.append(200.0)
+                elif sid.endswith("_300"):
+                    peaks.append(300.0)
+            return peaks
+
+        @staticmethod
+        def labeled_ids(_game):
+            return set()
+
+        @staticmethod
+        def load_feed_sent(_game):
+            return set(sent_ids)
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "shooter_vod_segment_feed", _Mod())
+    monkeypatch.setattr(sf, "singles_keyboard", lambda *a, **k: {"inline_keyboard": []})
+    monkeypatch.setattr(sf, "should_show_assemble_button", lambda *a, **k: False)
+
+    state: dict = {}
+    entry: dict = {}
+    marks: list[str] = []
+
+    total = sf.singles_first_send_cycle(
+        game="pubg",
+        token="t",
+        chat_id="1",
+        vod=tmp_path / "yt_vid.mp4",
+        vid="vid",
+        state=state,
+        entry=entry,
+        rows=rows,
+        gap_sec=45.0,
+        rejected_peaks=[],
+        sig="abc",
+        mark_exhausted_fn=lambda *_a, **_k: marks.append("ex"),
+        save_state_fn=lambda *_a, **_k: None,
+        record_scan_fn=lambda *_a, **_k: None,
+    )
+    assert total == 3
+    assert sent_ids == ["vid_100", "vid_200", "vid_300"]
+    assert marks  # exhausted/complete after pool done
+
+
+def test_quality_flood_respects_send_cap(monkeypatch, tmp_path):
+    import pubg_vod_singles_first as sf
+    import sys
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.setenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", "2")
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+
+    rows = [
+        {"segment_id": "vid_100", "peak_start": 100.0, "start": 95.0, "score": 0.9},
+        {"segment_id": "vid_200", "peak_start": 200.0, "start": 195.0, "score": 0.8},
+        {"segment_id": "vid_300", "peak_start": 300.0, "start": 295.0, "score": 0.7},
+    ]
+    sent_ids: list[str] = []
+
+    class _Mod:
+        @staticmethod
+        def _peak_too_close(peak, used, gap):
+            return any(abs(peak - u) <= gap for u in used)
+
+        @staticmethod
+        def _remember_dense_rejections(*_a, **_k):
+            return None
+
+        @staticmethod
+        def _send_batch(_game, _token, _chat, _vod, batch, *_a, **_k):
+            sent_ids.append(str(batch[0]["segment_id"]))
+            return 1
+
+        @staticmethod
+        def _used_peak_times(_game, _vid, sent_set):
+            mapping = {"vid_100": 100.0, "vid_200": 200.0, "vid_300": 300.0}
+            return [mapping[s] for s in sent_set if s in mapping]
+
+        @staticmethod
+        def labeled_ids(_game):
+            return set()
+
+        @staticmethod
+        def load_feed_sent(_game):
+            return set(sent_ids)
+
+    monkeypatch.setitem(sys.modules, "shooter_vod_segment_feed", _Mod())
+    monkeypatch.setattr(sf, "singles_keyboard", lambda *a, **k: {"inline_keyboard": []})
+    monkeypatch.setattr(sf, "should_show_assemble_button", lambda *a, **k: False)
+
+    total = sf.singles_first_send_cycle(
+        game="pubg",
+        token="t",
+        chat_id="1",
+        vod=tmp_path / "yt_vid.mp4",
+        vid="vid",
+        state={},
+        entry={},
+        rows=rows,
+        gap_sec=45.0,
+        rejected_peaks=[],
+        sig="abc",
+        mark_exhausted_fn=lambda *_a, **_k: None,
+        save_state_fn=lambda *_a, **_k: None,
+        record_scan_fn=lambda *_a, **_k: None,
+    )
+    assert total == 2
+    assert sent_ids == ["vid_100", "vid_200"]
