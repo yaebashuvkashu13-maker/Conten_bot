@@ -169,6 +169,7 @@ _HEARTBEAT_ALWAYS = frozenset(
     {
         "feed_main_start",
         "feed_pipeline_done",
+        "feed_scanning",
         "unit_test",
     }
 )

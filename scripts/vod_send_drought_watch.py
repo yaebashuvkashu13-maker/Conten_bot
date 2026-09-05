@@ -47,16 +47,6 @@ def telegram_send(text: str) -> bool:
     except Exception:
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = urllib.parse.urlencode(
-        {"chat_id": chat, "text": text[:3500], "disable_web_page_preview": "1"}
-    ).encode()
-    try:
-        urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST"), timeout=20)
-        return True
-    except Exception:
-        return False
-
 def _reject_ops_line(game: str) -> tuple[dict, str]:
     try:
         from vod_clip_quality_ledger import reject_reason_summary

@@ -2,7 +2,8 @@
 
 Документ для разработчика, который будет поддерживать и дорабатывать пайплайн нарезки teamfight-клипов из YouTube VOD Mobile Legends.
 
-**Актуальная ветка:** `cursor/vod-pipeline-base-6cbd` (стабилизация: `cursor/stability-hardening-d7dd`)  
+**Единственный prod deploy:** `bash scripts/deploy_unified_production.sh`  
+**Актуальная ветка:** `cursor/vod-unified-production-a016` (стабилизация: `cursor/vod-unified-production-a016`)  
 **Режим на VPS:** MLBB VOD-only (Shorts/calibration worker отключены)
 
 ---
@@ -322,9 +323,9 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 
 ```bash
 # На VPS
-bash /usr/local/bin/vps_apply_vod_only.sh
+bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 # или из репо:
-bash /root/content_bot_ml/scripts/vps_apply_vod_only.sh
+bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 ```
 
 Лог деплоя: `/root/data/mlbb/vps_apply_vod.log`.
@@ -339,7 +340,7 @@ bash /root/content_bot_ml/scripts/vps_apply_vod_only.sh
 ```bash
 cd /root/content_bot_ml
 git pull origin cursor/mlbb-video-pipeline-e712
-MLBB_VOD_INSTALL_RESTART_FEED=1 bash scripts/install_mlbb_vod_only.sh
+MLBB_VOD_INSTALL_RESTART_FEED=1 bash scripts/deploy_unified_production.sh
 bash /usr/local/bin/mlbb_vod_only_verify.sh
 ```
 

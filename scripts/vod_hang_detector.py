@@ -599,8 +599,9 @@ def apply_agent_recover_env(
         return target
     target["VOD_FORCE_SOFTEN"] = "1"
     # Enable singles gun bypass only while drought soften is active.
-    target.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
-    target.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "1")
+    # Hard-assign under soften — setdefault is a no-op when deploy pinned 0.
+    target["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
+    target["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
     # Never auto-skip discovery or bypass presend — that shipped menu/loot as "keepalive".
     # Soften thresholds only; quality gates stay on.
     # Feed reads SHOOTER_VOD_SKIP_DISCOVERY; also pin the VOD_FORCE_* alias.
@@ -691,18 +692,10 @@ def _recover_process_alive() -> bool:
 
 
 def _send_tg(text: str) -> bool:
-    token = os.environ.get("TG_BOT_TOKEN", "").strip()
-    chat = os.environ.get("TG_CHAT_ID", "").strip()
-    if not token or not chat:
-        return False
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
     try:
-        urllib.request.urlopen(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=data,
-            timeout=20,
-        )
-        return True
+        from vod_telegram_env import send_message
+
+        return send_message(text)
     except Exception:
         return False
 
@@ -846,6 +839,9 @@ def _ensure_telegram_bot() -> bool:
         joined = " ".join(p.decode(errors="ignore") for p in raw.split(b"\0") if p)
         if "telegram_upload_bot.py" in joined:
             return True
+    # Dual-owner risk: never nohup the bot unless explicitly armed.
+    if os.environ.get("VOD_FEED_ALLOW_NOHUP", "0") != "1":
+        return False
     log = Path("/root/data/mlbb/telegram_upload_bot.log")
     try:
         log.parent.mkdir(parents=True, exist_ok=True)

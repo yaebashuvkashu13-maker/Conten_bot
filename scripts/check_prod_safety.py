@@ -143,6 +143,71 @@ if "mlbb_vod_health_watchdog" not in deploy_body and "continuous_worker_watchdog
 if 'os.environ.get(env_key, "1") == "1"' in (SCRIPTS / "pubg_quality_score.py").read_text(encoding="utf-8"):
     errors.append("gun bypass missing-key default must not be 1")
 
+
+# --- Unified-only deploy blast radius (legacy path must not regress) ---
+install = (SCRIPTS / "install_mlbb_vod_only.sh").read_text(encoding="utf-8")
+if "deploy_unified_production.sh" not in install:
+    errors.append("install_mlbb_vod_only.sh must delegate to deploy_unified_production.sh")
+if "Restart=always" in install:
+    errors.append("install_mlbb_vod_only.sh must not ship Restart=always")
+if re.search(r"flock.*\n.*exit 0", install) or "exit 0" in install and "DEPRECATED" not in install[:400]:
+    # Deprecated wrapper may exit 2; refuse writing exit 0 flock handlers.
+    if "flock" in install and "exit 0" in install and "DEPRECATED" not in install:
+        errors.append("install_mlbb_vod_only.sh must not keep flock exit 0")
+if "mlbb_continuous_worker_watchdog" in install and "DEPRECATED" not in install:
+    errors.append("install_mlbb_vod_only.sh must not re-add continuous_worker_watchdog cron")
+
+apply = (SCRIPTS / "vps_apply_vod_only.sh").read_text(encoding="utf-8")
+if "deploy_unified_production.sh" not in apply:
+    errors.append("vps_apply_vod_only.sh must call deploy_unified_production.sh")
+if "install_mlbb_vod_only.sh" in apply and "deploy_unified_production.sh" not in apply:
+    errors.append("vps_apply_vod_only.sh must not call legacy install")
+
+health_wd = (SCRIPTS / "mlbb_vod_health_watchdog.sh").read_text(encoding="utf-8")
+if "nohup" in health_wd and 'VOD_FEED_ALLOW_NOHUP' not in health_wd:
+    # Allow gated telegram nohup only
+    if re.search(r'nohup\s+"?\$BIN/mlbb_vod_segment_feed', health_wd) or "nohup \"$BIN/mlbb_vod_segment_feed" in health_wd:
+        errors.append("mlbb_vod_health_watchdog.sh must not nohup the feed supervisor")
+if "REFUSED nohup feed" not in health_wd and "NEVER nohup" not in health_wd:
+    errors.append("mlbb_vod_health_watchdog.sh must refuse nohup feed restart")
+
+cont_wd = (SCRIPTS / "mlbb_continuous_worker_watchdog.sh").read_text(encoding="utf-8")
+if re.search(r'nohup\s+"\$VOD_WRAPPER"', cont_wd) or "nohup \"$VOD_WRAPPER\"" in cont_wd:
+    errors.append("mlbb_continuous_worker_watchdog.sh must not nohup VOD_WRAPPER")
+
+if re.search(r"vod_feed_owner_health\.py\s+vod_telegram_env\.py\s+--", deploy) or "vod_telegram_env.py --game" in deploy:
+    errors.append("deploy must not pass vod_telegram_env.py as argv to health")
+
+# Copying vod_telegram_env.py into /usr/local/bin is required; that is not an argv bug.
+
+hang2 = (SCRIPTS / "vod_hang_detector.py").read_text(encoding="utf-8")
+if "vod_telegram_env" not in hang2:
+    errors.append("vod_hang_detector must send alerts via vod_telegram_env")
+if "subprocess.Popen" in hang2 and "VOD_FEED_ALLOW_NOHUP" not in hang2:
+    errors.append("vod_hang_detector bot Popen must be gated by VOD_FEED_ALLOW_NOHUP")
+
+if "feed_scanning" not in feed and 'reason="feed_scanning"' not in feed:
+    errors.append("feed must record_heartbeat on scanning")
+
+unit = (SCRIPTS / "content_bot_vod_feed.service").read_text(encoding="utf-8")
+if "Restart=always" in unit:
+    errors.append("content_bot_vod_feed.service must not use Restart=always")
+if "Restart=on-failure" not in unit:
+    errors.append("content_bot_vod_feed.service must use Restart=on-failure")
+
+sup = (SCRIPTS / "mlbb_vod_segment_feed.sh").read_text(encoding="utf-8")
+sup_code = "\n".join(ln for ln in sup.splitlines() if not ln.lstrip().startswith("#"))
+
+if "exit 1" not in sup_code:
+    errors.append("mlbb_vod_segment_feed.sh flock miss must exit 1")
+
+wf = (ROOT / ".github/workflows/deploy-vps.yml").read_text(encoding="utf-8")
+if "install_mlbb_vod_only.sh" in wf or "vod-pipeline-base" in wf:
+    errors.append("deploy-vps.yml must use unified branch + deploy_unified_production.sh")
+if "deploy_unified_production.sh" not in wf:
+    errors.append("deploy-vps.yml must call deploy_unified_production.sh")
+
+
 if errors:
     print("PROD SAFETY CHECK FAILED:")
     for e in errors:

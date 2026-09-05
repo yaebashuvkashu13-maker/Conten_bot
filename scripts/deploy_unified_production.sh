@@ -123,7 +123,7 @@ PY
 # --- Purge legacy nohup watchdogs that fight systemd ownership ---
 if command -v crontab >/dev/null 2>&1; then
   tmp_cron="$(mktemp)"
-  crontab -l 2>/dev/null | grep -Ev 'continuous_worker_watchdog|mlbb_vod_health_watchdog|mlbb_vod_only_watchdog' >"$tmp_cron" || true
+  crontab -l 2>/dev/null | grep -Ev 'continuous_worker_watchdog|mlbb_vod_health_watchdog|mlbb_vod_only_watchdog|vps_apply_vod_only|vps_auto_update|install_mlbb_vod_only' >"$tmp_cron" || true
   crontab "$tmp_cron" || true
   rm -f "$tmp_cron"
   echo "purged legacy nohup watchdog cron lines (if any)"
@@ -146,5 +146,7 @@ systemctl enable --now "$UNIT"
 sleep 5
 systemctl is-active "$UNIT"
 pgrep -af 'mlbb_vod_segment_feed.sh|shooter_vod_segment_feed.py' || echo "WARN: feed process not visible yet"
-python3 /usr/local/bin/vod_feed_owner_health.py vod_telegram_env.py --game pubg || true
+if ! python3 /usr/local/bin/vod_feed_owner_health.py --game pubg; then
+  echo "WARN: vod_feed_owner_health reported problems (see JSON above)" >&2
+fi
 echo "deployed $BRANCH @ $(git rev-parse --short HEAD) unit=$UNIT"

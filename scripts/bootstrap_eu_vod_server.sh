@@ -105,7 +105,7 @@ echo "nproc=${NPROC} → ML threads=${ML_THREADS}"
 
 echo "--- install MLBB VOD-only ---"
 export MLBB_VOD_INSTALL_RESTART_FEED=1
-bash "$REPO/scripts/install_mlbb_vod_only.sh"
+CONTENT_BOT_REPO="$REPO" UNIFIED_BRANCH="${UNIFIED_BRANCH:-cursor/vod-unified-production-a016}" bash "$REPO/scripts/deploy_unified_production.sh"
 
 echo "--- smoke tests ---"
 if command -v yt-dlp >/dev/null; then

@@ -104,5 +104,5 @@ PUBG_PVP_MIN_BURST_CLUSTERS=2
 cd /root/content_bot_ml
 git pull origin cursor/daily-multi-game-cycle-6cbd
 export MLBB_VOD_INSTALL_RESTART_FEED=1
-bash scripts/install_mlbb_vod_only.sh
+bash scripts/deploy_unified_production.sh
 ```

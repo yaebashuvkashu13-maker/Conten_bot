@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
-# Single VPS apply: git pull + VOD-only install + verify. Run after every code change.
-# IMPORTANT: never kill a healthy feed on light (no-git-change) ticks.
+# VPS apply: pull unified branch + deploy_unified_production.sh only.
+# Never reinstalls legacy nohup supervisors or watchdog crons.
 set -Eeuo pipefail
-REPO="${VPS_REPO_PATH:-/root/content_bot_ml}"
-# Prefer hang-detector branch; fall back to legacy if unset elsewhere.
-BRANCH="${VPS_BRANCH:-${VOD_DEPLOY_BRANCH:-cursor/vod-hang-autounload-a016}}"
-ENV_FILE="${ENV_FILE:-/root/.video_bot.env}"
-LOG=/root/data/mlbb/vps_apply_vod.log
-mkdir -p /root/data/mlbb
+REPO="${CONTENT_BOT_REPO:-${VPS_REPO_PATH:-/root/content_bot_ml}}"
+BRANCH="${UNIFIED_BRANCH:-${VPS_BRANCH:-${VOD_DEPLOY_BRANCH:-cursor/vod-unified-production-a016}}}"
+ENV_FILE="${VOD_BOT_ENV_FILE:-${ENV_FILE:-/root/.video_bot.env}}"
+LOG="${VPS_APPLY_LOG:-/root/data/mlbb/vps_apply_vod.log}"
+mkdir -p "$(dirname "$LOG")" /root/data/mlbb
 exec >>"$LOG" 2>&1
-echo "===== vps_apply_vod_only $(date -Is) branch=${BRANCH} ====="
+echo "===== vps_apply_vod_only $(date -Is) branch=${BRANCH} (unified-only) ====="
 cd "$REPO" || exit 1
 
-# Persist deploy branch so future crons don't flip back to an old pipeline branch.
-if [[ -f "$ENV_FILE" ]] && ! grep -q '^VOD_DEPLOY_BRANCH=' "$ENV_FILE" 2>/dev/null; then
-  echo "VOD_DEPLOY_BRANCH=${BRANCH}" >>"$ENV_FILE"
-elif [[ -f "$ENV_FILE" ]]; then
-  sed -i "s|^VOD_DEPLOY_BRANCH=.*|VOD_DEPLOY_BRANCH=${BRANCH}|" "$ENV_FILE" || true
+# Persist deploy branch so crons cannot flip back to a hostile tip.
+if [[ -f "$ENV_FILE" ]]; then
+  if grep -q '^VOD_DEPLOY_BRANCH=' "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^VOD_DEPLOY_BRANCH=.*|VOD_DEPLOY_BRANCH=${BRANCH}|" "$ENV_FILE" || true
+  else
+    echo "VOD_DEPLOY_BRANCH=${BRANCH}" >>"$ENV_FILE"
+  fi
+  if grep -q '^UNIFIED_BRANCH=' "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^UNIFIED_BRANCH=.*|UNIFIED_BRANCH=${BRANCH}|" "$ENV_FILE" || true
+  else
+    echo "UNIFIED_BRANCH=${BRANCH}" >>"$ENV_FILE"
+  fi
 fi
 
 REV_BEFORE="$(git rev-parse HEAD 2>/dev/null || echo "")"
@@ -24,75 +30,23 @@ git fetch origin "$BRANCH" || {
   echo "fetch failed for ${BRANCH} — keep running"
   exit 0
 }
-# Stash local runtime edits so pull can proceed (owner labels etc.).
 git stash push -u -m "vps_apply auto-stash $(date -Is)" -- scripts data 2>/dev/null || true
-git checkout "$BRANCH" || true
+git checkout -B "$BRANCH" "origin/$BRANCH" || git checkout "$BRANCH" || true
 if ! git pull --ff-only origin "$BRANCH"; then
   echo "pull failed — keep running on $(git rev-parse --short HEAD 2>/dev/null)"
   exit 0
 fi
 REV_AFTER="$(git rev-parse HEAD 2>/dev/null || echo "")"
 
-_sync_pubg_env() {
-  if [[ -f /root/data/mlbb/EU_PUBG_ONLY ]] || grep -q '^VOD_PUBG_ONLY=1' "$ENV_FILE" 2>/dev/null; then
-    echo "sync PUBG-only env keys"
-    bash "$REPO/scripts/install_mlbb_vod_only.sh" --env-only || true
-  fi
-}
-
-_verify_or_warn() {
-  local label="$1"
-  _sync_pubg_env
-  if bash /usr/local/bin/mlbb_vod_only_verify.sh; then
-    echo "APPLY OK ${label} $(date -Is) rev=${REV_AFTER}"
-    return 0
-  fi
-  echo "VERIFY WARN ${label} — env synced, feed kept running (see verify output above)"
-  return 0
-}
-
 if [[ -n "$REV_BEFORE" && "$REV_BEFORE" == "$REV_AFTER" ]]; then
-  echo "no git change ($REV_AFTER) — skip install, skip feed restart"
-  # Light health only: hang detector tick (cooldown-safe). Do NOT full reinstall.
-  bash /usr/local/bin/mlbb_vod_health_watchdog.sh || true
+  echo "no git change ($REV_AFTER) — skip redeploy; health check only"
+  python3 /usr/local/bin/vod_feed_owner_health.py --game pubg || true
   exit 0
 fi
 
-# Code changed — install scripts but do NOT kill a live feed unless explicitly asked.
-export MLBB_VOD_INSTALL_RESTART_FEED="${MLBB_VOD_INSTALL_RESTART_FEED:-0}"
-bash "$REPO/scripts/install_mlbb_vod_only.sh"
-# Ensure hang detector + health watchdog are on /usr/local/bin
-cp -f "$REPO/scripts/vod_hang_detector.py" /usr/local/bin/ 2>/dev/null || true
-cp -f "$REPO/scripts/mlbb_vod_health_watchdog.sh" /usr/local/bin/ 2>/dev/null || true
-cp -f "$REPO/scripts/vod_feed_recover.py" /usr/local/bin/ 2>/dev/null || true
-cp -f "$REPO/scripts/vod_force_send.py" /usr/local/bin/ 2>/dev/null || true
-
-# Persist keepalive agent knobs so cron ticks always soften/recover like the manual playbook.
-_upsert_env() {
-  local key="$1" val="$2"
-  [[ -f "$ENV_FILE" ]] || return 0
-  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE" || true
-  else
-    echo "${key}=${val}" >>"$ENV_FILE"
-  fi
-}
-_upsert_env VOD_SILENCE_HEAL_SEC 3600
-_upsert_env VOD_SILENCE_WARN_SEC 3600
-_upsert_env VOD_ABSOLUTE_SILENCE_SEC 5400
-_upsert_env VOD_FORCE_DROUGHT_SEC 3600
-_upsert_env VOD_HEAL_RETRY_SEC 600
-_upsert_env VOD_HEAL_RETRY_ON_SILENCE 1
-_upsert_env VOD_RECOVER_UNPARK 4
-_upsert_env VOD_FORCE_SEND_MAX_VODS 4
-_upsert_env VOD_RECOVER_FORCE_SEND_TIMEOUT_SEC 1800
-_upsert_env VOD_HEAL_BACKGROUND 1
-
-bash /usr/local/bin/mlbb_vod_health_watchdog.sh || true
-_verify_or_warn "full"
-# If feed service is down after install, start it — don't leave inactive.
-if ! systemctl is-active content-bot-vod-feed.service >/dev/null 2>&1; then
-  echo "feed inactive after apply — starting"
-  systemctl start content-bot-vod-feed.service || true
-fi
+export CONTENT_BOT_REPO="$REPO"
+export UNIFIED_BRANCH="$BRANCH"
+export VOD_BOT_ENV_FILE="$ENV_FILE"
+bash "$REPO/scripts/deploy_unified_production.sh"
+echo "APPLY OK $(date -Is) rev=${REV_AFTER}"
 exit 0

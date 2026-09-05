@@ -3465,6 +3465,12 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             write_heartbeat(game, "scanning", vod=mp4.name)
         except Exception:
             pass
+        try:
+            from vod_clip_quality_ledger import record_heartbeat
+
+            record_heartbeat(game, reason="feed_scanning", metrics={"vod": mp4.name})
+        except Exception:
+            pass
         if entry is None:
             entry = _upsert_vod_registry(
                 state,

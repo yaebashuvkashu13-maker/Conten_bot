@@ -28,7 +28,7 @@ TWITCH_VOD_SEARCH_LIMIT=12
 Затем:
 
 ```bash
-bash /root/content_bot_ml/scripts/install_mlbb_vod_only.sh
+CONTENT_BOT_REPO=/root/content_bot_ml bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 ```
 
 Архивы попадают в тот же inbox PUBG (`/root/data/pubg/youtube_nightly/inbox/`) с префиксом `tw_<video_id>.mp4` и обрабатываются `shooter_vod_segment_feed.py pubg`.

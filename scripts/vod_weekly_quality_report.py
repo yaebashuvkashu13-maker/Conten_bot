@@ -189,16 +189,6 @@ def _telegram_send(text: str) -> bool:
     except Exception:
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = urllib.parse.urlencode(
-        {"chat_id": chat, "text": text[:3500], "disable_web_page_preview": "1"}
-    ).encode()
-    try:
-        urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST"), timeout=20)
-        return True
-    except Exception:
-        return False
-
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)

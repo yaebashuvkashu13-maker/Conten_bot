@@ -15,7 +15,7 @@ Do not delete dormant paths without owner sign-off.
 | `scripts/mlbb_vod_segment_store.py` | Segment index, 👍/👎 labels |
 | `scripts/telegram_upload_bot.py` | Owner bot + HQ file |
 | `scripts/run_owner_then_feed.sh` | Owner 8-URL batch → base feed |
-| `scripts/install_mlbb_vod_only.sh` | VPS install / env defaults |
+| `scripts/deploy_unified_production.sh` | DEPRECATED wrapper → deploy_unified_production.sh |
 
 ## Dormant (multi-game, disabled by `install_mlbb_vod_only.sh`)
 
@@ -37,6 +37,6 @@ Do not delete dormant paths without owner sign-off.
 
 ## Ops scripts (safe to keep)
 
-- `scripts/vps_apply_vod_only.sh` — git pull + light verify (cron)
+- `scripts/deploy_unified_production.sh (via vps_apply_vod_only.sh wrapper)` — git pull + light verify (cron)
 - `scripts/mlbb_vod_health_watchdog.sh` — feed supervisor
 - `scripts/mlbb_job_watchdog.py` — orphan process cleanup
