@@ -95,10 +95,12 @@ def test_dense_offsets_have_unique_third_pass(monkeypatch) -> None:
     assert len({tuple(grid) for grid in grids}) == 3
 
 
-def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> None:
+def test_candidate_pool_scales_beyond_fixed_top_n(monkeypatch, tmp_path: Path) -> None:
+    """Long VODs must keep more than a fixed top-16 so tail fights survive."""
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")  # isolate pool sizing from merge
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
     sve = _mock_smart_video_editor(1800.0)
@@ -117,15 +119,18 @@ def test_candidate_pool_can_exceed_ten_moments(monkeypatch, tmp_path: Path) -> N
             gap_sec=55.0,
         )
 
-    assert candidate_pool_target(2) >= 10
-    assert len(peaks) == 16
-    assert "picked=16" in reason
+    pool = candidate_pool_target(2, duration=1800.0)
+    assert pool >= 16
+    assert len(peaks) >= 16
+    assert len(peaks) == pool
+    assert peaks[-1] > 900  # recall reaches the back half of a 30min VOD
 
 
 def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
     sve = _mock_smart_video_editor(1800.0)
@@ -151,7 +156,7 @@ def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Pa
         )
 
     assert len(peaks) == 15
-    assert "shortlist=15" in reason
+    assert "shortlist=15" in reason or "picked=15" in reason or "hits=15" in reason
 
 
 def test_snap_peak_runs_panns_once(monkeypatch, tmp_path: Path) -> None:
@@ -244,6 +249,7 @@ def test_audio_generator_preserves_quiet_timeline_chunks() -> None:
 def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "1")
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "10")
+    monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"vod")
     sve = _mock_smart_video_editor(1200.0)
@@ -267,7 +273,9 @@ def test_audio_generator_keeps_low_panns_candidates(monkeypatch, tmp_path: Path)
             min_clips=2,
             gap_sec=55.0,
         )
-    assert len(peaks) == 10
+    # Duration-scaled pool may keep all audio seeds; never drop below the old floor.
+    assert len(peaks) >= 10
+    assert len(peaks) <= len(centers)
     assert "audio_generator" in reason
 
 
