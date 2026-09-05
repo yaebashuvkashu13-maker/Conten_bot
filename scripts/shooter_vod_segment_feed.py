@@ -2995,7 +2995,25 @@ def _scan_vod_with_adaptive(
                     sent_set = load_feed_sent(game)
                     used_peaks = _used_peak_times(game, vid, sent_set)
                     blocked_ids = labeled_ids(game) | sent_set
-                    all_rows = _build_rows(max(12.0, gap_sec * 0.9), used=used_peaks, blocked=blocked_ids)
+                    # Full peak scan: do NOT thin dense peaks with montage spacing
+                    # (gap*0.9 ≈ 50s turned picked=38 into rows=11). Only skip
+                    # near-duplicates so every fight candidate is inspected.
+                    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+                        row_gap = max(
+                            6.0,
+                            float(os.environ.get("PUBG_SINGLES_ROW_GAP_SEC", "8")),
+                        )
+                    else:
+                        row_gap = max(12.0, gap_sec * 0.9)
+                    all_rows = _build_rows(row_gap, used=used_peaks, blocked=blocked_ids)
+                    log.info(
+                        "pubg singles row pool vod=%s dense_peaks=%s rows=%s row_gap=%.1f full_scan=%s",
+                        vod.name,
+                        len(dense_peaks or []),
+                        len(all_rows),
+                        row_gap,
+                        os.environ.get("PUBG_FULL_PEAK_SCAN", "1"),
+                    )
                     n_sf = singles_first_send_cycle(
                         game=game,
                         token=token,

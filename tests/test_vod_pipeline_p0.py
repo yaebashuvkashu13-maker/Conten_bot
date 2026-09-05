@@ -22,6 +22,26 @@ def test_cascade_limits_defaults(monkeypatch):
     assert limits.kill_notification == 0
 
 
+def test_full_scan_ignores_stale_cascade_env_caps(monkeypatch):
+    """Stale VOD_CASCADE_PANN_MAX=25 must not re-impose a shortlist under full scan."""
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.setenv("VOD_CASCADE_PANN_MAX", "25")
+    monkeypatch.setenv("VOD_CASCADE_CLIP_MAX", "12")
+    monkeypatch.setenv("VOD_CASCADE_KILL_MAX", "8")
+    import importlib
+    import vod_scan_cascade as vsc
+
+    importlib.reload(vsc)
+    limits = vsc.cascade_limits()
+    assert limits.panns == 0
+    assert limits.clip_visual == 0
+    assert limits.kill_notification == 0
+    peaks = list(range(40))
+    assert vsc.apply_cascade_to_pool(peaks, "panns") == peaks
+    assert vsc.apply_cascade_to_pool(peaks, "clip") == peaks
+    assert vsc.apply_cascade_to_pool(peaks, "kill") == peaks
+
+
 def test_apply_cascade_to_pool(monkeypatch):
     peaks = [10.0, 20.0, 30.0, 40.0, 50.0]
     monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")

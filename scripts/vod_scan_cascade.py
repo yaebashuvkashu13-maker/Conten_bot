@@ -57,13 +57,14 @@ def cascade_limits() -> ScanCascadeLimits:
     available by setting PUBG_FULL_PEAK_SCAN=0 and the VOD_CASCADE_* envs.
     """
     if full_peak_scan_enabled():
-        # Full scan: keep discovery pools intact; montage_parts still bounds ship size.
+        # Full scan: ignore stale VOD_CASCADE_* caps in env (they used to silently
+        # re-impose PANN=25 / CLIP=12). Only montage_parts still bounds ship size.
         return ScanCascadeLimits(
-            dsp_candidates=_int_env("VOD_CASCADE_DSP_MAX", 0, high=100_000),
-            fast_ranker=_int_env("VOD_CASCADE_FAST_RANKER_MAX", 0, high=100_000),
-            panns=_int_env("VOD_CASCADE_PANN_MAX", 0, high=100_000),
-            clip_visual=_int_env("VOD_CASCADE_CLIP_MAX", 0, high=100_000),
-            kill_notification=_int_env("VOD_CASCADE_KILL_MAX", 0, high=100_000),
+            dsp_candidates=0,
+            fast_ranker=0,
+            panns=0,
+            clip_visual=0,
+            kill_notification=0,
             montage_parts=_int_env("VOD_CASCADE_MONTAGE_PARTS", 3, low=1, high=12),
         )
     # Legacy / explicit tight funnel (opt-in via PUBG_FULL_PEAK_SCAN=0).
