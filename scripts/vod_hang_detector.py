@@ -601,8 +601,14 @@ def apply_agent_recover_env(
     target["VOD_FORCE_SOFTEN"] = "1"
     # Never auto-skip discovery or bypass presend — that shipped menu/loot as "keepalive".
     # Soften thresholds only; quality gates stay on.
+    # Feed reads SHOOTER_VOD_SKIP_DISCOVERY; also pin the VOD_FORCE_* alias.
     target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+    target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
     target["VOD_FORCE_PRESEND_BYPASS"] = "0"
+    target["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
+        "VOD_FORCE_PRESEND_GATE",
+        os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1"),
+    )
     target.setdefault(
         "VOD_FORCE_SEND_MAX_VODS",
         os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4"),
@@ -639,6 +645,7 @@ def apply_agent_recover_env(
         )
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
         target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
     return target
 
 

@@ -133,3 +133,40 @@ def feedback_stats_for_vod(game: str, vod_id: str) -> dict[str, int]:
             elif row.get("label") == "bad":
                 bad += 1
     return {"sent": sent, "good": good, "bad": bad}
+
+
+def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
+    """Aggregate reject reasons + gun-bypass admit markers for drought tuning."""
+    counts: dict[str, int] = {}
+    gun_bypass = 0
+    early_payoff = 0
+    payoff_low = 0
+    sent = 0
+    rejected = 0
+    for row in iter_events(game)[-max(1, int(limit)) :]:
+        decision = str(row.get("decision") or "")
+        reason = str(row.get("reason") or "")
+        metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+        if decision == "sent":
+            sent += 1
+            if metrics.get("singles_gun_early_payoff_rescue") or metrics.get("singles_gun_payoff_bypass"):
+                gun_bypass += 1
+            continue
+        if decision != "reject":
+            continue
+        rejected += 1
+        key = reason.split("=")[0].split(":")[0].strip() or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+        if key.startswith("early_payoff") or "early_payoff" in reason:
+            early_payoff += 1
+        if key.startswith("payoff_low") or reason.startswith("payoff_low"):
+            payoff_low += 1
+    top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:20]
+    return {
+        "sent": sent,
+        "rejected": rejected,
+        "early_payoff_low": early_payoff,
+        "payoff_low": payoff_low,
+        "gun_bypass_admits": gun_bypass,
+        "top_rejects": top,
+    }

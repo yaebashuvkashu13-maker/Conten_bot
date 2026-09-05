@@ -30,12 +30,16 @@ p = Path("/root/.video_bot.env")
 wanted = {
     "VOD_FORCE_PRESEND_BYPASS": "0",
     "VOD_FORCE_SKIP_DISCOVERY": "0",
+    "SHOOTER_VOD_SKIP_DISCOVERY": "0",
+    "VOD_FORCE_PRESEND_GATE": "1",
+    "PUBG_PRESEND_SHOOTING_GATE": "1",
     "CLIP_HOOK_GATE": "1",
     "DISLIKE_REASON_GATES": "1",
     "VOD_CHEAP_CASCADE": "1",
     "VOD_AUDIO_PREFLIGHT": "1",
     "TELEGRAM_ENCODE": "1",
     "VOD_QUALITY_LEDGER": "1",
+    "VOD_ADAPTIVE_THRESHOLDS": "1",
     "VOD_DROUGHT_AUTO_RECOVER": "1",
     "VOD_DROUGHT_HOURS": "2",
     # Payoff calibration: stop OCR-miss drought without re-enabling menu bypass

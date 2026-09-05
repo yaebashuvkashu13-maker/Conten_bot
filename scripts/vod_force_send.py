@@ -270,7 +270,8 @@ def force_send_game(
         except ValueError:
             escalation = 0
         if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
-            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "0")
+            # Keep shooting/menu gate ON under drought — default was "0" and shipped junk.
+            env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
             env["PUBG_EARLY_PAYOFF_REJECT_SINGLES"] = "0"
             quality_default = "0.22"
             gun_default = "0.030"

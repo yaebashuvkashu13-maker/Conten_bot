@@ -691,22 +691,8 @@ def _validate_shooter_presend(
     if dur <= 0:
         clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
-    # Keepalive agent escalation-2: after repeated zero-sends, ship a single rather
-    # than sit in drought forever on hard_loot_walk / run_fake_gun.
-    try:
-        esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
-    except ValueError:
-        esc = 0
-    if (
-        game == "pubg"
-        and single
-        and not montage_part
-        and esc >= 2
-        and os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
-        and os.environ.get("VOD_FORCE_PRESEND_BYPASS", "0") == "1"
-        and float(dur) >= 5.0
-    ):
-        return True, "keepalive_esc2_pass", {"keepalive_bypass": True, "dur": round(float(dur), 2)}
+    # Drought recovery softens score floors only (vod_force_send / hang recover).
+    # Do not reintroduce a presend-bypass shortcut for menu/loot under escalation.
     if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
         from pubg_metro_royale_gate import segment_looks_metro_royale
 
@@ -3611,6 +3597,9 @@ def main() -> int:
             return 1
     os.environ.setdefault("HIGHLIGHT_HEATMAP", "0")
     os.environ.setdefault("SHOOTER_VOD_FEED", "1")
+    # Hard default: never auto-bypass shooting/menu gates (menu/loot risk).
+    os.environ.setdefault("VOD_FORCE_PRESEND_BYPASS", "0")
+    os.environ.setdefault("SHOOTER_VOD_SKIP_DISCOVERY", "0")
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_MONTAGE", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")
@@ -3641,6 +3630,14 @@ def main() -> int:
             apply_owner_send_policy()
         except ImportError:
             pass
+    # Owner 👎 floors (shared JSON store) must land in the feed process, not only the bot.
+    if os.environ.get("VOD_ADAPTIVE_THRESHOLDS", "1") == "1":
+        try:
+            from game_adaptive_thresholds import apply_to_environ
+
+            apply_to_environ(game)
+        except Exception as exc:
+            log.warning("adaptive thresholds apply failed game=%s: %s", game, exc)
     if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
     else:
