@@ -65,7 +65,7 @@ flowchart TD
 
 **Единственный рабочий процесс:** `mlbb_vod_segment_feed.py` (supervisor: `mlbb_vod_segment_feed.sh`).
 
-Все конкурирующие пайплайны (Shorts ingest, calibration feed, continuous worker, montage) в VOD-only режиме **убиваются и заглушаются** скриптом `install_mlbb_vod_only.sh`.
+Все конкурирующие пайплайны (Shorts ingest, calibration feed, continuous worker, montage) в VOD-only режиме **убиваются** на деплое/`vod` health path; единственный install: `deploy_unified_production.sh` (`install_mlbb_vod_only.sh` — только thin wrapper).
 
 ---
 
@@ -85,7 +85,7 @@ flowchart TD
 | `/usr/local/bin/mlbb_vod_segment_feed.py` | Симлинк/копия feed-скрипта |
 | `/usr/local/bin/telegram_upload_bot.py` | Бот для приёма 👍/👎 |
 | `/usr/local/bin/mlbb_vod_only_verify.sh` | Post-install проверка |
-| `/usr/local/bin/vps_apply_vod_only.sh` | git pull + install + verify |
+| `/usr/local/bin/vps_apply_vod_only.sh` | git pull unified + `deploy_unified_production.sh` |
 
 ### Проверка состояния
 
@@ -252,7 +252,7 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 
 ## 7. Переменные окружения (основные)
 
-Файл: `/root/.video_bot.env`. Устанавливаются `install_mlbb_vod_only.sh`.
+Файл: `/root/.video_bot.env`. Безопасные флаги пинятся `deploy_unified_production.sh`.
 
 ### Режим
 
@@ -328,20 +328,14 @@ bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 ```
 
-Лог деплоя: `/root/data/mlbb/vps_apply_vod.log`.
-
-**Поведение:**
-
-- Если git HEAD не изменился → light verify, **feed не перезапускается** (скан не сбрасывается).
-- Если есть новый коммит → `install_mlbb_vod_only.sh` с `MLBB_VOD_INSTALL_RESTART_FEED=1` → feed restart.
+**Поведение `deploy_unified_production.sh`:** checkout unified branch → preflight (refuse slim feed) → pin safe env → purge legacy watchdog crons → restart **only** `content-bot-vod-feed.service`.
 
 ### Ручной install
 
 ```bash
 cd /root/content_bot_ml
-git pull origin cursor/mlbb-video-pipeline-e712
-MLBB_VOD_INSTALL_RESTART_FEED=1 bash scripts/deploy_unified_production.sh
-bash /usr/local/bin/mlbb_vod_only_verify.sh
+CONTENT_BOT_REPO=/root/content_bot_ml bash scripts/deploy_unified_production.sh
+systemctl is-active content-bot-vod-feed.service
 ```
 
 ### Очистка диска
@@ -410,8 +404,9 @@ scripts/
   mlbb_vod_intervals.py         # gap / overlap
   youtube_mlbb_vod_prefs.py     # discovery filters
   mlbb_telegram_video.py        # compress + send
-  install_mlbb_vod_only.sh      # install + env + kill competitors
-  vps_apply_vod_only.sh         # git pull + install + verify
+  deploy_unified_production.sh  # ONLY prod deploy
+  install_mlbb_vod_only.sh      # DEPRECATED wrapper → unified deploy
+  vps_apply_vod_only.sh         # git pull unified + unified deploy
   mlbb_vod_only_verify.sh       # post-install checks
   vps_disk_cleanup.sh           # safe inbox cleanup
 tests/

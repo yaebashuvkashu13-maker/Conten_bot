@@ -53,6 +53,11 @@ for f in \
   vod_feed_owner_health.py vod_telegram_env.py; do
   [[ -f "scripts/$f" ]] && cp -f "scripts/$f" "/usr/local/bin/$f"
 done
+# Compat wrappers that must stay unified-only on the box.
+for f in vps_apply_vod_only.sh install_mlbb_vod_only.sh mlbb_vod_health_watchdog.sh \
+  mlbb_continuous_worker_watchdog.sh run_owner_then_feed.sh; do
+  [[ -f "scripts/$f" ]] && install -m 0755 "scripts/$f" "/usr/local/bin/$f"
+done
 
 # Install systemd-owned supervisor (single owner).
 install -m 0755 scripts/mlbb_vod_segment_feed.sh /usr/local/bin/mlbb_vod_segment_feed.sh

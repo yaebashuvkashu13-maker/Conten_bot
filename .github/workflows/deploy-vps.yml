@@ -24,23 +24,27 @@ jobs:
           fi
           echo "host=$host" >> "$GITHUB_OUTPUT"
           if [ -z "$host" ]; then
-            echo "::error::Set VPS_HOST or SSH_HOST in repository secrets"
-            exit 1
+            echo "::warning::VPS_HOST/SSH_HOST not set — skip deploy (manual: deploy_unified_production.sh)"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve VPS SSH key
         id: sshkey
+        if: steps.vps.outputs.skip != '1'
         run: |
           if [ -n "${{ secrets.VPS_SSH_KEY }}" ]; then
             echo "has_key=1" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
             echo "has_key=1" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Set VPS_SSH_KEY or SSH_PRIVATE_KEY in repository secrets"
-            exit 1
+            echo "::warning::VPS_SSH_KEY/SSH_PRIVATE_KEY not set — skip deploy"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy unified production
+        if: steps.vps.outputs.skip != '1' && steps.sshkey.outputs.skip != '1' && steps.sshkey.outputs.has_key == '1'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ steps.vps.outputs.host }}

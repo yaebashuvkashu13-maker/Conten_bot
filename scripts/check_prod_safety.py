@@ -207,6 +207,42 @@ if "install_mlbb_vod_only.sh" in wf or "vod-pipeline-base" in wf:
 if "deploy_unified_production.sh" not in wf:
     errors.append("deploy-vps.yml must call deploy_unified_production.sh")
 
+# run_owner_then_feed must not dual-start feed via nohup
+owner_feed = (SCRIPTS / "run_owner_then_feed.sh").read_text(encoding="utf-8")
+if re.search(r"nohup\s+.*mlbb_vod_segment_feed", owner_feed):
+    errors.append("run_owner_then_feed.sh must not nohup the VOD supervisor")
+if "systemctl" not in owner_feed or "REFUSED nohup feed" not in owner_feed:
+    errors.append("run_owner_then_feed.sh must start feed via systemd only")
+
+# Continuous Shorts watchdog must refuse when VOD unit present / ungated nohup telegram
+if "vod systemd unit present" not in cont_wd and "refuse Shorts" not in cont_wd:
+    errors.append("mlbb_continuous_worker_watchdog.sh must refuse Shorts path when VOD unit exists")
+if re.search(r'nohup python3 "\$TELEGRAM_BOT"', cont_wd):
+    # Must be gated by VOD_FEED_ALLOW_NOHUP nearby
+    if "VOD_FEED_ALLOW_NOHUP" not in cont_wd:
+        errors.append("mlbb_continuous_worker_watchdog.sh telegram nohup must be gated")
+if "REFUSED nohup continuous_worker" not in cont_wd and "REFUSED nohup feed" not in cont_wd:
+    errors.append("mlbb_continuous_worker_watchdog.sh must refuse ungated continuous_worker nohup")
+
+# Emergency Shorts restore must refuse under VOD ownership
+emerg = (SCRIPTS / "mlbb_emergency_restore.sh").read_text(encoding="utf-8")
+if "REFUSED" not in emerg or "deploy_unified_production.sh" not in emerg:
+    errors.append("mlbb_emergency_restore.sh must refuse under VOD / point to unified deploy")
+
+cont_install = (SCRIPTS / "install_mlbb_continuous_worker.sh").read_text(encoding="utf-8")
+if "REFUSED" not in cont_install or "deploy_unified_production.sh" not in cont_install:
+    errors.append("install_mlbb_continuous_worker.sh must refuse under VOD ownership")
+
+# Inventory / import tips must not teach legacy install as primary
+inv = (ROOT / "docs" / "REPO_INVENTORY.md").read_text(encoding="utf-8")
+active = inv.split("## Active")[1].split("## Dormant")[0] if "## Active" in inv and "## Dormant" in inv else inv
+if "deploy_unified_production.sh" not in active:
+    errors.append("REPO_INVENTORY must list deploy_unified_production.sh as active")
+
+import_tip = (SCRIPTS / "import_vod_state_bundle.sh").read_text(encoding="utf-8")
+if "install_mlbb_vod_only.sh" in import_tip and "deploy_unified_production.sh" not in import_tip:
+    errors.append("import_vod_state_bundle.sh must recommend deploy_unified_production.sh")
+
 
 if errors:
     print("PROD SAFETY CHECK FAILED:")

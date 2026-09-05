@@ -19,7 +19,7 @@
 
 Состояние: `/root/data/mlbb/daily_game_cycle.json`
 
-Включение: `DAILY_GAME_CYCLE_ENABLED=1` (ставится `install_mlbb_vod_only.sh`).
+Включение: `DAILY_GAME_CYCLE_ENABLED=1` (пинится через `deploy_unified_production.sh` / env).
 
 ## PUBG-only (безлимит)
 
@@ -37,7 +37,7 @@ SHOOTER_VOD_SEARCH_LIMIT=80  # результатов на запрос
 SHOOTER_VOD_PREFER_RUSSIAN=1
 ```
 
-Маркер `/root/data/mlbb/EU_PUBG_ONLY` включает эти настройки через `install_mlbb_vod_only.sh`.
+Маркер `/root/data/mlbb/EU_PUBG_ONLY` — исторический флаг EU PUBG-only; актуальный деплой: `deploy_unified_production.sh`.
 
 ## Quality-strict PUBG (по умолчанию в PUBG-only)
 
