@@ -36,3 +36,17 @@ def test_panns_trust_still_passes_real_fight(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert ok is True
     assert reason.startswith("panns_trust")
+
+
+def test_panns_trust_passes_ads_fight_with_aim_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADS spray: strong PANNs + gun~0.068 + aim sway must not be run_fake_gun."""
+    monkeypatch.setenv("PUBG_PANNS_TRUST_MIN", "0.35")
+    ok, reason = pubg_passes_owner_heuristics(
+        gunfire_density=0.068,
+        burst_ratio=4.36,
+        audio_rms=0.04,
+        center_motion=0.194,
+        panns_gun_max=0.685,
+    )
+    assert ok is True
+    assert reason.startswith("panns_trust")

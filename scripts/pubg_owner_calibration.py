@@ -191,9 +191,12 @@ def pubg_passes_owner_heuristics(
     min_gun_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_GUN", "0.040"))
     min_burst_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_BURST", "3.0"))
     if panns_gun_max >= panns_trust:
-        # High PANNs on loot/UI SFX must not bless a run with weak gun density
-        # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates).
-        if center_motion >= 0.075 and gunfire_density < 0.115:
+        # High PANNs on loot/UI SFX must not bless a run with weak DSP gun
+        # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates, gun~0.056).
+        # Real ADS fights often sit at gun 0.06–0.10 with aim sway (motion≥0.075)
+        # and strong PANNs — the old gun<0.115 ceiling falsely rejected those.
+        fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.060"))
+        if center_motion >= 0.075 and gunfire_density < fake_gun_ceil:
             return (
                 False,
                 f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
