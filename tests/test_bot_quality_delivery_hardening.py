@@ -35,17 +35,20 @@ def test_quality_ledger_send_and_feedback(tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_adaptive_thresholds_tighten_on_run_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_ADAPTIVE_THRESH_DIR", str(tmp_path / "thresh"))
-    from game_adaptive_thresholds import note_negative_feedback, thresholds_for
+    import game_adaptive_thresholds as gat
 
-    base = thresholds_for("pubg")
-    after_other = note_negative_feedback("pubg", "boring")
+    # Do not leak SMART_* env into other gate tests in the same pytest process.
+    monkeypatch.setattr(gat, "apply_to_environ", lambda game: gat.thresholds_for(game))
+
+    base = gat.thresholds_for("pubg")
+    after_other = gat.note_negative_feedback("pubg", "boring")
     assert after_other["gun_density_min"] == base["gun_density_min"]
-    after_run = note_negative_feedback("pubg", "loot_run")
+    after_run = gat.note_negative_feedback("pubg", "loot_run")
     assert after_run["gun_density_min"] > base["gun_density_min"]
     assert after_run["burst_ratio_min"] > base["burst_ratio_min"]
     assert after_run["motion_max_run"] < base["motion_max_run"]
-    after_menu = note_negative_feedback("standoff", "menu_lobby")
-    assert after_menu["gun_density_min"] >= thresholds_for("standoff")["gun_density_min"] - 1e-9
+    after_menu = gat.note_negative_feedback("standoff", "menu_lobby")
+    assert after_menu["gun_density_min"] >= gat.thresholds_for("standoff")["gun_density_min"] - 1e-9
 
 
 def test_media_cache_ffprobe_hit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

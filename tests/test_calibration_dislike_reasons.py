@@ -27,8 +27,10 @@ def test_mlbb_has_kill_reason():
 def test_keyboard_rows():
     kb = dislike_reason_keyboard_markup("abc123", game="pubg", callback_prefix="pubg_bad")
     buttons = [b for row in kb["inline_keyboard"] for b in row]
-    assert len(buttons) == 8
+    assert len(buttons) == 9
     assert buttons[0]["callback_data"].startswith("pubg_bad:abc123:")
+    assert "menu_lobby" in dislike_reason_codes("pubg")
+    assert "loot_run" in dislike_reason_codes("pubg")
 
 
 def test_normalize_game():

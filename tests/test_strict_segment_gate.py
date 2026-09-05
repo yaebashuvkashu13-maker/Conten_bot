@@ -7,6 +7,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def _clear_standoff_adaptive_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep standoff floors stable even if other tests mutate SMART_* env."""
+    for key in (
+        "SMART_STANDOFF_MIN_GUNFIRE_DENSITY",
+        "SMART_STANDOFF_MIN_BURST_RATIO",
+        "SMART_STANDOFF_MIN_CENTER_MOTION",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
