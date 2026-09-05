@@ -517,6 +517,14 @@ def discover_montage_gun_peaks(
     if funnel is not None:
         funnel.offsets_probed = len(offsets)
 
+    log.info(
+        "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
+        video_path.name,
+        len(offsets),
+        skip,
+        probe_pass,
+    )
+
     pcm_cache = None
     batch_stats: dict[str, float | int] = {}
     scored: list[tuple[float, float]] = []
@@ -604,14 +612,6 @@ def discover_montage_gun_peaks(
                     scored.append((gmax, t + WINDOW_SEC * 0.5))
             if funnel is not None:
                 funnel.panns_pass = len(scored)
-
-    log.info(
-        "dense gun probe start vod=%s offsets=%s skip=%.0f pass=%s",
-        video_path.name,
-        len(offsets),
-        skip,
-        probe_pass,
-    )
 
     if len(scored) < min_clips:
         return [], f"dense_panns_0/{len(offsets)}" if not scored else (
