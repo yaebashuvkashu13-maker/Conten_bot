@@ -639,6 +639,8 @@ def apply_agent_recover_env(
     target["VOD_FORCE_BURST_RATIO"] = "3.5"
     target["PUBG_QUALITY_SCORE_MIN_SINGLES"] = q_min
     target["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = p_min
+    target["PUBG_FAST_PAYOFF_MIN"] = p_min
+    target["PUBG_FAST_RANK_MIN_PAYOFF"] = p_min
     target["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun
     target["PUBG_PRESEND_MIN_GUN_DENSITY"] = gun
     target["PUBG_CLIP_MIN_GUN_DENSITY"] = gun

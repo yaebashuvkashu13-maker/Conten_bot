@@ -214,6 +214,8 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     # VOD_FORCE_PAYOFF_MIN from the pinned env file — those keys were left at
     # *stricter* values (0.40/0.30) and made drought worse than steady state.
     env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = payoff_default
+    env["PUBG_FAST_PAYOFF_MIN"] = payoff_default
+    env["PUBG_FAST_RANK_MIN_PAYOFF"] = payoff_default
     env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = quality_default
     env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
     env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
