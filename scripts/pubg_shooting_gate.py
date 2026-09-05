@@ -228,11 +228,13 @@ def pubg_passes_shooting_gate(
             )
         except ImportError:
             owner_good = False
-        # Never forgive run/loot/fake-gun without real sustained shots — unless owner 👍 on this window.
+        # Never auto-forgive run/loot/fake-gun. Soften lowers min_gun so
+        # "strict_audio" was true at gun~0.05 and shipped loot UI
+        # (_-HbZ0zNDOs_2538: run_fake_gun overridden by panns_trust).
+        # Only an explicit owner 👍 on this window may override.
         if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"}:
-            if owner_good and strict_audio:
-                metrics["visual_override"] = gate_reason
-            elif strict_audio and burst >= min_burst and gun >= min_gun:
+            hard_gun = float(os.environ.get("PUBG_FAKE_GUN_OVERRIDE_MIN_GUN", "0.090"))
+            if owner_good and gun >= hard_gun and burst >= min_burst:
                 metrics["visual_override"] = gate_reason
             else:
                 return False, gate_reason, metrics

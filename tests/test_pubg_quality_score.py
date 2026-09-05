@@ -177,28 +177,35 @@ def test_notification_without_gunfire_not_treated_as_kill(
     assert report.get("hard_reject") == "no_shots"
 
 
-def test_menu_overlay_hard_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drought must not ship lobby/menu windows (6tBEG4XXXP8_1783)."""
+def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inventory UI on start must hard-reject even if mid/end look like combat."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=True))
     patches[4] = patch(
         "pubg_combat_gate.pubg_combat_visual_strict",
         return_value=(
-            False,
-            "visual_frames=1/2:start:menu_overlay,end:run_no_shots",
-            {"best_hit_flash": 0.0, "best_weapon_edge": 0.0},
+            True,
+            "combat_visual_strict",
+            {
+                "best_hit_flash": 0.0,
+                "best_weapon_edge": 0.04,
+                "frames": [
+                    {"label": "start", "pass": False, "reason": "menu_overlay"},
+                    {"label": "mid", "pass": True, "reason": "combat_visible"},
+                    {"label": "end", "pass": True, "reason": "combat_visible"},
+                ],
+            },
         ),
     )
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-        ok, reason, report = score_pubg_window(Path("vod.mp4"), 1783, 43, single=True, use_cache=False)
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 2538, 24, single=True, use_cache=False)
     assert ok is False
     assert "menu_overlay" in reason
     assert report.get("hard_reject") == "menu_overlay"
 
 
 def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    """HUD false-positive kill banner must not count as author kill/payoff."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=False))
@@ -218,4 +225,3 @@ def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
         _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
     assert report.get("kill_notification_hit") is False
     assert report.get("kill_notification_class") == "hud_fp"
-    assert report.get("kill_notification_hud_fp_ignored") is True

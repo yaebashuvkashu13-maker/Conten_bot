@@ -363,15 +363,26 @@ def score_pubg_window(
     report["visual_ok"] = visual_ok
     report["visual_reason"] = visual_reason
     report["visual"] = visual
-    # Menu/lobby frames are never shippable — drought soften must not override this.
+    # Menu/lobby/loot-UI frames are never shippable — even if mid/end "pass"
+    # (_-HbZ0zNDOs_2538: start=menu_overlay inventory, visual_ok still True).
+    frame_reasons = [
+        str(fr.get("reason") or "")
+        for fr in (visual.get("frames") or [])
+        if isinstance(fr, dict)
+    ]
+    menu_hit = "menu_overlay" in str(visual_reason or "") or any(
+        "menu_overlay" in r for r in frame_reasons
+    )
     if (
         os.environ.get("PUBG_HARD_REJECT_MENU_OVERLAY", "1") == "1"
-        and (not visual_ok)
-        and "menu_overlay" in str(visual_reason or "")
+        and menu_hit
         and not _owner_redo_trusted(video_path, start_sec, duration_sec)
     ):
         report["hard_reject"] = "menu_overlay"
-        return _finish(False, f"hard_menu_overlay={visual_reason}")
+        return _finish(
+            False,
+            f"hard_menu_overlay={visual_reason or ','.join(frame_reasons) or 'menu_overlay'}",
+        )
     best_flash = float(visual.get("best_hit_flash", 0.0))
     best_weapon = float(visual.get("best_weapon_edge", 0.0))
 
@@ -458,12 +469,17 @@ def score_pubg_window(
             return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
     if payoff_score < payoff_min:
         # Singles with clear gunfire: ship for owner 👍/👎 instead of drought on OCR miss.
+        # Never bypass a near-zero payoff with no kill signal — that shipped loot runs
+        # (_-HbZ0zNDOs_2538: payoff=0.0, no killfeed/notification).
+        has_payoff_signal = bool(notification_hit or keyword_hit or float(killfeed) >= 0.25)
         if (
             single
             and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
             and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
             and not loot_walk
+            and has_payoff_signal
+            and payoff_score >= float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR", "0.05"))
         ):
             report["singles_gun_payoff_bypass"] = True
         elif _owner_redo_trusted(video_path, start_sec, duration_sec):

@@ -191,6 +191,18 @@ def pubg_passes_owner_heuristics(
     min_gun_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_GUN", "0.040"))
     min_burst_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_BURST", "3.0"))
     if panns_gun_max >= panns_trust:
+        # High PANNs on loot/UI SFX must not bless a run with weak gun density
+        # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates).
+        if center_motion >= 0.075 and gunfire_density < 0.115:
+            return (
+                False,
+                f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
+            )
+        if center_motion > 0.22 and gunfire_density < 0.052:
+            return (
+                False,
+                f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
+            )
         if gunfire_density >= min_gun_panns and (
             burst_ratio >= min_burst_panns or gunfire_density >= 0.055
         ):
