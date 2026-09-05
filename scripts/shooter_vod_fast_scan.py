@@ -289,8 +289,9 @@ def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -
     """
     dur = max(0.0, float(duration))
     if full_peak_scan_enabled():
-        # Contiguous coverage: default step = half PANNs window (overlap, no gaps).
-        default_step = max(1.0, float(WINDOW_SEC) * 0.5)
+        # Contiguous coverage: default 1s grid — no jumping between chunks.
+        # (Half-window ~5s still left silent gaps between loud moments.)
+        default_step = 1.0
         step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", str(default_step)))
         if step <= 0:
             step = default_step

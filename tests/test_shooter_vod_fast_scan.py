@@ -98,18 +98,18 @@ def test_dense_offsets_have_unique_third_pass(monkeypatch) -> None:
 
 
 def test_full_peak_scan_dense_grid_has_no_large_skips(monkeypatch) -> None:
-    """Full scan must cover the VOD with step ≤ WINDOW — no 40s holes."""
+    """Full scan must cover the VOD with 1s grid — no chunk jumps."""
     from highlight_scorer import WINDOW_SEC
     from shooter_vod_fast_scan import _dense_offsets
 
     monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
     monkeypatch.delenv("SHOOTER_VOD_DENSE_PROBE_MAX", raising=False)
     monkeypatch.delenv("SHOOTER_VOD_DENSE_PROBE_HARD_MAX", raising=False)
-    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "5")
+    monkeypatch.delenv("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", raising=False)
     offsets = _dense_offsets(1800.0, skip_intro=0.0, probe_pass=0)
-    assert len(offsets) >= 300  # ~1800/5
+    assert len(offsets) >= 1700  # ~1800/1 minus window tail
     gaps = [b - a for a, b in zip(offsets, offsets[1:])]
-    assert gaps and max(gaps) <= 5.01
+    assert gaps and max(gaps) <= 1.01
     assert offsets[0] <= 0.1
     assert offsets[-1] >= 1800.0 - WINDOW_SEC - 15.0
 

@@ -691,7 +691,7 @@ def apply_agent_recover_env(
     target["PUBG_RANKER_MAX_PROBES"] = "0"
     # Contiguous dense grid — no 40s probe skips / hard max truncation.
     target["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
-        "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "5"
+        "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1"
     )
     target["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
     target["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"

@@ -84,7 +84,7 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
         assert env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] == "0"
         assert env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] == "0"
         assert env["SHOOTER_VOD_DENSE_PROBE_MAX"] == "0"
-        assert float(env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"]) <= 5.0
+        assert float(env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"]) <= 1.0
         assert env["SHOOTER_VOD_FAST_SKIP_INTRO"] == "0"
         assert float(env["DISLIKE_MENU_OVERLAY_MAX"]) == pytest.approx(0.30)
         assert env["PUBG_HARD_REJECT_MENU_OVERLAY"] == "1"
