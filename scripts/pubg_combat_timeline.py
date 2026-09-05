@@ -142,7 +142,8 @@ class TimelineCostLimits:
 
 def timeline_cost_limits() -> TimelineCostLimits:
     return TimelineCostLimits(
-        max_zones=int(os.environ.get("PUBG_TIMELINE_MAX_ZONES", "20")),
+        max_zones=int(os.environ.get("PUBG_TIMELINE_MAX_ZONES",
+            "100000" if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1" else "20")),
         max_dense_seconds=float(os.environ.get("PUBG_TIMELINE_MAX_DENSE_SECONDS", "240")),
         ocr_top_n=int(os.environ.get("PUBG_TIMELINE_OCR_TOP_N", "12")),
         render_top_n=int(os.environ.get("PUBG_TIMELINE_RENDER_TOP_N", "2")),
@@ -154,18 +155,27 @@ def timeline_cost_limits() -> TimelineCostLimits:
 
 
 def adaptive_event_budget(duration_sec: float) -> int:
-    """How many combat events to keep — scales with VOD length, no tiny fixed cap.
+    """How many combat events to keep — scales with VOD length.
 
-    Long VODs must still surface fights near the end; a hard top-3 would drop them.
-    Soft ceiling exists only as a safety valve for pathological 8h dumps.
-    PUBG_TIMELINE_MAX_ZONES caps dense/OCR/render shortlists (enforce path), not
-    this discovery budget.
+    Under PUBG_FULL_PEAK_SCAN=1 (default) there is effectively no moment cap:
+    ceiling defaults to 100000 so every combat cluster survives discovery.
+    Set PUBG_COMBAT_EVENT_BUDGET_MAX explicitly to re-impose a soft ceiling.
     """
     dur = max(0.0, float(duration_sec))
-    per_sec = float(os.environ.get("PUBG_COMBAT_EVENT_PER_SEC", "75"))
-    floor = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MIN", "6"))
-    ceiling = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MAX", "96"))
-    raw = int(dur / max(30.0, per_sec)) + floor
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        # Dense full-scan defaults: ~1 event / 30s, high floor, huge ceiling.
+        per_sec = float(os.environ.get("PUBG_COMBAT_EVENT_PER_SEC", "30"))
+        floor = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MIN", "32"))
+        ceiling = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MAX", "100000"))
+        step = 15.0
+    else:
+        per_sec = float(os.environ.get("PUBG_COMBAT_EVENT_PER_SEC", "75"))
+        floor = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MIN", "6"))
+        ceiling = int(os.environ.get("PUBG_COMBAT_EVENT_BUDGET_MAX", "96"))
+        step = 30.0
+    if ceiling <= 0:
+        ceiling = 100000
+    raw = int(dur / max(step, per_sec)) + floor
     return max(floor, min(ceiling, raw))
 
 
@@ -173,10 +183,11 @@ def adaptive_event_budget(duration_sec: float) -> int:
 def adaptive_candidate_pool(duration_sec: float, *, min_clips: int = 2) -> int:
     """Recall pool for peak discovery — grows with duration so the tail is scanned."""
     base = adaptive_event_budget(duration_sec)
+    default_target = "256" if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1" else "16"
     return max(
         int(min_clips) * 4,
         base,
-        int(os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")),
+        int(os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", default_target)),
     )
 
 
@@ -366,7 +377,8 @@ def merge_combat_events(
 
     events.sort(key=lambda e: -e.score)
     budget = adaptive_event_budget(duration_sec)
-    kept = events[:budget]
+    # Full-peak scan: keep every merged combat cluster (budget is already huge).
+    kept = events if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1" else events[:budget]
     # Extra dedupe pass so near-duplicate peaks collapse to one cluster.
     deduped: list[CombatEvent] = []
     for event in sorted(kept, key=lambda e: e.peak):
@@ -551,7 +563,8 @@ def refine_peaks_with_timeline(
 ) -> list[float]:
     """Turn Stage-A peaks into duration-scaled combat CLUSTERS → one peak each.
 
-    Ranking only — does not authorize send. Asserts the hard-gate invariant.
+    Ranking only — does not authorize send. Under PUBG_FULL_PEAK_SCAN keep all
+    clusters (no silent collapse to top-8 / max_zones).
     """
     assert timeline_cannot_authorize_send()
     if not timeline_enabled():
@@ -560,9 +573,14 @@ def refine_peaks_with_timeline(
     events = merge_combat_events(points, duration_sec=duration_sec)
     if not events:
         ordered = sorted(float(p) for p in peaks)
+        if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+            return ordered
         return ordered[: adaptive_event_budget(duration_sec)]
     peaks_out = events_to_peaks(events)
-    if timeline_enforce_enabled():
+    if (
+        timeline_enforce_enabled()
+        and os.environ.get("PUBG_FULL_PEAK_SCAN", "1") != "1"
+    ):
         peaks_out = peaks_out[: max(1, timeline_cost_limits().max_zones)]
     return peaks_out
 

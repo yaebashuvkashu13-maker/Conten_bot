@@ -9,20 +9,53 @@ import pytest
 
 def test_cascade_limits_defaults(monkeypatch):
     monkeypatch.delenv("VOD_CASCADE_PANN_MAX", raising=False)
-    from vod_scan_cascade import cascade_limits
+    monkeypatch.delenv("VOD_CASCADE_FAST_RANKER_MAX", raising=False)
+    monkeypatch.delenv("VOD_CASCADE_KILL_MAX", raising=False)
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    from vod_scan_cascade import cascade_limits, full_peak_scan_enabled
 
+    assert full_peak_scan_enabled() is True
     limits = cascade_limits()
-    assert limits.panns == 25
-    assert limits.fast_ranker == 50
+    # Full scan: stage caps are unlimited (0).
+    assert limits.panns == 0
+    assert limits.fast_ranker == 0
+    assert limits.kill_notification == 0
 
 
 def test_apply_cascade_to_pool(monkeypatch):
-    monkeypatch.setenv("VOD_CASCADE_PANN_MAX", "8")
+    peaks = [10.0, 20.0, 30.0, 40.0, 50.0]
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
     from vod_scan_cascade import apply_cascade_to_pool
 
-    peaks = [10.0, 20.0, 30.0, 40.0, 50.0]
-    assert apply_cascade_to_pool(peaks, "panns") == [10.0, 20.0, 30.0, 40.0, 50.0][:8]
-    assert apply_cascade_to_pool(peaks, "kill") == peaks[:8]
+    # Full scan must not truncate to top-8.
+    assert apply_cascade_to_pool(peaks, "kill") == peaks
+    assert apply_cascade_to_pool(peaks, "panns") == peaks
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
+    monkeypatch.setenv("VOD_CASCADE_PANN_MAX", "8")
+    monkeypatch.setenv("VOD_CASCADE_KILL_MAX", "8")
+    import importlib
+    import vod_scan_cascade as vsc
+
+    importlib.reload(vsc)
+    assert vsc.apply_cascade_to_pool(peaks, "panns") == peaks[:8]
+    assert vsc.apply_cascade_to_pool(peaks, "kill") == peaks[:8]
+
+
+def test_full_scan_zero_cap_must_not_empty_slice(monkeypatch):
+    """Regression: scored[:limits.fast_ranker] with cap=0 emptied the pool."""
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    from vod_scan_cascade import cascade_limits, apply_cascade_to_pool, full_peak_scan_enabled
+
+    peaks = [float(i) for i in range(40)]
+    limits = cascade_limits()
+    assert full_peak_scan_enabled()
+    assert limits.fast_ranker == 0
+    assert limits.kill_notification == 0
+    # Correct API keeps the list; naive [:0] would drop everything.
+    assert apply_cascade_to_pool(peaks, "fast_ranker") == peaks
+    assert apply_cascade_to_pool(peaks, "kill") == peaks
+    assert peaks[: limits.fast_ranker] == []  # documents the footgun
 
 
 def test_runtime_labels_seed_from_repo(tmp_path, monkeypatch):

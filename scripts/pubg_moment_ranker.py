@@ -532,8 +532,15 @@ def rank_peaks_with_model(
     artifact = _load_artifact()
     if artifact is None or os.environ.get("PUBG_RANKER_ENABLED", "1") != "1":
         return list(peaks), "ranker_unavailable"
-    cap = max_probes or int(os.environ.get("PUBG_RANKER_MAX_PROBES", "16"))
-    cap = min(len(peaks), max(1, cap))
+    if max_probes is not None:
+        cap = int(max_probes)
+    elif os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        # Probe every peak — do not silently keep only the first 16.
+        raw = int(os.environ.get("PUBG_RANKER_MAX_PROBES", "0") or 0)
+        cap = len(peaks) if raw <= 0 else raw
+    else:
+        cap = int(os.environ.get("PUBG_RANKER_MAX_PROBES", "16"))
+    cap = min(len(peaks), max(1, cap)) if cap > 0 else len(peaks)
     selected_indices: list[int] = list(range(min(len(peaks), max(1, cap // 2))))
     selected_set = set(selected_indices)
     # Reserve half the budget for timeline diversity. Global audio rank alone

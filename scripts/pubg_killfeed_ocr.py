@@ -160,8 +160,12 @@ def rank_peaks_by_killfeed(
     if profile not in ("pubg", "standoff"):
         return list(peaks), "killfeed_rank_skip_profile"
 
-    cap = max(2, int(os.environ.get("PUBG_KILLFEED_RANK_MAX", str(max_probes))))
-    probe = list(peaks)[:cap]
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        raw_cap = int(os.environ.get("PUBG_KILLFEED_RANK_MAX", "0") or 0)
+        cap = raw_cap if raw_cap > 0 else len(peaks)
+    else:
+        cap = max(2, int(os.environ.get("PUBG_KILLFEED_RANK_MAX", str(max_probes))))
+    probe = list(peaks) if cap <= 0 else list(peaks)[:cap]
     scored: list[tuple[float, float, float]] = []
     for i, peak in enumerate(probe):
         cached = (meta or {}).get(float(peak))

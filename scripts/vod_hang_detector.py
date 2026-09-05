@@ -680,6 +680,15 @@ def apply_agent_recover_env(
     target["DISLIKE_REASON_GATES"] = "1"
     target["PUBG_COMBAT_TIMELINE"] = "1"
     target["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    # Full VOD peak scan — never collapse discovery to kill_pass=8.
+    target["PUBG_FULL_PEAK_SCAN"] = "1"
+    target["VOD_CASCADE_KILL_MAX"] = "0"
+    target["VOD_CASCADE_FAST_RANKER_MAX"] = "0"
+    target["CHEAP_CASCADE_TOP_K"] = "0"
+    target["CHEAP_CASCADE_HEAVY_TOP"] = "0"
+    target["PUBG_FAST_RANK_MAX"] = "0"
+    target["PUBG_KILLFEED_RANK_MAX"] = "0"
+    target["PUBG_RANKER_MAX_PROBES"] = "0"
     target["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if esc >= 1 else "6"

@@ -91,6 +91,16 @@ def test_cheap_cascade_ranks_by_gun(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert should_run_heavy(ranked[0], rank=0) is True
 
 
+def test_full_peak_scan_keeps_all_heavy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("CHEAP_CASCADE_HEAVY_TOP", raising=False)
+    from vod_cheap_cascade import should_run_heavy
+
+    # Every peak that clears the (default 0) score floor is inspected.
+    for rank in range(40):
+        assert should_run_heavy({"score": 0.01}, rank=rank) is True
+
+
 def test_upload_retry_only_network(monkeypatch: pytest.MonkeyPatch) -> None:
     from telegram_delivery import TelegramUploadQueue, is_retryable_upload_error
     import telegram_delivery as td

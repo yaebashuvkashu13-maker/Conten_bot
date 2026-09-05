@@ -101,6 +101,7 @@ def test_candidate_pool_scales_beyond_fixed_top_n(monkeypatch, tmp_path: Path) -
     monkeypatch.setenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
     monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
     monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")  # isolate pool sizing from merge
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")  # isolate legacy pool == hits equality
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
     sve = _mock_smart_video_editor(1800.0)
@@ -124,6 +125,39 @@ def test_candidate_pool_scales_beyond_fixed_top_n(monkeypatch, tmp_path: Path) -
     assert len(peaks) >= 16
     assert len(peaks) == pool
     assert peaks[-1] > 900  # recall reaches the back half of a 30min VOD
+
+
+def test_full_peak_scan_keeps_all_dense_hits(monkeypatch, tmp_path: Path) -> None:
+    """PUBG_FULL_PEAK_SCAN must not collapse dense hits to a top-8/16 shortlist."""
+    monkeypatch.setenv("SHOOTER_VOD_AUDIO_GENERATOR", "0")
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.setenv("SHOOTER_VOD_DENSE_PROBE_MAX", "48")
+    monkeypatch.setenv("PUBG_COMBAT_TIMELINE", "0")
+    monkeypatch.delenv("SHOOTER_VOD_CANDIDATE_POOL_TARGET", raising=False)
+    vod = tmp_path / "yt_test.mp4"
+    vod.write_bytes(b"")
+    sve = _mock_smart_video_editor(1800.0)
+
+    with patch.dict(sys.modules, {"smart_video_editor": sve}), patch(
+        "shooter_vod_fast_scan.score_panns_audio",
+        return_value={"panns_gun_max": 0.50},
+    ), patch(
+        "shooter_vod_fast_scan.snap_peak_to_gunfire",
+        side_effect=lambda _path, center, **_kwargs: (center, 0.08, 0.50),
+    ):
+        peaks, reason = discover_montage_gun_peaks(
+            vod,
+            "pubg",
+            min_clips=2,
+            gap_sec=40.0,
+        )
+
+    assert len(peaks) >= 20
+    assert "picked=" in reason
+    # Funnel reason should report more than the old kill_max=8 shortlist.
+    picked_n = int(reason.split("picked=")[-1].split()[0].split("/")[0])
+    assert picked_n >= 20
+    assert peaks[-1] > 900
 
 
 def test_candidate_spacing_relaxes_to_fill_recall_pool(monkeypatch, tmp_path: Path) -> None:

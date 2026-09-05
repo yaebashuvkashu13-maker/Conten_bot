@@ -275,6 +275,15 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     # Combat timeline path: duration-scaled events, early-action shift, no tiny top-N.
     env["PUBG_COMBAT_TIMELINE"] = "1"
     env["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    # Full VOD peak scan — never collapse discovery to kill_pass=8.
+    env["PUBG_FULL_PEAK_SCAN"] = "1"
+    env["VOD_CASCADE_KILL_MAX"] = "0"
+    env["VOD_CASCADE_FAST_RANKER_MAX"] = "0"
+    env["CHEAP_CASCADE_TOP_K"] = "0"
+    env["CHEAP_CASCADE_HEAVY_TOP"] = "0"
+    env["PUBG_FAST_RANK_MAX"] = "0"
+    env["PUBG_KILLFEED_RANK_MAX"] = "0"
+    env["PUBG_RANKER_MAX_PROBES"] = "0"
     # Force rediscovery — stale dense_pool_version caches replay loot/menu peaks.
     env["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(

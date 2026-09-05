@@ -112,8 +112,14 @@ def rank_peaks_fast(
     """Reorder peaks by fast fight+payoff; deprioritize no-notification peaks."""
     if not peaks:
         return [], "fast_rank_empty", {}
-    cap = max_probes or int(os.environ.get("PUBG_FAST_RANK_MAX", "16"))
-    probe = list(peaks)[:cap]
+    if max_probes is not None:
+        cap = int(max_probes)
+    elif os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        # Probe the full discovery pool — do not silently keep only the first 16.
+        cap = int(os.environ.get("PUBG_FAST_RANK_MAX", "0") or 0)
+    else:
+        cap = int(os.environ.get("PUBG_FAST_RANK_MAX", "16"))
+    probe = list(peaks) if cap <= 0 else list(peaks)[:cap]
     meta: dict[float, dict[str, Any]] = {}
     scored: list[tuple[float, float, float]] = []
     min_payoff = float(os.environ.get("PUBG_FAST_RANK_MIN_PAYOFF", "0.12"))

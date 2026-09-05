@@ -2312,7 +2312,14 @@ def _scan_vod(
             pool = []
             force_rediscover = True
             log.info("invalidate blocked cache — rediscover vod=%s", vod.name)
-    elif long_vod and not force_rediscover and game not in ("genshin", "wot"):
+    elif (
+        long_vod
+        and not force_rediscover
+        and game not in ("genshin", "wot")
+        # Full peak scan must rediscover long PUBG VODs — skipping left an empty
+        # pool and forced "download next" while fights later in the file existed.
+        and not (game == "pubg" and os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1")
+    ):
         pool = []
         log.warning(
             "skip full rediscover on long vod=%.0fs name=%s — use owner hints / download next",

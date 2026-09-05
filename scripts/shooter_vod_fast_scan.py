@@ -47,8 +47,12 @@ def candidate_pool_target(min_clips: int = 2, duration: float | None = None) -> 
     """Keep enough ranked moments to survive strict presend false positives.
 
     Scales with VOD length so end-of-VOD fights are not truncated by a fixed top-N.
+    Under PUBG_FULL_PEAK_SCAN the default target is large so the pool is not
+    silently collapsed to ~16 before kill/rank stages.
     """
-    raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", "16")
+    full_scan = os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
+    default_target = "256" if full_scan else "16"
+    raw = os.environ.get("SHOOTER_VOD_CANDIDATE_POOL_TARGET", default_target)
     base = max(10, int(raw), int(min_clips) * 4)
     if duration is not None and duration > 0:
         try:
@@ -480,7 +484,11 @@ def discover_montage_gun_peaks(
             rank = float(gun_d) + (1.0 - index / max(len(offsets), 1)) * 0.01
             scored.append((rank, center))
         scored.sort(key=lambda item: -item[0])
-        panns_cap = int(os.environ.get("PUBG_AUDIO_GEN_PANN_TOP", "25"))
+        # Full peak scan: PANNs-enrich the whole DSP shortlist, not a silent top-25.
+        default_pann_top = "0" if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1" else "25"
+        panns_cap = int(os.environ.get("PUBG_AUDIO_GEN_PANN_TOP", default_pann_top) or 0)
+        if panns_cap <= 0:
+            panns_cap = len(scored)
         if panns_cap > 0 and scored:
             enriched: list[tuple[float, float]] = []
             for rank, center in scored[:panns_cap]:
@@ -555,10 +563,12 @@ def discover_montage_gun_peaks(
 
     scored.sort(key=lambda x: -x[0])
     try:
-        from vod_scan_cascade import apply_cascade_to_pool, cascade_limits
+        from vod_scan_cascade import cascade_limits, full_peak_scan_enabled
 
         limits = cascade_limits()
-        scored = scored[: limits.fast_ranker]
+        # Cap 0 / full-peak scan must NOT slice to scored[:0] (empty pool).
+        if not full_peak_scan_enabled() and limits.fast_ranker > 0:
+            scored = scored[: limits.fast_ranker]
         if funnel is not None:
             funnel.fast_ranker_pass = len(scored)
             funnel.note_stage("fast_ranker", len(scored))
@@ -727,7 +737,12 @@ def apply_fast_probe_seeds(peaks: list[float]) -> None:
     if not peaks or os.environ.get("SHOOTER_VOD_SEED_FROM_FAST_PROBE", "1") != "1":
         return
     os.environ["HIGHLIGHT_ALLOW_SEED_STARTS"] = "1"
-    os.environ["HIGHLIGHT_SEED_STARTS"] = ",".join(str(round(p, 1)) for p in peaks[:8])
+    # Full peak scan: seed every discovered moment, not a silent top-8.
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        seed_peaks = list(peaks)
+    else:
+        seed_peaks = list(peaks[:8])
+    os.environ["HIGHLIGHT_SEED_STARTS"] = ",".join(str(round(p, 1)) for p in seed_peaks)
 
 
 def clear_fast_probe_seeds() -> None:

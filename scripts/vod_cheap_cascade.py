@@ -107,19 +107,39 @@ def rank_peaks_cheap(
     """Filter + rank peaks before expensive OCR/CLIP/render."""
     if not peaks:
         return []
-    top_k = int(top_k if top_k is not None else _env_int("CHEAP_CASCADE_TOP_K", 8))
+    # 0 / unset under full scan = keep every peak that clears min_gun.
+    if top_k is None:
+        if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+            top_k = _env_int("CHEAP_CASCADE_TOP_K", 0)
+        else:
+            top_k = _env_int("CHEAP_CASCADE_TOP_K", 8)
+    else:
+        top_k = int(top_k)
     min_gun = float(min_gun if min_gun is not None else _env_float("CHEAP_CASCADE_MIN_GUN", 0.08))
     scored = [cheap_peak_score(vod, float(p), audio_fn=audio_fn) for p in peaks]
     scored.sort(key=lambda r: float(r.get("score") or 0.0), reverse=True)
     kept = [r for r in scored if float(r.get("gun_proxy") or 0.0) >= min_gun]
     if not kept:
         # Keep best few anyway so feed can still attempt owner peaks.
-        kept = scored[: max(1, min(3, top_k))]
+        keep_n = len(scored) if top_k <= 0 else max(1, min(3, top_k))
+        kept = scored[:keep_n]
+    if top_k <= 0:
+        return kept
     return kept[:top_k]
 
 
 def should_run_heavy(candidate: dict[str, Any], *, rank: int) -> bool:
-    """Whether OCR/CLIP/render is worth it for this cheap-ranked candidate."""
+    """Whether OCR/CLIP/render is worth it for this cheap-ranked candidate.
+
+    Under PUBG_FULL_PEAK_SCAN every peak that clears the cheap gun floor is
+    inspected — no silent top-5 heavy shortlist.
+    """
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        hard_top = _env_int("CHEAP_CASCADE_HEAVY_TOP", 0)
+        min_score = _env_float("CHEAP_CASCADE_HEAVY_MIN_SCORE", 0.0)
+        if hard_top > 0 and rank >= hard_top:
+            return False
+        return float(candidate.get("score") or 0.0) >= min_score
     hard_top = _env_int("CHEAP_CASCADE_HEAVY_TOP", 5)
     min_score = _env_float("CHEAP_CASCADE_HEAVY_MIN_SCORE", 0.10)
     if rank >= hard_top:
