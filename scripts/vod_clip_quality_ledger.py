@@ -164,6 +164,15 @@ def feedback_stats_for_vod(game: str, vod_id: str) -> dict[str, int]:
 
 _last_heartbeat_ts: dict[str, float] = {}
 
+# Milestone pulses always write; idle ticks are rate-limited.
+_HEARTBEAT_ALWAYS = frozenset(
+    {
+        "feed_main_start",
+        "feed_pipeline_done",
+        "unit_test",
+    }
+)
+
 
 def record_heartbeat(game: str, *, reason: str = "feed_tick", metrics: dict[str, Any] | None = None) -> None:
     """Ops pulse so silence monitors know the feed path is writing the ledger."""
@@ -173,7 +182,8 @@ def record_heartbeat(game: str, *, reason: str = "feed_tick", metrics: dict[str,
         min_gap = 300.0
     now = time.time()
     last = _last_heartbeat_ts.get(game, 0.0)
-    if min_gap > 0 and (now - last) < min_gap and reason != "feed_main_start":
+    always = reason in _HEARTBEAT_ALWAYS or reason.startswith("unit_")
+    if min_gap > 0 and (now - last) < min_gap and not always:
         return
     _last_heartbeat_ts[game] = now
     append_event(

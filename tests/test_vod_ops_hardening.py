@@ -15,12 +15,14 @@ sys.path.insert(0, str(SCRIPTS))
 
 def test_ledger_heartbeat_and_gate_age(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOD_QUALITY_LEDGER_DIR", str(tmp_path / "ledger"))
-    from vod_clip_quality_ledger import (
-        latest_gate_event_age_sec,
-        record_decision,
-        record_heartbeat,
-        reject_reason_summary,
-    )
+    monkeypatch.setenv("VOD_LEDGER_HEARTBEAT_MIN_SEC", "0")
+    import vod_clip_quality_ledger as ledger
+
+    ledger._last_heartbeat_ts.clear()
+    latest_gate_event_age_sec = ledger.latest_gate_event_age_sec
+    record_decision = ledger.record_decision
+    record_heartbeat = ledger.record_heartbeat
+    reject_reason_summary = ledger.reject_reason_summary
 
     assert latest_gate_event_age_sec("pubg") is None
     record_heartbeat("pubg", reason="unit_test")
