@@ -41,10 +41,14 @@ def test_adaptive_thresholds_tighten_on_run_menu(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(gat, "apply_to_environ", lambda game: gat.thresholds_for(game))
 
     base = gat.thresholds_for("pubg")
-    after_other = gat.note_negative_feedback("pubg", "boring")
+    # Unknown/empty reason must not move floors.
+    after_other = gat.note_negative_feedback("pubg", "misc_comment")
     assert after_other["gun_density_min"] == base["gun_density_min"]
+    # Boring slightly raises gun/burst floors; run/menu tightens harder.
+    after_boring = gat.note_negative_feedback("pubg", "boring")
+    assert after_boring["gun_density_min"] > base["gun_density_min"]
     after_run = gat.note_negative_feedback("pubg", "loot_run")
-    assert after_run["gun_density_min"] > base["gun_density_min"]
+    assert after_run["gun_density_min"] > after_boring["gun_density_min"]
     assert after_run["burst_ratio_min"] > base["burst_ratio_min"]
     assert after_run["motion_max_run"] < base["motion_max_run"]
     after_menu = gat.note_negative_feedback("standoff", "menu_lobby")

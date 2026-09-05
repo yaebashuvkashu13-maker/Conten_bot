@@ -254,7 +254,10 @@ def test_apply_agent_recover_env_softens_after_hour(monkeypatch: pytest.MonkeyPa
     env: dict[str, str] = {}
     out = apply_agent_recover_env(env, escalation=0)
     assert out["VOD_FORCE_SOFTEN"] == "1"
-    assert out["VOD_FORCE_SKIP_DISCOVERY"] == "1"
+    # Soften thresholds only — never skip discovery (that starved inbox refill).
+    assert out["VOD_FORCE_SKIP_DISCOVERY"] == "0"
+    assert out["SHOOTER_VOD_SKIP_DISCOVERY"] == "0"
+    assert out["VOD_FORCE_PRESEND_BYPASS"] == "0"
 
 
 def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,7 +270,11 @@ def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.M
     assert float(out["VOD_FORCE_QUALITY_MIN"]) <= 0.05
     assert out["PUBG_PRESEND_SCORE_MODE"] == "1"
     assert out["PUBG_RELAX_OWNER_HEURISTICS"] == "2"
-    assert out["VOD_FORCE_PRESEND_BYPASS"] == "1"
+    # Never auto-bypass menu/loot gates under drought escalation.
+    assert out["VOD_FORCE_PRESEND_BYPASS"] == "0"
+    assert out["VOD_FORCE_SKIP_DISCOVERY"] == "0"
+    assert out["SHOOTER_VOD_SKIP_DISCOVERY"] == "0"
+    assert out.get("PUBG_PRESEND_SHOOTING_GATE", "1") != "0"
 
 
 def test_parse_recover_sent() -> None:
