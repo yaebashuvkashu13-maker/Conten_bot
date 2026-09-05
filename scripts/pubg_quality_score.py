@@ -482,19 +482,40 @@ def score_pubg_window(
             return _finish(False, f"fight_low={fight_score:.3f}:min{fight_min:.2f}")
     if payoff_score < payoff_min:
         # Singles with clear gunfire: ship for owner 👍/👎 instead of drought on OCR miss.
-        # Never bypass a near-zero payoff with no kill signal — that shipped loot runs
+        # Never bypass a near-zero payoff with weak DSP/PANNs — that shipped loot runs
         # (_-HbZ0zNDOs_2538: payoff=0.0, no killfeed/notification).
+        # Real ADS sprays can have OCR-blind payoff=0 while PANNs+DSP scream gun
+        # (Wg9qrAzWTLU ~471.5: panns=0.69, gun=0.068, burst=4.36).
         has_payoff_signal = bool(notification_hit or keyword_hit or float(killfeed) >= 0.25)
+        strong_gun = (
+            panns_gun >= float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_PANNS", "0.50"))
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
+            and burst
+            >= float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_BURST", "3.5"))
+        )
+        bypass_burst_min = float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+        if strong_gun:
+            bypass_burst_min = min(
+                bypass_burst_min,
+                float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_BURST", "3.5")),
+            )
+        bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR", "0.05"))
+        if strong_gun and has_payoff_signal is False:
+            # OCR-blind fight: allow floor 0 when audio proof is strong.
+            bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
+            has_payoff_signal = True
         if (
             single
             and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
-            and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
+            and burst >= bypass_burst_min
             and not loot_walk
             and has_payoff_signal
-            and payoff_score >= float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR", "0.05"))
+            and payoff_score >= bypass_floor
         ):
             report["singles_gun_payoff_bypass"] = True
+            if strong_gun:
+                report["singles_strong_gun_payoff_bypass"] = True
         elif _owner_redo_trusted(video_path, start_sec, duration_sec):
             report["owner_redo_trusted"] = True
         else:
