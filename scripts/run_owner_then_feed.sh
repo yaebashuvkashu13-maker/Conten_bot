@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Step 1: finish owner 8-URL batch (no parallel feed).
-# Step 2: start base VOD feed (download → highlights → cut → send).
+# Step 2: start base VOD feed via systemd only (never nohup dual-owner).
 # Step 3: feed keeps running until a new manual command stops it.
 set -Eeuo pipefail
 
@@ -9,6 +9,7 @@ REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 LOG="${MLBB_OWNER_THEN_FEED_LOG:-/root/data/mlbb/owner_then_feed.log}"
 BATCH="$REPO/scripts/run_owner_batch8.sh"
 OWNER_LOCK="/root/data/mlbb/OWNER_BATCH_RUNNING"
+UNIT="${VOD_FEED_SYSTEMD_UNIT:-content-bot-vod-feed.service}"
 
 mkdir -p "$(dirname "$LOG")"
 
@@ -26,12 +27,16 @@ set_vod_disabled() {
 }
 
 stop_feed_only() {
+  systemctl stop "$UNIT" 2>/dev/null || true
+  systemctl stop content-bot-vod-feed.service 2>/dev/null || true
   pkill -TERM -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
   pkill -TERM -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
+  pkill -TERM -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
   sleep 2
   pkill -KILL -f 'mlbb_vod_segment_feed.py' 2>/dev/null || true
   pkill -KILL -f 'mlbb_vod_segment_feed.sh' 2>/dev/null || true
-  rm -f /tmp/mlbb_vod_segment_feed.lock
+  pkill -KILL -f 'shooter_vod_segment_feed.py' 2>/dev/null || true
+  rm -f /tmp/mlbb_vod_segment_feed.lock /tmp/mlbb_vod_supervisor.lock /tmp/pubg_vod_segment_feed.lock
 }
 
 stop_vod_pipeline() {
@@ -46,11 +51,30 @@ stop_vod_pipeline() {
 
 wait_feed_alive() {
   sleep 3
-  if pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
-    log "feed ok pid=$(pgrep -f 'mlbb_vod_segment_feed.py' | head -1)"
+  if systemctl is-active "$UNIT" >/dev/null 2>&1 \
+    || systemctl is-active content-bot-vod-feed.service >/dev/null 2>&1 \
+    || pgrep -f 'mlbb_vod_segment_feed.sh' >/dev/null 2>&1 \
+    || pgrep -f 'shooter_vod_segment_feed.py' >/dev/null 2>&1 \
+    || pgrep -f 'mlbb_vod_segment_feed.py' >/dev/null 2>&1; then
+    log "feed ok (systemd/process visible)"
     return 0
   fi
-  log "ERROR: feed failed to start"
+  log "ERROR: feed failed to start via systemd"
+  return 1
+}
+
+start_feed_systemd() {
+  if systemctl cat "$UNIT" >/dev/null 2>&1; then
+    systemctl reset-failed "$UNIT" 2>/dev/null || true
+    systemctl enable --now "$UNIT"
+    return 0
+  fi
+  if systemctl cat content-bot-vod-feed.service >/dev/null 2>&1; then
+    systemctl reset-failed content-bot-vod-feed.service 2>/dev/null || true
+    systemctl enable --now content-bot-vod-feed.service
+    return 0
+  fi
+  log "REFUSED nohup feed — run: bash $REPO/scripts/deploy_unified_production.sh"
   return 1
 }
 
@@ -94,17 +118,11 @@ else
   log "owner batch finished rc=$batch_rc (some URLs may have sent=0; continuing to base feed)"
 fi
 
-log "=== STEP 2: base VOD feed (no owner oneoff) ==="
+log "=== STEP 2: base VOD feed via systemd (no nohup) ==="
 set_vod_disabled 0
 stop_feed_only
-rm -f /tmp/mlbb_vod_segment_feed.lock
-
-FEED_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
-if [[ ! -x "$FEED_WRAPPER" ]]; then
-  FEED_WRAPPER="$REPO/scripts/mlbb_vod_segment_feed.sh"
-fi
-nohup "$FEED_WRAPPER" >>/root/data/mlbb/mlbb_vod_segment_feed.log 2>&1 &
-log "started $FEED_WRAPPER pid=$!"
+start_feed_systemd || exit 1
+log "started $UNIT"
 
 wait_feed_alive || exit 1
 log "=== STEP 3: base feed running until new command ==="

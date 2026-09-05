@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from pubg_vod_singles_first import (  # noqa: E402
+    after_owner_label_keyboard,
+    assemble_eligible,
+    pick_next_single_row,
+    pubg_singles_first_enabled,
+    should_show_assemble_button,
+    singles_keyboard,
+)
+
+
+def _mock_good_rows(monkeypatch, rows: list[dict]) -> None:
+    monkeypatch.setattr(
+        "pubg_vod_singles_first.good_rows_for_vod",
+        lambda _game, _vod: list(rows),
+    )
+
+
+def test_singles_first_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("PUBG_VOD_SINGLES_FIRST", raising=False)
+    assert pubg_singles_first_enabled() is True
+
+
+def test_pick_next_single_marks_final_when_one_left():
+    rows = [
+        {"segment_id": "vid_100", "peak_start": 100.0, "start": 95.0, "score": 0.9},
+        {"segment_id": "vid_200", "peak_start": 200.0, "start": 195.0, "score": 0.8},
+    ]
+
+    def _close(peak, used, gap):
+        return any(abs(peak - u) <= gap for u in used)
+
+    row, is_final = pick_next_single_row(
+        rows,
+        blocked_ids=set(),
+        rejected_peaks=[],
+        gap_sec=45.0,
+        used_peaks=[],
+        peak_too_close=_close,
+    )
+    assert row["segment_id"] == "vid_100"
+    assert is_final is False
+
+    row2, is_final2 = pick_next_single_row(
+        rows,
+        blocked_ids={"vid_100"},
+        rejected_peaks=[],
+        gap_sec=45.0,
+        used_peaks=[100.0],
+        peak_too_close=_close,
+    )
+    assert row2["segment_id"] == "vid_200"
+    assert is_final2 is True
+
+
+def test_assemble_keyboard_when_two_ok(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
+    )
+    markup = singles_keyboard("pubg", "vid_200", "vid", show_assemble=True)
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" in texts
+
+
+def test_no_assemble_when_only_one_ok(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(monkeypatch, [{"segment_id": "vid_100", "peak_start": 100.0}])
+    assert assemble_eligible("pubg", "vid") is False
+    assert should_show_assemble_button("pubg", "vid", singles_final=True) is False
+    markup = singles_keyboard("pubg", "vid_100", "vid", show_assemble=True)
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
+
+
+def test_assemble_after_label_when_two_ok_and_final(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
+    )
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": sid == "vid_200"}
+
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_200", "good")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" in texts
+
+
+def test_no_assemble_after_label_on_non_final(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(
+        monkeypatch,
+        [
+            {"segment_id": "vid_100", "peak_start": 100.0},
+            {"segment_id": "vid_200", "peak_start": 200.0},
+        ],
+    )
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": False}
+
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_100", "good")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
+
+
+def test_no_assemble_after_bad_when_only_one_ok_left(monkeypatch):
+    monkeypatch.setenv("PUBG_VOD_SINGLES_FIRST", "1")
+    _mock_good_rows(monkeypatch, [{"segment_id": "vid_100", "peak_start": 100.0}])
+
+    def _find(_game, sid):
+        return {"segment_id": sid, "vod_id": "vid", "singles_final": True}
+
+    monkeypatch.setattr("shooter_vod_segment_store.find_segment", _find)
+    markup = after_owner_label_keyboard("pubg", "vid_200", "bad", reason="loot_walk")
+    texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+    assert "🔧 Собрать склейку" not in texts
+
+
+def test_pin_inbox_to_active_vod():
+    from pubg_vod_singles_first import pin_inbox_to_active_vod, set_active_vod
+
+    state: dict = {}
+    files = [Path("yt_AAA111aaa11.mp4"), Path("yt_BBB222bbb22.mp4")]
+    registry = [{"id": "AAA111aaa11", "path": str(files[0]), "exhausted": False}]
+    set_active_vod(state, "AAA111aaa11")
+    pinned = pin_inbox_to_active_vod(state, files, registry)
+    assert pinned == [files[0]]
+
+
+def test_refuse_pin_steal_while_active():
+    from pubg_vod_singles_first import get_active_vod_id, set_active_vod
+
+    state: dict = {}
+    set_active_vod(state, "AAA111aaa11")
+    set_active_vod(state, "BBB222bbb22")
+    assert get_active_vod_id(state) == "AAA111aaa11"
+
+
+def test_clear_active_when_exhausted():
+    from pubg_vod_singles_first import get_active_vod_id, pin_inbox_to_active_vod, set_active_vod
+
+    state: dict = {}
+    files = [Path("yt_AAA111aaa11.mp4"), Path("yt_BBB222bbb22.mp4")]
+    registry = [{"id": "AAA111aaa11", "path": str(files[0]), "exhausted": True}]
+    set_active_vod(state, "AAA111aaa11")
+    pinned = pin_inbox_to_active_vod(state, files, registry)
+    assert len(pinned) == 2
+    assert get_active_vod_id(state) == ""
+
+
+def test_resolve_vod_path_finds_parked(tmp_path, monkeypatch):
+    from pubg_vod_singles_first import resolve_vod_path
+
+    inbox = tmp_path / "inbox"
+    parked = tmp_path / "parked"
+    inbox.mkdir()
+    parked.mkdir()
+    vod = parked / "yt_Tovruh33adY.mp4"
+    vod.write_bytes(b"x")
+    monkeypatch.setenv("PUBG_VOD_INBOX", str(inbox))
+    assert resolve_vod_path("Tovruh33adY") == vod
+
+
+def test_segment_belongs_to_vod_owner_prefix():
+    from pubg_vod_singles_first import segment_belongs_to_vod
+
+    assert segment_belongs_to_vod("Tovruh33adY_1526", "Tovruh33adY")
+    assert segment_belongs_to_vod("owner_yt_Tovruh33adY_6604", "Tovruh33adY")
+    assert not segment_belongs_to_vod("6tBEG4XXXP8_1065", "Tovruh33adY")
+
+
+def test_enqueue_assemble_dedupes(tmp_path, monkeypatch):
+    from pubg_vod_singles_first import enqueue_assemble_job, load_pending_assemble
+
+    path = tmp_path / "pending.json"
+    monkeypatch.setattr("pubg_vod_singles_first.PENDING_ASSEMBLE_PATH", path)
+    first = enqueue_assemble_job("pubg", "Tovruh33adY", "1")
+    second = enqueue_assemble_job("pubg", "Tovruh33adY", "1")
+    assert first["id"] == second["id"]
+    assert len(load_pending_assemble()) == 1
+
+
+def test_full_scan_inspects_all_peaks_budget(monkeypatch):
+    from pubg_vod_singles_first import (
+        singles_peak_try_budget,
+        singles_zero_send_exhaust_limit,
+    )
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "1")
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    monkeypatch.delenv("PUBG_SINGLES_ZERO_SEND_EXHAUST", raising=False)
+    assert singles_peak_try_budget(40) == 40
+    assert singles_zero_send_exhaust_limit() == 0
+
+    monkeypatch.setenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", "0")
+    assert singles_peak_try_budget(25) == 25
+
+    monkeypatch.setenv("PUBG_FULL_PEAK_SCAN", "0")
+    monkeypatch.delenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", raising=False)
+    assert singles_peak_try_budget(40) == 4
+    assert singles_zero_send_exhaust_limit() == 6

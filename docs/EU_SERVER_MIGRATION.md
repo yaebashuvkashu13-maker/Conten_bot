@@ -45,8 +45,8 @@ flowchart LR
 | `scripts/bootstrap_eu_vod_server.sh` | Чистая установка на EU |
 | `scripts/export_vod_state_bundle.sh` | Экспорт state со **старого** VPS |
 | `scripts/import_vod_state_bundle.sh` | Импорт state на **новый** EU |
-| `scripts/install_mlbb_vod_only.sh` | Режим VOD-only + cron + supervisor |
-| `scripts/vps_apply_vod_only.sh` | `git pull` + переустановка после пуша |
+| `scripts/deploy_unified_production.sh` | Режим VOD-only + cron + supervisor |
+| `scripts/deploy_unified_production.sh (via vps_apply_vod_only.sh wrapper)` | `git pull` + переустановка после пуша |
 | `config/video_bot.env.example` | Шаблон env (без секретов) |
 | `data/mobile_legends_owner_labels.json` | Ваши метки kill для калибровки |
 
@@ -202,7 +202,7 @@ MKL_NUM_THREADS=4
 
 ## После переезда
 
-- Автодеплой: `docs/vps-autodeploy.md` (GitHub Actions или cron `vps_apply_vod_only.sh`).
+- Автодеплой: `docs/vps-autodeploy.md` (GitHub Actions или cron `vps_auto_update.sh` → unified deploy).
 - Техдока пайплайна: `docs/MLBB_VOD_PIPELINE.md`.
 - Очистка диска на старом перед выключением: `scripts/vps_disk_cleanup.sh`.
 

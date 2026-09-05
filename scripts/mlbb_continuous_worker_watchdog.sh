@@ -44,28 +44,39 @@ if [[ "${MLBB_VOD_ONLY:-0}" == "1" && "${MLBB_VOD_DISABLED:-1}" == "0" ]]; then
     python3 "$WATCHDOG_PY" --nudge >> "$WLOG" 2>&1 || true
   fi
   if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
-    log "restart telegram_upload_bot"
-    nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+    log "restart telegram_upload_bot via systemd only"
+    if systemctl cat telegram-upload-bot.service >/dev/null 2>&1; then
+      systemctl restart telegram-upload-bot.service || true
+    elif [[ "${VOD_FEED_ALLOW_NOHUP:-0}" == "1" ]]; then
+      nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+    else
+      log "REFUSED nohup telegram — enable telegram-upload-bot.service"
+    fi
   fi
-  VOD_WRAPPER="/usr/local/bin/mlbb_vod_segment_feed.sh"
-  if ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \
+  # Sole feed owner is systemd — never nohup the supervisor from this watchdog.
+  if ! systemctl is-active content-bot-vod-feed.service >/dev/null 2>&1 \
+    && ! pgrep -f "mlbb_vod_segment_feed.sh" >/dev/null 2>&1 \
     && ! pgrep -f "daily_cycle_runner.py" >/dev/null 2>&1 \
     && ! pgrep -f "shooter_vod_segment_feed.py" >/dev/null 2>&1 \
     && ! pgrep -f "mlbb_vod_segment_feed.py" >/dev/null 2>&1; then
-    if [[ -x "$VOD_WRAPPER" ]]; then
-      nohup "$VOD_WRAPPER" >>/root/data/mlbb/vod_only_watchdog.log 2>&1 &
-      log "started vod supervisor via wrapper pid=$!"
+    if systemctl cat content-bot-vod-feed.service >/dev/null 2>&1; then
+      systemctl start content-bot-vod-feed.service || true
+      log "started content-bot-vod-feed.service"
     else
-      nohup env PYTHONPATH="/usr/local/bin" flock -n /tmp/mlbb_vod_segment_feed.lock \
-        python3 -u /usr/local/bin/mlbb_vod_segment_feed.py \
-        >>/root/data/mlbb/vod_only.log 2>&1 &
-      log "started vod_segment_feed direct pid=$!"
+      log "REFUSED nohup feed — run deploy_unified_production.sh"
     fi
   fi
   exit 0
 fi
 
-# Shorts calibration watchdog (legacy).
+# If the unified VOD unit exists, never revive Shorts dual-owner path.
+if systemctl cat content-bot-vod-feed.service >/dev/null 2>&1 \
+  || systemctl cat "${VOD_FEED_SYSTEMD_UNIT:-content-bot-vod-feed.service}" >/dev/null 2>&1; then
+  log "vod systemd unit present — refuse Shorts continuous_worker nohup path"
+  exit 0
+fi
+
+# Shorts calibration watchdog (legacy / dormant).
 if [[ "${MLBB_VOD_DISABLED:-1}" == "1" || "${MLBB_CALIBRATION_FEED_ENABLED:-1}" == "1" ]]; then
   :
 else
@@ -134,6 +145,10 @@ PY
   # shellcheck disable=SC1091
   source "$ENV_FILE" 2>/dev/null || true
   set +a
+  if [[ "${VOD_FEED_ALLOW_NOHUP:-0}" != "1" ]]; then
+    log "REFUSED nohup continuous_worker — Shorts path is dormant; use deploy_unified_production.sh for VOD"
+    return 1
+  fi
   nohup python3 "$WORKER" >> "$LOG" 2>&1 &
   echo $! > "$PIDFILE"
   log "started pid=$(cat "$PIDFILE")"
@@ -145,8 +160,14 @@ if [[ -f "$WATCHDOG_PY" ]]; then
 fi
 
 if [[ -f "$TELEGRAM_BOT" ]] && ! pgrep -f "telegram_upload_bot.py" >/dev/null 2>&1; then
-  log "restart telegram_upload_bot"
-  nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+  log "restart telegram_upload_bot via systemd only"
+  if systemctl cat telegram-upload-bot.service >/dev/null 2>&1; then
+    systemctl restart telegram-upload-bot.service || true
+  elif [[ "${VOD_FEED_ALLOW_NOHUP:-0}" == "1" ]]; then
+    nohup python3 "$TELEGRAM_BOT" >> "$TELEGRAM_LOG" 2>&1 &
+  else
+    log "REFUSED nohup telegram — enable telegram-upload-bot.service"
+  fi
 fi
 
 pid="$(worker_pid || true)"

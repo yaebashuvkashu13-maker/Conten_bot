@@ -89,8 +89,34 @@ def score_killfeed_segment(
 ) -> tuple[float, dict]:
     from gameplay_gate import _read_frame_at, detect_game_viewport_crop
 
+    if profile.strip().lower() == "pubg" and os.environ.get(
+        "PUBG_KILL_NOTIFICATION_AUTO", "1"
+    ) == "1":
+        from pubg_notification_cache import cached_score_kill_notification_segment
+
+        notification_score, notification = cached_score_kill_notification_segment(
+            video_path,
+            start_sec,
+            duration_sec,
+        )
+        text_score, text_hits = score_killfeed_text(
+            str(notification.get("notification_text") or "")
+        )
+        score = max(float(notification_score), float(text_score))
+        return score, {
+            "killfeed_text": str(notification.get("notification_text") or "")[:160],
+            "killfeed_hits": text_hits,
+            "killfeed_density": score,
+            **notification,
+        }
+
     crop = killfeed_crop(profile)
-    viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    if os.environ.get("VOD_VIEWPORT_CACHE", "1") == "1":
+        from vod_viewport_cache import detect_viewport_cached
+
+        viewport = detect_viewport_cached(video_path, start_sec, duration_sec)
+    else:
+        viewport = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     merged = ""
     density = 0.0
     tags: list[str] = []
@@ -114,3 +140,66 @@ def score_killfeed_segment(
     density = max(density, full_sc)
     tags = sorted(set(tags + full_hits))
     return density, {"killfeed_text": merged[:160], "killfeed_hits": tags, "killfeed_density": density}
+
+
+def rank_peaks_by_killfeed(
+    video_path: Path,
+    peaks: list[float],
+    profile: str,
+    *,
+    part_sec: float = 14.0,
+    max_probes: int = 12,
+    meta: dict[float, dict] | None = None,
+) -> tuple[list[float], str]:
+    """Reorder peak shortlist — killfeed OCR first (cheap, before presend gates)."""
+    if os.environ.get("PUBG_KILLFEED_RANK", "1") != "1":
+        return list(peaks), "killfeed_rank_off"
+    if not peaks:
+        return [], "killfeed_rank_empty"
+    profile = profile.strip().lower()
+    if profile not in ("pubg", "standoff"):
+        return list(peaks), "killfeed_rank_skip_profile"
+
+    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+        raw_cap = int(os.environ.get("PUBG_KILLFEED_RANK_MAX", "0") or 0)
+        cap = raw_cap if raw_cap > 0 else len(peaks)
+    else:
+        cap = max(2, int(os.environ.get("PUBG_KILLFEED_RANK_MAX", str(max_probes))))
+    probe = list(peaks) if cap <= 0 else list(peaks)[:cap]
+    scored: list[tuple[float, float, float]] = []
+    for i, peak in enumerate(probe):
+        cached = (meta or {}).get(float(peak))
+        if cached is not None:
+            notification = float(cached.get("notification_score", 0.0) or 0.0)
+            kf = float(cached.get("killfeed", notification) or 0.0)
+            rank_score = max(kf, notification) * 1.5 + notification * 0.75
+            if cached.get("notification_hit"):
+                rank_score += 0.35
+            scored.append((rank_score, -float(i), float(peak)))
+            continue
+        start = max(0.0, float(peak) - part_sec * 0.5)
+        if profile == "pubg":
+            try:
+                from pubg_fast_peak_rank import payoff_probe_window
+
+                start, part_sec_probe = payoff_probe_window(float(peak), part_sec)
+            except Exception:
+                part_sec_probe = part_sec
+        else:
+            part_sec_probe = part_sec
+        try:
+            kf, kmeta = score_killfeed_segment(video_path, start, part_sec_probe, profile)
+        except Exception:
+            kf, kmeta = 0.0, {}
+        notification = float(kmeta.get("notification_score", 0.0) or 0.0)
+        rank_score = max(float(kf), notification) * 1.5 + notification * 0.75
+        if kmeta.get("notification_hit"):
+            rank_score += 0.35
+        scored.append((rank_score, -float(i), float(peak)))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    ranked = [p for _kf, _ord, p in scored]
+    tail = [p for p in peaks if p not in ranked]
+    ranked.extend(tail)
+    top_kf = scored[0][0] if scored else 0.0
+    return ranked, f"killfeed_rank top={top_kf:.2f} n={len(probe)}"

@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "sample_fps": 1.5,
+  "max_frames": 18,
+  "min_persistence_frames": 3,
+  "min_score": 0.42,
+  "min_colored_pixels": 10,
+  "min_width_ratio": 0.035,
+  "max_height_ratio": 0.14,
+  "min_aspect_ratio": 3.0,
+  "search": {
+    "x0": 0.0,
+    "y0": 0.0,
+    "x1": 1.0,
+    "y1": 0.82
+  },
+  "hsv_ranges": [
+    {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
+    {"name": "blue", "low": [100, 45, 70], "high": [135, 255, 255]},
+    {"name": "gold", "low": [12, 80, 140], "high": [38, 255, 255]}
+  ]
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Content Bot VOD hang detector tick (oneshot heal)
+After=network-online.target content-bot-vod-feed.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+EnvironmentFile=-/root/.video_bot.env
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+Environment=VOD_FEED_ALLOW_NOHUP=0
+ExecStart=/usr/bin/python3 -u /usr/local/bin/vod_hang_detector.py --tick --game pubg
+WorkingDirectory=/root/content_bot_ml
