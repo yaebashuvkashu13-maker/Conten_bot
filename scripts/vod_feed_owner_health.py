@@ -27,9 +27,16 @@ def _env(name: str, default: str = "") -> str:
 
 
 def _load_env_file(path: Path) -> None:
-    if not path.exists():
+    try:
+        if not path.exists():
+            return
+    except OSError:
         return
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -174,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         problems.append(f"duplicate_supervisors={len(supers)} heal={heal}")
     if not feeds and active == "active":
         problems.append("no shooter_vod_segment_feed.py while unit active")
-    silence_limit = max(0.5, float(args.ledger_silence_hours)) * 3600.0
+    silence_limit = max(0.0, float(args.ledger_silence_hours)) * 3600.0
     if ledger_age is None:
         problems.append("ledger_no_reject_sent_or_heartbeat")
     elif ledger_age > silence_limit:

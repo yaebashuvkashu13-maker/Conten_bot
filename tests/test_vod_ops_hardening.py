@@ -76,14 +76,30 @@ def test_feed_owner_health_detects_ledger_silence(
     monkeypatch.setenv("VOD_QUALITY_LEDGER_DIR", str(tmp_path / "ledger"))
     monkeypatch.setenv("VOD_FEED_HEALTH_STATE", str(tmp_path / "health.json"))
     monkeypatch.setenv("VOD_FEED_AUTO_HEAL_DUPES", "0")
+    env_file = tmp_path / "bot.env"
+    env_file.write_text("", encoding="utf-8")
     import vod_feed_owner_health as health
 
+    monkeypatch.setattr(health, "STATE_PATH", tmp_path / "health.json")
     monkeypatch.setattr(health, "_systemctl", lambda *a, **k: "active")
     monkeypatch.setattr(health, "n_restarts", lambda: 0)
     monkeypatch.setattr(health, "_pgrep", lambda pat: [1] if "mlbb" in pat else [2])
-    monkeypatch.setattr(health, "telegram_send", lambda text: False)
+    # Support either helper name used by the module.
+    if hasattr(health, "telegram_send"):
+        monkeypatch.setattr(health, "telegram_send", lambda text: False)
+    if hasattr(health, "telegram_send"):
+        monkeypatch.setattr(health, "telegram_send", lambda text: False)
     # No ledger events yet → degraded
-    rc = health.main(["--game", "pubg", "--ledger-silence-hours", "0.001"])
+    rc = health.main(
+        [
+            "--game",
+            "pubg",
+            "--ledger-silence-hours",
+            "0.001",
+            "--env-file",
+            str(env_file),
+        ]
+    )
     assert rc == 1
     report = json.loads(Path(tmp_path / "health.json").read_text(encoding="utf-8"))
     assert report["status"] == "degraded"
