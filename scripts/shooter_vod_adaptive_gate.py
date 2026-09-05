@@ -61,10 +61,9 @@ def streak_threshold() -> int:
     return max(1, int(raw))
 
 
-# Level 3: long zero streak — trust gun audio, skip run/loot owner heuristics.
+# Level 3: long zero streak — trust gun audio / Metro title. Never relax owner heuristics.
 SHOOTER_SOFTEN_L3: dict[str, str] = {
     **SHOOTER_SOFTEN_L2,
-    "PUBG_RELAX_OWNER_HEURISTICS": "1",
     "PUBG_METRO_SEGMENT_TRUST_VOD": "1",
     "PUBG_METRO_TITLE_TRUST": "1",
     "PUBG_REJECT_BOT_FARM": "0",
@@ -79,6 +78,8 @@ SHOOTER_SOFTEN_L3: dict[str, str] = {
 }
 
 # Level 4: streak 10+ — trust PANNs gun audio, probe more windows, lower hook bar.
+# Esc2 drought soften (vod_force_send) may set PUBG_RELAX_OWNER_HEURISTICS=1 separately;
+# adaptive tables must never declare RELAX — that shipped talk/loot as "combat".
 SHOOTER_SOFTEN_L4: dict[str, str] = {
     **SHOOTER_SOFTEN_L3,
     "SHOOTER_VOD_MAX_PANN_PROBE": "28",
@@ -87,7 +88,6 @@ SHOOTER_SOFTEN_L4: dict[str, str] = {
     "HIGHLIGHT_PANN_GUN_MIN": "0.12",
     "HIGHLIGHT_PANN_INFERENCE_FLOOR": "0.08",
     "PUBG_PANNS_TRUST_MIN": "0.28",
-    "PUBG_RELAX_OWNER_HEURISTICS": "2",
     "PUBG_COMBAT_PANN_MIN": "0.12",
     "PUBG_COMBAT_FRAMES_REQUIRED": "1",
     "VIRAL_SEGMENT_HOOK_MIN": "0.04",

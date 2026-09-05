@@ -135,6 +135,39 @@ def feedback_stats_for_vod(game: str, vod_id: str) -> dict[str, int]:
     return {"sent": sent, "good": good, "bad": bad}
 
 
+def record_heartbeat(game: str, *, reason: str = "feed_tick", metrics: dict[str, Any] | None = None) -> None:
+    """Ops pulse so silence monitors know the feed path is writing the ledger."""
+    append_event(
+        game,
+        {
+            "clip_id": "",
+            "vod_id": "",
+            "decision": "heartbeat",
+            "reason": reason,
+            "metrics": metrics or {},
+        },
+    )
+
+
+def latest_gate_event_age_sec(game: str, *, limit: int = 800) -> float | None:
+    """Seconds since newest reject/sent/heartbeat, or None if ledger empty of gates."""
+    import calendar
+
+    now = time.time()
+    newest: float | None = None
+    for row in iter_events(game)[-max(1, int(limit)) :]:
+        if str(row.get("decision") or "") not in {"reject", "sent", "heartbeat"}:
+            continue
+        ts = str(row.get("ts") or "")
+        try:
+            age = now - calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+        except ValueError:
+            continue
+        if newest is None or age < newest:
+            newest = age
+    return newest
+
+
 def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
     """Aggregate reject reasons + gun-bypass admit markers for drought tuning."""
     counts: dict[str, int] = {}
@@ -143,10 +176,14 @@ def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
     payoff_low = 0
     sent = 0
     rejected = 0
+    heartbeats = 0
     for row in iter_events(game)[-max(1, int(limit)) :]:
         decision = str(row.get("decision") or "")
         reason = str(row.get("reason") or "")
         metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+        if decision == "heartbeat":
+            heartbeats += 1
+            continue
         if decision == "sent":
             sent += 1
             if (
@@ -169,6 +206,7 @@ def reject_reason_summary(game: str, *, limit: int = 500) -> dict[str, Any]:
     return {
         "sent": sent,
         "rejected": rejected,
+        "heartbeats": heartbeats,
         "early_payoff_low": early_payoff,
         "payoff_low": payoff_low,
         "gun_bypass_admits": gun_bypass,

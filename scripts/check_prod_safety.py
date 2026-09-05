@@ -21,6 +21,10 @@ if "apply_to_environ" not in feed:
     errors.append("feed must apply game_adaptive_thresholds on startup")
 if "_ledger_record_decision" not in feed or "_ledger_record_send" not in feed:
     errors.append("feed must write quality ledger on reject/send")
+if "record_heartbeat" not in feed:
+    errors.append("feed must write quality ledger heartbeat on startup")
+if 'SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "0"' not in feed:
+    errors.append("feed default SKIP_DISCOVERY_WHEN_INBOX_DEAD must be 0")
 if "entry_is_hard_bad_without_peaks" not in feed:
     errors.append("feed recycle must skip hard-bad VODs without peaks")
 
@@ -58,9 +62,25 @@ for needle in (
     '"VOD_FORCE_PRESEND_GATE": "1"',
     '"SHOOTER_VOD_SKIP_DISCOVERY": "0"',
     '"PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0"',
+    '"SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD": "0"',
+    "mlbb_vod_segment_feed.sh",
+    "content_bot_vod_feed.service",
+    "vod_feed_owner_health",
+    "feed looks slim",
 ):
     if needle not in deploy:
-        errors.append(f"deploy_unified_production.sh missing pin {needle}")
+        errors.append(f"deploy_unified_production.sh missing {needle}")
+
+if not (SCRIPTS / "mlbb_vod_segment_feed.sh").is_file():
+    errors.append("mlbb_vod_segment_feed.sh supervisor must live in repo")
+if not (SCRIPTS / "content_bot_vod_feed.service").is_file():
+    errors.append("content_bot_vod_feed.service unit must live in repo")
+if not (SCRIPTS / "vod_feed_owner_health.py").is_file():
+    errors.append("vod_feed_owner_health.py must exist")
+if not (SCRIPTS / "install_vod_daily_quality_digest.sh").is_file():
+    errors.append("install_vod_daily_quality_digest.sh must exist")
+if not (SCRIPTS / "install_vod_feed_owner_health.sh").is_file():
+    errors.append("install_vod_feed_owner_health.sh must exist")
 
 cal = (SCRIPTS / "pubg_owner_calibration.py").read_text(encoding="utf-8")
 if 'PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0"' not in cal:
@@ -71,6 +91,24 @@ if "SMART_PUBG_MIN_GUNFIRE_DENSITY" in adaptive:
     errors.append("shooter_vod_adaptive_gate must not own SMART_PUBG_MIN_GUNFIRE_DENSITY floors")
 if "apply_to_environ" not in adaptive:
     errors.append("shooter_vod_adaptive_gate must re-apply game_adaptive_thresholds")
+for level_name in ("SHOOTER_SOFTEN_L3", "SHOOTER_SOFTEN_L4"):
+    block = re.search(
+        rf"{level_name}: dict\[str, str\] = \{{(.*?)\n\}}",
+        adaptive,
+        re.S,
+    )
+    if block and "PUBG_RELAX_OWNER_HEURISTICS" in block.group(1):
+        errors.append(f"{level_name} must not declare PUBG_RELAX_OWNER_HEURISTICS")
+
+ledger = (SCRIPTS / "vod_clip_quality_ledger.py").read_text(encoding="utf-8")
+if "def record_heartbeat" not in ledger:
+    errors.append("vod_clip_quality_ledger must expose record_heartbeat")
+if "def latest_gate_event_age_sec" not in ledger:
+    errors.append("vod_clip_quality_ledger must expose latest_gate_event_age_sec")
+
+drought = (SCRIPTS / "vod_send_drought_watch.py").read_text(encoding="utf-8")
+if "latest_gate_event_age_sec" not in drought or "ledger_silent" not in drought:
+    errors.append("vod_send_drought_watch must alert on silent ledger")
 
 bad = re.findall(r'os\.environ\.get\("VOD_FORCE_PRESEND_BYPASS",\s*"1"\)', hang + force + feed)
 if bad:

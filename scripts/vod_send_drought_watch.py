@@ -132,22 +132,40 @@ def main(argv: list[str] | None = None) -> int:
     report["recover"] = recover
     summary, ops_line = _reject_ops_line(args.game)
     report["reject_summary"] = summary
+    # Live monitoring: alert when feed is up but ledger has no reject/sent/heartbeat.
+    try:
+        from vod_clip_quality_ledger import latest_gate_event_age_sec
+
+        gate_age = latest_gate_event_age_sec(args.game)
+    except Exception:
+        gate_age = None
+    report["ledger_gate_age_sec"] = gate_age
+    silence_h = float(_env("VOD_LEDGER_SILENCE_HOURS", "3") or 3)
+    ledger_silent = gate_age is None or gate_age >= silence_h * 3600.0
+    report["ledger_silent"] = bool(ledger_silent)
     hours = age / 3600.0
     last_alert = float(prev.get("last_alert_age") or 0)
     # Avoid spam: alert at most once per half-window unless age grew a lot.
     should_alert = (age - last_alert) >= (limit * 0.5)
-    if should_alert:
-        text = (
-            f"⚠️ VOD drought [{args.game}]\n"
-            f"no sends for {hours:.1f}h (limit {args.hours:.1f}h)\n"
-            f"{ops_line}\n"
-            f"recover={json.dumps(recover, ensure_ascii=False)}"
-        )
+    if should_alert or (ledger_silent and (time.time() - float(prev.get("last_ledger_alert_ts") or 0) > 1800)):
+        parts = [
+            f"⚠️ VOD drought [{args.game}]",
+            f"no sends for {hours:.1f}h (limit {args.hours:.1f}h)",
+            ops_line or "rejects=n/a",
+            f"recover={json.dumps(recover, ensure_ascii=False)}",
+        ]
+        if ledger_silent:
+            age_s = "none" if gate_age is None else f"{gate_age/3600:.1f}h"
+            parts.append(f"ledger_gate_age={age_s} (silence>{silence_h:.0f}h)")
+        text = "\n".join(parts)
         report["alerted"] = telegram_send(text)
         report["last_alert_age"] = age
+        if ledger_silent:
+            report["last_ledger_alert_ts"] = time.time()
     else:
         report["alerted"] = False
         report["last_alert_age"] = last_alert
+        report["last_ledger_alert_ts"] = prev.get("last_ledger_alert_ts")
     state_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
     return 0

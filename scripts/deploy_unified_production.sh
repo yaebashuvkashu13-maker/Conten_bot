@@ -3,34 +3,80 @@
 # Supersedes parallel branches/PRs: vod-quality-ops-suite, vod-ffprobe-hang-fix,
 # pubg-fight-only-gates, vod-hang-autounload, pubg-owner-combat-gates, etc.
 # Always deploy from: cursor/vod-unified-production-a016 (#94)
-# Deploy the unified production branch onto the VPS hang-fix tree safely.
 # Usage: CONTENT_BOT_REPO=/root/content_bot_ml ./scripts/deploy_unified_production.sh
 set -euo pipefail
+
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 BRANCH="${UNIFIED_BRANCH:-cursor/vod-unified-production-a016}"
+UNIT="${VOD_FEED_SYSTEMD_UNIT:-content-bot-vod-feed.service}"
+ENV_FILE="${VOD_BOT_ENV_FILE:-/root/.video_bot.env}"
+FEED_SCRIPT="scripts/shooter_vod_segment_feed.py"
+
 cd "$REPO"
 git fetch origin "$BRANCH"
 # Stay on unified branch; never checkout slim feed branches.
 git checkout -B "$BRANCH" "origin/$BRANCH"
+
+# --- Preflight: refuse slim/wrong feed overwrite ---
+python3 - <<'PY'
+from pathlib import Path
+import sys
+feed = Path("scripts/shooter_vod_segment_feed.py")
+if not feed.is_file():
+    print("FATAL: shooter_vod_segment_feed.py missing", file=sys.stderr)
+    sys.exit(2)
+text = feed.read_text(encoding="utf-8")
+lines = text.count("\n")
+if lines < 2500:
+    print(f"FATAL: feed looks slim ({lines} lines < 2500) — refuse deploy", file=sys.stderr)
+    sys.exit(2)
+for needle in (
+    "_ledger_record_decision",
+    "_ledger_record_send",
+    "record_heartbeat",
+    'VOD_FORCE_PRESEND_BYPASS", "0"',
+    "entry_is_hard_bad_without_peaks",
+):
+    if needle not in text:
+        print(f"FATAL: feed missing safety marker: {needle}", file=sys.stderr)
+        sys.exit(2)
+print(f"preflight OK feed_lines={lines}")
+PY
+
 # Mirror hot scripts into /usr/local/bin for PYTHONPATH consumers.
 for f in \
   clip_hook_gate.py dislike_reason_gates.py vod_cheap_cascade.py telegram_delivery.py \
   vod_media_cache.py vod_clip_quality_ledger.py vod_weekly_quality_report.py \
   vod_inbox_recover.py vod_owner_feedback_bridge.py vod_send_drought_watch.py \
   game_adaptive_thresholds.py vod_hang_detector.py vod_force_send.py \
-  smart_video_editor.py shooter_vod_segment_feed.py; do
+  smart_video_editor.py shooter_vod_segment_feed.py daily_cycle_runner.py \
+  vod_feed_owner_health.py; do
   [[ -f "scripts/$f" ]] && cp -f "scripts/$f" "/usr/local/bin/$f"
 done
+
+# Install systemd-owned supervisor (single owner).
+install -m 0755 scripts/mlbb_vod_segment_feed.sh /usr/local/bin/mlbb_vod_segment_feed.sh
+install -m 0644 scripts/content_bot_vod_feed.service "/etc/systemd/system/${UNIT}"
+# Keep legacy unit name working if present.
+if [[ -f /etc/systemd/system/content-bot-vod-feed.service && "$UNIT" != content-bot-vod-feed.service ]]; then
+  cp -f "/etc/systemd/system/${UNIT}" /etc/systemd/system/content-bot-vod-feed.service
+fi
+systemctl daemon-reload
+
 bash scripts/install_vod_weekly_quality_report.sh || true
 bash scripts/install_vod_send_drought_watch.sh || true
+bash scripts/install_vod_daily_quality_digest.sh || true
+bash scripts/install_vod_feed_owner_health.sh || true
+
 # Pin safe defaults in env
-python3 - <<'PY'
+python3 - <<PY
 from pathlib import Path
-p = Path("/root/.video_bot.env")
+p = Path("${ENV_FILE}")
 wanted = {
     "VOD_FORCE_PRESEND_BYPASS": "0",
     "VOD_FORCE_SKIP_DISCOVERY": "0",
     "SHOOTER_VOD_SKIP_DISCOVERY": "0",
+    "SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD": "0",
     "VOD_FORCE_PRESEND_GATE": "1",
     "VOD_FORCE_REJECT_LOOT": "1",
     "VOD_FORCE_RELAX_OWNER": "1",
@@ -44,6 +90,7 @@ wanted = {
     "VOD_ADAPTIVE_THRESHOLDS": "1",
     "VOD_DROUGHT_AUTO_RECOVER": "1",
     "VOD_DROUGHT_HOURS": "2",
+    "VOD_LEDGER_SILENCE_HOURS": "3",
     # Payoff calibration: stop OCR-miss drought without re-enabling menu bypass
     "PUBG_EARLY_PAYOFF_REJECT_SINGLES": "0",
     "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0",
@@ -67,10 +114,24 @@ for line in lines:
 for k,v in wanted.items():
     if k not in keys:
         out.append(f"{k}={v}")
-p.write_text("\n".join(out) + "\n")
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("\\n".join(out) + "\\n")
 print("env pinned", sorted(wanted))
 PY
-pkill -f 'shooter_vod_segment_feed.py' || true
-sleep 8
-pgrep -af 'shooter_vod_segment_feed.py' || echo "waiting for supervisor to relaunch feed"
-echo "deployed $BRANCH @ $(git rev-parse --short HEAD)"
+
+# --- Single owner restart: stop unit, kill orphans, clear stale lock, start unit ---
+systemctl stop "$UNIT" 2>/dev/null || true
+systemctl stop content-bot-vod-feed.service 2>/dev/null || true
+# Kill any leftover supervisors/feeds not under systemd.
+pkill -f 'mlbb_vod_segment_feed\\.sh' 2>/dev/null || true
+pkill -f 'shooter_vod_segment_feed\\.py' 2>/dev/null || true
+pkill -f 'mlbb_vod_segment_feed\\.py' 2>/dev/null || true
+sleep 2
+rm -f /tmp/mlbb_vod_supervisor.lock /tmp/mlbb_vod_segment_feed.lock /tmp/pubg_vod_segment_feed.lock
+systemctl reset-failed "$UNIT" 2>/dev/null || true
+systemctl enable --now "$UNIT"
+sleep 5
+systemctl is-active "$UNIT"
+pgrep -af 'mlbb_vod_segment_feed.sh|shooter_vod_segment_feed.py' || echo "WARN: feed process not visible yet"
+python3 /usr/local/bin/vod_feed_owner_health.py --game pubg || true
+echo "deployed $BRANCH @ $(git rev-parse --short HEAD) unit=$UNIT"

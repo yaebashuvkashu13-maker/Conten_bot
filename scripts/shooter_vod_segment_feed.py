@@ -3592,10 +3592,11 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             # Still block discovery only when recently paused (403 / empty search).
             pause_until = float(state.get("discovery_pause_until") or 0)
             if pause_until > time.time() and os.environ.get(
-                "SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1"
+                "SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "0"
             ) == "1":
-                log.warning(
-                    "inbox exhausted + discovery paused — wait game=%s until=%.0f",
+                log.error(
+                    "SKIP_DISCOVERY_WHEN_INBOX_DEAD=1 armed — inbox exhausted + discovery paused "
+                    "game=%s until=%.0f (set env=0 to force discovery)",
                     game,
                     pause_until,
                 )
@@ -3735,7 +3736,8 @@ def main() -> int:
     os.environ.setdefault("SHOOTER_VOD_FAST_PROBE", "1")
     os.environ.setdefault("SHOOTER_VOD_FAST_MONTAGE", "1")
     os.environ.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", "3")
-    os.environ.setdefault("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "1")
+    # Default OFF: empty inbox must still run discovery (was a silent drought path).
+    os.environ.setdefault("SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "0")
     # Never inherit a 600s floor — that blocked every 4–9 min Metro VOD.
     os.environ.setdefault(
         "SHOOTER_VOD_MIN_SEC",
@@ -3743,6 +3745,12 @@ def main() -> int:
     )
     os.environ.setdefault("SHOOTER_VOD_MAX_SEC", "14400")
     os.environ.setdefault("HIGHLIGHT_ALLOW_NO_CLIP", "1")
+    try:
+        from vod_clip_quality_ledger import record_heartbeat
+
+        record_heartbeat(game, reason="feed_main_start")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("quality ledger heartbeat failed: %s", exc)
     # Disable CLIP during fast probe unless montage rank needs it (strict PUBG).
     if pubg_quality_strict() or os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
         if os.environ.get("HIGHLIGHT_CLIP_DISABLED", "0") != "1":
