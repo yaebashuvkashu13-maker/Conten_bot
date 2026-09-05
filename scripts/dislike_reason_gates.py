@@ -148,12 +148,25 @@ def evaluate_reason_gates(
     motion_max = min(t.motion_max for t in chosen)
     menu_max = min(t.menu_overlay_max for t in chosen)
     visual_min = max(t.visual_min for t in chosen)
-    # Drought / ops may raise menu_overlay_max (HUD false positives) without
-    # disabling the gate. Loot/gun floors stay at reason-table values.
-    override = os.environ.get("DISLIKE_MENU_OVERLAY_MAX", "").strip()
-    if override:
+    # Drought / ops overrides: raise menu ceiling / lower gun floor to match
+    # softened shoot gates. Loot hard-reject stays outside this module.
+    menu_override = os.environ.get("DISLIKE_MENU_OVERLAY_MAX", "").strip()
+    if menu_override:
         try:
-            menu_max = max(menu_max, float(override))
+            menu_max = max(menu_max, float(menu_override))
+        except ValueError:
+            pass
+    gun_override = os.environ.get("DISLIKE_GUN_DENSITY_MIN", "").strip()
+    if gun_override:
+        try:
+            # Take the looser (lower) floor under drought soften.
+            gun_min = min(gun_min, float(gun_override))
+        except ValueError:
+            pass
+    burst_override = os.environ.get("DISLIKE_BURST_RATIO_MIN", "").strip()
+    if burst_override:
+        try:
+            burst_min = min(burst_min, float(burst_override))
         except ValueError:
             pass
 

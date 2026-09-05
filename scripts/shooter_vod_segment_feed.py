@@ -167,7 +167,9 @@ def _purge_junk_inbox_vods(game: str, inbox: Path) -> int:
 ENV_PATH = Path("/root/.video_bot.env")
 EXTENDED_GAMES = frozenset({"genshin", "wot"})
 FEED_GAMES = frozenset({"pubg", "standoff", *EXTENDED_GAMES})
-DENSE_POOL_VERSION = 3
+# Bump when peak discovery semantics change (combat timeline, full-VOD recall).
+# Stale cached_pool peaks were blocking the new search and replaying loot/menu.
+DENSE_POOL_VERSION = 4
 
 
 def _game() -> str:
@@ -936,6 +938,8 @@ def _remember_dense_rejections(entry: dict | None, peaks: list[float]) -> None:
 
 
 def _dense_pool_cache_usable(entry: dict | None, cached_peaks: list[float], min_clips: int) -> bool:
+    if os.environ.get("SHOOTER_VOD_DENSE_POOL_BUST", "0") == "1":
+        return False
     if len(cached_peaks) < min_clips:
         return False
     if int((entry or {}).get("dense_pool_version") or 0) != DENSE_POOL_VERSION:

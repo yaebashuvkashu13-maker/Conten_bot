@@ -667,9 +667,18 @@ def apply_agent_recover_env(
     if esc >= 2:
         dislike_menu = "0.36"
     target["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    dislike_gun = "0.040"
+    dislike_burst = "4.0"
+    if esc >= 1:
+        dislike_gun, dislike_burst = "0.025", "3.5"
+    if esc >= 2:
+        dislike_gun, dislike_burst = "0.015", "3.0"
+    target["DISLIKE_GUN_DENSITY_MIN"] = dislike_gun
+    target["DISLIKE_BURST_RATIO_MIN"] = dislike_burst
     target["DISLIKE_REASON_GATES"] = "1"
     target["PUBG_COMBAT_TIMELINE"] = "1"
     target["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    target["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if esc >= 1 else "6"
     )

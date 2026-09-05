@@ -257,10 +257,22 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     if escalation >= 2:
         dislike_menu = "0.36"
     env["DISLIKE_MENU_OVERLAY_MAX"] = dislike_menu
+    # Align dislike gun floor with soften shoot gates (was stuck at 0.09 while
+    # VOD_FORCE_GUN_DENSITY=0.01 → every borderline fight died as reason_low_gun).
+    dislike_gun = "0.040"
+    dislike_burst = "4.0"
+    if escalation >= 1:
+        dislike_gun, dislike_burst = "0.025", "3.5"
+    if escalation >= 2:
+        dislike_gun, dislike_burst = "0.015", "3.0"
+    env["DISLIKE_GUN_DENSITY_MIN"] = dislike_gun
+    env["DISLIKE_BURST_RATIO_MIN"] = dislike_burst
     env["DISLIKE_REASON_GATES"] = "1"
     # Combat timeline path: duration-scaled events, early-action shift, no tiny top-N.
     env["PUBG_COMBAT_TIMELINE"] = "1"
     env["PUBG_EARLY_ACTION_SHIFT"] = "1"
+    # Force rediscovery — stale dense_pool_version caches replay loot/menu peaks.
+    env["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "8" if escalation >= 1 else "6"
     )
