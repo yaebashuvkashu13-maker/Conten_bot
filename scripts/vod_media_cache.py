@@ -169,3 +169,47 @@ def audio_preflight_ok(
     if not has_audio:
         return False, "no_audio", {"duration": duration}
     return True, "ok", {"duration": duration, "streams": len(streams)}
+
+
+def cached_feature(
+    kind: str,
+    path: Path,
+    *,
+    start_sec: float = 0.0,
+    dur_sec: float = 0.0,
+    extra_key: str = "",
+    compute_fn: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    """Generic content-hash cache for OCR / motion / killfeed / other heavy features."""
+    p = Path(path)
+    key = f"{file_fingerprint(p)}_{int(start_sec * 10)}_{int(dur_sec * 10)}"
+    if extra_key:
+        key = f"{key}_{extra_key}"
+    hit = get_json(kind, key)
+    if hit is not None:
+        return hit
+    data = compute_fn(p, float(start_sec), float(dur_sec)) or {}
+    if isinstance(data, dict) and data:
+        try:
+            set_json(kind, key, data)
+        except OSError:
+            pass
+    return data if isinstance(data, dict) else {}
+
+
+def cached_ocr_window(
+    path: Path,
+    start_sec: float,
+    dur_sec: float,
+    compute_fn: Callable[[Path, float, float], dict[str, Any]],
+) -> dict[str, Any]:
+    return cached_feature("ocr", path, start_sec=start_sec, dur_sec=dur_sec, compute_fn=compute_fn)
+
+
+def cached_motion_window(
+    path: Path,
+    start_sec: float,
+    dur_sec: float,
+    compute_fn: Callable[[Path, float, float], dict[str, Any]],
+) -> dict[str, Any]:
+    return cached_feature("motion", path, start_sec=start_sec, dur_sec=dur_sec, compute_fn=compute_fn)

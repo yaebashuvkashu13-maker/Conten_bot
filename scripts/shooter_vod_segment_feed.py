@@ -392,6 +392,88 @@ def _send_batch(game: str, token: str, chat_id: str, vod: Path, to_send: list[di
                         log.warning("quality ledger reject failed: %s", exc)
                 continue
 
+        if os.environ.get("CLIP_HOOK_GATE", "1") == "1":
+            try:
+                from clip_hook_gate import hook_gate_clip
+
+                hook_ok, hook_reason, hook_report = hook_gate_clip(deliver)
+            except Exception as exc:
+                log.warning("hook gate error sid=%s: %s", sid, exc)
+                hook_ok, hook_reason, hook_report = True, "hook_error", {}
+            if not hook_ok:
+                log.warning("hook gate REJECT %s: %s", sid, hook_reason)
+                if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                    try:
+                        from vod_clip_quality_ledger import record_decision
+
+                        record_decision(
+                            game,
+                            clip_id=sid,
+                            vod_id=vod_youtube_id(vod),
+                            vod_path=str(vod),
+                            decision="reject",
+                            reason=f"hook:{hook_reason}",
+                            metrics=hook_report if isinstance(hook_report, dict) else {},
+                            peak_sec=peak_f,
+                        )
+                    except Exception as exc:
+                        log.warning("quality ledger reject failed: %s", exc)
+                continue
+
+        if os.environ.get("DISLIKE_REASON_GATES", "1") == "1":
+            try:
+                from dislike_reason_gates import evaluate_reason_gates, recent_dislike_reasons
+
+                reason_metrics = {
+                    **(presend_report if isinstance(presend_report, dict) else {}),
+                    "gun_density": float(
+                        (presend_report or {}).get("gunfire_density")
+                        or (presend_report or {}).get("gun_density")
+                        or 0.0
+                    ),
+                    "burst_ratio": float(
+                        (presend_report or {}).get("burst_ratio")
+                        or (presend_report or {}).get("gun_burst_ratio")
+                        or 0.0
+                    ),
+                    "center_motion": float(
+                        (presend_report or {}).get("center_motion")
+                        or (presend_report or {}).get("motion")
+                        or 0.0
+                    ),
+                    "menu_overlay": float(
+                        (presend_report or {}).get("center_text")
+                        or (presend_report or {}).get("menu_overlay")
+                        or 0.0
+                    ),
+                }
+                rg_ok, rg_reason, rg_report = evaluate_reason_gates(
+                    reason_metrics,
+                    active_reasons=recent_dislike_reasons(game),
+                )
+            except Exception as exc:
+                log.warning("dislike reason gates error sid=%s: %s", sid, exc)
+                rg_ok, rg_reason, rg_report = True, "reason_gates_error", {}
+            if not rg_ok:
+                log.warning("dislike reason REJECT %s: %s", sid, rg_reason)
+                if os.environ.get("VOD_QUALITY_LEDGER", "1") == "1":
+                    try:
+                        from vod_clip_quality_ledger import record_decision
+
+                        record_decision(
+                            game,
+                            clip_id=sid,
+                            vod_id=vod_youtube_id(vod),
+                            vod_path=str(vod),
+                            decision="reject",
+                            reason=f"dislike_gate:{rg_reason}",
+                            metrics=rg_report if isinstance(rg_report, dict) else {},
+                            peak_sec=peak_f,
+                        )
+                    except Exception as exc:
+                        log.warning("quality ledger reject failed: %s", exc)
+                continue
+
         peak = int(peak_f)
         if game == "pubg":
             caption = (
@@ -544,6 +626,33 @@ def _scan_vod(
         log.info("reuse cached peak pool vod=%s peaks=%s", vod.name, len(pool))
     else:
         pool = discover_strict_candidates(vod, profile, sig, blocked_ids)
+        if pool and os.environ.get("VOD_CHEAP_CASCADE", "1") == "1":
+            try:
+                from vod_cheap_cascade import rank_peaks_cheap, should_run_heavy
+
+                peaks = [float(c.get("start") or c.get("peak_start") or 0.0) for c in pool]
+                ranked = rank_peaks_cheap(vod, peaks)
+                keep_peaks = {
+                    round(float(r["peak_sec"]), 1)
+                    for i, r in enumerate(ranked)
+                    if should_run_heavy(r, rank=i)
+                }
+                if keep_peaks:
+                    filtered = [
+                        c
+                        for c in pool
+                        if round(float(c.get("start") or c.get("peak_start") or 0.0), 1) in keep_peaks
+                    ]
+                    if filtered:
+                        log.info(
+                            "cheap cascade vod=%s pool=%s -> %s",
+                            vod.name,
+                            len(pool),
+                            len(filtered),
+                        )
+                        pool = filtered
+            except Exception as exc:
+                log.warning("cheap cascade skipped vod=%s: %s", vod.name, exc)
     pool_peaks = peaks_from_pool(pool)
     if not pool:
         log.info("no candidates %s", vod.name)

@@ -125,6 +125,34 @@ def encode_telegram_mp4(
     return out if out.exists() else src
 
 
+def is_retryable_upload_error(exc: BaseException) -> bool:
+    """Retry network/timeouts only — never re-render on client/logic errors."""
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    needles = (
+        "timeout",
+        "timed out",
+        "temporarily",
+        "connection",
+        "connect",
+        "reset by peer",
+        "broken pipe",
+        "503",
+        "502",
+        "504",
+        "429",
+        "retry after",
+        "flood",
+        "network",
+        "dns",
+        "ssl",
+        "http 5",
+    )
+    if any(n in name for n in ("timeout", "connection", "network", "ssl")):
+        return True
+    return any(n in text for n in needles)
+
+
 class TelegramUploadQueue:
     """Small in-process queue with retry/backoff to avoid parallel Bot API floods."""
 
@@ -152,7 +180,11 @@ class TelegramUploadQueue:
                     last_exc = exc
                     if on_error:
                         on_error(exc)
-                    time.sleep(min(60.0, 2.0**attempt))
+                    if attempt >= self.max_attempts or not is_retryable_upload_error(exc):
+                        break
+                    # Exponential backoff with light jitter; upload-only, no re-encode.
+                    delay = min(60.0, (2.0**attempt)) + (0.05 * attempt)
+                    time.sleep(delay)
             assert last_exc is not None
             raise last_exc
 

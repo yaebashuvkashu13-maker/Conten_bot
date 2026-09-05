@@ -47,6 +47,10 @@ RUN_MENU_REASONS = {
     "garage",
 }
 
+NO_GUN_REASONS = {"no_gun", "no_shooting", "silent", "нет_стрельбы"}
+BAD_RENDER_REASONS = {"bad_render", "render", "blurry", "freeze", "bad_encode"}
+BORING_REASONS = {"boring", "скучно", "uninteresting"}
+
 
 def store_path() -> Path:
     root = Path(os.environ.get("VOD_ADAPTIVE_THRESH_DIR", "/root/data/vod_adaptive_thresholds"))
@@ -116,26 +120,42 @@ def apply_to_environ(game: str) -> dict[str, float]:
 
 
 def note_negative_feedback(game: str, reason: str = "") -> dict[str, float]:
-    """Tighten gates after 👎 labeled as running/menu/loot."""
+    """Tighten gates after 👎; different knobs per dislike family."""
     g = (game or "pubg").strip().lower()
     if g not in BASE:
         g = "pubg"
     reason_l = (reason or "").strip().lower()
     tokens = {t for t in reason_l.replace("-", "_").replace(" ", "_").split("_") if t}
-    hit = bool(tokens & RUN_MENU_REASONS) or any(
+    hit_run_menu = bool(tokens & RUN_MENU_REASONS) or any(
         r in reason_l for r in ("loot_run", "menu_lobby", "menu_garage", "беготн", "меню")
     )
+    hit_no_gun = bool(tokens & NO_GUN_REASONS) or "no_gun" in reason_l or "стрельб" in reason_l
+    hit_render = bool(tokens & BAD_RENDER_REASONS) or "render" in reason_l or "freeze" in reason_l
+    hit_boring = bool(tokens & BORING_REASONS) or "boring" in reason_l or "скуч" in reason_l
     data = _load()
     games = dict(data.get("games") or {})
+    skip_keys = {"neg_run_menu", "neg_no_gun", "neg_bad_render", "neg_boring"}
     cur = dict(BASE[g])
-    cur.update({k: float(v) for k, v in (games.get(g) or {}).items() if k != "neg_run_menu"})
-    if not hit:
+    cur.update({k: float(v) for k, v in (games.get(g) or {}).items() if k not in skip_keys})
+    if not (hit_run_menu or hit_no_gun or hit_render or hit_boring):
         return apply_to_environ(g)
-    cur["gun_density_min"] = min(0.12, float(cur["gun_density_min"]) + 0.005)
-    cur["burst_ratio_min"] = min(10.0, float(cur["burst_ratio_min"]) + 0.15)
-    cur["motion_max_run"] = max(0.08, float(cur["motion_max_run"]) - 0.01)
-    cur["menu_overlay_max"] = max(0.15, float(cur["menu_overlay_max"]) - 0.02)
-    cur["neg_run_menu"] = float(cur.get("neg_run_menu", 0) + 1)
+    if hit_run_menu:
+        cur["gun_density_min"] = min(0.12, float(cur["gun_density_min"]) + 0.005)
+        cur["burst_ratio_min"] = min(10.0, float(cur["burst_ratio_min"]) + 0.15)
+        cur["motion_max_run"] = max(0.08, float(cur["motion_max_run"]) - 0.01)
+        cur["menu_overlay_max"] = max(0.15, float(cur["menu_overlay_max"]) - 0.02)
+        cur["neg_run_menu"] = float((games.get(g) or {}).get("neg_run_menu", 0) + 1)
+    if hit_no_gun:
+        cur["gun_density_min"] = min(0.13, float(cur["gun_density_min"]) + 0.008)
+        cur["burst_ratio_min"] = min(11.0, float(cur["burst_ratio_min"]) + 0.25)
+        cur["neg_no_gun"] = float((games.get(g) or {}).get("neg_no_gun", 0) + 1)
+    if hit_render:
+        cur["menu_overlay_max"] = max(0.12, float(cur["menu_overlay_max"]) - 0.03)
+        cur["neg_bad_render"] = float((games.get(g) or {}).get("neg_bad_render", 0) + 1)
+    if hit_boring:
+        cur["gun_density_min"] = min(0.12, float(cur["gun_density_min"]) + 0.004)
+        cur["burst_ratio_min"] = min(10.0, float(cur["burst_ratio_min"]) + 0.10)
+        cur["neg_boring"] = float((games.get(g) or {}).get("neg_boring", 0) + 1)
     games[g] = cur
     data["games"] = games
     _save(data)
