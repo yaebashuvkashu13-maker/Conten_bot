@@ -640,6 +640,11 @@ def apply_agent_recover_env(
     target["PUBG_QUALITY_SCORE_MIN_SINGLES"] = q_min
     target["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = p_min
     target["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun
+    target["PUBG_PRESEND_MIN_GUN_DENSITY"] = gun
+    target["PUBG_CLIP_MIN_GUN_DENSITY"] = gun
+    target["PUBG_POOL_MIN_GUN_DENSITY"] = gun
+    target["SHOOTER_VOD_DENSE_GUN_MIN"] = gun
+    target["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = gun
     # Keep loot reject ON at every escalation — garbage menu/loot > silence.
     target["VOD_FORCE_REJECT_LOOT"] = "1"
     target["PUBG_REJECT_LOOT_WALK"] = "1"
@@ -659,6 +664,7 @@ def apply_agent_recover_env(
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
         target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
         target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+        target["VOD_PUBG_QUALITY_STRICT"] = "0"
     return target
 
 

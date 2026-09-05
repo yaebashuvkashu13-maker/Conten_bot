@@ -218,6 +218,13 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
     env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
     env["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun_default
+    # Presend/pool/clip gun floors were left at steady 0.045/0.038 and
+    # rejected every soften candidate (no_shots at gun~0.03). Align them.
+    env["PUBG_PRESEND_MIN_GUN_DENSITY"] = gun_default
+    env["PUBG_CLIP_MIN_GUN_DENSITY"] = gun_default
+    env["PUBG_POOL_MIN_GUN_DENSITY"] = gun_default
+    env["SHOOTER_VOD_DENSE_GUN_MIN"] = gun_default
+    env["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = gun_default
     env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
     env["VOD_FORCE_GUN_DENSITY"] = gun_default
     env["VOD_FORCE_BURST_RATIO"] = env["PUBG_CLIP_MIN_BURST_RATIO"]
@@ -239,6 +246,8 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1")
         env["VOD_FORCE_PRESEND_BYPASS"] = "0"
         env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+        # Model strictness was blocking softened singles; keep shooting/loot gates.
+        env["VOD_PUBG_QUALITY_STRICT"] = "0"
     return env
 
 

@@ -63,12 +63,51 @@ def _systemctl(*args: str) -> str:
         return ""
 
 
-def _pgrep(pattern: str) -> list[int]:
+def _recover_in_progress() -> bool:
+    """True while hang --recover / exclusive force-send holds the lock."""
+    lock = Path(os.environ.get("VOD_HANG_RECOVER_LOCK", "/tmp/vod_hang_recover.lock"))
+    if not lock.is_file():
+        return False
     try:
-        out = subprocess.check_output(["pgrep", "-f", pattern], text=True)
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return []
-    return [int(x) for x in out.splitlines() if x.strip().isdigit()]
+        pid = int(lock.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def _pgrep(pattern: str) -> list[int]:
+    """Match real argv tokens only — never pgrep -f (matches SSH/bash wrappers)."""
+    needle = pattern.replace("\\", "").replace(r"\.", ".")
+    # Accept either regex-ish or plain substring of the script name.
+    plain = needle.replace(".*", "").replace("^", "").replace("$", "")
+    found: list[int] = []
+    for pid_name in os.listdir("/proc"):
+        if not pid_name.isdigit():
+            continue
+        try:
+            raw = Path(f"/proc/{pid_name}/cmdline").read_bytes()
+        except OSError:
+            continue
+        parts = [p.decode(errors="ignore") for p in raw.split(b"\0") if p]
+        if len(parts) < 2:
+            continue
+        # Skip remote shells that merely mention the script in -c payloads.
+        if parts[0].endswith("bash") or parts[0].endswith("sh"):
+            if any(a in ("-c", "-lc") for a in parts[1:3]):
+                continue
+        if any(plain in arg for arg in parts):
+            found.append(int(pid_name))
+    return found
 
 
 def n_restarts() -> int:
@@ -94,6 +133,8 @@ def maybe_heal_duplicates() -> dict:
     """Keep systemd as sole owner: kill orphan supervisors outside the unit."""
     if _env("VOD_FEED_AUTO_HEAL_DUPES", "1") != "1":
         return {"skipped": True}
+    if _recover_in_progress():
+        return {"skipped": True, "reason": "recover_in_progress"}
     pids = _pgrep("mlbb_vod_segment_feed\\.sh")
     if len(pids) <= 1:
         return {"supervisors": len(pids), "killed": []}
@@ -120,6 +161,8 @@ def maybe_heal_duplicates() -> dict:
 def maybe_heal_unit(*, active: str, ledger_age: float | None, silence_limit: float) -> dict:
     """Soft recover: restart dead unit; escalate hang oneshot on ledger silence."""
     out: dict = {"unit_restart": False, "hang_tick": False}
+    if _recover_in_progress():
+        return {**out, "skipped": True, "reason": "recover_in_progress"}
     if _env("VOD_FEED_AUTO_HEAL_UNIT", "1") == "1" and active not in {"active", "activating"}:
         _systemctl("reset-failed", SERVICE)
         _systemctl("start", SERVICE)

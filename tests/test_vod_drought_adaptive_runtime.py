@@ -93,6 +93,8 @@ def test_soften_hard_assigns_over_stale_strict_pins(monkeypatch: pytest.MonkeyPa
     assert float(force["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
     assert float(hang["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.12)
     assert float(hang["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.05)
+    assert float(force["PUBG_PRESEND_MIN_GUN_DENSITY"]) == pytest.approx(0.020)
+    assert float(hang["PUBG_PRESEND_MIN_GUN_DENSITY"]) == pytest.approx(0.020)
 
 
 def test_hang_recover_esc2_caps_owner_relax(monkeypatch: pytest.MonkeyPatch) -> None:
