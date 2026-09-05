@@ -182,6 +182,29 @@ def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=True))
+    # Weak gun/PANNs = real inventory/lobby, not an ADS false positive.
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.05,
+            "burst_ratio": 3.0,
+            "audio_rms": 0.03,
+            "center_motion": 0.05,
+            "center_text": 0.0,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.08,
+            "panns_machine_gun": 0.05,
+            "panns_explosion": 0.01,
+            "panns_speech": 0.05,
+            "panns_music": 0.02,
+            "panns_gun_max": 0.08,
+        },
+    )
     patches[4] = patch(
         "pubg_combat_gate.pubg_combat_visual_strict",
         return_value=(
@@ -203,6 +226,33 @@ def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch)
     assert ok is False
     assert "menu_overlay" in reason
     assert report.get("hard_reject") == "menu_overlay"
+
+
+def test_menu_overlay_rescued_by_strong_gun_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADS/HUD false menu_overlay must not block a strong-gun singles fight."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(author_kill=True))
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            True,
+            "combat_visual_strict",
+            {
+                "best_hit_flash": 0.01,
+                "best_weapon_edge": 0.05,
+                "frames": [
+                    {"label": "start", "pass": False, "reason": "menu_overlay"},
+                    {"label": "mid", "pass": False, "reason": "menu_overlay"},
+                    {"label": "end", "pass": True, "reason": "combat_visible"},
+                ],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 471.5, 23, single=True, use_cache=False)
+    assert report.get("singles_menu_gun_rescue") is True
+    assert report.get("hard_reject") != "menu_overlay"
 
 
 def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
