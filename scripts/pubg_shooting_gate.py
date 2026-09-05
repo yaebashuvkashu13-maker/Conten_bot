@@ -228,20 +228,31 @@ def pubg_passes_shooting_gate(
             )
         except ImportError:
             owner_good = False
-        # Never auto-forgive run/loot/fake-gun. Soften lowers min_gun so
-        # "strict_audio" was true at gun~0.05 and shipped loot UI
-        # (_-HbZ0zNDOs_2538: run_fake_gun overridden by panns_trust).
-        # Only an explicit owner 👍 on this window may override.
+        # Soften must not auto-forgive weak loot UI as "strict_audio"
+        # (_-HbZ0zNDOs_2538). Allow overrides only when:
+        # - owner 👍 on this window, or
+        # - owner heuristics already returned panns_trust AND DSP gun is above
+        #   the fake-gun ceiling (ADS sprays with aim sway, gun~0.06–0.10).
         if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"}:
             hard_gun = float(os.environ.get("PUBG_FAKE_GUN_OVERRIDE_MIN_GUN", "0.090"))
+            fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.060"))
+            panns_floor = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+            owner_reason = str(metrics.get("owner_reason") or "")
+            panns_trusted = owner_reason.startswith("panns_trust") and panns_gun_max >= panns_floor
             if owner_good and gun >= hard_gun and burst >= min_burst:
                 metrics["visual_override"] = gate_reason
+            elif panns_trusted and gun >= fake_gun_ceil and (
+                burst >= min_burst * 0.75 or gun >= min_gun
+            ):
+                metrics["panns_visual_override"] = gate_reason
             else:
                 return False, gate_reason, metrics
         else:
             return False, gate_reason, metrics
 
-    if not gate_ok and not metrics.get("visual_override"):
+    if not gate_ok and not (
+        metrics.get("visual_override") or metrics.get("panns_visual_override")
+    ):
         return False, gate_reason, metrics
 
     pass_reason = (
@@ -251,6 +262,10 @@ def pubg_passes_shooting_gate(
     )
     if metrics.get("visual_override"):
         pass_reason = f"{pass_reason}+override:{metrics['visual_override'].split('=')[0]}"
+    if metrics.get("panns_visual_override"):
+        pass_reason = (
+            f"{pass_reason}+panns_override:{metrics['panns_visual_override'].split('=')[0]}"
+        )
     return True, pass_reason, metrics
 
 
