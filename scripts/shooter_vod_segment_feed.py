@@ -2878,6 +2878,7 @@ def _scan_vod_with_adaptive(
                     *,
                     used: list[float],
                     blocked: set[str],
+                    peak_only_used: bool = False,
                 ) -> list[dict]:
                     out_rows: list[dict] = []
                     pubg_bounds = game == "pubg" and _pubg_fight_segmenter_enabled()
@@ -2898,7 +2899,13 @@ def _scan_vod_with_adaptive(
                                     tighten_pubg_clip_bounds,
                                 )
 
-                                if peak_blocked_by_used_fights(
+                                # Singles full-scan: only skip near-duplicate peaks.
+                                # Fight-window overlap vs old sends was killing the next
+                                # real fight (~50s later) and leaving only lobby junk.
+                                if peak_only_used:
+                                    if _peak_too_close(float(peak), used, peak_gap):
+                                        continue
+                                elif peak_blocked_by_used_fights(
                                     vod, float(peak), used, peak_gap_sec=peak_gap
                                 ):
                                     continue
@@ -2998,21 +3005,37 @@ def _scan_vod_with_adaptive(
                     # Full peak scan: do NOT thin dense peaks with montage spacing
                     # (gap*0.9 ≈ 50s turned picked=38 into rows=11). Only skip
                     # near-duplicates so every fight candidate is inspected.
-                    if os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1":
+                    full_scan = os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
+                    if full_scan:
                         row_gap = max(
                             6.0,
                             float(os.environ.get("PUBG_SINGLES_ROW_GAP_SEC", "8")),
                         )
+                        # Do NOT reuse montage gap (~55s) against prior sends — that
+                        # blocked a real ADS fight at 337s because 288s was already sent.
+                        used_gap = max(
+                            row_gap,
+                            float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "12")),
+                        )
                     else:
                         row_gap = max(12.0, gap_sec * 0.9)
-                    all_rows = _build_rows(row_gap, used=used_peaks, blocked=blocked_ids)
+                        used_gap = gap_sec
+                    all_rows = _build_rows(
+                        row_gap,
+                        used=used_peaks,
+                        blocked=blocked_ids,
+                        peak_only_used=full_scan,
+                    )
                     log.info(
-                        "pubg singles row pool vod=%s dense_peaks=%s rows=%s row_gap=%.1f full_scan=%s",
+                        "pubg singles row pool vod=%s dense_peaks=%s rows=%s "
+                        "row_gap=%.1f used_gap=%.1f full_scan=%s peaks=%s",
                         vod.name,
                         len(dense_peaks or []),
                         len(all_rows),
                         row_gap,
-                        os.environ.get("PUBG_FULL_PEAK_SCAN", "1"),
+                        used_gap,
+                        int(full_scan),
+                        [round(float(r.get("peak_start", 0)), 1) for r in all_rows[:12]],
                     )
                     n_sf = singles_first_send_cycle(
                         game=game,
@@ -3023,7 +3046,7 @@ def _scan_vod_with_adaptive(
                         state=state,
                         entry=entry,
                         rows=all_rows,
-                        gap_sec=gap_sec,
+                        gap_sec=used_gap,
                         rejected_peaks=rejected_peaks,
                         sig=file_sha256(vod),
                         mark_exhausted_fn=_mark_vod_exhausted,

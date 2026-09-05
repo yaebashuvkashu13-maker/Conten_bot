@@ -199,6 +199,40 @@ def test_enqueue_assemble_dedupes(tmp_path, monkeypatch):
     assert len(load_pending_assemble()) == 1
 
 
+def test_singles_used_gap_keeps_adjacent_fight():
+    """Montage gap (~55s) must not hide the next real fight after a prior send."""
+    from pubg_vod_singles_first import pick_next_single_row
+    from vod_peak_gap import peak_too_close
+
+    rows = [
+        {"segment_id": "vid_337", "peak_start": 337.5, "start": 322.0, "score": 0.95},
+        {"segment_id": "vid_155", "peak_start": 155.8, "start": 142.0, "score": 0.89},
+        {"segment_id": "vid_22", "peak_start": 22.0, "start": 18.0, "score": 0.83},
+    ]
+    # Already sent a fight near 288s — with used_gap=12 the 337s fight stays eligible.
+    row, _ = pick_next_single_row(
+        rows,
+        blocked_ids=set(),
+        rejected_peaks=[],
+        gap_sec=12.0,
+        used_peaks=[288.0],
+        peak_too_close=peak_too_close,
+    )
+    assert row is not None
+    assert row["peak_start"] == 337.5
+
+    # Legacy montage-sized gap wrongly skips it.
+    row_blocked, _ = pick_next_single_row(
+        rows,
+        blocked_ids=set(),
+        rejected_peaks=[],
+        gap_sec=55.0,
+        used_peaks=[288.0],
+        peak_too_close=peak_too_close,
+    )
+    assert row_blocked is None or row_blocked["peak_start"] != 337.5
+
+
 def test_full_scan_inspects_all_peaks_budget(monkeypatch):
     from pubg_vod_singles_first import (
         singles_max_sends_per_cycle,
