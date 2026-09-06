@@ -27,6 +27,10 @@ DEFAULT_CONFIG = {
         {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
         {"name": "blue", "low": [100, 45, 70], "high": [135, 255, 255]},
         {"name": "gold", "low": [12, 80, 140], "high": [38, 255, 255]},
+        # PUBG Mobile Metro kill-skin banners (purple/magenta). Avoid broad red —
+        # that matches the health bar and collapses transient detection to static HUD.
+        {"name": "purple", "low": [125, 40, 70], "high": [165, 255, 255]},
+        {"name": "magenta", "low": [150, 50, 80], "high": [170, 255, 255]},
     ],
 }
 
@@ -79,10 +83,14 @@ def _ocr_text(crop: np.ndarray) -> str:
         try:
             text = pytesseract.image_to_string(
                 image,
+                lang="rus+eng",
                 config=(
                     "--psm 7 "
                     "-c tessedit_char_whitelist="
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-+[] "
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                    "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+                    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+                    "0123456789_-+[]:xXx "
                 ),
             )
         except Exception:

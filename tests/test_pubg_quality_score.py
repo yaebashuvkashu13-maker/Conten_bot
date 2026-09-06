@@ -270,7 +270,7 @@ def test_menu_overlay_rescued_by_strong_gun_audio(monkeypatch: pytest.MonkeyPatc
     assert report.get("hard_reject") != "menu_overlay"
 
 
-def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_confident_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=False))
@@ -282,6 +282,7 @@ def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
                 "notification_score": 0.60,
                 "notification_hit": True,
                 "notification_class": "hud_fp",
+                "notification_class_conf": 0.80,
                 "killfeed_hits": [],
             },
         ),
@@ -290,6 +291,31 @@ def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
         _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
     assert report.get("kill_notification_hit") is False
     assert report.get("kill_notification_class") == "hud_fp"
+    assert report.get("kill_notification_hud_fp_ignored") is True
+
+
+def test_low_conf_hud_fp_keeps_mobile_kill_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Heuristic hud_fp@0.15 must not wipe purple/red Mobile Metro kill banners."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.60,
+            {
+                "notification_score": 0.60,
+                "notification_hit": True,
+                "notification_class": "hud_fp",
+                "notification_class_conf": 0.15,
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+        _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
+    assert report.get("kill_notification_hit") is True
+    assert report.get("kill_notification_hud_fp_ignored") is not True
 
 
 def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.MonkeyPatch) -> None:

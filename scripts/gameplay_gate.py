@@ -924,7 +924,13 @@ def score_pubg_gunfire_audio(
     start_sec: float,
     duration_sec: float,
 ) -> tuple[float, float, float]:
-    """Gunshot-like transients in segment audio: density, peak/rms, mean rms."""
+    """Gunshot-like energy in segment audio: density, peak/rms, mean rms.
+
+    Classic spike density works for sparse PC gunfire. Compressed Mobile /
+    Metro clips often have loud continuous combat where median*2.6 sits above
+    peak → density stayed 0 on real multi-kill fights. Blend spike density
+    with a sustained-combat floor so owner-style sprays still clear send gun.
+    """
     samples = _extract_segment_audio_pcm(video_path, start_sec, duration_sec)
     if samples.size < 384:
         return 0.0, 0.0, 0.0
@@ -940,13 +946,27 @@ def score_pubg_gunfire_audio(
     median = float(np.median(arr))
     peak = float(np.max(arr))
     rms = float(np.mean(arr))
-    floor = max(median * 2.6, 0.010)
+    # Never put the spike floor above the observed peak (Mobile sustained fire).
+    floor = max(min(median * 2.6, peak * 0.92), 0.010)
     spikes = 0
     for idx in range(1, len(arr)):
         if arr[idx] > floor and arr[idx] > arr[idx - 1] * 1.55:
             spikes += 1
-    density = spikes / max(len(arr) - 1, 1)
+    spike_density = spikes / max(len(arr) - 1, 1)
+    # Sustained loud combat: fraction of frames above an absolute fight floor.
+    combat_thr = max(0.055, min(0.14, median * 0.55 if median > 0.08 else 0.055))
+    sustained = float(np.mean(arr >= combat_thr))
+    if rms >= 0.080 and sustained >= 0.45:
+        # Map sustained fight energy into the density scale gates already use.
+        sustained_density = min(0.22, 0.035 + sustained * 0.16 + max(0.0, rms - 0.08) * 0.35)
+    else:
+        sustained_density = 0.0
+    density = max(spike_density, sustained_density)
     burst_ratio = peak / max(rms, 1e-6)
+    # Sustained Mobile sprays have low peak/rms; raise burst enough to clear
+    # soft send floors when energy is clearly fight-loud.
+    if sustained_density > 0 and burst_ratio < 3.5 and rms >= 0.10:
+        burst_ratio = max(burst_ratio, 3.5 + min(2.5, (rms - 0.10) * 12.0))
     return density, burst_ratio, rms
 
 

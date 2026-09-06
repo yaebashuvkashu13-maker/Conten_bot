@@ -21,14 +21,20 @@ MODEL_PATH = Path(
 
 def _features(crop: np.ndarray) -> np.ndarray:
     if crop is None or crop.size == 0:
-        return np.zeros(12, dtype=np.float32)
+        return np.zeros(14, dtype=np.float32)
     h, w = crop.shape[:2]
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     blue = cv2.inRange(hsv, np.array([90, 40, 60]), np.array([135, 255, 255]))
     cyan = cv2.inRange(hsv, np.array([78, 40, 80]), np.array([105, 255, 255]))
     gold = cv2.inRange(hsv, np.array([12, 80, 140]), np.array([38, 255, 255]))
-    colored = cv2.bitwise_or(cv2.bitwise_or(blue, cyan), gold)
+    purple = cv2.inRange(hsv, np.array([125, 40, 70]), np.array([165, 255, 255]))
+    red_a = cv2.inRange(hsv, np.array([0, 70, 90]), np.array([12, 255, 255]))
+    red_b = cv2.inRange(hsv, np.array([168, 70, 90]), np.array([179, 255, 255]))
+    warm = cv2.bitwise_or(cv2.bitwise_or(gold, purple), cv2.bitwise_or(red_a, red_b))
+    cool = cv2.bitwise_or(blue, cyan)
+    colored = cv2.bitwise_or(cool, warm)
     colored_ratio = float(np.count_nonzero(colored)) / max(colored.size, 1)
+    warm_ratio = float(np.count_nonzero(warm)) / max(colored.size, 1)
     aspect = w / max(h, 1)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 60, 150)
@@ -50,6 +56,8 @@ def _features(crop: np.ndarray) -> np.ndarray:
             float(np.std(gray)) / 128.0,
             float(np.mean(hsv[:, :, 1])) / 255.0,
             float(np.mean(hsv[:, :, 2])) / 255.0,
+            warm_ratio,
+            float(np.count_nonzero(purple)) / max(colored.size, 1),
         ],
         dtype=np.float32,
     )
@@ -58,10 +66,15 @@ def _features(crop: np.ndarray) -> np.ndarray:
 def heuristic_predict(crop: np.ndarray) -> tuple[str, float]:
     feat = _features(crop)
     colored, aspect, edge = float(feat[0]), float(feat[1]), float(feat[2])
-    if colored < 0.02:
+    warm = float(feat[12]) if feat.size > 12 else 0.0
+    purple = float(feat[13]) if feat.size > 13 else 0.0
+    if colored < 0.02 and warm < 0.015:
         return "hud_fp", 0.15
-    if aspect < 2.5:
+    if aspect < 2.5 and warm < 0.04:
         return "map_blue", 0.25
+    # Mobile Metro: purple kill-skin banners + red УБИЙСТВО text.
+    if (warm >= 0.05 or purple >= 0.04) and aspect >= 2.4 and edge > 0.03:
+        return "kill", min(0.94, 0.50 + warm * 2.2 + purple * 1.5 + edge)
     if colored > 0.08 and aspect >= 3.0 and edge > 0.04:
         return "kill", min(0.92, 0.45 + colored * 2.0 + edge)
     if colored > 0.06 and aspect >= 2.8:

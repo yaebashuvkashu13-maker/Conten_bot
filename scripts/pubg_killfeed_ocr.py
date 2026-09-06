@@ -16,6 +16,10 @@ KILL_PATTERNS = (
     (re.compile(r"\bclutch\b", re.I), 1.3),
     (re.compile(r"\bknock(?:ed|out)?\b", re.I), 1.1),
     (re.compile(r"\bkill\b|eliminated|убил|убийств", re.I), 1.0),
+    # PUBG Mobile Metro (RU): center kill banner + honor payout.
+    (re.compile(r"убийств[оае]?", re.I), 1.35),
+    (re.compile(r"получен[оа].*чест|чести\s*:\s*\+", re.I), 1.2),
+    (re.compile(r"\bx\s*[2-9]\b|\bx[2-9]\b", re.I), 1.15),
 )
 
 _DEFAULT_CROP = {"y0": 0.02, "y1": 0.22, "x0": 0.62, "x1": 0.98}

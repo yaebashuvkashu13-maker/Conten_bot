@@ -312,7 +312,17 @@ def score_pubg_window(
         or ""
     ).strip().lower()
     report["kill_notification_class"] = nclass or None
-    if nclass in {"hud_fp", "map_blue", "hud_false_positive"}:
+    # Only trust confident HUD/map FP labels. Low-conf heuristic "hud_fp" (~0.15)
+    # wiped Mobile Metro kill banners (purple skins / red УБИЙСТВО) that the
+    # locator already scored as real notifications.
+    nconf = float(
+        killfeed_row.get("notification_class_conf")
+        or (killfeed_row.get("kill_notification") or {}).get("notification_class_conf")
+        or 0.0
+    )
+    report["kill_notification_class_conf"] = round(nconf, 4)
+    hud_fp_conf_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_CONF", "0.45"))
+    if nclass in {"hud_fp", "map_blue", "hud_false_positive"} and nconf >= hud_fp_conf_min:
         notification_hit = False
         notification_score = min(notification_score, notification_min * 0.45)
         report["kill_notification_hud_fp_ignored"] = True
