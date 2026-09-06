@@ -428,15 +428,23 @@ def score_pubg_window(
     effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
     report["kill_notification_keyword_hit"] = keyword_hit
-    # HSV purple loot / scope glare can set notification_hit without a real kill banner.
-    # Require kill/knock class (conf) or OCR kill keyword before trusting the hit.
+    # Trust kill/knock class or OCR keywords. Empty class + strong score/PANNs can
+    # still be a real Mobile banner; explicit hud_fp/map_blue already handled above.
     nclass_ok = nclass in {"kill", "knock", "teammate_kill"} and nconf >= float(
         os.environ.get("PUBG_KILL_NOTIFICATION_CLASS_MIN_CONF", "0.40")
     )
     if notification_hit and not keyword_hit and not nclass_ok:
-        notification_hit = False
-        notification_score = min(notification_score, notification_min * 0.50)
-        report["kill_notification_unproven"] = True
+        strong_locator = notification_score >= float(
+            os.environ.get("PUBG_KILL_NOTIFICATION_UNPROVEN_KEEP_SCORE", "0.62")
+        ) and panns_gun >= float(
+            os.environ.get("PUBG_KILL_NOTIFICATION_UNPROVEN_KEEP_PANNS", "0.40")
+        )
+        if nclass in {"", "unknown", "uncertain"} and strong_locator:
+            report["kill_notification_unproven_kept"] = True
+        else:
+            notification_hit = False
+            notification_score = min(notification_score, notification_min * 0.50)
+            report["kill_notification_unproven"] = True
     report["kill_notification_hit"] = notification_hit
 
     notification_mode = os.environ.get("PUBG_KILL_NOTIFICATION_MODE", "prefer").strip().lower()
@@ -537,6 +545,23 @@ def score_pubg_window(
     ):
         has_kill = False
         report["author_kill_cleared_speech_music"] = True
+
+    # Real fights with strong gun PANNs may miss OCR kill banner (owner 👍 564/657).
+    # Allow flash/weapon author-kill only with strong PANNs and non-run motion —
+    # not the bot-farm flash-only path (PUBG_AUTHOR_KILL_ALLOW_FLASH stays off).
+    if (
+        not has_kill
+        and os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH", "1") == "1"
+        and panns_gun >= float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MIN", "0.50"))
+        and gun >= float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_GUN", "0.055"))
+        and float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MOTION_MIN", "0.025"))
+        <= motion
+        <= float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MOTION_MAX", "0.16"))
+        and best_flash >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004")) * 1.5
+        and not loot_walk
+    ):
+        has_kill = True
+        report["author_kill_panns_flash"] = True
 
     author_death = False
     author_reason = "author_kill_signal" if has_kill else "no_author_kill"
