@@ -157,19 +157,47 @@ def vod_looks_metro_royale(
     """Sample a few points in the VOD before investing in a full scan."""
     if os.environ.get("PUBG_METRO_GATE", "1") != "1":
         return True, "metro_gate_off"
+    try:
+        from vod_quality import pubg_quality_strict
+
+        strict = pubg_quality_strict()
+    except Exception:
+        strict = os.environ.get("VOD_PUBG_QUALITY_STRICT", "0") == "1"
     if title_metro_hint(title) and os.environ.get("PUBG_METRO_TITLE_TRUST", "1") == "1":
-        return True, "metro_title_trusted"
+        # YouTube search already filters Metro titles; strict visual probes often
+        # false-reject map-7/8 VODs (classic_outdoor_sky on non-Erangel content).
+        if not strict or os.environ.get("PUBG_METRO_TITLE_TRUST_STRICT", "0") == "1":
+            return True, "metro_title_trusted"
     if duration_sec is None:
         from mlbb_vod_segment_feed import _ffprobe_duration
 
         duration_sec = _ffprobe_duration(video_path)
     intro = float(os.environ.get("PUBG_METRO_VOD_SKIP_INTRO_SEC", "120"))
     dur = max(float(duration_sec or 0), intro + 60)
-    probes = [
-        intro + 60,
-        min(dur * 0.40, intro + 300),
-        min(dur * 0.55, max(intro + 120, dur - 90)),
-    ]
+    probes: list[float] = []
+    # Metro fights often land in first 2 min — probing only at 180s+ missed real VODs.
+    if title_metro_hint(title):
+        probes.extend([45.0, 90.0, 120.0])
+    else:
+        probes.append(min(120.0, max(45.0, dur * 0.08)))
+    probes.extend(
+        [
+            intro + 60,
+            min(dur * 0.40, intro + 300),
+            min(dur * 0.55, max(intro + 120, dur - 90)),
+        ]
+    )
+    seen: set[int] = set()
+    unique: list[float] = []
+    for t in sorted(probes):
+        if t >= max(30.0, dur - 12.0):
+            continue
+        key = int(t)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(t)
+    probes = unique[:6]
     oks = 0
     reasons: list[str] = []
     for t in probes:

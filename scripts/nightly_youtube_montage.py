@@ -166,7 +166,7 @@ def discover_candidates(
             for q in env.get("YOUTUBE_NIGHTLY_QUERIES", ",".join(DEFAULT_QUERIES)).split(",")
             if q.strip()
         ]
-    search_limit = int(search_limit or env.get("YOUTUBE_NIGHTLY_SEARCH_LIMIT", "15"))
+    search_limit = int(search_limit or env.get("YOUTUBE_NIGHTLY_SEARCH_LIMIT", "40"))
     min_sec = float(min_sec if min_sec is not None else env.get("YOUTUBE_NIGHT_MIN_SEC", "5400"))
     max_sec = float(max_sec if max_sec is not None else env.get("YOUTUBE_NIGHT_MAX_SEC", "12600"))
     seen: set[str] = set()
