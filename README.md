@@ -15,9 +15,9 @@
 | Highlight scoring | `scripts/highlight_scorer.py` |
 | Env (VPS) | `/root/.video_bot.env` |
 | State I/O | `scripts/vod_state_io.py` (atomic JSON + `.bak`) |
-| Deploy | `bash scripts/install_mlbb_vod_only.sh` после `git pull` |
+| Deploy | `bash scripts/deploy_unified_production.sh` (единственный prod deploy) |
 
-**Актуальная ветка:** `cursor/vod-pipeline-base-6cbd` / `cursor/stability-hardening-d7dd`
+**Актуальная ветка:** `cursor/vod-unified-production-a016` (PR #94)
 
 ```bash
 python3 -m pytest tests/ -q

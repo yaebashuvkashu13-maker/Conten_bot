@@ -82,8 +82,12 @@ def test_bot_farm_rejects_one_sided_gunfire() -> None:
     assert "bot_farm_one_sided" in reason
 
 
-def test_bot_farm_passes_with_killfeed() -> None:
+def test_bot_farm_killfeed_alone_does_not_waive_one_sided() -> None:
+    """Kill banners also appear on classic bot kills — require PvP gunfire shape."""
     with patch("pubg_combat_gate._pubg_scan_training_ui", return_value=(False, "")), patch(
+        "pubg_combat_gate._pubg_killfeed_hits",
+        return_value=("RealSniper eliminated", 1),
+    ), patch(
         "pubg_combat_gate._gunfire_pvp_shape",
         return_value=(1, 1, 0.1),
     ), patch("pubg_owner_calibration.segment_overlaps_owner_label", return_value=False):
@@ -94,8 +98,47 @@ def test_bot_farm_passes_with_killfeed() -> None:
             gunfire_density=0.08,
             ocr_hits=2,
         )
+    assert reject is True
+    assert "bot_farm_one_sided" in reason
+
+
+def test_bot_farm_passes_with_pvp_shape() -> None:
+    with patch("pubg_combat_gate._pubg_scan_training_ui", return_value=(False, "")), patch(
+        "pubg_combat_gate._pubg_killfeed_hits",
+        return_value=("RealSniper eliminated", 1),
+    ), patch(
+        "pubg_combat_gate._gunfire_pvp_shape",
+        return_value=(3, 3, 0.6),
+    ), patch("pubg_owner_calibration.segment_overlaps_owner_label", return_value=False):
+        reject, reason, _ = pubg_rejects_bot_farm(
+            Path("x.mp4"),
+            100.0,
+            10.0,
+            gunfire_density=0.08,
+            ocr_hits=2,
+        )
     assert reject is False
     assert reason == ""
+
+
+def test_bot_farm_rejects_playerNNNN_victim_name() -> None:
+    with patch("pubg_combat_gate._pubg_scan_training_ui", return_value=(False, "")), patch(
+        "pubg_combat_gate._pubg_killfeed_hits",
+        return_value=("Player1234 eliminated", 1),
+    ), patch(
+        "pubg_combat_gate._gunfire_pvp_shape",
+        return_value=(4, 4, 0.9),
+    ), patch("pubg_owner_calibration.segment_overlaps_owner_label", return_value=False):
+        reject, reason, row = pubg_rejects_bot_farm(
+            Path("x.mp4"),
+            100.0,
+            10.0,
+            gunfire_density=0.08,
+            ocr_hits=1,
+        )
+    assert reject is True
+    assert "bot_victim_name" in reason
+    assert row.get("bot_victim_name")
 
 
 def test_combat_gate_rejects_bot_farm_for_pubg() -> None:
