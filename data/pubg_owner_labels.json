@@ -49,7 +49,8 @@
       {"tc": "2:09", "time_sec": 129, "label": "good", "note": "owner peak — full gunfight"}
     ],
     "Wg9qrAzWTLU": [
-      {"tc": "12:00", "time_sec": 720, "label": "bad", "note": "bot kill not real player; force-send missed rating buttons"}
+      {"tc": "12:00", "time_sec": 720, "label": "bad", "note": "bot kill not real player; force-send missed rating buttons"},
+      {"tc": "22:00", "time_sec": 1320, "label": "bad", "note": "inventory/LEVEL UP empty — false kill UI on loot purple"}
     ]
   }
 }

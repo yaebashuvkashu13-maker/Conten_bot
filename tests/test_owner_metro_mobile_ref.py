@@ -30,47 +30,35 @@ def test_sustained_loud_combat_scores_nonzero_gun(tmp_path: Path, monkeypatch: p
     assert burst >= 3.5
 
 
-def test_quality_ignores_only_confident_hud_fp(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Low-conf hud_fp must not wipe Mobile kill banners."""
-    from pubg_quality_score import score_pubg_window
+def test_quality_hud_fp_policy_needs_keyword_or_panns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Low-conf hud_fp keeps hit only with kill keyword or strong PANNs gun."""
+    from pubg_quality_score import score_pubg_window  # local import for patch path
 
-    weak = {
-        "notification_score": 0.62,
-        "notification_class": "hud_fp",
-        "notification_class_conf": 0.15,
-        "killfeed_hits": [],
-    }
-    strong = {
-        "notification_score": 0.62,
-        "notification_class": "hud_fp",
-        "notification_class_conf": 0.80,
-        "killfeed_hits": [],
-    }
-
-    def _run(row: dict) -> dict:
-        with pytest.MonkeyPatch.context() as mp:
-            # Drive only the notification wipe branch via a tiny inline helper.
-            report: dict = {}
-            nclass = str(row.get("notification_class") or "").strip().lower()
-            nconf = float(row.get("notification_class_conf") or 0.0)
-            notification_min = 0.50
-            notification_score = float(row["notification_score"])
-            notification_hit = notification_score >= notification_min
-            hud_fp_conf_min = 0.45
-            if nclass in {"hud_fp", "map_blue", "hud_false_positive"} and nconf >= hud_fp_conf_min:
+    def _apply(row):
+        notification_score = float(row.get("notification_score") or 0.0)
+        notification_min = 0.50
+        notification_hit = notification_score >= notification_min
+        nclass = str(row.get("notification_class") or "").strip().lower()
+        nconf = float(row.get("notification_class_conf") or 0.0)
+        keyword_hit = bool(row.get("killfeed_hits"))
+        panns_gun = float(row.get("panns_gun_max") or 0.0)
+        report = {}
+        hud_fp_conf_min = 0.45
+        hud_fp_keep_panns = 0.35
+        if nclass in {"hud_fp", "map_blue", "hud_false_positive"}:
+            keep_low_conf = nconf < hud_fp_conf_min and (keyword_hit or panns_gun >= hud_fp_keep_panns)
+            if nconf >= hud_fp_conf_min or not keep_low_conf:
                 notification_hit = False
-                notification_score = min(notification_score, notification_min * 0.45)
                 report["kill_notification_hud_fp_ignored"] = True
-            report["kill_notification_hit"] = notification_hit
-            report["kill_notification_score"] = notification_score
-            return report
+        report["kill_notification_hit"] = notification_hit
+        return report
 
-    kept = _run(weak)
-    wiped = _run(strong)
-    assert kept["kill_notification_hit"] is True
-    assert kept.get("kill_notification_hud_fp_ignored") is not True
-    assert wiped["kill_notification_hit"] is False
-    assert wiped.get("kill_notification_hud_fp_ignored") is True
+    inventory = _apply({"notification_score": 0.72, "notification_class": "hud_fp", "notification_class_conf": 0.15, "killfeed_hits": [], "panns_gun_max": 0.01})
+    metro = _apply({"notification_score": 0.60, "notification_class": "hud_fp", "notification_class_conf": 0.15, "killfeed_hits": ["убийство"], "panns_gun_max": 0.01})
+    confident = _apply({"notification_score": 0.60, "notification_class": "hud_fp", "notification_class_conf": 0.80, "killfeed_hits": [], "panns_gun_max": 0.50})
+    assert inventory["kill_notification_hit"] is False
+    assert metro["kill_notification_hit"] is True
+    assert confident["kill_notification_hit"] is False
 
 
 def test_mobile_kill_patterns_match_russian_banner() -> None:

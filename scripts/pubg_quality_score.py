@@ -177,6 +177,60 @@ def _singles_gun_bypass_enabled(env_key: str = "PUBG_SINGLES_GUN_PAYOFF_BYPASS")
     return os.environ.get(env_key, "0") == "1"
 
 
+
+_MENU_UI_KEYWORDS = (
+    "level up",
+    "levelup",
+    "авантюрист",
+    "просмотр наград",
+    "быстрое добавление",
+    "инвентар",
+    "рюкзак",
+    "продать",
+    "стоимость выкладки",
+    "сейф",
+    "вес снаряжения",
+)
+
+
+def _pubg_scan_menu_loot_ui(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+) -> tuple[bool, str]:
+    """Reject inventory / LEVEL UP / sell-loot menus that are not fights."""
+    if os.environ.get("PUBG_REJECT_MENU_LOOT_UI", "1") != "1":
+        return False, ""
+    try:
+        from gameplay_gate import _read_frame_at, detect_game_viewport_crop
+    except Exception:
+        return False, ""
+    try:
+        import cv2
+        import pytesseract
+    except Exception:
+        return False, ""
+    crop = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+    hits: list[str] = []
+    for frac in (0.15, 0.45, 0.75):
+        frame = _read_frame_at(video_path, start_sec + duration_sec * frac)
+        if frame is None:
+            continue
+        if crop is not None:
+            x, y, w, h = crop
+            frame = frame[y : y + h, x : x + w]
+        small = cv2.resize(frame, (640, 360))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        text = pytesseract.image_to_string(gray, lang="eng+rus", config="--psm 6")
+        blob = " ".join(str(text or "").lower().split())
+        for kw in _MENU_UI_KEYWORDS:
+            if kw in blob:
+                hits.append(kw)
+    if not hits:
+        return False, ""
+    return True, ",".join(sorted(set(hits))[:4])
+
+
 def score_pubg_window(
     video_path: Path,
     start_sec: float,
@@ -300,6 +354,13 @@ def score_pubg_window(
             report["hard_reject"] = "training_ui"
             return _finish(False, f"hard_training_ui={training_text}")
 
+    menu_loot, menu_loot_text = _pubg_scan_menu_loot_ui(video_path, start_sec, duration_sec)
+    if menu_loot:
+        report["menu_loot_ui"] = menu_loot_text
+        report["hard_reject"] = "menu_loot_ui"
+        return _finish(False, f"hard_menu_loot_ui={menu_loot_text}")
+
+
     # Classic bot / one-sided farm reject (also covers owner-bad bot kills).
     if os.environ.get("PUBG_QUALITY_BOT_FARM_GATE", "1") == "1":
         try:
@@ -349,12 +410,21 @@ def score_pubg_window(
         or 0.0
     )
     report["kill_notification_class_conf"] = round(nconf, 4)
-    hud_fp_conf_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_CONF", "0.45"))
-    if nclass in {"hud_fp", "map_blue", "hud_false_positive"} and nconf >= hud_fp_conf_min:
-        notification_hit = False
-        notification_score = min(notification_score, notification_min * 0.45)
-        report["kill_notification_hud_fp_ignored"] = True
     keyword_hit = bool(killfeed_row.get("killfeed_hits"))
+    # HUD/map FP must not count as kill payoff. Low-conf hud_fp (~0.15) used to
+    # wipe real Mobile Metro banners — keep those only when kill keywords fire or
+    # PANNs gun is strong. Inventory purple (Wg9@1320) is hud_fp + tiny PANNs.
+    hud_fp_conf_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_CONF", "0.45"))
+    hud_fp_keep_panns = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_KEEP_PANNS", "0.35"))
+    if nclass in {"hud_fp", "map_blue", "hud_false_positive"}:
+        keep_low_conf = (
+            nconf < hud_fp_conf_min
+            and (keyword_hit or panns_gun >= hud_fp_keep_panns)
+        )
+        if nconf >= hud_fp_conf_min or not keep_low_conf:
+            notification_hit = False
+            notification_score = min(notification_score, notification_min * 0.45)
+            report["kill_notification_hud_fp_ignored"] = True
     effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
     report["kill_notification_hit"] = notification_hit
@@ -446,6 +516,19 @@ def score_pubg_window(
         gun=gun,
         motion=motion,
     )
+    # Empty loot/menu windows can fake DSP gun + inventory purple "kill" UI.
+    # Author-kill from notification alone still needs real gun PANNs (or keywords).
+    if (
+        has_kill
+        and notification_hit
+        and not keyword_hit
+        and panns_gun < float(os.environ.get("PUBG_AUTHOR_KILL_MIN_PANNS", "0.22"))
+        and max(float(panns.get("panns_speech", 0.0)), float(panns.get("panns_music", 0.0)))
+        >= float(os.environ.get("PUBG_AUTHOR_KILL_SPEECH_MUSIC_DOMINANCE", "0.45"))
+    ):
+        has_kill = False
+        report["author_kill_cleared_speech_music"] = True
+
     author_death = False
     author_reason = "author_kill_signal" if has_kill else "no_author_kill"
     author: dict[str, Any] = {

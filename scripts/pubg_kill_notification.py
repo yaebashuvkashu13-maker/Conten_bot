@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
     "min_width_ratio": 0.035,
     "max_height_ratio": 0.14,
     "min_aspect_ratio": 3.0,
-    "search": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.82},
+    "search": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.70},
     "hsv_ranges": [
         {"name": "cyan", "low": [78, 45, 90], "high": [105, 255, 255]},
         {"name": "blue", "low": [100, 45, 70], "high": [135, 255, 255]},
@@ -294,6 +294,23 @@ def _box_iou(left: list[float] | None, right: list[float] | None) -> float:
     return intersection / max(union, 1e-9)
 
 
+
+def _box_looks_like_kill_banner(box: list[float] | None) -> bool:
+    """Inventory/loot UI sits at the bottom; real kill banners are mid-frame strips."""
+    if not box or len(box) < 4:
+        return False
+    x, y, w, h = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+    max_y0 = float(os.environ.get("PUBG_KILL_NOTIFICATION_MAX_Y0", "0.62"))
+    max_y1 = float(os.environ.get("PUBG_KILL_NOTIFICATION_MAX_Y1", "0.72"))
+    min_h = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_H", "0.028"))
+    min_w = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_W", "0.12"))
+    if y > max_y0 or (y + h) > max_y1:
+        return False
+    if h < min_h or w < min_w:
+        return False
+    return True
+
+
 def score_kill_notification_segment(
     video_path: Path,
     start_sec: float,
@@ -385,6 +402,8 @@ def score_kill_notification_segment(
                 "prev_iou": prev_iou,
                 "track_frames": [frame_index for frame_index, _row in track],
             }
+            if not _box_looks_like_kill_banner(event.get("box")):
+                continue
             if best_event is None or onset > float(best_event["score"]):
                 best_event = event
 
@@ -392,6 +411,9 @@ def score_kill_notification_segment(
     best_text = ""
     best_box: list[float] | None = None
     event_index = None
+    if best_event is not None and not _box_looks_like_kill_banner(best_event.get("box")):
+        # Bottom inventory / sell-bar purple strips are not kill banners (Wg9@1320).
+        best_event = None
     if best_event is not None:
         event_index = int(best_event["index"])
         best_box = best_event.get("box")

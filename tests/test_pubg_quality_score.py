@@ -298,10 +298,12 @@ def test_confident_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) 
     assert report.get("kill_notification_hud_fp_ignored") is True
 
 
-def test_low_conf_hud_fp_keeps_mobile_kill_banner(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Heuristic hud_fp@0.15 must not wipe purple/red Mobile Metro kill banners."""
-    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+
+def test_low_conf_hud_fp_with_kill_keyword_keeps_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mobile Metro: low-conf hud_fp + kill keyword still counts."""
+    monkeypatch.setenv("PUBG_REJECT_MENU_OVERLAY_HARD", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
     patches = list(_base_patches(author_kill=False))
     patches[5] = patch(
         "pubg_killfeed_ocr.score_killfeed_segment",
@@ -312,15 +314,51 @@ def test_low_conf_hud_fp_keeps_mobile_kill_banner(monkeypatch: pytest.MonkeyPatc
                 "notification_hit": True,
                 "notification_class": "hud_fp",
                 "notification_class_conf": 0.15,
+                "killfeed_hits": ["убийство"],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert report.get("kill_notification_hit") is True
+    assert report.get("kill_notification_hud_fp_ignored") is not True
+
+
+def test_low_conf_hud_fp_inventory_purple_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inventory purple (Wg9@1320): hud_fp + no keyword + tiny PANNs must not be a kill."""
+    monkeypatch.setenv("PUBG_REJECT_MENU_OVERLAY_HARD", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    patches = list(_base_patches(author_kill=False))
+    # weak PANNs like inventory/music bed
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.01,
+            "panns_machine_gun": 0.01,
+            "panns_explosion": 0.0,
+            "panns_speech": 0.88,
+            "panns_music": 0.80,
+            "panns_gun_max": 0.01,
+        },
+    )
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.72,
+            {
+                "notification_score": 0.72,
+                "notification_hit": True,
+                "notification_class": "hud_fp",
+                "notification_class_conf": 0.15,
                 "killfeed_hits": [],
             },
         ),
     )
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
-        _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
-    assert report.get("kill_notification_hit") is True
-    assert report.get("kill_notification_hud_fp_ignored") is not True
-
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert report.get("kill_notification_hit") is False
+    assert report.get("kill_notification_hud_fp_ignored") is True
 
 def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     """ADS spray with strong audio but no kill must NOT bypass payoff_low."""
