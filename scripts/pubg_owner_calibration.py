@@ -7,7 +7,11 @@ import json
 import os
 from pathlib import Path
 
-LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
+LABELS_PATH = Path(
+    os.environ.get("PUBG_OWNER_LABELS_PATH", "/root/data/pubg/pubg_owner_labels.json")
+)
+# Legacy path kept as a merge source (older deploys wrote under mlbb/).
+LEGACY_LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
 # n97cHIR9Qow — owner review 2026-06-06
@@ -26,7 +30,9 @@ DEFAULT_LABELS: dict[str, list[dict]] = {
 
 
 def _read_labels_file(path: Path) -> dict:
-    if not path.exists():
+    from path_safe import exists as path_exists
+
+    if not path_exists(path):
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -39,7 +45,7 @@ def _read_labels_file(path: Path) -> dict:
 
 def load_owner_labels() -> dict[str, list[dict]]:
     merged = {vid: list(rows) for vid, rows in DEFAULT_LABELS.items()}
-    for path in (LABELS_PATH, REPO_LABELS_PATH):
+    for path in (LABELS_PATH, LEGACY_LABELS_PATH, REPO_LABELS_PATH):
         for vid, rows in _read_labels_file(path).items():
             merged.setdefault(vid, [])
             seen = {(r.get("time_sec"), r.get("label")) for r in merged[vid]}
@@ -91,20 +97,81 @@ def segment_overlaps_owner_label(
     duration_sec: float,
     *,
     label: str,
-    pad_sec: float = 8.0,
+    pad_sec: float | None = None,
 ) -> bool:
     end_sec = start_sec + duration_sec
     for row in labels_for_video(video_path):
         if row.get("label") != label:
             continue
         center = float(row["time_sec"])
-        if start_sec - pad_sec <= center <= end_sec + pad_sec:
+        note = str(row.get("note") or row.get("reason") or "")
+        pad = float(pad_sec) if pad_sec is not None else owner_bad_pad_sec(note if label == "bad" else "")
+        if label == "good" and pad_sec is None:
+            pad = float(os.environ.get("PUBG_OWNER_GOOD_PAD_SEC", "10"))
+        if start_sec - pad <= center <= end_sec + pad:
             return True
     return False
 
 
+def owner_bad_pad_sec(note: str = "") -> float:
+    """Block radius around owner 👎 — wider for run/empty/loot notes from label bank."""
+    base = float(os.environ.get("PUBG_OWNER_BAD_PAD_SEC", "12"))
+    text = note.strip().lower()
+    if any(token in text for token in ("run", "empty", "loot", "walk", "fly", "no fight", "no_combat")):
+        return max(base, float(os.environ.get("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")))
+    return base
+
+
 def has_owner_labels(video_path: Path) -> bool:
     return bool(labels_for_video(video_path))
+
+
+def apply_owner_send_policy() -> None:
+    """Apply owner-label-bank send criteria to the current process.
+
+    Send only clips where the streamer is actually shooting (gun+burst), not run/loot/fly.
+    Ground truth: data/pubg_owner_labels.json and runtime Telegram 👍/👎 labels.
+    Global fight-act floors (owner 6mWLqNBX1pE) apply to every VOD — no per-video labeling.
+    """
+    try:
+        from pubg_fight_act_profile import apply_global_act_defaults
+
+        apply_global_act_defaults()
+    except ImportError:
+        pass
+    os.environ.setdefault("PUBG_PRESEND_SHOOTING_GATE", "1")
+    os.environ.setdefault("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0")
+    os.environ.setdefault("PUBG_BOT_FARM_KILLFEED_WAIVE", "0")
+    os.environ.setdefault("PUBG_QUALITY_BOT_FARM_GATE", "1")
+    os.environ.setdefault("PUBG_PRESEND_SCORE_MODE", "1")
+    os.environ.setdefault("PUBG_REJECT_LOOT_WALK", "1")
+    os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
+    # Singles: owner rates kill/payoff — do not hard-block gunfights missing OCR kill banner.
+    os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+    os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
+    os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
+    os.environ.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
+    os.environ.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
+    os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.032")
+    os.environ.setdefault("PUBG_CLIP_MIN_BURST_RATIO", "4.5")
+    os.environ.setdefault("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "0")
+    os.environ.setdefault("SHOOTER_REQUIRE_AUTHOR_KILL", "0")
+    os.environ.setdefault("PUBG_OWNER_BAD_PAD_SEC", "12")
+    os.environ.setdefault("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")
+    os.environ.setdefault("PUBG_AUTHOR_KILL_STYLE_COMBAT", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_SOFTEN_LEVEL", "2")
+    os.environ.setdefault("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "1")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY", "1")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_IDLE_RATE", "0.15")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_FLOOR", "0.70")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_POST_SEND", "1.10")
+
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", "0.032")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", "4.5")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_PANNS", "0.28")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_FLASH", "0.020")
+    os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028")
+    os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38")
 
 
 def pubg_passes_tiktok_combat_gate(
@@ -147,8 +214,53 @@ def pubg_passes_owner_heuristics(
 ) -> tuple[bool, str]:
     """Rules fitted to owner labels on n97cHIR9Qow (2026-06-06)."""
     panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+    min_gun_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_GUN", "0.040"))
+    min_burst_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_BURST", "3.0"))
+    # Owner-calibrated Metro acts (6mWLqNBX1pE): gun 0.03–0.09 with burst≥5 is a
+    # real fight, even while strafing. High burst escapes fake-gun motion traps.
+    burst_escape = float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE", "5.5"))
+    burst_escape_gun = float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", "0.028"))
+
+    def _burst_says_real_gun() -> bool:
+        return burst_ratio >= burst_escape and gunfire_density >= burst_escape_gun
+
+    # Global fight-act profile (owner 6mWLqNBX1pE principle): mid gun + mid
+    # burst is a real act on EVERY VOD — do not wait for labels.
+    try:
+        from pubg_fight_act_profile import is_combat_act
+
+        if is_combat_act(gunfire_density, burst_ratio):
+            return True, f"combat_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+    except ImportError:
+        pass
+
     if panns_gun_max >= panns_trust:
-        return True, f"panns_trust={panns_gun_max:.3f}"
+        # High PANNs on loot/UI SFX must not bless a run with weak DSP gun
+        # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates, gun~0.056).
+        # Real ADS fights often sit at gun 0.06–0.10 with aim sway (motion≥0.075)
+        # and strong PANNs — the old gun<0.115 ceiling falsely rejected those.
+        fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.075"))
+        if (
+            center_motion >= 0.075
+            and gunfire_density < fake_gun_ceil
+            and not _burst_says_real_gun()
+        ):
+            return (
+                False,
+                f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
+            )
+        if center_motion > 0.22 and gunfire_density < 0.052 and not _burst_says_real_gun():
+            return (
+                False,
+                f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
+            )
+        if gunfire_density >= min_gun_panns and (
+            burst_ratio >= min_burst_panns or gunfire_density >= 0.055
+        ):
+            return True, f"panns_trust={panns_gun_max:.3f}"
+        if _burst_says_real_gun():
+            return True, f"burst_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+        return False, f"panns_no_gun=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
     if relax in ("1", "2"):
         if panns_gun_max >= max(0.22, panns_trust - 0.08) and gunfire_density >= 0.020:
@@ -162,15 +274,22 @@ def pubg_passes_owner_heuristics(
     if audio_rms > 0.050 and gunfire_density < 0.015 and panns_gun_max < 0.25:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
-        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+        if not _burst_says_real_gun():
+            return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
     if center_motion >= 0.075 and gunfire_density < 0.115 and panns_gun_max < 0.28:
-        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if gunfire_density < 0.040 and audio_rms > 0.036:
+        if not _burst_says_real_gun():
+            return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    if gunfire_density < 0.040 and audio_rms > 0.036 and not _burst_says_real_gun():
         return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if gunfire_density >= 0.055:
         return True, "fight_audio"
+    if _burst_says_real_gun():
+        return True, f"burst_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     if center_motion < 0.022 and gunfire_density >= 0.028 and burst_ratio >= 5.5:
         return True, "sniper_hold"
     if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:
         return True, "light_combat"
+    # Mid-band Metro sprays (owner acts often burst 3.5–4.5 with gun≥0.032).
+    if gunfire_density >= 0.032 and burst_ratio >= 3.5:
+        return True, f"metro_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     return False, f"below_owner_floor=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"

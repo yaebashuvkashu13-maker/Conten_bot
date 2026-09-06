@@ -12,7 +12,7 @@ from typing import Callable
 # Daily-cycle order (quotas reset at Moscow midnight).
 DAILY_GAMES = ("mlbb", "pubg", "standoff", "genshin", "wot")
 # Bump when VOD gate/feed logic changes — grep logs for this string to verify deploy.
-VOD_PIPELINE_REV = "vod-fast-scan-ru-2026-06-26"
+VOD_PIPELINE_REV = "vod-montage-full-fight-2026-09-01"
 # All games with VOD inbox / segment feed support.
 VOD_GAMES = DAILY_GAMES
 
@@ -130,6 +130,38 @@ def inbox_video_ids(game: str) -> set[str]:
     if not inbox.is_dir():
         return set()
     return {p.stem.replace("yt_", "") for p in inbox.glob("yt_*.mp4")}
+
+
+def trim_used_youtube_ids(
+    state: dict,
+    game: str,
+    *,
+    aggressive: bool = False,
+) -> int:
+    """Drop stale used YouTube IDs so discovery can find fresh VODs again."""
+    used = list(state.get("used_youtube_ids") or [])
+    if not used:
+        return 0
+    before = len(used)
+    max_keep = max(50, int(os.environ.get("SHOOTER_VOD_USED_IDS_MAX", "200")))
+    inbox_ids = inbox_video_ids(game)
+    registry = {str(r.get("id") or ""): r for r in state.get("vods") or []}
+
+    keep: set[str] = set(inbox_ids)
+    for vid, row in registry.items():
+        if vid and vid in inbox_ids and not row.get("exhausted"):
+            keep.add(vid)
+
+    if not aggressive and before <= max_keep:
+        return 0
+    new_used = sorted(u for u in used if u in keep)
+    if len(new_used) > max_keep:
+        new_used = new_used[-max_keep:]
+
+    removed = before - len(new_used)
+    if removed > 0:
+        state["used_youtube_ids"] = new_used
+    return removed
 
 
 def streak_from_state(state: dict) -> int:

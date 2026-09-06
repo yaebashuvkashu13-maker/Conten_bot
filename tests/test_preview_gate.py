@@ -37,6 +37,10 @@ def test_stage1_panns_prefilter_no_bypass(monkeypatch, tmp_path: Path) -> None:
 
     vod = tmp_path / "yt_test.mp4"
     vod.write_bytes(b"")
+    labels = tmp_path / "labels.json"
+    labels.write_text('{"videos":{}}', encoding="utf-8")
+    monkeypatch.setattr("vod_owner_learning.owner_labels_path", lambda *_a, **_k: labels)
+    monkeypatch.setattr("highlight_scorer._owner_labels_path", lambda _profile: labels)
     with patch("highlight_scorer.score_panns_audio", return_value={"panns_gun_max": 0.01}):
         kept = stage1_panns_prefilter(vod, [100.0, 200.0], "pubg")
     assert kept == []

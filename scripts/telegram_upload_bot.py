@@ -51,7 +51,7 @@ REJECT_MODE_TIMEOUT_SEC = 3600
 WM_MODE_TIMEOUT_SEC = 3600
 STANDOFF_EXEMPLAR_MODE_TIMEOUT_SEC = 7200
 VK_MLBB_UPLOAD_MODE_TIMEOUT_SEC = 7 * 86400
-BOT_VERSION = '2026-06-11-mlbb-vod-trim-seek-v1'
+BOT_VERSION = '2026-09-03-assemble-persist-v2'
 TELEGRAM_BOT_MAX_BYTES = 20 * 1024 * 1024  # Bot API getFile limit
 RESEARCH_ANALYSIS = Path('/usr/local/bin/research_delivery_analysis.py')
 INSTAGRAM_COOKIES_PATH = Path('/root/instagram_cookies.txt')
@@ -397,6 +397,8 @@ def safe_label(text: str | None) -> str:
 
 env = load_env(ENV_FILE)
 BOT_TOKEN = env['TG_BOT_TOKEN']
+os.environ.setdefault('TG_BOT_TOKEN', BOT_TOKEN)
+os.environ.setdefault('TELEGRAM_BOT_TOKEN', BOT_TOKEN)
 DEFAULT_CHAT_ID = env.get('TG_CHAT_ID', '')
 ALLOWED_CHAT_IDS = {item.strip() for item in env.get('TG_ALLOWED_CHAT_IDS', '').split(',') if item.strip()}
 AUTO_MAKE_CHAT_IDS = {item.strip() for item in env.get('AUTO_MAKE_CHAT_IDS', '').split(',') if item.strip()}
@@ -430,6 +432,11 @@ def api_call(method: str, payload: dict | None = None, timeout: int = 60):
     with telegram_urlopen(request, timeout=timeout) as response:
         result = json.loads(response.read().decode('utf-8'))
     if not result.get('ok'):
+        err = result.get('description') or result
+        err_s = str(err).lower()
+        if 'conflict' in err_s or result.get('error_code') == 409:
+            logging.error('Telegram 409 Conflict — exit for systemd restart: %s', err)
+            raise SystemExit(2)
         raise RuntimeError(f'Telegram API error for {method}: {result}')
     return result['result']
 
@@ -438,11 +445,66 @@ def is_limited_notify(chat_id: str | int) -> bool:
     return str(chat_id) in LIMITED_NOTIFY_CHAT_IDS
 
 
-def send_message(chat_id: str | int, text: str):
+def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None):
+    payload: dict = {'chat_id': str(chat_id), 'text': text}
+    if reply_markup:
+        payload['reply_markup'] = reply_markup
     try:
-        api_call('sendMessage', {'chat_id': str(chat_id), 'text': text}, timeout=30)
+        api_call('sendMessage', payload, timeout=30)
     except Exception as exc:
         logging.error('failed to send message to %s: %s', chat_id, exc)
+
+
+def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = True):
+    """Owner ops reply with actionable inline keyboard."""
+    markup = None
+    if with_inline:
+        try:
+            from telegram_owner_controls import owner_controls_keyboard
+
+            markup = owner_controls_keyboard()
+        except Exception:
+            logging.exception("owner_controls_keyboard failed")
+    send_message(chat_id, text, reply_markup=markup)
+
+
+def _schedule_owner_recover(chat_id: str | int, game: str = 'all') -> None:
+    """Run /recover in background — feed scan can take several minutes."""
+
+    def _run() -> None:
+        try:
+            from telegram_owner_controls import run_recover
+
+            send_owner_controls(chat_id, run_recover(game))
+        except Exception as exc:
+            logging.exception('owner recover failed')
+            send_owner_controls(chat_id, f'Recover: {exc}')
+
+    threading.Thread(target=_run, daemon=True, name=f'owner-recover-{game}').start()
+
+
+def _schedule_owner_send_now(chat_id: str | int, game: str = 'all') -> None:
+    """Force one feed send cycle without blocking Telegram polling."""
+
+    def _run() -> None:
+        try:
+            from telegram_owner_controls import run_send_now
+
+            send_owner_controls(chat_id, run_send_now(game))
+        except Exception as exc:
+            logging.exception('owner send_now failed')
+            send_owner_controls(chat_id, f'Отправка: {exc}')
+
+    threading.Thread(target=_run, daemon=True, name=f'owner-send-{game}').start()
+
+
+def remove_owner_reply_keyboard(chat_id: str | int, text: str) -> None:
+    """Drop any previously pinned reply keyboard."""
+    send_message(
+        chat_id,
+        text,
+        reply_markup={'remove_keyboard': True},
+    )
 
 
 def _schedule_owner_sync() -> None:
@@ -538,7 +600,7 @@ def _shooter_apply_vseg_label(
     reason: str = '',
 ) -> tuple[bool, str]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from shooter_vod_segment_store import apply_owner_label, stats
+    from shooter_vod_segment_store import apply_owner_label, find_segment, stats
 
     game = game.strip().lower()
     sid = segment_id.strip()
@@ -549,6 +611,19 @@ def _shooter_apply_vseg_label(
         reason=reason,
         by_chat=str(chat_id),
     )
+    try:
+        from vod_owner_feedback_bridge import apply_owner_feedback
+
+        row = find_segment(game, sid) or {}
+        apply_owner_feedback(
+            game,
+            clip_id=sid,
+            is_good=is_good,
+            reason=reason,
+            vod_id=str(row.get("vod_id") or ""),
+        )
+    except Exception:
+        logging.exception("owner feedback bridge failed game=%s sid=%s", game, sid)
     s = stats(game)
     if not ok:
         return False, f'Не нашёл {game.upper()} кусок {sid}.'
@@ -628,6 +703,52 @@ def _handle_shooter_vseg_callback(
     if not data.startswith(f'{prefix}_'):
         return False
 
+    if data.startswith(f'{prefix}_assemble_skip:'):
+        vod_id = data.split(':', 1)[1].strip()
+        try:
+            from pubg_vod_singles_first import assemble_skip_keyboard
+
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': 'Пропущено'},
+                timeout=15,
+            )
+            api_call(
+                'editMessageReplyMarkup',
+                {
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'reply_markup': assemble_skip_keyboard(game),
+                },
+                timeout=15,
+            )
+        except Exception as exc:
+            logging.exception('%s assemble_skip failed vod=%s', game, vod_id)
+            api_call(
+                'answerCallbackQuery',
+                {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                timeout=15,
+            )
+        return True
+
+    if data.startswith(f'{prefix}_assemble:'):
+        vod_id = data.split(':', 1)[1].strip()
+        api_call(
+            'answerCallbackQuery',
+            {'callback_query_id': query_id, 'text': 'Собираю склейку…'},
+            timeout=15,
+        )
+        try:
+            from pubg_vod_singles_first import enqueue_assemble_job, spawn_assemble_subprocess
+
+            enqueue_assemble_job(game, vod_id, str(chat_id))
+            spawn_assemble_subprocess(game, vod_id, str(chat_id), token=BOT_TOKEN)
+            logging.info('%s assemble queued vod=%s chat=%s', game, vod_id, chat_id)
+        except Exception as exc:
+            logging.exception('%s assemble spawn failed vod=%s', game, vod_id)
+            send_message(chat_id, f'❌ {game.upper()} {vod_id}: не удалось запустить склейку — {exc}')
+        return True
+
     if data.startswith(f'{prefix}_hq:'):
         item_id = data.split(':', 1)[1].strip()
         try:
@@ -662,7 +783,6 @@ def _handle_shooter_vseg_callback(
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
             return True
         from calibration_dislike_reasons import dislike_reason_codes
-        from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
 
         if reason not in dislike_reason_codes(game):
             reason = 'other'
@@ -682,12 +802,28 @@ def _handle_shooter_vseg_callback(
                 {'callback_query_id': query_id, 'text': '❌ Записано'},
                 timeout=15,
             )
+            if game == 'pubg':
+                from pubg_vod_singles_first import after_owner_label_keyboard
+
+                markup = after_owner_label_keyboard(game, item_id, 'bad', reason=reason)
+            else:
+                from shooter_vod_segment_store import (
+                    labeled_keyboard_markup as shooter_markup,
+                    montage_labeled_keyboard_markup,
+                    montage_parts_from_segment,
+                )
+
+                parts = montage_parts_from_segment(game, item_id)
+                if parts:
+                    markup = montage_labeled_keyboard_markup(game, parts, reason=reason)
+                else:
+                    markup = shooter_markup(game, 'bad', reason=reason)
             api_call(
                 'editMessageReplyMarkup',
                 {
                     'chat_id': chat_id,
                     'message_id': message_id,
-                    'reply_markup': shooter_markup(game, 'bad', reason=reason),
+                    'reply_markup': markup,
                 },
                 timeout=15,
             )
@@ -732,14 +868,32 @@ def _handle_shooter_vseg_callback(
         ok, reply = _shooter_apply_vseg_label(
             game, chat_id, item_id, is_good=is_good, reason=reason
         )
-        from shooter_vod_segment_store import labeled_keyboard_markup as shooter_markup
+        if game == 'pubg':
+            from pubg_vod_singles_first import after_owner_label_keyboard
 
-        markup = shooter_markup(
-            game,
-            'good' if is_good else 'bad',
-            reason=reason,
-            segment_id=item_id if is_good else '',
-        )
+            markup = after_owner_label_keyboard(
+                game,
+                item_id,
+                'good' if is_good else 'bad',
+                reason=reason,
+            )
+        else:
+            from shooter_vod_segment_store import (
+                labeled_keyboard_markup as shooter_markup,
+                montage_labeled_keyboard_markup,
+                montage_parts_from_segment,
+            )
+
+            parts = montage_parts_from_segment(game, item_id)
+            if parts:
+                markup = montage_labeled_keyboard_markup(game, parts, reason=reason)
+            else:
+                markup = shooter_markup(
+                    game,
+                    'good' if is_good else 'bad',
+                    reason=reason,
+                    segment_id=item_id if is_good else '',
+                )
         alert = '✅ Ок' if is_good else '❌ Не ок'
         if not ok:
             api_call(
@@ -763,12 +917,7 @@ def _handle_shooter_vseg_callback(
             timeout=15,
         )
         if is_good:
-            hq_ok = _shooter_send_vseg_hq_file(game, chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ {game.upper()} HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+            pass  # HQ only on explicit 📁 HQ файл button — never auto-send after 👍 Ок
     except Exception as exc:
         logging.exception('%s_vseg_yes callback failed data=%s', game, data)
         api_call(
@@ -1096,6 +1245,42 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    if data in ('ops_process', 'ops_reset', 'ops_recover', 'ops_send_now'):
+        try:
+            from telegram_owner_controls import (
+                format_process_report,
+                run_reset,
+            )
+
+            if data == 'ops_process':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
+                send_owner_controls(chat_id, format_process_report())
+            elif data == 'ops_recover':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover…'}, timeout=15)
+                send_owner_controls(
+                    chat_id,
+                    '🔧 Recover запущен — снимаю lock, сканирую inbox и отправляю клип…',
+                )
+                _schedule_owner_recover(chat_id, 'all')
+            elif data == 'ops_send_now':
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Отправка…'}, timeout=15)
+                send_owner_controls(chat_id, '📤 Отправка запущена — один цикл feed…')
+                _schedule_owner_send_now(chat_id, 'all')
+            else:
+                api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Сброс'}, timeout=15)
+                send_owner_controls(chat_id, run_reset('all'))
+        except Exception as exc:
+            logging.exception('ops callback failed')
+            try:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': f'Ошибка: {exc}'[:180], 'show_alert': True},
+                    timeout=15,
+                )
+            except Exception:
+                pass
+        return
+
     for shorts_game in ('mlbb', 'pubg', 'standoff', 'genshin', 'wot'):
         if _handle_game_shorts_callback(
             shorts_game,
@@ -1348,12 +1533,7 @@ def handle_callback_query(query: dict) -> None:
             timeout=15,
         )
         if mode == 'vseg' and is_good:
-            hq_ok = _mlbb_send_vseg_hq_file(chat_id, item_id)
-            if not hq_ok:
-                send_message(
-                    chat_id,
-                    f'⚠️ MLBB HQ файл #{item_id} не отправился — нажми 📁 HQ файл ещё раз.',
-                )
+            pass  # HQ only on explicit 📁 HQ файл button — never auto-send after 👍 Ок
     except Exception as exc:
         try:
             api_call(
@@ -2831,6 +3011,9 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_standoff2', 'description': 'Примеры Standoff 2 (владелец)'},
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
+        {'command': 'process', 'description': 'Процесс пайплайна (что сейчас ищет)'},
+        {'command': 'recover', 'description': 'Починить feed — видео снова пошли'},
+        {'command': 'reset', 'description': 'Сброс исчерпанных VOD + поиск'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
         {'command': 'ad_done', 'description': 'Закончить приём скринов'},
         {'command': 'wm', 'description': 'Убрать водяной знак (владелец)'},
@@ -2885,12 +3068,73 @@ def handle_message(message: dict):
     caption = safe_label(message.get('caption'))
     limited = is_limited_notify(chat_id)
 
+    if is_owner(chat_id):
+        from telegram_owner_controls import (
+            format_process_report,
+            is_process_command,
+            is_recover_command,
+            is_reset_command,
+            parse_recover_game,
+            parse_reset_game,
+        )
+
+        if is_process_command(text):
+            send_owner_controls(chat_id, format_process_report())
+            return
+        if is_recover_command(text) or cmd == '/recover':
+            try:
+                game = parse_recover_game(text)
+            except ValueError as exc:
+                send_owner_controls(chat_id, f'Recover: {exc}')
+                return
+            send_owner_controls(
+                chat_id,
+                '🔧 Recover запущен — снимаю lock, сканирую inbox и отправляю клип…',
+            )
+            _schedule_owner_recover(chat_id, game)
+            return
+        if is_reset_command(text) or cmd == '/reset':
+            try:
+                game = parse_reset_game(text)
+            except ValueError as exc:
+                send_owner_controls(chat_id, f'Сброс: {exc}')
+                return
+            send_owner_controls(chat_id, run_reset(game))
+            return
+
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
     if not (text.startswith('/') or caption.startswith('/')):
         if try_youtube_ingest(chat_id, message):
             return
 
     if cmd == '/start' or text.startswith('/start'):
+        if is_owner(chat_id):
+            start_text = (
+                'Владелец. По необходимости текстом:\n'
+                '/process — что сейчас ищет пайплайн\n'
+                '/recover — починить feed и отправить клип\n'
+                '/reset — снова открыть исчерпанные VOD\n'
+                'Кнопки: Процесс · Recover · Отправить · Сброс\n'
+                '/ping — версия бота\n'
+                '/make — нарезка из загруженных файлов\n\n'
+            )
+            if is_pubg_chat(chat_id):
+                start_text += (
+                    'Режим PUBG: отправляйте видео со стрима — получите нарезку Smart Edit. '
+                    'Параллельно ролики сохраняются для обучения по PUBG.'
+                )
+            elif chat_id in AUTO_MAKE_CHAT_IDS:
+                start_text += (
+                    'Отправь видео (можно по одному) — нарезка Smart Edit v1.1 запустится автоматически.'
+                )
+            else:
+                start_text += (
+                    'Отправь сюда 3-10 видео. Когда все загрузишь, дай /make.\n'
+                    'YouTube / Shorts: ссылка или /yt <url> → /make.\n'
+                    'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
+                )
+            remove_owner_reply_keyboard(chat_id, start_text)
+            return
         if is_pubg_chat(chat_id):
             send_message(
                 chat_id,
@@ -3113,8 +3357,7 @@ def handle_message(message: dict):
     if cmd == '/ping':
         register_bot_commands()
         yt_urls = [u for u in extract_urls_from_message(message) if looks_like_youtube_url(u)]
-        send_message(
-            chat_id,
+        ping_text = (
             f'Бот на связи ({BOT_VERSION}).\n'
             f'chat_id={chat_id}\n'
             f'владелец(TG_CHAT_ID)={"да" if is_owner(chat_id) else "нет"} '
@@ -3123,8 +3366,13 @@ def handle_message(message: dict):
             f'PUBG={"да" if is_pubg_chat(chat_id) else "нет"}\n'
             f'yt-dlp={"ok" if shutil.which("yt-dlp") else "НЕТ на сервере"}\n'
             f'YouTube: ссылка Shorts или /yt <url> → /make'
-            + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else ''),
+            + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
+        if is_owner(chat_id):
+            ping_text += '\n\nПо необходимости: /process · /recover · /reset'
+            remove_owner_reply_keyboard(chat_id, ping_text)
+        else:
+            send_message(chat_id, ping_text)
         return
     if cmd in ('/yt', '/youtube'):
         if not youtube_ingest_allowed(chat_id):
@@ -3579,6 +3827,18 @@ def handle_message(message: dict):
 
 
 def main():
+    import fcntl
+
+    lock_path = Path(os.environ.get('TELEGRAM_BOT_LOCK', '/tmp/telegram_upload_bot.lock'))
+    lock_fh = lock_path.open('w', encoding='utf-8')
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logging.error('another telegram_upload_bot already holds %s — exit', lock_path)
+        return
+    lock_fh.write(str(os.getpid()))
+    lock_fh.flush()
+
     api_call('deleteWebhook', {'drop_pending_updates': False}, timeout=30)
     register_bot_commands()
     state = _bot_state()
@@ -3590,6 +3850,14 @@ def main():
         DEFAULT_CHAT_ID or '(empty)',
         sorted(ALLOWED_CHAT_IDS),
     )
+    try:
+        from pubg_vod_singles_first import retry_pending_assemble_jobs
+
+        n = retry_pending_assemble_jobs(token=BOT_TOKEN)
+        if n:
+            logging.info('retried pending assemble jobs n=%s', n)
+    except Exception:
+        logging.exception('pending assemble retry failed')
     while True:
         try:
             updates = api_call(
