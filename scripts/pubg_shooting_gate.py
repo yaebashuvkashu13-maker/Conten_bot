@@ -17,6 +17,10 @@ from gameplay_gate import (
 MIN_GUNFIRE_DENSITY = 0.068
 MIN_BURST_RATIO = 5.2
 
+# Absolute floors even when soften/env try to lower them (quality floor).
+QUALITY_FLOOR_GUNFIRE = 0.055
+QUALITY_FLOOR_BURST = 4.8
+
 FORBIDDEN_REASONS = frozenset(
     {
         "run_no_fight",
@@ -26,6 +30,7 @@ FORBIDDEN_REASONS = frozenset(
         "run_loot",
         "talk_menu",
         "talk_low_gun",
+        "streamer_talk",
         "no_shots",
         "low_gunfire",
         "silent_segment",
@@ -33,15 +38,45 @@ FORBIDDEN_REASONS = frozenset(
     }
 )
 
-ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat"})
+ALLOWED_OWNER_REASONS = frozenset({"fight_audio", "light_combat", "sniper_hold"})
+
+
+def _drought_soften_active() -> bool:
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+        return True
+    try:
+        if int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0:
+            return True
+    except ValueError:
+        pass
+    # Adaptive streak soften L2+ / elasticity mid-drought: allow numeric floors
+    # to drop and enable reason-specific run_fake_gun PANNs rescue.
+    try:
+        if int(os.environ.get("SHOOTER_VOD_SOFTEN_LEVEL", "0") or 0) >= 2:
+            return True
+    except ValueError:
+        pass
+    if os.environ.get("PUBG_ADAPTIVE_DROUGHT_RESCUE", "0") == "1":
+        return True
+    if os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1":
+        return True
+    return False
 
 
 def _min_gunfire() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", str(MIN_GUNFIRE_DENSITY)))
+    # Steady-state keeps the absolute quality floor. Drought soften must be
+    # allowed to use VOD_FORCE_GUN_DENSITY / SMART floors or recover stays mute.
+    if _drought_soften_active():
+        return max(0.0, raw)
+    return max(raw, QUALITY_FLOOR_GUNFIRE)
 
 
 def _min_burst() -> float:
-    return float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    raw = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", str(MIN_BURST_RATIO)))
+    if _drought_soften_active():
+        return max(0.0, raw)
+    return max(raw, QUALITY_FLOOR_BURST)
 
 
 def reason_is_forbidden(reason: str) -> bool:
@@ -49,6 +84,15 @@ def reason_is_forbidden(reason: str) -> bool:
     if base in FORBIDDEN_REASONS:
         return True
     return any(fragment in reason for fragment in FORBIDDEN_REASONS)
+
+
+def owner_reason_counts_as_audio(reason: str) -> bool:
+    """Pass reasons from pubg_passes_owner_heuristics (incl. panns_trust=…)."""
+    base = reason.split("=", 1)[0].split(":")[0]
+    if base in ALLOWED_OWNER_REASONS:
+        return True
+    # panns_trust / panns_audio / relax_* / tiktok_* are explicit pass tokens.
+    return base.startswith(("panns_", "relax_", "tiktok_"))
 
 
 def pubg_probe_segment(
@@ -60,7 +104,12 @@ def pubg_probe_segment(
 ) -> dict:
     """Collect gunfire/motion metrics for logging and gate checks."""
     if crop_box is None:
-        crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
+        if os.environ.get("VOD_VIEWPORT_CACHE", "1") == "1":
+            from vod_viewport_cache import detect_viewport_cached
+
+            crop_box = detect_viewport_cached(video_path, start_sec, duration_sec)
+        else:
+            crop_box = detect_game_viewport_crop(video_path, start_sec, duration_sec)
     gun, burst, rms = score_pubg_gunfire_audio(video_path, start_sec, duration_sec)
     motion, _mini, _skill, center_text = score_segment_combat(
         video_path, start_sec, duration_sec, crop_box=crop_box, sample_frames=5
@@ -92,10 +141,10 @@ def pubg_passes_shooting_gate(
     Reject sniper_hold without visible aim motion, and all forbidden gate reasons.
     """
     try:
-        from pubg_owner_calibration import segment_overlaps_owner_label
+        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
 
         if segment_overlaps_owner_label(
-            video_path, start_sec, duration_sec, label="bad", pad_sec=14.0
+            video_path, start_sec, duration_sec, label="bad", pad_sec=owner_bad_pad_sec()
         ):
             metrics = pubg_probe_segment(video_path, start_sec, duration_sec, crop_box=crop_box)
             return False, "owner_bad_window", metrics
@@ -127,9 +176,11 @@ def pubg_passes_shooting_gate(
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
-    heuristic_audio = ok_owner and owner_reason in ALLOWED_OWNER_REASONS
+    # ok_owner already means heuristics passed; do not drop panns_trust just because
+    # the reason string is not exactly fight_audio/light_combat (that blocked montages).
+    heuristic_audio = bool(ok_owner) and owner_reason_counts_as_audio(owner_reason)
 
-    if owner_reason == "sniper_hold":
+    if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
             return False, f"sniper_hold_no_motion=motion{motion:.3f}:gun{gun:.3f}", metrics
         if gun < min_gun * 0.90:
@@ -152,8 +203,23 @@ def pubg_passes_shooting_gate(
         duration_sec,
         crop_box=crop,
         gunfire_density=gun,
+        burst_ratio=burst,
     ):
-        return False, f"loot_walk=density{gun:.3f}", metrics
+        # Strong PANNs gunfire: don't call continuous auto-fire "loot".
+        # Spike-density alone under-counts sprays; require audible energy too.
+        # Floor must match owner trust (0.40) — 0.28 let ambient/UI SFX override.
+        panns_floor = float(
+            os.environ.get(
+                "PUBG_PANNS_LOOT_OVERRIDE_MIN",
+                os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40"),
+            )
+        )
+        panns_strong = panns_gun_max >= panns_floor
+        audible = gun >= min_gun * 0.85 or (rms >= 0.035 and gun >= min_gun * 0.55)
+        if panns_strong and audible:
+            metrics["panns_loot_override"] = True
+        elif not (panns_gun_max >= 0.45 and gun >= min_gun * 0.85):
+            return False, f"loot_walk=density{gun:.3f}", metrics
 
     gate_ok, gate_reason = segment_is_valid_for_montage(
         video_path,
@@ -166,9 +232,67 @@ def pubg_passes_shooting_gate(
     metrics["gate_reason"] = gate_reason
 
     if reason_is_forbidden(gate_reason):
-        return False, gate_reason, metrics
+        base = str(gate_reason).split("=", 1)[0]
+        try:
+            from pubg_owner_calibration import segment_overlaps_owner_label
 
-    if not gate_ok:
+            owner_good = segment_overlaps_owner_label(
+                video_path, start_sec, duration_sec, label="good", pad_sec=10.0
+            )
+        except ImportError:
+            owner_good = False
+        # Soften must not auto-forgive weak loot UI as "strict_audio"
+        # (_-HbZ0zNDOs_2538). Allow overrides only when:
+        # - owner 👍 on this window, or
+        # - owner heuristics already returned panns_trust AND DSP gun is above
+        #   the fake-gun ceiling (ADS sprays with aim sway, gun~0.06–0.10).
+        if base in {"run_no_fight", "run_fake_gun", "run_no_shots", "run_loot", "loot_walk"}:
+            hard_gun = float(os.environ.get("PUBG_FAKE_GUN_OVERRIDE_MIN_GUN", "0.090"))
+            fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.060"))
+            panns_floor = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+            owner_reason = str(metrics.get("owner_reason") or "")
+            panns_trusted = owner_reason.startswith("panns_trust") and panns_gun_max >= panns_floor
+            # Owner 👍 / style_ref windows can have diluted density on long
+            # peaks (FxTv16VoLZk@30 shipped as 51s with gun~0.035). Allow a
+            # softer gun floor when PANNs still says combat.
+            style_gun = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028"))
+            style_panns = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38"))
+            if owner_good and gun >= hard_gun and burst >= min_burst:
+                metrics["visual_override"] = gate_reason
+            elif (
+                owner_good
+                and panns_gun_max >= style_panns
+                and gun >= style_gun
+                and burst >= min_burst * 0.75
+            ):
+                metrics["visual_override"] = gate_reason
+                metrics["owner_style_override"] = True
+            elif panns_trusted and gun >= fake_gun_ceil and (
+                burst >= min_burst * 0.75 or gun >= min_gun
+            ):
+                metrics["panns_visual_override"] = gate_reason
+            elif (
+                _drought_soften_active()
+                and base in {"run_fake_gun", "run_no_shots"}
+                and panns_gun_max
+                >= float(os.environ.get("PUBG_DROUGHT_PANNS_OVERRIDE", "0.45"))
+                and gun >= min_gun * float(os.environ.get("PUBG_DROUGHT_GUN_FACTOR", "0.70"))
+                and burst >= min_burst * 0.60
+            ):
+                # After proven-kill tightening, drought jammed on run_fake_gun
+                # with strong PANNs (owner-liked Wg9@564/657 style). Soften only
+                # those audio-strong windows — not silent loot/menu.
+                metrics["drought_panns_override"] = gate_reason
+            else:
+                return False, gate_reason, metrics
+        else:
+            return False, gate_reason, metrics
+
+    if not gate_ok and not (
+        metrics.get("visual_override")
+        or metrics.get("panns_visual_override")
+        or metrics.get("drought_panns_override")
+    ):
         return False, gate_reason, metrics
 
     pass_reason = (
@@ -176,6 +300,16 @@ def pubg_passes_shooting_gate(
         if strict_audio
         else f"{owner_reason}=gun{gun:.3f}:burst{burst:.2f}"
     )
+    if metrics.get("visual_override"):
+        pass_reason = f"{pass_reason}+override:{metrics['visual_override'].split('=')[0]}"
+    if metrics.get("panns_visual_override"):
+        pass_reason = (
+            f"{pass_reason}+panns_override:{metrics['panns_visual_override'].split('=')[0]}"
+        )
+    if metrics.get("drought_panns_override"):
+        pass_reason = (
+            f"{pass_reason}+drought_panns:{metrics['drought_panns_override'].split('=')[0]}"
+        )
     return True, pass_reason, metrics
 
 
