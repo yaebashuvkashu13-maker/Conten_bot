@@ -216,6 +216,129 @@
         "role": "style_ref",
         "note": "owner-approved Metro kill fight — target style for similar clips"
       }
+    ],
+    "6mWLqNBX1pE": [
+      {
+        "tc": "0:06",
+        "time_sec": 6,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "2:27",
+        "time_sec": 147,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "3:31",
+        "time_sec": 211,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "3:54",
+        "time_sec": 234,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "4:25",
+        "time_sec": 265,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "4:47",
+        "time_sec": 287,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "6:11",
+        "time_sec": 371,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "6:46",
+        "time_sec": 406,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:10",
+        "time_sec": 430,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:26",
+        "time_sec": 446,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:50",
+        "time_sec": 470,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "8:38",
+        "time_sec": 518,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "9:21",
+        "time_sec": 561,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "10:06",
+        "time_sec": 606,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "11:58",
+        "time_sec": 718,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      }
     ]
-  }
+  },
+  "updated_at": "2026-09-06 16:25:42",
+  "label_history": [
+    {
+      "at": "2026-09-06 16:25:42",
+      "video": "6mWLqNBX1pE",
+      "added": 15,
+      "note": "owner fight acts"
+    }
+  ]
 }

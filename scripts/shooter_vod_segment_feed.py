@@ -2292,7 +2292,9 @@ def _scan_vod(
     if pubg_singles:
         montage = False
     min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
-    owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0)) if montage else []
+    # Always seed owner-good fight acts — including PUBG singles-first.
+    # Montages-only seeding left labeled fights undiscovered when montage=False.
+    owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
     owner_hints = [
         c
         for c in owner_hints_all
@@ -2383,13 +2385,14 @@ def _scan_vod(
             log.warning("cheap cascade skipped vod=%s: %s", vod.name, exc)
 
 
-    if montage and owner_hints:
+    if owner_hints:
         pool = merge_owner_hints_into_pool(pool, owner_hints)
         log.info(
-            "owner hints merged vod=%s hints=%s pool=%s",
+            "owner hints merged vod=%s hints=%s pool=%s montage=%s",
             vod.name,
             len(owner_hints),
             len(pool),
+            int(bool(montage)),
         )
 
     pool_peaks = peaks_from_pool(pool)

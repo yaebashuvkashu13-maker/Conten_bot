@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 
 LABELS_PATH = Path(
-    os.environ.get("PUBG_OWNER_LABELS_PATH", "/root/data/mlbb/pubg_owner_labels.json")
+    os.environ.get("PUBG_OWNER_LABELS_PATH", "/root/data/pubg/pubg_owner_labels.json")
 )
+# Legacy path kept as a merge source (older deploys wrote under mlbb/).
+LEGACY_LABELS_PATH = Path("/root/data/mlbb/pubg_owner_labels.json")
 REPO_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "pubg_owner_labels.json"
 
 # n97cHIR9Qow — owner review 2026-06-06
@@ -43,7 +45,7 @@ def _read_labels_file(path: Path) -> dict:
 
 def load_owner_labels() -> dict[str, list[dict]]:
     merged = {vid: list(rows) for vid, rows in DEFAULT_LABELS.items()}
-    for path in (LABELS_PATH, REPO_LABELS_PATH):
+    for path in (LABELS_PATH, LEGACY_LABELS_PATH, REPO_LABELS_PATH):
         for vid, rows in _read_labels_file(path).items():
             merged.setdefault(vid, [])
             seen = {(r.get("time_sec"), r.get("label")) for r in merged[vid]}
@@ -207,18 +209,30 @@ def pubg_passes_owner_heuristics(
     panns_trust = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
     min_gun_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_GUN", "0.040"))
     min_burst_panns = float(os.environ.get("PUBG_PANNS_TRUST_MIN_BURST", "3.0"))
+    # Owner-calibrated Metro acts (6mWLqNBX1pE): gun 0.03–0.09 with burst≥5 is a
+    # real fight, even while strafing. High burst escapes fake-gun motion traps.
+    burst_escape = float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE", "5.5"))
+    burst_escape_gun = float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", "0.028"))
+
+    def _burst_says_real_gun() -> bool:
+        return burst_ratio >= burst_escape and gunfire_density >= burst_escape_gun
+
     if panns_gun_max >= panns_trust:
         # High PANNs on loot/UI SFX must not bless a run with weak DSP gun
         # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates, gun~0.056).
         # Real ADS fights often sit at gun 0.06–0.10 with aim sway (motion≥0.075)
         # and strong PANNs — the old gun<0.115 ceiling falsely rejected those.
         fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.060"))
-        if center_motion >= 0.075 and gunfire_density < fake_gun_ceil:
+        if (
+            center_motion >= 0.075
+            and gunfire_density < fake_gun_ceil
+            and not _burst_says_real_gun()
+        ):
             return (
                 False,
                 f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
             )
-        if center_motion > 0.22 and gunfire_density < 0.052:
+        if center_motion > 0.22 and gunfire_density < 0.052 and not _burst_says_real_gun():
             return (
                 False,
                 f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}",
@@ -227,6 +241,8 @@ def pubg_passes_owner_heuristics(
             burst_ratio >= min_burst_panns or gunfire_density >= 0.055
         ):
             return True, f"panns_trust={panns_gun_max:.3f}"
+        if _burst_says_real_gun():
+            return True, f"burst_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
         return False, f"panns_no_gun=pan{panns_gun_max:.3f}:gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     relax = os.environ.get("PUBG_RELAX_OWNER_HEURISTICS", "0")
     if relax in ("1", "2"):
@@ -241,13 +257,17 @@ def pubg_passes_owner_heuristics(
     if audio_rms > 0.050 and gunfire_density < 0.015 and panns_gun_max < 0.25:
         return False, f"talk_menu=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if center_motion > 0.22 and gunfire_density < 0.052 and panns_gun_max < 0.30:
-        return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+        if not _burst_says_real_gun():
+            return False, f"run_loot=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
     if center_motion >= 0.075 and gunfire_density < 0.115 and panns_gun_max < 0.28:
-        return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
-    if gunfire_density < 0.040 and audio_rms > 0.036:
+        if not _burst_says_real_gun():
+            return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
+    if gunfire_density < 0.040 and audio_rms > 0.036 and not _burst_says_real_gun():
         return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
     if gunfire_density >= 0.055:
         return True, "fight_audio"
+    if _burst_says_real_gun():
+        return True, f"burst_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     if center_motion < 0.022 and gunfire_density >= 0.028 and burst_ratio >= 5.5:
         return True, "sniper_hold"
     if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:

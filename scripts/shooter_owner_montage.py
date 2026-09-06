@@ -271,8 +271,11 @@ def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
     peaks.extend(_peaks_from_feedback_labels(game, vod))
     peaks.sort()
     deduped: list[float] = []
+    # Owner-marked fight acts must stay in the pool — including early-VOD
+    # openers (owner 6mWLqNBX1pE @0:06). The old t<45 skip dropped real fights.
+    min_t = float(os.environ.get("SHOOTER_OWNER_GOOD_MIN_PEAK_SEC", "0"))
     for t in peaks:
-        if t < 45.0:
+        if t < min_t:
             continue
         if game == "pubg" and any(abs(t - s) <= 2.0 for s in PUBG_SNIPER_SKIP):
             continue
@@ -435,6 +438,24 @@ def soft_allow_owner_montage_part(
 
     base = str(gate_reason).split("=", 1)[0].strip().lower()
     reason_l = str(gate_reason).lower()
+    # Owner-marked fight acts: run_fake_gun / no_shots may soft-pass when gunfire
+    # evidence exists (owner 6mWLqNBX1pE — real sprays mislabeled as fake gun).
+    owner_act_rescue = {
+        "run_fake_gun",
+        "no_shots",
+        "run_no_shots",
+        "low_gunfire",
+        "weak_shots",
+    }
+    if base in owner_act_rescue or any(n in reason_l for n in owner_act_rescue):
+        if (
+            owner_anchor_montage_enabled()
+            and os.environ.get("SHOOTER_VOD_OWNER_ACT_SOFT_ALLOW", "1") == "1"
+            and peak_near_owner_good(game, vod, peak_sec)
+            and _gunfire_evidence(metrics, gate_reason)
+        ):
+            return True, f"owner_act_soft={gate_reason}"
+
     if base in NEVER_SOFT_ALLOW_REASONS or any(n in reason_l for n in NEVER_SOFT_ALLOW_REASONS):
         return False, gate_reason
 

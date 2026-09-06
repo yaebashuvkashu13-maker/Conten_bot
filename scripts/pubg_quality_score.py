@@ -12,11 +12,15 @@ def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, float(value)))
 
 
-def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float) -> bool:
-    """Owner explicitly approved this fight window — skip automated hard rejects."""
-    if os.environ.get("PUBG_OWNER_REDO", "0") != "1":
-        return False
-    pad = float(os.environ.get("PUBG_OWNER_REDO_RADIUS_SEC", "45"))
+def _owner_good_window(
+    video_path: Path,
+    start_sec: float,
+    duration_sec: float,
+    *,
+    pad: float | None = None,
+) -> bool:
+    """True when the window overlaps an owner-good fight act (not anti_style)."""
+    pad_v = float(pad if pad is not None else os.environ.get("PUBG_OWNER_GOOD_PAD_SEC", "20"))
     end = float(start_sec) + float(duration_sec)
     try:
         from pubg_owner_calibration import labels_for_video
@@ -27,7 +31,7 @@ def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float)
             if str(row.get("role") or "").lower() == "anti_style":
                 continue
             t = float(row["time_sec"])
-            if (float(start_sec) - pad) <= t <= (end + pad):
+            if (float(start_sec) - pad_v) <= t <= (end + pad_v):
                 return True
         from shooter_owner_montage import peak_near_owner_good
 
@@ -37,10 +41,27 @@ def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float)
             start_sec + max(duration_sec - 4.0, duration_sec * 0.8),
         )
         return any(
-            peak_near_owner_good("pubg", video_path, float(t), radius_sec=pad) for t in probes
+            peak_near_owner_good("pubg", video_path, float(t), radius_sec=pad_v) for t in probes
         )
     except Exception:
         return False
+
+
+def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float) -> bool:
+    """Owner explicitly approved this fight window — skip automated hard rejects."""
+    if os.environ.get("PUBG_OWNER_REDO", "0") == "1":
+        return _owner_good_window(
+            video_path,
+            start_sec,
+            duration_sec,
+            pad=float(os.environ.get("PUBG_OWNER_REDO_RADIUS_SEC", "45")),
+        )
+    # Live feed: trust owner-good fight acts for payoff/OCR-blind rejects.
+    # Menu/loot/bot stay hard elsewhere. Owner 2026-09-06: Metro acts often
+    # have no kill banner but are real fights — do not skip them.
+    if os.environ.get("PUBG_OWNER_GOOD_TRUST_PAYOFF", "1") == "1":
+        return _owner_good_window(video_path, start_sec, duration_sec)
+    return False
 
 
 def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
@@ -721,6 +742,24 @@ def score_pubg_window(
         if strong_gun and has_kill:
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
+        # Owner-calibrated Metro fight acts often lack OCR kill banners but have
+        # clear burst gunfire. Under drought, allow payoff_low soft-pass on that
+        # evidence so real acts are not skipped (owner 6mWLqNBX1pE review).
+        drought_act = (
+            os.environ.get("PUBG_DROUGHT_ACT_PAYOFF_BYPASS", "1") == "1"
+            and (
+                os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1"
+                or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+                or int(os.environ.get("SHOOTER_VOD_SOFTEN_LEVEL", "0") or 0) >= 1
+            )
+            and gun >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", "0.028"))
+            and burst >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE", "5.5"))
+            and not loot_walk
+        )
+        if drought_act:
+            has_payoff_signal = True
+            bypass_floor = float(os.environ.get("PUBG_DROUGHT_ACT_PAYOFF_FLOOR", "0.0"))
+            report["drought_act_payoff_bypass"] = True
         if (
             single
             and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
@@ -733,6 +772,9 @@ def score_pubg_window(
             report["singles_gun_payoff_bypass"] = True
             if strong_gun:
                 report["singles_strong_gun_payoff_bypass"] = True
+        elif drought_act and single and payoff_score >= bypass_floor:
+            report["singles_gun_payoff_bypass"] = True
+            report["drought_act_payoff_bypass"] = True
         elif _owner_redo_trusted(video_path, start_sec, duration_sec):
             report["owner_redo_trusted"] = True
         else:
