@@ -2942,6 +2942,17 @@ def _scan_vod_with_adaptive(
                         score = max(0.2, 0.95 - idx * 0.03)
                         if style_match is not None:
                             score = max(score, 0.30 + float(style_match) * 0.65)
+                        # Prefer dense-rank audio confidence over pure list order so
+                        # OCR-blind strong fights (panns+gun) are tried before junk.
+                        meta_row = peak_meta.get(float(peak)) or {}
+                        try:
+                            fast = float(meta_row.get("fast_score") or 0.0)
+                        except (TypeError, ValueError):
+                            fast = 0.0
+                        if fast > 0.0:
+                            score = max(score, min(0.99, 0.35 + fast * 0.65))
+                        if meta_row.get("audio_strong"):
+                            score = max(score, 0.88)
                         row = {
                             "segment_id": sid,
                             "start": start,
@@ -3684,12 +3695,31 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 pass
             print(f"pipeline done sent={n} vods=1 game={game}")
             return 0
-        # Keep going to next inbox VOD in same run (no 25s idle tax per reject).
+        # Keep going to next inbox VOD in same run (no 25s idle tax per reject),
+        # but under full peak scan do NOT unpin a live VOD after a zero-send —
+        # that abandoned fights mid-pool and jumped to junk VODs.
         if game == "pubg" and _pubg_singles_first_enabled():
-            from pubg_vod_singles_first import clear_active_vod, get_active_vod_id
+            from pubg_vod_singles_first import (
+                clear_active_vod,
+                full_peak_scan_enabled,
+                get_active_vod_id,
+            )
 
             if get_active_vod_id(state) == vod_youtube_id(mp4):
-                clear_active_vod(state, reason="zero_send_try_next_vod")
+                entry_now = _vod_registry_entry(state, mp4) or entry
+                if entry_now and entry_now.get("exhausted"):
+                    clear_active_vod(state, reason="zero_send_exhausted")
+                elif full_peak_scan_enabled():
+                    log.info(
+                        "zero-send stick to active vod game=%s vod=%s — skip inbox jump",
+                        game,
+                        mp4.name,
+                    )
+                    _save_state(game, state)
+                    print(f"pipeline done sent=0 vods=1 game={game} stick_active=1")
+                    return 0
+                else:
+                    clear_active_vod(state, reason="zero_send_try_next_vod")
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
 
     # All inbox files on rescan cooldown — skip re-scan this tick but still discover

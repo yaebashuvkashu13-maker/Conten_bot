@@ -181,6 +181,10 @@ def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch)
     """Inventory UI on start must hard-reject even if mid/end look like combat."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    # Adaptive tests may leak SMART_PUBG_MIN_GUNFIRE_DENSITY into os.environ;
+    # isolate so missing-video combat scoring cannot preempt menu_overlay.
+    monkeypatch.delenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", raising=False)
+    monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "0")
     patches = list(_base_patches(author_kill=True))
     # Weak gun/PANNs = real inventory/lobby, not an ADS false positive.
     patches[2] = patch(
@@ -221,7 +225,18 @@ def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch)
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8],
+        patch("gameplay_gate.segment_looks_like_pubg_loot_or_walk", return_value=False),
+    ):
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 2538, 24, single=True, use_cache=False)
     assert ok is False
     assert "menu_overlay" in reason

@@ -84,6 +84,15 @@ def score_peak_fast(
         composite *= 0.55
     if gun < 0.010 and panns_gun < 0.08:
         composite *= 0.25
+    # OCR-blind real fights (Wg9qrAzWTLU ~471.5): strong PANNs+DSP must not lose
+    # to weak-gun peaks that only look good because of false kill notifications.
+    audio_strong = (
+        not loot_walk
+        and panns_gun >= float(os.environ.get("PUBG_FAST_AUDIO_STRONG_PANNS", "0.45"))
+        and gun >= float(os.environ.get("PUBG_FAST_AUDIO_STRONG_GUN", "0.055"))
+    )
+    if audio_strong:
+        composite = max(composite, fight * 0.85 + 0.12, 0.42)
 
     return {
         "peak_sec": round(float(peak_sec), 2),
@@ -98,6 +107,7 @@ def score_peak_fast(
         "gunfire_density": round(gun, 4),
         "panns_gun_max": round(panns_gun, 4),
         "loot_walk": loot_walk,
+        "audio_strong": audio_strong,
     }
 
 
@@ -139,9 +149,13 @@ def rank_peaks_fast(
         if drop_loot and row.get("loot_walk") and not row.get("notification_hit"):
             continue
         score = float(row["fast_score"])
+        audio_strong = bool(row.get("audio_strong"))
         if row.get("notification_hit"):
             score += 0.22
-        if float(row["payoff_fast"]) < min_payoff:
+        elif audio_strong:
+            # Prefer proven gun audio over OCR-blind-penalty + false banners.
+            score += float(os.environ.get("PUBG_FAST_AUDIO_STRONG_BONUS", "0.28"))
+        if float(row["payoff_fast"]) < min_payoff and not audio_strong:
             score *= 0.55
         if row.get("loot_walk"):
             score *= 0.45

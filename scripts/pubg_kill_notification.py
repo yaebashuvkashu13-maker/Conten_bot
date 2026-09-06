@@ -476,9 +476,12 @@ def score_kill_notification_segment(
                 if label in ("kill", "knock", "teammate_kill"):
                     score = min(1.0, score * 0.45 + float(conf) * 0.50 + 0.12)
                     best_score = max(best_score, score)
-                elif label in ("hud_fp", "map_blue"):
-                    # Crush FP scores so they cannot satisfy notification_hit
-                    # (weak conf used to leave score above threshold).
+                elif label in ("hud_fp", "map_blue") and conf >= float(
+                    os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_CONF", "0.45")
+                ):
+                    # Crush confident FP scores so they cannot satisfy notification_hit.
+                    # Low-conf classifier guesses (black/test crops ~0.15) must not
+                    # wipe a real transient notification onset.
                     score = min(score * 0.12, threshold * 0.40)
                     best_score = min(best_score, score)
                     meta["notification_hud_fp"] = True
@@ -486,10 +489,13 @@ def score_kill_notification_segment(
         pass
     meta["notification_score"] = round(score, 4)
     meta["notification_best_frame_score"] = round(best_score, 4)
-    # Never mark HUD/map false-positives as a kill hit.
-    if str(meta.get("notification_class") or "").lower() in {"hud_fp", "map_blue"}:
+    # Never mark confident HUD/map false-positives as a kill hit.
+    hud_fp = bool(meta.get("notification_hud_fp"))
+    if hud_fp:
         meta["notification_hit"] = False
-        meta["notification_score"] = round(min(float(meta["notification_score"]), threshold * 0.40), 4)
+        meta["notification_score"] = round(
+            min(float(meta["notification_score"]), threshold * 0.40), 4
+        )
     else:
         meta["notification_hit"] = score >= threshold
     return score, meta
