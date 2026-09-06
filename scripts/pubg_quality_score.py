@@ -416,6 +416,7 @@ def score_pubg_window(
     # PANNs gun is strong. Inventory purple (Wg9@1320) is hud_fp + tiny PANNs.
     hud_fp_conf_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_CONF", "0.45"))
     hud_fp_keep_panns = float(os.environ.get("PUBG_KILL_NOTIFICATION_HUD_FP_KEEP_PANNS", "0.35"))
+    hud_fp_kept = False
     if nclass in {"hud_fp", "map_blue", "hud_false_positive"}:
         keep_low_conf = (
             nconf < hud_fp_conf_min
@@ -425,15 +426,20 @@ def score_pubg_window(
             notification_hit = False
             notification_score = min(notification_score, notification_min * 0.45)
             report["kill_notification_hud_fp_ignored"] = True
+        else:
+            # Heuristic hud_fp (~0.15) + strong gun PANNs: likely a real Mobile
+            # purple kill banner mislabeled — do not let the unproven gate wipe it.
+            hud_fp_kept = True
+            report["kill_notification_hud_fp_kept"] = True
     effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
     report["kill_notification_keyword_hit"] = keyword_hit
     # Trust kill/knock class or OCR keywords. Empty class + strong score/PANNs can
-    # still be a real Mobile banner; explicit hud_fp/map_blue already handled above.
+    # still be a real Mobile banner; low-conf hud_fp kept via PANNs stays trusted.
     nclass_ok = nclass in {"kill", "knock", "teammate_kill"} and nconf >= float(
         os.environ.get("PUBG_KILL_NOTIFICATION_CLASS_MIN_CONF", "0.40")
     )
-    if notification_hit and not keyword_hit and not nclass_ok:
+    if notification_hit and not keyword_hit and not nclass_ok and not hud_fp_kept:
         strong_locator = notification_score >= float(
             os.environ.get("PUBG_KILL_NOTIFICATION_UNPROVEN_KEEP_SCORE", "0.62")
         ) and panns_gun >= float(

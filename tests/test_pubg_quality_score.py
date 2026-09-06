@@ -362,6 +362,46 @@ def test_low_conf_hud_fp_inventory_purple_ignored(monkeypatch: pytest.MonkeyPatc
     assert report.get("kill_notification_hit") is False
     assert report.get("kill_notification_hud_fp_ignored") is True
 
+
+def test_low_conf_hud_fp_strong_panns_not_cleared_by_unproven(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Heuristic hud_fp + strong gun PANNs must survive the unproven wipe (Wg9@670)."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.76,
+            "panns_machine_gun": 0.55,
+            "panns_explosion": 0.1,
+            "panns_speech": 0.15,
+            "panns_music": 0.05,
+            "panns_gun_max": 0.76,
+        },
+    )
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.63,
+            {
+                "notification_score": 0.63,
+                "notification_hit": True,
+                "notification_class": "hud_fp",
+                "notification_class_conf": 0.15,
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert report.get("kill_notification_hit") is True
+    assert report.get("kill_notification_hud_fp_kept") is True
+    assert report.get("kill_notification_unproven") is not True
+    assert report.get("kill_notification_hud_fp_ignored") is not True
+
 def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     """ADS spray with strong audio but no kill must NOT bypass payoff_low."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
