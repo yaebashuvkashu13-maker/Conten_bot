@@ -91,8 +91,9 @@ def owner_reason_counts_as_audio(reason: str) -> bool:
     base = reason.split("=", 1)[0].split(":")[0]
     if base in ALLOWED_OWNER_REASONS:
         return True
-    # panns_trust / panns_audio / relax_* / tiktok_* are explicit pass tokens.
-    return base.startswith(("panns_", "relax_", "tiktok_"))
+    # panns_trust / panns_audio / relax_* / tiktok_* / combat_act / metro_act
+    # are explicit pass tokens (global fight-act profile).
+    return base.startswith(("panns_", "relax_", "tiktok_", "combat_act", "metro_act", "burst_act"))
 
 
 def pubg_probe_segment(
@@ -170,15 +171,32 @@ def pubg_passes_shooting_gate(
     metrics["owner_reason"] = owner_reason
     metrics["panns_gun_max"] = round(float(panns_gun_max), 4)
 
-    if reason_is_forbidden(owner_reason) and panns_gun_max < float(
-        os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35")
+    combat_act = False
+    try:
+        from pubg_fight_act_profile import is_combat_act
+
+        combat_act = is_combat_act(gun, burst)
+    except ImportError:
+        combat_act = False
+    if combat_act and not ok_owner:
+        ok_owner = True
+        owner_reason = f"combat_act=gun{gun:.3f}:burst{burst:.2f}"
+        metrics["combat_act_override"] = True
+        metrics["owner_reason"] = owner_reason
+
+    if (
+        reason_is_forbidden(owner_reason)
+        and panns_gun_max < float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
+        and not combat_act
     ):
         return False, owner_reason, metrics
 
     strict_audio = gun >= min_gun and burst >= min_burst
     # ok_owner already means heuristics passed; do not drop panns_trust just because
     # the reason string is not exactly fight_audio/light_combat (that blocked montages).
-    heuristic_audio = bool(ok_owner) and owner_reason_counts_as_audio(owner_reason)
+    heuristic_audio = bool(ok_owner) and (
+        owner_reason_counts_as_audio(owner_reason) or combat_act
+    )
 
     if owner_reason == "sniper_hold" or owner_reason.startswith("sniper_hold"):
         if motion < 0.030:
@@ -186,12 +204,14 @@ def pubg_passes_shooting_gate(
         if gun < min_gun * 0.90:
             return False, f"sniper_hold_weak=gun{gun:.3f}", metrics
 
-    if not strict_audio and not heuristic_audio:
+    if not strict_audio and not heuristic_audio and not combat_act:
         return (
             False,
             f"no_shots=density{gun:.3f}:burst{burst:.2f}:owner{owner_reason}",
             metrics,
         )
+    if combat_act:
+        metrics["combat_act_override"] = True
 
     crop = tuple(metrics["crop_box"]) if metrics.get("crop_box") else crop_box
     if crop is not None:

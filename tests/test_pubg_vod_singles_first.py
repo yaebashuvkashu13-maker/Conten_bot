@@ -245,7 +245,7 @@ def test_full_scan_inspects_all_peaks_budget(monkeypatch):
     monkeypatch.delenv("PUBG_SINGLES_ZERO_SEND_EXHAUST", raising=False)
     monkeypatch.delenv("PUBG_SINGLES_MAX_SENDS_PER_CYCLE", raising=False)
     assert singles_peak_try_budget(40) == 40
-    assert singles_zero_send_exhaust_limit() == 0
+    assert singles_zero_send_exhaust_limit() == 20
     assert singles_max_sends_per_cycle() == 0
 
     monkeypatch.setenv("PUBG_SINGLES_PEAK_TRIES_PER_RUN", "0")

@@ -2,7 +2,7 @@
 """Global PUBG Metro fight-act profile (owner-calibrated, applies to ALL VODs).
 
 Derived from owner-marked acts on 6mWLqNBX1pE (2026-09-06): real fights often
-sit at gun≈0.03–0.09 with burst≥5 and little/no OCR kill payoff. These rules
+sit at gun≈0.03–0.09 with burst≥3.5 and little/no OCR kill payoff. These rules
 must apply to every video — not only labeled timestamps — so the owner does not
 need to mark each VOD.
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 # Numeric floors matching owner acts (global defaults).
 ACT_MIN_GUN = 0.032
-ACT_MIN_BURST = 4.5
+ACT_MIN_BURST = 3.5
 ACT_BURST_ESCAPE = 5.5
 ACT_BURST_ESCAPE_GUN = 0.028
 

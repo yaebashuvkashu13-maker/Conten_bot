@@ -58,14 +58,15 @@ def singles_peak_try_budget(n_rows: int) -> int:
 def singles_zero_send_exhaust_limit() -> int:
     """Consecutive presend rejects before giving up on a VOD.
 
-    Under full peak scan default 0 = never abandon on streak alone; only when
-    no sendable peaks remain. Legacy default 6.
+    Under full peak scan default 20 = skip dead VODs so fresh inbox can ship.
+    Set PUBG_SINGLES_ZERO_SEND_EXHAUST=0 to never abandon on streak alone.
+    Legacy (full scan off) default 6.
     """
     if full_peak_scan_enabled():
         try:
-            return max(0, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "0")))
+            return max(0, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "20")))
         except (TypeError, ValueError):
-            return 0
+            return 20
     try:
         return max(1, int(os.environ.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "6")))
     except (TypeError, ValueError):

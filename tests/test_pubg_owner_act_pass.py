@@ -34,7 +34,8 @@ def test_burst_escape_beats_fake_gun(monkeypatch: pytest.MonkeyPatch) -> None:
         panns_gun_max=0.10,
     )
     assert ok, reason
-    assert "burst_act" in reason or "fight" in reason or "light" in reason
+    assert ("burst_act" in reason or "fight" in reason or "light" in reason
+            or "combat_act" in reason or "metro_act" in reason)
 
 
 def test_owner_good_trusts_payoff_without_redo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

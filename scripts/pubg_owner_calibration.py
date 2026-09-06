@@ -224,12 +224,22 @@ def pubg_passes_owner_heuristics(
     def _burst_says_real_gun() -> bool:
         return burst_ratio >= burst_escape and gunfire_density >= burst_escape_gun
 
+    # Global fight-act profile (owner 6mWLqNBX1pE principle): mid gun + mid
+    # burst is a real act on EVERY VOD — do not wait for labels.
+    try:
+        from pubg_fight_act_profile import is_combat_act
+
+        if is_combat_act(gunfire_density, burst_ratio):
+            return True, f"combat_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+    except ImportError:
+        pass
+
     if panns_gun_max >= panns_trust:
         # High PANNs on loot/UI SFX must not bless a run with weak DSP gun
         # (_-HbZ0zNDOs_2538: panns_machine_gun=0.74 while looting crates, gun~0.056).
         # Real ADS fights often sit at gun 0.06–0.10 with aim sway (motion≥0.075)
         # and strong PANNs — the old gun<0.115 ceiling falsely rejected those.
-        fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.060"))
+        fake_gun_ceil = float(os.environ.get("PUBG_PANNS_FAKE_GUN_MAX", "0.075"))
         if (
             center_motion >= 0.075
             and gunfire_density < fake_gun_ceil
@@ -279,4 +289,7 @@ def pubg_passes_owner_heuristics(
         return True, "sniper_hold"
     if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:
         return True, "light_combat"
+    # Mid-band Metro sprays (owner acts often burst 3.5–4.5 with gun≥0.032).
+    if gunfire_density >= 0.032 and burst_ratio >= 3.5:
+        return True, f"metro_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     return False, f"below_owner_floor=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"

@@ -61,3 +61,33 @@ def test_drought_baseline_uses_act_floors() -> None:
 
     assert DEFAULT_BASELINE["PUBG_SINGLE_MIN_GUN_DENSITY"] <= 0.035
     assert DEFAULT_BASELINE["PUBG_PAYOFF_SCORE_MIN_SINGLES"] <= 0.12
+
+
+def test_mid_burst_owner_reject_shape_is_combat_act() -> None:
+    """Wg9-style rejects: gun≈0.05 burst≈3.8 must pass as combat acts."""
+    from pubg_fight_act_profile import is_combat_act
+    from pubg_owner_calibration import pubg_passes_owner_heuristics
+
+    assert is_combat_act(0.057, 3.78) is True
+    assert is_combat_act(0.039, 4.65) is True
+    assert is_combat_act(0.033, 3.73) is True
+    ok, reason = pubg_passes_owner_heuristics(
+        0.057, 3.78, 0.05, 0.127, panns_gun_max=0.51
+    )
+    assert ok, reason
+    assert "combat_act" in reason or "metro_act" in reason or "panns" in reason
+
+
+def test_forbidden_fake_gun_rescued_by_combat_act(monkeypatch) -> None:
+    """Low-PANNs run_fake_gun with act-shaped audio must not hard-stop."""
+    import pubg_shooting_gate as gate
+
+    monkeypatch.setenv("PUBG_GLOBAL_FIGHT_ACT", "1")
+    monkeypatch.setenv("PUBG_FIGHT_ACT_MIN_BURST", "3.5")
+    # Simulate the early path via heuristics alone.
+    from pubg_owner_calibration import pubg_passes_owner_heuristics
+
+    ok, reason = pubg_passes_owner_heuristics(
+        0.066, 5.06, 0.04, 0.15, panns_gun_max=0.25
+    )
+    assert ok, reason

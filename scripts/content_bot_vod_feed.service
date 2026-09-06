@@ -2,6 +2,8 @@
 Description=Content Bot PUBG/MLBB VOD feed (systemd-owned)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=20
 
 [Service]
 Type=simple
@@ -10,8 +12,6 @@ Type=simple
 ExecStart=/usr/local/bin/mlbb_vod_segment_feed.sh
 Restart=on-failure
 RestartSec=15
-StartLimitIntervalSec=600
-StartLimitBurst=20
 KillMode=control-group
 TimeoutStopSec=45
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
