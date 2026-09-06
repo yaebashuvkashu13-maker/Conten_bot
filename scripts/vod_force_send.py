@@ -286,7 +286,7 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_RANKER_MAX_PROBES"] = "0"
     # Contiguous dense grid — no 40s probe skips / hard max truncation.
     env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
-        "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1"
+        "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1.5"
     )
     env["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
     env["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"

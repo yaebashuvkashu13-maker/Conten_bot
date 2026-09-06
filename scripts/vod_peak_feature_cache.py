@@ -28,13 +28,13 @@ def cache_ttl_sec() -> int:
 
 
 def _probe_step_token() -> str:
-    raw = os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1")
+    raw = os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1.5")
     try:
         step = float(raw)
     except (TypeError, ValueError):
-        step = 1.0
+        step = 1.5
     if step <= 0:
-        step = 1.0
+        step = 1.5
     return f"{step:.3f}"
 
 

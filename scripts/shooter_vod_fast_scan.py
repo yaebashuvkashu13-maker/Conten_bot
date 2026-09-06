@@ -227,7 +227,8 @@ def discover_audio_candidate_offsets(
         base_sec=skip_intro,
         max_candidates=max(candidate_pool_target() * 3, max_c),
         gap_sec=gap,
-        step_sec=1.0 if full_peak_scan_enabled() else 2.0,
+        # Full-scan audio ranking: 1.5s grid (was 1.0 — too slow on long Metro VODs).
+        step_sec=1.5 if full_peak_scan_enabled() else 2.0,
     )
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_file.with_suffix(f".{os.getpid()}.tmp")
@@ -289,13 +290,15 @@ def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -
     """
     dur = max(0.0, float(duration))
     if full_peak_scan_enabled():
-        # Contiguous coverage: default 1s grid — no jumping between chunks.
-        # (Half-window ~5s still left silent gaps between loud moments.)
-        default_step = 1.0
+        # Contiguous coverage: default 1.5s grid (1.0 was too slow on long VODs).
+        # Still dense enough to catch short Metro fights without chunk jumps.
+        default_step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_DEFAULT", "1.5"))
+        if default_step <= 0:
+            default_step = 1.5
         step = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_STEP_SEC", str(default_step)))
         if step <= 0:
             step = default_step
-        # Never stretch step upward — that recreates silent skips.
+        # Never stretch step upward beyond the configured grid — that recreates silent skips.
         end = dur - 12.0 - WINDOW_SEC
         if end <= skip_intro:
             end = dur - WINDOW_SEC - 1.0
