@@ -199,6 +199,13 @@ def hook_gate_clip(
         "max_menu": max_menu_score,
     }
 
+    # Strong opening gunfire/energy: HUD chrome is not a pause menu. Combat-act
+    # clips were dying at hook_menu≈0.9 while max_rms≥0.6 (vhTD @1853).
+    if max_rms >= float(os.environ.get("CLIP_HOOK_COMBAT_RMS", "0.35")):
+        combat_menu_ceil = float(os.environ.get("CLIP_HOOK_COMBAT_MAX_MENU", "0.94"))
+        if combat_menu_ceil > max_menu:
+            max_menu = combat_menu_ceil
+            report["combat_audio_menu_ceil"] = max_menu
     if max_menu_score >= max_menu:
         return False, f"hook_menu={max_menu_score:.3f}", report
     if max_rms < min_rms and y_delta < min_y_delta:
