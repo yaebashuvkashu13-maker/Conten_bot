@@ -190,6 +190,16 @@ _MENU_UI_KEYWORDS = (
     "стоимость выкладки",
     "сейф",
     "вес снаряжения",
+    # Metro extract / event popups (Wg9@670 fog loot — not a kill)
+    "извлечь",
+    "извлечь всё",
+    "распределить",
+    "участвовать",
+    "отказаться",
+    "отказ",
+    "продвинутые предметы",
+    "extract all",
+    "distribute all",
 )
 
 
@@ -512,12 +522,17 @@ def score_pubg_window(
         # ADS scope / handcam PiP / combat HUD often trip menu_overlay while
         # gun audio is clearly a fight (Wg9qrAzWTLU ~471.5). Real lobbies stay
         # low on PANNs+DSP gun — keep those blocked.
+        # Do not rescue menu/loot overlays on hud_fp-only "kills" (Wg9@670 fog shop).
         menu_gun_rescue = (
             single
             and panns_gun
             >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_PANNS", "0.45"))
             and gun >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_DENSITY", "0.055"))
             and not loot_walk
+            and not (
+                report.get("kill_notification_hud_fp_kept")
+                and not keyword_hit
+            )
         )
         if menu_gun_rescue:
             report["singles_menu_gun_rescue"] = True
@@ -552,9 +567,29 @@ def score_pubg_window(
         has_kill = False
         report["author_kill_cleared_speech_music"] = True
 
+    # Low-conf hud_fp kept via PANNs alone can be extract/loot popups in fog
+    # (Wg9@670: flash≈0.019 from UI glare / purple skin). Require a strong
+    # hit-flash; weapon-edge alone is not enough.
+    hud_fp_flash_min = float(
+        os.environ.get("PUBG_AUTHOR_KILL_HUD_FP_MIN_FLASH", "0.025")
+    )
+    if (
+        has_kill
+        and report.get("kill_notification_hud_fp_kept")
+        and not keyword_hit
+        and best_flash < hud_fp_flash_min
+    ):
+        has_kill = False
+        notification_hit = False
+        notification_score = min(notification_score, notification_min * 0.45)
+        report["kill_notification_hit"] = False
+        report["kill_notification_score"] = round(notification_score, 4)
+        report["author_kill_cleared_hud_fp_no_flash"] = True
+
     # Real fights with strong gun PANNs may miss OCR kill banner (owner 👍 564/657).
     # Allow flash/weapon author-kill only with strong PANNs and non-run motion —
     # not the bot-farm flash-only path (PUBG_AUTHOR_KILL_ALLOW_FLASH stays off).
+    # Flash floor matches hud_fp keep so UI glare (~0.019) cannot re-enable a kill.
     if (
         not has_kill
         and os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH", "1") == "1"
@@ -563,8 +598,10 @@ def score_pubg_window(
         and float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MOTION_MIN", "0.025"))
         <= motion
         <= float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MOTION_MAX", "0.16"))
-        and best_flash >= float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004")) * 1.5
+        and best_flash
+        >= float(os.environ.get("PUBG_AUTHOR_KILL_PANNS_FLASH_MIN_FLASH", "0.025"))
         and not loot_walk
+        and not report.get("author_kill_cleared_hud_fp_no_flash")
     ):
         has_kill = True
         report["author_kill_panns_flash"] = True
