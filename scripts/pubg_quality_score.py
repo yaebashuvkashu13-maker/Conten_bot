@@ -544,15 +544,27 @@ def score_pubg_window(
         # gun audio is clearly a fight (Wg9qrAzWTLU ~471.5). Real lobbies stay
         # low on PANNs+DSP gun — keep those blocked.
         # Do not rescue menu/loot overlays on hud_fp-only "kills" (Wg9@670 fog shop).
+        combat_act_menu = False
+        try:
+            from pubg_fight_act_profile import is_combat_act
+
+            combat_act_menu = is_combat_act(gun, burst)
+        except Exception:
+            combat_act_menu = False
         menu_gun_rescue = (
             single
-            and panns_gun
-            >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_PANNS", "0.45"))
-            and gun >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_DENSITY", "0.055"))
             and not loot_walk
             and not (
                 report.get("kill_notification_hud_fp_kept")
                 and not keyword_hit
+            )
+            and (
+                combat_act_menu
+                or (
+                    panns_gun
+                    >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_PANNS", "0.45"))
+                    and gun >= float(os.environ.get("PUBG_MENU_GUN_RESCUE_DENSITY", "0.032"))
+                )
             )
         )
         if menu_gun_rescue:
