@@ -27,6 +27,9 @@ def test_style_reference_from_hardcoded_vod() -> None:
     vod3 = Path("/tmp/yt_Z7wR4vZkn5E.mp4")
     assert 1164.0 in style.style_reference_peaks(vod3)
 
+    vod4 = Path("/tmp/yt_FxTv16VoLZk.mp4")
+    assert 30.0 in style.style_reference_peaks(vod4)
+
 
 def test_cluster_prefers_anchor_streak(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SHOOTER_VOD_MONTAGE_SEQUENTIAL", "1")

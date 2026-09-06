@@ -665,3 +665,58 @@ def test_panns_flash_author_kill_rescue(monkeypatch: pytest.MonkeyPatch) -> None
     assert report.get("author", {}).get("has_author_kill") is True or report.get("has_author_kill") is True, (ok, reason, report)
     assert report.get("author_kill_panns_flash") is True
 
+
+
+def test_style_combat_author_kill_rescue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FxTv-like Metro fight: dense gun + hit-flash passes without OCR kill banner."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_PANNS_FLASH", "1")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_STYLE_COMBAT", "1")
+    monkeypatch.setenv("PUBG_QUALITY_BOT_FARM_GATE", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.168,
+            "burst_ratio": 4.5,
+            "audio_rms": 0.06,
+            "center_motion": 0.22,
+            "center_text": 0.0,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.40,
+            "panns_machine_gun": 0.38,
+            "panns_explosion": 0.05,
+            "panns_speech": 0.1,
+            "panns_music": 0.05,
+            "panns_gun_max": 0.40,
+        },
+    )
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            True,
+            "ok",
+            {
+                "best_hit_flash": 0.41,
+                "best_weapon_edge": 0.08,
+                "frames": [
+                    {"label": "start", "pass": True, "reason": "ok"},
+                    {"label": "mid", "pass": True, "reason": "ok"},
+                    {"label": "end", "pass": True, "reason": "ok"},
+                ],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 30, 22, single=True, use_cache=False)
+    assert report.get("author_kill_style_combat") is True, (ok, reason, report)
+    assert report.get("author", {}).get("has_author_kill") is True or report.get("has_author_kill") is True
+    assert ok is True

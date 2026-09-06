@@ -606,6 +606,22 @@ def score_pubg_window(
         has_kill = True
         report["author_kill_panns_flash"] = True
 
+    # FxTv16VoLZk-like Metro fights: dense DSP gun + real hit-flash, even when
+    # OCR miss and motion is high (strafe/ADS > 0.16). Do not require panns>=0.50.
+    if (
+        not has_kill
+        and os.environ.get("PUBG_AUTHOR_KILL_STYLE_COMBAT", "1") == "1"
+        and gun >= float(os.environ.get("PUBG_STYLE_COMBAT_MIN_GUN", "0.12"))
+        and burst >= float(os.environ.get("PUBG_STYLE_COMBAT_MIN_BURST", "4.2"))
+        and panns_gun >= float(os.environ.get("PUBG_STYLE_COMBAT_MIN_PANNS", "0.35"))
+        and best_flash >= float(os.environ.get("PUBG_STYLE_COMBAT_MIN_FLASH", "0.025"))
+        and motion <= float(os.environ.get("PUBG_STYLE_COMBAT_MOTION_MAX", "0.28"))
+        and not loot_walk
+        and not report.get("author_kill_cleared_hud_fp_no_flash")
+    ):
+        has_kill = True
+        report["author_kill_style_combat"] = True
+
     author_death = False
     author_reason = "author_kill_signal" if has_kill else "no_author_kill"
     author: dict[str, Any] = {

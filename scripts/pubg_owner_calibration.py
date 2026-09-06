@@ -149,6 +149,13 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("SHOOTER_REQUIRE_AUTHOR_KILL", "0")
     os.environ.setdefault("PUBG_OWNER_BAD_PAD_SEC", "12")
     os.environ.setdefault("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")
+    os.environ.setdefault("PUBG_AUTHOR_KILL_STYLE_COMBAT", "1")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", "0.12")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", "4.2")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_PANNS", "0.35")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_FLASH", "0.025")
+    os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028")
+    os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38")
 
 
 def pubg_passes_tiktok_combat_gate(

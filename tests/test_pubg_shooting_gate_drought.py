@@ -53,7 +53,7 @@ def test_run_fake_gun_not_overridden_by_softened_strict_audio(monkeypatch):
         "pubg_owner_calibration.segment_overlaps_owner_label", return_value=False
     ):
         ok, reason, metrics = pubg_passes_shooting_gate(
-            Path("vod.mp4"), 2538.0, 24.5, panns_gun_max=0.74
+            Path("vod.mp4"), 2538.0, 24.5, panns_gun_max=0.40
         )
     assert ok is False
     assert "run_fake_gun" in reason
@@ -92,3 +92,40 @@ def test_run_fake_gun_overridden_when_panns_trust_and_gun_above_fake_ceil(monkey
     assert ok is True
     assert metrics.get("panns_visual_override")
     assert "panns_override" in reason
+
+
+def test_owner_style_overrides_diluted_run_fake_gun(monkeypatch):
+    """FxTv@30 long window: owner good + panns~0.42 + diluted gun~0.035 may pass."""
+    from pubg_shooting_gate import pubg_passes_shooting_gate
+
+    probe = {
+        "start": 30.8,
+        "duration": 51.7,
+        "gunfire_density": 0.035,
+        "burst_ratio": 6.1,
+        "audio_rms": 0.086,
+        "center_motion": 0.202,
+        "center_text": 0.38,
+        "crop_box": None,
+    }
+
+    def _overlap(_path, _start, _dur, label="good", pad_sec=10.0, **_kw):
+        return label == "good"
+
+    with patch("pubg_shooting_gate.pubg_probe_segment", return_value=probe), patch(
+        "pubg_owner_calibration.pubg_passes_owner_heuristics",
+        return_value=(True, "panns_audio=pan0.420:gun0.035"),
+    ), patch(
+        "pubg_shooting_gate.segment_looks_like_pubg_loot_or_walk", return_value=False
+    ), patch(
+        "pubg_shooting_gate.segment_is_valid_for_montage",
+        return_value=(False, "run_fake_gun=motion0.202:gun0.035"),
+    ), patch(
+        "pubg_owner_calibration.segment_overlaps_owner_label", side_effect=_overlap
+    ):
+        ok, reason, metrics = pubg_passes_shooting_gate(
+            Path("yt_FxTv16VoLZk.mp4"), 30.8, 51.7, panns_gun_max=0.42
+        )
+    assert ok is True, (ok, reason, metrics)
+    assert metrics.get("owner_style_override") is True
+    assert metrics.get("visual_override")

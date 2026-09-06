@@ -239,8 +239,21 @@ def pubg_passes_shooting_gate(
             panns_floor = float(os.environ.get("PUBG_PANNS_TRUST_MIN", "0.35"))
             owner_reason = str(metrics.get("owner_reason") or "")
             panns_trusted = owner_reason.startswith("panns_trust") and panns_gun_max >= panns_floor
+            # Owner 👍 / style_ref windows can have diluted density on long
+            # peaks (FxTv16VoLZk@30 shipped as 51s with gun~0.035). Allow a
+            # softer gun floor when PANNs still says combat.
+            style_gun = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028"))
+            style_panns = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38"))
             if owner_good and gun >= hard_gun and burst >= min_burst:
                 metrics["visual_override"] = gate_reason
+            elif (
+                owner_good
+                and panns_gun_max >= style_panns
+                and gun >= style_gun
+                and burst >= min_burst * 0.75
+            ):
+                metrics["visual_override"] = gate_reason
+                metrics["owner_style_override"] = True
             elif panns_trusted and gun >= fake_gun_ceil and (
                 burst >= min_burst * 0.75 or gun >= min_gun
             ):

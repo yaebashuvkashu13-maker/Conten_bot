@@ -13,6 +13,7 @@ PUBG_STYLE_REF_BY_VOD: dict[str, list[float]] = {
     "Tovruh33adY": [5266.0],
     "bMn-6uTsDBg": [243.0],
     "Z7wR4vZkn5E": [1164.0],
+    "FxTv16VoLZk": [30.0],
 }
 
 _STYLE_KEYS = (
