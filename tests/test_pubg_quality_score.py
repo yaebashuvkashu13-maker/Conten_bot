@@ -290,3 +290,56 @@ def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
         _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
     assert report.get("kill_notification_hit") is False
     assert report.get("kill_notification_class") == "hud_fp"
+
+
+def test_strong_gun_payoff_bypass_ignores_noisy_killfeed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OCR-noisy killfeed density must not block floor-0 strong-gun payoff bypass."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
+    monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
+    patches = list(_base_patches(author_kill=False))
+    # Strong gun/PANNs like Wg9qrAzWTLU ~471.5
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.068,
+            "burst_ratio": 4.5,
+            "audio_rms": 0.04,
+            "center_motion": 0.05,
+            "center_text": 0.0,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.55,
+            "panns_machine_gun": 0.69,
+            "panns_explosion": 0.01,
+            "panns_speech": 0.2,
+            "panns_music": 0.1,
+            "panns_gun_max": 0.69,
+        },
+    )
+    # Noisy killfeed density without a real kill notification (the bug case).
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.28,
+            {
+                "notification_score": 0.22,
+                "notification_hit": False,
+                "notification_class": "hud_fp",
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 461.5, 22, single=True, use_cache=False)
+    assert report.get("singles_gun_payoff_bypass") is True
+    assert report.get("singles_strong_gun_payoff_bypass") is True
+    assert "payoff_low" not in reason
+

@@ -486,7 +486,9 @@ def score_pubg_window(
         # (_-HbZ0zNDOs_2538: payoff=0.0, no killfeed/notification).
         # Real ADS sprays can have OCR-blind payoff=0 while PANNs+DSP scream gun
         # (Wg9qrAzWTLU ~471.5: panns=0.69, gun=0.068, burst=4.36).
-        has_payoff_signal = bool(notification_hit or keyword_hit or float(killfeed) >= 0.25)
+        # Real kill OCR only — noisy killfeed density (~0.25–0.30 HUD FP) must not
+        # count as payoff proof; that blocked floor-0 strong-gun rescue on Wg9qrAzWTLU.
+        has_payoff_signal = bool(notification_hit or keyword_hit)
         strong_gun = (
             panns_gun >= float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_PANNS", "0.50"))
             and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
@@ -500,8 +502,10 @@ def score_pubg_window(
                 float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_BURST", "3.5")),
             )
         bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR", "0.05"))
-        if strong_gun and has_payoff_signal is False:
-            # OCR-blind fight: allow floor 0 when audio proof is strong.
+        if strong_gun:
+            # OCR-blind / OCR-noisy fight: audio proof is enough — always allow floor 0.
+            # Previously required has_payoff_signal is False; weak killfeed density
+            # flipped that True and kept floor 0.05, so payoff_score=0 still died.
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
         if (
