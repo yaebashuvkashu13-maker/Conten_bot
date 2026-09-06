@@ -502,10 +502,9 @@ def score_pubg_window(
                 float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_BURST", "3.5")),
             )
         bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR", "0.05"))
-        if strong_gun:
-            # OCR-blind / OCR-noisy fight: audio proof is enough — always allow floor 0.
-            # Previously required has_payoff_signal is False; weak killfeed density
-            # flipped that True and kept floor 0.05, so payoff_score=0 still died.
+        # Gun audio alone is NOT a kill (Wg9qrAzWTLU @471.5 = ADS spray, no elim).
+        # Floor-0 bypass only when we already have a real kill/knock/author signal.
+        if strong_gun and has_kill:
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
         if (

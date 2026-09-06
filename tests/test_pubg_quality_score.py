@@ -292,8 +292,8 @@ def test_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     assert report.get("kill_notification_class") == "hud_fp"
 
 
-def test_strong_gun_payoff_bypass_ignores_noisy_killfeed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """OCR-noisy killfeed density must not block floor-0 strong-gun payoff bypass."""
+def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADS spray with strong audio but no kill must NOT bypass payoff_low."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
@@ -301,7 +301,6 @@ def test_strong_gun_payoff_bypass_ignores_noisy_killfeed(monkeypatch: pytest.Mon
     monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
     monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
     patches = list(_base_patches(author_kill=False))
-    # Strong gun/PANNs like Wg9qrAzWTLU ~471.5
     patches[2] = patch(
         "pubg_shooting_gate.pubg_probe_segment",
         return_value={
@@ -324,7 +323,6 @@ def test_strong_gun_payoff_bypass_ignores_noisy_killfeed(monkeypatch: pytest.Mon
             "panns_gun_max": 0.69,
         },
     )
-    # Noisy killfeed density without a real kill notification (the bug case).
     patches[5] = patch(
         "pubg_killfeed_ocr.score_killfeed_segment",
         return_value=(
@@ -339,7 +337,8 @@ def test_strong_gun_payoff_bypass_ignores_noisy_killfeed(monkeypatch: pytest.Mon
     )
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 461.5, 22, single=True, use_cache=False)
-    assert report.get("singles_gun_payoff_bypass") is True
-    assert report.get("singles_strong_gun_payoff_bypass") is True
-    assert "payoff_low" not in reason
+    assert ok is False
+    assert "payoff_low" in reason
+    assert report.get("singles_gun_payoff_bypass") is not True
+    assert not report.get("has_author_kill")
 
