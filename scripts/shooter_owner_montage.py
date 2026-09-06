@@ -67,7 +67,7 @@ BORDERLINE_SOFT_REASONS: frozenset[str] = frozenset(
 
 
 def owner_anchor_montage_enabled() -> bool:
-    return os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1") == "1"
+    return os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "0") == "1"
 
 
 def _video_id(vod: Path) -> str:
@@ -247,8 +247,15 @@ def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: fl
 
 
 def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
-    """Deduped owner-good fight times (hints only)."""
+    """Deduped owner-good fight times (hints only — never the send queue).
+
+    Owner timestamps calibrate style/combat-act floors. They must NOT be
+    prepended into the live Telegram send order unless explicitly enabled.
+    """
     if not owner_anchor_montage_enabled():
+        return []
+    # PUBG singles production: labels teach the bot; they do not pick clips.
+    if game == "pubg" and os.environ.get("PUBG_OWNER_LABEL_SEED_SENDS", "0") != "1":
         return []
     profile = {
         "pubg": "pubg",
@@ -466,7 +473,7 @@ def soft_allow_owner_montage_part(
             return True, f"combat_act_soft={gate_reason}"
         if (
             owner_anchor_montage_enabled()
-            and os.environ.get("SHOOTER_VOD_OWNER_ACT_SOFT_ALLOW", "1") == "1"
+            and os.environ.get("SHOOTER_VOD_OWNER_ACT_SOFT_ALLOW", "0") == "1"
             and peak_near_owner_good(game, vod, peak_sec)
             and _gunfire_evidence(metrics, gate_reason)
         ):
@@ -483,7 +490,7 @@ def soft_allow_owner_montage_part(
     if not _gunfire_evidence(metrics, gate_reason):
         return False, gate_reason
 
-    if owner_anchor_montage_enabled() and os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "1") == "1":
+    if owner_anchor_montage_enabled() and os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "0") == "1":
         if peak_near_owner_good(game, vod, peak_sec):
             return True, f"owner_hint_soft={gate_reason}"
 

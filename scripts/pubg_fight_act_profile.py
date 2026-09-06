@@ -88,3 +88,8 @@ def apply_global_act_defaults() -> None:
     os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", str(ACT_MIN_GUN))
     os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", str(ACT_MIN_BURST))
     os.environ.setdefault("PUBG_STYLE_USE_GLOBAL_ACT_PROFILE", "1")
+    # Labels teach floors; they must not become the Telegram queue.
+    os.environ.setdefault("PUBG_OWNER_LABEL_SEED_SENDS", "0")
+    os.environ.setdefault("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "0")
+    os.environ.setdefault("SHOOTER_VOD_OWNER_ANCHOR_SOFT_ALLOW", "0")
+    os.environ.setdefault("PUBG_SINGLES_USED_GAP_SEC", "45")

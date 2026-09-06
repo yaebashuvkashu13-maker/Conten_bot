@@ -2292,9 +2292,11 @@ def _scan_vod(
     if pubg_singles:
         montage = False
     min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "3"))) if montage else 1
-    # Always seed owner-good fight acts — including PUBG singles-first.
-    # Montages-only seeding left labeled fights undiscovered when montage=False.
+    # Owner labels calibrate combat-act floors — they are NOT the send queue.
+    # Enable PUBG_OWNER_LABEL_SEED_SENDS=1 only for deliberate label replay.
     owner_hints_all = owner_good_pool(game, vod, lead_sec=max(lead, 6.0))
+    if game == "pubg" and os.environ.get("PUBG_OWNER_LABEL_SEED_SENDS", "0") != "1":
+        owner_hints_all = []
     owner_hints = [
         c
         for c in owner_hints_all
@@ -3061,7 +3063,7 @@ def _scan_vod_with_adaptive(
                         # blocked a real ADS fight at 337s because 288s was already sent.
                         used_gap = max(
                             row_gap,
-                            float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "12")),
+                            float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "45")),
                         )
                     else:
                         row_gap = max(12.0, gap_sec * 0.9)
@@ -4013,10 +4015,13 @@ def main() -> int:
             apply_to_environ(game)
         except Exception as exc:
             log.warning("adaptive thresholds apply failed game=%s: %s", game, exc)
-    if os.environ.get("SHOOTER_VOD_OWNER_EXEMPLARS", "1") == "1":
+    # Exemplars may exist for scoring, but live send must not rank by owner timestamps.
+    if os.environ.get("PUBG_OWNER_LABEL_SEED_SENDS", "0") == "1" and os.environ.get(
+        "SHOOTER_VOD_OWNER_EXEMPLARS", "1"
+    ) == "1":
         os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "1"
     else:
-        os.environ.setdefault("HIGHLIGHT_USE_OWNER_ANCHORS", "0")
+        os.environ["HIGHLIGHT_USE_OWNER_ANCHORS"] = "0"
     lock = _feed_lock(game)
     if lock is None:
         # Non-zero so systemd Restart=on-failure / owner-health see contention
