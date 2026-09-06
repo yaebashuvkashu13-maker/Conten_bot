@@ -28,6 +28,22 @@ def test_adaptive_apply_respects_drought_gun_floor(
     assert float(__import__("os").environ["PUBG_SINGLE_MIN_GUN_DENSITY"]) == pytest.approx(0.020)
 
 
+def test_drought_burst_takes_min_of_all_knobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale VOD_FORCE_BURST=5.5 must not block softer PUBG_CLIP_MIN_BURST=3.5."""
+    monkeypatch.setenv("VOD_ADAPTIVE_THRESH_DIR", str(tmp_path / "adaptive"))
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    monkeypatch.setenv("VOD_FORCE_ESCALATION", "0")
+    monkeypatch.setenv("VOD_FORCE_BURST_RATIO", "5.5")
+    monkeypatch.setenv("PUBG_CLIP_MIN_BURST_RATIO", "3.5")
+    from game_adaptive_thresholds import apply_to_environ
+
+    applied = apply_to_environ("pubg")
+    assert applied["burst_ratio_min"] == pytest.approx(3.5)
+    assert float(__import__("os").environ["PUBG_CLIP_MIN_BURST_RATIO"]) == pytest.approx(3.5)
+
+
 def test_adaptive_apply_full_floors_without_drought(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

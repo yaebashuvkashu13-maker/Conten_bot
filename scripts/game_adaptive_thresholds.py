@@ -101,7 +101,12 @@ def thresholds_for(game: str) -> dict[str, float]:
 
 
 def _drought_floor_cap(current: float, *env_keys: str) -> float:
-    """Under drought soften, never raise floors above VOD_FORCE_* recovery knobs."""
+    """Under drought soften, never raise floors above VOD_FORCE_* recovery knobs.
+
+    Take the *lowest* valid knob among all keys. Returning on the first hit made a
+    stale VOD_FORCE_BURST_RATIO=5.5 block the softer PUBG_CLIP_MIN_BURST_RATIO=3.5
+    from .env and kept send-gun rejecting real kill peaks (need>=5.5).
+    """
     soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
     try:
         esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
@@ -109,15 +114,18 @@ def _drought_floor_cap(current: float, *env_keys: str) -> float:
         esc = 0
     if not soften and esc <= 0:
         return current
+    floor = float(current)
+    saw = False
     for key in env_keys:
         raw = os.environ.get(key)
         if raw is None or raw == "":
             continue
         try:
-            return min(current, float(raw))
+            floor = min(floor, float(raw)) if saw else min(float(current), float(raw))
+            saw = True
         except ValueError:
             continue
-    return current
+    return floor if saw else current
 
 
 def apply_to_environ(game: str) -> dict[str, float]:

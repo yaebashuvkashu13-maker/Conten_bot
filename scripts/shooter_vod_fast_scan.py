@@ -599,13 +599,34 @@ def discover_montage_gun_peaks(
             scored = []
 
         if not scored:
+            # Never PANNs-walk thousands of 1s offsets after batch failure — that
+            # hung auto-send for hours on ~2h VODs (He9p offsets=7715). Stride the
+            # grid so mega VODs still finish; prefer batch/DSP path when available.
+            try:
+                max_seq = int(os.environ.get("SHOOTER_VOD_SEQUENTIAL_PANN_MAX", "240") or 240)
+            except ValueError:
+                max_seq = 240
+            targets = list(offsets)
+            stride = 1
+            if max_seq > 0 and len(targets) > max_seq:
+                import math
+
+                stride = max(1, int(math.ceil(len(targets) / float(max_seq))))
+                targets = targets[::stride][:max_seq]
+                log.warning(
+                    "dense sequential PANNs capped vod=%s full=%s using=%s stride=%s",
+                    video_path.name,
+                    len(offsets),
+                    len(targets),
+                    stride,
+                )
             try:
                 from panns_audio_cache import prewarm_grid
 
-                prewarm_grid(video_path, offsets, WINDOW_SEC)
+                prewarm_grid(video_path, targets, WINDOW_SEC)
             except Exception:
                 pass
-            for t in offsets:
+            for t in targets:
                 panns = score_panns_audio(video_path, t, WINDOW_SEC)
                 gmax = float(panns.get("panns_gun_max", 0))
                 if gmax >= gun_min:

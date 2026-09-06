@@ -2167,6 +2167,8 @@ def _inbox_order_key(
     reject = str((entry or {}).get("reject_reason") or "")
     fast_fail = 1 if reject.startswith("fast_panns_0") else 0
     # Prefer longer usable VODs — short junk burns stall budget without combat.
+    # Exception: under full 1s peak scan, mega VODs (90min+) starve auto-send for
+    # hours (e.g. He9p ~7741 offsets) while shorter fight VODs sit idle.
     try:
         size_prio = -int(mp4.stat().st_size)
     except OSError:
@@ -2175,9 +2177,26 @@ def _inbox_order_key(
     dur = float((entry or {}).get("duration") or (entry or {}).get("dur") or 0)
     if dur <= 0:
         dur = _ffprobe_duration(mp4)
-    # Tier: 90min+ streams → mid combat → barely-legal → under min.
     long_floor = float(os.environ.get("SHOOTER_VOD_LONG_REDISCOVER_MIN_SEC", "1800"))
-    if dur >= long_floor:
+    full_scan = False
+    try:
+        from shooter_vod_fast_scan import full_peak_scan_enabled
+
+        full_scan = bool(full_peak_scan_enabled())
+    except Exception:
+        full_scan = os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
+    if full_scan:
+        # Sweet spot: 10–60 min combat VODs finish dense scan and ship same hour.
+        if 600.0 <= dur <= 3600.0:
+            dur_tier = 0
+        elif dur >= _vod_min_sec() and dur < 600.0:
+            dur_tier = 1
+        elif dur <= 5400.0:
+            dur_tier = 2
+        else:
+            dur_tier = 3
+    elif dur >= long_floor:
+        # Legacy: 90min+ streams → mid combat → barely-legal → under min.
         dur_tier = 0
     elif dur >= max(_vod_min_sec(), 600.0):
         dur_tier = 1
@@ -2213,7 +2232,13 @@ def _inbox_order_key(
         if left == 0:
             mined_out = 1
     # Ready: more cached peaks first (almost-montage), then shorter VOD for faster retry.
-    dur_sort = int(dur) if pool_ready == 0 else -int(dur)
+    # Unscanned + full 1s scan: shorter first so mega streams do not block the feed.
+    if pool_ready == 0:
+        dur_sort = int(dur)
+    elif full_scan:
+        dur_sort = int(dur)
+    else:
+        dur_sort = -int(dur)
     return (
         singles_pin,
         mined_out,
