@@ -257,17 +257,17 @@ def pubg_passes_shooting_gate(
             # softer gun floor when PANNs still says combat.
             style_gun = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028"))
             style_panns = float(os.environ.get("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38"))
+            try:
+                from pubg_fight_act_profile import is_combat_act
+            except ImportError:
+                is_combat_act = None  # type: ignore[assignment]
+
             if owner_good and gun >= hard_gun and burst >= min_burst:
                 metrics["visual_override"] = gate_reason
-            elif (
-                owner_good
-                and gun >= float(os.environ.get("PUBG_OWNER_ACT_MIN_GUN", "0.028"))
-                and burst >= float(os.environ.get("PUBG_OWNER_ACT_MIN_BURST", "4.5"))
-            ):
-                # Owner-marked fight acts (6mWLqNBX1pE): gun~0.03–0.09 + real
-                # burst is enough — do not demand hard_gun 0.09 or high PANNs.
+            elif is_combat_act is not None and is_combat_act(gun, burst):
+                # Global fight-act profile (owner 6mWLqNBX1pE) — every VOD, no labels.
                 metrics["visual_override"] = gate_reason
-                metrics["owner_act_override"] = True
+                metrics["combat_act_override"] = True
             elif (
                 owner_good
                 and panns_gun_max >= style_panns
@@ -284,7 +284,7 @@ def pubg_passes_shooting_gate(
                 _drought_soften_active()
                 and base in {"run_fake_gun", "run_no_shots"}
                 and panns_gun_max
-                >= float(os.environ.get("PUBG_DROUGHT_PANNS_OVERRIDE", "0.45"))
+                >= float(os.environ.get("PUBG_DROUGHT_PANNS_OVERRIDE", "0.38"))
                 and gun >= min_gun * float(os.environ.get("PUBG_DROUGHT_GUN_FACTOR", "0.70"))
                 and burst >= min_burst * 0.60
             ):
@@ -292,14 +292,6 @@ def pubg_passes_shooting_gate(
                 # with strong PANNs (owner-liked Wg9@564/657 style). Soften only
                 # those audio-strong windows — not silent loot/menu.
                 metrics["drought_panns_override"] = gate_reason
-            elif (
-                _drought_soften_active()
-                and base in {"run_fake_gun", "run_no_shots"}
-                and gun >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", "0.028"))
-                and burst >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE", "5.5"))
-            ):
-                # OCR-blind Metro sprays: high burst proves gunfire without kill banner.
-                metrics["drought_burst_override"] = gate_reason
             else:
                 return False, gate_reason, metrics
         else:
@@ -309,7 +301,7 @@ def pubg_passes_shooting_gate(
         metrics.get("visual_override")
         or metrics.get("panns_visual_override")
         or metrics.get("drought_panns_override")
-        or metrics.get("drought_burst_override")
+        or metrics.get("combat_act_override")
     ):
         return False, gate_reason, metrics
 
@@ -320,8 +312,8 @@ def pubg_passes_shooting_gate(
     )
     if metrics.get("visual_override"):
         pass_reason = f"{pass_reason}+override:{metrics['visual_override'].split('=')[0]}"
-    if metrics.get("owner_act_override"):
-        pass_reason = f"{pass_reason}+owner_act"
+    if metrics.get("combat_act_override"):
+        pass_reason = f"{pass_reason}+combat_act"
     if metrics.get("panns_visual_override"):
         pass_reason = (
             f"{pass_reason}+panns_override:{metrics['panns_visual_override'].split('=')[0]}"
@@ -329,10 +321,6 @@ def pubg_passes_shooting_gate(
     if metrics.get("drought_panns_override"):
         pass_reason = (
             f"{pass_reason}+drought_panns:{metrics['drought_panns_override'].split('=')[0]}"
-        )
-    if metrics.get("drought_burst_override"):
-        pass_reason = (
-            f"{pass_reason}+drought_burst:{metrics['drought_burst_override'].split('=')[0]}"
         )
     return True, pass_reason, metrics
 

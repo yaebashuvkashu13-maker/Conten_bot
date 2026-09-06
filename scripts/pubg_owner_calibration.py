@@ -131,7 +131,14 @@ def apply_owner_send_policy() -> None:
 
     Send only clips where the streamer is actually shooting (gun+burst), not run/loot/fly.
     Ground truth: data/pubg_owner_labels.json and runtime Telegram 👍/👎 labels.
+    Global fight-act floors (owner 6mWLqNBX1pE) apply to every VOD — no per-video labeling.
     """
+    try:
+        from pubg_fight_act_profile import apply_global_act_defaults
+
+        apply_global_act_defaults()
+    except ImportError:
+        pass
     os.environ.setdefault("PUBG_PRESEND_SHOOTING_GATE", "1")
     os.environ.setdefault("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0")
     os.environ.setdefault("PUBG_BOT_FARM_KILLFEED_WAIVE", "0")
@@ -141,12 +148,12 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
     # Singles: owner rates kill/payoff — do not hard-block gunfights missing OCR kill banner.
     os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
-    os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
-    os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.32")
+    os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
+    os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
     os.environ.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")
     os.environ.setdefault("PUBG_SINGLES_GUN_QUALITY_BYPASS", "0")
-    os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045")
-    os.environ.setdefault("PUBG_CLIP_MIN_BURST_RATIO", "4.8")
+    os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", "0.032")
+    os.environ.setdefault("PUBG_CLIP_MIN_BURST_RATIO", "4.5")
     os.environ.setdefault("SHOOTER_VOD_MONTAGE_SHOOTING_ONLY", "0")
     os.environ.setdefault("SHOOTER_REQUIRE_AUTHOR_KILL", "0")
     os.environ.setdefault("PUBG_OWNER_BAD_PAD_SEC", "12")
@@ -159,10 +166,10 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_FLOOR", "0.70")
     os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_POST_SEND", "1.10")
 
-    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", "0.12")
-    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", "4.2")
-    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_PANNS", "0.35")
-    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_FLASH", "0.025")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", "0.032")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", "4.5")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_PANNS", "0.28")
+    os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_FLASH", "0.020")
     os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_GUN", "0.028")
     os.environ.setdefault("PUBG_STYLE_FAKE_GUN_OVERRIDE_MIN_PANNS", "0.38")
 

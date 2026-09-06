@@ -438,16 +438,32 @@ def soft_allow_owner_montage_part(
 
     base = str(gate_reason).split("=", 1)[0].strip().lower()
     reason_l = str(gate_reason).lower()
-    # Owner-marked fight acts: run_fake_gun / no_shots may soft-pass when gunfire
-    # evidence exists (owner 6mWLqNBX1pE — real sprays mislabeled as fake gun).
-    owner_act_rescue = {
+    # Global fight-act rescue (owner 6mWLqNBX1pE principle): run_fake_gun /
+    # no_shots soft-pass on ANY VOD when audio matches the combat-act profile.
+    # Do not require per-video owner labels.
+    act_rescue = {
         "run_fake_gun",
         "no_shots",
         "run_no_shots",
         "low_gunfire",
         "weak_shots",
     }
-    if base in owner_act_rescue or any(n in reason_l for n in owner_act_rescue):
+    if base in act_rescue or any(n in reason_l for n in act_rescue):
+        gun = float((metrics or {}).get("gunfire_density") or (metrics or {}).get("gun") or 0.0)
+        burst = float((metrics or {}).get("burst_ratio") or (metrics or {}).get("burst") or 0.0)
+        combat_ok = False
+        try:
+            from pubg_fight_act_profile import is_combat_act
+
+            combat_ok = is_combat_act(gun, burst)
+        except Exception:
+            combat_ok = False
+        if (
+            os.environ.get("SHOOTER_VOD_COMBAT_ACT_SOFT_ALLOW", "1") == "1"
+            and combat_ok
+            and _gunfire_evidence(metrics, gate_reason)
+        ):
+            return True, f"combat_act_soft={gate_reason}"
         if (
             owner_anchor_montage_enabled()
             and os.environ.get("SHOOTER_VOD_OWNER_ACT_SOFT_ALLOW", "1") == "1"

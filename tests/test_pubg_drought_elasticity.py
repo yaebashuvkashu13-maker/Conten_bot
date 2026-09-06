@@ -42,14 +42,14 @@ def test_scale_softens_15pct_per_idle_hour() -> None:
 
 
 def test_apply_scales_numeric_keeps_hard_locks(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
     monkeypatch.setenv("PUBG_REJECT_BOT_FARM", "0")  # should be forced back on
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
     info = el.apply_elasticity_to_environ(hours_idle=2.0)
     assert info["enabled"] is True
     assert info["scale"] == pytest.approx(0.70)
+    base = float(el.DEFAULT_BASELINE["PUBG_PAYOFF_SCORE_MIN_SINGLES"])
     assert float(__import__("os").environ["PUBG_PAYOFF_SCORE_MIN_SINGLES"]) == pytest.approx(
-        0.16 * 0.70, rel=1e-3
+        base * 0.70, rel=1e-3
     )
     assert __import__("os").environ["PUBG_REJECT_BOT_FARM"] == "1"
     assert __import__("os").environ["PUBG_HARD_REJECT_MENU_OVERLAY"] == "1"

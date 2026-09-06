@@ -14,6 +14,8 @@ PUBG_STYLE_REF_BY_VOD: dict[str, list[float]] = {
     "bMn-6uTsDBg": [243.0],
     "Z7wR4vZkn5E": [1164.0],
     "FxTv16VoLZk": [30.0],
+    # Owner fight-act exemplars — also drive GLOBAL_ACT_STYLE_PROFILE for all VODs.
+    "6mWLqNBX1pE": [211.0, 234.0, 265.0, 287.0, 406.0, 430.0, 446.0],
 }
 
 _STYLE_KEYS = (
@@ -139,7 +141,10 @@ def style_similarity(profile: dict[str, Any] | None, peak_row: dict[str, Any]) -
     sim = _weighted_similarity(profile, peak_row)
     if profile.get("notification_hit", 0) >= 0.5 and peak_row.get("notification_hit"):
         sim = min(1.0, sim + 0.12)
-    if float(peak_row.get("payoff_fast", 0.0) or 0.0) < 0.15:
+    # Only punish missing OCR payoff when the style profile expects it.
+    # Global Metro act profile is OCR-blind by design (owner 6mW acts).
+    expects_payoff = float(profile.get("payoff_fast", 0.0) or 0.0) >= 0.20
+    if expects_payoff and float(peak_row.get("payoff_fast", 0.0) or 0.0) < 0.15:
         sim *= 0.72
     if peak_row.get("loot_walk"):
         sim *= 0.55
@@ -158,12 +163,24 @@ def rank_peaks_by_style(
         return [], "style_rank_empty", {}
     refs = style_reference_peaks(vod)
     avoid = style_avoid_peaks(vod)
-    if not refs and not avoid:
+    profile = None
+    style_source = "local_refs"
+    if refs:
+        from pubg_fast_peak_rank import score_peak_fast  # noqa: F401 — used below
+
+        profile = build_style_profile(vod, refs, part_sec=part_sec)
+    elif os.environ.get("PUBG_STYLE_USE_GLOBAL_ACT_PROFILE", "1") == "1":
+        try:
+            from pubg_fight_act_profile import GLOBAL_ACT_STYLE_PROFILE
+
+            profile = dict(GLOBAL_ACT_STYLE_PROFILE)
+            style_source = "global_act"
+        except ImportError:
+            profile = None
+    if profile is None and not avoid:
         return list(peaks), "style_rank_skip", {}
 
     from pubg_fast_peak_rank import score_peak_fast
-
-    profile = build_style_profile(vod, refs, part_sec=part_sec) if refs else None
     avoid_profile = build_style_profile(vod, avoid, part_sec=part_sec) if avoid else None
     blend = float(os.environ.get("PUBG_STYLE_RANK_BLEND", "0.58"))
     sims: dict[float, float] = {}
@@ -185,7 +202,7 @@ def rank_peaks_by_style(
     tail = [p for p in peaks if p not in ranked]
     ranked.extend(tail)
     top_sim = sims.get(float(scored[0][2]), 0.0) if scored else 0.0
-    reason = f"style_rank refs={len(refs)} avoid={len(avoid)} top_sim={top_sim:.3f}"
+    reason = f"style_rank src={style_source} refs={len(refs)} avoid={len(avoid)} top_sim={top_sim:.3f}"
     return ranked, reason, sims
 
 

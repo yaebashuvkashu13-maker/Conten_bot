@@ -742,28 +742,28 @@ def score_pubg_window(
         if strong_gun and has_kill:
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
-        # Owner-calibrated Metro fight acts often lack OCR kill banners but have
-        # clear burst gunfire. Under drought, allow payoff_low soft-pass on that
-        # evidence so real acts are not skipped (owner 6mWLqNBX1pE review).
-        drought_act = (
-            os.environ.get("PUBG_DROUGHT_ACT_PAYOFF_BYPASS", "1") == "1"
-            and (
-                os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1"
-                or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
-                or int(os.environ.get("SHOOTER_VOD_SOFTEN_LEVEL", "0") or 0) >= 1
+        # Global fight-act profile (owner 6mWLqNBX1pE): OCR-blind sprays with
+        # real gun+burst are valid on EVERY VOD — not only labeled timestamps
+        # and not only during drought.
+        combat_act = False
+        try:
+            from pubg_fight_act_profile import is_combat_act
+
+            combat_act = (
+                os.environ.get("PUBG_COMBAT_ACT_PAYOFF_BYPASS", "1") == "1"
+                and is_combat_act(gun, burst)
+                and not loot_walk
             )
-            and gun >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", "0.028"))
-            and burst >= float(os.environ.get("PUBG_FAKE_GUN_BURST_ESCAPE", "5.5"))
-            and not loot_walk
-        )
-        if drought_act:
+        except Exception:
+            combat_act = False
+        if combat_act:
             has_payoff_signal = True
-            bypass_floor = float(os.environ.get("PUBG_DROUGHT_ACT_PAYOFF_FLOOR", "0.0"))
-            report["drought_act_payoff_bypass"] = True
+            bypass_floor = float(os.environ.get("PUBG_COMBAT_ACT_PAYOFF_FLOOR", "0.0"))
+            report["combat_act_payoff_bypass"] = True
         if (
             single
             and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
-            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"))
+            and gun >= float(os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.032"))
             and burst >= bypass_burst_min
             and not loot_walk
             and has_payoff_signal
@@ -772,9 +772,9 @@ def score_pubg_window(
             report["singles_gun_payoff_bypass"] = True
             if strong_gun:
                 report["singles_strong_gun_payoff_bypass"] = True
-        elif drought_act and single and payoff_score >= bypass_floor:
+        elif combat_act and single and payoff_score >= bypass_floor:
             report["singles_gun_payoff_bypass"] = True
-            report["drought_act_payoff_bypass"] = True
+            report["combat_act_payoff_bypass"] = True
         elif _owner_redo_trusted(video_path, start_sec, duration_sec):
             report["owner_redo_trusted"] = True
         else:
