@@ -245,13 +245,27 @@ def pubg_passes_shooting_gate(
                 burst >= min_burst * 0.75 or gun >= min_gun
             ):
                 metrics["panns_visual_override"] = gate_reason
+            elif (
+                _drought_soften_active()
+                and base in {"run_fake_gun", "run_no_shots"}
+                and panns_gun_max
+                >= float(os.environ.get("PUBG_DROUGHT_PANNS_OVERRIDE", "0.45"))
+                and gun >= min_gun * float(os.environ.get("PUBG_DROUGHT_GUN_FACTOR", "0.70"))
+                and burst >= min_burst * 0.60
+            ):
+                # After proven-kill tightening, drought jammed on run_fake_gun
+                # with strong PANNs (owner-liked Wg9@564/657 style). Soften only
+                # those audio-strong windows — not silent loot/menu.
+                metrics["drought_panns_override"] = gate_reason
             else:
                 return False, gate_reason, metrics
         else:
             return False, gate_reason, metrics
 
     if not gate_ok and not (
-        metrics.get("visual_override") or metrics.get("panns_visual_override")
+        metrics.get("visual_override")
+        or metrics.get("panns_visual_override")
+        or metrics.get("drought_panns_override")
     ):
         return False, gate_reason, metrics
 
@@ -265,6 +279,10 @@ def pubg_passes_shooting_gate(
     if metrics.get("panns_visual_override"):
         pass_reason = (
             f"{pass_reason}+panns_override:{metrics['panns_visual_override'].split('=')[0]}"
+        )
+    if metrics.get("drought_panns_override"):
+        pass_reason = (
+            f"{pass_reason}+drought_panns:{metrics['drought_panns_override'].split('=')[0]}"
         )
     return True, pass_reason, metrics
 
