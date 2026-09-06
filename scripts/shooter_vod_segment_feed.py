@@ -2239,8 +2239,14 @@ def _inbox_order_key(
         dur_sort = int(dur)
     else:
         dur_sort = -int(dur)
+    # Under full 1s scan, always apply dur_tier — including for "ready" pools.
+    # Old `dur_tier if pool_ready else 0` zeroed the tier when ready (pool_ready==0),
+    # so a cached 2h VOD starved mid-length fights forever.
+    dur_tier_key = dur_tier if (full_scan or pool_ready) else 0
+    mega_last = 1 if (full_scan and dur > 5400.0) else 0
     return (
         singles_pin,
+        mega_last,
         mined_out,
         gun_ready,
         pool_ready,
@@ -2248,7 +2254,7 @@ def _inbox_order_key(
         1 if scanned else 0,
         -gunish,
         -peaks_n if pool_ready == 0 else 0,
-        dur_tier if pool_ready else 0,
+        dur_tier_key,
         dur_sort,
         owner_prio,
         fast_fail,
