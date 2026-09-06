@@ -7,7 +7,12 @@ import os
 
 
 def pubg_quality_strict() -> bool:
-    """Strict PUBG Metro montage: full gates, ×3 parts, no adaptive soften."""
+    """Strict PUBG Metro montage: full gates, ×3 parts, denser probe.
+
+    Does **not** disable drought elasticity or the safe L1/L2 adaptive ladder —
+    those still ease numeric combat floors / run_fake_gun rescue while menu/loot/bot
+    stay hard. Opt-in via VOD_PUBG_QUALITY_STRICT=1.
+    """
     explicit = os.environ.get("VOD_PUBG_QUALITY_STRICT", "").strip()
     if explicit == "1":
         return True

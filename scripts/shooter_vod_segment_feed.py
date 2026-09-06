@@ -3371,31 +3371,9 @@ def _scan_vod_with_adaptive(
         _save_state(game, state)
         return 0
 
-    if pubg_quality_strict() and game == "pubg":
-        try:
-            sent = _scan_vod(game, token, chat_id, vod, env, soften_level=0, entry=entry, state=state)
-        finally:
-            if clear_fast_seeds is not None:
-                clear_fast_seeds()
-        new_streak = gate.record_vod_outcome(state, vod_id=vid, sent=sent)
-        state["last_adaptive_level"] = 0
-        _save_state(game, state)
-        if sent == 0 and os.environ.get("SHOOTER_VOD_EXHAUST_NOTIFY", os.environ.get("MLBB_VOD_EXHAUST_NOTIFY", "1")) == "1":
-            if new_streak % 3 == 0:
-                entry = _vod_registry_entry(state, vod)
-                send_message(
-                    token,
-                    chat_id,
-                    telegram_exhaust_notice(
-                        game,
-                        vid,
-                        level=0,
-                        streak=new_streak,
-                        detail=scan_zero_detail(entry),
-                    ),
-                )
-        return sent
-
+    # Quality-strict still uses adaptive_env: drought elasticity (−15%/idle-hour) and
+    # safe L1/L2 rescue must run. Strict mode only keeps montage×N / dense-probe rules —
+    # it must not freeze numeric floors at the pinned .env values forever.
     try:
         ctx = gate.adaptive_env(game, streak_in) if game in EXTENDED_GAMES else gate.adaptive_env(streak_in)
         with ctx as level:

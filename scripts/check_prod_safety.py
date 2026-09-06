@@ -27,6 +27,14 @@ if 'SHOOTER_VOD_SKIP_DISCOVERY_WHEN_INBOX_DEAD", "0"' not in feed:
     errors.append("feed default SKIP_DISCOVERY_WHEN_INBOX_DEAD must be 0")
 if "entry_is_hard_bad_without_peaks" not in feed:
     errors.append("feed recycle must skip hard-bad VODs without peaks")
+# Quality-strict must not bypass adaptive_env / drought elasticity.
+if re.search(
+    r"if pubg_quality_strict\(\) and game == \"pubg\":\s*\n\s*try:\s*\n\s*sent = _scan_vod\([^\n]*soften_level=0",
+    feed,
+):
+    errors.append(
+        "quality-strict must not skip adaptive_env/elasticity via soften_level=0 early return"
+    )
 
 hang = (SCRIPTS / "vod_hang_detector.py").read_text(encoding="utf-8")
 if 'target["VOD_FORCE_PRESEND_BYPASS"] = "0"' not in hang:
