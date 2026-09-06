@@ -47,6 +47,9 @@
     "ACCvn55IvVw": [
       {"tc": "2:03", "time_sec": 123, "label": "bad", "role": "anti_style", "note": "tightened kill-tail only / no gunfire"},
       {"tc": "2:09", "time_sec": 129, "label": "good", "note": "owner peak — full gunfight"}
+    ],
+    "Wg9qrAzWTLU": [
+      {"tc": "12:00", "time_sec": 720, "label": "bad", "note": "bot kill not real player; force-send missed rating buttons"}
     ]
   }
 }

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +235,29 @@ def _pubg_killfeed_hits(
     return merged[:120], best_hits
 
 
+
+# PUBG Mobile classic bot / NPC name patterns (killfeed + nameplates).
+_BOT_NAME_RE = re.compile(
+    r"(?:"
+    r"\bbot\b|\bбот\b|\bnpc\b|"
+    r"\bplayer\d{2,6}\b|"
+    r"\bai[_-]?\d{0,4}\b|"
+    r"\bcom[_-]?\d{2,6}\b|"
+    r"\bguest\d{2,6}\b"
+    r")",
+    re.I,
+)
+
+
+def pubg_bot_victim_name(text: str) -> str:
+    """Return matched bot/NPC name token from killfeed/OCR blob, else empty."""
+    blob = " ".join(str(text or "").split())
+    if not blob:
+        return ""
+    m = _BOT_NAME_RE.search(blob)
+    return m.group(0) if m else ""
+
+
 def pubg_rejects_bot_farm(
     video_path: Path,
     start_sec: float,
@@ -264,9 +288,19 @@ def pubg_rejects_bot_farm(
     if training_hit:
         return True, f"training_mode_ui={training_text}", out
 
+    killfeed_text = ""
     if ocr_hits <= 0:
-        _text, ocr_hits = _pubg_killfeed_hits(video_path, start_sec, duration_sec)
+        killfeed_text, ocr_hits = _pubg_killfeed_hits(video_path, start_sec, duration_sec)
+    else:
+        # Still OCR names — killfeed count alone must not waive bot victims.
+        killfeed_text, _extra = _pubg_killfeed_hits(video_path, start_sec, duration_sec)
+        ocr_hits = max(int(ocr_hits), int(_extra))
     out["killfeed_hits"] = ocr_hits
+    out["killfeed_text"] = (killfeed_text or "")[:120]
+    bot_name = pubg_bot_victim_name(killfeed_text)
+    out["bot_victim_name"] = bot_name or None
+    if bot_name and os.environ.get("PUBG_REJECT_BOT_VICTIM_NAME", "1") == "1":
+        return True, f"bot_victim_name={bot_name}", out
 
     clusters, quarters_active, span_ratio = _gunfire_pvp_shape(video_path, start_sec, duration_sec)
     out["gunfire_clusters"] = clusters
@@ -279,13 +313,16 @@ def pubg_rejects_bot_farm(
     min_mini = float(os.environ.get("PUBG_PVP_MIN_MINIMAP", "0.009"))
     min_motion = float(os.environ.get("PUBG_PVP_MIN_CENTER_MOTION", "0.032"))
 
-    if ocr_hits >= 1:
+    pvp_shaped = quarters_active >= min_quarters and clusters >= min_clusters
+    mini_ok = minimap_delta >= min_mini and center_motion >= min_motion
+    span_ok = clusters >= min_clusters and span_ratio >= float(
+        os.environ.get("PUBG_PVP_MIN_SPAN", "0.35")
+    )
+    # Killfeed alone is NOT PvP proof — classic bots also produce kill banners.
+    # Waive one-sided reject only when gunfire shape/minimap look like a real fight.
+    if pvp_shaped or mini_ok or span_ok:
         return False, "", out
-    if quarters_active >= min_quarters and clusters >= min_clusters:
-        return False, "", out
-    if minimap_delta >= min_mini and center_motion >= min_motion:
-        return False, "", out
-    if clusters >= min_clusters and span_ratio >= float(os.environ.get("PUBG_PVP_MIN_SPAN", "0.35")):
+    if ocr_hits >= 1 and os.environ.get("PUBG_BOT_FARM_KILLFEED_WAIVE", "0") == "1":
         return False, "", out
 
     if gunfire_density >= min_gun:

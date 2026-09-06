@@ -72,7 +72,11 @@ def _primary_has_kill(
     gun: float,
     motion: float,
 ) -> bool:
-    """Kill from notification/killfeed first; flash/weapon only as weak backup."""
+    """Kill from notification/killfeed first; flash/weapon only if explicitly allowed.
+
+    Flash-only "kills" shipped classic bot farms (Wg9qrAzWTLU@720) with no kill UI.
+    Default: require kill banner / killfeed keyword for author-kill credit.
+    """
     if notification_hit:
         min_gun = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_GUN", "0.04"))
         if not keyword_hit and gun < min_gun:
@@ -80,6 +84,9 @@ def _primary_has_kill(
         return True
     if keyword_hit and float(killfeed) >= 0.30:
         return True
+    # Opt-in weak backup — off by default so bot sprays without kill UI do not ship.
+    if os.environ.get("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0") != "1":
+        return False
     flash_min = float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_HIT_FLASH", "0.004")) * 1.8
     weapon_min = float(os.environ.get("SHOOTER_AUTHOR_KILL_MIN_WEAPON_EDGE", "0.030")) * 1.35
     if best_flash >= flash_min and gun >= 0.065:
@@ -292,6 +299,27 @@ def score_pubg_window(
             report["training_ui"] = training_text
             report["hard_reject"] = "training_ui"
             return _finish(False, f"hard_training_ui={training_text}")
+
+    # Classic bot / one-sided farm reject (also covers owner-bad bot kills).
+    if os.environ.get("PUBG_QUALITY_BOT_FARM_GATE", "1") == "1":
+        try:
+            from pubg_combat_gate import pubg_rejects_bot_farm
+
+            bot_reject, bot_reason, bot_row = pubg_rejects_bot_farm(
+                video_path,
+                start_sec,
+                duration_sec,
+                gunfire_density=gun,
+                center_motion=motion,
+                minimap_delta=0.0,
+                ocr_hits=0,
+            )
+            report["bot_farm"] = bot_row
+            if bot_reject:
+                report["hard_reject"] = "bot_farm"
+                return _finish(False, f"hard_bot_farm={bot_reason}")
+        except Exception as exc:  # noqa: BLE001
+            report["bot_farm_error"] = str(exc)[:120]
 
     # Payoff signal before expensive visual/death OCR.
     try:
@@ -610,6 +638,8 @@ def score_pubg_window(
             and burst >= float(os.environ.get("PUBG_CLIP_MIN_BURST_RATIO", "4.8"))
             and not loot_walk
             and fight_score >= fight_min
+            # Never ship bot/gun-only via quality bypass without kill UI.
+            and (notification_hit or keyword_hit)
         ):
             report["singles_gun_quality_bypass"] = True
             return _finish(True, f"quality_singles_gun={quality:.3f}:fight{fight_score:.3f}")

@@ -131,6 +131,9 @@ def apply_owner_send_policy() -> None:
     Ground truth: data/pubg_owner_labels.json and runtime Telegram 👍/👎 labels.
     """
     os.environ.setdefault("PUBG_PRESEND_SHOOTING_GATE", "1")
+    os.environ.setdefault("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0")
+    os.environ.setdefault("PUBG_BOT_FARM_KILLFEED_WAIVE", "0")
+    os.environ.setdefault("PUBG_QUALITY_BOT_FARM_GATE", "1")
     os.environ.setdefault("PUBG_PRESEND_SCORE_MODE", "1")
     os.environ.setdefault("PUBG_REJECT_LOOT_WALK", "1")
     os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")

@@ -68,6 +68,10 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
         ),
         patch("shooter_author_kill_gate.detect_author_death_signals", return_value=(False, "", {})),
         patch("pubg_combat_gate._pubg_scan_training_ui", return_value=(False, "")),
+        patch(
+            "pubg_combat_gate.pubg_rejects_bot_farm",
+            return_value=(False, "", {"killfeed_hits": 0}),
+        ),
         patch("pubg_moment_ranker.predict_from_features", return_value=None),
     )
 
@@ -75,7 +79,7 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
 def test_no_kill_fails_early_payoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "1")
     patches = _base_patches(author_kill=False)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is False
     assert reason.startswith("early_payoff_low")
@@ -85,7 +89,7 @@ def test_no_kill_fails_payoff_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
     patches = _base_patches(author_kill=False)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is False
     assert reason.startswith("payoff_low")
@@ -94,7 +98,7 @@ def test_no_kill_fails_payoff_gate(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_kill_passes_fight_and_payoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_QUALITY_SCORE_MIN", "0.48")
     patches = _base_patches(author_kill=True)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is True
     assert reason.startswith("quality_ok")
@@ -117,7 +121,7 @@ def test_author_death_without_kill_remains_hard_reject(monkeypatch: pytest.Monke
         "shooter_author_kill_gate.detect_author_death_signals",
         return_value=(True, "author_death_screen", {}),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
     assert ok is False
     assert reason.startswith("hard_author_death")
@@ -130,7 +134,7 @@ def test_required_kill_notification_rejects_shooting_only(
     monkeypatch.setenv("PUBG_REQUIRE_KILL_NOTIFICATION", "1")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = _base_patches(author_kill=False)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14)
     assert ok is False
     assert reason.startswith("kill_notification_missing")
@@ -171,7 +175,7 @@ def test_notification_without_gunfire_not_treated_as_kill(
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 123, 11, use_cache=False)
     assert ok is False
     assert report.get("hard_reject") == "no_shots"
@@ -264,7 +268,7 @@ def test_menu_overlay_rescued_by_strong_gun_audio(monkeypatch: pytest.MonkeyPatc
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 471.5, 23, single=True, use_cache=False)
     assert report.get("singles_menu_gun_rescue") is True
     assert report.get("hard_reject") != "menu_overlay"
@@ -287,7 +291,7 @@ def test_confident_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) 
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
     assert report.get("kill_notification_hit") is False
     assert report.get("kill_notification_class") == "hud_fp"
@@ -312,7 +316,7 @@ def test_low_conf_hud_fp_keeps_mobile_kill_banner(monkeypatch: pytest.MonkeyPatc
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         _ok, _reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, single=True, use_cache=False)
     assert report.get("kill_notification_hit") is True
     assert report.get("kill_notification_hud_fp_ignored") is not True
@@ -361,10 +365,55 @@ def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.Monkey
             },
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 461.5, 22, single=True, use_cache=False)
     assert ok is False
     assert "payoff_low" in reason
     assert report.get("singles_gun_payoff_bypass") is not True
     assert not report.get("has_author_kill")
 
+
+
+def test_flash_only_author_kill_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hit-flash without kill UI must not count as author kill (bot farm lesson)."""
+    monkeypatch.delenv("PUBG_AUTHOR_KILL_ALLOW_FLASH", raising=False)
+    from pubg_quality_score import _primary_has_kill
+
+    assert (
+        _primary_has_kill(
+            notification_hit=False,
+            keyword_hit=False,
+            killfeed=0.0,
+            best_flash=0.02,
+            best_weapon=0.05,
+            gun=0.08,
+            motion=0.05,
+        )
+        is False
+    )
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_ALLOW_FLASH", "1")
+    assert (
+        _primary_has_kill(
+            notification_hit=False,
+            keyword_hit=False,
+            killfeed=0.0,
+            best_flash=0.02,
+            best_weapon=0.05,
+            gun=0.08,
+            motion=0.05,
+        )
+        is True
+    )
+
+
+def test_bot_farm_hard_reject_from_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_QUALITY_BOT_FARM_GATE", "1")
+    patches = _base_patches(author_kill=True)
+    # Override stub: force bot-farm reject.
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patch(
+        "pubg_combat_gate.pubg_rejects_bot_farm",
+        return_value=(True, "bot_victim_name=Player99", {"bot_victim_name": "Player99"}),
+    ), patches[9]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert ok is False
+    assert "bot_farm" in reason or "bot_victim" in reason
