@@ -193,29 +193,34 @@ def evaluate_reason_gates(
             "visual": visual,
         },
     }
+    # Global fight-act floors always override dislike burst/gun mins when audio
+    # matches owner Metro acts — not only when menu_overlay also fires.
+    # Otherwise mid-burst sprays (burst≈5 with gun≈0.05) die as reason_low_burst
+    # under loot_run/menu floors (7.0–7.5) and nothing ships.
+    combat_ok = False
+    try:
+        from pubg_fight_act_profile import is_combat_act
+
+        combat_ok = is_combat_act(gun, burst)
+    except Exception:
+        combat_ok = False
+    if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "1") == "1":
+        report["combat_act_rescue"] = True
+        try:
+            from pubg_fight_act_profile import ACT_MIN_BURST, ACT_MIN_GUN
+
+            gun_min = min(gun_min, float(ACT_MIN_GUN))
+            burst_min = min(burst_min, float(ACT_MIN_BURST))
+            report["floors"]["gun_density_min"] = gun_min
+            report["floors"]["burst_ratio_min"] = burst_min
+        except Exception:
+            pass
+
     if menu >= menu_max and menu > 0:
         # ADS/HUD/PiP often inflate center-text into "menu" while audio is a real
-        # Metro fight. Combat-act audio (owner 6mW floors) rescues those.
-        combat_ok = False
-        try:
-            from pubg_fight_act_profile import is_combat_act
-
-            combat_ok = is_combat_act(gun, burst)
-        except Exception:
-            combat_ok = False
+        # Metro fight. Combat-act audio rescues those.
         if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_MENU_RESCUE", "1") == "1":
             report["combat_act_menu_rescue"] = True
-            # Menu-reason floors are calibrated for UI spam; once combat audio is
-            # proven, keep act floors instead of the stricter dislike gun mins.
-            try:
-                from pubg_fight_act_profile import ACT_MIN_BURST, ACT_MIN_GUN
-
-                gun_min = min(gun_min, float(ACT_MIN_GUN))
-                burst_min = min(burst_min, float(ACT_MIN_BURST))
-                report["floors"]["gun_density_min"] = gun_min
-                report["floors"]["burst_ratio_min"] = burst_min
-            except Exception:
-                pass
         else:
             return False, f"reason_menu_overlay={menu:.3f}>={menu_max:.3f}", report
     if gun > 0 and gun < gun_min:
