@@ -48,7 +48,10 @@ def _read_json(path: Path, default: dict | list) -> dict | list:
 def _write_json(path: Path, payload: dict | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    if path != REPO_LABELS_PATH and REPO_LABELS_PATH.parent.exists():
+    # Mirror owner labels into the repository, but never copy index/sent state
+    # over calibration_labels.json. The old condition mirrored every JSON write
+    # and a routine index rebuild replaced labels with a {"candidates": ...} file.
+    if path == LABELS_PATH and path != REPO_LABELS_PATH and REPO_LABELS_PATH.parent.exists():
         REPO_LABELS_PATH.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )

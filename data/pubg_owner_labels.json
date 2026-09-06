@@ -1,28 +1,221 @@
 {
   "videos": {
     "pJ-X6NdSU9k": [
-      {"tc": "8:35", "time_sec": 515, "label": "good"},
-      {"tc": "9:10", "time_sec": 550, "label": "good"},
-      {"tc": "10:15", "time_sec": 615, "label": "good"},
-      {"tc": "47:22", "time_sec": 2842, "label": "good"},
-      {"tc": "49:00", "time_sec": 2940, "label": "good"},
-      {"tc": "54:45", "time_sec": 3285, "label": "good"}
+      {
+        "tc": "8:35",
+        "time_sec": 515,
+        "label": "good"
+      },
+      {
+        "tc": "9:10",
+        "time_sec": 550,
+        "label": "good"
+      },
+      {
+        "tc": "10:15",
+        "time_sec": 615,
+        "label": "good"
+      },
+      {
+        "tc": "47:22",
+        "time_sec": 2842,
+        "label": "good"
+      },
+      {
+        "tc": "49:00",
+        "time_sec": 2940,
+        "label": "good"
+      },
+      {
+        "tc": "54:45",
+        "time_sec": 3285,
+        "label": "good"
+      }
     ],
     "zv3JymSZOb0": [
-      {"tc": "29:54", "time_sec": 1794, "label": "bad", "note": "run no starter shots"},
-      {"tc": "35:40", "time_sec": 2140, "label": "bad", "note": "run no starter shots"},
-      {"tc": "1:22:56", "time_sec": 4976, "label": "bad", "note": "run no starter shots"},
-      {"tc": "1:45:08", "time_sec": 6308, "label": "bad", "note": "run no starter shots"}
+      {
+        "tc": "29:54",
+        "time_sec": 1794,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "35:40",
+        "time_sec": 2140,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "1:22:56",
+        "time_sec": 4976,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "1:45:08",
+        "time_sec": 6308,
+        "label": "bad",
+        "note": "run no starter shots"
+      }
     ],
     "n97cHIR9Qow": [
-      {"tc": "30:45", "time_sec": 1845, "label": "good"},
-      {"tc": "33:25", "time_sec": 2005, "label": "good"},
-      {"tc": "35:05", "time_sec": 2105, "label": "bad"},
-      {"tc": "35:50", "time_sec": 2150, "label": "good"},
-      {"tc": "36:55", "time_sec": 2215, "label": "bad"},
-      {"tc": "38:07", "time_sec": 2287, "label": "bad"},
-      {"tc": "41:10", "time_sec": 2470, "label": "good"},
-      {"tc": "42:01", "time_sec": 2521, "label": "bad"}
+      {
+        "tc": "30:45",
+        "time_sec": 1845,
+        "label": "good"
+      },
+      {
+        "tc": "33:25",
+        "time_sec": 2005,
+        "label": "good"
+      },
+      {
+        "tc": "35:05",
+        "time_sec": 2105,
+        "label": "bad"
+      },
+      {
+        "tc": "35:50",
+        "time_sec": 2150,
+        "label": "good"
+      },
+      {
+        "tc": "36:55",
+        "time_sec": 2215,
+        "label": "bad"
+      },
+      {
+        "tc": "38:07",
+        "time_sec": 2287,
+        "label": "bad"
+      },
+      {
+        "tc": "41:10",
+        "time_sec": 2470,
+        "label": "good"
+      },
+      {
+        "tc": "42:01",
+        "time_sec": 2521,
+        "label": "bad"
+      }
+    ],
+    "Tovruh33adY": [
+      {
+        "tc": "25:33",
+        "time_sec": 1533,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "long intro / cut before fight"
+      },
+      {
+        "tc": "1:27:46",
+        "time_sec": 5266,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style — part 2 reference"
+      }
+    ],
+    "bMn-6uTsDBg": [
+      {
+        "tc": "2:21",
+        "time_sec": 141,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "long intro / fight at end of clip"
+      },
+      {
+        "tc": "4:03",
+        "time_sec": 243,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style — part 2 reference"
+      }
+    ],
+    "Z7wR4vZkn5E": [
+      {
+        "tc": "14:18",
+        "time_sec": 858,
+        "label": "good",
+        "note": "owner peak"
+      },
+      {
+        "tc": "19:24",
+        "time_sec": 1164,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style"
+      }
+    ],
+    "3hDKNrY4sGU": [
+      {
+        "tc": "20:04",
+        "time_sec": 1204,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "fight at end / cut before payoff"
+      },
+      {
+        "tc": "33:51",
+        "time_sec": 2031,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "empty part / no fight content"
+      }
+    ],
+    "oVKSI-HFr2E": [
+      {
+        "tc": "6:29",
+        "time_sec": 389,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "80% running / no fight"
+      },
+      {
+        "tc": "20:21",
+        "time_sec": 1221,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "gunfire only at end of clip"
+      }
+    ],
+    "ACCvn55IvVw": [
+      {
+        "tc": "2:03",
+        "time_sec": 123,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "tightened kill-tail only / no gunfire"
+      },
+      {
+        "tc": "2:09",
+        "time_sec": 129,
+        "label": "good",
+        "note": "owner peak — full gunfight"
+      }
+    ],
+    "Wg9qrAzWTLU": [
+      {
+        "tc": "12:00",
+        "time_sec": 720,
+        "label": "bad",
+        "note": "bot kill not real player; force-send missed rating buttons"
+      },
+      {
+        "tc": "22:00",
+        "time_sec": 1320,
+        "label": "bad",
+        "note": "inventory/LEVEL UP empty — false kill UI on loot purple"
+      }
+    ],
+    "FxTv16VoLZk": [
+      {
+        "tc": "0:30",
+        "time_sec": 30,
+        "label": "good",
+        "role": "style_ref",
+        "note": "owner-approved Metro kill fight — target style for similar clips"
+      }
     ]
   }
 }
