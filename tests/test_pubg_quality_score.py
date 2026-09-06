@@ -62,6 +62,8 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
                 {
                     "notification_score": 0.62 if author_kill else 0.0,
                     "notification_hit": author_kill,
+                    "notification_class": "kill" if author_kill else "",
+                    "notification_class_conf": 0.85 if author_kill else 0.0,
                     "killfeed_hits": ["kill"] if author_kill else [],
                 },
             ),
@@ -455,3 +457,28 @@ def test_bot_farm_hard_reject_from_quality(monkeypatch: pytest.MonkeyPatch) -> N
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
     assert ok is False
     assert "bot_farm" in reason or "bot_victim" in reason
+
+
+def test_unproven_notification_without_class_or_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scope glare / loot purple: notification_hit without class/keyword is not a kill."""
+    monkeypatch.setenv("PUBG_REJECT_MENU_OVERLAY_HARD", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.70,
+            {
+                "notification_score": 0.70,
+                "notification_hit": True,
+                "notification_class": "",
+                "notification_class_conf": 0.0,
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 100, 14, use_cache=False)
+    assert report.get("kill_notification_hit") is False
+    assert report.get("kill_notification_unproven") is True

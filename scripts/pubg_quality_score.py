@@ -427,8 +427,17 @@ def score_pubg_window(
             report["kill_notification_hud_fp_ignored"] = True
     effective_killfeed = float(killfeed) if (notification_hit or keyword_hit) else 0.0
     report["kill_notification_score"] = round(notification_score, 4)
-    report["kill_notification_hit"] = notification_hit
     report["kill_notification_keyword_hit"] = keyword_hit
+    # HSV purple loot / scope glare can set notification_hit without a real kill banner.
+    # Require kill/knock class (conf) or OCR kill keyword before trusting the hit.
+    nclass_ok = nclass in {"kill", "knock", "teammate_kill"} and nconf >= float(
+        os.environ.get("PUBG_KILL_NOTIFICATION_CLASS_MIN_CONF", "0.40")
+    )
+    if notification_hit and not keyword_hit and not nclass_ok:
+        notification_hit = False
+        notification_score = min(notification_score, notification_min * 0.50)
+        report["kill_notification_unproven"] = True
+    report["kill_notification_hit"] = notification_hit
 
     notification_mode = os.environ.get("PUBG_KILL_NOTIFICATION_MODE", "prefer").strip().lower()
     report["kill_notification_mode"] = notification_mode
