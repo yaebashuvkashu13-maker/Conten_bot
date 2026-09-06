@@ -7,6 +7,22 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 
+def _clear_drought_elasticity(monkeypatch):
+    for key in (
+        "VOD_FORCE_SOFTEN",
+        "VOD_FORCE_ESCALATION",
+        "SHOOTER_VOD_SOFTEN_LEVEL",
+        "PUBG_ADAPTIVE_DROUGHT_RESCUE",
+        "PUBG_DROUGHT_ELASTICITY_ACTIVE",
+        "PUBG_DROUGHT_ELASTICITY",
+        "PUBG_DROUGHT_PANNS_OVERRIDE",
+        "PUBG_DROUGHT_GUN_FACTOR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("PUBG_DROUGHT_ELASTICITY", "0")
+    monkeypatch.setenv("PUBG_DROUGHT_PANNS_OVERRIDE", "0.45")
+    monkeypatch.setenv("PUBG_DROUGHT_GUN_FACTOR", "0.70")
+
 def test_min_gunfire_respects_drought_soften(monkeypatch):
     monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
     monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.010")
@@ -16,6 +32,7 @@ def test_min_gunfire_respects_drought_soften(monkeypatch):
 
 
 def test_min_gunfire_keeps_quality_floor_steady(monkeypatch):
+    _clear_drought_elasticity(monkeypatch)
     monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
     monkeypatch.delenv("VOD_FORCE_ESCALATION", raising=False)
     monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.010")
@@ -25,6 +42,7 @@ def test_min_gunfire_keeps_quality_floor_steady(monkeypatch):
 
 
 def test_run_fake_gun_not_overridden_by_softened_strict_audio(monkeypatch):
+    _clear_drought_elasticity(monkeypatch)
     """_-HbZ0zNDOs_2538: soften made strict_audio true at gun~0.05 and overrode loot run."""
     monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
     monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.010")

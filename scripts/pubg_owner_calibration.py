@@ -150,6 +150,13 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_OWNER_BAD_PAD_SEC", "12")
     os.environ.setdefault("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")
     os.environ.setdefault("PUBG_AUTHOR_KILL_STYLE_COMBAT", "1")
+    os.environ.setdefault("SHOOTER_VOD_MAX_SOFTEN_LEVEL", "2")
+    os.environ.setdefault("SHOOTER_VOD_ZERO_STREAK_SOFTEN", "1")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY", "1")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_IDLE_RATE", "0.15")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_FLOOR", "0.70")
+    os.environ.setdefault("PUBG_DROUGHT_ELASTICITY_POST_SEND", "1.10")
+
     os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_GUN", "0.12")
     os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_BURST", "4.2")
     os.environ.setdefault("PUBG_STYLE_COMBAT_MIN_PANNS", "0.35")

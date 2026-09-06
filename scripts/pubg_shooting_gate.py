@@ -45,9 +45,22 @@ def _drought_soften_active() -> bool:
     if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
         return True
     try:
-        return int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0
+        if int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0:
+            return True
     except ValueError:
-        return False
+        pass
+    # Adaptive streak soften L2+ / elasticity mid-drought: allow numeric floors
+    # to drop and enable reason-specific run_fake_gun PANNs rescue.
+    try:
+        if int(os.environ.get("SHOOTER_VOD_SOFTEN_LEVEL", "0") or 0) >= 2:
+            return True
+    except ValueError:
+        pass
+    if os.environ.get("PUBG_ADAPTIVE_DROUGHT_RESCUE", "0") == "1":
+        return True
+    if os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1":
+        return True
+    return False
 
 
 def _min_gunfire() -> float:
