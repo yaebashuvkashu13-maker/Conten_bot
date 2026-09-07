@@ -2060,6 +2060,29 @@ def _send_batch(
                 )
                 continue
 
+        if game == "pubg" and os.environ.get("PUBG_SENT_RANGE_GATE", "1") == "1":
+            try:
+                from pubg_sent_param_ranges import evaluate_against_ranges
+
+                rng_ok, rng_reason, rng_report = evaluate_against_ranges(
+                    presend_report if isinstance(presend_report, dict) else {},
+                    game=game,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("sent-range gate error sid=%s: %s", sid, exc)
+                rng_ok, rng_reason, rng_report = True, f"range_gate_error:{exc}", {}
+            if not rng_ok:
+                log.warning("sent-range REJECT %s: %s", sid, rng_reason)
+                _ledger_record_decision(
+                    game,
+                    vod=vod,
+                    row=row,
+                    decision="reject",
+                    reason=f"sent_range:{rng_reason}",
+                    metrics=rng_report if isinstance(rng_report, dict) else {},
+                )
+                continue
+
         out = deliver
         peak = int(row.get("peak_start", row["start"]))
         out_dur = _ffprobe_duration(out)
@@ -2095,6 +2118,7 @@ def _send_batch(
                     "duration": _ffprobe_duration(out),
                     "peak_start": peak,
                     "score": row.get("score", 0),
+                    "quality_metrics": presend_report if isinstance(presend_report, dict) else {},
                     "sig": sig,
                     "ingested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "singles_final": bool(singles_final),

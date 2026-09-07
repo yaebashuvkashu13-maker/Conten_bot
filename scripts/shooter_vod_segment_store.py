@@ -263,6 +263,14 @@ def apply_owner_label(
 
     save_labels(game, labels)
 
+    if game.strip().lower() == "pubg":
+        try:
+            from pubg_sent_param_ranges import build_ranges
+
+            build_ranges("pubg")
+        except Exception:
+            pass
+
     vid = vod_id_from_row(row, segment_id_str)
     append_owner_time_label(
         profile,
