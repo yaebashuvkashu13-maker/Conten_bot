@@ -572,8 +572,10 @@ def auto_heal_stalled_feed(game: str) -> dict[str, object]:
     stats["paused"] = int(clear_discovery_pauses(game))
     stats["trimmed"] = trim_discovery_used_ids(game)
     stats["parked"] = park_exhausted_inbox(game)
-    stats["cooled"] = bump_scan_cooldowns(game)
+    # Reset exhausted first so bump_scan_cooldowns can clear dense rejects on
+    # those same inbox VODs (it only touches non-exhausted rows).
     stats["reset"] = reset_inbox_exhausted(game)
+    stats["cooled"] = bump_scan_cooldowns(game)
     return stats
 
 

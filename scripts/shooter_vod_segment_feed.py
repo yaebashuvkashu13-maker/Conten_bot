@@ -3059,17 +3059,20 @@ def _scan_vod_with_adaptive(
                             6.0,
                             float(os.environ.get("PUBG_SINGLES_ROW_GAP_SEC", "8")),
                         )
-                        # Do NOT reuse montage gap (~55s) against prior sends — that
-                        # blocked a real ADS fight at 337s because 288s was already sent.
+                        # Keep adjacent real fights (~49s) sendable; only skip near
+                        # dupes (~15s). Montage gap (~55s) was too aggressive and
+                        # left phantom rows that pick_next then exhausted instantly.
                         used_gap = max(
                             row_gap,
-                            float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "45")),
+                            float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "20")),
                         )
                     else:
                         row_gap = max(12.0, gap_sec * 0.9)
                         used_gap = gap_sec
+                    # Filter used peaks with the SAME gap pick_next will use —
+                    # otherwise rows=N look healthy then all die as "no sendable".
                     all_rows = _build_rows(
-                        row_gap,
+                        used_gap if full_scan else row_gap,
                         used=used_peaks,
                         blocked=blocked_ids,
                         peak_only_used=full_scan,

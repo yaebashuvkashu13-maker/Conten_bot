@@ -42,7 +42,10 @@ def test_singles_used_gap_default_blocks_near_duplicates(monkeypatch: pytest.Mon
     monkeypatch.delenv("PUBG_SINGLES_USED_GAP_SEC", raising=False)
     from vod_peak_gap import peak_too_close
     import os
-    gap = float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "45"))
-    assert gap >= 45
+    gap = float(os.environ.get("PUBG_SINGLES_USED_GAP_SEC", "20"))
+    assert gap >= 20
+    # Near-dupe of a prior send (~15s) must stay blocked.
     assert peak_too_close(36.8, [52.0], gap) is True
+    # Distinct fight ~46s later must remain eligible.
     assert peak_too_close(6.0, [52.0], gap) is False
+    assert peak_too_close(337.5, [288.0], gap) is False
