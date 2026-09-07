@@ -110,6 +110,12 @@ wanted = {
     "VOD_LEDGER_SILENCE_HOURS": "3",
     # Permanent singles floors (anti-garbage). Drought soften may lower temporarily.
     "PUBG_EARLY_PAYOFF_REJECT_SINGLES": "0",
+    "PUBG_REQUIRE_AUTHOR_KILL_SINGLES": "1",
+    "PUBG_COMBAT_ACT_ALLOW_NO_KILL": "0",
+    "PUBG_OWNER_GOOD_TRUST_NO_KILL": "0",
+    "PUBG_OWNER_GOOD_TRUST_LOOT": "0",
+    "PUBG_DISLIKE_LOOT_FLOOR_LOCK": "1",
+    "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE": "1",
     "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0",
     "PUBG_SINGLES_GUN_QUALITY_BYPASS": "0",
     "PUBG_FAST_PAYOFF_MIN": "0.12",
@@ -125,6 +131,9 @@ drop_keys = {
     "VOD_FORCE_PAYOFF_MIN",
     "VOD_FORCE_GUN_DENSITY",
     "VOD_FORCE_ESCALATION",
+    # Permanent soften pins that let loot_run / mid-spray junk through dislike gates.
+    "DISLIKE_GUN_DENSITY_MIN",
+    "DISLIKE_BURST_RATIO_MIN",
 }
 text = p.read_text() if p.exists() else ""
 lines = text.splitlines(); keys=set(); out=[]
