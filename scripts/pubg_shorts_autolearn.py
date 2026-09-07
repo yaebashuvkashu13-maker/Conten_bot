@@ -116,7 +116,7 @@ def _rate_ok(state: dict[str, Any], *, kind: str) -> bool:
             state[day_key] = now
             state[day_count_key] = 0
             day_count = 0
-        day_cap = _env_int("PUBG_SHORTS_MAX_DL_PER_DAY", 320)
+        day_cap = _env_int("PUBG_SHORTS_MAX_DL_PER_DAY", 360)
         if day_cap > 0 and day_count >= day_cap:
             return False
     return True
