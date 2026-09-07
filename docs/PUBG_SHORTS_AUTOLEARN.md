@@ -26,12 +26,21 @@ Silver-слой: бот сам смотрит популярные Metro Shorts 
 |----------|-----|--------|
 | YouTube Shorts + highlights | `content-bot-pubg-shorts-autolearn.timer` | 385/сутки |
 | Локальный пул на диске | `…-local.timer` | без IP-лимита |
-| **TikTok** | `content-bot-pubg-multi-harvest.timer` + proxy | ~4 за запуск |
+| **TikTok** | `content-bot-pubg-multi-harvest.timer` — **профили** (`@metroroyale`, `@pubgmobile`, …) | ~4 за запуск |
 | **Instagram Reels** | тот же harvest, нужен `/root/instagram_cookies.txt` | ~4 за запуск |
-| **VK** | тот же harvest | ~2 за запуск |
+| **VK** | только явные URL (`PUBG_VK_VIDEO_URLS`) — search в yt-dlp ломается | по списку |
 
-Instagram без cookies **не стартует** (скажи — подскажу как выгрузить Netscape cookies).
+Ещё кандидаты (пока не в таймере): Likee, Snapchat Spotlight, Facebook Reels — хрупкие extractors / нужны cookies.
+
+TikTok **не** через `tiktoksearch`/`tag` (в yt-dlp помечены broken). Берём user feed + фильтр заголовков под Metro. Нужен yt-dlp ≥ 2026.08. Нужный SOCKS часто мёртв — TikTok идёт **напрямую** с VPS (`PUBG_TIKTOK_DIRECT=1`).
+
+Instagram без cookies **не стартует**. Netscape cookies → `/root/instagram_cookies.txt` (расширение «Get cookies.txt LOCALLY» в браузере, залогинься в IG → экспорт).
 Скачанное сразу попадает в локальный скорер → таблица параметров.
+
+```bash
+python3 scripts/pubg_multiplatform_harvest.py status
+python3 scripts/pubg_multiplatform_harvest.py run --per-source 2
+```
 
 ## Команды
 

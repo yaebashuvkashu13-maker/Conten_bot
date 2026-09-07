@@ -2,12 +2,15 @@
 """Multi-platform short-video harvest for PUBG Metro silver learning.
 
 Sources (gentle, rate-limited):
-  - TikTok search (requires YTDLP_PROXY / SOCKS5_PROXY)
+  - TikTok user feeds (yt-dlp `tiktok:user`; tag/search extractors are broken)
   - Instagram Reels / tags (requires INSTAGRAM_COOKIES_PATH)
-  - VK clips (optional, yt-dlp)
+  - VK clips (optional; often broken in current yt-dlp — reported clearly)
 
 Downloaded files land under /root/datasets/{tiktok,instagram,vk}/pubg/
 and are scored by pubg_shorts_autolearn local pool (no extra YouTube pressure).
+
+Proxy: use only when the SOCKS/HTTP endpoint accepts TCP; otherwise go direct
+(TikTok works from the VPS without the external SOCKS).
 """
 
 from __future__ import annotations
@@ -17,11 +20,13 @@ import json
 import os
 import random
 import re
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,12 +41,24 @@ STATE_PATH = Path(
     )
 )
 
-TIKTOK_QUERIES = (
-    "метро роял пабг",
-    "metro royale pubg",
-    "pubg metro royale clutch",
-    "метро роял перестрелка",
-    "pubg mobile metro royale",
+# Seed Metro / PUBG Mobile creators. Override with PUBG_TIKTOK_USERS=a,b,c
+TIKTOK_USERS = (
+    "metroroyale",
+    "pubgmobile",
+    "pubgm.official",
+    "pubgmobilesports",
+    "pubgmobileesports",
+    "officialpubgmobile",
+    "predator.pubgmobile",
+    "sparrowpubg3",
+    "dabplays",
+)
+
+# Prefer gameplay-ish titles when harvesting broad PUBG accounts.
+METRO_TITLE_RE = re.compile(
+    r"metro|метро|royale|роял|clutch|перестрел|fight|бой|loot|эвакуац|squad|"
+    r"kill|килл|highlight|геймплей|gameplay|brawl|дуэль",
+    re.I,
 )
 
 INSTAGRAM_TAGS = (
@@ -51,9 +68,9 @@ INSTAGRAM_TAGS = (
     "pubgmobilemetro",
 )
 
-VK_QUERIES = (
-    "метро роял пабг",
-    "metro royale pubg",
+VK_VIDEO_URLS = (
+    # Direct video / wall posts work more often than search extractors.
+    # Keep empty-safe: harvest_vk probes these if set via env.
 )
 
 
@@ -100,6 +117,35 @@ def _proxy(env: dict[str, str]) -> str:
     return ""
 
 
+def _proxy_alive(proxy: str, *, timeout: float = 3.0) -> bool:
+    if not proxy:
+        return False
+    try:
+        parsed = urlparse(proxy)
+        host = parsed.hostname
+        port = parsed.port or 1080
+        if not host:
+            return False
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
+def _use_proxy(env: dict[str, str], *, prefer: bool) -> bool:
+    """Only attach --proxy when the endpoint accepts TCP."""
+    if not prefer:
+        return False
+    force = os.environ.get("PUBG_MULTI_FORCE_PROXY", env.get("PUBG_MULTI_FORCE_PROXY", "0"))
+    proxy = _proxy(env)
+    if not proxy:
+        return False
+    if force == "1":
+        return True
+    return _proxy_alive(proxy)
+
+
 def _cookies() -> Path | None:
     for cand in (
         os.environ.get("INSTAGRAM_COOKIES_PATH", "").strip(),
@@ -114,7 +160,7 @@ def _cookies() -> Path | None:
 
 def load_state() -> dict[str, Any]:
     if not STATE_PATH.is_file():
-        return {"seen_urls": [], "downloaded": 0, "by_source": {}}
+        return {"seen_urls": [], "downloaded": 0, "by_source": {}, "tiktok_users_ok": []}
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -135,9 +181,10 @@ def save_state(state: dict[str, Any]) -> None:
 
 def _ytdlp_base(env: dict[str, str], *, use_proxy: bool, cookies: Path | None = None) -> list[str]:
     cmd = [ytdlp_bin(env)]
-    proxy = _proxy(env) if use_proxy else ""
-    if proxy:
-        cmd += ["--proxy", proxy]
+    if use_proxy:
+        proxy = _proxy(env)
+        if proxy:
+            cmd += ["--proxy", proxy]
     if cookies is not None:
         cmd += ["--cookies", str(cookies)]
     cmd += [
@@ -152,33 +199,89 @@ def _ytdlp_base(env: dict[str, str], *, use_proxy: bool, cookies: Path | None = 
     return cmd
 
 
-def _search_urls(
-    extractor_query: str,
+def _list_urls(
+    target: str,
     *,
     env: dict[str, str],
     use_proxy: bool,
     cookies: Path | None = None,
     limit: int = 15,
+    playlist: bool = True,
 ) -> list[str]:
-    cmd = _ytdlp_base(env, use_proxy=use_proxy, cookies=cookies) + [
+    cmd = _ytdlp_base(env, use_proxy=use_proxy, cookies=cookies)
+    # User/tag feeds need playlist mode; single videos do not.
+    if playlist:
+        cmd = [c for c in cmd if c != "--no-playlist"]
+        cmd += ["--flat-playlist", "--playlist-end", str(max(limit, 1))]
+    cmd += ["--print", "%(webpage_url)s\t%(title)s", target]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=150)
+    except subprocess.TimeoutExpired:
+        return []
+    rows: list[tuple[str, str]] = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("http"):
+            continue
+        if "\t" in line:
+            url, title = line.split("\t", 1)
+        else:
+            url, title = line, ""
+        rows.append((url.strip(), title.strip()))
+        if len(rows) >= limit:
+            break
+    return [u for u, _ in rows]  # titles filtered by caller via _list_urls_filtered
+
+
+def _list_urls_filtered(
+    target: str,
+    *,
+    env: dict[str, str],
+    use_proxy: bool,
+    cookies: Path | None = None,
+    limit: int = 15,
+    require_metro: bool = False,
+) -> list[str]:
+    cmd = _ytdlp_base(env, use_proxy=use_proxy, cookies=cookies)
+    cmd = [c for c in cmd if c != "--no-playlist"]
+    cmd += [
         "--flat-playlist",
+        "--playlist-end",
+        str(max(limit * 3, 12)),
         "--print",
-        "%(webpage_url)s",
-        extractor_query,
+        "%(webpage_url)s\t%(title)s",
+        target,
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=150)
     except subprocess.TimeoutExpired:
         return []
-    urls: list[str] = []
+    picked: list[str] = []
+    loose: list[str] = []
     for line in (proc.stdout or "").splitlines():
-        url = line.strip()
-        if not url.startswith("http"):
+        line = line.strip()
+        if not line.startswith("http"):
             continue
-        urls.append(url)
-        if len(urls) >= limit:
+        if "\t" in line:
+            url, title = line.split("\t", 1)
+        else:
+            url, title = line, ""
+        url = url.strip()
+        if "/video/" not in url and "/reel/" not in url and "/clip" not in url.lower():
+            # Keep TikTok video URLs; skip live / non-video.
+            if "tiktok.com" in url and "/video/" not in url:
+                continue
+        if METRO_TITLE_RE.search(title or ""):
+            picked.append(url)
+        else:
+            loose.append(url)
+        if len(picked) >= limit:
             break
-    return urls
+    if require_metro:
+        return picked[:limit]
+    # Prefer metro-titled; fill remainder from the rest.
+    out = picked + [u for u in loose if u not in picked]
+    return out[:limit]
 
 
 def _download(
@@ -210,7 +313,6 @@ def _download(
         return False
     if dest.is_file() and dest.stat().st_size > 40_000:
         return True
-    # Resolve whatever extension landed.
     stem = dest.with_suffix("").name
     cands = sorted(
         [
@@ -243,33 +345,71 @@ def _id_from_url(url: str, source: str) -> str:
     return f"{source[:2]}_{hashlib.sha1(url.encode()).hexdigest()[:12]}"
 
 
+def _tiktok_users(env: dict[str, str]) -> list[str]:
+    raw = (env.get("PUBG_TIKTOK_USERS") or os.environ.get("PUBG_TIKTOK_USERS") or "").strip()
+    if raw:
+        return [u.strip().lstrip("@") for u in raw.split(",") if u.strip()]
+    return list(TIKTOK_USERS)
+
+
 def harvest_tiktok(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dict[str, Any]:
-    proxy = _proxy(env)
-    if not proxy:
-        return {"saved": 0, "skipped": "no_proxy", "attempted": 0}
+    """Pull short videos from curated TikTok user feeds (no broken search/tag)."""
     out_dir = Path(os.environ.get("PUBG_TIKTOK_DIR", "/root/datasets/tiktok/pubg"))
     out_dir.mkdir(parents=True, exist_ok=True)
+    prefer_proxy = os.environ.get("PUBG_TIKTOK_PREFER_PROXY", env.get("PUBG_TIKTOK_PREFER_PROXY", "0")) == "1"
+    use_proxy = _use_proxy(env, prefer=prefer_proxy or bool(_proxy(env)))
+    # If configured proxy is dead, fall back to direct (do not hard-fail).
+    if prefer_proxy and not use_proxy and _proxy(env):
+        use_proxy = False
+    # Default: try direct first for TikTok (VPS reaches TikTok; external SOCKS often dead).
+    if os.environ.get("PUBG_TIKTOK_DIRECT", env.get("PUBG_TIKTOK_DIRECT", "1")) == "1":
+        use_proxy = False
+
     seen = set(state.get("seen_urls") or [])
     saved = 0
     attempted = 0
     errors: list[str] = []
-    queries = list(TIKTOK_QUERIES)
-    random.shuffle(queries)
-    for query in queries:
+    users = _tiktok_users(env)
+    random.shuffle(users)
+    users_ok: list[str] = list(state.get("tiktok_users_ok") or [])
+
+    for user in users:
         if saved >= limit:
             break
-        urls = _search_urls(f"tiktoksearch{max(12, limit * 2)}:{query}", env=env, use_proxy=True, limit=12)
+        # Metro-named accounts: take any video; broad PUBG: prefer metro-ish titles.
+        require_metro = user not in {"metroroyale", "pubgmetroroyale"} and "metro" not in user.lower()
+        target = f"https://www.tiktok.com/@{user}"
+        urls = _list_urls_filtered(
+            target,
+            env=env,
+            use_proxy=use_proxy,
+            limit=max(8, limit * 2),
+            require_metro=require_metro,
+        )
+        if not urls and require_metro:
+            # Soften: still take a couple from the profile for silver diversity.
+            urls = _list_urls_filtered(
+                target,
+                env=env,
+                use_proxy=use_proxy,
+                limit=4,
+                require_metro=False,
+            )
+        if urls and user not in users_ok:
+            users_ok.append(user)
         random.shuffle(urls)
-        time.sleep(random.uniform(8, 18))
+        time.sleep(random.uniform(4, 10))
         for url in urls:
             if saved >= limit:
                 break
             if url in seen:
                 continue
+            if "/video/" not in url:
+                continue
             attempted += 1
             vid = _id_from_url(url, "tt")
             dest = out_dir / f"{vid}.mp4"
-            ok = _download(url, dest, env=env, use_proxy=True)
+            ok = _download(url, dest, env=env, use_proxy=use_proxy)
             seen.add(url)
             if ok:
                 saved += 1
@@ -279,9 +419,19 @@ def harvest_tiktok(env: dict[str, str], state: dict[str, Any], *, limit: int) ->
                 state["by_source"] = by
             else:
                 errors.append(f"tt_fail:{vid}")
-            time.sleep(random.uniform(14, 32))
+            time.sleep(random.uniform(10, 24))
+
     state["seen_urls"] = list(seen)
-    return {"saved": saved, "attempted": attempted, "errors": errors[:10], "out": str(out_dir)}
+    state["tiktok_users_ok"] = users_ok[-40:]
+    return {
+        "saved": saved,
+        "attempted": attempted,
+        "errors": errors[:10],
+        "out": str(out_dir),
+        "via": "users",
+        "proxy": use_proxy,
+        "users_tried": users[:8],
+    }
 
 
 def harvest_instagram(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dict[str, Any]:
@@ -301,23 +451,12 @@ def harvest_instagram(env: dict[str, str], state: dict[str, Any], *, limit: int)
     errors: list[str] = []
     tags = list(INSTAGRAM_TAGS)
     random.shuffle(tags)
-    # Prefer proxy for IG too when available (datacenter IP often blocked).
-    use_proxy = bool(_proxy(env))
+    use_proxy = _use_proxy(env, prefer=True)
     for tag in tags:
         if saved >= limit:
             break
-        # yt-dlp Instagram tag / reel search is fragile; try tag URL first.
         query = f"https://www.instagram.com/explore/tags/{tag}/"
-        urls = _search_urls(query, env=env, use_proxy=use_proxy, cookies=cookies, limit=10)
-        if not urls:
-            # Fallback: igsearch if extractor exists in this yt-dlp build.
-            urls = _search_urls(
-                f"igsearch{max(8, limit)}:{tag} metro royale",
-                env=env,
-                use_proxy=use_proxy,
-                cookies=cookies,
-                limit=8,
-            )
+        urls = _list_urls(query, env=env, use_proxy=use_proxy, cookies=cookies, limit=10)
         random.shuffle(urls)
         time.sleep(random.uniform(10, 22))
         for url in urls:
@@ -346,48 +485,46 @@ def harvest_instagram(env: dict[str, str], state: dict[str, Any], *, limit: int)
 
 
 def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dict[str, Any]:
-    """VK short clips via yt-dlp search — optional third source."""
+    """VK short clips — optional. Search extractors are unreliable; use explicit URLs."""
     if os.environ.get("PUBG_VK_HARVEST", "1") != "1":
         return {"saved": 0, "skipped": "disabled"}
+    raw = (env.get("PUBG_VK_VIDEO_URLS") or os.environ.get("PUBG_VK_VIDEO_URLS") or "").strip()
+    urls = [u.strip() for u in raw.split(",") if u.strip().startswith("http")]
+    urls.extend(VK_VIDEO_URLS)
+    if not urls:
+        return {
+            "saved": 0,
+            "skipped": "vk_needs_urls",
+            "hint": "Задай PUBG_VK_VIDEO_URLS=https://vk.com/video-…,… (search/tag в yt-dlp сейчас ломается)",
+            "attempted": 0,
+        }
     out_dir = Path(os.environ.get("PUBG_VK_DIR", "/root/datasets/vk/pubg"))
     out_dir.mkdir(parents=True, exist_ok=True)
     seen = set(state.get("seen_urls") or [])
     saved = 0
     attempted = 0
     errors: list[str] = []
-    use_proxy = bool(_proxy(env))
-    queries = list(VK_QUERIES)
-    random.shuffle(queries)
-    for query in queries:
+    use_proxy = _use_proxy(env, prefer=True)
+    random.shuffle(urls)
+    for url in urls:
         if saved >= limit:
             break
-        urls = _search_urls(
-            f"vksearch{max(10, limit * 2)}:{query}",
-            env=env,
-            use_proxy=use_proxy,
-            limit=10,
-        )
-        random.shuffle(urls)
-        time.sleep(random.uniform(6, 14))
-        for url in urls:
-            if saved >= limit:
-                break
-            if url in seen:
-                continue
-            attempted += 1
-            vid = _id_from_url(url, "vk")
-            dest = out_dir / f"{vid}.mp4"
-            ok = _download(url, dest, env=env, use_proxy=use_proxy)
-            seen.add(url)
-            if ok:
-                saved += 1
-                state["downloaded"] = int(state.get("downloaded") or 0) + 1
-                by = dict(state.get("by_source") or {})
-                by["vk"] = int(by.get("vk") or 0) + 1
-                state["by_source"] = by
-            else:
-                errors.append(f"vk_fail:{vid}")
-            time.sleep(random.uniform(10, 24))
+        if url in seen:
+            continue
+        attempted += 1
+        vid = _id_from_url(url, "vk")
+        dest = out_dir / f"{vid}.mp4"
+        ok = _download(url, dest, env=env, use_proxy=use_proxy)
+        seen.add(url)
+        if ok:
+            saved += 1
+            state["downloaded"] = int(state.get("downloaded") or 0) + 1
+            by = dict(state.get("by_source") or {})
+            by["vk"] = int(by.get("vk") or 0) + 1
+            state["by_source"] = by
+        else:
+            errors.append(f"vk_fail:{vid}")
+        time.sleep(random.uniform(8, 18))
     state["seen_urls"] = list(seen)
     return {"saved": saved, "attempted": attempted, "errors": errors[:10], "out": str(out_dir)}
 
@@ -396,7 +533,14 @@ def run_harvest(*, per_source: int | None = None) -> dict[str, Any]:
     env = {**os.environ, **load_env(ENV_PATH)}
     state = load_state()
     per_source = per_source or _env_int("PUBG_MULTI_HARVEST_PER_SOURCE", 4)
-    report: dict[str, Any] = {"per_source": per_source, "sources": {}}
+    proxy = _proxy(env)
+    report: dict[str, Any] = {
+        "per_source": per_source,
+        "proxy_configured": bool(proxy),
+        "proxy_alive": _proxy_alive(proxy) if proxy else False,
+        "ytdlp": ytdlp_bin(env),
+        "sources": {},
+    }
 
     if os.environ.get("PUBG_TIKTOK_HARVEST", "1") == "1":
         report["sources"]["tiktok"] = harvest_tiktok(env, state, limit=per_source)
@@ -423,13 +567,18 @@ def main() -> int:
     sub.add_parser("status", help="Show harvest state")
     args = parser.parse_args()
     if args.cmd == "status":
+        env = {**os.environ, **load_env(ENV_PATH)}
+        proxy = _proxy(env)
         print(json.dumps(load_state(), ensure_ascii=False, indent=2))
         cookies = _cookies()
         print(
             json.dumps(
                 {
-                    "proxy_configured": bool(_proxy({**os.environ, **load_env(ENV_PATH)})),
+                    "proxy_configured": bool(proxy),
+                    "proxy_alive": _proxy_alive(proxy) if proxy else False,
                     "instagram_cookies": str(cookies) if cookies else None,
+                    "ytdlp": ytdlp_bin(env),
+                    "tiktok_users": _tiktok_users(env),
                 },
                 ensure_ascii=False,
                 indent=2,
