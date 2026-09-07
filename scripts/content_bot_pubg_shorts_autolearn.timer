@@ -2,10 +2,10 @@
 Description=Timer: PUBG Shorts autolearn (polite, anti-ban)
 
 [Timer]
-# Every 25 minutes — with batch=2 and sleeps, stays under hourly caps.
-OnBootSec=12min
-OnUnitActiveSec=25min
-RandomizedDelaySec=3min
+# Every 12 minutes — batch=4 → ~20 downloads/hour under the hourly cap.
+OnBootSec=8min
+OnUnitActiveSec=12min
+RandomizedDelaySec=2min
 Persistent=true
 Unit=content-bot-pubg-shorts-autolearn.service
 

@@ -79,11 +79,12 @@ def shorts_root() -> Path:
 def polite_sleep(kind: str = "download") -> None:
     """Jittered sleep between YouTube calls — anti-ban."""
     if kind == "search":
-        lo = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MIN", 25.0)
-        hi = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MAX", 55.0)
+        lo = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MIN", 18.0)
+        hi = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MAX", 40.0)
     else:
-        lo = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MIN", 55.0)
-        hi = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MAX", 120.0)
+        # ~20/hour needs ~3 min average spacing including scoring time.
+        lo = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MIN", 35.0)
+        hi = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MAX", 75.0)
     if hi < lo:
         lo, hi = hi, lo
     delay = random.uniform(lo, hi)
@@ -102,9 +103,23 @@ def _rate_ok(state: dict[str, Any], *, kind: str) -> bool:
         count = 0
     cap = _env_int(
         "PUBG_SHORTS_MAX_SEARCH_PER_HOUR" if kind == "search" else "PUBG_SHORTS_MAX_DL_PER_HOUR",
-        4 if kind == "search" else 8,
+        8 if kind == "search" else 20,
     )
-    return count < cap
+    if count >= cap:
+        return False
+    if kind == "download":
+        day_key = "download_day_ts"
+        day_count_key = "download_day_count"
+        day_start = float(state.get(day_key) or 0.0)
+        day_count = int(state.get(day_count_key) or 0)
+        if now - day_start >= 86400:
+            state[day_key] = now
+            state[day_count_key] = 0
+            day_count = 0
+        day_cap = _env_int("PUBG_SHORTS_MAX_DL_PER_DAY", 320)
+        if day_cap > 0 and day_count >= day_cap:
+            return False
+    return True
 
 
 def _rate_bump(state: dict[str, Any], *, kind: str) -> None:
@@ -115,6 +130,13 @@ def _rate_bump(state: dict[str, Any], *, kind: str) -> None:
         state[hour_key] = now
         state[count_key] = 0
     state[count_key] = int(state.get(count_key) or 0) + 1
+    if kind == "download":
+        day_key = "download_day_ts"
+        day_count_key = "download_day_count"
+        if now - float(state.get(day_key) or 0.0) >= 86400:
+            state[day_key] = now
+            state[day_count_key] = 0
+        state[day_count_key] = int(state.get(day_count_key) or 0) + 1
 
 
 def _title_ok(title: str) -> bool:

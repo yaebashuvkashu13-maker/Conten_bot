@@ -20,11 +20,18 @@ Silver-слой: бот сам смотрит популярные Metro Shorts 
 
 ## Антибан
 
-- 1–2 Shorts за запуск таймера
-- sleep 55–120s между скачиваниями, 25–55s между поисками
-- ≤6 download / ≤3 search в час
-- backoff 15 мин при 429 / bot-check
+- до **20** Shorts/час (паузы 35–75s между скачиваниями)
+- мягкий потолок **~320/сутки** по умолчанию (безопаснее, чем 480 на VPS/датацентр IP)
+- 480/сутки = `PUBG_SHORTS_MAX_DL_PER_DAY=480` — можно, но выше риск 429/бана IP
+- sleep + hourly/daily caps + backoff 15 мин при 429
 - `Nice=15`, flock, **отдельный** timer — не трогает VOD feed
+
+Чтобы поднять до 480/день на VPS:
+```bash
+# в /root/.video_bot.env
+PUBG_SHORTS_MAX_DL_PER_HOUR=20
+PUBG_SHORTS_MAX_DL_PER_DAY=480
+```
 
 ## Команды
 
