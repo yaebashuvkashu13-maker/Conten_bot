@@ -205,11 +205,20 @@ def download_short(vid: str, dest: Path, env: dict[str, str]) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_file() and dest.stat().st_size > 10_000:
         return True
+    # Prefer progressive mp4 to avoid stuck f###.webm.part merges on Shorts.
     fmt = env.get(
         "YOUTUBE_SHORTS_FORMAT",
-        "bv*[height<=720][height>=360]+ba/b[height<=720]/b",
+        "b[ext=mp4][height<=720]/bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[height<=720]/b",
     )
     url = f"https://www.youtube.com/shorts/{vid}"
+    # Clean stale partials from previous failed attempts.
+    for stale in dest.parent.glob(f"yt_{vid}.mp4*"):
+        if stale.suffix in {".part", ".ytdl"} or ".f" in stale.name:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    out_tmpl = str(dest.parent / f"yt_{vid}.%(ext)s")
     cmd = ytdlp_cmd(env) + [
         "-f",
         fmt,
@@ -217,9 +226,12 @@ def download_short(vid: str, dest: Path, env: dict[str, str]) -> bool:
         "--retries",
         "3",
         "--fragment-retries",
-        "3",
+        "5",
+        "--merge-output-format",
+        "mp4",
+        "--newline",
         "-o",
-        str(dest),
+        out_tmpl,
         url,
         *ytdlp_extra_args(env),
     ]
@@ -232,10 +244,31 @@ def download_short(vid: str, dest: Path, env: dict[str, str]) -> bool:
         env=subprocess_env_no_proxy(env),
     )
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "")[-400:]
+        err = (proc.stderr or proc.stdout or "")[-500:]
         if re.search(r"429|Too Many Requests|Sign in to confirm|bot", err, re.I):
             raise RuntimeError(f"youtube_rate_limited:{err[:120]}")
         return False
+    # Resolve actual output (mp4 preferred).
+    if dest.is_file() and dest.stat().st_size > 10_000:
+        return True
+    cands = sorted(
+        [
+            p
+            for p in dest.parent.glob(f"yt_{vid}.*")
+            if p.suffix.lower() in {".mp4", ".webm", ".mkv"} and p.stat().st_size > 10_000
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not cands:
+        return False
+    if cands[0] != dest:
+        try:
+            if dest.exists():
+                dest.unlink()
+            cands[0].replace(dest)
+        except OSError:
+            return cands[0].is_file() and cands[0].stat().st_size > 10_000
     return dest.is_file() and dest.stat().st_size > 10_000
 
 
@@ -469,12 +502,14 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
     media.mkdir(parents=True, exist_ok=True)
 
     saved = 0
+    attempted = 0
     errors: list[str] = []
+    stop = False
     queries = _queries()
     random.shuffle(queries)
 
     for query in queries:
-        if saved >= max_downloads:
+        if stop or saved >= max_downloads:
             break
         if not _rate_ok(state, kind="search"):
             errors.append("search_hour_cap")
@@ -493,20 +528,23 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
             break
 
         for hit in hits:
-            if saved >= max_downloads:
+            if stop or saved >= max_downloads:
                 break
             vid = hit["video_id"]
             if vid in seen:
                 continue
             if not _rate_ok(state, kind="download"):
                 errors.append("download_hour_cap")
-                saved = max_downloads  # stop outer loops
+                stop = True
                 break
             dest = media / f"yt_{vid}.mp4"
             try:
                 polite_sleep("download")
                 ok_dl = download_short(vid, dest, env)
-                _rate_bump(state, kind="download")
+                attempted += 1
+                # Count only successful downloads toward the hourly/daily caps.
+                if ok_dl:
+                    _rate_bump(state, kind="download")
             except RuntimeError as exc:
                 errors.append(str(exc)[:160])
                 state["last_error"] = str(exc)[:200]
@@ -515,6 +553,7 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
                 save_state(state)
                 return {
                     "saved": saved,
+                    "attempted": attempted,
                     "errors": errors,
                     "watched_total": int(state.get("watched_total") or 0),
                     "stopped": "rate_limited",
@@ -523,7 +562,8 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
                 errors.append(f"dl:{exc}"[:160])
                 continue
             if not ok_dl:
-                seen.add(vid)
+                errors.append(f"dl_incomplete:{vid}")
+                # Do not burn seen_ids forever on transient incomplete downloads.
                 continue
 
             try:
@@ -565,6 +605,7 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
     save_state(state)
     return {
         "saved": saved,
+        "attempted": attempted,
         "errors": errors,
         "watched_total": int(state.get("watched_total") or 0),
         "ranges_ready": bool(ranges_blob.get("ready")),
