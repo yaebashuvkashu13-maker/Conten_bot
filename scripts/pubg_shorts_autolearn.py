@@ -107,6 +107,8 @@ def local_pool_dirs() -> list[tuple[str, Path]]:
         ("shorts_autolearn_media", shorts_root()),
         ("tiktok_pubg", Path("/root/datasets/tiktok/pubg")),
         ("tiktok_metro", Path("/root/datasets/tiktok/metro")),
+        ("instagram_pubg", Path("/root/datasets/instagram/pubg")),
+        ("vk_pubg", Path("/root/datasets/vk/pubg")),
     ]
 
 

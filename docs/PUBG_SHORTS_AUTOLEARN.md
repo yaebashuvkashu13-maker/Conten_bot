@@ -20,11 +20,18 @@ Silver-слой: бот сам смотрит популярные Metro Shorts 
 
 ## Антибан
 
-- **385/сутки** YouTube, размазано на **24 часа** (~16–17/час)
-- **параллельно**: локальный пул на диске (уже скачанные Shorts/viral/exemplars) — без лимита IP, отдельный timer
-- **параллельно**: YouTube highlights 12–90с + Shorts
-- TikTok-папки подхватываются, если появятся (`/root/datasets/tiktok/pubg`)
-- паузы 40–80s только на YouTube-скачиваниях
+## Платформы (параллельно)
+
+| Источник | Как | Лимит |
+|----------|-----|--------|
+| YouTube Shorts + highlights | `content-bot-pubg-shorts-autolearn.timer` | 385/сутки |
+| Локальный пул на диске | `…-local.timer` | без IP-лимита |
+| **TikTok** | `content-bot-pubg-multi-harvest.timer` + proxy | ~4 за запуск |
+| **Instagram Reels** | тот же harvest, нужен `/root/instagram_cookies.txt` | ~4 за запуск |
+| **VK** | тот же harvest | ~2 за запуск |
+
+Instagram без cookies **не стартует** (скажи — подскажу как выгрузить Netscape cookies).
+Скачанное сразу попадает в локальный скорер → таблица параметров.
 
 ## Команды
 
