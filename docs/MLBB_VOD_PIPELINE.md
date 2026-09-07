@@ -2,7 +2,8 @@
 
 Документ для разработчика, который будет поддерживать и дорабатывать пайплайн нарезки teamfight-клипов из YouTube VOD Mobile Legends.
 
-**Актуальная ветка:** `cursor/vod-pipeline-base-6cbd` (стабилизация: `cursor/stability-hardening-d7dd`)  
+**Единственный prod deploy:** `bash scripts/deploy_unified_production.sh`  
+**Актуальная ветка:** `cursor/vod-unified-production-a016` (стабилизация: `cursor/vod-unified-production-a016`)  
 **Режим на VPS:** MLBB VOD-only (Shorts/calibration worker отключены)
 
 ---
@@ -64,7 +65,7 @@ flowchart TD
 
 **Единственный рабочий процесс:** `mlbb_vod_segment_feed.py` (supervisor: `mlbb_vod_segment_feed.sh`).
 
-Все конкурирующие пайплайны (Shorts ingest, calibration feed, continuous worker, montage) в VOD-only режиме **убиваются и заглушаются** скриптом `install_mlbb_vod_only.sh`.
+Все конкурирующие пайплайны (Shorts ingest, calibration feed, continuous worker, montage) в VOD-only режиме **убиваются** на деплое/`vod` health path; единственный install: `deploy_unified_production.sh` (`install_mlbb_vod_only.sh` — только thin wrapper).
 
 ---
 
@@ -84,7 +85,7 @@ flowchart TD
 | `/usr/local/bin/mlbb_vod_segment_feed.py` | Симлинк/копия feed-скрипта |
 | `/usr/local/bin/telegram_upload_bot.py` | Бот для приёма 👍/👎 |
 | `/usr/local/bin/mlbb_vod_only_verify.sh` | Post-install проверка |
-| `/usr/local/bin/vps_apply_vod_only.sh` | git pull + install + verify |
+| `/usr/local/bin/vps_apply_vod_only.sh` | git pull unified + `deploy_unified_production.sh` |
 
 ### Проверка состояния
 
@@ -251,7 +252,7 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 
 ## 7. Переменные окружения (основные)
 
-Файл: `/root/.video_bot.env`. Устанавливаются `install_mlbb_vod_only.sh`.
+Файл: `/root/.video_bot.env`. Безопасные флаги пинятся `deploy_unified_production.sh`.
 
 ### Режим
 
@@ -269,7 +270,8 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 | `MLBB_VOD_MIN_SEC` | 180 | Мин. длина VOD |
 | `MLBB_VOD_MAX_SEC` | 1200 | Макс. длина VOD |
 | `MLBB_VOD_TARGET_DUR_SEC` | 780 | Целевая длина ~13 мин |
-| `MLBB_VOD_SEARCH_BATCH` | 3 | Queries за цикл |
+| `MLBB_VOD_SEARCH_BATCH` | 6 | Queries за цикл |
+| `MLBB_VOD_SEARCH_LIMIT` | 50 | Результатов YouTube на запрос |
 | `MLBB_VOD_MAX_AGE_DAYS` | 35 | Макс. возраст upload |
 
 ### Scan / send
@@ -321,25 +323,19 @@ start, end, dur = bounds_from_banner(hit.sec, file_dur,
 
 ```bash
 # На VPS
-bash /usr/local/bin/vps_apply_vod_only.sh
+bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 # или из репо:
-bash /root/content_bot_ml/scripts/vps_apply_vod_only.sh
+bash /root/content_bot_ml/scripts/deploy_unified_production.sh
 ```
 
-Лог деплоя: `/root/data/mlbb/vps_apply_vod.log`.
-
-**Поведение:**
-
-- Если git HEAD не изменился → light verify, **feed не перезапускается** (скан не сбрасывается).
-- Если есть новый коммит → `install_mlbb_vod_only.sh` с `MLBB_VOD_INSTALL_RESTART_FEED=1` → feed restart.
+**Поведение `deploy_unified_production.sh`:** checkout unified branch → preflight (refuse slim feed) → pin safe env → purge legacy watchdog crons → restart **only** `content-bot-vod-feed.service`.
 
 ### Ручной install
 
 ```bash
 cd /root/content_bot_ml
-git pull origin cursor/mlbb-video-pipeline-e712
-MLBB_VOD_INSTALL_RESTART_FEED=1 bash scripts/install_mlbb_vod_only.sh
-bash /usr/local/bin/mlbb_vod_only_verify.sh
+CONTENT_BOT_REPO=/root/content_bot_ml bash scripts/deploy_unified_production.sh
+systemctl is-active content-bot-vod-feed.service
 ```
 
 ### Очистка диска
@@ -408,8 +404,9 @@ scripts/
   mlbb_vod_intervals.py         # gap / overlap
   youtube_mlbb_vod_prefs.py     # discovery filters
   mlbb_telegram_video.py        # compress + send
-  install_mlbb_vod_only.sh      # install + env + kill competitors
-  vps_apply_vod_only.sh         # git pull + install + verify
+  deploy_unified_production.sh  # ONLY prod deploy
+  install_mlbb_vod_only.sh      # DEPRECATED wrapper → unified deploy
+  vps_apply_vod_only.sh         # git pull unified + unified deploy
   mlbb_vod_only_verify.sh       # post-install checks
   vps_disk_cleanup.sh           # safe inbox cleanup
 tests/
