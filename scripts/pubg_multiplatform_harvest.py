@@ -65,13 +65,39 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _proxy(env: dict[str, str]) -> str:
-    return (
+    direct = (
         env.get("YTDLP_PROXY")
         or env.get("SOCKS5_PROXY")
         or env.get("HTTPS_PROXY")
         or os.environ.get("YTDLP_PROXY")
         or ""
     ).strip()
+    if direct:
+        return direct
+
+    def _from_parts(src: dict[str, str]) -> str:
+        host = (src.get("SOCKS_HOST") or "").strip()
+        port = (src.get("SOCKS_PORT") or "").strip()
+        user = (src.get("SOCKS_USER") or "").strip()
+        password = (src.get("SOCKS_PASS") or "").strip()
+        if not (host and port):
+            return ""
+        if user and password:
+            return f"socks5://{user}:{password}@{host}:{port}"
+        return f"socks5://{host}:{port}"
+
+    built = _from_parts({**os.environ, **env})
+    if built:
+        return built
+    cred = Path(os.environ.get("PROXY_CREDS_FILE", "/root/proxy-creds.env"))
+    if cred.is_file():
+        try:
+            from youtube_download import load_env as _load
+
+            return _from_parts(_load(cred))
+        except Exception:
+            return ""
+    return ""
 
 
 def _cookies() -> Path | None:
