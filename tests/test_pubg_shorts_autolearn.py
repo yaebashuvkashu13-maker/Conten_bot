@@ -127,17 +127,17 @@ def test_title_gate_blocks_meme() -> None:
 
 
 def test_hourly_and_daily_caps(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_HOUR", "20")
-    monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_DAY", "360")
+    monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_HOUR", "17")
+    monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_DAY", "385")
     from pubg_shorts_autolearn import _rate_bump, _rate_ok
 
     state: dict = {}
     assert _rate_ok(state, kind="download") is True
-    state["download_hour_count"] = 20
+    state["download_hour_count"] = 17
     state["download_hour_ts"] = __import__("time").time()
     assert _rate_ok(state, kind="download") is False
 
-    state = {"download_day_count": 360, "download_day_ts": __import__("time").time()}
+    state = {"download_day_count": 385, "download_day_ts": __import__("time").time()}
     assert _rate_ok(state, kind="download") is False
 
     state = {}

@@ -10,15 +10,15 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 EnvironmentFile=-/root/.video_bot.env
-# Max-safe on datacenter VPS: 20/hour, 360/day (not 480 — ban risk).
-Environment=PUBG_SHORTS_BATCH_SIZE=4
-Environment=PUBG_SHORTS_MAX_DL_PER_HOUR=20
+# Spread ~385/day across 24h → ~16–17/hour (not a daytime burst).
+Environment=PUBG_SHORTS_BATCH_SIZE=3
+Environment=PUBG_SHORTS_MAX_DL_PER_HOUR=17
 Environment=PUBG_SHORTS_MAX_SEARCH_PER_HOUR=8
-Environment=PUBG_SHORTS_MAX_DL_PER_DAY=360
+Environment=PUBG_SHORTS_MAX_DL_PER_DAY=385
 Environment=PUBG_SHORTS_REPORT_EVERY=100
 Environment=PUBG_SHORTS_VOD_PROBE=1
-Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MIN=35
-Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MAX=75
+Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MIN=40
+Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MAX=80
 WorkingDirectory=/root/content_bot_ml
 ExecStart=/usr/bin/flock -n /tmp/pubg_shorts_autolearn.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_shorts_autolearn.py run
 

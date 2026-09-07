@@ -82,9 +82,8 @@ def polite_sleep(kind: str = "download") -> None:
         lo = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MIN", 18.0)
         hi = _env_float("PUBG_SHORTS_SEARCH_SLEEP_MAX", 40.0)
     else:
-        # ~20/hour needs ~3 min average spacing including scoring time.
-        lo = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MIN", 35.0)
-        hi = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MAX", 75.0)
+        lo = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MIN", 40.0)
+        hi = _env_float("PUBG_SHORTS_DOWNLOAD_SLEEP_MAX", 80.0)
     if hi < lo:
         lo, hi = hi, lo
     delay = random.uniform(lo, hi)
@@ -103,7 +102,7 @@ def _rate_ok(state: dict[str, Any], *, kind: str) -> bool:
         count = 0
     cap = _env_int(
         "PUBG_SHORTS_MAX_SEARCH_PER_HOUR" if kind == "search" else "PUBG_SHORTS_MAX_DL_PER_HOUR",
-        8 if kind == "search" else 20,
+        8 if kind == "search" else 17,
     )
     if count >= cap:
         return False
@@ -116,7 +115,7 @@ def _rate_ok(state: dict[str, Any], *, kind: str) -> bool:
             state[day_key] = now
             state[day_count_key] = 0
             day_count = 0
-        day_cap = _env_int("PUBG_SHORTS_MAX_DL_PER_DAY", 360)
+        day_cap = _env_int("PUBG_SHORTS_MAX_DL_PER_DAY", 385)
         if day_cap > 0 and day_count >= day_cap:
             return False
     return True
