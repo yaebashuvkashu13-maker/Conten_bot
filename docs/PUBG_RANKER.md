@@ -47,14 +47,14 @@ accuracy and bad-accept regression, not by sparse-label precision@10.
 
 ## Learnable loop (owner windows → model)
 
-Goal: improve ranking from labeled **15s windows**, not from more hand gates.
+Goal: improve ranking from labeled **8s windows**, not from more hand gates.
 
 1. Build a rating queue for a VOD (grid + dense audio candidates):
 
 ```bash
 python3 scripts/pubg_window_label_queue.py build \
   --vod /root/data/pubg/youtube_nightly/inbox/yt_VIDEO.mp4 \
-  --window-sec 15 --stride-sec 45 --max-windows 120
+  --window-sec 8 --stride-sec 24 --max-windows 120
 ```
 
 2. Rate windows (fight / not fight; optional `--event fight|loot|menu|other`):

@@ -144,7 +144,7 @@ def test_build_queue_grid_without_ffprobe(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setenv("PUBG_WINDOW_LABEL_QUEUE", str(qpath))
     monkeypatch.setattr(queue, "_ffprobe_duration", lambda _p: 600.0)
     monkeypatch.setattr(queue, "_dense_peaks", lambda _p, limit=40: [120.0, 300.0])
-    report = queue.build_queue(vod, window_sec=15.0, grid_stride_sec=60.0, max_windows=20)
+    report = queue.build_queue(vod, window_sec=8.0, grid_stride_sec=24.0, max_windows=20)
     assert report["status"] == "queued"
     assert report["rows"] >= 2
     assert qpath.is_file()

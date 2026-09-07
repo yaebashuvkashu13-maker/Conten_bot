@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a 15s window labeling queue from a PUBG VOD (owner rates fight/not-fight).
+"""Build an 8s window labeling queue from a PUBG VOD (owner rates fight/not-fight).
 
 Does NOT require watching every second of the VOD: mixes a coarse grid with
 audio-dense candidates so ~N ratings cover useful diversity.
@@ -81,8 +81,8 @@ def _dense_peaks(vod: Path, limit: int) -> list[float]:
 def build_queue(
     vod: Path,
     *,
-    window_sec: float = 15.0,
-    grid_stride_sec: float = 45.0,
+    window_sec: float = 8.0,
+    grid_stride_sec: float = 24.0,
     max_windows: int = 120,
     video_id: str = "",
 ) -> dict[str, Any]:
@@ -194,8 +194,8 @@ def main() -> int:
 
     build = sub.add_parser("build", help="Append windows for one VOD into the queue")
     build.add_argument("--vod", type=Path, required=True)
-    build.add_argument("--window-sec", type=float, default=15.0)
-    build.add_argument("--stride-sec", type=float, default=45.0)
+    build.add_argument("--window-sec", type=float, default=8.0)
+    build.add_argument("--stride-sec", type=float, default=24.0)
     build.add_argument("--max-windows", type=int, default=120)
     build.add_argument("--video-id", default="")
 

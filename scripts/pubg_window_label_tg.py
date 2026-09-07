@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram spam of 15s VOD windows for owner fight/not-fight labeling.
+"""Telegram spam of short VOD windows for owner fight/not-fight labeling.
 
 Buttons:
   👍 Файт  → good + event=fight
@@ -211,7 +211,7 @@ def send_next_windows(*, limit: int = 5, pause_sec: float = 1.0) -> dict[str, An
         caption = (
             f"🎓 Разметка окна (обучение)\n"
             f"VOD `{video_id}`\n"
-            f"{t0:.0f}–{t1:.0f}s (~15 сек)\n"
+            f"{t0:.0f}–{t1:.0f}s (~{max(1, int(round(t1 - t0)))} сек)\n"
             f"👍 = файт / годный момент\n"
             f"👎 = не то (потом причина)"
         )
