@@ -1,0 +1,23 @@
+[Unit]
+Description=PUBG Shorts autolearn — polite YouTube silver watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+EnvironmentFile=-/root/.video_bot.env
+# Keep batches tiny; timer fires often. Never compete with VOD feed CPU.
+Environment=PUBG_SHORTS_BATCH_SIZE=2
+Environment=PUBG_SHORTS_MAX_DL_PER_HOUR=6
+Environment=PUBG_SHORTS_MAX_SEARCH_PER_HOUR=3
+Environment=PUBG_SHORTS_REPORT_EVERY=100
+Environment=PUBG_SHORTS_VOD_PROBE=1
+WorkingDirectory=/root/content_bot_ml
+ExecStart=/usr/bin/flock -n /tmp/pubg_shorts_autolearn.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_shorts_autolearn.py run
+
+[Install]
+WantedBy=multi-user.target
