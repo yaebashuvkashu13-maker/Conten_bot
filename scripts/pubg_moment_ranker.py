@@ -202,6 +202,8 @@ def load_training_samples() -> list[TrainingSample]:
         float(os.environ.get("PUBG_RANKER_FEEDBACK_AUGMENT_SEC", "10")),
     )
 
+    from pubg_label_reason import normalize_reason, weight_multiplier
+
     def add(
         video_id: str,
         vod: Path,
@@ -212,7 +214,10 @@ def load_training_samples() -> list[TrainingSample]:
         features: dict[str, float] | None = None,
         *,
         augment: float = 0.0,
+        reason: str = "",
     ) -> None:
+        reason_code = normalize_reason(reason)
+        weight = float(weight) * weight_multiplier(reason_code, label=int(label))
         offsets = (0.0,) if augment <= 0 else (-augment, 0.0, augment)
         for offset in offsets:
             sample_peak = max(0.0, peak + offset)
@@ -237,6 +242,7 @@ def load_training_samples() -> list[TrainingSample]:
                 continue
             label = 1 if row.get("label") == "good" else 0
             peak = float(row["time_sec"])
+            note = str(row.get("note") or row.get("reason") or "")
             add(
                 str(video_id),
                 vod,
@@ -245,6 +251,7 @@ def load_training_samples() -> list[TrainingSample]:
                 "owner_label",
                 2.0,
                 augment=owner_augment,
+                reason=note,
             )
 
     feedback = _read_json(feedback_path())
@@ -261,6 +268,7 @@ def load_training_samples() -> list[TrainingSample]:
             if not video_id or not vod:
                 continue
             peak = float(row.get("peak_start", row.get("start", 0)) or 0)
+            reason = str(row.get("reason") or row.get("note") or "")
             add(
                 video_id,
                 vod,
@@ -270,6 +278,7 @@ def load_training_samples() -> list[TrainingSample]:
                 1.0,
                 features_from_quality_report(row.get("quality_metrics") or {}),
                 augment=feedback_augment,
+                reason=reason,
             )
 
     # Explicit 15s window ratings (learnable-loop unit).
@@ -293,6 +302,7 @@ def load_training_samples() -> list[TrainingSample]:
                     float(row.get("weight") or 1.5),
                     feats,
                     augment=0.0,
+                    reason=str(row.get("event") or row.get("reason") or ""),
                 )
     except Exception:
         pass
@@ -370,6 +380,7 @@ def train(*, if_changed: bool = False, dataset: Path | None = None) -> dict[str,
             round(row.peak_sec, 2),
             row.label,
             row.source,
+            round(float(row.weight), 3),
             row.video_path.stat().st_size,
             row.video_path.stat().st_mtime_ns,
         )

@@ -85,3 +85,9 @@ python3 scripts/pubg_regression_benchmark.py --output /tmp/bench.json
 Window labels live in `PUBG_WINDOW_LABELS_PATH` (default
 `/root/data/pubg/window_labels.jsonl`) and are also mirrored into owner
 timestamps with `source=window_label`.
+
+## Cadence (ops)
+
+- Window spam: `content-bot-pubg-winlabel.timer` — about **4 clips / 20 min** (install via `scripts/install_pubg_winlabel_timer.sh`). Independent of the VOD feed so labeling does not hang discovery/encode.
+- Manual burst: Telegram `/winlabel 5`.
+- Ranker retrain: nightly `content-bot-pubg-ranker.timer` (~03:30 UTC) uses owner 👍/👎 **and** dislike reasons / notes as **sample weights** (not inference features).
