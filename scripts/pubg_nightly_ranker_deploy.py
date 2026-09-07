@@ -28,7 +28,7 @@ def main() -> int:
 
     if args.train:
         proc = subprocess.run(
-            [sys.executable, str(scripts / "pubg_moment_ranker.py"), "train"],
+            [sys.executable, str(scripts / "pubg_moment_ranker.py"), "--train"],
             capture_output=True,
             text=True,
         )

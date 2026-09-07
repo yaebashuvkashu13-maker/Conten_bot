@@ -271,12 +271,44 @@ def load_training_samples() -> list[TrainingSample]:
                 features_from_quality_report(row.get("quality_metrics") or {}),
                 augment=feedback_augment,
             )
+
+    # Explicit 15s window ratings (learnable-loop unit).
+    try:
+        from pubg_ranker_dataset import load_window_label_rows, window_labels_path
+
+        if window_labels_path().is_file():
+            for row in load_window_label_rows():
+                video_id = str(row["video_id"])
+                hinted = str(row.get("video_path") or "")
+                vod = resolve_vod(video_id, hinted_path=hinted)
+                if not vod:
+                    continue
+                feats = row.get("features") if isinstance(row.get("features"), dict) else None
+                add(
+                    video_id,
+                    vod,
+                    float(row["peak_sec"]),
+                    int(row["label"]),
+                    str(row.get("source") or "window_label"),
+                    float(row.get("weight") or 1.5),
+                    feats,
+                    augment=0.0,
+                )
+    except Exception:
+        pass
     return sorted(samples.values(), key=lambda row: (row.video_id, row.peak_sec))
 
 
 def training_signature() -> str:
     digest = hashlib.sha256()
-    for path in (owner_labels_path(), feedback_path()):
+    paths = [owner_labels_path(), feedback_path()]
+    try:
+        from pubg_ranker_dataset import window_labels_path
+
+        paths.append(window_labels_path())
+    except Exception:
+        pass
+    for path in paths:
         digest.update(str(path).encode())
         try:
             digest.update(path.read_bytes())
@@ -315,7 +347,7 @@ def _best_threshold(y_true: list[int], probabilities: list[float]) -> tuple[floa
     return best[1], best[2], best[3]
 
 
-def train(*, if_changed: bool = False) -> dict[str, Any]:
+def train(*, if_changed: bool = False, dataset: Path | None = None) -> dict[str, Any]:
     global _MODEL_CACHE
     import joblib
     import numpy as np
@@ -326,7 +358,12 @@ def train(*, if_changed: bool = False) -> dict[str, Any]:
     from sklearn.preprocessing import StandardScaler
 
     output = model_path()
-    samples = load_training_samples()
+    if dataset is not None:
+        from pubg_ranker_dataset import samples_from_dataset
+
+        samples = samples_from_dataset(Path(dataset))
+    else:
+        samples = load_training_samples()
     sample_state = [
         (
             row.video_id,
@@ -611,10 +648,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", action="store_true")
     parser.add_argument("--train-if-changed", action="store_true")
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=None,
+        help="Train from exported JSONL (pubg_ranker_dataset export)",
+    )
     args = parser.parse_args()
     if not args.train and not args.train_if_changed:
         parser.error("choose --train or --train-if-changed")
-    report = train(if_changed=args.train_if_changed)
+    report = train(if_changed=args.train_if_changed, dataset=args.dataset)
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
     return 0 if report["status"] in {"trained", "unchanged"} else 2
 

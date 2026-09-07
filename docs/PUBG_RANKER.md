@@ -44,3 +44,44 @@ Release validation (2026-09-01):
 The timestamp set is intentionally sparse and does not claim that all other
 top-10 windows are bad. Ranker quality is gated primarily by held-out grouped
 accuracy and bad-accept regression, not by sparse-label precision@10.
+
+## Learnable loop (owner windows → model)
+
+Goal: improve ranking from labeled **15s windows**, not from more hand gates.
+
+1. Build a rating queue for a VOD (grid + dense audio candidates):
+
+```bash
+python3 scripts/pubg_window_label_queue.py build \
+  --vod /root/data/pubg/youtube_nightly/inbox/yt_VIDEO.mp4 \
+  --window-sec 15 --stride-sec 45 --max-windows 120
+```
+
+2. Rate windows (fight / not fight; optional `--event fight|loot|menu|other`):
+
+```bash
+python3 scripts/pubg_ranker_dataset.py add-window \
+  --video-id VIDEO --t0 1840 --t1 1855 --label good --event fight
+```
+
+Target scale: **~2–5k window labels** across many VODs. Prefer timecodes /
+previews over uploading every chunk to Telegram.
+
+3. Export versioned dataset + train + regression check:
+
+```bash
+python3 scripts/pubg_learn_loop.py --extract-features \
+  --output /root/data/pubg/learn_loop_report.json
+```
+
+Or step by step:
+
+```bash
+python3 scripts/pubg_ranker_dataset.py export --extract-features
+python3 scripts/pubg_moment_ranker.py --train --dataset /root/data/pubg/ranker_dataset/moments_v1.jsonl
+python3 scripts/pubg_regression_benchmark.py --output /tmp/bench.json
+```
+
+Window labels live in `PUBG_WINDOW_LABELS_PATH` (default
+`/root/data/pubg/window_labels.jsonl`) and are also mirrored into owner
+timestamps with `source=window_label`.
