@@ -50,6 +50,7 @@ def test_segment_trust_vod_skips_frames(monkeypatch: pytest.MonkeyPatch) -> None
 def test_vod_title_trusted_skips_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_METRO_GATE", "1")
     monkeypatch.setenv("PUBG_METRO_TITLE_TRUST", "1")
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "0")
 
     with patch("pubg_metro_royale_gate.segment_looks_metro_royale") as fake_segment:
         ok, reason = vod_looks_metro_royale(
@@ -60,6 +61,26 @@ def test_vod_title_trusted_skips_probes(monkeypatch: pytest.MonkeyPatch) -> None
     fake_segment.assert_not_called()
     assert ok is True
     assert reason == "metro_title_trusted"
+
+
+def test_vod_strict_mode_ignores_title_only_trust(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_METRO_GATE", "1")
+    monkeypatch.setenv("PUBG_METRO_TITLE_TRUST", "1")
+    monkeypatch.setenv("VOD_PUBG_QUALITY_STRICT", "1")
+    monkeypatch.setenv("PUBG_METRO_VOD_MIN_PROBES", "1")
+
+    with patch(
+        "pubg_metro_royale_gate.segment_looks_metro_royale",
+        return_value=(False, "classic_outdoor_sky=3/3"),
+    ) as fake_segment:
+        ok, reason = vod_looks_metro_royale(
+            Path("x.mp4"),
+            duration_sec=600.0,
+            title="Best Metro Royale clutch",
+        )
+    fake_segment.assert_called()
+    assert ok is False
+    assert "metro_vod_reject" in reason
 
 
 def test_vod_title_hint_needs_one_probe(monkeypatch: pytest.MonkeyPatch) -> None:
