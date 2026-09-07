@@ -24,6 +24,9 @@ REASON_ALIASES: dict[str, str] = {
     "no_shooting": "no_gun",
     "нет_стрельбы": "no_gun",
     "silent": "no_gun",
+    "no_kill": "no_kill",
+    "nokill": "no_kill",
+    "нет_килла": "no_kill",
     "bad_render": "bad_render",
     "render": "bad_render",
     "blurry": "bad_render",
@@ -59,7 +62,7 @@ REASON_THRESHOLDS: dict[str, ReasonThresholds] = {
     "loot_run": ReasonThresholds(
         gun_density_min=0.090,
         burst_ratio_min=7.5,
-        motion_max=0.12,
+        motion_max=0.10,
         menu_overlay_max=0.30,
         visual_min=0.32,
         hook_gun_min=0.05,
@@ -73,6 +76,16 @@ REASON_THRESHOLDS: dict[str, ReasonThresholds] = {
         visual_min=0.30,
         hook_gun_min=0.06,
         hook_motion_min=0.02,
+    ),
+    # Owner 👎 no_kill: require kill evidence; keep combat floors high.
+    "no_kill": ReasonThresholds(
+        gun_density_min=0.055,
+        burst_ratio_min=4.5,
+        motion_max=0.18,
+        menu_overlay_max=0.30,
+        visual_min=0.30,
+        hook_gun_min=0.04,
+        hook_motion_min=0.03,
     ),
     "bad_render": ReasonThresholds(
         gun_density_min=0.070,
@@ -136,8 +149,8 @@ def evaluate_reason_gates(
     reasons = [normalize_reason(r) for r in (active_reasons or [])]
     reasons = [r for r in reasons if r]
     if not reasons and os.environ.get("DISLIKE_REASON_GATES_DEFAULT", "1") == "1":
-        # Always keep anti-menu + anti-loot floors on for PUBG-like feeds.
-        reasons = ["menu", "loot_run"]
+        # Always keep anti-menu + anti-loot + anti-no_kill floors on for PUBG feeds.
+        reasons = ["menu", "loot_run", "no_kill"]
 
     chosen = [REASON_THRESHOLDS[r] for r in reasons if r in REASON_THRESHOLDS]
     if not chosen:
@@ -148,8 +161,12 @@ def evaluate_reason_gates(
     motion_max = min(t.motion_max for t in chosen)
     menu_max = min(t.menu_overlay_max for t in chosen)
     visual_min = max(t.visual_min for t in chosen)
-    # Drought / ops overrides: raise menu ceiling / lower gun floor to match
-    # softened shoot gates. Loot hard-reject stays outside this module.
+    # Drought may raise menu ceiling. Gun/burst soften must NOT undercut loot_run
+    # / no_kill floors — that is how mid-spray loot kept shipping under soften=2.
+    loot_floor_lock = (
+        os.environ.get("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1") == "1"
+        and bool({"loot_run", "no_gun", "no_kill"} & set(reasons))
+    )
     menu_override = os.environ.get("DISLIKE_MENU_OVERLAY_MAX", "").strip()
     if menu_override:
         try:
@@ -157,14 +174,14 @@ def evaluate_reason_gates(
         except ValueError:
             pass
     gun_override = os.environ.get("DISLIKE_GUN_DENSITY_MIN", "").strip()
-    if gun_override:
+    if gun_override and not loot_floor_lock:
         try:
             # Take the looser (lower) floor under drought soften.
             gun_min = min(gun_min, float(gun_override))
         except ValueError:
             pass
     burst_override = os.environ.get("DISLIKE_BURST_RATIO_MIN", "").strip()
-    if burst_override:
+    if burst_override and not loot_floor_lock:
         try:
             burst_min = min(burst_min, float(burst_override))
         except ValueError:
@@ -178,6 +195,7 @@ def evaluate_reason_gates(
 
     report = {
         "active_reasons": reasons,
+        "loot_floor_lock": loot_floor_lock,
         "floors": {
             "gun_density_min": gun_min,
             "burst_ratio_min": burst_min,
@@ -193,10 +211,6 @@ def evaluate_reason_gates(
             "visual": visual,
         },
     }
-    # Global fight-act floors always override dislike burst/gun mins when audio
-    # matches owner Metro acts — not only when menu_overlay also fires.
-    # Otherwise mid-burst sprays (burst≈5 with gun≈0.05) die as reason_low_burst
-    # under loot_run/menu floors (7.0–7.5) and nothing ships.
     combat_ok = False
     try:
         from pubg_fight_act_profile import is_combat_act
@@ -204,17 +218,23 @@ def evaluate_reason_gates(
         combat_ok = is_combat_act(gun, burst)
     except Exception:
         combat_ok = False
+    # Combat-act rescue may soften menu-only floors. Never lower loot_run /
+    # no_gun / no_kill floors — owner 👎 (vhTD mid-burst, UkXwq loot) came from that.
     if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "1") == "1":
-        report["combat_act_rescue"] = True
-        try:
-            from pubg_fight_act_profile import ACT_MIN_BURST, ACT_MIN_GUN
+        locked = {"loot_run", "no_gun", "no_kill"} & set(reasons)
+        if locked:
+            report["combat_act_rescue_blocked_by"] = sorted(locked)
+        else:
+            report["combat_act_rescue"] = True
+            try:
+                from pubg_fight_act_profile import ACT_MIN_BURST, ACT_MIN_GUN
 
-            gun_min = min(gun_min, float(ACT_MIN_GUN))
-            burst_min = min(burst_min, float(ACT_MIN_BURST))
-            report["floors"]["gun_density_min"] = gun_min
-            report["floors"]["burst_ratio_min"] = burst_min
-        except Exception:
-            pass
+                gun_min = min(gun_min, float(ACT_MIN_GUN))
+                burst_min = min(burst_min, float(ACT_MIN_BURST))
+                report["floors"]["gun_density_min"] = gun_min
+                report["floors"]["burst_ratio_min"] = burst_min
+            except Exception:
+                pass
 
     if menu >= menu_max and menu > 0:
         # ADS/HUD/PiP often inflate center-text into "menu" while audio is a real
@@ -227,10 +247,35 @@ def evaluate_reason_gates(
         return False, f"reason_low_gun={gun:.3f}<{gun_min:.3f}", report
     if burst > 0 and burst < burst_min:
         return False, f"reason_low_burst={burst:.2f}<{burst_min:.2f}", report
+    # Loot/run: high locomotion with non-dominant gun — even when gun clears floor.
+    if (
+        "loot_run" in reasons
+        and motion > motion_max
+        and gun < max(gun_min, float(os.environ.get("PUBG_DISLIKE_LOOT_STRONG_GUN", "0.085")))
+    ):
+        return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if motion > 0 and gun < gun_min * 0.85 and motion > motion_max:
         return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if visual < visual_min:
         return False, f"reason_low_visual={visual:.3f}<{visual_min:.3f}", report
+    if "no_kill" in reasons and os.environ.get("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1") == "1":
+        has_kill = bool(
+            metrics.get("has_author_kill")
+            or metrics.get("kill_notification_hit")
+            or metrics.get("killfeed_hits")
+            or metrics.get("keyword_hit")
+        )
+        killfeed = _f(metrics, "killfeed_density", "effective_killfeed")
+        notif = _f(metrics, "kill_notification_score", "notification_score")
+        notif_min = float(os.environ.get("PUBG_KILL_NOTIFICATION_MIN_SCORE", "0.50"))
+        report["kill_evidence"] = {
+            "has_author_kill": bool(metrics.get("has_author_kill")),
+            "kill_notification_hit": bool(metrics.get("kill_notification_hit")),
+            "killfeed_density": killfeed,
+            "kill_notification_score": notif,
+        }
+        if not has_kill and killfeed < 0.30 and notif < notif_min:
+            return False, "reason_no_kill_evidence", report
     return True, "ok", report
 
 

@@ -372,7 +372,12 @@ def score_pubg_window(
         return _finish(False, "hard_no_action")
 
     if loot_walk and os.environ.get("PUBG_REJECT_LOOT_WALK", "1") == "1":
-        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+        # Owner-good timestamps must not waive loot/run — vhTD_1312 shipped as
+        # owner_redo_trusted and got 👎 loot_run.
+        if (
+            os.environ.get("PUBG_OWNER_GOOD_TRUST_LOOT", "0") == "1"
+            and _owner_redo_trusted(video_path, start_sec, duration_sec)
+        ):
             report["owner_redo_trusted"] = True
         else:
             report["hard_reject"] = "loot_walk"
@@ -681,6 +686,26 @@ def score_pubg_window(
         report["hard_reject"] = "author_death"
         return _finish(False, f"hard_{author_reason or 'author_death'}")
 
+    # Owner 👎 no_kill dominates recent bad feedback — do not ship singles
+    # without kill evidence. Owner-good trust may not waive this unless opted in.
+    require_kill = (
+        os.environ.get("PUBG_REQUIRE_AUTHOR_KILL", "0") == "1"
+        or (
+            single
+            and os.environ.get("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1") == "1"
+        )
+    )
+    if require_kill and not has_kill:
+        allow_owner_no_kill = (
+            os.environ.get("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0") == "1"
+            and _owner_redo_trusted(video_path, start_sec, duration_sec)
+        )
+        if allow_owner_no_kill:
+            report["owner_redo_trusted_no_kill"] = True
+        else:
+            report["hard_reject"] = "no_author_kill"
+            return _finish(False, "hard_no_author_kill")
+
     notification_required = (
         notification_mode == "required"
         or os.environ.get("PUBG_REQUIRE_KILL_NOTIFICATION", "0") == "1"
@@ -754,9 +779,8 @@ def score_pubg_window(
         if strong_gun and has_kill:
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
-        # Global fight-act profile (owner 6mWLqNBX1pE): OCR-blind sprays with
-        # real gun+burst are valid on EVERY VOD — not only labeled timestamps
-        # and not only during drought.
+        # Combat-act audio may rescue OCR-blind payoff ONLY when kill evidence
+        # already exists. Bare sprays (owner 👎 no_kill) must not bypass.
         combat_act = False
         try:
             from pubg_fight_act_profile import is_combat_act
@@ -765,6 +789,10 @@ def score_pubg_window(
                 os.environ.get("PUBG_COMBAT_ACT_PAYOFF_BYPASS", "1") == "1"
                 and is_combat_act(gun, burst)
                 and not loot_walk
+                and (
+                    has_kill
+                    or os.environ.get("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0") == "1"
+                )
             )
         except Exception:
             combat_act = False
@@ -779,15 +807,22 @@ def score_pubg_window(
             and burst >= bypass_burst_min
             and not loot_walk
             and has_payoff_signal
+            and has_kill
             and payoff_score >= bypass_floor
         ):
             report["singles_gun_payoff_bypass"] = True
             if strong_gun:
                 report["singles_strong_gun_payoff_bypass"] = True
-        elif combat_act and single and payoff_score >= bypass_floor:
+        elif combat_act and single and has_kill and payoff_score >= bypass_floor:
             report["singles_gun_payoff_bypass"] = True
             report["combat_act_payoff_bypass"] = True
-        elif _owner_redo_trusted(video_path, start_sec, duration_sec):
+        elif (
+            _owner_redo_trusted(video_path, start_sec, duration_sec)
+            and (
+                has_kill
+                or os.environ.get("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0") == "1"
+            )
+        ):
             report["owner_redo_trusted"] = True
         else:
             report["quality_score"] = round(payoff_score, 4)
@@ -857,7 +892,13 @@ def score_pubg_window(
         }
     )
     if quality < threshold:
-        if _owner_redo_trusted(video_path, start_sec, duration_sec):
+        if (
+            _owner_redo_trusted(video_path, start_sec, duration_sec)
+            and (
+                has_kill
+                or os.environ.get("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0") == "1"
+            )
+        ):
             report["owner_redo_trusted"] = True
             report["quality_score"] = round(max(quality, threshold), 4)
             return _finish(True, f"owner_redo_trusted={quality:.3f}")

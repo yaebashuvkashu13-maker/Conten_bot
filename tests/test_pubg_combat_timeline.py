@@ -119,6 +119,7 @@ def test_dislike_rejects_junk_menu_at_drought_cap(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setenv("DISLIKE_MENU_OVERLAY_MAX", "0.30")
     monkeypatch.setenv("DISLIKE_GUN_DENSITY_MIN", "0.015")
+    monkeypatch.setenv("PUBG_DISLIKE_COMBAT_ACT_MENU_RESCUE", "0")
     ok, reason, _report = evaluate_reason_gates(
         {
             "gun_density": 0.053,

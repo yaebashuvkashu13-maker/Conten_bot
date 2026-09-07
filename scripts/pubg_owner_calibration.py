@@ -146,8 +146,14 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_PRESEND_SCORE_MODE", "1")
     os.environ.setdefault("PUBG_REJECT_LOOT_WALK", "1")
     os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
-    # Singles: owner rates kill/payoff — do not hard-block gunfights missing OCR kill banner.
+    # Singles: keep early OCR payoff soft, but require author-kill evidence —
+    # owner 👎 no_kill / loot_run were shipping via combat-act bypass.
     os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+    os.environ.setdefault("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1")
+    os.environ.setdefault("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0")
+    os.environ.setdefault("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0")
+    os.environ.setdefault("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1")
+    os.environ.setdefault("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1")
     os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
     os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")
     os.environ.setdefault("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "0")

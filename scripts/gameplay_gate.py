@@ -985,8 +985,18 @@ def segment_looks_like_pubg_loot_or_walk(
     )
     min_gun = float(os.environ.get("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.055"))
     min_burst = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "4.8"))
-    if gunfire_density >= min_gun and burst_ratio >= min_burst * 0.85:
+    strong_gun = float(os.environ.get("SMART_PUBG_LOOT_STRONG_GUN", "0.070"))
+    motion_clear = float(os.environ.get("SMART_PUBG_LOOT_MOTION_CLEAR", "0.14"))
+    # Escape loot only with real gun AND locomotion not dominating (UkXwq/Tovruh).
+    if (
+        gunfire_density >= min_gun
+        and burst_ratio >= min_burst * 0.85
+        and center_motion <= motion_clear
+    ):
         return False
+    # High run motion with only mid gun (0.045–0.069) is still loot/run.
+    if center_motion >= 0.10 and gunfire_density < strong_gun:
+        return True
     if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
         return True
     if center_motion < 0.014 and gunfire_density < min_gun * 0.55:

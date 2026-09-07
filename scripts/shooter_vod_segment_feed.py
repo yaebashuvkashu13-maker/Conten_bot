@@ -2034,12 +2034,22 @@ def _send_batch(
             try:
                 from dislike_reason_gates import evaluate_reason_gates, recent_dislike_reasons
                 pr = presend_report if isinstance(presend_report, dict) else {}
+                author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
                 reason_metrics = {
                     **pr,
                     "gun_density": float(pr.get("gunfire_density") or pr.get("gun_density") or 0.0),
                     "burst_ratio": float(pr.get("burst_ratio") or pr.get("gun_burst_ratio") or 0.0),
                     "center_motion": float(pr.get("center_motion") or pr.get("motion") or 0.0),
                     "menu_overlay": float(pr.get("center_text") or pr.get("menu_overlay") or 0.0),
+                    "has_author_kill": bool(
+                        pr.get("has_author_kill")
+                        or author.get("has_author_kill")
+                    ),
+                    "kill_notification_hit": bool(pr.get("kill_notification_hit")),
+                    "killfeed_density": float(pr.get("killfeed_density") or 0.0),
+                    "kill_notification_score": float(
+                        pr.get("kill_notification_score") or 0.0
+                    ),
                 }
                 rg_ok, rg_reason, rg_report = evaluate_reason_gates(
                     reason_metrics,

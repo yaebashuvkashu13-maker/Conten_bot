@@ -526,7 +526,8 @@ def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.Monkey
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
         ok, reason, report = score_pubg_window(Path("vod.mp4"), 461.5, 22, single=True, use_cache=False)
     assert ok is False
-    assert "payoff_low" in reason
+    # Singles without kill evidence hard-reject before payoff (owner 👎 no_kill).
+    assert "hard_no_author_kill" in reason or "payoff_low" in reason
     assert report.get("singles_gun_payoff_bypass") is not True
     assert not report.get("has_author_kill")
 

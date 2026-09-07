@@ -73,9 +73,10 @@ def apply_global_act_defaults() -> None:
     os.environ.setdefault("PUBG_FIGHT_ACT_MIN_BURST", str(ACT_MIN_BURST))
     os.environ.setdefault("PUBG_FAKE_GUN_BURST_ESCAPE", str(ACT_BURST_ESCAPE))
     os.environ.setdefault("PUBG_FAKE_GUN_BURST_ESCAPE_GUN", str(ACT_BURST_ESCAPE_GUN))
-    # Always allow OCR-blind combat acts (not only near owner labels / drought).
+    # Always allow combat-act payoff bypass only WITH kill evidence by default.
     os.environ.setdefault("PUBG_COMBAT_ACT_PAYOFF_BYPASS", "1")
     os.environ.setdefault("PUBG_COMBAT_ACT_PAYOFF_FLOOR", "0.0")
+    os.environ.setdefault("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0")
     # New normal floors — owner acts must pass without per-VOD labels.
     os.environ.setdefault("PUBG_SINGLE_MIN_GUN_DENSITY", str(ACT_MIN_GUN))
     os.environ.setdefault("PUBG_CLIP_MIN_GUN_DENSITY", str(ACT_MIN_GUN))
