@@ -1238,6 +1238,31 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
+    # PUBG 15s window labeling (learnable loop)
+    if data.startswith('pubg_win_') or data == 'pubg_win_noop':
+        try:
+            from pubg_window_label_tg import apply_window_callback
+
+            if apply_window_callback(
+                data,
+                chat_id=chat_id,
+                message_id=message_id,
+                query_id=query_id,
+                api_call=api_call,
+            ):
+                return
+        except Exception:
+            logging.exception('pubg_win callback failed data=%s', data)
+            try:
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': 'Ошибка разметки', 'show_alert': True},
+                    timeout=15,
+                )
+            except Exception:
+                pass
+            return
+
     if data == 'mlbb_noop':
         try:
             api_call('answerCallbackQuery', {'callback_query_id': query_id}, timeout=15)
@@ -3605,6 +3630,29 @@ def handle_message(message: dict):
         except Exception as exc:
             send_message(chat_id, f'REFUSED: preview, reason={exc}')
         return
+    if is_owner(chat_id) and (cmd == '/winlabel' or text.startswith('/winlabel')):
+        try:
+            from pubg_window_label_tg import send_next_windows
+
+            parts = text.split()
+            limit = 5
+            if len(parts) >= 2:
+                try:
+                    limit = max(1, min(20, int(parts[1])))
+                except ValueError:
+                    limit = 5
+            send_message(chat_id, f'🎓 Шлю {limit} окон на разметку…')
+            report = send_next_windows(limit=limit)
+            send_message(
+                chat_id,
+                f"Окна: sent={report.get('sent')} left={report.get('pending_left')} "
+                f"err={len(report.get('errors') or [])}",
+            )
+        except Exception as exc:
+            logging.exception('winlabel failed')
+            send_message(chat_id, f'winlabel error: {exc}'[:500])
+        return
+
     if text.startswith('/status'):
         if limited:
             return
