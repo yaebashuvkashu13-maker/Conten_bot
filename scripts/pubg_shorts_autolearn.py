@@ -46,6 +46,14 @@ DEFAULT_QUERIES = (
     "metro royale clutch shorts",
 )
 
+HIGHLIGHT_QUERIES = (
+    "метро роял пабг лучшие моменты",
+    "метро роял клатч пабг",
+    "pubg metro royale highlights",
+    "pubg metro royale clutch",
+    "метро роял один против сквада",
+)
+
 TITLE_BLOCK = re.compile(
     r"(giveaway|#ad\b|sponsored|tutorial|guide|tips|reaction|meme|funny|"
     r"montage|compilation|lobby only|skin showcase)",
@@ -74,6 +82,149 @@ def shorts_root() -> Path:
             "/root/datasets/pubg/shorts_autolearn",
         )
     )
+
+
+def local_pool_dirs() -> list[tuple[str, Path]]:
+    """Local silver pools — no YouTube rate limit."""
+    raw = os.environ.get("PUBG_SHORTS_LOCAL_POOLS", "").strip()
+    if raw:
+        out: list[tuple[str, Path]] = []
+        for part in raw.split("|"):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" in part:
+                tag, path_s = part.split(":", 1)
+            else:
+                tag, path_s = "local", part
+            out.append((tag, Path(path_s)))
+        return out
+    return [
+        ("youtube_shorts_calib", Path("/root/datasets/pubg/youtube_shorts")),
+        ("viral_reference", Path("/root/datasets/viral_reference/pubg")),
+        ("exemplar_good", Path("/root/data/highlight_exemplars/pubg/good")),
+        ("exemplar_bad", Path("/root/data/highlight_exemplars/pubg/bad")),
+        ("shorts_autolearn_media", shorts_root()),
+        ("tiktok_pubg", Path("/root/datasets/tiktok/pubg")),
+        ("tiktok_metro", Path("/root/datasets/tiktok/metro")),
+    ]
+
+
+def _video_id_from_path(path: Path) -> str:
+    stem = path.stem
+    if stem.startswith("yt_") and len(stem) >= 14:
+        return stem[3:14]
+    # Stable synthetic id for non-YouTube local files.
+    import hashlib
+
+    return hashlib.sha1(str(path).encode()).hexdigest()[:11]
+
+
+def list_local_candidates(*, seen: set[str], limit: int) -> list[dict[str, Any]]:
+    cands: list[dict[str, Any]] = []
+    for source, root in local_pool_dirs():
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.mp4")):
+            if path.stat().st_size < 20_000:
+                continue
+            vid = _video_id_from_path(path)
+            key = f"local:{path}"
+            if vid in seen or key in seen:
+                continue
+            cands.append(
+                {
+                    "video_id": vid,
+                    "seen_key": key,
+                    "title": path.stem.replace("_", " ")[:200],
+                    "path": path,
+                    "source": source,
+                    "source_url": f"file://{path}",
+                    "search_query": f"local:{source}",
+                    "view_count": 0,
+                    "duration": 0.0,
+                }
+            )
+            if len(cands) >= limit * 3:
+                break
+        if len(cands) >= limit * 3:
+            break
+    random.shuffle(cands)
+    return cands[:limit]
+
+
+def ingest_one_local(hit: dict[str, Any], *, batch_id: int) -> dict[str, Any] | None:
+    path = Path(hit["path"])
+    try:
+        q_ok, q_reason, report = extract_short_features(path)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"score:{exc}"[:160], "video_id": hit.get("video_id")}
+    row = row_from_short_metrics(
+        video_id=str(hit["video_id"]),
+        title=hit.get("title") or "",
+        source_url=hit.get("source_url") or "",
+        search_query=hit.get("search_query") or "",
+        path=str(path),
+        meta=hit,
+        quality_report=report,
+        quality_ok=q_ok,
+        reject_reason="" if q_ok else q_reason,
+        batch_id=batch_id,
+        source=str(hit.get("source") or "local"),
+    )
+    return row
+
+
+def run_local_batch(
+    state: dict[str, Any],
+    *,
+    max_items: int | None = None,
+    workers: int | None = None,
+) -> dict[str, Any]:
+    """Score already-on-disk clips in parallel — accelerates learning without YT."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    max_items = max_items or _env_int("PUBG_SHORTS_LOCAL_BATCH", 25)
+    workers = workers or _env_int("PUBG_SHORTS_LOCAL_WORKERS", 2)
+    seen = set(state.get("seen_ids") or [])
+    hits = list_local_candidates(seen=seen, limit=max_items)
+    if not hits:
+        return {"saved": 0, "attempted": 0, "errors": [], "pool_empty": True}
+
+    saved = 0
+    errors: list[str] = []
+    batch_base = int(state.get("batches") or 0)
+
+    def _job(hit: dict[str, Any], idx: int) -> dict[str, Any] | None:
+        return ingest_one_local(hit, batch_id=batch_base + idx + 1)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = {pool.submit(_job, hit, i): hit for i, hit in enumerate(hits)}
+        for fut in as_completed(futs):
+            hit = futs[fut]
+            try:
+                row = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"local:{exc}"[:160])
+                continue
+            if not row:
+                continue
+            if row.get("error"):
+                errors.append(str(row["error"]))
+                continue
+            append_feature_row(row)
+            seen.add(str(hit.get("seen_key") or hit["video_id"]))
+            seen.add(str(hit["video_id"]))
+            saved += 1
+            state["batches"] = int(state.get("batches") or 0) + 1
+            state["watched_total"] = int(state.get("watched_total") or 0) + 1
+            state["local_watched"] = int(state.get("local_watched") or 0) + 1
+            state["seen_ids"] = list(seen)
+            if saved % 5 == 0:
+                save_state(state)
+
+    save_state(state)
+    return {"saved": saved, "attempted": len(hits), "errors": errors[:20], "pool_empty": False}
 
 
 def polite_sleep(kind: str = "download") -> None:
@@ -146,7 +297,13 @@ def _title_ok(title: str) -> bool:
     )
 
 
-def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[str, Any]]:
+def search_youtube_clips(
+    query: str,
+    *,
+    limit: int,
+    env: dict[str, str],
+    mode: str = "shorts",
+) -> list[dict[str, Any]]:
     search_n = max(limit * 3, 20)
     cmd = ytdlp_cmd(env) + [
         f"ytsearch{search_n}:{query}",
@@ -164,6 +321,8 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[s
         env=subprocess_env_no_proxy(env),
     )
     rows: list[dict[str, Any]] = []
+    dur_lo, dur_hi = (4.0, 75.0) if mode == "shorts" else (12.0, 90.0)
+    source = "youtube_shorts" if mode == "shorts" else "youtube_highlights"
     for line in (proc.stdout or "").splitlines():
         parts = line.split("|", 4)
         if len(parts) < 2:
@@ -178,12 +337,17 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[s
             dur = float(parts[2]) if len(parts) > 2 and parts[2] else 0.0
         except ValueError:
             dur = 0.0
-        if dur and (dur < 4 or dur > 75):
+        if dur and (dur < dur_lo or dur > dur_hi):
             continue
         try:
             views = int(float(parts[3])) if len(parts) > 3 and parts[3] else 0
         except ValueError:
             views = 0
+        url = (
+            f"https://www.youtube.com/shorts/{vid}"
+            if mode == "shorts"
+            else f"https://www.youtube.com/watch?v={vid}"
+        )
         rows.append(
             {
                 "video_id": vid,
@@ -191,8 +355,9 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[s
                 "duration": dur,
                 "view_count": views,
                 "upload_date": parts[4] if len(parts) > 4 else "",
-                "url": f"https://www.youtube.com/shorts/{vid}",
+                "url": url,
                 "search_query": query,
+                "source": source,
             }
         )
         if len(rows) >= limit:
@@ -200,7 +365,17 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[s
     return rows
 
 
-def download_short(vid: str, dest: Path, env: dict[str, str]) -> bool:
+def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[str, Any]]:
+    return search_youtube_clips(query, limit=limit, env=env, mode="shorts")
+
+
+def download_short(
+    vid: str,
+    dest: Path,
+    env: dict[str, str],
+    *,
+    url: str | None = None,
+) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_file() and dest.stat().st_size > 10_000:
         return True
@@ -209,7 +384,7 @@ def download_short(vid: str, dest: Path, env: dict[str, str]) -> bool:
         "YOUTUBE_SHORTS_FORMAT",
         "b[ext=mp4][height<=720]/bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[height<=720]/b",
     )
-    url = f"https://www.youtube.com/shorts/{vid}"
+    url = url or f"https://www.youtube.com/shorts/{vid}"
     # Clean stale partials from previous failed attempts.
     for stale in dest.parent.glob(f"yt_{vid}.mp4*"):
         if stale.suffix in {".part", ".ytdl"} or ".f" in stale.name:
@@ -322,19 +497,22 @@ def extract_short_features(path: Path) -> tuple[bool, str, dict[str, Any]]:
     return bool(ok), str(reason or ""), report
 
 
-def _queries() -> list[str]:
+def _queries(*, mode: str = "shorts") -> list[str]:
+    if mode == "highlights":
+        raw = os.environ.get("PUBG_SHORTS_HIGHLIGHT_QUERIES", "").strip()
+        if raw:
+            return [q.strip() for q in raw.split("|") if q.strip()]
+        return list(HIGHLIGHT_QUERIES)
     raw = os.environ.get("PUBG_SHORTS_AUTOLEARN_QUERIES", "").strip()
     if raw:
         return [q.strip() for q in raw.split("|") if q.strip()]
     # Prefer YAML config when present.
     try:
-        import yaml
-        from game_shorts_calibration import CONFIG_PATH, load_games
+        from game_shorts_calibration import load_games
 
         for g in load_games():
             if g.id == "pubg" and g.queries:
                 return list(g.queries)
-        _ = CONFIG_PATH
     except Exception:
         pass
     return list(DEFAULT_QUERIES)
@@ -492,19 +670,22 @@ def maybe_probe(state: dict[str, Any], ranges_blob: dict[str, Any]) -> list[dict
     return probes
 
 
-def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict[str, Any]:
-    env = load_env(Path("/root/.video_bot.env"))
-    state = load_state()
+def run_youtube_batch(
+    state: dict[str, Any],
+    *,
+    env: dict[str, str],
+    max_downloads: int,
+    mode: str = "shorts",
+    dry_run: bool = False,
+) -> dict[str, Any]:
     seen = set(state.get("seen_ids") or [])
-    max_downloads = max_downloads or _env_int("PUBG_SHORTS_BATCH_SIZE", 3)
     media = shorts_root()
     media.mkdir(parents=True, exist_ok=True)
-
     saved = 0
     attempted = 0
     errors: list[str] = []
     stop = False
-    queries = _queries()
+    queries = _queries(mode=mode)
     random.shuffle(queries)
 
     for query in queries:
@@ -517,12 +698,11 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
             continue
         try:
             polite_sleep("search")
-            hits = search_shorts(query, limit=12, env=env)
+            hits = search_youtube_clips(query, limit=12, env=env, mode=mode)
             _rate_bump(state, kind="search")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"search:{exc}"[:160])
             state["last_error"] = str(exc)[:200]
-            # Back off harder on search failures.
             time.sleep(_env_float("PUBG_SHORTS_ERROR_SLEEP", 180.0))
             break
 
@@ -539,22 +719,19 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
             dest = media / f"yt_{vid}.mp4"
             try:
                 polite_sleep("download")
-                ok_dl = download_short(vid, dest, env)
+                ok_dl = download_short(vid, dest, env, url=hit.get("url"))
                 attempted += 1
-                # Count only successful downloads toward the hourly/daily caps.
                 if ok_dl:
                     _rate_bump(state, kind="download")
             except RuntimeError as exc:
                 errors.append(str(exc)[:160])
                 state["last_error"] = str(exc)[:200]
-                # Ban risk — stop this run and sleep long.
                 time.sleep(_env_float("PUBG_SHORTS_BAN_SLEEP", 900.0))
                 save_state(state)
                 return {
                     "saved": saved,
                     "attempted": attempted,
                     "errors": errors,
-                    "watched_total": int(state.get("watched_total") or 0),
                     "stopped": "rate_limited",
                 }
             except Exception as exc:  # noqa: BLE001
@@ -562,7 +739,6 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
                 continue
             if not ok_dl:
                 errors.append(f"dl_incomplete:{vid}")
-                # Do not burn seen_ids forever on transient incomplete downloads.
                 continue
 
             try:
@@ -584,13 +760,59 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
                 quality_ok=q_ok,
                 reject_reason="" if q_ok else q_reason,
                 batch_id=int(state["batches"]),
+                source=str(hit.get("source") or mode),
             )
             append_feature_row(row)
             seen.add(vid)
             state["seen_ids"] = list(seen)
             state["watched_total"] = int(state.get("watched_total") or 0) + 1
+            state[f"{mode}_watched"] = int(state.get(f"{mode}_watched") or 0) + 1
             saved += 1
             save_state(state)
+
+    return {"saved": saved, "attempted": attempted, "errors": errors, "stopped": stop}
+
+
+def run_once(
+    *,
+    max_downloads: int | None = None,
+    dry_run: bool = False,
+    local_only: bool = False,
+    youtube_only: bool = False,
+) -> dict[str, Any]:
+    env = load_env(Path("/root/.video_bot.env"))
+    state = load_state()
+    max_downloads = max_downloads or _env_int("PUBG_SHORTS_BATCH_SIZE", 3)
+    errors: list[str] = []
+    local_stats: dict[str, Any] = {"saved": 0}
+    shorts_stats: dict[str, Any] = {"saved": 0}
+    highlights_stats: dict[str, Any] = {"saved": 0}
+
+    if not youtube_only and os.environ.get("PUBG_SHORTS_LOCAL_INGEST", "1") == "1":
+        local_stats = run_local_batch(state)
+        errors.extend(local_stats.get("errors") or [])
+
+    if not local_only:
+        half = max(1, max_downloads // 2) if max_downloads > 1 else max_downloads
+        shorts_stats = run_youtube_batch(
+            state,
+            env=env,
+            max_downloads=max(1, max_downloads - half + 1) if max_downloads > 1 else max_downloads,
+            mode="shorts",
+            dry_run=dry_run,
+        )
+        errors.extend(shorts_stats.get("errors") or [])
+        if os.environ.get("PUBG_SHORTS_HIGHLIGHTS", "1") == "1" and not shorts_stats.get(
+            "stopped"
+        ):
+            highlights_stats = run_youtube_batch(
+                state,
+                env=env,
+                max_downloads=half,
+                mode="highlights",
+                dry_run=dry_run,
+            )
+            errors.extend(highlights_stats.get("errors") or [])
 
     ranges_blob = build_silver_ranges()
     report_sent = maybe_send_batch_report(state, ranges_blob)
@@ -598,14 +820,18 @@ def run_once(*, max_downloads: int | None = None, dry_run: bool = False) -> dict
     if probes:
         send_message(
             f"Shorts-autolearn: отправил {len(probes)} пробных нарезок из VOD "
-            f"после {state.get('watched_total')} Shorts. Оцени 👍/👎."
+            f"после {state.get('watched_total')} клипов. Оцени 👍/👎."
         )
     state["last_error"] = "; ".join(errors)[:300] if errors else ""
     save_state(state)
     return {
-        "saved": saved,
-        "attempted": attempted,
-        "errors": errors,
+        "local_saved": int(local_stats.get("saved") or 0),
+        "shorts_saved": int(shorts_stats.get("saved") or 0),
+        "highlights_saved": int(highlights_stats.get("saved") or 0),
+        "saved": int(local_stats.get("saved") or 0)
+        + int(shorts_stats.get("saved") or 0)
+        + int(highlights_stats.get("saved") or 0),
+        "errors": errors[:30],
         "watched_total": int(state.get("watched_total") or 0),
         "ranges_ready": bool(ranges_blob.get("ready")),
         "report_sent": report_sent,
@@ -655,22 +881,41 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="PUBG Shorts autonomous learning loop")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    run_p = sub.add_parser("run", help="Watch a small polite batch of Shorts")
-    run_p.add_argument("--max", type=int, default=0, help="Override batch size")
+    run_p = sub.add_parser("run", help="Local pool + YouTube Shorts + highlights")
+    run_p.add_argument("--max", type=int, default=0, help="Override YouTube batch size")
     run_p.add_argument("--dry-run", action="store_true")
+    run_p.add_argument("--local-only", action="store_true")
+    run_p.add_argument("--youtube-only", action="store_true")
 
     sub.add_parser("status", help="Show watched count + ranges")
     rep = sub.add_parser("report", help="Send Telegram range report if due")
     rep.add_argument("--force", action="store_true")
     probe = sub.add_parser("probe-vod", help="Cut VOD probes matching silver ranges")
     probe.add_argument("--count", type=int, default=3)
+    local_p = sub.add_parser("run-local", help="Score on-disk pools only (fast, no YT)")
+    local_p.add_argument("--max", type=int, default=0)
 
     args = parser.parse_args()
     if args.cmd == "run":
         out = run_once(
             max_downloads=args.max or None,
             dry_run=bool(args.dry_run),
+            local_only=bool(args.local_only),
+            youtube_only=bool(args.youtube_only),
         )
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+    if args.cmd == "run-local":
+        state = load_state()
+        out = run_local_batch(
+            state,
+            max_items=args.max or None,
+        )
+        ranges_blob = build_silver_ranges()
+        maybe_send_batch_report(state, ranges_blob)
+        save_state(state)
+        out["watched_total"] = state.get("watched_total")
+        out["stage"] = ranges_blob.get("stage")
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "status":

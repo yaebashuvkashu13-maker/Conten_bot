@@ -19,6 +19,10 @@ Environment=PUBG_SHORTS_REPORT_EVERY=100
 Environment=PUBG_SHORTS_VOD_PROBE=1
 Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MIN=40
 Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MAX=80
+Environment=PUBG_SHORTS_LOCAL_INGEST=1
+Environment=PUBG_SHORTS_HIGHLIGHTS=1
+Environment=PUBG_SHORTS_LOCAL_BATCH=20
+Environment=PUBG_SHORTS_LOCAL_WORKERS=2
 WorkingDirectory=/root/content_bot_ml
 ExecStart=/usr/bin/flock -n /tmp/pubg_shorts_autolearn.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_shorts_autolearn.py run
 

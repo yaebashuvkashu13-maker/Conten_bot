@@ -126,6 +126,20 @@ def test_title_gate_blocks_meme() -> None:
     assert _title_ok("funny meme metro royale") is False
 
 
+def test_local_pool_lists_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    (pool / "yt_abcdefghijk.mp4").write_bytes(b"x" * 50_000)
+    monkeypatch.setenv("PUBG_SHORTS_LOCAL_POOLS", f"testpool:{pool}")
+    from pubg_shorts_autolearn import list_local_candidates
+
+    hits = list_local_candidates(seen=set(), limit=10)
+    assert len(hits) == 1
+    assert hits[0]["video_id"] == "abcdefghijk"
+    assert hits[0]["source"] == "testpool"
+
+
 def test_hourly_and_daily_caps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_HOUR", "17")
     monkeypatch.setenv("PUBG_SHORTS_MAX_DL_PER_DAY", "385")

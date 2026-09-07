@@ -61,6 +61,7 @@ TABLE_COLUMNS: tuple[str, ...] = (
     "ts",
     "video_id",
     "title",
+    "source",
     "source_url",
     "search_query",
     "path",
@@ -159,9 +160,23 @@ def append_feature_row(row: dict[str, Any]) -> None:
     root = data_root()
     root.mkdir(parents=True, exist_ok=True)
     path = features_jsonl_path()
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    rebuild_csv()
+    lock_path = root / ".write.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock_fh:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            pass
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        rebuild_csv()
+        try:
+            import fcntl
+
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
 
 
 def rebuild_csv() -> Path:
@@ -280,6 +295,7 @@ def row_from_short_metrics(
     quality_ok: bool,
     reject_reason: str,
     batch_id: int,
+    source: str = "youtube_shorts",
 ) -> dict[str, Any]:
     flat = flatten_metrics(quality_report)
     # Fill duration from report/meta/file probe fields.
@@ -291,6 +307,7 @@ def row_from_short_metrics(
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "video_id": video_id,
         "title": (title or "")[:200],
+        "source": source,
         "source_url": source_url,
         "search_query": search_query,
         "path": path,
