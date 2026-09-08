@@ -24,9 +24,10 @@ def test_harvest_instagram_skips_without_cookies(monkeypatch, tmp_path: Path) ->
     assert out["skipped"] == "no_instagram_cookies"
 
 
-def test_harvest_vk_skips_without_user_token(monkeypatch) -> None:
+def test_harvest_vk_skips_without_user_token(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PUBG_VK_HARVEST", "1")
     monkeypatch.setenv("PUBG_VK_CHANNELS", "pubgkotleta")
+    monkeypatch.setenv("VK_COOKIES_PATH", str(tmp_path / "missing.txt"))
     monkeypatch.delenv("PUBG_VK_VIDEO_URLS", raising=False)
     monkeypatch.delenv("PUBG_VK_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("VK_USER_ACCESS_TOKEN", raising=False)
@@ -37,6 +38,30 @@ def test_harvest_vk_skips_without_user_token(monkeypatch) -> None:
     assert out["saved"] == 0
     assert out["skipped"] == "vk_needs_user_token"
     assert "pubgkotleta" in out["channels"]
+
+
+def test_harvest_vk_reports_invalid_cookies(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PUBG_VK_HARVEST", "1")
+    monkeypatch.setenv("PUBG_VK_CHANNELS", "pubgkotleta")
+    ck = tmp_path / "vk_cookies.txt"
+    ck.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".vk.ru\tTRUE\t/\tTRUE\t9999999999\tremixsid\tdead_session\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VK_COOKIES_PATH", str(ck))
+    monkeypatch.delenv("PUBG_VK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("VK_USER_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("VK_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "pubg_multiplatform_harvest._vk_cookies_session_ok",
+        lambda _p=None: (False, "redirect_login"),
+    )
+    from pubg_multiplatform_harvest import harvest_vk
+
+    out = harvest_vk({}, {}, limit=2)
+    assert out["skipped"] == "vk_cookies_invalid"
+    assert "oauth.vk.com/authorize" in out["hint"]
 
 
 def test_vk_channels_parse_url() -> None:

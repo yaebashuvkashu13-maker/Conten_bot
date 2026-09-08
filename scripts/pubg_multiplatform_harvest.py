@@ -514,6 +514,51 @@ def _vk_cookies() -> Path | None:
     return None
 
 
+def _vk_cookies_session_ok(cookies: Path | None = None) -> tuple[bool, str]:
+    """Return (ok, detail). Dead remixsid → VK redirects to /login."""
+    path = cookies or _vk_cookies()
+    if path is None:
+        return False, "no_cookies_file"
+    try:
+        from http.cookiejar import MozillaCookieJar
+        import urllib.request
+
+        jar = MozillaCookieJar(str(path))
+        jar.load(ignore_discard=True, ignore_expires=True)
+        has_sid = any(c.name == "remixsid" and c.value for c in jar)
+        if not has_sid:
+            return False, "no_remixsid"
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        req = urllib.request.Request(
+            "https://m.vk.ru/feed",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                ),
+                "Accept-Language": "ru-RU,ru;q=0.9",
+            },
+        )
+        with opener.open(req, timeout=30) as resp:
+            final = str(resp.geturl() or "")
+        if "/login" in final.lower():
+            return False, "redirect_login"
+        return True, "ok"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"check_fail:{exc}"[:120]
+
+
+def _vk_oauth_hint() -> str:
+    return (
+        "Cookies сейчас не логинят (VK → /login). Нужен свежий экспорт сразу после входа, "
+        "либо user-токен: открой в браузере (уже залогиненным)\n"
+        "https://oauth.vk.com/authorize?client_id=6121396&scope=video,offline"
+        "&redirect_uri=https://oauth.vk.com/blank.html&display=page&response_type=token&v=5.199\n"
+        "Скопируй access_token из адресной строки blank.html → "
+        "PUBG_VK_ACCESS_TOKEN=... в /root/.video_bot.env"
+    )
+
+
 def _vk_user_token(env: dict[str, str]) -> str:
     """User OAuth token (video scope). Group/community tokens cannot list foreign clips."""
     for key in (
@@ -638,6 +683,7 @@ def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dic
 
     channels = _vk_channels(env)
     token = _vk_user_token(env)
+    cookies = _vk_cookies()
     channel_errors: list[str] = []
     if channels and token:
         for screen in channels:
@@ -650,15 +696,38 @@ def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dic
                 channel_errors.append(f"empty_or_denied:{screen}:{oid}")
             urls.extend(found)
     elif channels and not token:
+        ok_sess, sess_detail = _vk_cookies_session_ok(cookies)
+        if cookies and not ok_sess:
+            return {
+                "saved": 0,
+                "skipped": "vk_cookies_invalid",
+                "channels": channels,
+                "cookies": str(cookies),
+                "session": sess_detail,
+                "hint": _vk_oauth_hint(),
+                "attempted": 0,
+            }
+        if cookies and ok_sess:
+            # Cookies alive but channel listing still needs API token today.
+            return {
+                "saved": 0,
+                "skipped": "vk_needs_user_token",
+                "channels": channels,
+                "cookies": str(cookies),
+                "session": "ok",
+                "hint": (
+                    "Cookies живые, но список клипов канала всё равно нужен через "
+                    "PUBG_VK_ACCESS_TOKEN (scope video). " + _vk_oauth_hint().split("либо user-токен:", 1)[-1]
+                ),
+                "attempted": 0,
+            }
         return {
             "saved": 0,
             "skipped": "vk_needs_user_token",
             "channels": channels,
             "hint": (
                 "Канал уже задан (pubgkotleta / клипы). Отдельные ссылки не нужны. "
-                "Один раз положи user-токен VK со scope video в PUBG_VK_ACCESS_TOKEN "
-                "(или VK_USER_ACCESS_TOKEN) — group-токен MLBB не подходит. "
-                "Либо Netscape cookies в /root/vk_cookies.txt после логина."
+                + _vk_oauth_hint()
             ),
             "attempted": 0,
         }
