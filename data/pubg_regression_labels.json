@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "description": "Immutable PUBG regression set from owner-provided timestamps.",
+  "videos": {
+    "pJ-X6NdSU9k": [
+      {"tc": "8:35", "time_sec": 515, "label": "good"},
+      {"tc": "9:10", "time_sec": 550, "label": "good"},
+      {"tc": "10:15", "time_sec": 615, "label": "good"},
+      {"tc": "47:22", "time_sec": 2842, "label": "good"},
+      {"tc": "49:00", "time_sec": 2940, "label": "good"},
+      {"tc": "54:45", "time_sec": 3285, "label": "good"}
+    ],
+    "zv3JymSZOb0": [
+      {"tc": "29:54", "time_sec": 1794, "label": "bad", "note": "run no starter shots"},
+      {"tc": "35:40", "time_sec": 2140, "label": "bad", "note": "run no starter shots"},
+      {"tc": "1:22:56", "time_sec": 4976, "label": "bad", "note": "run no starter shots"},
+      {"tc": "1:45:08", "time_sec": 6308, "label": "bad", "note": "run no starter shots"}
+    ],
+    "n97cHIR9Qow": [
+      {"tc": "30:45", "time_sec": 1845, "label": "good"},
+      {"tc": "33:25", "time_sec": 2005, "label": "good"},
+      {"tc": "35:05", "time_sec": 2105, "label": "bad"},
+      {"tc": "35:50", "time_sec": 2150, "label": "good"},
+      {"tc": "36:55", "time_sec": 2215, "label": "bad"},
+      {"tc": "38:07", "time_sec": 2287, "label": "bad"},
+      {"tc": "41:10", "time_sec": 2470, "label": "good"},
+      {"tc": "42:01", "time_sec": 2521, "label": "bad"}
+    ]
+  }
+}

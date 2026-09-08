@@ -1,3 +1,5 @@
+**Prod deploy:** `bash scripts/deploy_unified_production.sh` (`cursor/vod-unified-production-a016`)
+
 # Автодеплой без ручной консоли
 
 Агент в Cursor **не видит ваш VPS** напрямую. Чтобы **не печатать команды руками**, один раз настраивается автодеплой.

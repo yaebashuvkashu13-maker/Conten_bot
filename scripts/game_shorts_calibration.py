@@ -388,6 +388,18 @@ def apply_shorts_label(
             c["owner_label"] = "yes" if is_good else "no"
             c["reason"] = reason
     _write_json(paths["index"], index)
+    try:
+        from vod_owner_feedback_bridge import apply_owner_feedback
+
+        apply_owner_feedback(
+            spec.id,
+            clip_id=video_id,
+            is_good=is_good,
+            reason=reason,
+            vod_id=video_id,
+        )
+    except Exception:
+        pass
     return True, feedback_ack_message(spec.id, is_good=is_good, reason=reason)
 
 
