@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -21,6 +22,9 @@ from typing import Any
 import numpy as np
 
 log = logging.getLogger("highlight_scorer")
+
+_MODEL_INIT_LOCK = threading.Lock()
+
 
 def _repo_root() -> Path:
     env = os.environ.get("CONTENT_BOT_REPO", "").strip()
@@ -471,20 +475,31 @@ def _extract_audio_32k(video_path: Path, start_sec: float, duration_sec: float) 
 
 @lru_cache(maxsize=1)
 def _panns_tagger():
-    from panns_inference import AudioTagging
+    with _MODEL_INIT_LOCK:
+        from panns_inference import AudioTagging
 
-    device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
-    try:
-        import torch
+        device = "cuda" if os.environ.get("HIGHLIGHT_PANN_DEVICE", "cpu") == "cuda" else "cpu"
+        try:
+            import torch
 
-        if device == "cuda" and not torch.cuda.is_available():
+            if device == "cuda" and not torch.cuda.is_available():
+                device = "cpu"
+        except ImportError:
             device = "cpu"
-    except ImportError:
-        device = "cpu"
-    return AudioTagging(device=device)
+        return AudioTagging(device=device)
 
 
 def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -> dict[str, float]:
+    try:
+        from panns_audio_cache import cache_enabled, get_cached, put_cached
+
+        if cache_enabled():
+            hit = get_cached(video_path, start_sec, duration_sec)
+            if hit is not None:
+                return hit
+    except Exception:
+        pass
+
     audio = _extract_audio_32k(video_path, start_sec, duration_sec)
     out = {
         "panns_gunshot": 0.0,
@@ -512,21 +527,68 @@ def score_panns_audio(video_path: Path, start_sec: float, duration_sec: float) -
         out["panns_explosion"],
         out["panns_artillery"],
     )
+    try:
+        from panns_audio_cache import cache_enabled, put_cached
+
+        if cache_enabled():
+            put_cached(video_path, start_sec, duration_sec, out)
+    except Exception:
+        pass
     return out
+
+
+def score_panns_audio_batch(
+    video_path: Path,
+    windows: list[tuple[float, float]],
+) -> list[dict[str, float]]:
+    """Batch PANNs inference for multiple (start, duration) windows on one VOD."""
+    if not windows:
+        return []
+    tagger = _panns_tagger()
+    results: list[dict[str, float]] = []
+    for start_sec, duration_sec in windows:
+        audio = _extract_audio_32k(video_path, start_sec, duration_sec)
+        out = {
+            "panns_gunshot": 0.0,
+            "panns_machine_gun": 0.0,
+            "panns_explosion": 0.0,
+            "panns_artillery": 0.0,
+            "panns_speech": 0.0,
+            "panns_music": 0.0,
+            "panns_gun_max": 0.0,
+        }
+        if audio.size > 0:
+            clipwise, _emb = tagger.inference(audio[None, :])
+            scores = clipwise[0]
+            out["panns_gunshot"] = float(scores[PANN_GUN_IDX["gunshot"]])
+            out["panns_machine_gun"] = float(scores[PANN_GUN_IDX["machine_gun"]])
+            out["panns_explosion"] = float(scores[PANN_GUN_IDX["explosion"]])
+            out["panns_artillery"] = float(scores[PANN_GUN_IDX["artillery"]])
+            out["panns_speech"] = float(scores[PANN_GUN_IDX["speech"]])
+            out["panns_music"] = float(scores[PANN_GUN_IDX["music"]])
+            out["panns_gun_max"] = max(
+                out["panns_gunshot"],
+                out["panns_machine_gun"],
+                out["panns_explosion"],
+                out["panns_artillery"],
+            )
+        results.append(out)
+    return results
 
 
 @lru_cache(maxsize=1)
 def _clip_bundle():
-    import open_clip
-    import torch
+    with _MODEL_INIT_LOCK:
+        import open_clip
+        import torch
 
-    model_name = os.environ.get("HIGHLIGHT_CLIP_MODEL", "ViT-B-32")
-    pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "laion2b_s34b_b79k")
-    device = "cuda" if torch.cuda.is_available() and os.environ.get("HIGHLIGHT_CLIP_DEVICE") == "cuda" else "cpu"
-    model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
-    model = model.to(device).eval()
-    tokenizer = open_clip.get_tokenizer(model_name)
-    return model, preprocess, tokenizer, device
+        model_name = os.environ.get("HIGHLIGHT_CLIP_MODEL", "ViT-B-32")
+        pretrained = os.environ.get("HIGHLIGHT_CLIP_PRETRAINED", "laion2b_s34b_b79k")
+        device = "cuda" if torch.cuda.is_available() and os.environ.get("HIGHLIGHT_CLIP_DEVICE") == "cuda" else "cpu"
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+        model = model.to(device).eval()
+        tokenizer = open_clip.get_tokenizer(model_name)
+        return model, preprocess, tokenizer, device
 
 
 def _frame_to_pil(frame: np.ndarray):
@@ -826,6 +888,62 @@ def score_clip_exemplar(video_path: Path, start_sec: float, duration_sec: float,
     else:
         clip_final = text_score if text_score else exemplar_score
     return clip_final, frame_rows
+
+
+def rank_shortlist_with_clip(
+    video_path: Path,
+    rows: list[dict],
+    profile: str,
+    *,
+    max_n: int | None = None,
+) -> list[dict]:
+    """Score montage shortlist windows with CLIP; return rows sorted best-first."""
+    if not rows:
+        return rows
+    profile = normalize_profile(profile)
+    cap = len(rows)
+    if max_n is not None:
+        cap = min(cap, max(1, int(max_n)))
+    budget = min(
+        len(rows),
+        max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_BUDGET", str(cap)))),
+    )
+
+    scored: list[dict] = []
+    for row in rows[:budget]:
+        clip = dict(row.get("clip") or {})
+        start = float(row.get("start", clip.get("start", 0)) or 0)
+        dur = float(
+            clip.get("input_duration")
+            or clip.get("output_duration")
+            or row.get("duration")
+            or WINDOW_SEC
+        )
+        dur = max(4.0, dur)
+        clip_score, _frames = score_clip_exemplar(video_path, start, dur, profile)
+        hm = dict(row.get("highlight_metrics") or {})
+        if clip_score >= 0:
+            hm["clip_score"] = round(float(clip_score), 4)
+            hm["clip_rank"] = True
+        else:
+            hm.setdefault("clip_rank", False)
+        base = float(row.get("score", 0) or 0)
+        scored.append(
+            {
+                **row,
+                "clip_score": max(0.0, float(clip_score)),
+                "highlight_metrics": hm,
+                "score": base + max(0.0, float(clip_score)) * 0.35,
+            }
+        )
+
+    scored.sort(
+        key=lambda r: (float(r.get("clip_score", 0)), float(r.get("score", 0))),
+        reverse=True,
+    )
+    if max_n is not None:
+        return scored[: max(1, int(max_n))]
+    return scored
 
 
 def score_killfeed_ocr(video_path: Path, start_sec: float, duration_sec: float) -> tuple[str, int]:

@@ -6,8 +6,8 @@ REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 DEST=/usr/local/bin
 
 cd "$REPO"
-git fetch origin cursor/mlbb-video-pipeline-e712 2>/dev/null || git fetch origin
-git checkout cursor/mlbb-video-pipeline-e712 2>/dev/null || git pull origin main || true
+git fetch origin cursor/vod-unified-production-a016 2>/dev/null || git fetch origin
+git checkout cursor/vod-unified-production-a016 2>/dev/null || git pull origin main || true
 git pull --ff-only 2>/dev/null || true
 
 apt-get update -qq
