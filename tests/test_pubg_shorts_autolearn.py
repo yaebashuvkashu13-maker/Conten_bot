@@ -97,6 +97,7 @@ def test_batch_report_every_100(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         "watched_total": 100,
         "last_report_at_count": 0,
     }
+    save_state(state)
     ok = maybe_send_batch_report(
         state,
         {
@@ -114,10 +115,31 @@ def test_batch_report_every_100(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert "Просмотрено 100" in sent[0]
     assert "gunfire_density" in sent[0]
 
-    # Not due again until +100.
+    # Not due again until next milestone (200), even if +few clips.
+    state["watched_total"] = 105
+    save_state(state)
     ok2 = maybe_send_batch_report(state, {"ranges": {}})
     assert ok2 is False
 
+    state["watched_total"] = 199
+    save_state(state)
+    assert maybe_send_batch_report(state, {"ranges": {}}) is False
+
+    state["watched_total"] = 200
+    save_state(state)
+    blob2 = {
+        "stage": "forming",
+        "low_q": 0.1,
+        "high_q": 0.9,
+        "rows_used": 180,
+        "rows_total": 200,
+        "ready": True,
+        "ranges": {"gunfire_density": {"min": 0.1, "max": 0.2, "p50": 0.15, "n": 1}},
+    }
+    assert maybe_send_batch_report(state, blob2) is True
+    assert state["last_report_at_count"] == 200
+    assert len(sent) == 2
+    assert "Следующий отчёт на 300" in sent[1]
 
 def test_title_gate_blocks_meme() -> None:
     from pubg_shorts_autolearn import _title_ok

@@ -11,6 +11,7 @@ Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 EnvironmentFile=-/root/.video_bot.env
 Environment=PUBG_SHORTS_LOCAL_BATCH=30
 Environment=PUBG_SHORTS_LOCAL_WORKERS=2
+Environment=PUBG_SHORTS_LOCAL_SEND_REPORT=0
 WorkingDirectory=/root/content_bot_ml
 # Separate lock from YouTube runner so both can overlap.
 ExecStart=/usr/bin/flock -n /tmp/pubg_shorts_autolearn_local.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_shorts_autolearn.py run-local --max 30

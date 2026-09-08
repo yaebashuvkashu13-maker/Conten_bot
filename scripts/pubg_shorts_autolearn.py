@@ -520,31 +520,119 @@ def _queries(*, mode: str = "shorts") -> list[str]:
     return list(DEFAULT_QUERIES)
 
 
+def _autolearn_report_lock():
+    """Serialize report/probe decisions across YouTube + local timers."""
+    import fcntl
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _lock():
+        lock_path = data_root() / "report.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+", encoding="utf-8")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            fh.close()
+
+    return _lock()
+
+
 def maybe_send_batch_report(state: dict[str, Any], ranges_blob: dict[str, Any]) -> bool:
+    """Send TG range report once per N watched (milestone), under a lock.
+
+    YouTube + local timers share state; without a lock they both saw
+    total-last>=100 and spammed reports every few clips.
+    """
     every = _env_int("PUBG_SHORTS_REPORT_EVERY", 100)
-    total = int(state.get("watched_total") or 0)
-    last = int(state.get("last_report_at_count") or 0)
-    if every <= 0 or total < every or total - last < every:
+    if every <= 0:
         return False
-    batch_no = total // every
-    table = format_ranges_table(ranges_blob)
-    text = (
-        f"PUBG Shorts autolearn — отчёт #{batch_no}\n"
-        f"Просмотрено {total} Shorts (+{total - last} с прошлого отчёта).\n"
-        f"Сформирован диапазон параметров для нарезки VOD:\n"
-        f"{table}\n"
-        f"Продолжаю просмотр аккуратно (rate-limit).\n"
-        f"Таблица: {data_root() / 'features.csv'}"
-    )
-    ok = send_message(text)
-    report_path = reports_dir() / f"report_{total:05d}.txt"
-    report_path.write_text(text, encoding="utf-8")
-    if ok:
-        state["last_report_at_count"] = total
-        state["last_report_ok"] = True
-    else:
-        state["last_report_ok"] = False
-    return ok
+
+    with _autolearn_report_lock():
+        # Re-read counters from disk so a parallel timer cannot double-send.
+        disk = load_state()
+        total = max(int(state.get("watched_total") or 0), int(disk.get("watched_total") or 0))
+        last = int(disk.get("last_report_at_count") or state.get("last_report_at_count") or 0)
+        milestone = total // every
+        last_milestone = last // every
+        if total < every or milestone <= last_milestone:
+            state["watched_total"] = total
+            state["last_report_at_count"] = last
+            return False
+
+        batch_no = milestone
+        table = format_ranges_table(ranges_blob)
+        text = (
+            f"PUBG Shorts autolearn — отчёт #{batch_no}\n"
+            f"Просмотрено {total} клипов (+{total - last} с прошлого отчёта).\n"
+            f"Следующий отчёт на {every * (milestone + 1)}.\n"
+            f"Сформирован диапазон параметров для нарезки VOD:\n"
+            f"{table}\n"
+            f"Продолжаю просмотр аккуратно (rate-limit).\n"
+            f"Таблица: {data_root() / 'features.csv'}"
+        )
+        # Claim the milestone before network I/O so a twin process backs off.
+        claim_at = every * milestone
+        state["watched_total"] = total
+        state["last_report_at_count"] = claim_at
+        disk["watched_total"] = total
+        disk["last_report_at_count"] = claim_at
+        save_state(disk)
+
+        ok = send_message(text)
+        report_path = reports_dir() / f"report_{total:05d}.txt"
+        report_path.write_text(text, encoding="utf-8")
+        state["last_report_ok"] = bool(ok)
+        disk["last_report_ok"] = bool(ok)
+        if ok:
+            # Keep claim; optionally bump to exact total for display continuity.
+            state["last_report_at_count"] = total
+            disk["last_report_at_count"] = total
+        else:
+            # Roll back claim so the next run can retry this milestone.
+            state["last_report_at_count"] = last
+            disk["last_report_at_count"] = last
+        save_state(disk)
+        return ok
+
+
+def maybe_probe(state: dict[str, Any], ranges_blob: dict[str, Any]) -> list[dict[str, Any]]:
+    every = _env_int("PUBG_SHORTS_REPORT_EVERY", 100)
+    if os.environ.get("PUBG_SHORTS_VOD_PROBE", "1") != "1":
+        return []
+    if every <= 0:
+        return []
+    if not ranges_blob.get("ranges"):
+        return []
+
+    with _autolearn_report_lock():
+        disk = load_state()
+        total = max(int(state.get("watched_total") or 0), int(disk.get("watched_total") or 0))
+        last = int(disk.get("last_probe_at_count") or state.get("last_probe_at_count") or 0)
+        milestone = total // every
+        last_milestone = last // every
+        if total < every or milestone <= last_milestone:
+            return []
+        # Claim probe milestone before cutting.
+        claim_at = every * milestone
+        state["last_probe_at_count"] = claim_at
+        disk["last_probe_at_count"] = claim_at
+        disk["watched_total"] = total
+        save_state(disk)
+
+    probes = probe_vod_cuts(ranges_blob=ranges_blob)
+    state["last_probe_at_count"] = int(state.get("watched_total") or total)
+    state["last_probe_count"] = len(probes)
+    disk = load_state()
+    disk["last_probe_at_count"] = state["last_probe_at_count"]
+    disk["last_probe_count"] = len(probes)
+    save_state(disk)
+    return probes
 
 
 def find_inbox_vod() -> Path | None:
@@ -654,22 +742,6 @@ def probe_vod_cuts(
             }
         )
     return results
-
-
-def maybe_probe(state: dict[str, Any], ranges_blob: dict[str, Any]) -> list[dict[str, Any]]:
-    every = _env_int("PUBG_SHORTS_REPORT_EVERY", 100)
-    total = int(state.get("watched_total") or 0)
-    last = int(state.get("last_probe_at_count") or 0)
-    if os.environ.get("PUBG_SHORTS_VOD_PROBE", "1") != "1":
-        return []
-    if every <= 0 or total < every or total - last < every:
-        return []
-    if not ranges_blob.get("ranges"):
-        return []
-    probes = probe_vod_cuts(ranges_blob=ranges_blob)
-    state["last_probe_at_count"] = total
-    state["last_probe_count"] = len(probes)
-    return probes
 
 
 def run_youtube_batch(
@@ -914,7 +986,10 @@ def main() -> int:
             max_items=args.max or None,
         )
         ranges_blob = build_silver_ranges()
-        maybe_send_batch_report(state, ranges_blob)
+        # Default off: YouTube runner owns TG reports. Parallel local timer
+        # previously raced and spammed reports every few clips.
+        if os.environ.get("PUBG_SHORTS_LOCAL_SEND_REPORT", "0") == "1":
+            maybe_send_batch_report(state, ranges_blob)
         save_state(state)
         out["watched_total"] = state.get("watched_total")
         out["stage"] = ranges_blob.get("stage")
