@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: PUBG multi-platform short harvest
+
+[Timer]
+# Stagger vs YouTube/local timers — gentle external platform pulls.
+OnBootSec=15min
+OnUnitActiveSec=35min
+RandomizedDelaySec=4min
+Persistent=true
+Unit=content-bot-pubg-multi-harvest.service
+
+[Install]
+WantedBy=timers.target
