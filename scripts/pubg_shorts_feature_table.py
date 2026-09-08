@@ -105,26 +105,34 @@ def reports_dir() -> Path:
     return d
 
 
-def load_state() -> dict[str, Any]:
+def _state_lock_path() -> Path:
+    return data_root() / "state.lock"
+
+
+def _default_state() -> dict[str, Any]:
+    return {
+        "watched_total": 0,
+        "last_report_at_count": 0,
+        "last_probe_at_count": 0,
+        "seen_ids": [],
+        "batches": 0,
+        "last_error": "",
+        "updated_at": "",
+    }
+
+
+def _read_state_unlocked() -> dict[str, Any]:
     path = state_path()
     if not path.is_file():
-        return {
-            "watched_total": 0,
-            "last_report_at_count": 0,
-            "last_probe_at_count": 0,
-            "seen_ids": [],
-            "batches": 0,
-            "last_error": "",
-            "updated_at": "",
-        }
+        return _default_state()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) else _default_state()
     except (OSError, json.JSONDecodeError):
-        return {}
+        return _default_state()
 
 
-def save_state(state: dict[str, Any]) -> None:
+def _write_state_unlocked(state: dict[str, Any]) -> None:
     root = data_root()
     root.mkdir(parents=True, exist_ok=True)
     state = dict(state)
@@ -136,6 +144,162 @@ def save_state(state: dict[str, Any]) -> None:
     tmp = state_path().with_suffix(".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, state_path())
+
+
+def _merge_state(disk: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge parallel YouTube + local timer writes without losing counters."""
+    out = dict(disk)
+    out.update(incoming)
+    # Counters: never go backwards when two runners overlap.
+    for key in (
+        "watched_total",
+        "batches",
+        "local_watched",
+        "shorts_watched",
+        "highlights_watched",
+        "last_report_at_count",
+        "last_probe_at_count",
+        "last_progress_at_count",
+        "download_hour_count",
+        "download_day_count",
+        "search_hour_count",
+        "search_miss_hour_count",
+    ):
+        out[key] = max(int(disk.get(key) or 0), int(incoming.get(key) or 0))
+    # Prefer newer rate-window timestamps when counts were reset by that runner.
+    for ts_key, count_key in (
+        ("download_hour_ts", "download_hour_count"),
+        ("download_day_ts", "download_day_count"),
+        ("search_hour_ts", "search_hour_count"),
+        ("search_miss_hour_ts", "search_miss_hour_count"),
+    ):
+        disk_ts = float(disk.get(ts_key) or 0.0)
+        inc_ts = float(incoming.get(ts_key) or 0.0)
+        if inc_ts > disk_ts:
+            out[ts_key] = inc_ts
+            out[count_key] = int(incoming.get(count_key) or 0)
+        elif disk_ts > inc_ts:
+            out[ts_key] = disk_ts
+            out[count_key] = int(disk.get(count_key) or 0)
+        else:
+            out[ts_key] = max(disk_ts, inc_ts)
+            out[count_key] = max(int(disk.get(count_key) or 0), int(incoming.get(count_key) or 0))
+    seen = list(dict.fromkeys([*(disk.get("seen_ids") or []), *(incoming.get("seen_ids") or [])]))
+    if len(seen) > 5000:
+        seen = seen[-5000:]
+    out["seen_ids"] = seen
+    # Preserve non-empty last_error from incoming; else keep disk.
+    if incoming.get("last_error"):
+        out["last_error"] = incoming.get("last_error")
+    elif disk.get("last_error") and "last_error" not in incoming:
+        out["last_error"] = disk.get("last_error")
+    return out
+
+
+def load_state() -> dict[str, Any]:
+    import fcntl
+
+    root = data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = _state_lock_path()
+    with open(lock_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+        try:
+            return _read_state_unlocked()
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def save_state(state: dict[str, Any]) -> None:
+    """Persist state under an exclusive lock, merging with any parallel writer."""
+    import fcntl
+
+    root = data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = _state_lock_path()
+    with open(lock_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            disk = _read_state_unlocked()
+            merged = _merge_state(disk, state)
+            _write_state_unlocked(merged)
+            # Keep caller's dict in sync with what landed on disk.
+            state.clear()
+            state.update(merged)
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def mark_seen_ids(state: dict[str, Any], keys: list[str]) -> None:
+    """Add ids to seen set without bumping watched_total (failed score, etc.)."""
+    import fcntl
+
+    root = data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = _state_lock_path()
+    keys = [str(k) for k in keys if k]
+    with open(lock_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            disk = _read_state_unlocked()
+            merged = _merge_state(disk, state)
+            seen = list(merged.get("seen_ids") or [])
+            seen_set = set(seen)
+            changed = False
+            for key in keys:
+                if key not in seen_set:
+                    seen.append(key)
+                    seen_set.add(key)
+                    changed = True
+            if changed:
+                merged["seen_ids"] = seen[-5000:]
+                _write_state_unlocked(merged)
+            state.clear()
+            state.update(merged)
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def record_watched(
+    state: dict[str, Any],
+    *,
+    seen_keys: list[str],
+    counter_keys: list[str] | None = None,
+) -> bool:
+    """Atomically mark one clip watched (+1) under lock. Returns False if already seen."""
+    import fcntl
+
+    root = data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = _state_lock_path()
+    counter_keys = counter_keys or []
+    keys = [str(k) for k in seen_keys if k]
+    with open(lock_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            disk = _read_state_unlocked()
+            merged = _merge_state(disk, state)
+            seen = list(merged.get("seen_ids") or [])
+            seen_set = set(seen)
+            if keys and all(k in seen_set for k in keys):
+                state.clear()
+                state.update(merged)
+                return False
+            for key in keys:
+                if key not in seen_set:
+                    seen.append(key)
+                    seen_set.add(key)
+            merged["seen_ids"] = seen[-5000:]
+            merged["watched_total"] = int(merged.get("watched_total") or 0) + 1
+            merged["batches"] = int(merged.get("batches") or 0) + 1
+            for key in counter_keys:
+                merged[key] = int(merged.get(key) or 0) + 1
+            _write_state_unlocked(merged)
+            state.clear()
+            state.update(merged)
+            return True
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def iter_feature_rows() -> list[dict[str, Any]]:

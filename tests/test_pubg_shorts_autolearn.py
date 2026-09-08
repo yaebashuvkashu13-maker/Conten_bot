@@ -180,3 +180,54 @@ def test_hourly_and_daily_caps(monkeypatch: pytest.MonkeyPatch) -> None:
     _rate_bump(state, kind="download")
     assert state["download_hour_count"] == 1
     assert state["download_day_count"] == 1
+
+
+def test_search_miss_budget_separate_from_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_SHORTS_MAX_SEARCH_PER_HOUR", "2")
+    monkeypatch.setenv("PUBG_SHORTS_MAX_SEARCH_MISS_PER_HOUR", "5")
+    from pubg_shorts_autolearn import _rate_bump, _rate_ok
+
+    state: dict = {"search_hour_count": 2, "search_hour_ts": __import__("time").time()}
+    assert _rate_ok(state, kind="search") is False
+    assert _rate_ok(state, kind="search_miss") is True
+    _rate_bump(state, kind="search_miss")
+    assert state["search_miss_hour_count"] == 1
+
+
+def test_record_watched_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
+    from pubg_shorts_feature_table import load_state, record_watched, save_state
+
+    a = {"watched_total": 10, "seen_ids": ["old"], "batches": 10}
+    save_state(a)
+    b = load_state()
+    assert record_watched(b, seen_keys=["new1"], counter_keys=["local_watched"]) is True
+    assert b["watched_total"] == 11
+    # Second writer with stale base still increments on disk.
+    stale = {"watched_total": 10, "seen_ids": ["old"], "batches": 10}
+    assert record_watched(stale, seen_keys=["new2"], counter_keys=["shorts_watched"]) is True
+    final = load_state()
+    assert final["watched_total"] == 12
+    assert "new1" in final["seen_ids"] and "new2" in final["seen_ids"]
+    assert final["local_watched"] == 1
+    assert final["shorts_watched"] == 1
+
+
+def test_progress_ping_every_25(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
+    monkeypatch.setenv("PUBG_SHORTS_PROGRESS_EVERY", "25")
+    monkeypatch.setenv("PUBG_SHORTS_REPORT_EVERY", "100")
+    from pubg_shorts_autolearn import maybe_send_progress_ping
+    from pubg_shorts_feature_table import save_state
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "pubg_shorts_autolearn.send_message",
+        lambda text, **_k: sent.append(text) or True,
+    )
+    state = {"watched_total": 50, "last_progress_at_count": 25}
+    save_state(state)
+    assert maybe_send_progress_ping(state) is True
+    assert "просмотрено 50" in sent[0]
+    assert state["last_progress_at_count"] == 50
+    assert maybe_send_progress_ping(state) is False

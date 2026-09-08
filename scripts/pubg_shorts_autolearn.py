@@ -28,6 +28,8 @@ from pubg_shorts_feature_table import (
     format_ranges_table,
     iter_feature_rows,
     load_state,
+    mark_seen_ids,
+    record_watched,
     reports_dir,
     row_from_short_metrics,
     save_state,
@@ -100,15 +102,15 @@ def local_pool_dirs() -> list[tuple[str, Path]]:
             out.append((tag, Path(path_s)))
         return out
     return [
-        ("youtube_shorts_calib", Path("/root/datasets/pubg/youtube_shorts")),
-        ("viral_reference", Path("/root/datasets/viral_reference/pubg")),
-        ("exemplar_good", Path("/root/data/highlight_exemplars/pubg/good")),
-        ("exemplar_bad", Path("/root/data/highlight_exemplars/pubg/bad")),
-        ("shorts_autolearn_media", shorts_root()),
         ("tiktok_pubg", Path("/root/datasets/tiktok/pubg")),
         ("tiktok_metro", Path("/root/datasets/tiktok/metro")),
         ("instagram_pubg", Path("/root/datasets/instagram/pubg")),
         ("vk_pubg", Path("/root/datasets/vk/pubg")),
+        ("shorts_autolearn_media", shorts_root()),
+        ("youtube_shorts_calib", Path("/root/datasets/pubg/youtube_shorts")),
+        ("viral_reference", Path("/root/datasets/viral_reference/pubg")),
+        ("exemplar_good", Path("/root/data/highlight_exemplars/pubg/good")),
+        ("exemplar_bad", Path("/root/data/highlight_exemplars/pubg/bad")),
     ]
 
 
@@ -215,15 +217,13 @@ def run_local_batch(
                 errors.append(str(row["error"]))
                 continue
             append_feature_row(row)
-            seen.add(str(hit.get("seen_key") or hit["video_id"]))
-            seen.add(str(hit["video_id"]))
-            saved += 1
-            state["batches"] = int(state.get("batches") or 0) + 1
-            state["watched_total"] = int(state.get("watched_total") or 0) + 1
-            state["local_watched"] = int(state.get("local_watched") or 0) + 1
-            state["seen_ids"] = list(seen)
-            if saved % 5 == 0:
-                save_state(state)
+            counted = record_watched(
+                state,
+                seen_keys=[str(hit.get("seen_key") or hit["video_id"]), str(hit["video_id"])],
+                counter_keys=["local_watched"],
+            )
+            if counted:
+                saved += 1
 
     save_state(state)
     return {"saved": saved, "attempted": len(hits), "errors": errors[:20], "pool_empty": False}
@@ -253,10 +253,14 @@ def _rate_ok(state: dict[str, Any], *, kind: str) -> bool:
         state[hour_key] = now
         state[count_key] = 0
         count = 0
-    cap = _env_int(
-        "PUBG_SHORTS_MAX_SEARCH_PER_HOUR" if kind == "search" else "PUBG_SHORTS_MAX_DL_PER_HOUR",
-        8 if kind == "search" else 17,
-    )
+    if kind == "search":
+        cap = _env_int("PUBG_SHORTS_MAX_SEARCH_PER_HOUR", 24)
+    elif kind == "search_miss":
+        # Soft budget for all-seen / empty searches so we can rotate queries
+        # without burning the productive search cap.
+        cap = _env_int("PUBG_SHORTS_MAX_SEARCH_MISS_PER_HOUR", 40)
+    else:
+        cap = _env_int("PUBG_SHORTS_MAX_DL_PER_HOUR", 17)
     if count >= cap:
         return False
     if kind == "download":
@@ -543,6 +547,40 @@ def _autolearn_report_lock():
     return _lock()
 
 
+def maybe_send_progress_ping(state: dict[str, Any]) -> bool:
+    """Lightweight TG ping so the owner sees the watched counter move.
+
+    Full range reports stay on 100-milestones; this only posts a short status
+    every PUBG_SHORTS_PROGRESS_EVERY clips (default 25).
+    """
+    every = _env_int("PUBG_SHORTS_PROGRESS_EVERY", 25)
+    if every <= 0:
+        return False
+    report_every = max(1, _env_int("PUBG_SHORTS_REPORT_EVERY", 100))
+    with _autolearn_report_lock():
+        disk = load_state()
+        total = max(int(state.get("watched_total") or 0), int(disk.get("watched_total") or 0))
+        last = int(disk.get("last_progress_at_count") or state.get("last_progress_at_count") or 0)
+        if total < every or total - last < every:
+            return False
+        next_report = report_every * (total // report_every + 1)
+        text = (
+            f"PUBG Shorts: просмотрено {total} "
+            f"(+{total - last} с прошлого статуса). "
+            f"Полный отчёт на {next_report}."
+        )
+        state["last_progress_at_count"] = total
+        disk["last_progress_at_count"] = total
+        disk["watched_total"] = total
+        save_state(disk)
+        ok = send_message(text)
+        if not ok:
+            state["last_progress_at_count"] = last
+            disk["last_progress_at_count"] = last
+            save_state(disk)
+        return bool(ok)
+
+
 def maybe_send_batch_report(state: dict[str, Any], ranges_blob: dict[str, Any]) -> bool:
     """Send TG range report once per N watched (milestone), under a lock.
 
@@ -765,7 +803,11 @@ def run_youtube_batch(
     for query in queries:
         if stop or saved >= max_downloads:
             break
-        if not _rate_ok(state, kind="search"):
+        # Prefer productive searches; fall back to miss budget when rotating
+        # through already-seen results (common after ~200+ watched ids).
+        can_search = _rate_ok(state, kind="search")
+        can_miss = _rate_ok(state, kind="search_miss")
+        if not can_search and not can_miss:
             errors.append("search_hour_cap")
             break
         if dry_run:
@@ -773,12 +815,22 @@ def run_youtube_batch(
         try:
             polite_sleep("search")
             hits = search_youtube_clips(query, limit=12, env=env, mode=mode)
-            _rate_bump(state, kind="search")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"search:{exc}"[:160])
             state["last_error"] = str(exc)[:200]
             time.sleep(_env_float("PUBG_SHORTS_ERROR_SLEEP", 180.0))
             break
+
+        fresh = [h for h in hits if h.get("video_id") and h["video_id"] not in seen]
+        if fresh:
+            if can_search:
+                _rate_bump(state, kind="search")
+            else:
+                _rate_bump(state, kind="search_miss")
+            hits = fresh
+        else:
+            _rate_bump(state, kind="search_miss")
+            continue
 
         for hit in hits:
             if stop or saved >= max_downloads:
@@ -819,10 +871,10 @@ def run_youtube_batch(
                 q_ok, q_reason, report = extract_short_features(dest)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"score:{exc}"[:160])
-                seen.add(vid)
+                mark_seen_ids(state, [vid])
+                seen = set(state.get("seen_ids") or [])
                 continue
 
-            state["batches"] = int(state.get("batches") or 0) + 1
             row = row_from_short_metrics(
                 video_id=vid,
                 title=hit.get("title") or "",
@@ -833,16 +885,18 @@ def run_youtube_batch(
                 quality_report=report,
                 quality_ok=q_ok,
                 reject_reason="" if q_ok else q_reason,
-                batch_id=int(state["batches"]),
+                batch_id=int(state.get("batches") or 0) + 1,
                 source=str(hit.get("source") or mode),
             )
             append_feature_row(row)
-            seen.add(vid)
-            state["seen_ids"] = list(seen)
-            state["watched_total"] = int(state.get("watched_total") or 0) + 1
-            state[f"{mode}_watched"] = int(state.get(f"{mode}_watched") or 0) + 1
-            saved += 1
-            save_state(state)
+            counted = record_watched(
+                state,
+                seen_keys=[vid],
+                counter_keys=[f"{mode}_watched"],
+            )
+            seen = set(state.get("seen_ids") or [])
+            if counted:
+                saved += 1
 
     return {"saved": saved, "attempted": attempted, "errors": errors, "stopped": stop}
 
@@ -890,6 +944,12 @@ def run_once(
 
     ranges_blob = build_silver_ranges()
     report_sent = maybe_send_batch_report(state, ranges_blob)
+    saved_total = (
+        int(local_stats.get("saved") or 0)
+        + int(shorts_stats.get("saved") or 0)
+        + int(highlights_stats.get("saved") or 0)
+    )
+    progress_sent = maybe_send_progress_ping(state) if saved_total > 0 else False
     probes = maybe_probe(state, ranges_blob)
     if probes:
         send_message(
@@ -909,6 +969,7 @@ def run_once(
         "watched_total": int(state.get("watched_total") or 0),
         "ranges_ready": bool(ranges_blob.get("ready")),
         "report_sent": report_sent,
+        "progress_sent": progress_sent,
         "probes": len(probes),
         "stage": ranges_blob.get("stage"),
     }
