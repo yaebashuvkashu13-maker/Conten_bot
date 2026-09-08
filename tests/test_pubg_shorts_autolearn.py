@@ -141,6 +141,20 @@ def test_batch_report_every_100(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert len(sent) == 2
     assert "Следующий отчёт на 300" in sent[1]
 
+def test_pubg_queries_merged_and_large(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("PUBG_SHORTS_AUTOLEARN_QUERIES", raising=False)
+    # Point calibration YAML at repo config via default load_games path.
+    from pubg_shorts_autolearn import DEFAULT_QUERIES, HIGHLIGHT_QUERIES, _queries
+
+    shorts_q = _queries(mode="shorts")
+    assert len(shorts_q) >= 20
+    assert len(set(q.lower() for q in shorts_q)) == len(shorts_q)
+    assert any("метро" in q.lower() or "metro" in q.lower() for q in shorts_q)
+    hl = _queries(mode="highlights")
+    assert len(hl) >= len(HIGHLIGHT_QUERIES) - 1
+    assert len(DEFAULT_QUERIES) >= 20
+
+
 def test_title_gate_blocks_meme() -> None:
     from pubg_shorts_autolearn import _title_ok
 

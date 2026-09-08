@@ -41,27 +41,54 @@ from youtube_game_prefs import has_metro_royale
 REPO = Path(os.environ.get("CONTENT_BOT_REPO", Path(__file__).resolve().parent.parent))
 
 DEFAULT_QUERIES = (
+    # RU Metro shorts
     "метро роял пабг перестрелка shorts",
     "метро роял 7 карта shorts пабг",
+    "метро роял 8 карта shorts пабг",
     "метро роял соло против отряда shorts",
+    "метро роял один против сквадов shorts",
     "метро роял эвакуация пабг shorts",
     "метро роял килл пабг shorts",
+    "метро роял клатч пабг shorts",
+    "метро роял буст пабг shorts",
+    "метро роял с нуля до фул 6 shorts",
+    "метро рояль пабг мобайл shorts",
+    "метро роял пабг мобайл бой shorts",
+    "метро роял дуэль пабг shorts",
+    "метро роял тима файт shorts",
+    "метро роял топ 1 пабг shorts",
+    "пабг метро роял перестрелка shorts",
+    "пабг мобайл метро роял киллы shorts",
     "pubg metro royale gunfight shorts",
     "metro royale clutch shorts",
     "pubg metro royale 1v4 shorts",
     "pubg mobile metro royale fight shorts",
-    "метро рояль пабг мобайл shorts",
+    "pubg metro royale squad wipe shorts",
+    "pubg metro royale extraction shorts",
+    "pubg metro royale close fight shorts",
+    "metro royale pubg mobile shorts 2026",
+    "metro royale ace shorts pubg",
+    "pubg mr gunfight shorts",
 )
 
 HIGHLIGHT_QUERIES = (
     "метро роял пабг лучшие моменты",
     "метро роял клатч пабг",
     "метро роял хайлайты пабг",
+    "метро роял один против сквада",
+    "метро роял буст пабг",
+    "метро роял лучшие киллы пабг",
+    "метро роял топ моменты пабг мобайл",
+    "метро роял эвакуация хайлайт",
+    "пабг метро роял лучшие бои",
+    "пабг мобайл метро роял хайлайты",
     "pubg metro royale highlights",
     "pubg metro royale clutch",
-    "метро роял один против сквада",
     "pubg metro royale best plays",
-    "метро роял буст пабг",
+    "pubg metro royale best moments",
+    "pubg mobile metro royale highlights 2026",
+    "metro royale insane clutch pubg",
+    "pubg metro royale 1v3 clutch",
 )
 
 TITLE_BLOCK = re.compile(
@@ -512,6 +539,7 @@ def extract_short_features(path: Path) -> tuple[bool, str, dict[str, Any]]:
 
 
 def _queries(*, mode: str = "shorts") -> list[str]:
+    """Build search query list: env override, else YAML∪defaults (deduped)."""
     if mode == "highlights":
         raw = os.environ.get("PUBG_SHORTS_HIGHLIGHT_QUERIES", "").strip()
         if raw:
@@ -520,16 +548,28 @@ def _queries(*, mode: str = "shorts") -> list[str]:
     raw = os.environ.get("PUBG_SHORTS_AUTOLEARN_QUERIES", "").strip()
     if raw:
         return [q.strip() for q in raw.split("|") if q.strip()]
-    # Prefer YAML config when present.
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    def _add(items: list[str] | tuple[str, ...]) -> None:
+        for q in items:
+            key = " ".join(str(q).lower().split())
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(str(q).strip())
+
     try:
         from game_shorts_calibration import load_games
 
         for g in load_games():
             if g.id == "pubg" and g.queries:
-                return list(g.queries)
+                _add(list(g.queries))
+                break
     except Exception:
         pass
-    return list(DEFAULT_QUERIES)
+    _add(DEFAULT_QUERIES)
+    return merged or list(DEFAULT_QUERIES)
 
 
 def _autolearn_report_lock():
