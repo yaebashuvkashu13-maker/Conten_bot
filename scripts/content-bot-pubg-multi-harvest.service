@@ -8,15 +8,14 @@ Type=oneshot
 Nice=12
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 EnvironmentFile=-/root/.video_bot.env
-Environment=PUBG_MULTI_HARVEST_PER_SOURCE=4
+Environment=PUBG_MULTI_HARVEST_PER_SOURCE=8
 Environment=PUBG_TIKTOK_HARVEST=1
 Environment=PUBG_TIKTOK_DIRECT=1
 Environment=PUBG_INSTAGRAM_HARVEST=1
-Environment=PUBG_VK_HARVEST=1
+Environment=PUBG_VK_HARVEST=0
 Environment=PUBG_VK_CHANNELS=pubgkotleta,club239893669,club201271677,pubgmgasper0,metroshop_pubg1
-Environment=PUBG_VK_HARVEST=1
 WorkingDirectory=/root/content_bot_ml
-ExecStart=/usr/bin/flock -n /tmp/pubg_multiplatform_harvest.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_multiplatform_harvest.py run --per-source 4
+ExecStart=/usr/bin/flock -n /tmp/pubg_multiplatform_harvest.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_multiplatform_harvest.py run --per-source 8
 
 [Install]
 WantedBy=multi-user.target

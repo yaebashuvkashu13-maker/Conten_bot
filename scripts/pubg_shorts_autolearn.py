@@ -44,16 +44,24 @@ DEFAULT_QUERIES = (
     "метро роял пабг перестрелка shorts",
     "метро роял 7 карта shorts пабг",
     "метро роял соло против отряда shorts",
+    "метро роял эвакуация пабг shorts",
+    "метро роял килл пабг shorts",
     "pubg metro royale gunfight shorts",
     "metro royale clutch shorts",
+    "pubg metro royale 1v4 shorts",
+    "pubg mobile metro royale fight shorts",
+    "метро рояль пабг мобайл shorts",
 )
 
 HIGHLIGHT_QUERIES = (
     "метро роял пабг лучшие моменты",
     "метро роял клатч пабг",
+    "метро роял хайлайты пабг",
     "pubg metro royale highlights",
     "pubg metro royale clutch",
     "метро роял один против сквада",
+    "pubg metro royale best plays",
+    "метро роял буст пабг",
 )
 
 TITLE_BLOCK = re.compile(
@@ -310,7 +318,7 @@ def search_youtube_clips(
     env: dict[str, str],
     mode: str = "shorts",
 ) -> list[dict[str, Any]]:
-    search_n = max(limit * 3, 20)
+    search_n = max(limit * 4, _env_int("PUBG_SHORTS_SEARCH_N", 40))
     cmd = ytdlp_cmd(env) + [
         f"ytsearch{search_n}:{query}",
         "--flat-playlist",
@@ -814,7 +822,12 @@ def run_youtube_batch(
             continue
         try:
             polite_sleep("search")
-            hits = search_youtube_clips(query, limit=12, env=env, mode=mode)
+            hits = search_youtube_clips(
+                query,
+                limit=_env_int("PUBG_SHORTS_SEARCH_HIT_LIMIT", 25),
+                env=env,
+                mode=mode,
+            )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"search:{exc}"[:160])
             state["last_error"] = str(exc)[:200]
