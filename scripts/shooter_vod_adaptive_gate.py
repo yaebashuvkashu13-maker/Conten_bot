@@ -239,6 +239,7 @@ def adaptive_env(streak: int) -> Iterator[int]:
         "PUBG_DROUGHT_ELASTICITY_ACTIVE",
         "PUBG_DROUGHT_ELASTICITY_SCALE",
         "PUBG_DROUGHT_ELASTICITY_IDLE_HOURS",
+        "PUBG_DROUGHT_COMBAT_ESCAPE",
         "SHOOTER_VOD_SOFTEN_LEVEL",
         "PUBG_ADAPTIVE_DROUGHT_RESCUE",
     )

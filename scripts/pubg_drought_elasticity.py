@@ -186,6 +186,16 @@ def apply_elasticity_to_environ(*, hours_idle: float | None = None) -> dict[str,
                     pass
     state["baseline"] = baseline
     hours = idle_hours(last_sent_ts=float(state.get("last_sent_ts") or 0.0)) if hours_idle is None else float(hours_idle)
+    # Prefer hang-detector last-send age when elasticity stamp is missing/stale.
+    if hours_idle is None:
+        try:
+            from vod_hang_detector import last_send_age_sec
+
+            age = last_send_age_sec()
+            if age is not None:
+                hours = max(hours, float(age) / 3600.0)
+        except Exception:
+            pass
     scale = elasticity_scale(hours_idle=hours)
     applied: dict[str, float] = {}
     for key in ELASTIC_KEYS:
@@ -207,6 +217,17 @@ def apply_elasticity_to_environ(*, hours_idle: float | None = None) -> dict[str,
         os.environ["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
         os.environ["PUBG_REJECT_BOT_FARM"] = "1"
         os.environ["PUBG_QUALITY_BOT_FARM_GATE"] = "1"
+    # Deep drought: combat escape for loot/OCR false rejects (loud fights only).
+    try:
+        hard_escape_h = float(os.environ.get("PUBG_DROUGHT_HARD_ESCAPE_SEC", "21600")) / 3600.0
+    except ValueError:
+        hard_escape_h = 6.0
+    if hours >= hard_escape_h:
+        os.environ["PUBG_DROUGHT_COMBAT_ESCAPE"] = "1"
+        os.environ.setdefault("PUBG_DROUGHT_ESCAPE_MIN_GUN", "0.040")
+        os.environ.setdefault("PUBG_DROUGHT_ESCAPE_MIN_BURST", "4.0")
+    else:
+        os.environ["PUBG_DROUGHT_COMBAT_ESCAPE"] = "0"
     active = scale < 0.999
     os.environ["PUBG_DROUGHT_ELASTICITY_ACTIVE"] = "1" if active else "0"
     os.environ["PUBG_DROUGHT_ELASTICITY_SCALE"] = f"{scale:.4f}"

@@ -416,6 +416,18 @@ def force_send_game(
             escalation = 0
         if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
             apply_drought_pubg_env(env, escalation=escalation)
+            # Deep drought combat escape (loot/OCR false rejects).
+            try:
+                from vod_hang_detector import last_send_age_sec as _age
+
+                silence = float(_age() or 0)
+            except Exception:
+                silence = 0.0
+            hard_escape_sec = float(os.environ.get("PUBG_DROUGHT_HARD_ESCAPE_SEC", "21600"))
+            if silence >= hard_escape_sec and escalation >= 1:
+                env["PUBG_DROUGHT_COMBAT_ESCAPE"] = "1"
+                env.setdefault("PUBG_DROUGHT_ESCAPE_MIN_GUN", "0.040")
+                env.setdefault("PUBG_DROUGHT_ESCAPE_MIN_BURST", "4.0")
 
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))

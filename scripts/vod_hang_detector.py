@@ -652,6 +652,22 @@ def apply_agent_recover_env(
     # Keep loot reject ON at every escalation — garbage menu/loot > silence.
     target["VOD_FORCE_REJECT_LOOT"] = "1"
     target["PUBG_REJECT_LOOT_WALK"] = "1"
+    # After long silence, allow combat escape for loot/OCR false rejects.
+    # Does NOT disable loot gate globally — only loud-gun windows (see quality score).
+    hard_escape_sec = max(
+        drought_sec,
+        int(os.environ.get("PUBG_DROUGHT_HARD_ESCAPE_SEC", "21600")),  # 6h
+    )
+    if silence >= float(hard_escape_sec) and esc >= 1:
+        target["PUBG_DROUGHT_COMBAT_ESCAPE"] = "1"
+        target["PUBG_DROUGHT_ESCAPE_MIN_GUN"] = os.environ.get(
+            "PUBG_DROUGHT_ESCAPE_MIN_GUN", "0.040"
+        )
+        target["PUBG_DROUGHT_ESCAPE_MIN_BURST"] = os.environ.get(
+            "PUBG_DROUGHT_ESCAPE_MIN_BURST", "4.0"
+        )
+    else:
+        target["PUBG_DROUGHT_COMBAT_ESCAPE"] = "0"
     # Hook gate stays ON; only soften HUD false-positive menu score under drought.
     target["CLIP_HOOK_GATE"] = "1"
     hook_menu, hook_rms, hook_ydelta = "0.62", "0.08", "1.5"

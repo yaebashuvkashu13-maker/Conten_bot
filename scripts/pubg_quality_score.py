@@ -64,6 +64,28 @@ def _owner_redo_trusted(video_path: Path, start_sec: float, duration_sec: float)
     return False
 
 
+def _drought_combat_escape_ok(
+    *,
+    gun: float,
+    burst: float,
+    center_text: float,
+) -> bool:
+    """Deep-drought only: let loud fights through when loot/OCR hard-gates false-fire.
+
+    Enabled by recover/force_send after long silence (PUBG_DROUGHT_COMBAT_ESCAPE=1).
+    Still blocks menu-heavy frames (high center_text) and quiet loot walks.
+    """
+    if os.environ.get("PUBG_DROUGHT_COMBAT_ESCAPE", "0") != "1":
+        return False
+    try:
+        gun_min = float(os.environ.get("PUBG_DROUGHT_ESCAPE_MIN_GUN", "0.040"))
+        burst_min = float(os.environ.get("PUBG_DROUGHT_ESCAPE_MIN_BURST", "4.0"))
+        text_max = float(os.environ.get("PUBG_DROUGHT_ESCAPE_MAX_CENTER_TEXT", "0.22"))
+    except ValueError:
+        gun_min, burst_min, text_max = 0.040, 4.0, 0.22
+    return float(gun) >= gun_min and float(burst) >= burst_min and float(center_text) <= text_max
+
+
 def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
@@ -379,6 +401,10 @@ def score_pubg_window(
             and _owner_redo_trusted(video_path, start_sec, duration_sec)
         ):
             report["owner_redo_trusted"] = True
+        elif _drought_combat_escape_ok(gun=gun, burst=burst, center_text=center_text):
+            # Deep drought only: loot heuristic false-positives on real fights
+            # were locking force_send at 0 sends for 19h+.
+            report["drought_loot_escape"] = True
         else:
             report["hard_reject"] = "loot_walk"
             return _finish(False, "hard_loot_walk")
@@ -702,6 +728,9 @@ def score_pubg_window(
         )
         if allow_owner_no_kill:
             report["owner_redo_trusted_no_kill"] = True
+        elif _drought_combat_escape_ok(gun=gun, burst=burst, center_text=center_text):
+            # OCR kill miss under deep drought — still require audible fight.
+            report["drought_no_kill_escape"] = True
         else:
             report["hard_reject"] = "no_author_kill"
             return _finish(False, "hard_no_author_kill")
