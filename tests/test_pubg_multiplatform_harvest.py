@@ -24,14 +24,26 @@ def test_harvest_instagram_skips_without_cookies(monkeypatch, tmp_path: Path) ->
     assert out["skipped"] == "no_instagram_cookies"
 
 
-def test_harvest_vk_skips_without_urls(monkeypatch) -> None:
+def test_harvest_vk_skips_without_user_token(monkeypatch) -> None:
     monkeypatch.setenv("PUBG_VK_HARVEST", "1")
+    monkeypatch.setenv("PUBG_VK_CHANNELS", "pubgkotleta")
     monkeypatch.delenv("PUBG_VK_VIDEO_URLS", raising=False)
+    monkeypatch.delenv("PUBG_VK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("VK_USER_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("VK_ACCESS_TOKEN", raising=False)
     from pubg_multiplatform_harvest import harvest_vk
 
     out = harvest_vk({}, {}, limit=2)
     assert out["saved"] == 0
-    assert out["skipped"] == "vk_needs_urls"
+    assert out["skipped"] == "vk_needs_user_token"
+    assert "pubgkotleta" in out["channels"]
+
+
+def test_vk_channels_parse_url() -> None:
+    from pubg_multiplatform_harvest import _vk_channels
+
+    assert _vk_channels({"PUBG_VK_CHANNELS": "https://vk.ru/pubgkotleta"}) == ["pubgkotleta"]
+    assert _vk_channels({})[0] == "pubgkotleta"
 
 
 def test_proxy_alive_false_for_closed_port() -> None:

@@ -13,6 +13,7 @@ Environment=PUBG_TIKTOK_HARVEST=1
 Environment=PUBG_TIKTOK_DIRECT=1
 Environment=PUBG_INSTAGRAM_HARVEST=1
 Environment=PUBG_VK_HARVEST=1
+Environment=PUBG_VK_CHANNELS=pubgkotleta
 Environment=PUBG_VK_HARVEST=1
 WorkingDirectory=/root/content_bot_ml
 ExecStart=/usr/bin/flock -n /tmp/pubg_multiplatform_harvest.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_multiplatform_harvest.py run --per-source 4

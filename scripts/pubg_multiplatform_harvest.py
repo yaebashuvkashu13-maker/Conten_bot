@@ -73,6 +73,16 @@ VK_VIDEO_URLS = (
     # Keep empty-safe: harvest_vk probes these if set via env.
 )
 
+# Screen names / channel URLs — enough; no per-video links needed.
+# Owner of https://vk.ru/pubgkotleta → group 230808874 (clips tab = PUBG).
+VK_CHANNELS = (
+    "pubgkotleta",
+)
+
+VK_CHANNEL_OWNER_IDS = {
+    "pubgkotleta": -230808874,
+}
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -484,27 +494,188 @@ def harvest_instagram(env: dict[str, str], state: dict[str, Any], *, limit: int)
     return {"saved": saved, "attempted": attempted, "errors": errors[:10], "out": str(out_dir)}
 
 
+def _vk_cookies() -> Path | None:
+    for cand in (
+        os.environ.get("VK_COOKIES_PATH", "").strip(),
+        "/root/vk_cookies.txt",
+        "/root/data/vk_cookies.txt",
+        str(REPO / "vk_cookies.txt"),
+    ):
+        if cand and Path(cand).is_file() and Path(cand).stat().st_size > 50:
+            return Path(cand)
+    return None
+
+
+def _vk_user_token(env: dict[str, str]) -> str:
+    """User OAuth token (video scope). Group/community tokens cannot list foreign clips."""
+    for key in (
+        "PUBG_VK_ACCESS_TOKEN",
+        "VK_USER_ACCESS_TOKEN",
+        "VK_ACCESS_TOKEN",
+    ):
+        tok = (env.get(key) or os.environ.get(key) or "").strip()
+        if tok:
+            return tok
+    return ""
+
+
+def _vk_channels(env: dict[str, str]) -> list[str]:
+    raw = (env.get("PUBG_VK_CHANNELS") or os.environ.get("PUBG_VK_CHANNELS") or "").strip()
+    if raw:
+        out: list[str] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            # Accept full URL or screen name.
+            part = part.rstrip("/").split("/")[-1]
+            if part.startswith("clips"):
+                continue
+            out.append(part.lstrip("@"))
+        return out or list(VK_CHANNELS)
+    return list(VK_CHANNELS)
+
+
+def _vk_api(method: str, params: dict[str, Any], *, token: str) -> dict[str, Any]:
+    import urllib.parse
+    import urllib.request
+
+    q = {**params, "access_token": token, "v": "5.199"}
+    url = "https://api.vk.com/method/" + method + "?" + urllib.parse.urlencode(q)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 content-bot"})
+    with urllib.request.urlopen(req, timeout=40) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def _vk_owner_id(screen: str, *, token: str) -> int | None:
+    key = screen.strip().lstrip("@").lower()
+    if key in VK_CHANNEL_OWNER_IDS:
+        return int(VK_CHANNEL_OWNER_IDS[key])
+    if not token:
+        return None
+    try:
+        data = _vk_api("utils.resolveScreenName", {"screen_name": key}, token=token)
+        resp = data.get("response") or {}
+        if not isinstance(resp, dict) or not resp.get("object_id"):
+            return None
+        oid = int(resp["object_id"])
+        if resp.get("type") in {"group", "page", "event"}:
+            return -oid
+        return oid
+    except Exception:
+        return None
+
+
+def _vk_list_channel_urls(owner_id: int, *, token: str, limit: int) -> list[str]:
+    """List clip/video page URLs for a channel via user token."""
+    urls: list[str] = []
+    # Prefer short videos (Clips tab).
+    for method, params in (
+        ("shortVideo.getOwnerVideos", {"owner_id": owner_id, "count": max(limit * 3, 20)}),
+        ("video.get", {"owner_id": owner_id, "count": max(limit * 3, 20)}),
+    ):
+        try:
+            data = _vk_api(method, params, token=token)
+        except Exception:
+            continue
+        if data.get("error"):
+            continue
+        resp = data.get("response") or {}
+        items = resp.get("items") if isinstance(resp, dict) else resp
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            oid = item.get("owner_id", owner_id)
+            vid = item.get("id") or item.get("video_id")
+            if oid is None or vid is None:
+                continue
+            # Clips use /clip{owner}_{id}; regular videos /video{owner}_{id}.
+            kind = "clip" if method.startswith("shortVideo") or item.get("type") == "short_video" else "video"
+            urls.append(f"https://vk.com/{kind}{oid}_{vid}")
+            if len(urls) >= limit * 4:
+                break
+        if urls:
+            break
+    # De-dupe preserve order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dict[str, Any]:
-    """VK short clips — optional. Search extractors are unreliable; use explicit URLs."""
+    """VK clips from channel screen names (e.g. pubgkotleta) and/or explicit URLs.
+
+    Channel link is enough — no per-video links. Listing needs a **user** OAuth
+    token (`VK_USER_ACCESS_TOKEN` / `PUBG_VK_ACCESS_TOKEN`) with `video` scope.
+    Group tokens (VK_MLBB_ACCESS_TOKEN) cannot list another community's clips.
+    """
     if os.environ.get("PUBG_VK_HARVEST", "1") != "1":
         return {"saved": 0, "skipped": "disabled"}
+
     raw = (env.get("PUBG_VK_VIDEO_URLS") or os.environ.get("PUBG_VK_VIDEO_URLS") or "").strip()
     urls = [u.strip() for u in raw.split(",") if u.strip().startswith("http")]
     urls.extend(VK_VIDEO_URLS)
+
+    channels = _vk_channels(env)
+    token = _vk_user_token(env)
+    channel_errors: list[str] = []
+    if channels and token:
+        for screen in channels:
+            oid = _vk_owner_id(screen, token=token)
+            if oid is None:
+                channel_errors.append(f"resolve_fail:{screen}")
+                continue
+            found = _vk_list_channel_urls(oid, token=token, limit=limit)
+            if not found:
+                channel_errors.append(f"empty_or_denied:{screen}:{oid}")
+            urls.extend(found)
+    elif channels and not token:
+        return {
+            "saved": 0,
+            "skipped": "vk_needs_user_token",
+            "channels": channels,
+            "hint": (
+                "Канал уже задан (pubgkotleta / клипы). Отдельные ссылки не нужны. "
+                "Один раз положи user-токен VK со scope video в PUBG_VK_ACCESS_TOKEN "
+                "(или VK_USER_ACCESS_TOKEN) — group-токен MLBB не подходит. "
+                "Либо Netscape cookies в /root/vk_cookies.txt после логина."
+            ),
+            "attempted": 0,
+        }
+
+    # De-dupe.
+    dedup: list[str] = []
+    seen_u: set[str] = set()
+    for u in urls:
+        if u not in seen_u:
+            seen_u.add(u)
+            dedup.append(u)
+    urls = dedup
+
     if not urls:
         return {
             "saved": 0,
-            "skipped": "vk_needs_urls",
-            "hint": "Задай PUBG_VK_VIDEO_URLS=https://vk.com/video-…,… (search/tag в yt-dlp сейчас ломается)",
+            "skipped": "vk_no_urls",
+            "channels": channels,
+            "errors": channel_errors[:10],
+            "hint": "Канал не отдал клипы — проверь user-токен (video) или задай PUBG_VK_VIDEO_URLS",
             "attempted": 0,
         }
+
     out_dir = Path(os.environ.get("PUBG_VK_DIR", "/root/datasets/vk/pubg"))
     out_dir.mkdir(parents=True, exist_ok=True)
     seen = set(state.get("seen_urls") or [])
     saved = 0
     attempted = 0
-    errors: list[str] = []
-    use_proxy = _use_proxy(env, prefer=True)
+    errors: list[str] = list(channel_errors[:5])
+    use_proxy = _use_proxy(env, prefer=False)  # VK usually reachable direct from VPS
+    cookies = _vk_cookies()
     random.shuffle(urls)
     for url in urls:
         if saved >= limit:
@@ -514,7 +685,7 @@ def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dic
         attempted += 1
         vid = _id_from_url(url, "vk")
         dest = out_dir / f"{vid}.mp4"
-        ok = _download(url, dest, env=env, use_proxy=use_proxy)
+        ok = _download(url, dest, env=env, use_proxy=use_proxy, cookies=cookies)
         seen.add(url)
         if ok:
             saved += 1
@@ -526,8 +697,14 @@ def harvest_vk(env: dict[str, str], state: dict[str, Any], *, limit: int) -> dic
             errors.append(f"vk_fail:{vid}")
         time.sleep(random.uniform(8, 18))
     state["seen_urls"] = list(seen)
-    return {"saved": saved, "attempted": attempted, "errors": errors[:10], "out": str(out_dir)}
-
+    return {
+        "saved": saved,
+        "attempted": attempted,
+        "errors": errors[:10],
+        "out": str(out_dir),
+        "channels": channels,
+        "listed": len(urls),
+    }
 
 def run_harvest(*, per_source: int | None = None) -> dict[str, Any]:
     env = {**os.environ, **load_env(ENV_PATH)}
@@ -577,6 +754,9 @@ def main() -> int:
                     "proxy_configured": bool(proxy),
                     "proxy_alive": _proxy_alive(proxy) if proxy else False,
                     "instagram_cookies": str(cookies) if cookies else None,
+                    "vk_cookies": str(_vk_cookies()) if _vk_cookies() else None,
+                    "vk_user_token": bool(_vk_user_token(env)),
+                    "vk_channels": _vk_channels(env),
                     "ytdlp": ytdlp_bin(env),
                     "tiktok_users": _tiktok_users(env),
                 },
