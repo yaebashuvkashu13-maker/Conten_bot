@@ -47,7 +47,15 @@ def exemplar_root() -> Path:
 
 
 def owner_labels_path(profile: str, *, create: bool = False) -> Path | None:
-    """Path to {profile}_owner_labels.json (repo data/ by default)."""
+    """Runtime labels path — git data/ is seed only (see runtime_labels.py)."""
+    if os.environ.get("VOD_RUNTIME_LABELS", "1") == "1":
+        from runtime_labels import ensure_runtime_labels, runtime_labels_path as runtime_path
+
+        path = runtime_path(profile, create=create)
+        if path is not None:
+            if create or path.exists():
+                return path
+            return ensure_runtime_labels(profile)
     p = normalize_profile(profile)
     if p not in _OWNER_JSON_NAMES:
         return None
@@ -121,6 +129,11 @@ def load_owner_labels(profile: str) -> dict:
 
 
 def save_owner_labels(profile: str, data: dict) -> None:
+    if os.environ.get("VOD_RUNTIME_LABELS", "1") == "1":
+        from runtime_labels import save_runtime_labels
+
+        save_runtime_labels(profile, data)
+        return
     path = owner_labels_path(profile, create=True)
     if path is None:
         return
@@ -139,7 +152,7 @@ def append_owner_time_label(
     source: str = "vod_segment",
 ) -> bool:
     vid = video_id.strip()
-    if not vid or label not in ("good", "bad"):
+    if not vid or label not in ("good", "bad", "uncertain"):
         return False
     data = load_owner_labels(profile)
     videos: dict = data.setdefault("videos", {})

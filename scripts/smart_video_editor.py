@@ -145,10 +145,36 @@ def run_command(
 
 
 def ffprobe_json(path: Path) -> dict:
-    result = run_command([
-        'ffprobe', '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', str(path)
-    ], capture_output=True)
-    return json.loads(result.stdout)
+    """Return probe metadata; never raise on corrupt/missing media."""
+    try:
+        result = run_command(
+            [
+                'ffprobe',
+                '-v',
+                'error',
+                '-print_format',
+                'json',
+                '-show_format',
+                '-show_streams',
+                str(path),
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        logging.warning('ffprobe_json failed path=%s err=%s', path, exc)
+        return {}
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or '').strip()[:240]
+        logging.warning(
+            'ffprobe_json rc=%s path=%s err=%s', result.returncode, path, err
+        )
+        return {}
+    try:
+        return json.loads(result.stdout or '{}') or {}
+    except json.JSONDecodeError as exc:
+        logging.warning('ffprobe_json bad json path=%s err=%s', path, exc)
+        return {}
 
 
 def first_nonempty(lines: list[str], max_lines: int) -> list[str]:

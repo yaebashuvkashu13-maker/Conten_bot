@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 REPO="${REPO:-/root/content_bot_ml}"
-BRANCH="${BRANCH:-cursor/mlbb-video-pipeline-e712}"
+BRANCH="${BRANCH:-cursor/vod-unified-production-a016}"
 
 cd "$REPO"
 git fetch origin "$BRANCH"

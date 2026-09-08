@@ -21,7 +21,19 @@ def test_reset_clears_exhausted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     (inbox / "yt_standoff1234.mp4").write_bytes(b"x")
     state_path = root / "vod_segment_state.json"
     state_path.write_text(
-        json.dumps({"vods": [{"id": "standoff1234", "exhausted": True, "reject_reason": "none"}]}),
+        json.dumps(
+            {
+                "vods": [
+                    {
+                        "id": "standoff1234",
+                        "exhausted": True,
+                        "reject_reason": "pubg_singles_exhausted",
+                        "dense_rejected_peaks": [100.0, 200.0],
+                        "singles_zero_send_streak": 8,
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("SHOOTER_STANDOFF_DATA_ROOT", str(root))
@@ -30,3 +42,5 @@ def test_reset_clears_exhausted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["vods"][0]["exhausted"] is False
     assert "reject_reason" not in state["vods"][0]
+    assert "dense_rejected_peaks" not in state["vods"][0]
+    assert "singles_zero_send_streak" not in state["vods"][0]

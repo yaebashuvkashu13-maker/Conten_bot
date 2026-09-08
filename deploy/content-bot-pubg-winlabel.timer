@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic PUBG window-label spam (learnable loop)
+
+[Timer]
+# Every 20 minutes while you are rating; independent of VOD feed.
+OnBootSec=3min
+OnUnitActiveSec=20min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

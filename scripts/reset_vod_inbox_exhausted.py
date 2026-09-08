@@ -56,6 +56,12 @@ def reset_game(
             row["exhausted"] = False
             if clear_reject_reason:
                 row.pop("reject_reason", None)
+            # Prior gate rejects must not permanently mine out the VOD after heal —
+            # otherwise auto-heal clears exhausted and the next tick immediately
+            # reports "no sendable peaks" from stale dense_rejected_peaks.
+            row.pop("dense_rejected_peaks", None)
+            row.pop("singles_zero_send_streak", None)
+            row.pop("last_scan_blocked", None)
         reset += 1
 
     if not dry_run and reset:
