@@ -36,7 +36,7 @@ TikTok **не** через `tiktoksearch`/`tag` (в yt-dlp помечены brok
 
 Instagram без cookies **не стартует**. Netscape cookies → `/root/instagram_cookies.txt` (расширение «Get cookies.txt LOCALLY» в браузере, залогинься в IG → экспорт).
 
-**VK:** ссылки на каждое видео **не нужны** — достаточно канала (`https://vk.ru/pubgkotleta`, вкладка Клипы). Но VK режет ботов: один раз нужен **user**-токен со scope `video` в `PUBG_VK_ACCESS_TOKEN` (group-токен MLBB не подойдёт), либо cookies в `/root/vk_cookies.txt`.
+**VK:** ссылки на каждое видео **не нужны** — достаточно каналов (`pubgkotleta`, `club239893669`, `club201271677`, `pubgmgasper0`, `metroshop_pubg1` — клипы PUBG). Но VK режет ботов: один раз нужен **user**-токен со scope `video` в `PUBG_VK_ACCESS_TOKEN` (group-токен MLBB не подойдёт), либо cookies в `/root/vk_cookies.txt`.
 Скачанное сразу попадает в локальный скорер → таблица параметров.
 
 ```bash

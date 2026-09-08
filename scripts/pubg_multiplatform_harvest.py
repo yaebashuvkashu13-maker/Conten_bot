@@ -74,13 +74,21 @@ VK_VIDEO_URLS = (
 )
 
 # Screen names / channel URLs — enough; no per-video links needed.
-# Owner of https://vk.ru/pubgkotleta → group 230808874 (clips tab = PUBG).
+# Clips tabs on these communities are PUBG-only (owner-confirmed).
 VK_CHANNELS = (
     "pubgkotleta",
+    "club239893669",  # Pubg kotleta
+    "club201271677",  # PUBG mobile metro
+    "pubgmgasper0",
+    "metroshop_pubg1",
 )
 
 VK_CHANNEL_OWNER_IDS = {
     "pubgkotleta": -230808874,
+    "club239893669": -239893669,
+    "club201271677": -201271677,
+    "pubgmgasper0": -228773005,
+    "metroshop_pubg1": -213549615,
 }
 
 
@@ -551,6 +559,12 @@ def _vk_owner_id(screen: str, *, token: str) -> int | None:
     key = screen.strip().lstrip("@").lower()
     if key in VK_CHANNEL_OWNER_IDS:
         return int(VK_CHANNEL_OWNER_IDS[key])
+    # club123456 / public123456 without API.
+    m = re.fullmatch(r"(?:club|public)(\d+)", key)
+    if m:
+        return -int(m.group(1))
+    if key.isdigit():
+        return -int(key)
     if not token:
         return None
     try:

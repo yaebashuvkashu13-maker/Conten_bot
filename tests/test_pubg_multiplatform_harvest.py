@@ -40,10 +40,12 @@ def test_harvest_vk_skips_without_user_token(monkeypatch) -> None:
 
 
 def test_vk_channels_parse_url() -> None:
-    from pubg_multiplatform_harvest import _vk_channels
+    from pubg_multiplatform_harvest import _vk_channels, _vk_owner_id
 
     assert _vk_channels({"PUBG_VK_CHANNELS": "https://vk.ru/pubgkotleta"}) == ["pubgkotleta"]
-    assert _vk_channels({})[0] == "pubgkotleta"
+    assert "metroshop_pubg1" in _vk_channels({})
+    assert _vk_owner_id("club239893669", token="") == -239893669
+    assert _vk_owner_id("pubgmgasper0", token="") == -228773005
 
 
 def test_proxy_alive_false_for_closed_port() -> None:
