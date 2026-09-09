@@ -822,24 +822,30 @@ def probe_vod_cuts(
     from pubg_sent_param_ranges import evaluate_against_ranges
     from pubg_window_label_queue import render_preview
 
-    # Cheap peaks: prefer montage gun discovery, else fixed grid.
-    peaks: list[float] = []
-    try:
-        from shooter_vod_fast_scan import discover_montage_gun_peaks
+    # Default: fixed grid. Gun-peak discovery ffprobe-hangs on multi-GB inbox VODs.
+    peaks: list[float] = [30.0, 90.0, 150.0, 240.0, 360.0, 480.0, 600.0, 720.0, 900.0]
+    if os.environ.get("PUBG_SHORTS_PROBE_GUN_PEAKS", "0") == "1":
+        try:
+            from shooter_vod_fast_scan import discover_montage_gun_peaks
 
-        peaks, _reason = discover_montage_gun_peaks(vod, "pubg", min_clips=5, gap_sec=40.0)
-        peaks = [float(p) for p in (peaks or [])][:40]
-    except Exception:
-        peaks = []
-    if not peaks:
-        peaks = [30.0, 90.0, 150.0, 240.0, 360.0, 480.0, 600.0]
+            gun_peaks, _reason = discover_montage_gun_peaks(
+                vod, "pubg", min_clips=5, gap_sec=40.0
+            )
+            gun_peaks = [float(p) for p in (gun_peaks or [])][:40]
+            if gun_peaks:
+                peaks = gun_peaks
+        except Exception as exc:  # noqa: BLE001
+            print(f"[probe] gun peaks skipped: {exc}", flush=True)
 
     preview_dir = data_root() / "vod_probes"
     preview_dir.mkdir(parents=True, exist_ok=True)
     from pubg_quality_score import score_pubg_window
 
-    scored: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    sent_n = 0
     for peak in peaks:
+        if sent_n >= count:
+            break
         start = max(0.0, float(peak) - 4.0)
         dur = 14.0
         try:
@@ -847,45 +853,21 @@ def probe_vod_cuts(
                 vod, start, dur, single=True, use_cache=True
             )
         except Exception as exc:  # noqa: BLE001
-            scored.append({"peak": peak, "error": str(exc)[:120]})
+            results.append({"peak": peak, "error": str(exc)[:120]})
             continue
         rng_ok, rng_reason, _ = evaluate_against_ranges(
             report,
             game="pubg",
             ranges_blob={**ranges_blob, "ready": True} if ranges_blob.get("ranges") else ranges_blob,
         )
-        scored.append(
-            {
-                "peak": peak,
-                "start": start,
-                "dur": dur,
-                "ok": ok,
-                "reason": reason,
-                "rng_ok": rng_ok,
-                "range_reason": rng_reason,
-                "report": report,
-            }
-        )
-
-    # Prefer in-range quality OK, then any quality OK, then anything scored.
-    preferred = [c for c in scored if c.get("rng_ok") and c.get("ok") and "error" not in c]
-    ok_only = [c for c in scored if c.get("ok") and "error" not in c and c not in preferred]
-    rest = [c for c in scored if "error" not in c and c not in preferred and c not in ok_only]
-    ordered = preferred + ok_only + (rest if soft else [])
-    if not ordered and soft:
-        ordered = [c for c in scored if "error" not in c]
-
-    results: list[dict[str, Any]] = [c for c in scored if "error" in c]
-    for cand in ordered:
-        if sum(1 for r in results if r.get("sent")) >= count:
-            break
-        start = float(cand["start"])
-        dur = float(cand["dur"])
+        # Strict mode: only silver in-range. Soft (default): always try to deliver.
+        if not soft and ranges_blob.get("ready") and not rng_ok:
+            continue
         dest = preview_dir / f"{vod.stem}_{int(start)}_{int(time.time())}.mp4"
         try:
             render_preview(vod, start, start + dur, dest)
         except Exception as exc:  # noqa: BLE001
-            results.append({"peak": cand.get("peak"), "error": f"render:{exc}"[:120]})
+            results.append({"peak": peak, "error": f"render:{exc}"[:120]})
             continue
         sent = False
         try:
@@ -894,12 +876,12 @@ def probe_vod_cuts(
 
             token = bot_token()
             chat = chat_id()
-            tag = "in-range" if cand.get("rng_ok") else ("borderline" if soft else "out-of-range")
+            tag = "in-range" if rng_ok else "borderline"
             caption = (
-                f"Shorts-autolearn проба #{sum(1 for r in results if r.get('sent')) + 1}\n"
+                f"Shorts-autolearn проба #{sent_n + 1}\n"
                 f"{vod.name} @ {int(start)}s ({tag})\n"
-                f"quality={'OK' if cand.get('ok') else str(cand.get('reason') or '')[:80]}\n"
-                f"range={cand.get('range_reason')}\n"
+                f"quality={'OK' if ok else str(reason)[:80]}\n"
+                f"range={rng_reason}\n"
                 f"Оцени: научился бот или нет? 👍/👎"
             )
             if token and chat:
@@ -913,18 +895,18 @@ def probe_vod_cuts(
             {
                 "vod": str(vod),
                 "start": start,
-                "ok": bool(cand.get("ok")),
-                "reason": cand.get("reason"),
-                "range_reason": cand.get("range_reason"),
+                "ok": bool(ok),
+                "reason": reason,
+                "range_reason": rng_reason,
                 "preview": str(dest),
                 "sent": sent,
             }
         )
-    print(
-        f"[probe] scored={len(scored)} preferred={len(preferred)} "
-        f"sent={sum(1 for r in results if r.get('sent'))}",
-        flush=True,
-    )
+        if sent:
+            sent_n += 1
+            print(f"[probe] sent #{sent_n} start={int(start)}s tag={tag}", flush=True)
+
+    print(f"[probe] attempts={len(results)} sent={sent_n}", flush=True)
     return results
 
 
