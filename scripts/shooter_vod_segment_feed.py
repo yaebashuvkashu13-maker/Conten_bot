@@ -44,6 +44,7 @@ from shooter_vod_segment_store import (
     _paths,
 )
 from shooter_owner_montage import (
+    boost_pool_near_owner_labels,
     merge_owner_hints_into_pool,
     owner_good_fight_peaks,
     owner_good_pool,
@@ -2441,6 +2442,9 @@ def _scan_vod(
             len(pool),
             int(bool(montage)),
         )
+    # Even when label-seed sends are off, 👍 must still boost nearby candidates.
+    if game == "pubg" and pool:
+        pool = boost_pool_near_owner_labels(game, vod, pool)
 
     pool_peaks = peaks_from_pool(pool)
     if not pool:

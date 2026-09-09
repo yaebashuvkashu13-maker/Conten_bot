@@ -22,6 +22,41 @@ def test_owner_peaks_empty_when_seed_sends_disabled(monkeypatch: pytest.MonkeyPa
     assert owner_good_fight_peaks("pubg", vod) == []
 
 
+def test_peak_near_owner_good_reads_labels_even_when_seed_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """👍 must still teach trust/ranking when labels are not the send queue."""
+    monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1")
+    monkeypatch.setenv("PUBG_OWNER_LABEL_SEED_SENDS", "0")
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_DGsoEt9znls.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "owner_labeled_good_times", lambda game, path: [606.0])
+    assert m.peak_near_owner_good("pubg", vod, 610.0) is True
+    assert m.peak_near_owner_good("pubg", vod, 100.0) is False
+    # Seeding still off — fight_peaks stay empty.
+    assert m.owner_good_fight_peaks("pubg", vod) == []
+
+
+def test_boost_pool_near_owner_labels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.20")
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_DGsoEt9znls.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "owner_labeled_good_times", lambda game, path: [606.0])
+    pool = [
+        {"start": 100.0, "score": 0.50},
+        {"start": 610.0, "score": 0.50},
+    ]
+    out = m.boost_pool_near_owner_labels("pubg", vod, pool)
+    by_start = {float(c["start"]): c for c in out}
+    assert by_start[610.0]["score"] == pytest.approx(0.70)
+    assert by_start[610.0].get("owner_anchor") is True
+    assert by_start[100.0]["score"] == pytest.approx(0.50)
+
+
 def test_owner_peaks_available_only_with_explicit_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1")
     monkeypatch.setenv("PUBG_OWNER_LABEL_SEED_SENDS", "1")

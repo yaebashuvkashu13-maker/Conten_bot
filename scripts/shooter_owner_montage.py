@@ -246,11 +246,77 @@ def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: fl
     return False
 
 
+def owner_labeled_good_times(game: str, vod: Path) -> list[float]:
+    """Owner 👍 timestamps for this VOD — always available for learning/trust.
+
+    Unlike owner_good_fight_peaks(), this is NOT gated by
+    PUBG_OWNER_LABEL_SEED_SENDS. Ratings must affect nearby trust / ranking
+    even when labels are forbidden from becoming the send queue.
+    """
+    if game != "pubg":
+        return []
+    out: list[float] = []
+    try:
+        from daily_game_cycle import profile_for_game
+        from vod_owner_learning import owner_labels_for_vod_scan
+
+        for row in owner_labels_for_vod_scan(vod, profile_for_game(game)):
+            if str(row.get("label") or "") != "good":
+                continue
+            try:
+                out.append(float(row["time_sec"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    except Exception as exc:  # noqa: BLE001
+        log.debug("owner good labels load failed: %s", exc)
+
+    # Also read segment-store good bucket directly (source of Telegram 👍).
+    try:
+        from shooter_vod_segment_store import _paths
+
+        path = _paths(game)["labels"]
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            vid = _video_id(vod)
+            for row in data.get("good", []):
+                sid = str(row.get("segment_id") or "")
+                vod_field = str(row.get("vod") or "")
+                row_vid = ""
+                if vod_field:
+                    vp = Path(vod_field)
+                    row_vid = vp.stem[3:] if vp.stem.startswith("yt_") else vp.stem
+                elif sid.startswith(f"{vid}_"):
+                    row_vid = vid
+                if row_vid != vid:
+                    continue
+                peak = row.get("peak_start", row.get("start"))
+                if peak is None and "_" in sid:
+                    try:
+                        peak = float(sid.rsplit("_", 1)[-1])
+                    except ValueError:
+                        continue
+                try:
+                    out.append(float(peak))
+                except (TypeError, ValueError):
+                    continue
+    except Exception as exc:  # noqa: BLE001
+        log.debug("owner good segment labels load failed: %s", exc)
+
+    deduped: list[float] = []
+    for t in sorted(out):
+        if any(abs(t - p) <= 4.0 for p in deduped):
+            continue
+        deduped.append(float(t))
+    return deduped
+
+
 def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
-    """Deduped owner-good fight times (hints only — never the send queue).
+    """Deduped owner-good fight times for optional send-queue seeding.
 
     Owner timestamps calibrate style/combat-act floors. They must NOT be
     prepended into the live Telegram send order unless explicitly enabled.
+    For trust / ranking near 👍, use owner_labeled_good_times() /
+    peak_near_owner_good() instead — those stay on even when seeding is off.
     """
     if not owner_anchor_montage_enabled():
         return []
@@ -276,6 +342,8 @@ def owner_good_fight_peaks(game: str, vod: Path) -> list[float]:
         peaks.extend(_peaks_from_pubg_calibration(vod))
     peaks.extend(_peaks_from_highlight_labels(vod, profile))
     peaks.extend(_peaks_from_feedback_labels(game, vod))
+    # Explicit Telegram 👍 times when seeding is enabled.
+    peaks.extend(owner_labeled_good_times(game, vod))
     peaks.sort()
     deduped: list[float] = []
     # Owner-marked fight acts must stay in the pool — including early-VOD
@@ -374,10 +442,53 @@ def peak_near_owner_good(
         if radius_sec is not None
         else os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "18")
     )
+    # Always consult stored 👍 labels — independent of send-queue seeding.
+    labeled = owner_labeled_good_times(game, vod)
+    for t in labeled:
+        if abs(float(peak_sec) - t) <= radius:
+            return True
+    # Fallback: seeded/calibration peaks when explicitly enabled.
     for t in owner_good_fight_peaks(game, vod):
         if abs(float(peak_sec) - t) <= radius:
             return True
     return False
+
+
+def boost_pool_near_owner_labels(
+    game: str,
+    vod: Path,
+    pool: list[dict],
+) -> list[dict]:
+    """Raise scores of candidates near owner 👍 without injecting label-only sends."""
+    goods = owner_labeled_good_times(game, vod)
+    if not goods or not pool:
+        return pool
+    boost = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.12"))
+    radius = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "18"))
+    merged: list[dict] = [dict(c) for c in pool]
+    boosted = 0
+    for clip in merged:
+        peak = float(clip.get("start", clip.get("peak_start", 0)) or 0)
+        if any(abs(peak - g) <= radius for g in goods):
+            clip["score"] = float(clip.get("score", 0) or 0) + boost
+            hm = dict(clip.get("highlight_metrics") or {})
+            hm["owner_label_boost"] = True
+            clip["highlight_metrics"] = hm
+            clip["owner_anchor"] = True
+            boosted += 1
+    if boosted:
+        log.info(
+            "owner-label boost game=%s vod=%s boosted=%s goods=%s",
+            game,
+            vod.name,
+            boosted,
+            [int(g) for g in goods[:8]],
+        )
+        merged.sort(
+            key=lambda c: (1 if c.get("owner_anchor") else 0, float(c.get("score", 0) or 0)),
+            reverse=True,
+        )
+    return merged
 
 
 def _gunfire_evidence(metrics: dict | None, gate_reason: str) -> bool:

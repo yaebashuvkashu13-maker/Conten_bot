@@ -66,6 +66,7 @@ def test_owner_good_fight_peaks_keep_early_acts(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1")
     monkeypatch.setenv("SHOOTER_OWNER_GOOD_MIN_PEAK_SEC", "0")
+    monkeypatch.setenv("PUBG_OWNER_LABEL_SEED_SENDS", "1")
     labels_path = tmp_path / "labels.json"
     monkeypatch.setattr(cal, "LABELS_PATH", labels_path)
     labels = {
