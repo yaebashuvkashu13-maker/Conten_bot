@@ -119,10 +119,11 @@ def test_resolve_owner_neighborhood_bounds_trims_run_in(
     fake = types.ModuleType("pubg_shooting_gate")
     fake.pubg_probe_segment = _probe
     monkeypatch.setitem(sys.modules, "pubg_shooting_gate", fake)
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110")
     start, dur = m.resolve_owner_neighborhood_bounds(vod, 3991.0)
     assert start >= 3965.0
     assert start <= 3972.0
-    assert (start + dur) >= 4065.0
+    assert (start + dur) >= 4068.0
 
 
 def test_prescore_owner_neighborhood_keeps_passers(

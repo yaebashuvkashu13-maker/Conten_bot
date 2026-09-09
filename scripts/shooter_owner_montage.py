@@ -507,7 +507,7 @@ def resolve_owner_neighborhood_bounds(
 
     min_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_GUN", "0.055"))
     min_burst = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_BURST", "3.2"))
-    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "95"))
+    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110"))
     min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35"))
     pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "2.5"))
     pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "4.0"))
