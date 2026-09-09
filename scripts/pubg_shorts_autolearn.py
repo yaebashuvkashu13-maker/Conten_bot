@@ -1123,7 +1123,13 @@ def run_owner_probes(
     sent_n = sum(1 for r in results if r.get("sent"))
     if sent_n >= count:
         return results
-    if os.environ.get("PUBG_SHORTS_PROBE_SHORTS_FALLBACK", "1") != "1":
+    # Default OFF: owner expects VOD cuts, not Shorts/TikToks.
+    if os.environ.get("PUBG_SHORTS_PROBE_SHORTS_FALLBACK", "0") != "1":
+        if sent_n < count:
+            print(
+                f"[probe] VOD-only mode: sent={sent_n}/{count} (shorts fallback disabled)",
+                flush=True,
+            )
         return results
     need = count - sent_n
     print(f"[probe] VOD sent={sent_n}; falling back to quality_ok shorts need={need}", flush=True)
