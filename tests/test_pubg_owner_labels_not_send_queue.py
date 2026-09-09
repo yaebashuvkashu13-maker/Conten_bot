@@ -126,6 +126,77 @@ def test_resolve_owner_neighborhood_bounds_trims_run_in(
     assert (start + dur) >= 4068.0
 
 
+def test_resolve_owner_neighborhood_does_not_end_mid_gun(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """zRQC@4264: high gun + low burst must not stop the act; min_dur must not land mid-burst."""
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
+
+    def _probe(_vod, t, _dur):
+        tt = float(t)
+        # Strict onset around 4267 (gun+burst).
+        if 4264 <= tt <= 4280:
+            return {"gunfire_density": 0.08, "burst_ratio": 4.0, "center_motion": 0.06}
+        # Hot climax with LOW burst (old bug stopped here) through ~4305.
+        if 4280 < tt <= 4305:
+            return {"gunfire_density": 0.15, "burst_ratio": 2.0, "center_motion": 0.07}
+        # Quiet landing.
+        return {"gunfire_density": 0.01, "burst_ratio": 2.0, "center_motion": 0.05}
+
+    import types, sys
+
+    fake = types.ModuleType("pubg_shooting_gate")
+    fake.pubg_probe_segment = _probe
+    monkeypatch.setitem(sys.modules, "pubg_shooting_gate", fake)
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "6.0")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "10.0")
+    start, dur = m.resolve_owner_neighborhood_bounds(vod, 4267.0)
+    end = start + dur
+    # Must not end at the old 35s mid-burst cut (~4299).
+    assert end >= 4306.0, (start, dur, end)
+    assert end <= 4325.0, (start, dur, end)
+
+
+def test_resolve_owner_neighborhood_skips_reload_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Brief quiet then more gun = same fight; do not end in the lull."""
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
+
+    def _probe(_vod, t, _dur):
+        tt = float(t)
+        if 4264 <= tt <= 4300:
+            return {"gunfire_density": 0.12, "burst_ratio": 4.0, "center_motion": 0.06}
+        if 4300 < tt <= 4308:
+            return {"gunfire_density": 0.01, "burst_ratio": 2.0, "center_motion": 0.05}
+        if 4308 < tt <= 4335:
+            return {"gunfire_density": 0.14, "burst_ratio": 2.1, "center_motion": 0.07}
+        return {"gunfire_density": 0.01, "burst_ratio": 2.0, "center_motion": 0.05}
+
+    import types, sys
+
+    fake = types.ModuleType("pubg_shooting_gate")
+    fake.pubg_probe_segment = _probe
+    monkeypatch.setitem(sys.modules, "pubg_shooting_gate", fake)
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "6.0")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "10.0")
+    start, dur = m.resolve_owner_neighborhood_bounds(vod, 4267.0)
+    end = start + dur
+    assert end >= 4334.0, (start, dur, end)
+
+
 def test_prescore_owner_neighborhood_keeps_passers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

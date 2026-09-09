@@ -497,7 +497,9 @@ def resolve_owner_neighborhood_bounds(
 
     Scan ± around peak for gun onset / offset. Used for near-👍 assists so
     openings are not loot/run and tails are not truncated on live fire
-    (owner: zRQC@3960 useless start + cut mid-gun).
+    (owner: zRQC@3960 useless start + cut mid-gun; zRQC@4264 ended mid-burst
+    because offset required high burst while gun was still hot, then min_dur
+    padded into the climax).
     """
     try:
         from pubg_shooting_gate import pubg_probe_segment
@@ -507,19 +509,43 @@ def resolve_owner_neighborhood_bounds(
 
     min_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_GUN", "0.055"))
     min_burst = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_BURST", "3.2"))
+    # Continuation can be high gun / low burst (full-auto smear) — do not stop there.
+    cont_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_CONT_GUN", "0.04"))
+    quiet_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GUN", "0.035"))
+    # Reload / peek gaps are often 3–5s; require a longer quiet before ending.
+    quiet_need = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "6.0"))
+    look_ahead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "10.0"))
     max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110"))
     min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35"))
+    # Extra room past max_dur only to land on quiet instead of mid-burst.
+    quiet_grace = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "25"))
     pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "2.5"))
     pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "4.0"))
     step = 3.0
     peak_v = float(peak)
+    probe_cache: dict[int, dict] = {}
+
+    def _probe(t: float, win: float = 3.0) -> dict:
+        key = int(round(float(t) * 2))
+        hit = probe_cache.get(key)
+        if hit is not None:
+            return hit
+        row = pubg_probe_segment(vod, float(t), float(win))
+        probe_cache[key] = row
+        return row
+
+    def _gun_at(t: float) -> float:
+        if t < 0:
+            return 0.0
+        return float(_probe(t).get("gunfire_density") or 0.0)
 
     def _gunny(t: float) -> bool:
+        """Strict onset detector — real fight start, not run-in."""
         if t < 0:
             return False
         if _is_owner_rejected_peak("pubg", vod, t):
             return False
-        row = pubg_probe_segment(vod, float(t), 6.0)
+        row = _probe(t, 6.0)
         gun = float(row.get("gunfire_density") or 0.0)
         burst = float(row.get("burst_ratio") or 0.0)
         motion = float(row.get("center_motion") or 0.0)
@@ -527,6 +553,17 @@ def resolve_owner_neighborhood_bounds(
         if motion >= 0.13 and gun < min_gun:
             return False
         return gun >= min_gun and burst >= min_burst
+
+    def _still_hot(t: float) -> bool:
+        """Offset / tail: any clear gun means the act is not over."""
+        if t < 0:
+            return False
+        if _is_owner_rejected_peak("pubg", vod, t):
+            return False
+        return _gun_at(t) >= cont_gun
+
+    def _quiet_enough(t: float) -> bool:
+        return _gun_at(t) < quiet_gun and not _is_owner_rejected_peak("pubg", vod, t)
 
     onset = peak_v
     for back in range(0, 36, int(step)):
@@ -547,15 +584,35 @@ def resolve_owner_neighborhood_bounds(
         t = prev
         onset = t
 
+    def _hot_in_window(t0: float, span: float) -> float | None:
+        """Return first hot timestamp in [t0, t0+span], sampling finely."""
+        tt = float(t0)
+        limit = float(t0) + float(span)
+        fine = 1.0
+        while tt <= limit + 0.05:
+            if _is_owner_rejected_peak("pubg", vod, tt):
+                return None
+            if _still_hot(tt):
+                return tt
+            tt += fine
+        return None
+
     offset = peak_v
     t = peak_v
-    while (t - onset) < max_dur:
+    hard_end = onset + max_dur + quiet_grace
+    while t < hard_end:
         nxt = t + step
         if _is_owner_rejected_peak("pubg", vod, nxt):
             break
-        if _gunny(nxt) or _gunny(nxt - 1.0):
+        if _still_hot(nxt) or _still_hot(nxt - 1.0):
             offset = nxt
             t = nxt
+            continue
+        # Brief lull — peek ahead before declaring the act over.
+        resume_at = _hot_in_window(nxt, look_ahead)
+        if resume_at is not None:
+            offset = resume_at
+            t = resume_at
             continue
         break
 
@@ -563,15 +620,107 @@ def resolve_owner_neighborhood_bounds(
     end = offset + pad_after
     dur = end - start
     if dur < min_dur:
+        # Never pad blindly into a hotter climax (4264: 35s landed on peak gun).
         end = start + min_dur
-        dur = min_dur
-    if dur > max_dur:
-        end = start + max_dur
-        dur = max_dur
+        t = end
+        while t < start + max_dur + quiet_grace:
+            if _still_hot(t) or _still_hot(t - 1.0):
+                end = t + pad_after
+                t += step
+                continue
+            resume_at = _hot_in_window(t, look_ahead)
+            if resume_at is not None:
+                end = resume_at + pad_after
+                t = resume_at
+                continue
+            break
+        dur = end - start
+
+    # If the chosen end is still mid-burst, walk to a quiet landing.
+    if _still_hot(end - 1.0) or _still_hot(end - 2.0):
+        quiet = 0.0
+        t = end
+        landed = False
+        while t < start + max_dur + quiet_grace:
+            if _is_owner_rejected_peak("pubg", vod, t):
+                break
+            if _still_hot(t):
+                quiet = 0.0
+                end = t + pad_after
+                t += step
+                continue
+            if _quiet_enough(t):
+                quiet += step
+                end = t + 1.0
+                if quiet >= quiet_need:
+                    resume_at = _hot_in_window(t + 1.0, look_ahead)
+                    if resume_at is not None:
+                        quiet = 0.0
+                        t = resume_at
+                        end = t + pad_after
+                        continue
+                    landed = True
+                    break
+            else:
+                quiet = 0.0
+            t += step
+        if not landed and (end - start) > max_dur:
+            # Still hot at grace cap — keep the last max_dur (payoff), drop early lead.
+            target_end = end
+            new_start = max(0.0, target_end - max_dur)
+            if new_start > start:
+                start = max(onset - pad_before, new_start) if onset > new_start else new_start
+        dur = end - start
+
+    # Final pass: gun just past the cut still means mid-act (owner zRQC@4264).
+    guard = 0
+    while guard < 40:
+        guard += 1
+        resume_at = _hot_in_window(end - 0.5, look_ahead)
+        if resume_at is None or resume_at < end - 1.0:
+            break
+        if (resume_at - start) > max_dur + quiet_grace:
+            break
+        end = max(end, resume_at + pad_after)
+        quiet = 0.0
+        t = end
+        while t < start + max_dur + quiet_grace:
+            if _still_hot(t):
+                quiet = 0.0
+                end = t + pad_after
+                t += step
+                continue
+            if _quiet_enough(t):
+                quiet += step
+                end = t + 1.0
+                if quiet >= quiet_need:
+                    break
+            else:
+                quiet = 0.0
+            t += step
+        dur = end - start
+
+    # Soft cap: allow quiet_grace past max_dur only to avoid mid-burst cuts.
+    if dur > max_dur + quiet_grace:
+        end = start + max_dur + quiet_grace
+        dur = end - start
+    elif dur > max_dur and not (_still_hot(end - 1.0) or _still_hot(end - 2.0)):
+        # Already quiet — trim grace fat if we overshot a lot without need.
+        if dur > max_dur + 8.0:
+            end = start + min(dur, max_dur + quiet_grace)
+            dur = end - start
+
     # Never enter a known 👎 neighborhood at the tail.
     if _is_owner_rejected_peak("pubg", vod, end - 1.0):
         end = max(start + min_dur, end - 12.0)
         dur = end - start
+    log.info(
+        "owner-neighborhood bounds peak=%.1f start=%.1f end=%.1f dur=%.1f",
+        peak_v,
+        start,
+        end,
+        dur,
+    )
     return float(start), float(dur)
 
 
