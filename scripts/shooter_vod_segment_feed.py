@@ -1147,22 +1147,50 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
         or (prepared.get("owner_anchor") and clip_in.get("bounds_locked"))
     )
     # Keep the fixed near-👍 window — do not let fight-segmenter remap it.
-    if owner_direct and not clip_in.get("bounds_locked"):
-        lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
-        dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
-        peak = float(prepared.get("peak_start", clip_in.get("peak_start", 0)) or 0)
-        start = max(0.0, peak - lead)
-        clip_in = {
-            **clip_in,
-            "start": start,
-            "peak_start": peak,
-            "input_duration": dur,
-            "output_duration": dur,
-            "bounds_locked": True,
-            "owner_neighborhood_direct": True,
-        }
-        prepared["clip"] = clip_in
-        prepared["start"] = start
+    # Prefer gun-onset/offset snap so we don't ship empty lead or mid-gun cuts.
+    if owner_direct:
+        peak0 = float(prepared.get("peak_start", clip_in.get("peak_start", 0)) or 0)
+        if os.environ.get("PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "1") == "1" and peak0 > 0:
+            try:
+                from shooter_owner_montage import resolve_owner_neighborhood_bounds
+
+                start_s, dur_s = resolve_owner_neighborhood_bounds(vod, peak0)
+                clip_in = {
+                    **clip_in,
+                    "start": float(start_s),
+                    "peak_start": peak0,
+                    "input_duration": float(dur_s),
+                    "output_duration": float(dur_s),
+                    "bounds_locked": True,
+                    "owner_neighborhood_direct": True,
+                    "gun_snapped": True,
+                }
+                prepared["clip"] = clip_in
+                prepared["start"] = float(start_s)
+                log.info(
+                    "owner-neighborhood gun-snap peak=%.1f -> start=%.1f dur=%.1f",
+                    peak0,
+                    start_s,
+                    dur_s,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("owner-neighborhood gun-snap failed: %s", exc)
+        if not clip_in.get("bounds_locked"):
+            lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
+            dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
+            peak = float(prepared.get("peak_start", clip_in.get("peak_start", 0)) or 0)
+            start = max(0.0, peak - lead)
+            clip_in = {
+                **clip_in,
+                "start": start,
+                "peak_start": peak,
+                "input_duration": dur,
+                "output_duration": dur,
+                "bounds_locked": True,
+                "owner_neighborhood_direct": True,
+            }
+            prepared["clip"] = clip_in
+            prepared["start"] = start
     clip = _prepare_montage_clip(prepared, vod, part_max=999.0, game="pubg", single=single)
     if clip.get("shape_reject"):
         return None

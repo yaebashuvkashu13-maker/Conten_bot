@@ -92,9 +92,37 @@ def test_build_owner_neighborhood_send_rows_locks_bounds(
     assert rows
     assert all(r.get("owner_neighborhood_direct") for r in rows)
     assert all(r["clip"].get("bounds_locked") for r in rows)
-    assert all(float(r["clip"]["input_duration"]) == 45.0 for r in rows)
+    assert all(float(r["clip"]["input_duration"]) >= 35.0 for r in rows)
     # Exact 👍 peak must not be re-queued (offset 0 excluded).
     assert all(abs(float(r["peak_start"]) - 2141.5) >= 12.0 for r in rows)
+
+
+def test_resolve_owner_neighborhood_bounds_trims_run_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
+
+    def _probe(_vod, t, _dur):
+        # Run-in junk before 3970; gun act 3970-4070.
+        if float(t) < 3968:
+            return {"gunfire_density": 0.02, "burst_ratio": 3.0, "center_motion": 0.16}
+        if float(t) <= 4070:
+            return {"gunfire_density": 0.09, "burst_ratio": 4.5, "center_motion": 0.08}
+        return {"gunfire_density": 0.01, "burst_ratio": 2.0, "center_motion": 0.05}
+
+    import types, sys
+
+    fake = types.ModuleType("pubg_shooting_gate")
+    fake.pubg_probe_segment = _probe
+    monkeypatch.setitem(sys.modules, "pubg_shooting_gate", fake)
+    start, dur = m.resolve_owner_neighborhood_bounds(vod, 3991.0)
+    assert start >= 3965.0
+    assert start <= 3972.0
+    assert (start + dur) >= 4065.0
 
 
 def test_prescore_owner_neighborhood_keeps_passers(

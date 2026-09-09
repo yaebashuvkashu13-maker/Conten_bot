@@ -486,6 +486,95 @@ def owner_neighborhood_probe_peaks(
     return out
 
 
+def resolve_owner_neighborhood_bounds(
+    vod: Path,
+    peak: float,
+    *,
+    lead_fallback: float = 8.0,
+    dur_fallback: float = 45.0,
+) -> tuple[float, float]:
+    """Trim empty lead and keep the gun act — fixed lead/dur kept cutting mid-fight.
+
+    Scan ± around peak for gun onset / offset. Used for near-👍 assists so
+    openings are not loot/run and tails are not truncated on live fire
+    (owner: zRQC@3960 useless start + cut mid-gun).
+    """
+    try:
+        from pubg_shooting_gate import pubg_probe_segment
+    except Exception:
+        start = max(0.0, float(peak) - float(lead_fallback))
+        return start, float(dur_fallback)
+
+    min_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_GUN", "0.055"))
+    min_burst = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_BURST", "3.2"))
+    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "95"))
+    min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35"))
+    pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "2.5"))
+    pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "4.0"))
+    step = 3.0
+    peak_v = float(peak)
+
+    def _gunny(t: float) -> bool:
+        if t < 0:
+            return False
+        if _is_owner_rejected_peak("pubg", vod, t):
+            return False
+        row = pubg_probe_segment(vod, float(t), 6.0)
+        gun = float(row.get("gunfire_density") or 0.0)
+        burst = float(row.get("burst_ratio") or 0.0)
+        motion = float(row.get("center_motion") or 0.0)
+        # High locomotion + weak gun = run-in junk (3960 lead).
+        if motion >= 0.13 and gun < min_gun:
+            return False
+        return gun >= min_gun and burst >= min_burst
+
+    onset = peak_v
+    for back in range(0, 36, int(step)):
+        t = peak_v - float(back)
+        if t < 5:
+            break
+        if _gunny(t):
+            onset = t
+        else:
+            if back > 0:
+                break
+    # Walk further back while still gunny to find true onset.
+    t = onset
+    while t > 5:
+        prev = t - step
+        if not _gunny(prev):
+            break
+        t = prev
+        onset = t
+
+    offset = peak_v
+    t = peak_v
+    while (t - onset) < max_dur:
+        nxt = t + step
+        if _is_owner_rejected_peak("pubg", vod, nxt):
+            break
+        if _gunny(nxt) or _gunny(nxt - 1.0):
+            offset = nxt
+            t = nxt
+            continue
+        break
+
+    start = max(0.0, onset - pad_before)
+    end = offset + pad_after
+    dur = end - start
+    if dur < min_dur:
+        end = start + min_dur
+        dur = min_dur
+    if dur > max_dur:
+        end = start + max_dur
+        dur = max_dur
+    # Never enter a known 👎 neighborhood at the tail.
+    if _is_owner_rejected_peak("pubg", vod, end - 1.0):
+        end = max(start + min_dur, end - 12.0)
+        dur = end - start
+    return float(start), float(dur)
+
+
 def build_owner_neighborhood_send_rows(
     game: str,
     vod: Path,
@@ -513,8 +602,10 @@ def build_owner_neighborhood_send_rows(
     blocked = set(blocked_ids or [])
     used = list(used_peaks or [])
     lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
-    # 24s kept cutting mid-gun (zRQC@4045). Metro fights often run 40–55s.
+    # Fallback only — real bounds snap to gun onset/offset at prepare time.
     dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
+    # Snapping every candidate at build time is too slow; prepare does the snap.
+    snap = os.environ.get("PUBG_OWNER_NEIGHBORHOOD_SNAP_AT_BUILD", "0") == "1"
     # Skip offset 0 — that is the already-rated 👍 peak itself.
     raw = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_OFFSETS_SEC",
@@ -547,7 +638,17 @@ def build_owner_neighborhood_send_rows(
                 continue
             if any(abs(peak - float(u)) <= gap_sec for u in used):
                 continue
-            start = max(0.0, peak - lead)
+            if snap:
+                try:
+                    start, clip_dur = resolve_owner_neighborhood_bounds(
+                        vod, peak, lead_fallback=lead, dur_fallback=dur
+                    )
+                except Exception:
+                    start = max(0.0, peak - lead)
+                    clip_dur = dur
+            else:
+                start = max(0.0, peak - lead)
+                clip_dur = dur
             sid = segment_id(vid, start)
             if sid in blocked:
                 continue
@@ -564,11 +665,12 @@ def build_owner_neighborhood_send_rows(
                     "clip": {
                         "start": float(start),
                         "peak_start": float(peak),
-                        "input_duration": dur,
-                        "output_duration": dur,
+                        "input_duration": float(clip_dur),
+                        "output_duration": float(clip_dur),
                         "bounds_locked": True,
                         "owner_anchor": True,
                         "owner_neighborhood_direct": True,
+                        "gun_snapped": bool(snap),
                     },
                 }
             )
