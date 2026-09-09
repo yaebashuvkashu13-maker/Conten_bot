@@ -228,7 +228,9 @@ def _fight_candidate_owner_review_ok(
         return False
     gun_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_GUN", "0.050"))
     burst_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_BURST", "4.0"))
-    panns_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_PANNS", "0.40"))
+    # 0.35 matches style-combat / owner act PANNs floor; 0.40 was starving
+    # OCR-blind Metro peaks that re-score ~0.39 after window jitter.
+    panns_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_PANNS", "0.35"))
     if float(gun) < gun_min or float(burst) < burst_min or float(panns_gun) < panns_min:
         return False
     speech_music = max(
@@ -236,8 +238,8 @@ def _fight_candidate_owner_review_ok(
         float(panns.get("panns_music", 0.0) or 0.0),
     )
     # Commentary-over-quiet-gameplay: DSP gun + speech/music, tiny real gun PANNs.
-    abs_panns = float(os.environ.get("PUBG_FIGHT_CANDIDATE_ABS_PANNS", "0.55"))
-    ratio = float(os.environ.get("PUBG_FIGHT_CANDIDATE_PANNS_SPEECH_RATIO", "0.75"))
+    abs_panns = float(os.environ.get("PUBG_FIGHT_CANDIDATE_ABS_PANNS", "0.50"))
+    ratio = float(os.environ.get("PUBG_FIGHT_CANDIDATE_PANNS_SPEECH_RATIO", "0.70"))
     if speech_music > 0.0 and float(panns_gun) < abs_panns:
         if float(panns_gun) < speech_music * ratio:
             return False

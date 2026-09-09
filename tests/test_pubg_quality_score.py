@@ -562,12 +562,12 @@ def test_fight_candidate_owner_review_passes_ocr_blind_combat(
     patches[3] = patch(
         "highlight_scorer.score_panns_audio",
         return_value={
-            "panns_gunshot": 0.62,
-            "panns_machine_gun": 0.55,
+            "panns_gunshot": 0.40,
+            "panns_machine_gun": 0.36,
             "panns_explosion": 0.05,
             "panns_speech": 0.25,
             "panns_music": 0.10,
-            "panns_gun_max": 0.62,
+            "panns_gun_max": 0.40,
         },
     )
     patches[4] = patch(
