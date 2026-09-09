@@ -768,11 +768,27 @@ def _validate_shooter_presend(
     # Drought recovery softens score floors only (vod_force_send / hang recover).
     # Do not reintroduce a presend-bypass shortcut for menu/loot under escalation.
     if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
-        from pubg_metro_royale_gate import segment_looks_metro_royale
+        owner_direct = bool(
+            row.get("owner_neighborhood_direct")
+            or (isinstance(row.get("clip"), dict) and row["clip"].get("owner_neighborhood_direct"))
+        )
+        # Inbox VOD already passed metro title trust; per-window sky votes are
+        # noisy and were killing prescored near-👍 cuts the manual path shipped.
+        skip_metro_seg = owner_direct and os.environ.get(
+            "PUBG_OWNER_NEIGHBORHOOD_SKIP_METRO_SEG", "1"
+        ) == "1"
+        if not skip_metro_seg:
+            from pubg_metro_royale_gate import segment_looks_metro_royale
 
-        ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
-        if not ok_metro:
-            return False, metro_reason, {"metro": metro_reason}
+            ok_metro, metro_reason = segment_looks_metro_royale(vod, start, dur)
+            if not ok_metro:
+                return False, metro_reason, {"metro": metro_reason}
+        else:
+            log.info(
+                "owner-neighborhood skip metro-seg gate start=%.1f dur=%.1f",
+                start,
+                dur,
+            )
     if game == "pubg" and _pubg_score_mode_ready():
         from pubg_clip_shape_gate import validate_clip_fight_shape
         from pubg_quality_score import score_pubg_window
@@ -1867,7 +1883,14 @@ def _send_batch(
     sent = 0
     # Final CLIP quality gate on the single chosen clip (discovery stays CLIP-off).
     to_send_ranked = list(to_send)
-    if os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1":
+    owner_direct_batch = any(
+        bool(r.get("owner_neighborhood_direct") or (r.get("clip") or {}).get("owner_neighborhood_direct"))
+        for r in to_send
+    )
+    if (
+        os.environ.get("SHOOTER_VOD_MONTAGE_CLIP_RANK", "1") == "1"
+        and not owner_direct_batch
+    ):
         prev_clip_disabled = os.environ.get("HIGHLIGHT_CLIP_DISABLED")
         os.environ["HIGHLIGHT_CLIP_DISABLED"] = "0"
         try:
@@ -1884,6 +1907,8 @@ def _send_batch(
                 os.environ.pop("HIGHLIGHT_CLIP_DISABLED", None)
             else:
                 os.environ["HIGHLIGHT_CLIP_DISABLED"] = prev_clip_disabled
+    elif owner_direct_batch:
+        log.info("owner-neighborhood skip CLIP rank — use prescored fixed window")
     for row in to_send_ranked[:1]:
         sid = row["segment_id"]
         clip = dict(row.get("clip") or {})
@@ -2089,41 +2114,52 @@ def _send_batch(
                     continue
 
         if os.environ.get("DISLIKE_REASON_GATES", "1") == "1":
-            try:
-                from dislike_reason_gates import evaluate_reason_gates, recent_dislike_reasons
-                pr = presend_report if isinstance(presend_report, dict) else {}
-                author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
-                reason_metrics = {
-                    **pr,
-                    "gun_density": float(pr.get("gunfire_density") or pr.get("gun_density") or 0.0),
-                    "burst_ratio": float(pr.get("burst_ratio") or pr.get("gun_burst_ratio") or 0.0),
-                    "center_motion": float(pr.get("center_motion") or pr.get("motion") or 0.0),
-                    "menu_overlay": float(pr.get("center_text") or pr.get("menu_overlay") or 0.0),
-                    "has_author_kill": bool(
-                        pr.get("has_author_kill")
-                        or author.get("has_author_kill")
-                    ),
-                    "kill_notification_hit": bool(pr.get("kill_notification_hit")),
-                    "killfeed_density": float(pr.get("killfeed_density") or 0.0),
-                    "kill_notification_score": float(
-                        pr.get("kill_notification_score") or 0.0
-                    ),
-                    "fight_candidate_owner_review": bool(
-                        pr.get("fight_candidate_owner_review")
-                    ),
-                    "near_owner_good": bool(
-                        pr.get("near_owner_good")
-                        or pr.get("owner_good_window")
-                        or row.get("owner_anchor")
-                    ),
-                }
-                rg_ok, rg_reason, rg_report = evaluate_reason_gates(
-                    reason_metrics,
-                    active_reasons=recent_dislike_reasons(game),
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("dislike reason gates error sid=%s: %s", sid, exc)
-                rg_ok, rg_reason, rg_report = False, f"reason_gates_error:{exc}", {}
+            owner_direct = bool(
+                row.get("owner_neighborhood_direct")
+                or (isinstance(row.get("clip"), dict) and row["clip"].get("owner_neighborhood_direct"))
+            )
+            # Manual near-👍 path: score_pubg_window then send. Extra dislike
+            # floors (raised by unrelated 👎) were killing the same windows.
+            if owner_direct and os.environ.get(
+                "PUBG_OWNER_NEIGHBORHOOD_SKIP_DISLIKE", "1"
+            ) == "1":
+                rg_ok, rg_reason, rg_report = True, "owner_neighborhood_skip_dislike", {}
+            else:
+                try:
+                    from dislike_reason_gates import evaluate_reason_gates, recent_dislike_reasons
+                    pr = presend_report if isinstance(presend_report, dict) else {}
+                    author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
+                    reason_metrics = {
+                        **pr,
+                        "gun_density": float(pr.get("gunfire_density") or pr.get("gun_density") or 0.0),
+                        "burst_ratio": float(pr.get("burst_ratio") or pr.get("gun_burst_ratio") or 0.0),
+                        "center_motion": float(pr.get("center_motion") or pr.get("motion") or 0.0),
+                        "menu_overlay": float(pr.get("center_text") or pr.get("menu_overlay") or 0.0),
+                        "has_author_kill": bool(
+                            pr.get("has_author_kill")
+                            or author.get("has_author_kill")
+                        ),
+                        "kill_notification_hit": bool(pr.get("kill_notification_hit")),
+                        "killfeed_density": float(pr.get("killfeed_density") or 0.0),
+                        "kill_notification_score": float(
+                            pr.get("kill_notification_score") or 0.0
+                        ),
+                        "fight_candidate_owner_review": bool(
+                            pr.get("fight_candidate_owner_review")
+                        ),
+                        "near_owner_good": bool(
+                            pr.get("near_owner_good")
+                            or pr.get("owner_good_window")
+                            or row.get("owner_anchor")
+                        ),
+                    }
+                    rg_ok, rg_reason, rg_report = evaluate_reason_gates(
+                        reason_metrics,
+                        active_reasons=recent_dislike_reasons(game),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("dislike reason gates error sid=%s: %s", sid, exc)
+                    rg_ok, rg_reason, rg_report = False, f"reason_gates_error:{exc}", {}
             if not rg_ok:
                 log.warning("dislike reason REJECT %s: %s", sid, rg_reason)
                 _ledger_record_decision(
