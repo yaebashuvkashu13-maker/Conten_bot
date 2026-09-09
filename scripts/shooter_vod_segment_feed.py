@@ -1890,7 +1890,12 @@ def _send_batch(
         and (_pubg_single_fallback_enabled() or skip_montage or _pubg_singles_first_enabled())
     )
     if pubg_single:
-        prepared = _prepare_pubg_row_for_send(to_send[0], vod, single=True)
+        already = to_send[0]
+        clip0 = already.get("clip") if isinstance(already.get("clip"), dict) else {}
+        if clip0.get("gun_snapped") and already.get("segment_id"):
+            prepared = already
+        else:
+            prepared = _prepare_pubg_row_for_send(to_send[0], vod, single=True)
         if prepared is None:
             log.warning(
                 "pubg single fallback rejected peak=%.1f",
@@ -2260,6 +2265,42 @@ def _send_batch(
                     f"⚠ нет kill UI — combat-act кандидат | {presend_reason}\n"
                     f"👍 Ок / 👎 Не ок"
                 )
+        send_markup = reply_markup
+        # Gun-snap rewrites start/sid after the caller built reply_markup with the
+        # old peak−lead id — buttons then 404 on 👍/👎 (zRQC@_4411 vs caption #_4416).
+        if game == "pubg" and send_markup is not None:
+            try:
+                from pubg_vod_singles_first import singles_keyboard
+
+                old_cb = ""
+                for mk_row in send_markup.get("inline_keyboard") or []:
+                    for btn in mk_row:
+                        cb = str(btn.get("callback_data") or "")
+                        if "_yes:" in cb or "_no:" in cb:
+                            old_cb = cb.split(":", 1)[-1].strip()
+                            break
+                    if old_cb:
+                        break
+                has_assemble = any(
+                    "assemble" in str(btn.get("callback_data") or "")
+                    for mk_row in (send_markup.get("inline_keyboard") or [])
+                    for btn in mk_row
+                )
+                if old_cb and old_cb != sid:
+                    log.warning(
+                        "rebuild rating keyboard stale_sid=%s -> sid=%s",
+                        old_cb,
+                        sid,
+                    )
+                    send_markup = singles_keyboard(
+                        game,
+                        sid,
+                        vod_youtube_id(vod),
+                        show_assemble=bool(singles_final or has_assemble),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("keyboard sid sync failed sid=%s: %s", sid, exc)
+                send_markup = keyboard(game, sid)
         if send_video(
             token,
             chat_id,
@@ -2267,7 +2308,7 @@ def _send_batch(
             caption,
             seg_id=sid,
             record_learning=False,
-            reply_markup=reply_markup or keyboard(game, sid),
+            reply_markup=send_markup or keyboard(game, sid),
             cycle_game=game,
         ):
             upsert_segment(
@@ -2735,6 +2776,13 @@ def _scan_vod(
                     entry["exhausted"] = True
                     entry["reject_reason"] = "pubg_singles_exhausted"
                 return 0
+            # Snap bounds before building the keyboard so callback sid matches caption.
+            prepared_row = _prepare_pubg_row_for_send(row, vod, single=True)
+            if prepared_row is None:
+                skip_peaks.add(round(float(row.get("peak_start", row["start"])), 1))
+                peak_tries += 1
+                continue
+            row = prepared_row
             if state is not None:
                 set_active_vod(state, vid)
             markup = singles_keyboard(

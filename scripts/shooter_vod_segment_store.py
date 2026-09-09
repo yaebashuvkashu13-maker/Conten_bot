@@ -154,7 +154,56 @@ def find_segment(game: str, segment_id_str: str) -> dict | None:
     direct = _paths(game)["segments"] / f"seg_{sid}.mp4"
     if direct.exists():
         return {"segment_id": sid, "path": str(direct), "start": 0, "score": 0}
-    return None
+    # Gun-snap can rewrite start after the Telegram keyboard was built with the
+    # old peak−lead sid (owner: alert «Не нашёл …_4411» on caption #…_4416).
+    return find_segment_near_sid(game, sid)
+
+
+def find_segment_near_sid(
+    game: str,
+    segment_id_str: str,
+    *,
+    window_sec: float | None = None,
+) -> dict | None:
+    """Resolve a stale keyboard sid to the indexed clip after bounds remap."""
+    sid = segment_id_str.strip()
+    if "_" not in sid:
+        return None
+    vod_id, _, tail = sid.rpartition("_")
+    try:
+        stamp = float(tail)
+    except ValueError:
+        return None
+    try:
+        window = float(
+            window_sec
+            if window_sec is not None
+            else os.environ.get("PUBG_VSEG_SID_REMAP_WINDOW_SEC", "12")
+        )
+    except ValueError:
+        window = 12.0
+    best: dict | None = None
+    best_dist = window + 1.0
+    for row in load_index(game).get("segments", []):
+        if str(row.get("vod_id") or "") != vod_id and not str(row.get("segment_id") or "").startswith(
+            f"{vod_id}_"
+        ):
+            continue
+        try:
+            start = float(row.get("start") or 0.0)
+            peak = float(row.get("peak_start") if row.get("peak_start") is not None else start)
+        except (TypeError, ValueError):
+            continue
+        dist = min(abs(start - stamp), abs(peak - stamp), abs(peak - 8.0 - stamp))
+        if dist <= window and dist < best_dist:
+            path = Path(str(row.get("path") or ""))
+            if not path.exists():
+                alt = _paths(game)["segments"] / f"seg_{row.get('segment_id')}.mp4"
+                if not alt.exists():
+                    continue
+            best = row
+            best_dist = dist
+    return best
 
 
 def montage_parts_from_segment(game: str, segment_id_str: str) -> list[dict]:
@@ -202,9 +251,12 @@ def apply_owner_label(
     reason: str = "",
     by_chat: str = "",
 ) -> tuple[bool, str]:
-    row = find_segment(game, segment_id_str)
+    requested = segment_id_str.strip()
+    row = find_segment(game, requested)
     if not row:
-        return False, f"unknown_segment:{segment_id_str}"
+        return False, f"unknown_segment:{requested}"
+    # Prefer the indexed sid after gun-snap remap so labels land on the real clip.
+    segment_id_str = str(row.get("segment_id") or requested).strip()
     path = Path(row.get("path", ""))
     if not path.exists():
         path = _paths(game)["segments"] / f"seg_{segment_id_str}.mp4"

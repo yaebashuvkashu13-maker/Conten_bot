@@ -62,6 +62,29 @@ def test_apply_owner_label_records_feedback(pubg_data: Path) -> None:
     assert labels["good"][0].get("exemplar", "").endswith("vod_abc123_42.mp4")
 
 
+def test_apply_owner_label_resolves_stale_gun_snap_sid(pubg_data: Path) -> None:
+    """Keyboard kept peak−lead sid; index has gun-snapped start (4411 vs 4416)."""
+    path = pubg_data / "segments" / "seg_zRQC8jkxbXQ_4416.mp4"
+    path.write_bytes(b"fake")
+    upsert_segment(
+        "pubg",
+        {
+            "segment_id": "zRQC8jkxbXQ_4416",
+            "path": str(path),
+            "vod": "/tmp/yt_zRQC8jkxbXQ.mp4",
+            "vod_id": "zRQC8jkxbXQ",
+            "start": 4416.5,
+            "peak_start": 4419.0,
+            "score": 0.7,
+        },
+    )
+    ok, label = apply_owner_label("pubg", "zRQC8jkxbXQ_4411", is_good=False, reason="test", by_chat="1")
+    assert ok is True
+    assert label == "bad"
+    labels = json.loads((pubg_data / "vod_segment_labels.json").read_text(encoding="utf-8"))
+    assert labels["bad"][0]["segment_id"] == "zRQC8jkxbXQ_4416"
+
+
 def test_apply_owner_label_writes_owner_json_and_exemplar(
     pubg_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
