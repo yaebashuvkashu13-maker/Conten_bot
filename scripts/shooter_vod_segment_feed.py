@@ -1149,7 +1149,7 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
     # Keep the fixed near-👍 window — do not let fight-segmenter remap it.
     if owner_direct and not clip_in.get("bounds_locked"):
         lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
-        dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24"))
+        dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
         peak = float(prepared.get("peak_start", clip_in.get("peak_start", 0)) or 0)
         start = max(0.0, peak - lead)
         clip_in = {
@@ -3110,7 +3110,7 @@ def _scan_vod_with_adaptive(
                         os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8")
                     )
                     owner_dur = float(
-                        os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+                        os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45")
                     )
                     for idx, peak in enumerate(dense_peaks):
                         if any(abs(float(peak) - bad) <= 4.0 for bad in rejected_peaks):

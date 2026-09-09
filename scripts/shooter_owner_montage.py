@@ -513,7 +513,8 @@ def build_owner_neighborhood_send_rows(
     blocked = set(blocked_ids or [])
     used = list(used_peaks or [])
     lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
-    dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24"))
+    # 24s kept cutting mid-gun (zRQC@4045). Metro fights often run 40–55s.
+    dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
     # Skip offset 0 — that is the already-rated 👍 peak itself.
     raw = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_OFFSETS_SEC",
@@ -610,7 +611,7 @@ def prescore_owner_neighborhood_rows(
         start = float(row.get("start") or (row.get("clip") or {}).get("start") or 0)
         dur = float(
             (row.get("clip") or {}).get("input_duration")
-            or os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+            or os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45")
         )
         scored += 1
         try:

@@ -79,7 +79,7 @@ def test_build_owner_neighborhood_send_rows_locks_bounds(
     monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1")
     monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_OFFSETS_SEC", "28,-28")
     monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8")
-    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45")
     import shooter_owner_montage as m
     import shooter_vod_segment_store as store
 
@@ -92,7 +92,7 @@ def test_build_owner_neighborhood_send_rows_locks_bounds(
     assert rows
     assert all(r.get("owner_neighborhood_direct") for r in rows)
     assert all(r["clip"].get("bounds_locked") for r in rows)
-    assert all(float(r["clip"]["input_duration"]) == 24.0 for r in rows)
+    assert all(float(r["clip"]["input_duration"]) == 45.0 for r in rows)
     # Exact 👍 peak must not be re-queued (offset 0 excluded).
     assert all(abs(float(r["peak_start"]) - 2141.5) >= 12.0 for r in rows)
 
