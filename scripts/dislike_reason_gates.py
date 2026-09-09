@@ -222,6 +222,16 @@ def evaluate_reason_gates(
     # no_gun / no_kill floors — owner 👎 (vhTD mid-burst, UkXwq loot) came from that.
     if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "1") == "1":
         locked = {"loot_run", "no_gun", "no_kill"} & set(reasons)
+        # Labeled fight-candidate already cleared loot/bot/menu quality gates without
+        # claiming a kill. Recent 👎 no_kill must not re-raise gun floors and starve
+        # OCR-blind Metro acts the owner is rating (zRQC@2141 → 👍 after direct send).
+        if (
+            locked == {"no_kill"}
+            and metrics.get("fight_candidate_owner_review")
+            and os.environ.get("PUBG_FIGHT_CANDIDATE_DISLIKE_RESCUE", "1") == "1"
+        ):
+            locked = set()
+            report["fight_candidate_dislike_rescue"] = True
         if locked:
             report["combat_act_rescue_blocked_by"] = sorted(locked)
         else:
@@ -275,7 +285,13 @@ def evaluate_reason_gates(
             "kill_notification_score": notif,
         }
         if not has_kill and killfeed < 0.30 and notif < notif_min:
-            return False, "reason_no_kill_evidence", report
+            if (
+                metrics.get("fight_candidate_owner_review")
+                and os.environ.get("PUBG_FIGHT_CANDIDATE_DISLIKE_RESCUE", "1") == "1"
+            ):
+                report["fight_candidate_no_kill_evidence_waive"] = True
+            else:
+                return False, "reason_no_kill_evidence", report
     return True, "ok", report
 
 

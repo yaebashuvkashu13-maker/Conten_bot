@@ -109,3 +109,53 @@ def test_no_kill_reason_requires_kill_evidence(monkeypatch: pytest.MonkeyPatch) 
         active_reasons=["no_kill"],
     )
     assert ok2, reason2
+
+
+def test_fight_candidate_waives_no_kill_dislike_floors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OCR-blind fight-candidate must not be re-blocked by recent 👎 no_kill floors."""
+    monkeypatch.setenv("PUBG_GLOBAL_FIGHT_ACT", "1")
+    monkeypatch.setenv("PUBG_FIGHT_ACT_MIN_GUN", "0.032")
+    monkeypatch.setenv("PUBG_FIGHT_ACT_MIN_BURST", "3.5")
+    monkeypatch.setenv("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "1")
+    monkeypatch.setenv("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_DISLIKE_RESCUE", "1")
+    monkeypatch.setenv("DISLIKE_GUN_DENSITY_MIN", "0.090")
+    monkeypatch.setenv("DISLIKE_BURST_RATIO_MIN", "4.5")
+    from dislike_reason_gates import evaluate_reason_gates
+
+    ok, reason, report = evaluate_reason_gates(
+        {
+            "gun_density": 0.066,
+            "burst_ratio": 4.4,
+            "center_motion": 0.08,
+            "menu_overlay": 0.10,
+            "has_author_kill": False,
+            "kill_notification_hit": False,
+            "killfeed_density": 0.0,
+            "kill_notification_score": 0.0,
+            "fight_candidate_owner_review": True,
+        },
+        active_reasons=["no_kill", "low_gun"],
+    )
+    assert ok, reason
+    assert report.get("fight_candidate_dislike_rescue") is True
+    assert report.get("fight_candidate_no_kill_evidence_waive") is True
+    assert report["floors"]["gun_density_min"] <= 0.032
+
+    # Without the fight-candidate flag, recent no_kill still hard-blocks.
+    ok2, reason2, report2 = evaluate_reason_gates(
+        {
+            "gun_density": 0.066,
+            "burst_ratio": 4.4,
+            "center_motion": 0.08,
+            "menu_overlay": 0.10,
+            "has_author_kill": False,
+            "kill_notification_hit": False,
+            "killfeed_density": 0.0,
+            "kill_notification_score": 0.0,
+        },
+        active_reasons=["no_kill", "low_gun"],
+    )
+    assert not ok2
+    assert "no_kill" in reason2 or "low_gun" in reason2 or "low_burst" in reason2
+    assert "no_kill" in (report2.get("combat_act_rescue_blocked_by") or [])
