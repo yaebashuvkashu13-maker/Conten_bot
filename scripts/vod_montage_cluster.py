@@ -176,6 +176,36 @@ def pick_sequential_montage_rows(
     return picked[:pool_cap]
 
 
+def drop_weak_leading_montage_parts(
+    rows: list[dict],
+    *,
+    min_clips: int,
+    weak_ratio: float | None = None,
+) -> list[dict]:
+    """Drop leading setup beats that are far weaker than the best later part.
+
+    Owner (zRQC@3969): «Зачем открытие?» — first beat had gun density but no payoff.
+    Keep chronological order; never shrink below min_clips.
+    """
+    if len(rows) <= min_clips:
+        return rows
+    ratio = float(
+        weak_ratio
+        if weak_ratio is not None
+        else os.environ.get("SHOOTER_VOD_MONTAGE_WEAK_OPEN_RATIO", "0.72")
+    )
+    ordered = sorted(rows, key=_row_peak)
+    while len(ordered) > min_clips:
+        lead = _row_score(ordered[0])
+        best_later = max(_row_score(r) for r in ordered[1:])
+        if best_later <= 0:
+            break
+        if lead >= best_later * ratio:
+            break
+        ordered = ordered[1:]
+    return ordered
+
+
 def pick_montage_rows(
     rows: list[dict],
     *,
@@ -185,19 +215,21 @@ def pick_montage_rows(
     anchor_peaks: list[float] | None = None,
 ) -> list[dict]:
     if sequential_montage_enabled():
-        return pick_sequential_montage_rows(
+        picked = pick_sequential_montage_rows(
             rows,
             min_clips=min_clips,
             max_clips=max_clips,
             part_gap_sec=min(gap_sec * 0.4, montage_part_gap_sec()) if gap_sec > 0 else None,
             anchor_peaks=anchor_peaks,
         )
-    return pick_spread_montage_rows(
-        rows,
-        min_clips=min_clips,
-        max_clips=max_clips,
-        gap_sec=gap_sec,
-    )
+    else:
+        picked = pick_spread_montage_rows(
+            rows,
+            min_clips=min_clips,
+            max_clips=max_clips,
+            gap_sec=gap_sec,
+        )
+    return drop_weak_leading_montage_parts(picked, min_clips=min_clips)
 
 
 def sequential_pool_peaks(
@@ -223,6 +255,7 @@ def sequential_pool_peaks(
 
 
 __all__ = [
+    "drop_weak_leading_montage_parts",
     "montage_cluster_span_sec",
     "montage_part_gap_sec",
     "pick_montage_rows",

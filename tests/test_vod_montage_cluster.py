@@ -78,3 +78,32 @@ def test_sequential_pool_keeps_chronological_order() -> None:
     assert peaks == sorted(peaks)
     assert len(peaks) == 5
     assert peaks[0] == 100.0 and peaks[-1] == 2050.0
+
+
+def test_drop_weak_leading_open_without_payoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """zRQC@3969: weak open beat must not pad a dense climax montage."""
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_WEAK_OPEN_RATIO", "0.72")
+    rows = [
+        _row(3970.0, 0.45),  # approach / fake open
+        _row(4013.0, 0.88),
+        _row(4053.0, 0.95),
+    ]
+    kept = cluster.drop_weak_leading_montage_parts(rows, min_clips=2)
+    peaks = [float(r["peak_start"]) for r in kept]
+    assert 3970.0 not in peaks
+    assert peaks == [4013.0, 4053.0]
+
+
+def test_keep_strong_leading_beat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_MONTAGE_WEAK_OPEN_RATIO", "0.72")
+    rows = [
+        _row(100.0, 0.92),
+        _row(130.0, 0.94),
+        _row(160.0, 0.90),
+    ]
+    kept = cluster.drop_weak_leading_montage_parts(rows, min_clips=2)
+    assert [float(r["peak_start"]) for r in kept] == [100.0, 130.0, 160.0]
