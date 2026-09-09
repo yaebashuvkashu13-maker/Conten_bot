@@ -847,7 +847,9 @@ def probe_vod_cuts(
         if sent_n >= count:
             break
         start = max(0.0, float(peak) - 4.0)
-        dur = 14.0
+        # Silver duration envelope is ~19–55s (from sent clips); 14s always
+        # failed range checks and produced only "borderline" probes.
+        dur = _env_float("PUBG_SHORTS_PROBE_DUR", 22.0)
         try:
             ok, reason, report = score_pubg_window(
                 vod, start, dur, single=True, use_cache=True
