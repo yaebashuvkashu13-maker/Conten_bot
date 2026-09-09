@@ -40,8 +40,10 @@ def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
     mp4.write_bytes(b"x" * 20_000)
     index = tmp_path / "index.json"
     labels = tmp_path / "labels.json"
+    repo_labels = tmp_path / "repo_calibration_labels.json"
     index.write_text(json.dumps({"candidates": []}))
     labels.write_text(json.dumps({"good": [], "bad": [], "feedback": []}))
+    repo_labels.write_text(json.dumps({"good": [{"video_id": "keep"}], "bad": []}))
 
     monkeypatch.setenv("MLBB_SHORTS_ROOT", str(shorts))
     monkeypatch.setenv("MLBB_SHORTS_INDEX", str(index))
@@ -52,6 +54,7 @@ def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
     monkeypatch.setattr(store, "INDEX_PATH", index)
     monkeypatch.setattr(store, "LABELS_PATH", labels)
+    monkeypatch.setattr(store, "REPO_LABELS_PATH", repo_labels)
 
     n = rebuild_index_from_disk()
     assert n == 1
@@ -59,6 +62,7 @@ def test_rebuild_index_from_disk(tmp_path: Path, monkeypatch) -> None:
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["video_id"] == "abcdefghijk"
     assert data["candidates"][0].get("ingested_at")
+    assert json.loads(repo_labels.read_text())["good"][0]["video_id"] == "keep"
 
 
 def test_rebuild_backfills_ingested_at_for_existing_row(tmp_path: Path, monkeypatch) -> None:
@@ -384,6 +388,7 @@ def test_apply_owner_label_bad_blocks_queue(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(store, "SHORTS_ROOT", shorts)
     monkeypatch.setattr(store, "INDEX_PATH", index)
     monkeypatch.setattr(store, "LABELS_PATH", labels)
+    monkeypatch.setattr(store, "REPO_LABELS_PATH", tmp_path / "repo_labels.json")
     ex_root = tmp_path / "exemplars"
     owner_labels = tmp_path / "owner_labels.json"
     monkeypatch.setenv("HIGHLIGHT_EXEMPLAR_ROOT", str(ex_root))
