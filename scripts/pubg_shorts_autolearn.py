@@ -808,16 +808,31 @@ def find_inbox_vod(roots: list[Path] | None = None) -> Path | None:
 
 def _probe_candidate_peaks(vod: Path) -> list[float]:
     """Candidate fight centers for owner probes — prefer audio peaks, never hang on dense scan."""
+    skip = float(os.environ.get("PUBG_SHORTS_PROBE_SKIP_INTRO", "200"))
     peaks: list[float] = []
+
+    def _filter(vals: list[float]) -> list[float]:
+        out = [float(p) for p in vals if float(p) >= skip]
+        # Mid/late first: early montage peaks are often loot/bot-farm.
+        out.sort()
+        if len(out) >= 6:
+            mid = len(out) // 3
+            out = out[mid:] + out[:mid]
+        return out[:40]
+
     try:
         from vod_peak_feature_cache import cache_enabled, get_cached
 
         if cache_enabled():
             hit = get_cached(vod, 0)
             cached = [float(p) for p in (hit or {}).get("peaks") or []]
-            if len(cached) >= 3:
-                print(f"[probe] peaks from feature cache n={len(cached)}", flush=True)
-                return cached[:40]
+            filtered = _filter(cached)
+            if len(filtered) >= 3:
+                print(
+                    f"[probe] peaks from feature cache n={len(filtered)} (skip<{skip:.0f}s)",
+                    flush=True,
+                )
+                return filtered
     except Exception:
         pass
 
@@ -828,10 +843,10 @@ def _probe_candidate_peaks(vod: Path) -> list[float]:
             gun_peaks, reason = discover_montage_gun_peaks(
                 vod, "pubg", min_clips=5, gap_sec=40.0
             )
-            gun_peaks = [float(p) for p in (gun_peaks or [])][:40]
-            if gun_peaks:
-                print(f"[probe] gun peaks n={len(gun_peaks)} ({reason})", flush=True)
-                return gun_peaks
+            filtered = _filter([float(p) for p in (gun_peaks or [])])
+            if filtered:
+                print(f"[probe] gun peaks n={len(filtered)} ({reason})", flush=True)
+                return filtered
         except Exception as exc:  # noqa: BLE001
             print(f"[probe] gun peaks skipped: {exc}", flush=True)
 
@@ -845,36 +860,36 @@ def _probe_candidate_peaks(vod: Path) -> list[float]:
             centers = discover_audio_candidate_offsets(
                 vod,
                 duration=dur,
-                skip_intro=float(os.environ.get("PUBG_SHORTS_PROBE_SKIP_INTRO", "90")),
+                skip_intro=skip,
             )
-            peaks = [float(c) for c in (centers or []) if float(c) >= 60.0][:40]
-            if peaks:
-                print(f"[probe] audio candidate peaks n={len(peaks)}", flush=True)
-                return peaks
+            filtered = _filter([float(c) for c in (centers or [])])
+            if filtered:
+                print(f"[probe] audio candidate peaks n={len(filtered)}", flush=True)
+                return filtered
     except Exception as exc:  # noqa: BLE001
         print(f"[probe] audio peaks skipped: {exc}", flush=True)
 
     # Late-game grid — early VOD is usually loot / bot farm.
-    grid = [
-        float(t)
-        for t in (
-            120,
-            180,
-            240,
-            320,
-            400,
-            480,
-            600,
-            720,
-            840,
-            960,
-            1080,
-            1200,
-            1400,
-            1600,
-            1800,
-        )
-    ]
+    grid = _filter(
+        [
+            float(t)
+            for t in (
+                240,
+                320,
+                400,
+                480,
+                600,
+                720,
+                840,
+                960,
+                1080,
+                1200,
+                1400,
+                1600,
+                1800,
+            )
+        ]
+    )
     print(f"[probe] fallback grid peaks n={len(grid)}", flush=True)
     return grid
 
