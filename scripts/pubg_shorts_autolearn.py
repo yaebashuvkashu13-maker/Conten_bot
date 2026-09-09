@@ -410,6 +410,37 @@ def search_shorts(query: str, *, limit: int, env: dict[str, str]) -> list[dict[s
     return search_youtube_clips(query, limit=limit, env=env, mode="shorts")
 
 
+def _maybe_prune_scored_media(path: Path) -> None:
+    """Delete scored Shorts mp4 unless keep-budget says otherwise.
+
+    Default keep=40 newest files under shorts_root — learning uses features.jsonl,
+    not the raw mp4. Without pruning the pool filled a 151G disk overnight.
+    """
+    keep = _env_int("PUBG_SHORTS_KEEP_MEDIA", 40)
+    if keep < 0:
+        return
+    try:
+        if path.is_file():
+            path.unlink()
+    except OSError:
+        pass
+    if keep == 0:
+        return
+    root = shorts_root()
+    if not root.is_dir():
+        return
+    files = sorted(
+        [p for p in root.glob("yt_*.mp4") if p.is_file()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old in files[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
 def download_short(
     vid: str,
     dest: Path,
@@ -460,8 +491,12 @@ def download_short(
     )
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "")[-500:]
-        if re.search(r"429|Too Many Requests|Sign in to confirm|bot", err, re.I):
+        # True anti-bot / quota — pause the batch.
+        if re.search(r"\b429\b|Too Many Requests|confirm you.?re not a bot", err, re.I):
             raise RuntimeError(f"youtube_rate_limited:{err[:120]}")
+        # Age-gate / login walls: skip this id, do not sleep 15 minutes.
+        if re.search(r"Sign in to confirm your age|login required|members-only", err, re.I):
+            return False
         return False
     # Resolve actual output (mp4 preferred).
     if dest.is_file() and dest.stat().st_size > 10_000:
@@ -918,6 +953,9 @@ def run_youtube_batch(
                 continue
             if not ok_dl:
                 errors.append(f"dl_incomplete:{vid}")
+                # Avoid retrying the same broken/age-gated id forever.
+                mark_seen_ids(state, [vid])
+                seen = set(state.get("seen_ids") or [])
                 continue
 
             try:
@@ -950,6 +988,8 @@ def run_youtube_batch(
             seen = set(state.get("seen_ids") or [])
             if counted:
                 saved += 1
+            # Features are on disk — drop media so Shorts pool cannot fill the VPS again.
+            _maybe_prune_scored_media(dest)
 
     return {"saved": saved, "attempted": attempted, "errors": errors, "stopped": stop}
 

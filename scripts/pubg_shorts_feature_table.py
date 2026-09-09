@@ -421,8 +421,16 @@ def build_silver_ranges(
     path = ranges_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        # Disk-full must not crash the watcher; ranges stay in-memory for the run.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
     return payload
 
 
