@@ -97,6 +97,46 @@ def test_build_owner_neighborhood_send_rows_locks_bounds(
     assert all(abs(float(r["peak_start"]) - 2141.5) >= 12.0 for r in rows)
 
 
+def test_prescore_owner_neighborhood_keeps_passers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+
+    def _score(path, start, dur, single=True, use_cache=True):
+        if float(start) == 100.0:
+            return True, "quality_ok=0.5", {"quality_score": 0.5}
+        return False, "hard_loot_walk", {"quality_score": 0.1}
+
+    import types, sys
+
+    fake = types.ModuleType("pubg_quality_score")
+    fake.score_pubg_window = _score
+    monkeypatch.setitem(sys.modules, "pubg_quality_score", fake)
+    rows = [
+        {
+            "segment_id": "z_100",
+            "start": 100.0,
+            "peak_start": 108.0,
+            "score": 0.97,
+            "clip": {"start": 100.0, "input_duration": 24.0},
+        },
+        {
+            "segment_id": "z_200",
+            "start": 200.0,
+            "peak_start": 208.0,
+            "score": 0.97,
+            "clip": {"start": 200.0, "input_duration": 24.0},
+        },
+    ]
+    kept = m.prescore_owner_neighborhood_rows(vod, rows, max_score=8, keep=4)
+    assert len(kept) == 1
+    assert kept[0]["segment_id"] == "z_100"
+    assert kept[0]["score"] >= 0.90
+
+
 def test_owner_peaks_available_only_with_explicit_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1")
     monkeypatch.setenv("PUBG_OWNER_LABEL_SEED_SENDS", "1")

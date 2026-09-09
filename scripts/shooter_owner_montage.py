@@ -572,6 +572,77 @@ def build_owner_neighborhood_send_rows(
     return rows
 
 
+def prescore_owner_neighborhood_rows(
+    vod: Path,
+    rows: list[dict],
+    *,
+    max_score: int | None = None,
+    keep: int | None = None,
+) -> list[dict]:
+    """Keep only near-👍 windows that already pass score_pubg_window (manual recipe)."""
+    if not rows:
+        return []
+    max_score = int(
+        max_score
+        if max_score is not None
+        else os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "16")
+    )
+    keep_n = int(
+        keep
+        if keep is not None
+        else os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "4")
+    )
+    from pubg_quality_score import score_pubg_window
+
+    kept: list[dict] = []
+    scored = 0
+    for row in rows:
+        if scored >= max_score or len(kept) >= keep_n:
+            break
+        start = float(row.get("start") or (row.get("clip") or {}).get("start") or 0)
+        dur = float(
+            (row.get("clip") or {}).get("input_duration")
+            or os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+        )
+        scored += 1
+        try:
+            ok, reason, report = score_pubg_window(
+                vod, start, dur, single=True, use_cache=True
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.info(
+                "owner-neighborhood prescore error start=%.1f: %s", start, exc
+            )
+            continue
+        if not ok:
+            log.info(
+                "owner-neighborhood prescore skip start=%.1f reason=%s",
+                start,
+                str(reason)[:80],
+            )
+            continue
+        out = dict(row)
+        q = float((report or {}).get("quality_score") or 0.0)
+        out["score"] = max(float(out.get("score") or 0.0), 0.90 + min(0.09, q))
+        out["quality_metrics"] = report or {}
+        if (report or {}).get("fight_candidate_owner_review"):
+            out["fight_candidate"] = True
+        kept.append(out)
+        log.info(
+            "owner-neighborhood prescore KEEP start=%.1f peak=%.1f q=%.3f",
+            start,
+            float(out.get("peak_start") or 0),
+            q,
+        )
+    log.info(
+        "owner-neighborhood prescore vod=%s scored=%s kept=%s",
+        vod.name,
+        scored,
+        len(kept),
+    )
+    return kept
+
+
 def boost_pool_near_owner_labels(
     game: str,
     vod: Path,

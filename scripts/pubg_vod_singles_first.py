@@ -458,15 +458,7 @@ def pick_next_single_row(
         if sid and sid in blocked_ids:
             continue
         peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-        # Owner-neighborhood fixed windows are a different cut than the
-        # fight-segmenter reject that populated rejected_peaks — still try them.
-        owner_direct = bool(
-            row.get("owner_neighborhood_direct")
-            or (row.get("clip") or {}).get("owner_neighborhood_direct")
-        )
-        if not owner_direct and any(
-            abs(peak - float(bad)) <= 4.0 for bad in rejected_peaks
-        ):
+        if any(abs(peak - float(bad)) <= 4.0 for bad in rejected_peaks):
             continue
         if peak_too_close(peak, used_peaks, gap_sec):
             continue
@@ -722,8 +714,14 @@ def singles_first_send_cycle(
 
     # Prefer the same near-👍 fixed windows that already ship good cuts manually.
     # Fight-segmenter remapping was turning those neighbors into loot/menu rejects.
+    # Clear stale dense rejects so owner-locked windows get a fair try this cycle.
+    if entry is not None:
+        entry["dense_rejected_peaks"] = []
     try:
-        from shooter_owner_montage import build_owner_neighborhood_send_rows
+        from shooter_owner_montage import (
+            build_owner_neighborhood_send_rows,
+            prescore_owner_neighborhood_rows,
+        )
 
         owner_rows = build_owner_neighborhood_send_rows(
             game,
@@ -733,6 +731,8 @@ def singles_first_send_cycle(
             gap_sec=gap_sec,
             peak_too_close=_peak_too_close,
         )
+        if owner_rows:
+            owner_rows = prescore_owner_neighborhood_rows(vod, owner_rows)
     except Exception as exc:  # noqa: BLE001
         log.warning("owner-neighborhood direct rows failed: %s", exc)
         owner_rows = []
