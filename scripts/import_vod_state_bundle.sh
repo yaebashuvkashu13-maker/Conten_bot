@@ -51,6 +51,5 @@ fi
 
 echo ""
 echo "Import done. Ensure /root/.video_bot.env exists, then:"
-echo "  export MLBB_VOD_INSTALL_RESTART_FEED=1"
-echo "  bash $REPO/scripts/install_mlbb_vod_only.sh"
-echo "  bash /usr/local/bin/mlbb_vod_only_verify.sh"
+echo "  CONTENT_BOT_REPO=$REPO bash $REPO/scripts/deploy_unified_production.sh"
+echo "  systemctl is-active content-bot-vod-feed.service"

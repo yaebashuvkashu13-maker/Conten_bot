@@ -1,0 +1,37 @@
+[Unit]
+Description=PUBG Shorts autolearn — polite YouTube silver watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+EnvironmentFile=-/root/.video_bot.env
+# Target ~20–24 YouTube saves/hour when fresh results exist (~400+/day).
+Environment=PUBG_SHORTS_BATCH_SIZE=5
+Environment=PUBG_SHORTS_MAX_DL_PER_HOUR=24
+Environment=PUBG_SHORTS_MAX_SEARCH_PER_HOUR=36
+Environment=PUBG_SHORTS_MAX_SEARCH_MISS_PER_HOUR=60
+Environment=PUBG_SHORTS_MAX_DL_PER_DAY=450
+Environment=PUBG_SHORTS_REPORT_EVERY=100
+Environment=PUBG_SHORTS_PROGRESS_EVERY=25
+Environment=PUBG_SHORTS_VOD_PROBE=1
+Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MIN=20
+Environment=PUBG_SHORTS_DOWNLOAD_SLEEP_MAX=45
+Environment=PUBG_SHORTS_SEARCH_SLEEP_MIN=10
+Environment=PUBG_SHORTS_SEARCH_SLEEP_MAX=22
+Environment=PUBG_SHORTS_SEARCH_N=40
+Environment=PUBG_SHORTS_SEARCH_HIT_LIMIT=25
+# Local timer owns on-disk scoring — keep YouTube runner focused on download.
+Environment=PUBG_SHORTS_LOCAL_INGEST=0
+Environment=PUBG_SHORTS_HIGHLIGHTS=1
+Environment=PUBG_SHORTS_LOCAL_BATCH=20
+Environment=PUBG_SHORTS_LOCAL_WORKERS=2
+WorkingDirectory=/root/content_bot_ml
+ExecStart=/usr/bin/flock -n /tmp/pubg_shorts_autolearn.lock /usr/bin/python3 -u /root/content_bot_ml/scripts/pubg_shorts_autolearn.py run
+
+[Install]
+WantedBy=multi-user.target
