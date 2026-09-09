@@ -458,7 +458,15 @@ def pick_next_single_row(
         if sid and sid in blocked_ids:
             continue
         peak = float(row.get("peak_start", row.get("start", 0)) or 0)
-        if any(abs(peak - float(bad)) <= 4.0 for bad in rejected_peaks):
+        # Owner-neighborhood fixed windows are a different cut than the
+        # fight-segmenter reject that populated rejected_peaks — still try them.
+        owner_direct = bool(
+            row.get("owner_neighborhood_direct")
+            or (row.get("clip") or {}).get("owner_neighborhood_direct")
+        )
+        if not owner_direct and any(
+            abs(peak - float(bad)) <= 4.0 for bad in rejected_peaks
+        ):
             continue
         if peak_too_close(peak, used_peaks, gap_sec):
             continue
@@ -711,6 +719,40 @@ def singles_first_send_cycle(
                 merged_rejected.append(float(value))
             except (TypeError, ValueError):
                 continue
+
+    # Prefer the same near-👍 fixed windows that already ship good cuts manually.
+    # Fight-segmenter remapping was turning those neighbors into loot/menu rejects.
+    try:
+        from shooter_owner_montage import build_owner_neighborhood_send_rows
+
+        owner_rows = build_owner_neighborhood_send_rows(
+            game,
+            vod,
+            blocked_ids=blocked_ids,
+            used_peaks=used_peaks,
+            gap_sec=gap_sec,
+            peak_too_close=_peak_too_close,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("owner-neighborhood direct rows failed: %s", exc)
+        owner_rows = []
+    if owner_rows:
+        seen = {str(r.get("segment_id") or "") for r in owner_rows}
+        merged_rows = list(owner_rows)
+        for row in rows:
+            sid = str(row.get("segment_id") or "")
+            if sid and sid in seen:
+                continue
+            merged_rows.append(row)
+            if sid:
+                seen.add(sid)
+        rows = merged_rows
+        log.info(
+            "pubg singles prepend owner-neighborhood rows vod=%s n=%s total_rows=%s",
+            vod.name,
+            len(owner_rows),
+            len(rows),
+        )
 
     max_tries = singles_peak_try_budget(len(rows))
     exhaust_streak = singles_zero_send_exhaust_limit()

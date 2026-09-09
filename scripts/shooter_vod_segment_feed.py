@@ -1124,6 +1124,29 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
     from pubg_montage_bounds import pubg_clip_has_gunfire
 
     prepared = dict(row)
+    clip_in = dict(prepared.get("clip") or {})
+    owner_direct = bool(
+        prepared.get("owner_neighborhood_direct")
+        or clip_in.get("owner_neighborhood_direct")
+        or (prepared.get("owner_anchor") and clip_in.get("bounds_locked"))
+    )
+    # Keep the fixed near-👍 window — do not let fight-segmenter remap it.
+    if owner_direct and not clip_in.get("bounds_locked"):
+        lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
+        dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24"))
+        peak = float(prepared.get("peak_start", clip_in.get("peak_start", 0)) or 0)
+        start = max(0.0, peak - lead)
+        clip_in = {
+            **clip_in,
+            "start": start,
+            "peak_start": peak,
+            "input_duration": dur,
+            "output_duration": dur,
+            "bounds_locked": True,
+            "owner_neighborhood_direct": True,
+        }
+        prepared["clip"] = clip_in
+        prepared["start"] = start
     clip = _prepare_montage_clip(prepared, vod, part_max=999.0, game="pubg", single=single)
     if clip.get("shape_reject"):
         return None
@@ -1131,7 +1154,7 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
     start = float(clip.get("start", 0))
     dur = float(clip.get("input_duration", 0))
     report = clip.get("segment_report") if isinstance(clip.get("segment_report"), dict) else {}
-    if report:
+    if report and not owner_direct:
         ok, reason = validate_clip_fight_shape(start, dur, peak, report)
         if not ok:
             log.warning("pubg send shape reject peak=%.1f: %s", peak, reason)
@@ -1164,6 +1187,14 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
             return None
     except Exception as exc:  # noqa: BLE001
         log.debug("pubg send rated-skip check failed: %s", exc)
+    if owner_direct:
+        log.info(
+            "pubg owner-neighborhood locked send peak=%.1f start=%.1f dur=%.1f sid=%s",
+            peak,
+            start,
+            dur,
+            sid,
+        )
     prepared["segment_id"] = sid
     prepared["start"] = start
     prepared["peak_start"] = peak
@@ -3027,6 +3058,12 @@ def _scan_vod_with_adaptive(
                 ) -> list[dict]:
                     out_rows: list[dict] = []
                     pubg_bounds = game == "pubg" and _pubg_fight_segmenter_enabled()
+                    owner_lead = float(
+                        os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8")
+                    )
+                    owner_dur = float(
+                        os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+                    )
                     for idx, peak in enumerate(dense_peaks):
                         if any(abs(float(peak) - bad) <= 4.0 for bad in rejected_peaks):
                             continue
@@ -3038,8 +3075,22 @@ def _scan_vod_with_adaptive(
                             abs(float(peak) - float(bad)) <= 25.0 for bad in pubg_avoid_peaks
                         ):
                             continue
+                        near_owner = bool(
+                            owner_good_times
+                            and any(
+                                abs(float(peak) - float(g)) <= owner_radius
+                                for g in owner_good_times
+                            )
+                        )
                         report = None
-                        if pubg_bounds:
+                        # Near 👍: lock the same fixed window the manual send used.
+                        # Fight-segmenter remaps these into loot tails and hard-rejects.
+                        if near_owner and game == "pubg":
+                            if _peak_too_close(float(peak), used, peak_gap):
+                                continue
+                            start = max(0.0, float(peak) - owner_lead)
+                            clip_dur = owner_dur
+                        elif pubg_bounds:
                             try:
                                 from pubg_montage_bounds import (
                                     fight_bounds,
@@ -3101,13 +3152,6 @@ def _scan_vod_with_adaptive(
                             score = max(score, min(0.99, 0.35 + fast * 0.65))
                         if meta_row.get("audio_strong"):
                             score = max(score, 0.88)
-                        near_owner = bool(
-                            owner_good_times
-                            and any(
-                                abs(float(peak) - float(g)) <= owner_radius
-                                for g in owner_good_times
-                            )
-                        )
                         if near_owner:
                             score = min(0.99, float(score) + owner_boost)
                         row = {
@@ -3116,12 +3160,15 @@ def _scan_vod_with_adaptive(
                             "peak_start": float(peak),
                             "score": score,
                             "owner_anchor": near_owner,
+                            "owner_neighborhood_direct": near_owner,
                             "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
                                 "input_duration": clip_dur,
                                 "output_duration": clip_dur,
                                 "owner_anchor": near_owner,
+                                "bounds_locked": bool(near_owner),
+                                "owner_neighborhood_direct": bool(near_owner),
                             },
                         }
                         if report is not None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 log = logging.getLogger("shooter_owner_montage")
@@ -483,6 +484,92 @@ def owner_neighborhood_probe_peaks(
                 continue
             out.append(peak)
     return out
+
+
+def build_owner_neighborhood_send_rows(
+    game: str,
+    vod: Path,
+    *,
+    blocked_ids: set[str] | None = None,
+    used_peaks: list[float] | None = None,
+    gap_sec: float = 20.0,
+    peak_too_close: Callable[[float, list[float], float], bool] | None = None,
+) -> list[dict]:
+    """Same window recipe as the working near-👍 manual send — for the live bot.
+
+    Fixed lead/dur with bounds_locked so fight-segmenter cannot remap a good
+    neighborhood into loot/menu and then hard-reject it.
+    Exact already-liked peaks are skipped; we only ship *neighbors*.
+    """
+    if game != "pubg":
+        return []
+    if os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1") != "1":
+        return []
+    goods = owner_labeled_good_times(game, vod)
+    if not goods:
+        return []
+    from shooter_vod_segment_store import segment_id
+
+    blocked = set(blocked_ids or [])
+    used = list(used_peaks or [])
+    lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
+    dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24"))
+    # Skip offset 0 — that is the already-rated 👍 peak itself.
+    raw = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_OFFSETS_SEC",
+        "28,-28,55,-55,90,-90,120",
+    )
+    offsets = tuple(float(x.strip()) for x in raw.split(",") if x.strip()) or (
+        28.0,
+        -28.0,
+        55.0,
+        -55.0,
+    )
+    vid = _video_id(vod)
+    rows: list[dict] = []
+    for g in sorted(goods, reverse=True):
+        for off in offsets:
+            peak = max(25.0, float(g) + float(off))
+            if abs(peak - float(g)) < 12.0:
+                continue
+            if _is_owner_rejected_peak(game, vod, peak):
+                continue
+            if peak_too_close is not None and peak_too_close(peak, used, gap_sec):
+                continue
+            if any(abs(peak - float(u)) <= gap_sec for u in used):
+                continue
+            start = max(0.0, peak - lead)
+            sid = segment_id(vid, start)
+            if sid in blocked:
+                continue
+            if any(abs(start - float(r.get("start") or 0)) < 20.0 for r in rows):
+                continue
+            rows.append(
+                {
+                    "segment_id": sid,
+                    "start": float(start),
+                    "peak_start": float(peak),
+                    "score": 0.97,
+                    "owner_anchor": True,
+                    "owner_neighborhood_direct": True,
+                    "clip": {
+                        "start": float(start),
+                        "peak_start": float(peak),
+                        "input_duration": dur,
+                        "output_duration": dur,
+                        "bounds_locked": True,
+                        "owner_anchor": True,
+                        "owner_neighborhood_direct": True,
+                    },
+                }
+            )
+    log.info(
+        "owner-neighborhood direct rows vod=%s n=%s goods=%s",
+        vod.name,
+        len(rows),
+        [int(g) for g in goods[:8]],
+    )
+    return rows
 
 
 def boost_pool_near_owner_labels(

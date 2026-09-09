@@ -73,6 +73,30 @@ def test_owner_neighborhood_probe_peaks(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert any(abs(p - 2111.5) < 0.1 for p in peaks)
 
 
+def test_build_owner_neighborhood_send_rows_locks_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_OFFSETS_SEC", "28,-28")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8")
+    monkeypatch.setenv("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "24")
+    import shooter_owner_montage as m
+    import shooter_vod_segment_store as store
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "owner_labeled_good_times", lambda game, path: [2141.5])
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
+    monkeypatch.setattr(store, "segment_id", lambda vid, start: f"{vid}_{int(start)}")
+    rows = m.build_owner_neighborhood_send_rows("pubg", vod, blocked_ids=set(), used_peaks=[])
+    assert rows
+    assert all(r.get("owner_neighborhood_direct") for r in rows)
+    assert all(r["clip"].get("bounds_locked") for r in rows)
+    assert all(float(r["clip"]["input_duration"]) == 24.0 for r in rows)
+    # Exact 👍 peak must not be re-queued (offset 0 excluded).
+    assert all(abs(float(r["peak_start"]) - 2141.5) >= 12.0 for r in rows)
+
+
 def test_owner_peaks_available_only_with_explicit_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_MONTAGE", "1")
     monkeypatch.setenv("PUBG_OWNER_LABEL_SEED_SENDS", "1")
