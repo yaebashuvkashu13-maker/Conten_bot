@@ -2173,27 +2173,39 @@ def _send_batch(
                 continue
 
         if game == "pubg" and os.environ.get("PUBG_SENT_RANGE_GATE", "1") == "1":
-            try:
-                from pubg_sent_param_ranges import evaluate_against_ranges
+            owner_direct = bool(
+                row.get("owner_neighborhood_direct")
+                or (
+                    isinstance(row.get("clip"), dict)
+                    and row["clip"].get("owner_neighborhood_direct")
+                )
+            )
+            if owner_direct and os.environ.get(
+                "PUBG_OWNER_NEIGHBORHOOD_SKIP_SENT_RANGE", "1"
+            ) == "1":
+                log.info("owner-neighborhood skip sent-range gate sid=%s", sid)
+            else:
+                try:
+                    from pubg_sent_param_ranges import evaluate_against_ranges
 
-                rng_ok, rng_reason, rng_report = evaluate_against_ranges(
-                    presend_report if isinstance(presend_report, dict) else {},
-                    game=game,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("sent-range gate error sid=%s: %s", sid, exc)
-                rng_ok, rng_reason, rng_report = True, f"range_gate_error:{exc}", {}
-            if not rng_ok:
-                log.warning("sent-range REJECT %s: %s", sid, rng_reason)
-                _ledger_record_decision(
-                    game,
-                    vod=vod,
-                    row=row,
-                    decision="reject",
-                    reason=f"sent_range:{rng_reason}",
-                    metrics=rng_report if isinstance(rng_report, dict) else {},
-                )
-                continue
+                    rng_ok, rng_reason, rng_report = evaluate_against_ranges(
+                        presend_report if isinstance(presend_report, dict) else {},
+                        game=game,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("sent-range gate error sid=%s: %s", sid, exc)
+                    rng_ok, rng_reason, rng_report = True, f"range_gate_error:{exc}", {}
+                if not rng_ok:
+                    log.warning("sent-range REJECT %s: %s", sid, rng_reason)
+                    _ledger_record_decision(
+                        game,
+                        vod=vod,
+                        row=row,
+                        decision="reject",
+                        reason=f"sent_range:{rng_reason}",
+                        metrics=rng_report if isinstance(rng_report, dict) else {},
+                    )
+                    continue
 
         out = deliver
         peak = int(row.get("peak_start", row["start"]))
