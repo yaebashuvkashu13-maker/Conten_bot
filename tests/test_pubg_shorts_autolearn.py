@@ -162,6 +162,19 @@ def test_title_gate_blocks_meme() -> None:
     assert _title_ok("funny meme metro royale") is False
 
 
+def test_find_inbox_vod_prefers_pubg(tmp_path: Path) -> None:
+    from pubg_shorts_autolearn import find_inbox_vod
+
+    mlbb = tmp_path / "mlbb" / "inbox"
+    pubg = tmp_path / "pubg" / "youtube_nightly" / "inbox"
+    mlbb.mkdir(parents=True)
+    pubg.mkdir(parents=True)
+    (mlbb / "yt_oldmlbbxxxx.mp4").write_bytes(b"x" * 6_000_000)
+    target = pubg / "yt_newpubgxxxx.mp4"
+    target.write_bytes(b"y" * 6_000_000)
+    assert find_inbox_vod(roots=[mlbb, pubg]) == target
+
+
 def test_local_pool_lists_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
     pool = tmp_path / "pool"

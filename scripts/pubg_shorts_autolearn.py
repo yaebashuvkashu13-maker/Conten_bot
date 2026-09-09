@@ -747,31 +747,62 @@ def maybe_probe(state: dict[str, Any], ranges_blob: dict[str, Any]) -> list[dict
         save_state(disk)
 
     probes = probe_vod_cuts(ranges_blob=ranges_blob)
+    sent_n = sum(1 for p in probes if p.get("sent"))
+    if sent_n <= 0:
+        # Don't burn the milestone when nothing reached Telegram — retry next run.
+        with _autolearn_report_lock():
+            disk = load_state()
+            state["last_probe_at_count"] = last
+            state["last_probe_count"] = 0
+            disk["last_probe_at_count"] = last
+            disk["last_probe_count"] = 0
+            save_state(disk)
+        return []
     state["last_probe_at_count"] = int(state.get("watched_total") or total)
-    state["last_probe_count"] = len(probes)
+    state["last_probe_count"] = sent_n
     disk = load_state()
     disk["last_probe_at_count"] = state["last_probe_at_count"]
-    disk["last_probe_count"] = len(probes)
+    disk["last_probe_count"] = sent_n
     save_state(disk)
     return probes
 
 
-def find_inbox_vod() -> Path | None:
-    roots = [
-        Path(os.environ.get("PUBG_VOD_INBOX", "/root/data/mlbb/youtube_nightly/inbox")),
+def inbox_vod_roots() -> list[Path]:
+    return [
+        Path(os.environ.get("PUBG_VOD_INBOX", "")),
+        Path("/root/data/pubg/youtube_nightly/inbox"),
+        Path("/root/data/mlbb/youtube_nightly/inbox"),
         Path("/root/videos/pubg"),
         Path("/root/data/pubg/vods"),
+        Path("/root/data/pubg/regression_vods"),
     ]
+
+
+def find_inbox_vod(roots: list[Path] | None = None) -> Path | None:
+    search_roots = roots if roots is not None else inbox_vod_roots()
     cands: list[Path] = []
-    for root in roots:
-        if not root.is_dir():
+    for root in search_roots:
+        if not root or not root.is_dir():
             continue
-        for path in root.glob("yt_*.mp4"):
-            if path.stat().st_size > 5_000_000:
-                cands.append(path)
+        for path in list(root.glob("yt_*.mp4")) + list(root.glob("*.mp4")):
+            try:
+                if path.stat().st_size > 5_000_000:
+                    cands.append(path)
+            except OSError:
+                continue
     if not cands:
         return None
-    cands.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    # Prefer PUBG inbox paths, then newest mtime.
+    def _rank(p: Path) -> tuple[int, float]:
+        s = str(p)
+        pri = 0 if "/pubg/" in s else 1
+        try:
+            mt = p.stat().st_mtime
+        except OSError:
+            mt = 0.0
+        return (pri, -mt)
+
+    cands.sort(key=_rank)
     return cands[0]
 
 
@@ -782,9 +813,12 @@ def probe_vod_cuts(
 ) -> list[dict[str, Any]]:
     """Cut a few VOD windows that match silver ranges for owner rating."""
     count = count or _env_int("PUBG_SHORTS_PROBE_COUNT", 3)
+    soft = os.environ.get("PUBG_SHORTS_PROBE_SOFT", "1") == "1"
     vod = find_inbox_vod()
     if vod is None:
+        print("[probe] no inbox VOD found", flush=True)
         return []
+    print(f"[probe] using VOD {vod}", flush=True)
     from pubg_sent_param_ranges import evaluate_against_ranges
     from pubg_window_label_queue import render_preview
 
@@ -802,12 +836,10 @@ def probe_vod_cuts(
 
     preview_dir = data_root() / "vod_probes"
     preview_dir.mkdir(parents=True, exist_ok=True)
-    results: list[dict[str, Any]] = []
     from pubg_quality_score import score_pubg_window
 
+    scored: list[dict[str, Any]] = []
     for peak in peaks:
-        if len(results) >= count:
-            break
         start = max(0.0, float(peak) - 4.0)
         dur = 14.0
         try:
@@ -815,23 +847,45 @@ def probe_vod_cuts(
                 vod, start, dur, single=True, use_cache=True
             )
         except Exception as exc:  # noqa: BLE001
-            results.append({"peak": peak, "error": str(exc)[:120]})
+            scored.append({"peak": peak, "error": str(exc)[:120]})
             continue
         rng_ok, rng_reason, _ = evaluate_against_ranges(
             report,
             game="pubg",
             ranges_blob={**ranges_blob, "ready": True} if ranges_blob.get("ranges") else ranges_blob,
         )
-        # Prefer windows inside silver envelope; still send borderline if few hits.
-        if ranges_blob.get("ready") and not rng_ok and len(results) < count // 2 + 1:
-            # skip obvious out-of-range early
-            if "out_of_sent_range" in rng_reason:
-                continue
+        scored.append(
+            {
+                "peak": peak,
+                "start": start,
+                "dur": dur,
+                "ok": ok,
+                "reason": reason,
+                "rng_ok": rng_ok,
+                "range_reason": rng_reason,
+                "report": report,
+            }
+        )
+
+    # Prefer in-range quality OK, then any quality OK, then anything scored.
+    preferred = [c for c in scored if c.get("rng_ok") and c.get("ok") and "error" not in c]
+    ok_only = [c for c in scored if c.get("ok") and "error" not in c and c not in preferred]
+    rest = [c for c in scored if "error" not in c and c not in preferred and c not in ok_only]
+    ordered = preferred + ok_only + (rest if soft else [])
+    if not ordered and soft:
+        ordered = [c for c in scored if "error" not in c]
+
+    results: list[dict[str, Any]] = [c for c in scored if "error" in c]
+    for cand in ordered:
+        if sum(1 for r in results if r.get("sent")) >= count:
+            break
+        start = float(cand["start"])
+        dur = float(cand["dur"])
         dest = preview_dir / f"{vod.stem}_{int(start)}_{int(time.time())}.mp4"
         try:
             render_preview(vod, start, start + dur, dest)
         except Exception as exc:  # noqa: BLE001
-            results.append({"peak": peak, "error": f"render:{exc}"[:120]})
+            results.append({"peak": cand.get("peak"), "error": f"render:{exc}"[:120]})
             continue
         sent = False
         try:
@@ -840,28 +894,37 @@ def probe_vod_cuts(
 
             token = bot_token()
             chat = chat_id()
+            tag = "in-range" if cand.get("rng_ok") else ("borderline" if soft else "out-of-range")
             caption = (
-                f"Shorts-autolearn проба #{len(results)+1}\n"
-                f"{vod.name} @ {int(start)}s\n"
-                f"quality={'OK' if ok else reason[:80]}\n"
-                f"range={rng_reason}\n"
+                f"Shorts-autolearn проба #{sum(1 for r in results if r.get('sent')) + 1}\n"
+                f"{vod.name} @ {int(start)}s ({tag})\n"
+                f"quality={'OK' if cand.get('ok') else str(cand.get('reason') or '')[:80]}\n"
+                f"range={cand.get('range_reason')}\n"
                 f"Оцени: научился бот или нет? 👍/👎"
             )
             if token and chat:
                 sent = bool(send_video_file(token, chat, dest, caption))
-        except Exception:
+            else:
+                print("[probe] missing TELEGRAM token/chat", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[probe] send failed: {exc}", flush=True)
             sent = False
         results.append(
             {
                 "vod": str(vod),
                 "start": start,
-                "ok": ok,
-                "reason": reason,
-                "range_reason": rng_reason,
+                "ok": bool(cand.get("ok")),
+                "reason": cand.get("reason"),
+                "range_reason": cand.get("range_reason"),
                 "preview": str(dest),
                 "sent": sent,
             }
         )
+    print(
+        f"[probe] scored={len(scored)} preferred={len(preferred)} "
+        f"sent={sum(1 for r in results if r.get('sent'))}",
+        flush=True,
+    )
     return results
 
 
