@@ -175,6 +175,55 @@ def test_find_inbox_vod_prefers_pubg(tmp_path: Path) -> None:
     assert find_inbox_vod(roots=[mlbb, pubg]) == target
 
 
+def test_probe_uses_owner_rated_send_and_skips_junk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probes must go through 👍/👎 helper and never soft-send quality rejects."""
+    from unittest.mock import patch
+
+    import pubg_shorts_autolearn as mod
+
+    vod = tmp_path / "pubg" / "youtube_nightly" / "inbox" / "yt_probevodxxxx.mp4"
+    vod.parent.mkdir(parents=True)
+    vod.write_bytes(b"y" * 6_000_000)
+    monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
+    monkeypatch.setenv("PUBG_SHORTS_PROBE_REQUIRE_QUALITY", "1")
+    monkeypatch.setenv("PUBG_SHORTS_PROBE_SOFT", "0")
+    monkeypatch.setenv("PUBG_SHORTS_PROBE_MAX_SCAN", "5")
+
+    def fake_score(path, start, dur, **kwargs):
+        # Early loot junk vs later fight.
+        if start < 100:
+            return False, "hard_loot_walk", {"gunfire_density": 0.01}
+        return True, "ok", {"gunfire_density": 0.12, "duration": dur}
+
+    sent: list[dict] = []
+
+    def fake_send(video_path, **kwargs):
+        sent.append({"path": str(video_path), **kwargs})
+        return {"ok": True, "segment_id": "sid1"}
+
+    with patch.object(mod, "find_inbox_vod", return_value=vod), patch.object(
+        mod, "_probe_candidate_peaks", return_value=[30.0, 180.0, 400.0]
+    ), patch("pubg_quality_score.score_pubg_window", side_effect=fake_score), patch(
+        "pubg_window_label_queue.render_preview", return_value=None
+    ), patch(
+        "pubg_sent_param_ranges.evaluate_against_ranges",
+        return_value=(True, "in_range", {}),
+    ), patch(
+        "pubg_owner_rated_send.send_owner_rated_clip", side_effect=fake_send
+    ) as owner_send, patch(
+        "mlbb_telegram_video.send_video_file"
+    ) as bare_send:
+        out = mod.probe_vod_cuts(ranges_blob={"ready": True, "ranges": {"duration": {"min": 19, "max": 55}}}, count=2)
+
+    assert bare_send.call_count == 0
+    assert owner_send.call_count >= 1
+    assert all(r.get("sent") for r in out if r.get("preview"))
+    assert all(float(r["start"]) >= 100 for r in out if r.get("sent"))
+    assert sent and "caption" in sent[0]
+
+
 def test_local_pool_lists_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_SHORTS_AUTOLEARN_DIR", str(tmp_path / "al"))
     pool = tmp_path / "pool"

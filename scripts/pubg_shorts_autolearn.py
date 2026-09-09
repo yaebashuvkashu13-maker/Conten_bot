@@ -806,90 +806,185 @@ def find_inbox_vod(roots: list[Path] | None = None) -> Path | None:
     return cands[0]
 
 
+def _probe_candidate_peaks(vod: Path) -> list[float]:
+    """Candidate fight centers for owner probes — prefer audio peaks, never hang on dense scan."""
+    peaks: list[float] = []
+    try:
+        from vod_peak_feature_cache import cache_enabled, get_cached
+
+        if cache_enabled():
+            hit = get_cached(vod, 0)
+            cached = [float(p) for p in (hit or {}).get("peaks") or []]
+            if len(cached) >= 3:
+                print(f"[probe] peaks from feature cache n={len(cached)}", flush=True)
+                return cached[:40]
+    except Exception:
+        pass
+
+    if os.environ.get("PUBG_SHORTS_PROBE_GUN_PEAKS", "0") == "1":
+        try:
+            from shooter_vod_fast_scan import discover_montage_gun_peaks
+
+            gun_peaks, reason = discover_montage_gun_peaks(
+                vod, "pubg", min_clips=5, gap_sec=40.0
+            )
+            gun_peaks = [float(p) for p in (gun_peaks or [])][:40]
+            if gun_peaks:
+                print(f"[probe] gun peaks n={len(gun_peaks)} ({reason})", flush=True)
+                return gun_peaks
+        except Exception as exc:  # noqa: BLE001
+            print(f"[probe] gun peaks skipped: {exc}", flush=True)
+
+    # Fast path: loud/gun audio candidates (no full dense PANNs walk).
+    try:
+        from shooter_vod_fast_scan import discover_audio_candidate_offsets
+        from smart_video_editor import ffprobe_duration
+
+        dur = float(ffprobe_duration(vod) or 0.0)
+        if dur > 60.0:
+            centers = discover_audio_candidate_offsets(
+                vod,
+                duration=dur,
+                skip_intro=float(os.environ.get("PUBG_SHORTS_PROBE_SKIP_INTRO", "90")),
+            )
+            peaks = [float(c) for c in (centers or []) if float(c) >= 60.0][:40]
+            if peaks:
+                print(f"[probe] audio candidate peaks n={len(peaks)}", flush=True)
+                return peaks
+    except Exception as exc:  # noqa: BLE001
+        print(f"[probe] audio peaks skipped: {exc}", flush=True)
+
+    # Late-game grid — early VOD is usually loot / bot farm.
+    grid = [
+        float(t)
+        for t in (
+            120,
+            180,
+            240,
+            320,
+            400,
+            480,
+            600,
+            720,
+            840,
+            960,
+            1080,
+            1200,
+            1400,
+            1600,
+            1800,
+        )
+    ]
+    print(f"[probe] fallback grid peaks n={len(grid)}", flush=True)
+    return grid
+
+
 def probe_vod_cuts(
     *,
     ranges_blob: dict[str, Any],
     count: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Cut a few VOD windows that match silver ranges for owner rating."""
+    """Cut quality-OK VOD windows and send with 👍/👎 owner rating buttons."""
     count = count or _env_int("PUBG_SHORTS_PROBE_COUNT", 3)
-    soft = os.environ.get("PUBG_SHORTS_PROBE_SOFT", "1") == "1"
+    # Soft only relaxes silver-range match — never sends quality rejects (loot/bot farm).
+    soft_range = os.environ.get("PUBG_SHORTS_PROBE_SOFT", "0") == "1"
+    require_quality = os.environ.get("PUBG_SHORTS_PROBE_REQUIRE_QUALITY", "1") == "1"
+    max_scan = _env_int("PUBG_SHORTS_PROBE_MAX_SCAN", 24)
     vod = find_inbox_vod()
     if vod is None:
         print("[probe] no inbox VOD found", flush=True)
         return []
     print(f"[probe] using VOD {vod}", flush=True)
+    from pubg_owner_rated_send import send_owner_rated_clip
+    from pubg_quality_score import score_pubg_window
     from pubg_sent_param_ranges import evaluate_against_ranges
     from pubg_window_label_queue import render_preview
 
-    # Default: fixed grid. Gun-peak discovery ffprobe-hangs on multi-GB inbox VODs.
-    peaks: list[float] = [30.0, 90.0, 150.0, 240.0, 360.0, 480.0, 600.0, 720.0, 900.0]
-    if os.environ.get("PUBG_SHORTS_PROBE_GUN_PEAKS", "0") == "1":
-        try:
-            from shooter_vod_fast_scan import discover_montage_gun_peaks
-
-            gun_peaks, _reason = discover_montage_gun_peaks(
-                vod, "pubg", min_clips=5, gap_sec=40.0
-            )
-            gun_peaks = [float(p) for p in (gun_peaks or [])][:40]
-            if gun_peaks:
-                peaks = gun_peaks
-        except Exception as exc:  # noqa: BLE001
-            print(f"[probe] gun peaks skipped: {exc}", flush=True)
-
+    peaks = _probe_candidate_peaks(vod)
     preview_dir = data_root() / "vod_probes"
     preview_dir.mkdir(parents=True, exist_ok=True)
-    from pubg_quality_score import score_pubg_window
+    dur = _env_float("PUBG_SHORTS_PROBE_DUR", 22.0)
 
-    results: list[dict[str, Any]] = []
-    sent_n = 0
-    for peak in peaks:
-        if sent_n >= count:
-            break
+    scored: list[dict[str, Any]] = []
+    for peak in peaks[:max_scan]:
         start = max(0.0, float(peak) - 4.0)
-        # Silver duration envelope is ~19–55s (from sent clips); 14s always
-        # failed range checks and produced only "borderline" probes.
-        dur = _env_float("PUBG_SHORTS_PROBE_DUR", 22.0)
         try:
             ok, reason, report = score_pubg_window(
                 vod, start, dur, single=True, use_cache=True
             )
         except Exception as exc:  # noqa: BLE001
-            results.append({"peak": peak, "error": str(exc)[:120]})
+            scored.append({"peak": peak, "start": start, "error": str(exc)[:120]})
             continue
         rng_ok, rng_reason, _ = evaluate_against_ranges(
             report,
             game="pubg",
             ranges_blob={**ranges_blob, "ready": True} if ranges_blob.get("ranges") else ranges_blob,
         )
-        # Strict mode: only silver in-range. Soft (default): always try to deliver.
-        if not soft and ranges_blob.get("ready") and not rng_ok:
-            continue
+        report_d = report if isinstance(report, dict) else {}
+        gun = float(report_d.get("gunfire_density") or report_d.get("panns_gun_max") or 0.0)
+        scored.append(
+            {
+                "peak": peak,
+                "start": start,
+                "ok": bool(ok),
+                "reason": reason,
+                "rng_ok": bool(rng_ok),
+                "range_reason": rng_reason,
+                "gun": gun,
+                "report": report_d,
+            }
+        )
+        print(
+            f"[probe] score start={int(start)}s ok={ok} rng={rng_ok} "
+            f"gun={gun:.3f} reason={str(reason)[:60]}",
+            flush=True,
+        )
+
+    # Rank: quality OK first, then silver in-range, then gun density.
+    viable = [c for c in scored if "error" not in c]
+    if require_quality:
+        viable = [c for c in viable if c.get("ok")]
+    preferred = [c for c in viable if c.get("rng_ok")]
+    if preferred:
+        viable = preferred
+    elif not soft_range and os.environ.get("PUBG_SHORTS_PROBE_STRICT_RANGE", "0") == "1":
+        # Optional hard mode: refuse anything outside silver envelope.
+        viable = []
+
+    viable.sort(key=lambda c: (1 if c.get("rng_ok") else 0, float(c.get("gun") or 0.0)), reverse=True)
+
+    results: list[dict[str, Any]] = [c for c in scored if "error" in c]
+    sent_n = 0
+    for cand in viable:
+        if sent_n >= count:
+            break
+        start = float(cand["start"])
         dest = preview_dir / f"{vod.stem}_{int(start)}_{int(time.time())}.mp4"
         try:
             render_preview(vod, start, start + dur, dest)
         except Exception as exc:  # noqa: BLE001
-            results.append({"peak": peak, "error": f"render:{exc}"[:120]})
+            results.append({"peak": cand.get("peak"), "error": f"render:{exc}"[:120]})
             continue
+        tag = "in-range" if cand.get("rng_ok") else "quality-ok"
+        caption = (
+            f"Shorts-autolearn проба #{sent_n + 1}\n"
+            f"{vod.name} @ {int(start)}s ({tag})\n"
+            f"quality=OK gun={float(cand.get('gun') or 0):.3f}\n"
+            f"range={cand.get('range_reason')}\n"
+            f"👍 = похоже на то что слать / 👎 = всё ещё мусор"
+        )
         sent = False
+        sid = ""
         try:
-            from mlbb_telegram_video import send_video_file
-            from vod_telegram_env import bot_token, chat_id
-
-            token = bot_token()
-            chat = chat_id()
-            tag = "in-range" if rng_ok else "borderline"
-            caption = (
-                f"Shorts-autolearn проба #{sent_n + 1}\n"
-                f"{vod.name} @ {int(start)}s ({tag})\n"
-                f"quality={'OK' if ok else str(reason)[:80]}\n"
-                f"range={rng_reason}\n"
-                f"Оцени: научился бот или нет? 👍/👎"
+            out = send_owner_rated_clip(
+                dest,
+                caption=caption,
+                vod=vod,
+                start_sec=start,
+                peak_sec=float(cand.get("peak") or start),
             )
-            if token and chat:
-                sent = bool(send_video_file(token, chat, dest, caption))
-            else:
-                print("[probe] missing TELEGRAM token/chat", flush=True)
+            sent = bool(out.get("ok"))
+            sid = str(out.get("segment_id") or "")
         except Exception as exc:  # noqa: BLE001
             print(f"[probe] send failed: {exc}", flush=True)
             sent = False
@@ -897,18 +992,32 @@ def probe_vod_cuts(
             {
                 "vod": str(vod),
                 "start": start,
-                "ok": bool(ok),
-                "reason": reason,
-                "range_reason": rng_reason,
+                "ok": True,
+                "reason": cand.get("reason"),
+                "range_reason": cand.get("range_reason"),
                 "preview": str(dest),
                 "sent": sent,
+                "segment_id": sid,
+                "has_buttons": sent,
             }
         )
         if sent:
             sent_n += 1
-            print(f"[probe] sent #{sent_n} start={int(start)}s tag={tag}", flush=True)
+            print(f"[probe] sent #{sent_n} start={int(start)}s tag={tag} sid={sid}", flush=True)
 
-    print(f"[probe] attempts={len(results)} sent={sent_n}", flush=True)
+    if sent_n == 0:
+        rejects = [
+            f"{int(c.get('start') or 0)}s:{c.get('reason')}"
+            for c in scored
+            if "error" not in c and not c.get("ok")
+        ][:8]
+        print(
+            f"[probe] nothing sendable after scan={len(scored)} "
+            f"quality_ok={sum(1 for c in scored if c.get('ok'))} "
+            f"rejects={rejects}",
+            flush=True,
+        )
+    print(f"[probe] attempts={len(scored)} sent={sent_n}", flush=True)
     return results
 
 
