@@ -746,7 +746,7 @@ def maybe_probe(state: dict[str, Any], ranges_blob: dict[str, Any]) -> list[dict
         disk["watched_total"] = total
         save_state(disk)
 
-    probes = probe_vod_cuts(ranges_blob=ranges_blob)
+    probes = run_owner_probes(ranges_blob=ranges_blob)
     sent_n = sum(1 for p in probes if p.get("sent"))
     if sent_n <= 0:
         # Don't burn the milestone when nothing reached Telegram — retry next run.
@@ -1041,6 +1041,96 @@ def probe_vod_cuts(
     return results
 
 
+
+def probe_quality_ok_shorts(*, count: int = 3) -> list[dict[str, Any]]:
+    """Send learned quality_ok Shorts/TikToks with 👍/👎 (fallback when VOD is loot-only)."""
+    from pubg_owner_rated_send import send_owner_rated_clip
+    from pubg_shorts_feature_table import iter_feature_rows
+
+    max_bytes = int(float(os.environ.get("PUBG_SHORTS_PROBE_MAX_BYTES", str(40_000_000))))
+    best: dict[str, tuple[float, Path, dict[str, Any]]] = {}
+    for row in iter_feature_rows():
+        if row.get("quality_ok") not in (True, 1, "1", "true", "True"):
+            continue
+        vid = str(row.get("video_id") or "").strip()
+        path_v = Path(str(row.get("path") or ""))
+        if not vid or not path_v.is_file():
+            continue
+        try:
+            size = path_v.stat().st_size
+        except OSError:
+            continue
+        if size <= 0 or size > max_bytes:
+            continue
+        gun = float(row.get("gunfire_density") or row.get("panns_gun_max") or 0.0)
+        prev = best.get(vid)
+        if prev is None or gun > prev[0]:
+            best[vid] = (gun, path_v, row)
+
+    ranked = sorted(best.items(), key=lambda kv: kv[1][0], reverse=True)
+    print(f"[probe] quality_ok shorts on disk={len(ranked)}", flush=True)
+    results: list[dict[str, Any]] = []
+    sent_n = 0
+    for vid, (gun, path_v, row) in ranked:
+        if sent_n >= count:
+            break
+        caption = (
+            f"Shorts-autolearn проба #{sent_n + 1} (quality_ok short)\n"
+            f"id={vid} gun={gun:.3f} dur={row.get('duration')}\n"
+            f"Это то, что обучение считает годным.\n"
+            f"👍 = слать такие / 👎 = всё ещё мусор"
+        )
+        try:
+            out = send_owner_rated_clip(
+                path_v,
+                caption=caption,
+                vod=path_v,
+                start_sec=0.0,
+                peak_sec=float(row.get("duration") or 0.0) / 2.0,
+            )
+            sent = bool(out.get("ok"))
+            sid = str(out.get("segment_id") or "")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[probe] short send failed {vid}: {exc}", flush=True)
+            results.append({"video_id": vid, "path": str(path_v), "error": str(exc)[:160], "sent": False})
+            continue
+        results.append(
+            {
+                "video_id": vid,
+                "path": str(path_v),
+                "gun": gun,
+                "ok": True,
+                "sent": sent,
+                "segment_id": sid,
+                "has_buttons": sent,
+                "source": "quality_ok_short",
+            }
+        )
+        if sent:
+            sent_n += 1
+            print(f"[probe] sent short #{sent_n} id={vid} gun={gun:.3f} sid={sid}", flush=True)
+    return results
+
+
+def run_owner_probes(
+    *,
+    ranges_blob: dict[str, Any],
+    count: int | None = None,
+) -> list[dict[str, Any]]:
+    """Prefer VOD fight windows; fill remainder from learned quality_ok shorts."""
+    count = count or _env_int("PUBG_SHORTS_PROBE_COUNT", 3)
+    results = probe_vod_cuts(ranges_blob=ranges_blob, count=count)
+    sent_n = sum(1 for r in results if r.get("sent"))
+    if sent_n >= count:
+        return results
+    if os.environ.get("PUBG_SHORTS_PROBE_SHORTS_FALLBACK", "1") != "1":
+        return results
+    need = count - sent_n
+    print(f"[probe] VOD sent={sent_n}; falling back to quality_ok shorts need={need}", flush=True)
+    results.extend(probe_quality_ok_shorts(count=need))
+    return results
+
+
 def run_youtube_batch(
     state: dict[str, Any],
     *,
@@ -1331,7 +1421,7 @@ def main() -> int:
         return cmd_report(force=bool(args.force))
     if args.cmd == "probe-vod":
         ranges_blob = build_silver_ranges()
-        probes = probe_vod_cuts(ranges_blob=ranges_blob, count=int(args.count))
+        probes = run_owner_probes(ranges_blob=ranges_blob, count=int(args.count))
         print(json.dumps(probes, ensure_ascii=False, indent=2))
         return 0
     return 2
