@@ -41,11 +41,13 @@ def test_peak_near_owner_good_reads_labels_even_when_seed_off(
 
 def test_boost_pool_near_owner_labels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.20")
+    monkeypatch.setenv("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "45")
     import shooter_owner_montage as m
 
     vod = tmp_path / "yt_DGsoEt9znls.mp4"
     vod.write_bytes(b"")
     monkeypatch.setattr(m, "owner_labeled_good_times", lambda game, path: [606.0])
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
     pool = [
         {"start": 100.0, "score": 0.50},
         {"start": 610.0, "score": 0.50},
@@ -55,6 +57,20 @@ def test_boost_pool_near_owner_labels(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert by_start[610.0]["score"] == pytest.approx(0.70)
     assert by_start[610.0].get("owner_anchor") is True
     assert by_start[100.0]["score"] == pytest.approx(0.50)
+
+
+def test_owner_neighborhood_probe_peaks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_OWNER_PROBE_OFFSETS_SEC", "0,30,-30")
+    import shooter_owner_montage as m
+
+    vod = tmp_path / "yt_zRQC8jkxbXQ.mp4"
+    vod.write_bytes(b"")
+    monkeypatch.setattr(m, "owner_labeled_good_times", lambda game, path: [2141.5])
+    monkeypatch.setattr(m, "_is_owner_rejected_peak", lambda *a, **k: False)
+    peaks = m.owner_neighborhood_probe_peaks("pubg", vod)
+    assert 2141.5 in peaks
+    assert any(abs(p - 2171.5) < 0.1 for p in peaks)
+    assert any(abs(p - 2111.5) < 0.1 for p in peaks)
 
 
 def test_owner_peaks_available_only_with_explicit_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -68,7 +68,7 @@ def style_reference_peaks(vod: Path) -> list[float]:
 
 
 def style_avoid_peaks(vod: Path) -> list[float]:
-    """Fights to deprioritize (wrong intro/payoff shape)."""
+    """Fights to deprioritize — owner 👎 windows plus curated anti-style peaks."""
     vid = _video_id(vod)
     avoid: list[float] = []
     if vid == "Tovruh33adY":
@@ -81,13 +81,20 @@ def style_avoid_peaks(vod: Path) -> list[float]:
         for row in labels_for_video(vod):
             if str(row.get("label") or "") != "bad":
                 continue
-            note = str(row.get("note") or "").lower()
-            if "intro" in note or "cut" in note or "fight" in note or row.get("role") == "anti_style":
-                try:
-                    avoid.append(float(row["time_sec"]))
-                except (KeyError, TypeError, ValueError):
-                    continue
+            # All owner 👎 times (loot/no_combat/no_kill), not only intro notes —
+            # otherwise style_rank keep shipping the same 👎 peaks (zRQC@4136).
+            try:
+                avoid.append(float(row["time_sec"]))
+            except (KeyError, TypeError, ValueError):
+                continue
     except ImportError:
+        pass
+    try:
+        from shooter_owner_montage import _owner_bad_peaks
+
+        for t, _reason in _owner_bad_peaks("pubg", vod):
+            avoid.append(float(t))
+    except Exception:
         pass
     avoid.sort()
     deduped: list[float] = []

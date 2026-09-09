@@ -465,7 +465,15 @@ def pick_next_single_row(
         candidates.append(row)
     if not candidates:
         return None, True
-    candidates.sort(key=lambda r: float(r.get("score", 0)), reverse=True)
+    # Owner 👍 neighborhoods first — score alone kept shipping menu/loot tops.
+    candidates.sort(
+        key=lambda r: (
+            1 if r.get("owner_anchor") or (r.get("clip") or {}).get("owner_anchor") else 0,
+            0 if r.get("owner_bad") else 1,
+            float(r.get("score", 0) or 0),
+        ),
+        reverse=True,
+    )
     chosen = candidates[0]
     peak = float(chosen.get("peak_start", chosen.get("start", 0)) or 0)
     rest = [

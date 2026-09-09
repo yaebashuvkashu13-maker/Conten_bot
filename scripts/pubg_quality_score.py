@@ -348,6 +348,9 @@ def score_pubg_window(
         "score_mode": True,
         "presend_cache_hit": False,
     }
+    near_owner = _owner_good_window(video_path, start_sec, duration_sec)
+    report["near_owner_good"] = bool(near_owner)
+    report["owner_good_window"] = bool(near_owner)
 
     def _finish(ok: bool, reason: str) -> tuple[bool, str, dict[str, Any]]:
         if put_presend is not None:

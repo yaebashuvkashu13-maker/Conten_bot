@@ -232,6 +232,16 @@ def evaluate_reason_gates(
         ):
             locked = set()
             report["fight_candidate_dislike_rescue"] = True
+        # Owner already 👍'd this neighborhood — don't starve it with global
+        # dislike gun floors that were raised by unrelated 👎 no_kill clips.
+        if (
+            locked
+            and metrics.get("near_owner_good")
+            and combat_ok
+            and os.environ.get("PUBG_OWNER_GOOD_DISLIKE_RESCUE", "1") == "1"
+        ):
+            locked = locked - {"no_kill"}
+            report["owner_good_dislike_rescue"] = True
         if locked:
             report["combat_act_rescue_blocked_by"] = sorted(locked)
         else:

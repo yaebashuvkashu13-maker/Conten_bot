@@ -440,7 +440,7 @@ def peak_near_owner_good(
     radius = float(
         radius_sec
         if radius_sec is not None
-        else os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "18")
+        else os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "45")
     )
     # Always consult stored 👍 labels — independent of send-queue seeding.
     labeled = owner_labeled_good_times(game, vod)
@@ -454,6 +454,37 @@ def peak_near_owner_good(
     return False
 
 
+def owner_neighborhood_probe_peaks(
+    game: str,
+    vod: Path,
+    *,
+    offsets: tuple[float, ...] | None = None,
+) -> list[float]:
+    """Extra probe times near owner 👍 so the pool actually contains learnable fights.
+
+    Does not enqueue labels as sends — only expands discovery around what the
+    owner already marked good. Skips owner-👎 neighborhoods.
+    """
+    goods = owner_labeled_good_times(game, vod)
+    if not goods:
+        return []
+    if offsets is None:
+        raw = os.environ.get("SHOOTER_VOD_OWNER_PROBE_OFFSETS_SEC", "0,28,-28,55,-55,90")
+        offsets = tuple(
+            float(x.strip()) for x in raw.split(",") if x.strip()
+        ) or (0.0, 28.0, -28.0, 55.0, -55.0)
+    out: list[float] = []
+    for g in goods:
+        for off in offsets:
+            peak = max(20.0, float(g) + float(off))
+            if _is_owner_rejected_peak(game, vod, peak):
+                continue
+            if any(abs(peak - p) <= 8.0 for p in out):
+                continue
+            out.append(peak)
+    return out
+
+
 def boost_pool_near_owner_labels(
     game: str,
     vod: Path,
@@ -461,31 +492,47 @@ def boost_pool_near_owner_labels(
 ) -> list[dict]:
     """Raise scores of candidates near owner 👍 without injecting label-only sends."""
     goods = owner_labeled_good_times(game, vod)
-    if not goods or not pool:
+    if not pool:
         return pool
-    boost = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.12"))
-    radius = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "18"))
+    # Wider than old 18s — Metro fights drift; 👍 must still pull neighbors up.
+    boost = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.22"))
+    radius = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "45"))
+    demote = float(os.environ.get("SHOOTER_VOD_OWNER_BAD_SCORE_DEMOTE", "0.35"))
     merged: list[dict] = [dict(c) for c in pool]
     boosted = 0
+    demoted = 0
     for clip in merged:
         peak = float(clip.get("start", clip.get("peak_start", 0)) or 0)
-        if any(abs(peak - g) <= radius for g in goods):
+        if _is_owner_rejected_peak(game, vod, peak):
+            clip["score"] = max(0.01, float(clip.get("score", 0) or 0) - demote)
+            hm = dict(clip.get("highlight_metrics") or {})
+            hm["owner_bad_demote"] = True
+            clip["highlight_metrics"] = hm
+            clip["owner_bad"] = True
+            demoted += 1
+            continue
+        if goods and any(abs(peak - g) <= radius for g in goods):
             clip["score"] = float(clip.get("score", 0) or 0) + boost
             hm = dict(clip.get("highlight_metrics") or {})
             hm["owner_label_boost"] = True
             clip["highlight_metrics"] = hm
             clip["owner_anchor"] = True
             boosted += 1
-    if boosted:
+    if boosted or demoted:
         log.info(
-            "owner-label boost game=%s vod=%s boosted=%s goods=%s",
+            "owner-label boost game=%s vod=%s boosted=%s demoted=%s goods=%s",
             game,
             vod.name,
             boosted,
+            demoted,
             [int(g) for g in goods[:8]],
         )
         merged.sort(
-            key=lambda c: (1 if c.get("owner_anchor") else 0, float(c.get("score", 0) or 0)),
+            key=lambda c: (
+                0 if c.get("owner_bad") else 1,
+                1 if c.get("owner_anchor") else 0,
+                float(c.get("score", 0) or 0),
+            ),
             reverse=True,
         )
     return merged

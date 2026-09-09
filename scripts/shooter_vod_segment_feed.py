@@ -48,8 +48,11 @@ from shooter_owner_montage import (
     merge_owner_hints_into_pool,
     owner_good_fight_peaks,
     owner_good_pool,
+    owner_labeled_good_times,
+    owner_neighborhood_probe_peaks,
     soft_allow_owner_montage_part,
     vod_has_owner_montage_anchors,
+    _is_owner_rejected_peak,
 )
 from strict_montage_direct import discover_strict_candidates, file_sha256
 from vod_peak_gap import peak_too_close, segment_gap_sec, used_peak_times_shooter
@@ -1138,6 +1141,29 @@ def _prepare_pubg_row_for_send(row: dict, vod: Path, *, single: bool) -> dict | 
         log.warning("pubg send gun reject peak=%.1f: %s", peak, gun_reason)
         return None
     sid = segment_id(vod_youtube_id(vod), start)
+    # Fight-bounds remapping can land on an already-rated window (zRQC@2141 →
+    # sid_2126). Never re-ship / re-gate labeled or sent clips.
+    try:
+        blocked = labeled_ids("pubg") | load_feed_sent("pubg")
+        if sid in blocked:
+            log.warning(
+                "pubg send skip already-rated sid=%s peak=%.1f start=%.1f",
+                sid,
+                peak,
+                start,
+            )
+            return None
+        if _is_owner_rejected_peak("pubg", vod, peak) or _is_owner_rejected_peak(
+            "pubg", vod, start
+        ):
+            log.warning(
+                "pubg send skip owner-👎 neighborhood peak=%.1f start=%.1f",
+                peak,
+                start,
+            )
+            return None
+    except Exception as exc:  # noqa: BLE001
+        log.debug("pubg send rated-skip check failed: %s", exc)
     prepared["segment_id"] = sid
     prepared["start"] = start
     prepared["peak_start"] = peak
@@ -2051,6 +2077,14 @@ def _send_batch(
                     "kill_notification_score": float(
                         pr.get("kill_notification_score") or 0.0
                     ),
+                    "fight_candidate_owner_review": bool(
+                        pr.get("fight_candidate_owner_review")
+                    ),
+                    "near_owner_good": bool(
+                        pr.get("near_owner_good")
+                        or pr.get("owner_good_window")
+                        or row.get("owner_anchor")
+                    ),
                 }
                 rg_ok, rg_reason, rg_report = evaluate_reason_gates(
                     reason_metrics,
@@ -2831,9 +2865,20 @@ def _scan_vod_with_adaptive(
                     owner_peaks = owner_good_fight_peaks(game, vod)
                 except Exception:
                     owner_peaks = []
-                if owner_peaks:
+                # Even when label-seed sends are off, probe *near* 👍 so learning
+                # shapes the candidate set (not only ranks existing dense junk).
+                try:
+                    owner_probes = (
+                        owner_neighborhood_probe_peaks(game, vod)
+                        if game == "pubg"
+                        else []
+                    )
+                except Exception:
+                    owner_probes = []
+                seed_peaks = list(owner_peaks) + list(owner_probes)
+                if seed_peaks:
                     merged: list[float] = []
-                    for t in list(owner_peaks) + list(dense_peaks or []):
+                    for t in list(seed_peaks) + list(dense_peaks or []):
                         ft = float(t)
                         if any(abs(ft - x) < max(12.0, gap_sec * 0.4) for x in merged):
                             continue
@@ -2841,11 +2886,12 @@ def _scan_vod_with_adaptive(
                     dense_peaks = merged
                     dense_reason = f"owner+{dense_reason}"
                     log.info(
-                        "fast-montage owner peaks game=%s vod=%s n=%s first=%s",
+                        "fast-montage owner peaks game=%s vod=%s seeds=%s probes=%s first=%s",
                         game,
                         vod.name,
                         len(owner_peaks),
-                        owner_peaks[:6],
+                        len(owner_probes),
+                        seed_peaks[:8],
                     )
                 try:
                     from vod_event_dedup import dedup_by_audio_signature, merge_nearby_peaks
@@ -2959,6 +3005,19 @@ def _scan_vod_with_adaptive(
                     except Exception:
                         pubg_avoid_peaks = []
 
+                owner_good_times: list[float] = []
+                if game == "pubg":
+                    try:
+                        owner_good_times = owner_labeled_good_times(game, vod)
+                    except Exception:
+                        owner_good_times = []
+                owner_boost = float(
+                    os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.22")
+                )
+                owner_radius = float(
+                    os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "45")
+                )
+
                 def _build_rows(
                     peak_gap: float,
                     *,
@@ -2970,6 +3029,10 @@ def _scan_vod_with_adaptive(
                     pubg_bounds = game == "pubg" and _pubg_fight_segmenter_enabled()
                     for idx, peak in enumerate(dense_peaks):
                         if any(abs(float(peak) - bad) <= 4.0 for bad in rejected_peaks):
+                            continue
+                        if game == "pubg" and _is_owner_rejected_peak(
+                            game, vod, float(peak)
+                        ):
                             continue
                         if pubg_avoid_peaks and any(
                             abs(float(peak) - float(bad)) <= 25.0 for bad in pubg_avoid_peaks
@@ -3038,16 +3101,27 @@ def _scan_vod_with_adaptive(
                             score = max(score, min(0.99, 0.35 + fast * 0.65))
                         if meta_row.get("audio_strong"):
                             score = max(score, 0.88)
+                        near_owner = bool(
+                            owner_good_times
+                            and any(
+                                abs(float(peak) - float(g)) <= owner_radius
+                                for g in owner_good_times
+                            )
+                        )
+                        if near_owner:
+                            score = min(0.99, float(score) + owner_boost)
                         row = {
                             "segment_id": sid,
                             "start": start,
                             "peak_start": float(peak),
                             "score": score,
+                            "owner_anchor": near_owner,
                             "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
                                 "input_duration": clip_dur,
                                 "output_duration": clip_dur,
+                                "owner_anchor": near_owner,
                             },
                         }
                         if report is not None:
@@ -3055,6 +3129,13 @@ def _scan_vod_with_adaptive(
                         if style_match is not None:
                             row["style_sim"] = float(style_match)
                         out_rows.append(row)
+                    out_rows.sort(
+                        key=lambda r: (
+                            1 if r.get("owner_anchor") else 0,
+                            float(r.get("score", 0) or 0),
+                        ),
+                        reverse=True,
+                    )
                     return out_rows
 
                 def _shortlist_rows(used: list[float], blocked: set[str]) -> list[dict]:
