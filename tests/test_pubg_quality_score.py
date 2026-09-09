@@ -481,13 +481,14 @@ def test_low_conf_hud_fp_strong_panns_with_flash_keeps_kill(
     assert (report.get("author") or {}).get("has_author_kill") is True
 
 def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ADS spray with strong audio but no kill must NOT bypass payoff_low."""
+    """ADS spray with strong audio but no kill must NOT bypass when fight-candidate is off."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
     monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
     monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
     monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.16")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "0")
     patches = list(_base_patches(author_kill=False))
     patches[2] = patch(
         "pubg_shooting_gate.pubg_probe_segment",
@@ -530,6 +531,131 @@ def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.Monkey
     assert "hard_no_author_kill" in reason or "payoff_low" in reason
     assert report.get("singles_gun_payoff_bypass") is not True
     assert not report.get("has_author_kill")
+
+
+def test_fight_candidate_owner_review_passes_ocr_blind_combat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gun-dense Metro act with blind kill UI ships as labeled fight-candidate."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    monkeypatch.setenv("PUBG_QUALITY_BOT_FARM_GATE", "0")
+    monkeypatch.setenv("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "1")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_ALLOW_FLASH", "0")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_PANNS_FLASH", "0")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_STYLE_COMBAT", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.078,
+            "burst_ratio": 5.5,
+            "audio_rms": 0.05,
+            "center_motion": 0.09,
+            "center_text": 0.05,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.62,
+            "panns_machine_gun": 0.55,
+            "panns_explosion": 0.05,
+            "panns_speech": 0.25,
+            "panns_music": 0.10,
+            "panns_gun_max": 0.62,
+        },
+    )
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            True,
+            "ok",
+            {
+                "best_hit_flash": 0.0,
+                "best_weapon_edge": 0.0,
+                "frames": [
+                    {"label": "start", "pass": True, "reason": "ok"},
+                    {"label": "mid", "pass": True, "reason": "ok"},
+                    {"label": "end", "pass": True, "reason": "ok"},
+                ],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 100, 22, single=True, use_cache=False
+        )
+    assert ok is True, (ok, reason, report)
+    assert "fight_candidate_owner_review" in reason
+    assert report.get("fight_candidate_owner_review") is True
+    assert report.get("has_author_kill") is not True
+    assert (report.get("author") or {}).get("has_author_kill") is not True
+
+
+def test_fight_candidate_blocks_speech_dominated_false_gun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DSP gun + speech/music with tiny gun PANNs must stay hard_no_author_kill."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_REJECT_MENU_LOOT_UI", "0")
+    monkeypatch.setenv("PUBG_QUALITY_BOT_FARM_GATE", "0")
+    monkeypatch.setenv("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "1")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_PANNS_FLASH", "0")
+    monkeypatch.setenv("PUBG_AUTHOR_KILL_STYLE_COMBAT", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.084,
+            "burst_ratio": 5.9,
+            "audio_rms": 0.04,
+            "center_motion": 0.14,
+            "center_text": 0.27,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.009,
+            "panns_machine_gun": 0.007,
+            "panns_explosion": 0.0,
+            "panns_speech": 0.82,
+            "panns_music": 0.74,
+            "panns_gun_max": 0.009,
+        },
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 2371, 22, single=True, use_cache=False
+        )
+    assert ok is False
+    assert "hard_no_author_kill" in reason
+    assert report.get("fight_candidate_owner_review") is not True
+
+
+def test_fight_candidate_still_blocks_loot_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "1")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "1")
+    monkeypatch.setenv("PUBG_OWNER_GOOD_TRUST_LOOT", "0")
+    patches = _base_patches(loot=True, author_kill=False)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch(
+        "gameplay_gate.segment_looks_like_pubg_loot_or_walk",
+        return_value=True,
+    ):
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 100, 22, single=True, use_cache=False
+        )
+    assert ok is False
+    assert "loot" in reason
+    assert report.get("fight_candidate_owner_review") is not True
 
 
 

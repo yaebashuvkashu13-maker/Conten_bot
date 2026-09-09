@@ -2107,6 +2107,17 @@ def _send_batch(
             f"{'Boss' if game == 'genshin' else 'Combat' if game == 'wot' else 'POV combat'} ✓ | {presend_reason}\n"
             f"👍 Ок / 👎 Не ок"
         )
+        if game == "pubg":
+            pr = presend_report if isinstance(presend_report, dict) else {}
+            if pr.get("fight_candidate_owner_review") or str(presend_reason).startswith(
+                "fight_candidate_owner_review"
+            ):
+                caption = (
+                    f"{game.upper()} Metro fight-candidate #{sid}\n"
+                    f"{vod_youtube_id(vod)} @ {int(row['start'])}s (пик {peak}s, {out_dur:.0f}s)\n"
+                    f"⚠ нет kill UI — combat-act кандидат | {presend_reason}\n"
+                    f"👍 Ок / 👎 Не ок"
+                )
         if send_video(
             token,
             chat_id,

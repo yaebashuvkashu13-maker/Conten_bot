@@ -198,6 +198,52 @@ def _singles_gun_bypass_enabled(env_key: str = "PUBG_SINGLES_GUN_PAYOFF_BYPASS")
     return os.environ.get(env_key, "0") == "1"
 
 
+def _fight_candidate_owner_review_ok(
+    *,
+    gun: float,
+    burst: float,
+    panns_gun: float,
+    panns: dict[str, float],
+    loot_walk: bool,
+    single: bool,
+) -> bool:
+    """OCR-blind Metro combat acts → owner 👍/👎 as fight-candidate (not proven kill).
+
+    Killfeed/hit-flash are often blind on Mobile Metro while gun+PANNs scream fight.
+    Still blocks loot walks and speech/music-dominated DSP false-gun windows.
+    Does **not** claim has_author_kill — caption must label the review path.
+    """
+    if not single:
+        return False
+    if os.environ.get("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "1") != "1":
+        return False
+    if loot_walk:
+        return False
+    try:
+        from pubg_fight_act_profile import is_combat_act
+
+        if not is_combat_act(gun, burst):
+            return False
+    except Exception:
+        return False
+    gun_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_GUN", "0.050"))
+    burst_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_BURST", "4.0"))
+    panns_min = float(os.environ.get("PUBG_FIGHT_CANDIDATE_MIN_PANNS", "0.40"))
+    if float(gun) < gun_min or float(burst) < burst_min or float(panns_gun) < panns_min:
+        return False
+    speech_music = max(
+        float(panns.get("panns_speech", 0.0) or 0.0),
+        float(panns.get("panns_music", 0.0) or 0.0),
+    )
+    # Commentary-over-quiet-gameplay: DSP gun + speech/music, tiny real gun PANNs.
+    abs_panns = float(os.environ.get("PUBG_FIGHT_CANDIDATE_ABS_PANNS", "0.55"))
+    ratio = float(os.environ.get("PUBG_FIGHT_CANDIDATE_PANNS_SPEECH_RATIO", "0.75"))
+    if speech_music > 0.0 and float(panns_gun) < abs_panns:
+        if float(panns_gun) < speech_music * ratio:
+            return False
+    return True
+
+
 
 _MENU_UI_KEYWORDS = (
     "level up",
@@ -702,6 +748,20 @@ def score_pubg_window(
         )
         if allow_owner_no_kill:
             report["owner_redo_trusted_no_kill"] = True
+        elif _fight_candidate_owner_review_ok(
+            gun=gun,
+            burst=burst,
+            panns_gun=panns_gun,
+            panns=panns,
+            loot_walk=bool(loot_walk),
+            single=bool(single),
+        ):
+            # Real Metro fights often lack kill UI; send for owner rating labeled.
+            report["fight_candidate_owner_review"] = True
+            report["has_author_kill"] = False
+            author["has_author_kill"] = False
+            author_reason = "fight_candidate_no_kill_ui"
+            report["author_reason"] = author_reason
         else:
             report["hard_reject"] = "no_author_kill"
             return _finish(False, "hard_no_author_kill")
@@ -824,6 +884,9 @@ def score_pubg_window(
             )
         ):
             report["owner_redo_trusted"] = True
+        elif report.get("fight_candidate_owner_review") and fight_score >= fight_min:
+            # Payoff OCR is blind; fight audio already passed combat-act floors.
+            report["fight_candidate_payoff_bypass"] = True
         else:
             report["quality_score"] = round(payoff_score, 4)
             report["quality_threshold"] = payoff_min
@@ -914,7 +977,23 @@ def score_pubg_window(
         ):
             report["singles_gun_quality_bypass"] = True
             return _finish(True, f"quality_singles_gun={quality:.3f}:fight{fight_score:.3f}")
+        if (
+            report.get("fight_candidate_owner_review")
+            and fight_score >= fight_min
+            and not loot_walk
+        ):
+            report["fight_candidate_quality_bypass"] = True
+            report["quality_score"] = round(max(quality, threshold), 4)
+            return _finish(
+                True,
+                f"fight_candidate_owner_review={quality:.3f}:fight{fight_score:.3f}",
+            )
         return _finish(False, f"quality_low={quality:.3f}:min{threshold:.2f}")
+    if report.get("fight_candidate_owner_review"):
+        return _finish(
+            True,
+            f"fight_candidate_owner_review={quality:.3f}:fight{fight_score:.3f}",
+        )
     return _finish(True, f"quality_ok={quality:.3f}")
 
 
