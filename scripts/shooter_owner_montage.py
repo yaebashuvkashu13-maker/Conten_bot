@@ -527,8 +527,16 @@ def build_owner_neighborhood_send_rows(
     )
     vid = _video_id(vod)
     rows: list[dict] = []
-    for g in sorted(goods, reverse=True):
-        for off in offsets:
+    # Prefer dense 👍 clusters (manual wins were mid-VOD fights, not end-loot).
+    # Round-robin offsets across goods so prescore budget is not burned on one
+    # late-VOD peak's ±28/55/90 before ever trying the liked fight belt.
+    def _cluster_rank(g: float) -> tuple[int, float]:
+        near = sum(1 for x in goods if abs(float(x) - float(g)) <= 90.0)
+        return (-near, -float(g))
+
+    goods_ordered = sorted(goods, key=_cluster_rank)
+    for off in offsets:
+        for g in goods_ordered:
             peak = max(25.0, float(g) + float(off))
             if abs(peak - float(g)) < 12.0:
                 continue
@@ -567,7 +575,7 @@ def build_owner_neighborhood_send_rows(
         "owner-neighborhood direct rows vod=%s n=%s goods=%s",
         vod.name,
         len(rows),
-        [int(g) for g in goods[:8]],
+        [int(g) for g in goods_ordered[:8]],
     )
     return rows
 
@@ -585,7 +593,7 @@ def prescore_owner_neighborhood_rows(
     max_score = int(
         max_score
         if max_score is not None
-        else os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "16")
+        else os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "24")
     )
     keep_n = int(
         keep
