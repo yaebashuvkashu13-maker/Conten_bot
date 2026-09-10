@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -588,7 +589,9 @@ def resolve_owner_neighborhood_bounds(
         """Return first hot timestamp in [t0, t0+span], sampling finely."""
         tt = float(t0)
         limit = float(t0) + float(span)
-        fine = 1.0
+        # 2s is enough to catch mid-burst without 1s×full-probe hangs (owner drought).
+        fine = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_FINE_STEP_SEC", "2.0"))
+        fine = max(1.0, fine)
         while tt <= limit + 0.05:
             if _is_owner_rejected_peak("pubg", vod, tt):
                 return None
@@ -597,10 +600,29 @@ def resolve_owner_neighborhood_bounds(
             tt += fine
         return None
 
+    def _heartbeat(phase: str) -> None:
+        try:
+            from vod_hang_detector import write_heartbeat
+
+            write_heartbeat(
+                "pubg",
+                phase,
+                vod=vod.name,
+                peak=peak_v,
+                probes=len(probe_cache),
+            )
+        except Exception:
+            pass
+
+    _heartbeat("owner_neighborhood_bounds")
     offset = peak_v
     t = peak_v
     hard_end = onset + max_dur + quiet_grace
+    last_hb = time.monotonic()
     while t < hard_end:
+        if time.monotonic() - last_hb >= 20.0:
+            _heartbeat("owner_neighborhood_offset")
+            last_hb = time.monotonic()
         nxt = t + step
         if _is_owner_rejected_peak("pubg", vod, nxt):
             break
