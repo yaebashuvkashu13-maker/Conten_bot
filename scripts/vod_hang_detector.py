@@ -1081,11 +1081,35 @@ def maybe_silence_alert(report: HangReport) -> bool:
         f"⚠️ VOD feed: тишина ~{hours}ч {mins}м\n"
         f"Причины: {reasons}\n"
         f"zero_send_streak={report.zero_send_streak}\n"
-        f"Автовосстановление запущено (следующее не раньше чем через "
-        f"{int(os.environ.get('VOD_HEAL_COOLDOWN_SEC', '2700')) // 60} мин)."
+        f"Автовосстановление запущено.\n"
+        f"Можно сразу: /agent или кнопка «Агент зависания»."
     )
     if _send_tg(text):
         DEFAULT_ALERT_STAMP.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
+        # Best-effort ops keyboard for the owner alert.
+        try:
+            from telegram_owner_controls import owner_controls_keyboard
+            from vod_telegram_env import bot_token, chat_id
+            import json as _json
+            import urllib.request
+
+            token, chat = bot_token(), chat_id()
+            if token and chat:
+                payload = _json.dumps(
+                    {
+                        "chat_id": chat,
+                        "text": "Панель: агент / recover / отправить",
+                        "reply_markup": owner_controls_keyboard(),
+                    }
+                ).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=20).read()
+        except Exception:
+            pass
         return True
     return False
 

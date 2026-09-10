@@ -498,6 +498,21 @@ def _schedule_owner_send_now(chat_id: str | int, game: str = 'all') -> None:
     threading.Thread(target=_run, daemon=True, name=f'owner-send-{game}').start()
 
 
+def _schedule_owner_hang_agent(chat_id: str | int, game: str = 'pubg') -> None:
+    """Run hang-agent playbook in background (diagnose + recover + force-send)."""
+
+    def _run() -> None:
+        try:
+            from telegram_owner_controls import run_hang_agent
+
+            send_owner_controls(chat_id, run_hang_agent(game))
+        except Exception as exc:
+            logging.exception('owner hang agent failed')
+            send_owner_controls(chat_id, f'Агент зависания: {exc}')
+
+    threading.Thread(target=_run, daemon=True, name=f'owner-hang-agent-{game}').start()
+
+
 def remove_owner_reply_keyboard(chat_id: str | int, text: str) -> None:
     """Drop any previously pinned reply keyboard."""
     send_message(
@@ -1270,7 +1285,7 @@ def handle_callback_query(query: dict) -> None:
             pass
         return
 
-    if data in ('ops_process', 'ops_reset', 'ops_recover', 'ops_send_now'):
+    if data in ('ops_process', 'ops_reset', 'ops_recover', 'ops_send_now', 'ops_hang_agent'):
         try:
             from telegram_owner_controls import (
                 format_process_report,
@@ -1280,6 +1295,17 @@ def handle_callback_query(query: dict) -> None:
             if data == 'ops_process':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Процесс'}, timeout=15)
                 send_owner_controls(chat_id, format_process_report())
+            elif data == 'ops_hang_agent':
+                api_call(
+                    'answerCallbackQuery',
+                    {'callback_query_id': query_id, 'text': 'Агент…'},
+                    timeout=15,
+                )
+                send_owner_controls(
+                    chat_id,
+                    '🤖 Агент зависания запущен — диагноз, снятие lock, recover, отправка клипа…',
+                )
+                _schedule_owner_hang_agent(chat_id, 'pubg')
             elif data == 'ops_recover':
                 api_call('answerCallbackQuery', {'callback_query_id': query_id, 'text': 'Recover…'}, timeout=15)
                 send_owner_controls(
@@ -3037,6 +3063,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'upload_vkmlbb', 'description': 'Очередь клипов MLBB → VK'},
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'process', 'description': 'Процесс пайплайна (что сейчас ищет)'},
+        {'command': 'agent', 'description': 'Агент зависания — диагноз + recover + клип'},
         {'command': 'recover', 'description': 'Починить feed — видео снова пошли'},
         {'command': 'reset', 'description': 'Сброс исчерпанных VOD + поиск'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
@@ -3096,13 +3123,22 @@ def handle_message(message: dict):
     if is_owner(chat_id):
         from telegram_owner_controls import (
             format_process_report,
+            is_hang_agent_command,
             is_process_command,
             is_recover_command,
             is_reset_command,
             parse_recover_game,
             parse_reset_game,
+            run_reset,
         )
 
+        if is_hang_agent_command(text) or cmd in ('/agent', '/hang', '/завис', '/агент'):
+            send_owner_controls(
+                chat_id,
+                '🤖 Агент зависания запущен — диагноз, снятие lock, recover, отправка клипа…',
+            )
+            _schedule_owner_hang_agent(chat_id, 'pubg')
+            return
         if is_process_command(text):
             send_owner_controls(chat_id, format_process_report())
             return
@@ -3135,11 +3171,11 @@ def handle_message(message: dict):
     if cmd == '/start' or text.startswith('/start'):
         if is_owner(chat_id):
             start_text = (
-                'Владелец. По необходимости текстом:\n'
+                'Владелец. Если завис — жми «Агент зависания» или /agent\n'
                 '/process — что сейчас ищет пайплайн\n'
                 '/recover — починить feed и отправить клип\n'
                 '/reset — снова открыть исчерпанные VOD\n'
-                'Кнопки: Процесс · Recover · Отправить · Сброс\n'
+                'Кнопки ниже: Агент · Процесс · Recover · Отправить · Сброс\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
             )
@@ -3159,6 +3195,10 @@ def handle_message(message: dict):
                     'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
                 )
             remove_owner_reply_keyboard(chat_id, start_text)
+            send_owner_controls(
+                chat_id,
+                'Панель управления VOD — если завис, жми «Агент зависания».',
+            )
             return
         if is_pubg_chat(chat_id):
             send_message(
@@ -3394,8 +3434,9 @@ def handle_message(message: dict):
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
         if is_owner(chat_id):
-            ping_text += '\n\nПо необходимости: /process · /recover · /reset'
+            ping_text += '\n\nЕсли завис: /agent · /process · /recover · /reset'
             remove_owner_reply_keyboard(chat_id, ping_text)
+            send_owner_controls(chat_id, 'Панель: агент зависания / recover / отправить')
         else:
             send_message(chat_id, ping_text)
         return

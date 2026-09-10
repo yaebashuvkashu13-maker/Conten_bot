@@ -15,6 +15,7 @@ CALLBACK_RESET = "ops_reset"
 CALLBACK_PROCESS = "ops_process"
 CALLBACK_RECOVER = "ops_recover"
 CALLBACK_SEND_NOW = "ops_send_now"
+CALLBACK_HANG_AGENT = "ops_hang_agent"
 
 PROCESS_PATTERNS: tuple[tuple[str, str], ...] = (
     ("telegram_bot", "telegram_upload_bot.py"),
@@ -56,6 +57,9 @@ def owner_controls_keyboard() -> dict:
     """Inline buttons under owner status / recover replies."""
     return {
         "inline_keyboard": [
+            [
+                {"text": "🤖 Агент зависания", "callback_data": CALLBACK_HANG_AGENT},
+            ],
             [
                 {"text": "📊 Процесс", "callback_data": CALLBACK_PROCESS},
                 {"text": "🔧 Recover", "callback_data": CALLBACK_RECOVER},
@@ -108,6 +112,21 @@ def is_recover_command(text: str) -> bool:
         "восстановление",
         "почему нет видео",
         "нет видео",
+    }
+
+
+def is_hang_agent_command(text: str) -> bool:
+    raw = (text or "").strip()
+    token = raw.split()[0].split("@")[0].lower() if raw else ""
+    if token in ("/agent", "/hang", "/завис", "/агент"):
+        return True
+    return _norm_text(raw) in {
+        "агент",
+        "агент зависания",
+        "завис",
+        "снова завис",
+        "hang agent",
+        "hang",
     }
 
 
@@ -215,8 +234,8 @@ def format_process_report(
     if not running.get("vod_supervisor") or not (
         running.get("daily_cycle") or running.get("shooter_feed") or running.get("mlbb_feed")
     ):
-        lines.append("Feed не работает — напиши /recover.")
-    lines.append("Команды: /process · /recover · /reset · кнопки ниже")
+        lines.append("Feed не работает — напиши /recover или жми «Агент зависания».")
+    lines.append("Команды: /agent · /process · /recover · /reset · кнопки ниже")
     return "\n".join(lines)
 
 
@@ -232,6 +251,78 @@ def run_recover(game: str = "all") -> str:
     from vod_feed_recover import run_recover as _run_recover
 
     return _run_recover(game)
+
+
+def run_hang_agent(game: str = "pubg") -> str:
+    """One-button hang agent: diagnose → clear stale locks → recover → force-send.
+
+    This is the local playbook the cloud agent runs when the owner says «завис».
+    """
+    import os
+    import time
+    from pathlib import Path
+
+    target = "pubg" if game in ("all", "", "pubg") else game.strip().lower()
+    lines = [f"🤖 Агент зависания ({target})"]
+
+    lock = Path(os.environ.get("VOD_HANG_RECOVER_LOCK", "/tmp/vod_hang_recover.lock"))
+    if lock.is_file():
+        raw = lock.read_text(encoding="utf-8", errors="ignore").strip()
+        stale = True
+        try:
+            pid = int(raw.split()[0])
+            os.kill(pid, 0)
+            stale = False
+            lines.append(f"• recover уже идёт (pid={pid})")
+        except (ValueError, OSError, IndexError):
+            stale = True
+        if stale:
+            try:
+                lock.unlink()
+                lines.append("• снял зависший recover-lock")
+            except OSError as exc:
+                lines.append(f"• lock: {exc}")
+
+    try:
+        from vod_hang_detector import (
+            apply_agent_recover_env,
+            auto_unload_and_recover,
+            detect_hang,
+        )
+
+        report = detect_hang()
+        age = int(report.last_send_age_sec or 0)
+        hb = int(report.heartbeat_age_sec or 0) if report.heartbeat_age_sec else -1
+        lines.append(
+            f"• диагноз: {'OK' if report.ok else 'HANG'} | "
+            f"тишина {age // 60}м | hb={hb}s | "
+            f"{', '.join(report.reasons[:3]) or '—'}"
+        )
+        heal = auto_unload_and_recover(report, game=target, force=True, background=False)
+        lines.append(
+            f"• heal: {heal.get('action')} "
+            f"({' '.join(str(a) for a in (heal.get('actions') or [])[:4]) or '—'})"
+        )
+        apply_agent_recover_env(os.environ, escalation=int(heal.get("escalation") or 0))
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"• heal error: {exc}")
+
+    try:
+        from vod_force_send import force_send, format_force_send_report
+
+        t0 = time.time()
+        report_rows = force_send(target)
+        lines.append(format_force_send_report(report_rows))
+        lines.append(f"• force-send за {int(time.time() - t0)}с")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"• force-send error: {exc}")
+        try:
+            lines.append(run_recover(target))
+        except Exception as exc2:  # noqa: BLE001
+            lines.append(f"• recover fallback: {exc2}")
+
+    lines.append("Готово. Если снова тихо >1ч — жми «Агент зависания».")
+    return "\n".join(lines)
 
 
 def run_send_now(game: str = "all") -> str:
