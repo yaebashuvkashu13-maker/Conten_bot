@@ -777,6 +777,9 @@ def apply_agent_recover_env(
     target["PUBG_FAST_RANK_MAX"] = os.environ.get("VOD_FORCE_FAST_RANK_MAX", "24")
     target["PUBG_KILLFEED_RANK_MAX"] = os.environ.get("VOD_FORCE_KILLFEED_RANK_MAX", "16")
     target["PUBG_RANKER_MAX_PROBES"] = os.environ.get("VOD_FORCE_RANKER_MAX_PROBES", "16")
+    target["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
+    )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
@@ -802,15 +805,8 @@ def apply_agent_recover_env(
             "PUBG_PRESEND_SHOOTING_GATE", "1"
         )
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
-        skip_discovery = os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY") or os.environ.get(
-            "VOD_FORCE_SKIP_DISCOVERY"
-        )
-        if skip_discovery is None:
-            target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
-            target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
-        else:
-            target["VOD_FORCE_SKIP_DISCOVERY"] = skip_discovery
-            target["SHOOTER_VOD_SKIP_DISCOVERY"] = skip_discovery
+        target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
         target["VOD_PUBG_QUALITY_STRICT"] = "0"
     return target
 

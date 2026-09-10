@@ -305,6 +305,11 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_FAST_RANK_MAX"] = os.environ.get("VOD_FORCE_FAST_RANK_MAX", "24")
     env["PUBG_KILLFEED_RANK_MAX"] = os.environ.get("VOD_FORCE_KILLFEED_RANK_MAX", "16")
     env["PUBG_RANKER_MAX_PROBES"] = os.environ.get("VOD_FORCE_RANKER_MAX_PROBES", "16")
+    # Direct 👍-neighbor fan-out (30–40 rows + PANNs prescore) stalls drought
+    # shipping; ranked dense peaks are enough when silence is extreme.
+    env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
+    )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
@@ -317,22 +322,14 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
         "VOD_FORCE_MAX_SENDS_PER_CYCLE", "0"
     )
-    # Honor explicit skip-discovery from emergency ship / operator env.
-    skip_discovery = os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY") or os.environ.get(
-        "VOD_FORCE_SKIP_DISCOVERY"
-    )
-    if skip_discovery is None:
-        env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
-    else:
-        env["SHOOTER_VOD_SKIP_DISCOVERY"] = skip_discovery
-        env["VOD_FORCE_SKIP_DISCOVERY"] = skip_discovery
+    # Always keep discovery on — SKIP_DISCOVERY is a hard config conflict.
+    env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+    env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
     if escalation >= 2:
         env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
         env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get("VOD_FORCE_RELAX_OWNER", "1")
         env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1")
         env["VOD_FORCE_PRESEND_BYPASS"] = "0"
-        if skip_discovery is None:
-            env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
         # Model strictness was blocking softened singles; keep shooting/loot gates.
         env["VOD_PUBG_QUALITY_STRICT"] = "0"
     return env
