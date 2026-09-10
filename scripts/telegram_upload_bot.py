@@ -455,8 +455,14 @@ def send_message(chat_id: str | int, text: str, reply_markup: dict | None = None
         logging.error('failed to send message to %s: %s', chat_id, exc)
 
 
-def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = True):
-    """Owner ops reply with actionable inline keyboard."""
+def send_owner_controls(
+    chat_id: str | int,
+    text: str,
+    *,
+    with_inline: bool = True,
+    with_reply_keyboard: bool = False,
+):
+    """Owner ops reply with actionable inline keyboard (and optional persistent pad)."""
     markup = None
     if with_inline:
         try:
@@ -466,6 +472,17 @@ def send_owner_controls(chat_id: str | int, text: str, *, with_inline: bool = Tr
         except Exception:
             logging.exception("owner_controls_keyboard failed")
     send_message(chat_id, text, reply_markup=markup)
+    if with_reply_keyboard:
+        try:
+            from telegram_owner_controls import owner_reply_keyboard
+
+            send_message(
+                chat_id,
+                'Панель всегда внизу: Агент · Процесс · Recover · Отправить · Сброс',
+                reply_markup=owner_reply_keyboard(),
+            )
+        except Exception:
+            logging.exception('owner_reply_keyboard failed')
 
 
 def _schedule_owner_recover(chat_id: str | int, game: str = 'all') -> None:
@@ -3064,6 +3081,7 @@ def _bot_command_list() -> list[dict[str, str]]:
         {'command': 'status', 'description': 'Сколько видео в очереди'},
         {'command': 'process', 'description': 'Процесс пайплайна (что сейчас ищет)'},
         {'command': 'agent', 'description': 'Агент зависания — диагноз + recover + клип'},
+        {'command': 'send', 'description': 'Отправить клип сейчас'},
         {'command': 'recover', 'description': 'Починить feed — видео снова пошли'},
         {'command': 'reset', 'description': 'Сброс исчерпанных VOD + поиск'},
         {'command': 'ad', 'description': 'Скрины рекламы (владелец)'},
@@ -3127,6 +3145,7 @@ def handle_message(message: dict):
             is_process_command,
             is_recover_command,
             is_reset_command,
+            is_send_now_command,
             parse_recover_game,
             parse_reset_game,
             run_reset,
@@ -3141,6 +3160,10 @@ def handle_message(message: dict):
             return
         if is_process_command(text):
             send_owner_controls(chat_id, format_process_report())
+            return
+        if is_send_now_command(text) or cmd in ('/send', '/отправить', '/sendnow'):
+            send_owner_controls(chat_id, '📤 Отправка запущена — один цикл feed…')
+            _schedule_owner_send_now(chat_id, 'all')
             return
         if is_recover_command(text) or cmd == '/recover':
             try:
@@ -3171,11 +3194,13 @@ def handle_message(message: dict):
     if cmd == '/start' or text.startswith('/start'):
         if is_owner(chat_id):
             start_text = (
-                'Владелец. Если завис — жми «Агент зависания» или /agent\n'
+                'Владелец. Автоагент сам следит за зависаниями каждые 5 мин.\n'
+                'Кнопки внизу и под сообщениями — ручной форс при необходимости.\n'
+                '/agent — агент зависания сейчас\n'
                 '/process — что сейчас ищет пайплайн\n'
                 '/recover — починить feed и отправить клип\n'
+                '/send — отправить клип сейчас\n'
                 '/reset — снова открыть исчерпанные VOD\n'
-                'Кнопки ниже: Агент · Процесс · Recover · Отправить · Сброс\n'
                 '/ping — версия бота\n'
                 '/make — нарезка из загруженных файлов\n\n'
             )
@@ -3194,10 +3219,10 @@ def handle_message(message: dict):
                     'YouTube / Shorts: ссылка или /yt <url> → /make.\n'
                     'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
                 )
-            remove_owner_reply_keyboard(chat_id, start_text)
             send_owner_controls(
                 chat_id,
-                'Панель управления VOD — если завис, жми «Агент зависания».',
+                start_text,
+                with_reply_keyboard=True,
             )
             return
         if is_pubg_chat(chat_id):
@@ -3434,9 +3459,10 @@ def handle_message(message: dict):
             + (f'\nссылка в сообщении: {"да" if yt_urls else "нет"}' if yt_urls else '')
         )
         if is_owner(chat_id):
-            ping_text += '\n\nЕсли завис: /agent · /process · /recover · /reset'
-            remove_owner_reply_keyboard(chat_id, ping_text)
-            send_owner_controls(chat_id, 'Панель: агент зависания / recover / отправить')
+            ping_text += (
+                '\n\nАвтоагент следит сам. Ручной форс: /agent · /process · /recover · /send · /reset'
+            )
+            send_owner_controls(chat_id, ping_text, with_reply_keyboard=True)
         else:
             send_message(chat_id, ping_text)
         return

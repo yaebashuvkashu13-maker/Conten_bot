@@ -52,14 +52,40 @@ def test_owner_controls_keyboard_has_hang_agent() -> None:
     assert "ops_reset" in buttons
 
 
+def test_owner_reply_keyboard_persistent() -> None:
+    from telegram_owner_controls import (
+        BTN_HANG_AGENT,
+        BTN_PROCESS,
+        BTN_RECOVER,
+        BTN_RESET,
+        BTN_SEND_NOW,
+        owner_reply_keyboard,
+    )
+
+    kb = owner_reply_keyboard()
+    assert kb["resize_keyboard"] is True
+    assert kb["is_persistent"] is True
+    labels = [b["text"] for row in kb["keyboard"] for b in row]
+    assert labels[0] == BTN_HANG_AGENT
+    assert BTN_PROCESS in labels
+    assert BTN_RECOVER in labels
+    assert BTN_SEND_NOW in labels
+    assert BTN_RESET in labels
+
+
 def test_text_hang_agent_command() -> None:
-    from telegram_owner_controls import is_hang_agent_command
+    from telegram_owner_controls import is_hang_agent_command, is_send_now_command
 
     assert is_hang_agent_command("/agent")
     assert is_hang_agent_command("/завис")
     assert is_hang_agent_command("снова завис")
     assert is_hang_agent_command("агент зависания")
+    assert is_hang_agent_command("🤖 Агент зависания")
     assert not is_hang_agent_command("/recover")
+    assert is_send_now_command("/send")
+    assert is_send_now_command("📤 Отправить")
+    assert is_send_now_command("отправить")
+    assert not is_send_now_command("/agent")
 
 
 def test_text_process_command() -> None:

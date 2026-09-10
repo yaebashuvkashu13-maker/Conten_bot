@@ -53,22 +53,42 @@ DEFAULT_VOD_SEARCH_LIMIT = 80
 DEFAULT_VOD_SEARCH_BATCH = 10
 
 
+BTN_HANG_AGENT = "🤖 Агент зависания"
+BTN_PROCESS = "📊 Процесс"
+BTN_RECOVER = "🔧 Recover"
+BTN_SEND_NOW = "📤 Отправить"
+BTN_RESET = "🔄 Сброс"
+
+
 def owner_controls_keyboard() -> dict:
     """Inline buttons under owner status / recover replies."""
     return {
         "inline_keyboard": [
             [
-                {"text": "🤖 Агент зависания", "callback_data": CALLBACK_HANG_AGENT},
+                {"text": BTN_HANG_AGENT, "callback_data": CALLBACK_HANG_AGENT},
             ],
             [
-                {"text": "📊 Процесс", "callback_data": CALLBACK_PROCESS},
-                {"text": "🔧 Recover", "callback_data": CALLBACK_RECOVER},
+                {"text": BTN_PROCESS, "callback_data": CALLBACK_PROCESS},
+                {"text": BTN_RECOVER, "callback_data": CALLBACK_RECOVER},
             ],
             [
-                {"text": "📤 Отправить", "callback_data": CALLBACK_SEND_NOW},
-                {"text": "🔄 Сброс", "callback_data": CALLBACK_RESET},
+                {"text": BTN_SEND_NOW, "callback_data": CALLBACK_SEND_NOW},
+                {"text": BTN_RESET, "callback_data": CALLBACK_RESET},
             ],
         ],
+    }
+
+
+def owner_reply_keyboard() -> dict:
+    """Persistent bottom keyboard — always visible for the owner."""
+    return {
+        "keyboard": [
+            [{"text": BTN_HANG_AGENT}],
+            [{"text": BTN_PROCESS}, {"text": BTN_RECOVER}],
+            [{"text": BTN_SEND_NOW}, {"text": BTN_RESET}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
     }
 
 
@@ -76,12 +96,19 @@ def _norm_text(text: str) -> str:
     return " ".join((text or "").strip().split()).lower()
 
 
+def _btn_norm(text: str) -> str:
+    """Normalize reply-keyboard presses (strip leading emoji / symbols)."""
+    import re
+
+    return re.sub(r"^[^a-zа-яё0-9/]+", "", _norm_text(text), flags=re.IGNORECASE)
+
+
 def is_process_command(text: str) -> bool:
     raw = (text or "").strip()
     token = raw.split()[0].split("@")[0].lower() if raw else ""
     if token in ("/process", "/процесс", "/proc"):
         return True
-    return _norm_text(raw) in {
+    return _btn_norm(raw) in {
         "процесс",
         "process",
         "статус пайплайна",
@@ -93,7 +120,7 @@ def is_reset_command(text: str) -> bool:
     token = raw.split()[0].split("@")[0].lower() if raw else ""
     if token in ("/reset", "/сброс"):
         return True
-    return _norm_text(raw) in {
+    return _btn_norm(raw) in {
         "сброс",
         "reset",
         "сброс процесса",
@@ -106,7 +133,7 @@ def is_recover_command(text: str) -> bool:
     token = raw.split()[0].split("@")[0].lower() if raw else ""
     if token in ("/recover", "/восстановить", "/fix"):
         return True
-    return _norm_text(raw) in {
+    return _btn_norm(raw) in {
         "recover",
         "восстановить",
         "восстановление",
@@ -115,12 +142,25 @@ def is_recover_command(text: str) -> bool:
     }
 
 
+def is_send_now_command(text: str) -> bool:
+    raw = (text or "").strip()
+    token = raw.split()[0].split("@")[0].lower() if raw else ""
+    if token in ("/send", "/отправить", "/sendnow"):
+        return True
+    return _btn_norm(raw) in {
+        "отправить",
+        "send",
+        "send now",
+        "отправка",
+    }
+
+
 def is_hang_agent_command(text: str) -> bool:
     raw = (text or "").strip()
     token = raw.split()[0].split("@")[0].lower() if raw else ""
     if token in ("/agent", "/hang", "/завис", "/агент"):
         return True
-    return _norm_text(raw) in {
+    return _btn_norm(raw) in {
         "агент",
         "агент зависания",
         "завис",
@@ -338,7 +378,9 @@ def run_hang_agent(game: str = "pubg") -> str:
         except Exception as exc2:  # noqa: BLE001
             lines.append(f"• recover fallback: {exc2}")
 
-    lines.append("Готово. Если снова тихо >1ч — жми «Агент зависания».")
+    lines.append(
+        "Готово. Автоагент тоже следит каждые 5 мин — кнопки ниже на всякий случай."
+    )
     return "\n".join(lines)
 
 

@@ -1059,7 +1059,47 @@ def auto_unload_and_recover(
     return {"action": "light_restart", "actions": actions, "reasons": report.reasons}
 
 
-def maybe_silence_alert(report: HangReport) -> bool:
+def _clear_stale_recover_lock() -> bool:
+    """Drop dead recover locks so auto-agent is never stuck behind a ghost pid."""
+    lock = _recover_lock_path()
+    if not lock.is_file():
+        return False
+    try:
+        pid = int(lock.read_text(encoding="utf-8").strip().split()[0])
+    except (OSError, ValueError, IndexError):
+        lock.unlink(missing_ok=True)
+        return True
+    if pid <= 1 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+        return False
+    except OSError:
+        lock.unlink(missing_ok=True)
+        return True
+
+
+def _owner_ops_markup() -> dict | None:
+    try:
+        from telegram_owner_controls import owner_controls_keyboard
+
+        return owner_controls_keyboard()
+    except Exception:
+        return None
+
+
+def notify_owner_ops(text: str) -> bool:
+    """Telegram notify with inline ops keyboard (agent / recover / send)."""
+    markup = _owner_ops_markup()
+    try:
+        from vod_telegram_env import send_message
+
+        return send_message(text, reply_markup=markup)
+    except Exception:
+        return _send_tg(text)
+
+
+def maybe_silence_alert(report: HangReport, *, heal: dict | None = None) -> bool:
     alert_sec = max(3600, int(os.environ.get("VOD_SILENCE_ALERT_SEC", "7200")))
     if report.last_send_age_sec is None or report.last_send_age_sec < alert_sec:
         return False
@@ -1077,41 +1117,154 @@ def maybe_silence_alert(report: HangReport) -> bool:
     hours = int(report.last_send_age_sec // 3600)
     mins = int((report.last_send_age_sec % 3600) // 60)
     reasons = ", ".join(report.reasons[:4]) or "unknown"
+    heal_bit = ""
+    if heal:
+        heal_bit = f"\nHeal: {heal.get('action')} sent={heal.get('sent', '?')}"
     text = (
         f"⚠️ VOD feed: тишина ~{hours}ч {mins}м\n"
         f"Причины: {reasons}\n"
-        f"zero_send_streak={report.zero_send_streak}\n"
-        f"Автовосстановление запущено.\n"
-        f"Можно сразу: /agent или кнопка «Агент зависания»."
+        f"zero_send_streak={report.zero_send_streak}"
+        f"{heal_bit}\n"
+        f"Автоагент уже чинит — тебе ничего жать не нужно.\n"
+        f"Кнопки ниже — только если хочешь форснуть сам."
     )
-    if _send_tg(text):
+    if notify_owner_ops(text):
         DEFAULT_ALERT_STAMP.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
-        # Best-effort ops keyboard for the owner alert.
-        try:
-            from telegram_owner_controls import owner_controls_keyboard
-            from vod_telegram_env import bot_token, chat_id
-            import json as _json
-            import urllib.request
-
-            token, chat = bot_token(), chat_id()
-            if token and chat:
-                payload = _json.dumps(
-                    {
-                        "chat_id": chat,
-                        "text": "Панель: агент / recover / отправить",
-                        "reply_markup": owner_controls_keyboard(),
-                    }
-                ).encode()
-                req = urllib.request.Request(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                urllib.request.urlopen(req, timeout=20).read()
-        except Exception:
-            pass
         return True
     return False
+
+
+def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dict:
+    """Watchdog playbook: clear stale locks → heal → force-send → notify owner.
+
+    Runs without owner button presses. Buttons remain as a manual override.
+    """
+    cleared = _clear_stale_recover_lock()
+    report = detect_hang()
+    out: dict = {
+        "ok": report.ok,
+        "reasons": list(report.reasons),
+        "last_send_age_sec": int(report.last_send_age_sec or 0),
+        "cleared_stale_lock": cleared,
+        "ts": _now(),
+    }
+    if report.ok and not force:
+        out["action"] = "healthy"
+        return out
+
+    cooldown_sec = max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
+    if not force and not _heal_cooldown_ok(cooldown_sec):
+        out["action"] = "cooldown"
+        out["heal"] = {
+            "action": "cooldown",
+            "reasons": report.reasons,
+            "cooldown_sec": cooldown_sec,
+        }
+        return out
+
+    if not force and _recover_already_running():
+        out["action"] = "recover_in_progress"
+        out["heal"] = {"action": "recover_in_progress", "reasons": report.reasons}
+        return out
+
+    # Prefer full agent playbook on absolute silence / force — not a silent bg recover
+    # that can die and leave a ghost lock.
+    absolute = max(
+        600,
+        int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400")),
+    )
+    silence = float(report.last_send_age_sec or 0)
+    use_full_agent = (
+        force
+        or silence >= absolute
+        or os.environ.get("VOD_AUTO_HANG_AGENT", "1") == "1"
+    )
+
+    if use_full_agent:
+        try:
+            from telegram_owner_controls import run_hang_agent
+
+            # Background spawn so the 5-min systemd oneshot does not time out.
+            if (
+                not force
+                and os.environ.get("VOD_HEAL_BACKGROUND", "1") == "1"
+                and os.environ.get("VOD_AUTO_AGENT_BG", "1") == "1"
+            ):
+                if _spawn_background_agent(game):
+                    _mark_heal("auto_agent_bg", sent=0, escalation=_heal_escalation())
+                    out["action"] = "auto_agent_bg"
+                    out["heal"] = {"action": "auto_agent_bg"}
+                    maybe_silence_alert(report, heal=out["heal"])
+                    return out
+            msg = run_hang_agent(game)
+            sent = 1 if ("SENT" in msg or "отправлен" in msg.lower()) else 0
+            import re as _re
+
+            m = _re.search(r"sent[=:\s]+(\d+)", msg, _re.IGNORECASE)
+            if m:
+                sent = int(m.group(1))
+            esc = 0 if sent > 0 else min(2, _heal_escalation() + 1)
+            _mark_heal("auto_agent", sent=sent, escalation=esc)
+            out["action"] = "auto_agent"
+            out["sent"] = sent
+            out["report_tail"] = msg.splitlines()[-12:]
+            if sent <= 0 or silence >= absolute:
+                notify_owner_ops(
+                    "🤖 Автоагент зависания отработал:\n"
+                    + "\n".join(msg.splitlines()[:18])
+                )
+            return out
+        except Exception as exc:  # noqa: BLE001
+            out["agent_error"] = str(exc)
+
+    heal = auto_unload_and_recover(
+        report, game=game, force=force or use_full_agent, background=not force
+    )
+    out["action"] = heal.get("action")
+    out["heal"] = heal
+    if heal.get("action") not in ("none", "cooldown", "recover_in_progress"):
+        maybe_silence_alert(report, heal=heal)
+    return out
+
+
+def _spawn_background_agent(game: str) -> bool:
+    """Start hang-agent playbook in background; log to hang_recover_auto.log."""
+    if _recover_already_running():
+        return False
+    _clear_stale_recover_lock()
+    script = Path(__file__).resolve()
+    log_path = Path(os.environ.get("VOD_AUTO_RECOVER_LOG", str(DEFAULT_AUTO_RECOVER_LOG)))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    esc = _heal_escalation()
+    env = apply_agent_recover_env(dict(os.environ), escalation=esc)
+    env["VOD_RECOVER_CHILD"] = "1"
+    env["VOD_AUTO_AGENT_BG"] = "0"  # child runs synchronously
+    header = (
+        f"\n===== auto agent {time.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"game={game} esc={esc} silence={int(last_send_age_sec() or 0)}s =====\n"
+    )
+    try:
+        log_fh = log_path.open("a", encoding="utf-8")
+    except OSError:
+        log_fh = subprocess.DEVNULL  # type: ignore[assignment]
+    if log_fh is not subprocess.DEVNULL:
+        try:
+            log_fh.write(header)
+            log_fh.flush()
+        except OSError:
+            pass
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(script), "--agent", "--game", game],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        _recover_lock_path().write_text(str(proc.pid), encoding="utf-8")
+    except OSError:
+        pass
+    return True
 
 
 def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
@@ -1132,12 +1285,21 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
         DEFAULT_DETECT_STAMP.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
+    # Always drop ghost locks even when report looks ok — prevents permanent stuck.
+    cleared = _clear_stale_recover_lock()
+    if cleared:
+        out["cleared_stale_lock"] = True
     if not report.ok or force:
-        # Alert only when we actually heal (not on cooldown spam).
-        heal = auto_unload_and_recover(report, game=game, force=force, background=not force)
-        out["heal"] = heal
-        if heal.get("action") not in ("none", "cooldown", "recover_in_progress"):
-            maybe_silence_alert(report)
+        agent = run_autonomous_hang_agent(game=game, force=force)
+        out["heal"] = agent.get("heal") or {
+            "action": agent.get("action"),
+            "sent": agent.get("sent"),
+        }
+        out["agent"] = {
+            "action": agent.get("action"),
+            "sent": agent.get("sent"),
+            "cleared_stale_lock": agent.get("cleared_stale_lock"),
+        }
     return out
 
 
@@ -1172,8 +1334,28 @@ def main() -> int:
     parser.add_argument("--tick", action="store_true", help="Run one watchdog tick (cron)")
     parser.add_argument("--detect", action="store_true", help="Print hang report JSON only")
     parser.add_argument("--recover", action="store_true", help="Force recover now")
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Run full hang-agent playbook (diagnose + recover + force-send + notify)",
+    )
     parser.add_argument("--game", default="pubg", choices=("all", *VOD_GAMES))
     args = parser.parse_args()
+
+    if args.agent:
+        _clear_stale_recover_lock()
+        if not _acquire_recover_lock():
+            print(json.dumps({"action": "recover_in_progress"}, ensure_ascii=False))
+            return 0
+        try:
+            from telegram_owner_controls import run_hang_agent
+
+            msg = run_hang_agent(args.game if args.game != "all" else "pubg")
+            print(msg)
+            notify_owner_ops("🤖 Автоагент зависания:\n" + "\n".join(msg.splitlines()[:18]))
+            return 0
+        finally:
+            _release_recover_lock()
 
     if args.detect:
         report = detect_hang()

@@ -95,9 +95,78 @@ def test_hang_unit_files_exist_and_tick() -> None:
     assert "OnUnitActiveSec=" in timer or "OnCalendar=" in timer
     install = (root / "install_vod_hang_watch.sh").read_text(encoding="utf-8")
     assert "content-bot-vod-hang.timer" in install
+    assert "telegram_owner_controls.py" in install
     deploy = (root / "deploy_unified_production.sh").read_text(encoding="utf-8")
     assert "install_vod_hang_watch.sh" in deploy
     assert "VOD_PUBG_ONLY" in deploy
+
+
+def test_autonomous_hang_agent_spawns_on_silence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import vod_hang_detector as hang
+
+    class _R:
+        ok = False
+        last_send_age_sec = 9000.0
+        heartbeat_age_sec = 50.0
+        reasons = ["absolute_silence_9000s"]
+        zero_send_streak = 0
+        feed_alive = True
+        stuck_children: list = []
+        stuck_parts: list = []
+
+    monkeypatch.setattr(hang, "detect_hang", lambda: _R())
+    monkeypatch.setattr(hang, "_heal_cooldown_ok", lambda *_a, **_k: True)
+    monkeypatch.setattr(hang, "_recover_already_running", lambda: False)
+    monkeypatch.setattr(hang, "_clear_stale_recover_lock", lambda: True)
+    monkeypatch.setenv("VOD_AUTO_HANG_AGENT", "1")
+    monkeypatch.setenv("VOD_AUTO_AGENT_BG", "1")
+    monkeypatch.setenv("VOD_HEAL_BACKGROUND", "1")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "3600")
+
+    spawned: list[str] = []
+
+    def fake_spawn(game: str) -> bool:
+        spawned.append(game)
+        return True
+
+    monkeypatch.setattr(hang, "_spawn_background_agent", fake_spawn)
+    monkeypatch.setattr(hang, "_mark_heal", lambda *a, **k: None)
+    monkeypatch.setattr(hang, "maybe_silence_alert", lambda *a, **k: True)
+    monkeypatch.setattr(hang, "_heal_escalation", lambda: 0)
+
+    out = hang.run_autonomous_hang_agent(game="pubg", force=False)
+    assert out["action"] == "auto_agent_bg"
+    assert spawned == ["pubg"]
+
+
+def test_run_tick_clears_stale_lock_when_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vod_hang_detector as hang
+
+    class _R:
+        ok = True
+        last_send_age_sec = 10.0
+        heartbeat_age_sec = 5.0
+        reasons: list = []
+        zero_send_streak = 0
+        feed_alive = True
+        stuck_children: list = []
+        stuck_parts: list = []
+
+    cleared = {"n": 0}
+
+    monkeypatch.setattr(hang, "detect_hang", lambda: _R())
+    monkeypatch.setattr(
+        hang,
+        "_clear_stale_recover_lock",
+        lambda: cleared.__setitem__("n", cleared["n"] + 1) or True,
+    )
+    monkeypatch.setattr(hang, "DEFAULT_DETECT_STAMP", Path("/tmp/vod_detect_test.json"))
+
+    out = hang.run_tick(game="pubg", force=False)
+    assert out["ok"] is True
+    assert cleared["n"] == 1
+    assert out.get("cleared_stale_lock") is True
+    assert "agent" not in out or out.get("heal") is None
 
 
 def test_hang_loads_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
