@@ -361,22 +361,25 @@ def run_hang_agent(game: str = "pubg") -> str:
             or "sent=0" in report_txt.lower()
         )
         if mined:
-            lines.append("• mined/пусто — unload + reset + unpark и шлю ещё раз")
+            lines.append("• mined/пусто — unload reject-heavy + unpark готовых (без полного /reset)")
             try:
-                from vod_hang_detector import unload_stuck_inbox_vod
+                from vod_hang_detector import (
+                    mark_mined_inbox_exhausted,
+                    unload_stuck_inbox_vod,
+                )
 
                 unloaded = unload_stuck_inbox_vod(target, min_rejects=2)
                 if unloaded:
                     lines.append(f"• unload stuck VOD: {unloaded}")
+                marked = mark_mined_inbox_exhausted(target)
+                if marked:
+                    lines.append(f"• mined exhausted: {', '.join(marked[:4])}")
             except Exception as exc:  # noqa: BLE001
                 lines.append(f"• unload: {exc}")
             try:
-                lines.append(run_reset(target))
-            except Exception as exc:  # noqa: BLE001
-                lines.append(f"• reset: {exc}")
-            try:
-                from vod_feed_recover import unpark_ready_vods
+                from vod_feed_recover import park_exhausted_inbox, unpark_ready_vods
 
+                park_exhausted_inbox(target)
                 n = unpark_ready_vods(target, limit=5)
                 lines.append(f"• unpark: {n}")
             except Exception as exc:  # noqa: BLE001
