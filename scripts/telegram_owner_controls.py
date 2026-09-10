@@ -312,8 +312,25 @@ def run_hang_agent(game: str = "pubg") -> str:
 
         t0 = time.time()
         report_rows = force_send(target)
-        lines.append(format_force_send_report(report_rows))
+        report_txt = format_force_send_report(report_rows)
+        lines.append(report_txt)
         lines.append(f"• force-send за {int(time.time() - t0)}с")
+        mined = "mined_out" in report_txt or "не отправлено" in report_txt
+        if mined:
+            lines.append("• mined/пусто — сбрасываю exhausted + unpark и шлю ещё раз")
+            try:
+                lines.append(run_reset(target))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"• reset: {exc}")
+            try:
+                from vod_feed_recover import unpark_ready_vods
+
+                n = unpark_ready_vods(target, limit=5)
+                lines.append(f"• unpark: {n}")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"• unpark: {exc}")
+            report_rows = force_send(target)
+            lines.append(format_force_send_report(report_rows))
     except Exception as exc:  # noqa: BLE001
         lines.append(f"• force-send error: {exc}")
         try:
