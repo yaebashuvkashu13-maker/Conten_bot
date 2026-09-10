@@ -3022,14 +3022,27 @@ def _scan_vod_with_adaptive(
                     owner_peaks = []
                 # Even when label-seed sends are off, probe *near* 👍 so learning
                 # shapes the candidate set (not only ranks existing dense junk).
+                # Drought/force-send must NOT explode 50+ neighborhood probes into
+                # killfeed+PANNs — that burns 10–30min with zero Telegram clips.
+                owner_probe_on = (
+                    game == "pubg"
+                    and os.environ.get("SHOOTER_VOD_OWNER_NEIGHBORHOOD_PROBE", "1") == "1"
+                )
                 try:
                     owner_probes = (
-                        owner_neighborhood_probe_peaks(game, vod)
-                        if game == "pubg"
-                        else []
+                        owner_neighborhood_probe_peaks(game, vod) if owner_probe_on else []
                     )
                 except Exception:
                     owner_probes = []
+                if owner_probes:
+                    try:
+                        probe_cap = int(
+                            os.environ.get("SHOOTER_VOD_OWNER_PROBE_MAX", "0") or 0
+                        )
+                    except ValueError:
+                        probe_cap = 0
+                    if probe_cap > 0:
+                        owner_probes = owner_probes[:probe_cap]
                 seed_peaks = list(owner_peaks) + list(owner_probes)
                 if seed_peaks:
                     merged: list[float] = []
@@ -3048,6 +3061,11 @@ def _scan_vod_with_adaptive(
                         len(owner_probes),
                         seed_peaks[:8],
                     )
+                elif not owner_probe_on and game == "pubg":
+                    log.info(
+                        "fast-montage skip owner-neighborhood probes vod=%s (drought/fast path)",
+                        vod.name,
+                    )
                 try:
                     from vod_event_dedup import dedup_by_audio_signature, merge_nearby_peaks
 
@@ -3058,6 +3076,11 @@ def _scan_vod_with_adaptive(
                 style_sims: dict[float, float] = {}
                 peak_meta: dict[float, dict] = {}
                 if game == "pubg" and dense_peaks:
+                    log.info(
+                        "fast-montage rank start vod=%s peaks=%s",
+                        vod.name,
+                        len(dense_peaks),
+                    )
                     try:
                         from pubg_fast_peak_rank import rank_peaks_fast
 
@@ -3069,6 +3092,11 @@ def _scan_vod_with_adaptive(
                         )
                         scan_funnel.note_stage("fast_rank", len(dense_peaks))
                         dense_reason = f"{dense_reason} {fast_reason}"
+                        log.info(
+                            "fast-montage rank fast vod=%s n=%s",
+                            vod.name,
+                            len(dense_peaks or []),
+                        )
                     except Exception as exc:
                         log.warning("fast peak rank fallback vod=%s: %s", vod.name, exc)
                     try:
@@ -3088,6 +3116,12 @@ def _scan_vod_with_adaptive(
                         meta=peak_meta,
                     )
                     dense_reason = f"{dense_reason} {kf_reason}"
+                    log.info(
+                        "fast-montage rank killfeed vod=%s n=%s reason=%s",
+                        vod.name,
+                        len(dense_peaks or []),
+                        kf_reason,
+                    )
                     try:
                         from vod_scan_cascade import apply_cascade_to_pool
 
@@ -3104,6 +3138,11 @@ def _scan_vod_with_adaptive(
                             part_sec=min(14.0, part_max),
                         )
                         dense_reason = f"{dense_reason} {ranker_reason}"
+                        log.info(
+                            "fast-montage rank model vod=%s n=%s",
+                            vod.name,
+                            len(dense_peaks or []),
+                        )
                     except Exception as exc:
                         log.warning("pubg ranker fallback vod=%s: %s", vod.name, exc)
                     try:
@@ -3116,6 +3155,11 @@ def _scan_vod_with_adaptive(
                             meta=peak_meta,
                         )
                         dense_reason = f"{dense_reason} {style_reason}"
+                        log.info(
+                            "fast-montage rank style vod=%s n=%s",
+                            vod.name,
+                            len(dense_peaks or []),
+                        )
                     except Exception as exc:
                         log.warning("style rank fallback vod=%s: %s", vod.name, exc)
                 try:

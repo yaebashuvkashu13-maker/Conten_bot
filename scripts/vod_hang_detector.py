@@ -755,9 +755,6 @@ def apply_agent_recover_env(
     target["VOD_CASCADE_FAST_RANKER_MAX"] = "0"
     target["CHEAP_CASCADE_TOP_K"] = "0"
     target["CHEAP_CASCADE_HEAVY_TOP"] = "0"
-    target["PUBG_FAST_RANK_MAX"] = "0"
-    target["PUBG_KILLFEED_RANK_MAX"] = "0"
-    target["PUBG_RANKER_MAX_PROBES"] = "0"
     # Contiguous dense grid — no 40s probe skips / hard max truncation.
     target["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
         "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1.5"
@@ -770,6 +767,16 @@ def apply_agent_recover_env(
     )
     target["SHOOTER_VOD_AUDIO_CANDIDATE_MAX"] = "0"
     target["SHOOTER_VOD_DENSE_POOL_BUST"] = os.environ.get("SHOOTER_VOD_DENSE_POOL_BUST", "0")
+    # Same as force-send drought: do not fan out 50+ 👍 neighborhood probes.
+    target["SHOOTER_VOD_OWNER_NEIGHBORHOOD_PROBE"] = os.environ.get(
+        "SHOOTER_VOD_OWNER_NEIGHBORHOOD_PROBE", "0"
+    )
+    target["SHOOTER_VOD_OWNER_PROBE_MAX"] = os.environ.get(
+        "SHOOTER_VOD_OWNER_PROBE_MAX", "8"
+    )
+    target["PUBG_FAST_RANK_MAX"] = os.environ.get("VOD_FORCE_FAST_RANK_MAX", "24")
+    target["PUBG_KILLFEED_RANK_MAX"] = os.environ.get("VOD_FORCE_KILLFEED_RANK_MAX", "16")
+    target["PUBG_RANKER_MAX_PROBES"] = os.environ.get("VOD_FORCE_RANKER_MAX_PROBES", "16")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
@@ -795,8 +802,15 @@ def apply_agent_recover_env(
             "PUBG_PRESEND_SHOOTING_GATE", "1"
         )
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
-        target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
-        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+        skip_discovery = os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY") or os.environ.get(
+            "VOD_FORCE_SKIP_DISCOVERY"
+        )
+        if skip_discovery is None:
+            target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+            target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+        else:
+            target["VOD_FORCE_SKIP_DISCOVERY"] = skip_discovery
+            target["SHOOTER_VOD_SKIP_DISCOVERY"] = skip_discovery
         target["VOD_PUBG_QUALITY_STRICT"] = "0"
     return target
 
@@ -1196,7 +1210,8 @@ def maybe_silence_alert(report: HangReport, *, heal: dict | None = None) -> bool
         f"Причины: {reasons}\n"
         f"zero_send_streak={report.zero_send_streak}"
         f"{heal_bit}\n"
-        f"Автоагент уже чинит — тебе ничего жать не нужно.\n"
+        f"Автоагент чинит сейчас. Видео появится только после успешной отправки "
+        f"(не путать с heartbeat «scanning»).\n"
         f"Кнопки ниже — только если хочешь форснуть сам."
     )
     if notify_owner_ops(text):

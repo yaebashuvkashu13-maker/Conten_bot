@@ -414,7 +414,7 @@ def run_hang_agent(game: str = "pubg") -> str:
             lines.append(f"• recover fallback: {exc2}")
 
     lines.append(
-        "Готово. Автоагент тоже следит каждые 5 мин — кнопки ниже на всякий случай."
+        "Готово. Таймер крутится каждые 5 мин; видео — только когда stamp отправки обновится."
     )
     return "\n".join(lines)
 
