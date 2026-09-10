@@ -3201,6 +3201,8 @@ def _scan_vod_with_adaptive(
                         from pubg_owner_style import style_avoid_peaks
 
                         pubg_avoid_peaks = style_avoid_peaks(vod)
+                        if os.environ.get("PUBG_STYLE_AVOID_ENABLE", "1") != "1":
+                            pubg_avoid_peaks = []
                     except Exception:
                         pubg_avoid_peaks = []
 

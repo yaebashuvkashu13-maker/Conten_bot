@@ -778,17 +778,32 @@ def apply_agent_recover_env(
     target["PUBG_KILLFEED_RANK_MAX"] = os.environ.get("VOD_FORCE_KILLFEED_RANK_MAX", "16")
     target["PUBG_RANKER_MAX_PROBES"] = os.environ.get("VOD_FORCE_RANKER_MAX_PROBES", "16")
     target["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
+        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1"
+    )
+    target["PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "0"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "45"
+    )
+    target["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
+    )
+    target["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "8"
+    )
+    target["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "3"
     )
     if esc >= 2:
         target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
             "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        )
+        target["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
+            "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
         target["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] = os.environ.get(
             "PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0"
@@ -805,6 +820,7 @@ def apply_agent_recover_env(
         target["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
             "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
         )
+        target["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("PUBG_STYLE_AVOID_ENABLE", "0")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"

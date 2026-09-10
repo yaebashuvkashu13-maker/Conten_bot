@@ -308,14 +308,26 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     # Direct 👍-neighbor fan-out (30–40 rows + PANNs prescore) stalls drought
     # shipping; ranked dense peaks are enough when silence is extreme.
     env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
+        "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1"
     )
-    # Keep gun-snap windows short when any owner-locked path still fires.
+    # Short fixed near-👍 windows — not 110s+ gun-snap encodes.
+    env["PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "0"
+    )
     env["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "45"
+    )
+    env["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
+    )
+    env["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "8"
+    )
+    env["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "3"
     )
     # Keep hard loot_walk reject ON, but allow drought DISLIKE_GUN soften to apply.
     # With loot_floor_lock=1, active loot_run reasons froze gun at 0.09 and killed
@@ -323,6 +335,9 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     if escalation >= 2:
         env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
             "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        )
+        env["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
+            "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
         # File env / owner calibration pin SINGLES kill require=1; under multi-hour
         # silence that rejects every OCR-blind fight (hard_no_author_kill).
@@ -339,6 +354,9 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         env["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
             "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
         )
+        # Already-sent 👍 zones are style-avoided; under drought we still need
+        # near-👍 neighbors, not only leftover loot peaks.
+        env["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("PUBG_STYLE_AVOID_ENABLE", "0")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
