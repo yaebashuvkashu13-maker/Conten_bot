@@ -355,9 +355,21 @@ def run_hang_agent(game: str = "pubg") -> str:
         report_txt = format_force_send_report(report_rows)
         lines.append(report_txt)
         lines.append(f"• force-send за {int(time.time() - t0)}с")
-        mined = "mined_out" in report_txt or "не отправлено" in report_txt
+        mined = (
+            "mined_out" in report_txt
+            or "не отправлено" in report_txt
+            or "sent=0" in report_txt.lower()
+        )
         if mined:
-            lines.append("• mined/пусто — сбрасываю exhausted + unpark и шлю ещё раз")
+            lines.append("• mined/пусто — unload + reset + unpark и шлю ещё раз")
+            try:
+                from vod_hang_detector import unload_stuck_inbox_vod
+
+                unloaded = unload_stuck_inbox_vod(target, min_rejects=2)
+                if unloaded:
+                    lines.append(f"• unload stuck VOD: {unloaded}")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"• unload: {exc}")
             try:
                 lines.append(run_reset(target))
             except Exception as exc:  # noqa: BLE001
@@ -369,6 +381,16 @@ def run_hang_agent(game: str = "pubg") -> str:
                 lines.append(f"• unpark: {n}")
             except Exception as exc:  # noqa: BLE001
                 lines.append(f"• unpark: {exc}")
+            # Escalate soften one step for the retry pass.
+            try:
+                from vod_hang_detector import apply_agent_recover_env, _heal_escalation
+
+                apply_agent_recover_env(
+                    os.environ,
+                    escalation=min(2, int(_heal_escalation()) + 1),
+                )
+            except Exception:
+                pass
             report_rows = force_send(target)
             lines.append(format_force_send_report(report_rows))
     except Exception as exc:  # noqa: BLE001

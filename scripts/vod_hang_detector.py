@@ -285,12 +285,21 @@ def unload_stuck_inbox_vod(game: str, *, min_rejects: int = 3) -> str | None:
 
     reject_counts: dict[str, int] = {}
     for line in tail:
-        if "metro_reject=1" not in line and "sent=0" not in line:
+        low = line.lower()
+        if (
+            "metro_reject=1" not in line
+            and "sent=0" not in line
+            and "presend reject" not in low
+            and "hard_no_author_kill" not in low
+            and "hard_loot_walk" not in low
+            and "hard_menu_overlay" not in low
+        ):
             continue
         for mp4 in mp4s:
             vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
             if vid and vid in line:
                 reject_counts[vid] = reject_counts.get(vid, 0) + 1
+                break
 
     parked_dir = inbox.parent / "parked"
     parked_dir.mkdir(parents=True, exist_ok=True)
@@ -742,7 +751,7 @@ def _parse_recover_sent(msg: str) -> int:
 
 
 def _recover_process_alive() -> bool:
-    """True if a hang-detector --recover child is running (lock may lag)."""
+    """True if a hang-detector --recover/--agent child is running (lock may lag)."""
     me = os.getpid()
     for pid_name in os.listdir("/proc"):
         if not pid_name.isdigit():
@@ -756,7 +765,9 @@ def _recover_process_alive() -> bool:
             continue
         parts = [p.decode(errors="ignore") for p in raw.split(b"\0") if p]
         joined = " ".join(parts)
-        if "vod_hang_detector.py" in joined and "--recover" in joined:
+        if "vod_hang_detector.py" not in joined:
+            continue
+        if "--recover" in joined or "--agent" in joined:
             return True
     return False
 
