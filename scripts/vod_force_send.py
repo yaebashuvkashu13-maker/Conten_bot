@@ -317,6 +317,13 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
     )
+    # Keep hard loot_walk reject ON, but allow drought DISLIKE_GUN soften to apply.
+    # With loot_floor_lock=1, active loot_run reasons froze gun at 0.09 and killed
+    # borderline fights (0.064) while silence was already multi-hour.
+    if escalation >= 2:
+        env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
+            "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"

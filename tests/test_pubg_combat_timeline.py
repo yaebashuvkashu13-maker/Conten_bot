@@ -92,6 +92,7 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
         assert env["SHOOTER_VOD_DENSE_POOL_BUST"] == "0"
         assert env["SHOOTER_VOD_OWNER_NEIGHBORHOOD_PROBE"] == "0"
         assert env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] == "0"
+        assert env.get("PUBG_DISLIKE_LOOT_FLOOR_LOCK") == "0"
         assert int(env["PUBG_FAST_RANK_MAX"]) == 24
         assert int(env["PUBG_KILLFEED_RANK_MAX"]) == 16
         assert int(env["PUBG_RANKER_MAX_PROBES"]) == 16

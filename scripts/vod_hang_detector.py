@@ -786,6 +786,10 @@ def apply_agent_recover_env(
     target["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
     )
+    if esc >= 2:
+        target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
+            "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
