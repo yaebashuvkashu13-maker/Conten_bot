@@ -3322,21 +3322,28 @@ def _scan_vod_with_adaptive(
                             score = max(score, 0.88)
                         if near_owner:
                             score = min(0.99, float(score) + owner_boost)
+                        # Locked neighborhood windows only when DIRECT path is on.
+                        # Under drought DIRECT=0: keep owner_anchor score boost, but use
+                        # normal fight bounds (not 110s+ gun-snap encodes).
+                        lock_owner = (
+                            near_owner
+                            and os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1") == "1"
+                        )
                         row = {
                             "segment_id": sid,
                             "start": start,
                             "peak_start": float(peak),
                             "score": score,
                             "owner_anchor": near_owner,
-                            "owner_neighborhood_direct": near_owner,
+                            "owner_neighborhood_direct": lock_owner,
                             "clip": {
                                 "start": start,
                                 "peak_start": float(peak),
                                 "input_duration": clip_dur,
                                 "output_duration": clip_dur,
                                 "owner_anchor": near_owner,
-                                "bounds_locked": bool(near_owner),
-                                "owner_neighborhood_direct": bool(near_owner),
+                                "bounds_locked": bool(lock_owner),
+                                "owner_neighborhood_direct": bool(lock_owner),
                             },
                         }
                         if report is not None:

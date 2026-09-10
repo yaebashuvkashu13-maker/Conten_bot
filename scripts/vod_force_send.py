@@ -310,6 +310,13 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
     )
+    # Keep gun-snap windows short when any owner-locked path still fires.
+    env["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"
+    )
+    env["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
+    )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"

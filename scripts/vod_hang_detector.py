@@ -780,6 +780,12 @@ def apply_agent_recover_env(
     target["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "0"
     )
+    target["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"
+    )
+    target["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"
+    )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
