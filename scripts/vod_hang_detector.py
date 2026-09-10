@@ -790,6 +790,21 @@ def apply_agent_recover_env(
         target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
             "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
         )
+        target["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] = os.environ.get(
+            "PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0"
+        )
+        target["PUBG_REQUIRE_AUTHOR_KILL"] = os.environ.get(
+            "PUBG_REQUIRE_AUTHOR_KILL", "0"
+        )
+        target["SHOOTER_REQUIRE_AUTHOR_KILL"] = os.environ.get(
+            "SHOOTER_REQUIRE_AUTHOR_KILL", "0"
+        )
+        target["PUBG_OWNER_GOOD_TRUST_NO_KILL"] = os.environ.get(
+            "PUBG_OWNER_GOOD_TRUST_NO_KILL", "1"
+        )
+        target["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
+            "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
+        )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"

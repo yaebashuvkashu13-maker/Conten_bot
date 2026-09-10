@@ -324,6 +324,21 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
             "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
         )
+        # File env / owner calibration pin SINGLES kill require=1; under multi-hour
+        # silence that rejects every OCR-blind fight (hard_no_author_kill).
+        env["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] = os.environ.get(
+            "PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0"
+        )
+        env["PUBG_REQUIRE_AUTHOR_KILL"] = os.environ.get("PUBG_REQUIRE_AUTHOR_KILL", "0")
+        env["SHOOTER_REQUIRE_AUTHOR_KILL"] = os.environ.get(
+            "SHOOTER_REQUIRE_AUTHOR_KILL", "0"
+        )
+        env["PUBG_OWNER_GOOD_TRUST_NO_KILL"] = os.environ.get(
+            "PUBG_OWNER_GOOD_TRUST_NO_KILL", "1"
+        )
+        env["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
+            "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
+        )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
