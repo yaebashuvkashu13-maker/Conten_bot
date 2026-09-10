@@ -265,6 +265,66 @@ def stop_feed_processes(game: str = "all") -> None:
         _stop_game_feed(g)
 
 
+def isolate_drought_inbox(game: str = "pubg", *, prefer_ids: list[str] | None = None) -> list[str]:
+    """On extreme silence keep only preferred VODs in inbox; park the rest.
+
+    Prevents the hang agent from burning hours on junk/new downloads while a
+    known-good Metro VOD still has unused peaks.
+    """
+    prefer = [p for p in (prefer_ids or []) if p]
+    if not prefer:
+        prefer = [
+            x.strip()
+            for x in str(os.environ.get("VOD_DROUGHT_PREFER_IDS", "zRQC8jkxbXQ")).split(",")
+            if x.strip()
+        ]
+    if not prefer:
+        return []
+    inbox = spec(game).inbox()
+    if not inbox.is_dir():
+        return []
+    parked = inbox / "parked"
+    parked.mkdir(parents=True, exist_ok=True)
+    kept: list[str] = []
+    moved: list[str] = []
+    prefer_set = set(prefer)
+    for mp4 in list(inbox.glob("yt_*.mp4")):
+        vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
+        if vid in prefer_set:
+            kept.append(mp4.name)
+            continue
+        dest = parked / mp4.name
+        try:
+            if dest.exists():
+                mp4.unlink(missing_ok=True)
+            else:
+                mp4.rename(dest)
+            moved.append(mp4.name)
+        except OSError:
+            continue
+    # Pin preferred id when present.
+    try:
+        state = load_state(game)
+        for pref in prefer:
+            name = f"yt_{pref}.mp4"
+            if (inbox / name).is_file():
+                state["pubg_singles_active_vod"] = pref
+                for row in state.get("vods") or []:
+                    vid = str(row.get("id") or "")
+                    if vid == pref:
+                        row["exhausted"] = False
+                        row.pop("reject_reason", None)
+                    elif vid:
+                        row["exhausted"] = True
+                save_state(game, state)
+                break
+    except Exception:
+        pass
+    if moved:
+        return moved
+    return kept
+
+
 def unload_stuck_inbox_vod(game: str, *, min_rejects: int = 3) -> str | None:
     """Park inbox VOD that keeps failing (metro_reject loop) so feed can move on."""
     inbox = spec(game).inbox()
@@ -709,7 +769,7 @@ def apply_agent_recover_env(
         "SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1"
     )
     target["SHOOTER_VOD_AUDIO_CANDIDATE_MAX"] = "0"
-    target["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
+    target["SHOOTER_VOD_DENSE_POOL_BUST"] = os.environ.get("SHOOTER_VOD_DENSE_POOL_BUST", "0")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"

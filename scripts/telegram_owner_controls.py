@@ -338,6 +338,16 @@ def run_hang_agent(game: str = "pubg") -> str:
             f"тишина {age // 60}м | hb={hb}s | "
             f"{', '.join(report.reasons[:3]) or '—'}"
         )
+        # Extreme drought: stop thrashing junk inbox — keep preferred Metro VOD only.
+        if age >= max(7200, int(os.environ.get("VOD_DROUGHT_ISOLATE_SEC", "10800"))):
+            try:
+                from vod_hang_detector import isolate_drought_inbox
+
+                moved = isolate_drought_inbox(target)
+                if moved:
+                    lines.append(f"• drought isolate: park {len(moved)} junk VOD")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"• drought isolate: {exc}")
         heal = auto_unload_and_recover(report, game=target, force=True, background=False)
         lines.append(
             f"• heal: {heal.get('action')} "

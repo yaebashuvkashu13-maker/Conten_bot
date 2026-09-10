@@ -295,8 +295,9 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         "SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1"
     )
     env["SHOOTER_VOD_AUDIO_CANDIDATE_MAX"] = "0"
-    # Force rediscovery — stale dense_pool_version caches replay loot/menu peaks.
-    env["SHOOTER_VOD_DENSE_POOL_BUST"] = "1"
+    # Do NOT bust dense peak cache on every drought heal — full VOD rescan
+    # (3900+ offsets) burns 15–30 minutes and looks like a hang. Opt-in only.
+    env["SHOOTER_VOD_DENSE_POOL_BUST"] = os.environ.get("SHOOTER_VOD_DENSE_POOL_BUST", "0")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
