@@ -98,6 +98,20 @@ def test_soften_hard_assigns_over_stale_strict_pins(monkeypatch: pytest.MonkeyPa
     from vod_hang_detector import apply_agent_recover_env
 
     monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    # Strict pins only in the env *dict* (as if left over from a prior merge) —
+    # they must not win. Clear process env so OS pins cannot skew the floor.
+    for key in (
+        "VOD_FORCE_QUALITY_MIN",
+        "VOD_FORCE_PAYOFF_MIN",
+        "VOD_FORCE_GUN_DENSITY",
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "PUBG_FAST_PAYOFF_MIN",
+        "PUBG_FAST_RANK_MIN_PAYOFF",
+        "PUBG_QUALITY_SCORE_MIN_SINGLES",
+        "PUBG_SINGLE_MIN_GUN_DENSITY",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     stale = {
         "VOD_FORCE_QUALITY_MIN": "0.40",
         "VOD_FORCE_PAYOFF_MIN": "0.30",
@@ -113,6 +127,21 @@ def test_soften_hard_assigns_over_stale_strict_pins(monkeypatch: pytest.MonkeyPa
     assert float(hang["PUBG_FAST_PAYOFF_MIN"]) == pytest.approx(0.05)
     assert float(force["PUBG_PRESEND_MIN_GUN_DENSITY"]) == pytest.approx(0.020)
     assert float(hang["PUBG_PRESEND_MIN_GUN_DENSITY"]) == pytest.approx(0.020)
+
+
+def test_drought_honors_lenient_payoff_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ops may set payoff=0 under multi-hour silence; esc2 must not re-raise to 0.03."""
+    from vod_force_send import apply_drought_pubg_env
+
+    monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0")
+    monkeypatch.setenv("VOD_FORCE_PAYOFF_MIN", "0")
+    env = apply_drought_pubg_env({}, escalation=2)
+    assert float(env["PUBG_PAYOFF_SCORE_MIN_SINGLES"]) == pytest.approx(0.0)
+    assert float(env["PUBG_FAST_PAYOFF_MIN"]) == pytest.approx(0.0)
+    assert float(env["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.0)
+    # Loot / shooting stay ON even when payoff floor is waived.
+    assert env["PUBG_REJECT_LOOT_WALK"] == "1"
+    assert env["PUBG_PRESEND_SHOOTING_GATE"] == "1"
 
 
 def test_hang_recover_esc2_caps_owner_relax(monkeypatch: pytest.MonkeyPatch) -> None:

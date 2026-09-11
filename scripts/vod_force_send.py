@@ -213,28 +213,62 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         quality_default = "0.20"
         gun_default = "0.010"
         payoff_default = "0.03"
-    # Hard-assign soften floors. Never inherit VOD_FORCE_QUALITY_MIN /
-    # VOD_FORCE_PAYOFF_MIN from the pinned env file — those keys were left at
-    # *stricter* values (0.40/0.30) and made drought worse than steady state.
-    env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = payoff_default
-    env["PUBG_FAST_PAYOFF_MIN"] = payoff_default
-    env["PUBG_FAST_RANK_MIN_PAYOFF"] = payoff_default
-    env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = quality_default
+    # Hard-assign soften floors. Ignore *stricter* pinned VOD_FORCE_* from the
+    # env file (0.40/0.30 made drought worse). Honor *more lenient* ops overrides
+    # (e.g. PUBG_PAYOFF_SCORE_MIN_SINGLES=0) so OCR-blind fights with payoff=0
+    # are not stuck behind the esc2 0.03 floor during multi-hour silence.
+    def _lenient_floor(default: str, *keys: str) -> str:
+        best = float(default)
+        for key in keys:
+            raw = os.environ.get(key)
+            if raw is None or str(raw).strip() == "":
+                continue
+            try:
+                best = min(best, float(raw))
+            except ValueError:
+                continue
+        if best <= 0:
+            return "0"
+        text = f"{best:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+
+    payoff_floor = _lenient_floor(
+        payoff_default,
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "PUBG_FAST_PAYOFF_MIN",
+        "PUBG_FAST_RANK_MIN_PAYOFF",
+        "VOD_FORCE_PAYOFF_MIN",
+    )
+    quality_floor = _lenient_floor(
+        quality_default,
+        "PUBG_QUALITY_SCORE_MIN_SINGLES",
+        "VOD_FORCE_QUALITY_MIN",
+    )
+    gun_floor = _lenient_floor(
+        gun_default,
+        "PUBG_SINGLE_MIN_GUN_DENSITY",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+        "VOD_FORCE_GUN_DENSITY",
+    )
+    env["PUBG_PAYOFF_SCORE_MIN_SINGLES"] = payoff_floor
+    env["PUBG_FAST_PAYOFF_MIN"] = payoff_floor
+    env["PUBG_FAST_RANK_MIN_PAYOFF"] = payoff_floor
+    env["PUBG_QUALITY_SCORE_MIN_SINGLES"] = quality_floor
     env["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
     env["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
-    env["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun_default
+    env["PUBG_SINGLE_MIN_GUN_DENSITY"] = gun_floor
     # Presend/pool/clip gun floors were left at steady 0.045/0.038 and
     # rejected every soften candidate (no_shots at gun~0.03). Align them.
-    env["PUBG_PRESEND_MIN_GUN_DENSITY"] = gun_default
-    env["PUBG_CLIP_MIN_GUN_DENSITY"] = gun_default
-    env["PUBG_POOL_MIN_GUN_DENSITY"] = gun_default
-    env["SHOOTER_VOD_DENSE_GUN_MIN"] = gun_default
-    env["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = gun_default
+    env["PUBG_PRESEND_MIN_GUN_DENSITY"] = gun_floor
+    env["PUBG_CLIP_MIN_GUN_DENSITY"] = gun_floor
+    env["PUBG_POOL_MIN_GUN_DENSITY"] = gun_floor
+    env["SHOOTER_VOD_DENSE_GUN_MIN"] = gun_floor
+    env["SMART_PUBG_MIN_GUNFIRE_DENSITY"] = gun_floor
     env["PUBG_CLIP_MIN_BURST_RATIO"] = os.environ.get("VOD_FORCE_BURST_RATIO", "3.5")
-    env["VOD_FORCE_GUN_DENSITY"] = gun_default
+    env["VOD_FORCE_GUN_DENSITY"] = gun_floor
     env["VOD_FORCE_BURST_RATIO"] = env["PUBG_CLIP_MIN_BURST_RATIO"]
-    env["VOD_FORCE_QUALITY_MIN"] = quality_default
-    env["VOD_FORCE_PAYOFF_MIN"] = payoff_default
+    env["VOD_FORCE_QUALITY_MIN"] = quality_floor
+    env["VOD_FORCE_PAYOFF_MIN"] = payoff_floor
     if escalation >= 2:
         # Keep loot reject ON by default even at esc2 — garbage menu/loot is worse than silence.
         env["PUBG_REJECT_LOOT_WALK"] = os.environ.get("VOD_FORCE_REJECT_LOOT", "1")
