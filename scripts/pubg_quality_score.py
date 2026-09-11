@@ -423,12 +423,38 @@ def score_pubg_window(
         return _finish(False, "hard_no_action")
 
     if loot_walk and os.environ.get("PUBG_REJECT_LOOT_WALK", "1") == "1":
-        # Owner-good timestamps must not waive loot/run — vhTD_1312 shipped as
-        # owner_redo_trusted and got 👎 loot_run.
-        if (
+        # Mirror shooting_gate PANNs loot override. Otherwise gate can pass a real
+        # spray (panns_loot_override=True) and quality still hard-rejects the same
+        # window as loot_walk — that burned multi-hour drought force-sends.
+        shoot_row = report.get("shooting_gate") if isinstance(report.get("shooting_gate"), dict) else {}
+        panns_floor = float(
+            os.environ.get(
+                "PUBG_PANNS_LOOT_OVERRIDE_MIN",
+                os.environ.get("PUBG_PANNS_TRUST_QUALITY_FLOOR", "0.40"),
+            )
+        )
+        try:
+            min_gun = float(
+                os.environ.get(
+                    "PUBG_PRESEND_MIN_GUN_DENSITY",
+                    os.environ.get("PUBG_SINGLE_MIN_GUN_DENSITY", "0.045"),
+                )
+            )
+        except ValueError:
+            min_gun = 0.045
+        panns_strong = panns_gun >= panns_floor
+        audible = gun >= min_gun * 0.85 or (rms >= 0.035 and gun >= min_gun * 0.55)
+        if shoot_row.get("panns_loot_override") or (panns_strong and audible):
+            report["panns_loot_override"] = True
+            loot_walk = False
+            report["loot_walk"] = False
+            report["legacy_gate_ok"] = True
+        elif (
             os.environ.get("PUBG_OWNER_GOOD_TRUST_LOOT", "0") == "1"
             and _owner_redo_trusted(video_path, start_sec, duration_sec)
         ):
+            # Owner-good timestamps must not waive loot/run by default —
+            # vhTD_1312 shipped as owner_redo_trusted and got 👎 loot_run.
             report["owner_redo_trusted"] = True
         else:
             report["hard_reject"] = "loot_walk"

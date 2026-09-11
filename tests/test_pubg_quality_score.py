@@ -12,9 +12,22 @@ sys.path.insert(0, str(SCRIPTS))
 from pubg_quality_score import score_pubg_window  # noqa: E402
 
 
-def _base_patches(*, loot: bool = False, author_kill: bool = False):
+def _base_patches(
+    *,
+    loot: bool = False,
+    author_kill: bool = False,
+    gun: float | None = None,
+    panns_gun: float | None = None,
+    rms: float | None = None,
+):
     motion = 0.035 if loot else 0.06
-    gun = 0.025 if loot else 0.08
+    if gun is None:
+        gun = 0.025 if loot else 0.08
+    if panns_gun is None:
+        # Keep loot cases below PANNs override floor (0.40) by default.
+        panns_gun = 0.12 if loot else 0.45
+    if rms is None:
+        rms = 0.02 if loot else 0.05
     shoot_ok = not loot
     return (
         patch("pubg_quality_score._owner_bad", return_value=False),
@@ -27,7 +40,7 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
             return_value={
                 "gunfire_density": gun,
                 "burst_ratio": 8.0,
-                "audio_rms": 0.05,
+                "audio_rms": rms,
                 "center_motion": motion,
                 "center_text": 0.0,
                 "crop_box": None,
@@ -36,12 +49,12 @@ def _base_patches(*, loot: bool = False, author_kill: bool = False):
         patch(
             "highlight_scorer.score_panns_audio",
             return_value={
-                "panns_gunshot": 0.45,
-                "panns_machine_gun": 0.30,
+                "panns_gunshot": panns_gun,
+                "panns_machine_gun": max(0.0, panns_gun - 0.15),
                 "panns_explosion": 0.10,
                 "panns_speech": 0.05,
                 "panns_music": 0.02,
-                "panns_gun_max": 0.45,
+                "panns_gun_max": panns_gun,
             },
         ),
         patch(
@@ -645,7 +658,8 @@ def test_fight_candidate_still_blocks_loot_walk(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "1")
     monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "1")
     monkeypatch.setenv("PUBG_OWNER_GOOD_TRUST_LOOT", "0")
-    patches = _base_patches(loot=True, author_kill=False)
+    # Weak gun + weak PANNs: loot_walk must stay hard-reject.
+    patches = _base_patches(loot=True, author_kill=False, gun=0.02, panns_gun=0.10, rms=0.02)
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch(
         "gameplay_gate.segment_looks_like_pubg_loot_or_walk",
         return_value=True,
@@ -656,6 +670,35 @@ def test_fight_candidate_still_blocks_loot_walk(monkeypatch: pytest.MonkeyPatch)
     assert ok is False
     assert "loot" in reason
     assert report.get("fight_candidate_owner_review") is not True
+
+
+def test_panns_loot_override_blocks_false_hard_loot_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shooting-gate spray (strong PANNs) must not die again as hard_loot_walk."""
+    monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "1")
+    monkeypatch.setenv("PUBG_OWNER_GOOD_TRUST_LOOT", "0")
+    monkeypatch.setenv("PUBG_PANNS_LOOT_OVERRIDE_MIN", "0.40")
+    monkeypatch.setenv("PUBG_PRESEND_MIN_GUN_DENSITY", "0.045")
+    patches = _base_patches(loot=False, author_kill=True, gun=0.061, panns_gun=0.52, rms=0.04)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch(
+        "gameplay_gate.segment_looks_like_pubg_loot_or_walk",
+        return_value=True,
+    ), patch(
+        "pubg_shooting_gate.pubg_passes_shooting_gate",
+        return_value=(
+            True,
+            "ok",
+            {"panns_loot_override": True, "combat_act_override": True, "gate_reason": "ok"},
+        ),
+    ):
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 442, 55, single=True, use_cache=False
+        )
+    assert report.get("panns_loot_override") is True
+    assert report.get("hard_reject") != "loot_walk"
+    assert "hard_loot_walk" not in reason
+    assert ok is True or "loot" not in reason
 
 
 
