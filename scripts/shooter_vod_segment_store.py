@@ -52,7 +52,14 @@ def vod_youtube_id(path: Path) -> str:
     stem = path.stem
     if stem.startswith("yt_"):
         return stem[3:][:11]
+    if stem.startswith("tw_"):
+        return stem[3:]
     return stem[:11]
+
+
+def peak_label_sec(peak: float) -> int:
+    """Consistent peak second for segment_id, captions, and HQ filenames."""
+    return int(round(float(peak)))
 
 
 def segment_id(vod_id: str, start_sec: float) -> str:
@@ -110,7 +117,16 @@ def mark_feed_sent(game: str, segment_ids: list[str]) -> None:
     sent = load_feed_sent(game)
     sent.update(segment_ids)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"sent": sorted(sent)}, indent=2), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "sent": sorted(sent),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def upsert_segment(game: str, row: dict) -> None:
@@ -138,6 +154,92 @@ def find_segment(game: str, segment_id_str: str) -> dict | None:
     direct = _paths(game)["segments"] / f"seg_{sid}.mp4"
     if direct.exists():
         return {"segment_id": sid, "path": str(direct), "start": 0, "score": 0}
+    # Gun-snap can rewrite start after the Telegram keyboard was built with the
+    # old peak−lead sid (owner: alert «Не нашёл …_4411» on caption #…_4416).
+    return find_segment_near_sid(game, sid)
+
+
+def find_segment_near_sid(
+    game: str,
+    segment_id_str: str,
+    *,
+    window_sec: float | None = None,
+) -> dict | None:
+    """Resolve a stale keyboard sid to the indexed clip after bounds remap."""
+    sid = segment_id_str.strip()
+    if "_" not in sid:
+        return None
+    vod_id, _, tail = sid.rpartition("_")
+    try:
+        stamp = float(tail)
+    except ValueError:
+        return None
+    try:
+        window = float(
+            window_sec
+            if window_sec is not None
+            else os.environ.get("PUBG_VSEG_SID_REMAP_WINDOW_SEC", "12")
+        )
+    except ValueError:
+        window = 12.0
+    best: dict | None = None
+    best_dist = window + 1.0
+    for row in load_index(game).get("segments", []):
+        if str(row.get("vod_id") or "") != vod_id and not str(row.get("segment_id") or "").startswith(
+            f"{vod_id}_"
+        ):
+            continue
+        try:
+            start = float(row.get("start") or 0.0)
+            peak = float(row.get("peak_start") if row.get("peak_start") is not None else start)
+        except (TypeError, ValueError):
+            continue
+        dist = min(abs(start - stamp), abs(peak - stamp), abs(peak - 8.0 - stamp))
+        if dist <= window and dist < best_dist:
+            path = Path(str(row.get("path") or ""))
+            if not path.exists():
+                alt = _paths(game)["segments"] / f"seg_{row.get('segment_id')}.mp4"
+                if not alt.exists():
+                    continue
+            best = row
+            best_dist = dist
+    return best
+
+
+def montage_parts_from_segment(game: str, segment_id_str: str) -> list[dict]:
+    """All montage part rows sharing montage_id (for per-part 👍/👎 keyboard)."""
+    row = find_segment(game, segment_id_str)
+    if not row:
+        return []
+    part_ids = row.get("montage_parts") or [segment_id_str]
+    parts: list[dict] = []
+    seen: set[str] = set()
+    for pid in part_ids:
+        sid = str(pid)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        part = find_segment(game, sid) or {"segment_id": sid, **row, "segment_id": sid}
+        parts.append(part)
+    if len(parts) >= 2:
+        return parts
+    return []
+
+
+def _part_label_status(game: str, segment_id_str: str) -> str | None:
+    sid = segment_id_str.strip()
+    for bucket, mark in (("good", "good"), ("bad", "bad")):
+        for row in load_labels(game).get(bucket, []):
+            if row.get("segment_id") == sid:
+                return mark
+    for row in load_labels(game).get("feedback", []):
+        if row.get("segment_id") != sid:
+            continue
+        ol = row.get("owner_label")
+        if ol in ("yes", "good"):
+            return "good"
+        if ol in ("no", "bad"):
+            return "bad"
     return None
 
 
@@ -149,9 +251,12 @@ def apply_owner_label(
     reason: str = "",
     by_chat: str = "",
 ) -> tuple[bool, str]:
-    row = find_segment(game, segment_id_str)
+    requested = segment_id_str.strip()
+    row = find_segment(game, requested)
     if not row:
-        return False, f"unknown_segment:{segment_id_str}"
+        return False, f"unknown_segment:{requested}"
+    # Prefer the indexed sid after gun-snap remap so labels land on the real clip.
+    segment_id_str = str(row.get("segment_id") or requested).strip()
     path = Path(row.get("path", ""))
     if not path.exists():
         path = _paths(game)["segments"] / f"seg_{segment_id_str}.mp4"
@@ -165,6 +270,8 @@ def apply_owner_label(
         "vod": row.get("vod", ""),
         "start": row.get("start", 0),
         "score": row.get("score", 0),
+        "quality_metrics": row.get("quality_metrics", {}),
+        "segment_report": row.get("segment_report", {}),
         "reason": reason,
         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "by_chat": by_chat,
@@ -208,6 +315,14 @@ def apply_owner_label(
 
     save_labels(game, labels)
 
+    if game.strip().lower() == "pubg":
+        try:
+            from pubg_sent_param_ranges import build_ranges
+
+            build_ranges("pubg")
+        except Exception:
+            pass
+
     vid = vod_id_from_row(row, segment_id_str)
     append_owner_time_label(
         profile,
@@ -245,6 +360,70 @@ def inline_keyboard_markup(game: str, segment_id_str: str) -> dict:
     }
 
 
+def montage_keyboard_markup(game: str, parts: list[dict]) -> dict:
+    """Per-part 👍/👎 for montage (each peak = separate segment_id)."""
+    prefix = _callback_prefix(game)
+    rows: list[list[dict]] = []
+    for i, row in enumerate(parts, 1):
+        sid = str(row.get("segment_id", "")).strip()
+        if not sid:
+            continue
+        peak = peak_label_sec(float(row.get("peak_start", row.get("start", 0))))
+        rows.append(
+            [
+                {"text": f"👍 {i}·{peak}s", "callback_data": f"{prefix}_yes:{sid}"},
+                {"text": f"👎 {i}", "callback_data": f"{prefix}_no:{sid}"},
+            ]
+        )
+    if not rows:
+        return inline_keyboard_markup(game, str(parts[0].get("segment_id", "")))
+    return {"inline_keyboard": rows}
+
+
+def montage_labeled_keyboard_markup(game: str, parts: list[dict], *, reason: str = "") -> dict:
+    """After feedback — show ✅/❌ per rated part, keep 👍/👎 on unrated."""
+    from mlbb_calibration_store import dislike_reason_label
+
+    prefix = _callback_prefix(game)
+    rows: list[list[dict]] = []
+    for i, row in enumerate(parts, 1):
+        sid = str(row.get("segment_id", "")).strip()
+        if not sid:
+            continue
+        status = _part_label_status(game, sid)
+        peak = peak_label_sec(float(row.get("peak_start", row.get("start", 0))))
+        if status == "good":
+            part_row = [{"text": f"✅ {i}·{peak}s", "callback_data": "mlbb_noop"}]
+            part_row.append({"text": "📁 HQ", "callback_data": f"{prefix}_hq:{sid}"})
+            rows.append(part_row)
+        elif status == "bad":
+            bad_reason = reason
+            for row in load_labels(game).get("bad", []):
+                if row.get("segment_id") == sid:
+                    bad_reason = str(row.get("reason") or reason or "Не ок")
+                    break
+            rows.append(
+                [{"text": f"❌ {i}·{peak}s {dislike_reason_label(bad_reason)}", "callback_data": "mlbb_noop"}]
+            )
+        else:
+            rows.append(
+                [
+                    {"text": f"👍 {i}·{peak}s", "callback_data": f"{prefix}_yes:{sid}"},
+                    {"text": f"👎 {i}", "callback_data": f"{prefix}_no:{sid}"},
+                ]
+            )
+    if not rows:
+        return {"inline_keyboard": [[{"text": "—", "callback_data": "mlbb_noop"}]]}
+    return {"inline_keyboard": rows}
+
+
+def keyboard_for_montage(game: str, parts: list[dict]) -> dict:
+    if len(parts) >= 2:
+        return montage_keyboard_markup(game, parts)
+    sid = str(parts[0].get("segment_id", "")) if parts else ""
+    return inline_keyboard_markup(game, sid)
+
+
 def labeled_keyboard_markup(
     game: str,
     label: str,
@@ -267,3 +446,7 @@ def labeled_keyboard_markup(
 
 def keyboard(game: str, seg_id: str) -> dict:
     return inline_keyboard_markup(game, seg_id)
+
+
+def keyboard_for_parts(game: str, parts: list[dict]) -> dict:
+    return keyboard_for_montage(game, parts)

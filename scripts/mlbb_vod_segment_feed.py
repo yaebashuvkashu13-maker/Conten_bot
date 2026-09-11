@@ -421,8 +421,10 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     min_sec = _vod_min_sec()
     max_sec = _vod_max_sec()
     target = _vod_target_dur_sec()
+    from telegram_owner_controls import DEFAULT_VOD_SEARCH_BATCH, DEFAULT_VOD_SEARCH_LIMIT
+
     search_delay = float(os.environ.get("MLBB_VOD_SEARCH_DELAY", "5"))
-    search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", "25"))
+    search_limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", str(DEFAULT_VOD_SEARCH_LIMIT)))
     blocked_uploaders = _zero_yield_uploaders()
     all_queries = [
         q.strip()
@@ -432,7 +434,7 @@ def _discover_mlbb_vod_candidates(env: dict[str, str], used: set[str], *, thrott
     batch_size = int(
         os.environ.get(
             "MLBB_VOD_SEARCH_BATCH",
-            "3" if throttled else str(min(6, max(3, len(all_queries)))),
+            str(min(DEFAULT_VOD_SEARCH_BATCH, max(3, len(all_queries)))),
         )
     )
     state = _load_state()
@@ -1763,7 +1765,11 @@ def _resolve_next_vod(
             return Path(str(entry["path"])), entry
 
     if notify:
-        send_message(token, chat_id, "📥 Качаю новый MLBB VOD с YouTube (с паузами, без бана)…")
+        from telegram_owner_controls import DEFAULT_VOD_SEARCH_BATCH, DEFAULT_VOD_SEARCH_LIMIT, discovery_start_text
+
+        batch = int(os.environ.get("MLBB_VOD_SEARCH_BATCH", str(DEFAULT_VOD_SEARCH_BATCH)))
+        limit = int(os.environ.get("MLBB_VOD_SEARCH_LIMIT", str(DEFAULT_VOD_SEARCH_LIMIT)))
+        send_message(token, chat_id, discovery_start_text("mlbb", batch=batch, limit=limit))
     vod = _download_new_mlbb_vod(env, registry, throttled=True)
     if vod:
         registry[:] = _ensure_registry(env)
@@ -1773,7 +1779,7 @@ def _resolve_next_vod(
             send_message(
                 token,
                 chat_id,
-                f"✅ Скачал: {title[:80]}\n"
+                f"📥 Скачал: {title[:80]}\n"
                 f"Сканирую куски (~{int(_ffprobe_duration(vod) // 60)} мин стрима)…",
             )
         return vod, entry
@@ -1818,6 +1824,10 @@ def _process_vod_segments(
     send_quota_blocked = False
     labeled_set = set(labeled.keys()) if isinstance(labeled, dict) else set(labeled)
     lead = float(os.environ.get("MLBB_VOD_LEAD_SEC", "4"))
+    if os.environ.get("MLBB_VOD_SCAN_NOTIFY", "1") == "1":
+        from telegram_owner_controls import scan_start_text
+
+        send_message(token, chat_id, scan_start_text("mlbb", vid))
 
     clear_fast_seeds = None
     if os.environ.get("MLBB_VOD_FAST_PROBE", "1") == "1":

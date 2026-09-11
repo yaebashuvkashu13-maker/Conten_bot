@@ -19,7 +19,45 @@
 
 Состояние: `/root/data/mlbb/daily_game_cycle.json`
 
-Включение: `DAILY_GAME_CYCLE_ENABLED=1` (ставится `install_mlbb_vod_only.sh`).
+Включение: `DAILY_GAME_CYCLE_ENABLED=1` (пинится через `deploy_unified_production.sh` / env).
+
+## PUBG-only (безлимит)
+
+Для сервера только с PUBG Metro Royale:
+
+```bash
+VOD_PUBG_ONLY=1
+DAILY_PUBG_QUOTA=-1          # безлимит (∞)
+DAILY_MLBB_QUOTA=0
+DAILY_STANDOFF_QUOTA=0
+DAILY_GENSHIN_QUOTA=0
+DAILY_WOT_QUOTA=0
+SHOOTER_VOD_SEARCH_BATCH=10  # запросов за цикл
+SHOOTER_VOD_SEARCH_LIMIT=80  # результатов на запрос
+SHOOTER_VOD_PREFER_RUSSIAN=1
+```
+
+Маркер `/root/data/mlbb/EU_PUBG_ONLY` — исторический флаг EU PUBG-only; актуальный деплой: `deploy_unified_production.sh`.
+
+## Quality-strict PUBG (по умолчанию в PUBG-only)
+
+```bash
+VOD_PUBG_QUALITY_STRICT=1
+SHOOTER_VOD_MONTAGE_MIN_CLIPS=3          # ×3 склейка, не одиночные куски
+PUBG_VOD_MONTAGE_SOFT_MIN_CLIPS=3
+SHOOTER_VOD_MONTAGE_SHIP_PARTIAL=0       # без частичных отправок
+SHOOTER_VOD_MONTAGE_EARLY_SHIP=0         # ждём полный набор частей
+SHOOTER_VOD_MONTAGE_SHOOTING_ONLY=0      # полный combat presend на каждый кусок
+SHOOTER_VOD_ZERO_STREAK_SOFTEN=0         # без ослабления гейтов
+PUBG_METRO_GATE=1                        # Metro на VOD и на каждой части
+PUBG_VOD_MONTAGE_MIN_FINAL_SEC=32
+SHOOTER_VOD_MONTAGES_PER_VOD=3      # до 3 ×3 склеек с одного VOD за визит
+SHOOTER_VOD_DENSE_PROBE_MAX=48      # больше окон PANNs по длине стрима
+SHOOTER_VOD_DENSE_PROBE_STEP_SEC=30
+SHOOTER_VOD_DENSE_PROBE_PASSES=2    # сдвиг сетки при повторном визите
+```
+
+Идея: **усложняем** пайплайн (CLIP-rank, metro + combat + author-kill на каждый кусок, финальная проверка), чтобы в Telegram уходили только плотные ×3 склейки.
 
 ## PUBG: перестрелка от лица стримера (не фон)
 
@@ -66,5 +104,5 @@ PUBG_PVP_MIN_BURST_CLUSTERS=2
 cd /root/content_bot_ml
 git pull origin cursor/daily-multi-game-cycle-6cbd
 export MLBB_VOD_INSTALL_RESTART_FEED=1
-bash scripts/install_mlbb_vod_only.sh
+bash scripts/deploy_unified_production.sh
 ```

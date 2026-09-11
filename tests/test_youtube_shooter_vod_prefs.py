@@ -29,6 +29,27 @@ def test_discovery_rotates_queries() -> None:
     b = vod_discovery_search_cycle(1, "pubg", {})
     assert a["queries"] != b["queries"]
     assert len(a["queries"]) >= 1
+    assert int(a["limit"]) == 80
+    assert str(a["queries"][0]).lower().startswith(("pubg", "метро", "пабг"))
+    assert all(str(u).startswith("ytsearch") for u in a["urls"])
+
+
+def test_queries_use_env_pubg_search_list(monkeypatch) -> None:
+    from youtube_shooter_vod_prefs import _queries_for
+
+    monkeypatch.setenv(
+        "PUBG_VOD_SEARCH_QUERIES",
+        "метро роял тест,PUBG Mobile Metro Royale gameplay",
+    )
+    qs = _queries_for("pubg")
+    assert qs[0] == "метро роял тест"
+    assert "PUBG Mobile Metro Royale gameplay" in qs
+
+
+def test_discovery_can_use_results_url_when_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("SHOOTER_VOD_YTSEARCH_ONLY", "0")
+    params = vod_discovery_search_cycle(0, "pubg", {})
+    assert any("youtube.com/results" in str(u) for u in params["urls"])
 
 
 def test_pubg_ru_stream_title_ok() -> None:
