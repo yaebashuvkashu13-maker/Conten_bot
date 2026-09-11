@@ -139,6 +139,32 @@ def test_autonomous_hang_agent_spawns_on_silence(monkeypatch: pytest.MonkeyPatch
     assert spawned == ["pubg"]
 
 
+def test_autonomous_hang_agent_stands_down_for_live_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not spam auto_agent_bg headers while vod_force_send is shipping."""
+    import vod_hang_detector as hang
+
+    class _R:
+        ok = False
+        last_send_age_sec = 9000.0
+        heartbeat_age_sec = 50.0
+        reasons = ["absolute_silence_9000s"]
+        zero_send_streak = 0
+        feed_alive = False
+        stuck_children: list = []
+        stuck_parts: list = []
+
+    monkeypatch.setattr(hang, "detect_hang", lambda: _R())
+    monkeypatch.setattr(hang, "_heal_cooldown_ok", lambda *_a, **_k: True)
+    monkeypatch.setattr(hang, "_recover_already_running", lambda: True)
+    monkeypatch.setattr(hang, "_clear_stale_recover_lock", lambda: False)
+    spawned: list[str] = []
+    monkeypatch.setattr(hang, "_spawn_background_agent", lambda g: spawned.append(g) or True)
+    out = hang.run_autonomous_hang_agent(game="pubg", force=False)
+    assert out["action"] == "recover_in_progress"
+    assert spawned == []
+
 def test_run_tick_clears_stale_lock_when_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
     import vod_hang_detector as hang
 

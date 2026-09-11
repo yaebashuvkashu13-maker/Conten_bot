@@ -263,11 +263,22 @@ def test_apply_agent_recover_env_softens_after_hour(monkeypatch: pytest.MonkeyPa
 def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.MonkeyPatch) -> None:
     from vod_hang_detector import apply_agent_recover_env
 
-    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 8000.0)
+    # Below extreme-silence pay0 threshold — esc2 still uses 0.03 payoff floor.
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 5000.0)
+    monkeypatch.setenv("VOD_EXTREME_SILENCE_PAYOFF_ZERO_SEC", "7200")
+    for key in (
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "VOD_FORCE_PAYOFF_MIN",
+        "PUBG_FAST_PAYOFF_MIN",
+        "PUBG_QUALITY_SCORE_MIN_SINGLES",
+        "VOD_FORCE_QUALITY_MIN",
+    ):
+        monkeypatch.delenv(key, raising=False)
     env: dict[str, str] = {}
     out = apply_agent_recover_env(env, escalation=2)
     assert out["VOD_FORCE_ESCALATION"] == "2"
     assert float(out["VOD_FORCE_QUALITY_MIN"]) == pytest.approx(0.20)
+    assert float(out["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.03)
     assert out["PUBG_PRESEND_SCORE_MODE"] == "1"
     assert out["PUBG_RELAX_OWNER_HEURISTICS"] == "1"
     # Never auto-bypass menu/loot gates under drought escalation.
@@ -275,6 +286,25 @@ def test_apply_agent_recover_env_escalation_lowers_quality(monkeypatch: pytest.M
     assert out["VOD_FORCE_SKIP_DISCOVERY"] == "0"
     assert out["SHOOTER_VOD_SKIP_DISCOVERY"] == "0"
     assert out.get("PUBG_PRESEND_SHOOTING_GATE", "1") != "0"
+
+
+def test_apply_agent_recover_env_extreme_silence_waives_payoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    monkeypatch.setenv("VOD_EXTREME_SILENCE_PAYOFF_ZERO_SEC", "7200")
+    for key in (
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "VOD_FORCE_PAYOFF_MIN",
+        "PUBG_FAST_PAYOFF_MIN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    out = apply_agent_recover_env({}, escalation=2)
+    assert float(out["VOD_FORCE_PAYOFF_MIN"]) == pytest.approx(0.0)
+    assert float(out["PUBG_PAYOFF_SCORE_MIN_SINGLES"]) == pytest.approx(0.0)
+    assert out["PUBG_REJECT_LOOT_WALK"] == "1"
 
 
 def test_parse_recover_sent() -> None:

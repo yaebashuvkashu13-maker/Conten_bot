@@ -696,14 +696,45 @@ def apply_agent_recover_env(
     )
     target["VOD_FORCE_ESCALATION"] = str(esc)
     # Soften ladder (hard-assign). Must match apply_drought_pubg_env.
-    # Do NOT read VOD_FORCE_QUALITY_MIN / PAYOFF_MIN from pinned env — stale
-    # strict pins (0.40/0.30) made drought recover stricter than steady state.
-    # Keep a real quality floor under drought (0.05 shipped menu junk).
+    # Do NOT inherit *stricter* pinned VOD_FORCE_* (0.40/0.30). Keep a real
+    # quality floor under drought (0.05 shipped menu junk). After extreme
+    # silence, waive OCR-blind payoff floor (0.03 was blocking payoff=0 fights)
+    # — loot/menu/shooting gates stay ON.
     q_min, p_min, gun = "0.28", "0.08", "0.030"
     if esc >= 1:
         q_min, p_min, gun = "0.24", "0.05", "0.020"
     if esc >= 2:
         q_min, p_min, gun = "0.20", "0.03", "0.010"
+    extreme_pay0 = max(
+        3600,
+        int(os.environ.get("VOD_EXTREME_SILENCE_PAYOFF_ZERO_SEC", "7200")),
+    )
+    if esc >= 2 and silence >= float(extreme_pay0):
+        p_min = "0"
+
+    def _lenient(default: str, *keys: str) -> str:
+        best = float(default)
+        for key in keys:
+            raw = os.environ.get(key)
+            if raw is None or str(raw).strip() == "":
+                continue
+            try:
+                best = min(best, float(raw))
+            except ValueError:
+                continue
+        if best <= 0:
+            return "0"
+        text = f"{best:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+
+    q_min = _lenient(q_min, "PUBG_QUALITY_SCORE_MIN_SINGLES", "VOD_FORCE_QUALITY_MIN")
+    p_min = _lenient(
+        p_min,
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "PUBG_FAST_PAYOFF_MIN",
+        "VOD_FORCE_PAYOFF_MIN",
+    )
+    gun = _lenient(gun, "PUBG_SINGLE_MIN_GUN_DENSITY", "VOD_FORCE_GUN_DENSITY")
     target["VOD_FORCE_QUALITY_MIN"] = q_min
     target["VOD_FORCE_PAYOFF_MIN"] = p_min
     target["VOD_FORCE_GUN_DENSITY"] = gun
@@ -862,7 +893,13 @@ def _parse_recover_sent(msg: str) -> int:
 
 
 def _recover_process_alive() -> bool:
-    """True if a hang-detector --recover/--agent child is running (lock may lag)."""
+    """True if recover/force-send is already shipping (lock may lag).
+
+    Must detect ``vod_force_send.py`` / emergency ship scripts — not only
+    hang-detector children. Otherwise the 5–10m timer keeps spawning
+    ``auto_agent_bg`` during a live force-send, fights the inbox pin, and
+    turns into a silence diary while last_send_age grows for hours.
+    """
     me = os.getpid()
     for pid_name in os.listdir("/proc"):
         if not pid_name.isdigit():
@@ -876,6 +913,10 @@ def _recover_process_alive() -> bool:
             continue
         parts = [p.decode(errors="ignore") for p in raw.split(b"\0") if p]
         joined = " ".join(parts)
+        if "vod_force_send.py" in joined:
+            return True
+        if "ship_drought" in joined or "ship_zRQC" in joined:
+            return True
         if "vod_hang_detector.py" not in joined:
             continue
         if "--recover" in joined or "--agent" in joined:
@@ -1286,6 +1327,8 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
         return out
 
     if not force and _recover_already_running():
+        # Live force-send / recover is the ship path — do not spawn another
+        # auto_agent_bg header every 10m (that is spectator spam, not healing).
         out["action"] = "recover_in_progress"
         out["heal"] = {"action": "recover_in_progress", "reasons": report.reasons}
         return out

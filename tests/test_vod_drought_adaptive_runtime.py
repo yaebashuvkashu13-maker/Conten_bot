@@ -159,7 +159,18 @@ def test_soften_relaxes_hook_menu_not_gate(monkeypatch: pytest.MonkeyPatch) -> N
     from vod_force_send import apply_drought_pubg_env
     from vod_hang_detector import apply_agent_recover_env
 
-    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    # Keep hang below extreme pay0 so floors stay comparable to force esc2.
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 5000.0)
+    monkeypatch.setenv("VOD_EXTREME_SILENCE_PAYOFF_ZERO_SEC", "7200")
+    for key in (
+        "PUBG_PAYOFF_SCORE_MIN_SINGLES",
+        "VOD_FORCE_PAYOFF_MIN",
+        "PUBG_FAST_PAYOFF_MIN",
+        "PUBG_QUALITY_SCORE_MIN_SINGLES",
+        "VOD_FORCE_QUALITY_MIN",
+        "VOD_FORCE_GUN_DENSITY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     force = apply_drought_pubg_env({}, escalation=2)
     hang = apply_agent_recover_env({}, escalation=2)
     for env in (force, hang):
