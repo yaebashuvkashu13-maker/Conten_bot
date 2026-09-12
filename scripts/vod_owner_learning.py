@@ -47,7 +47,15 @@ def exemplar_root() -> Path:
 
 
 def owner_labels_path(profile: str, *, create: bool = False) -> Path | None:
-    """Path to {profile}_owner_labels.json (repo data/ by default)."""
+    """Runtime labels path — git data/ is seed only (see runtime_labels.py)."""
+    if os.environ.get("VOD_RUNTIME_LABELS", "1") == "1":
+        from runtime_labels import ensure_runtime_labels, runtime_labels_path as runtime_path
+
+        path = runtime_path(profile, create=create)
+        if path is not None:
+            if create or path.exists():
+                return path
+            return ensure_runtime_labels(profile)
     p = normalize_profile(profile)
     if p not in _OWNER_JSON_NAMES:
         return None
@@ -77,17 +85,54 @@ def vod_segment_labels_path(profile: str) -> Path | None:
     return _paths(game)["labels"]
 
 
+_SEGMENT_SID_SUFFIXES = ("_p8", "_ext", "_tg")
+
+
+def normalize_segment_id(segment_id_str: str) -> str:
+    """Strip seg_/probe suffixes so vid_562_p8 → vid_562."""
+    sid = str(segment_id_str or "").strip()
+    if sid.startswith("seg_"):
+        sid = sid[4:]
+    changed = True
+    while changed:
+        changed = False
+        for suf in _SEGMENT_SID_SUFFIXES:
+            if sid.endswith(suf):
+                sid = sid[: -len(suf)]
+                changed = True
+    return sid
+
+
+def parse_pubg_segment_sid(segment_id_str: str) -> tuple[str, float] | None:
+    """Parse `{video_id}_{time}` including probe8 ids like `abc_562_p8`."""
+    sid = normalize_segment_id(segment_id_str)
+    if "_" not in sid:
+        return None
+    vid, _, raw = sid.rpartition("_")
+    if not vid:
+        return None
+    try:
+        return vid, float(raw)
+    except ValueError:
+        return None
+
+
+def is_probe8_segment_id(segment_id_str: str) -> bool:
+    sid = str(segment_id_str or "").strip()
+    if sid.startswith("seg_"):
+        sid = sid[4:]
+    return sid.endswith("_p8") or "_p8_" in sid
+
+
 def peak_time_sec(row: dict, segment_id_str: str = "") -> float:
     if row.get("peak_start") is not None:
         return float(row["peak_start"])
     if row.get("start") is not None:
         return float(row["start"])
     sid = segment_id_str or str(row.get("segment_id") or "")
-    if "_" in sid:
-        try:
-            return float(sid.rsplit("_", 1)[-1])
-        except ValueError:
-            pass
+    parsed = parse_pubg_segment_sid(sid)
+    if parsed is not None:
+        return parsed[1]
     return 0.0
 
 
@@ -99,8 +144,9 @@ def vod_id_from_row(row: dict, segment_id_str: str = "") -> str:
             return p.stem[3:][:11]
         return p.stem[:11]
     sid = segment_id_str or str(row.get("segment_id") or "")
-    if "_" in sid:
-        return sid.rsplit("_", 1)[0][:11]
+    parsed = parse_pubg_segment_sid(sid)
+    if parsed is not None:
+        return parsed[0][:11]
     return ""
 
 
@@ -121,6 +167,11 @@ def load_owner_labels(profile: str) -> dict:
 
 
 def save_owner_labels(profile: str, data: dict) -> None:
+    if os.environ.get("VOD_RUNTIME_LABELS", "1") == "1":
+        from runtime_labels import save_runtime_labels
+
+        save_runtime_labels(profile, data)
+        return
     path = owner_labels_path(profile, create=True)
     if path is None:
         return
@@ -139,7 +190,7 @@ def append_owner_time_label(
     source: str = "vod_segment",
 ) -> bool:
     vid = video_id.strip()
-    if not vid or label not in ("good", "bad"):
+    if not vid or label not in ("good", "bad", "uncertain"):
         return False
     data = load_owner_labels(profile)
     videos: dict = data.setdefault("videos", {})
