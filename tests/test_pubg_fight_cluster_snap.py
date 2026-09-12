@@ -38,6 +38,28 @@ def test_snap_keeps_hot_28_35_burst_not_full_50s() -> None:
     assert 5.0 <= dur <= 12.0
 
 
+def test_extend_past_active_gun_covers_full_audible_burst() -> None:
+    """Owner: DGso@447 10s cut ended mid-burst — extend while RMS/gun still hot."""
+    from pubg_montage_bounds import extend_end_past_active_gunfire
+
+    timeline = []
+    for t in range(447, 465):
+        # Match measured RMS: loud 452–460, quiet after.
+        if 452 <= t <= 460:
+            gun, rms = 0.12, 0.25
+        elif t in (448,):
+            gun, rms = 0.08, 0.07
+        else:
+            gun, rms = 0.02, 0.008
+        timeline.append({"start": float(t), "gun": gun, "rms": rms})
+    report = {"timeline": timeline}
+    # Short 10s window ending mid-fight (457) must grow through 460.
+    start, dur = extend_end_past_active_gunfire(447.0, 10.0, report, max_dur=22.0, single=True)
+    assert start == 447.0
+    assert start + dur >= 461.0
+    assert dur <= 22.0
+
+
 def test_trim_edges_then_snap_drops_run_bridge() -> None:
     from pubg_montage_bounds import trim_quiet_run_edges
 
