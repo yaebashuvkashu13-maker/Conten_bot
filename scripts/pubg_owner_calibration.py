@@ -246,11 +246,19 @@ def pubg_passes_owner_heuristics(
 
     # Global fight-act profile (owner 6mWLqNBX1pE principle): mid gun + mid
     # burst is a real act on EVERY VOD — do not wait for labels.
+    # Still require audible RMS: silent DSP false-gun (DGso 257/1026, rms~0.008)
+    # previously returned combat_act=True and shipped loot_run / empty clips.
+    audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
     try:
         from pubg_fight_act_profile import is_combat_act
 
         if is_combat_act(gunfire_density, burst_ratio):
-            return True, f"combat_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+            if audio_rms >= audible_min:
+                return True, f"combat_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
+            return (
+                False,
+                f"silent_fake_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}",
+            )
     except ImportError:
         pass
 
@@ -301,15 +309,25 @@ def pubg_passes_owner_heuristics(
             return False, f"run_fake_gun=motion{center_motion:.3f}:gun{gunfire_density:.3f}"
     if gunfire_density < 0.040 and audio_rms > 0.036 and not _burst_says_real_gun():
         return False, f"talk_low_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}"
-    if gunfire_density >= 0.055:
+    # Silent false-gun (DGso 660/257/1026): DSP gun/burst can fire while RMS≈0
+    # and the frame is just running. Require audible floor for fight-audio paths.
+    audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+    if audio_rms < audible_min and gunfire_density < 0.10:
+        return (
+            False,
+            f"silent_fake_gun=rms{audio_rms:.4f}:gun{gunfire_density:.3f}",
+        )
+    if gunfire_density >= 0.055 and audio_rms >= audible_min:
         return True, "fight_audio"
-    if _burst_says_real_gun():
+    if _burst_says_real_gun() and audio_rms >= audible_min:
         return True, f"burst_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     if center_motion < 0.022 and gunfire_density >= 0.028 and burst_ratio >= 5.5:
         return True, "sniper_hold"
-    if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms < 0.040:
+    # Was: gun>=0.048 + burst>=4.8 + rms<0.040 → "light_combat". That shipped
+    # silent loot_run as fights. Require audible RMS instead.
+    if gunfire_density >= 0.048 and burst_ratio >= 4.8 and audio_rms >= audible_min:
         return True, "light_combat"
     # Mid-band Metro sprays (owner acts often burst 3.5–4.5 with gun≥0.032).
-    if gunfire_density >= 0.032 and burst_ratio >= 3.5:
+    if gunfire_density >= 0.032 and burst_ratio >= 3.5 and audio_rms >= audible_min:
         return True, f"metro_act=gun{gunfire_density:.3f}:burst{burst_ratio:.2f}"
     return False, f"below_owner_floor=density{gunfire_density:.3f}:burst{burst_ratio:.2f}"

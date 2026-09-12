@@ -206,14 +206,15 @@ def _bin_is_real_gunfight(row: dict[str, Any]) -> bool:
     if gun < gun_min:
         return False
     rms_raw = row.get("rms", row.get("audio_rms"))
+    rms_min = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_RMS", "0.020"))
+    # Missing rms must not count as a fight bin — silent DSP false-gun is how
+    # loot_run clips (DGso 660/1026) snapped into "clusters" with gun>0, rms~0.
     if rms_raw is None:
-        # Legacy timelines without rms — fall back to gun-only.
-        return True
+        return os.environ.get("PUBG_FIGHT_CLUSTER_ALLOW_MISSING_RMS", "0") == "1"
     try:
         rms = float(rms_raw or 0.0)
     except (TypeError, ValueError):
-        return True
-    rms_min = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_RMS", "0.020"))
+        return False
     return rms >= rms_min
 
 

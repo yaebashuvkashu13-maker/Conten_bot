@@ -277,13 +277,27 @@ def evaluate_reason_gates(
         # Drought soften + combat-act: short fight snaps often have motion>gun while
         # audio is a real Metro spray (OCR-blind). Allow rescue so force-send can
         # ship fight-cluster clips instead of dying on reason_loot_run after render.
-        if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1":
+        rms = _f(metrics, "audio_rms", "rms")
+        rms_min = float(os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE_MIN_RMS", "0.025"))
+        if (
+            combat_ok
+            and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1"
+            and rms >= rms_min
+        ):
             report["combat_act_loot_run_rescue"] = True
+            report["combat_act_loot_run_rescue_rms"] = rms
         else:
             return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if motion > 0 and gun < gun_min * 0.85 and motion > motion_max:
-        if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1":
+        rms = _f(metrics, "audio_rms", "rms")
+        rms_min = float(os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE_MIN_RMS", "0.025"))
+        if (
+            combat_ok
+            and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1"
+            and rms >= rms_min
+        ):
             report["combat_act_loot_run_rescue"] = True
+            report["combat_act_loot_run_rescue_rms"] = rms
         else:
             return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if visual < visual_min:
