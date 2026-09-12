@@ -287,7 +287,11 @@ def owner_probe8_good_times(game: str, vod: Path) -> list[float]:
 
 
 def short_fight_cluster_cap(game: str, vod: Path, peak_sec: float) -> float | None:
-    """Near probe8 👍 → keep cuts short (~8s) like the owner labeled."""
+    """Near probe8 👍 → prefer short fights, but never mid-burst.
+
+    Owner ended_early on 6–8s caps while gun was still hot (TJFY@680/854).
+    Default ceiling is ~14s; hard floor of the active gun tail still wins.
+    """
     if game != "pubg":
         return None
     if os.environ.get("PUBG_P8_SHORT_FIGHT", "1") != "1":
@@ -298,7 +302,8 @@ def short_fight_cluster_cap(game: str, vod: Path, peak_sec: float) -> float | No
     radius = float(os.environ.get("PUBG_P8_SHORT_FIGHT_RADIUS_SEC", "12"))
     if not any(abs(float(peak_sec) - g) <= radius for g in goods):
         return None
-    return float(os.environ.get("PUBG_P8_SHORT_FIGHT_MAX_SEC", "8"))
+    # 8s was too aggressive mid-spray; keep "short" but allow a full exchange.
+    return float(os.environ.get("PUBG_P8_SHORT_FIGHT_MAX_SEC", "14"))
 
 
 def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: float = 20.0) -> bool:
