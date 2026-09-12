@@ -25,6 +25,9 @@ SLICE_SEC = float(os.environ.get("PROBE8_SLICE_SEC", "8"))
 MAX_SEND = int(os.environ.get("PROBE8_MAX", "48"))
 PARENTS = int(os.environ.get("PROBE8_PARENTS", "20"))
 MIN_PARENT_SEC = float(os.environ.get("PROBE8_MIN_PARENT_SEC", "20"))
+# Overlapping OK parents (e.g. 532+562, 742+783) produced near-identical 8s
+# clips offset by 1–2s. Keep ≥ this gap between probe starts on one VOD.
+MIN_DEDUP_SEC = float(os.environ.get("PROBE8_MIN_DEDUP_SEC", "7"))
 LABELS_PATH = Path(
     os.environ.get(
         "PUBG_VOD_SEGMENT_LABELS",
@@ -159,22 +162,21 @@ def select_long_parents(goods: list[dict], limit: int) -> list[dict]:
     return out
 
 
-def main() -> int:
-    env = load_env()
-    token = (env.get("TG_BOT_TOKEN") or os.environ.get("TG_BOT_TOKEN") or "").strip()
-    chat = (env.get("TG_CHAT_ID") or os.environ.get("TG_CHAT_ID") or "").strip()
-    if not chat:
-        chats = (env.get("PUBG_CHAT_IDS") or "").split(",")
-        chat = chats[0].strip() if chats else ""
-    if not token or not chat:
-        print("missing TG_BOT_TOKEN / TG_CHAT_ID", file=sys.stderr)
-        return 2
+def parse_probe_start(sid: str) -> tuple[str, float] | None:
+    if not sid.endswith("_p8"):
+        return None
+    base = sid[:-3]
+    if "_" not in base:
+        return None
+    vid, _, raw = base.rpartition("_")
+    try:
+        return vid, float(raw)
+    except ValueError:
+        return None
 
-    from pubg_owner_rated_send import send_owner_rated_clip
 
-    labels = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
-    parents = select_long_parents(labels.get("good") or [], PARENTS)
-
+def candidate_probes(parents: list[dict]) -> list[dict]:
+    """All 8s slices from long OK parents (may include near-dups across overlaps)."""
     probes: list[dict] = []
     for row in parents:
         src = Path(str(row.get("path") or ""))
@@ -202,9 +204,72 @@ def main() -> int:
                     "abs_start": abs_start,
                     "vod": vod_path,
                     "sid": sid,
+                    "vid": vid,
                 }
             )
             t += SLICE_SEC
+    return probes
+
+
+def dedupe_probes(probes: list[dict], sent_ids: set[str]) -> list[dict]:
+    """Keep ≥ MIN_DEDUP_SEC between starts on one VOD (vs kept + already sent).
+
+    Overlapping OK parents (532∩562, 742∩783, …) used to emit near-identical
+    8s clips offset by 1–2s. Collapse those before send.
+    """
+    sent_by_vid: dict[str, list[float]] = {}
+    for sid in sent_ids:
+        parsed = parse_probe_start(sid)
+        if not parsed:
+            continue
+        vid, t = parsed
+        sent_by_vid.setdefault(vid, []).append(t)
+    for vid in sent_by_vid:
+        sent_by_vid[vid].sort()
+
+    def too_close(vid: str, t: float, kept: list[float]) -> bool:
+        for prev in kept:
+            if abs(prev - t) < MIN_DEDUP_SEC:
+                return True
+        for prev in sent_by_vid.get(vid, []):
+            if abs(prev - t) < MIN_DEDUP_SEC:
+                return True
+            if prev > t + MIN_DEDUP_SEC:
+                break
+        return False
+
+    # Prefer earlier absolute start; stable within same second by sid.
+    ordered = sorted(
+        probes,
+        key=lambda p: (str(p.get("vid") or ""), float(p["abs_start"]), str(p["sid"])),
+    )
+    kept: list[dict] = []
+    kept_by_vid: dict[str, list[float]] = {}
+    for probe in ordered:
+        vid = str(probe.get("vid") or "")
+        t = float(probe["abs_start"])
+        if too_close(vid, t, kept_by_vid.get(vid, [])):
+            continue
+        kept.append(probe)
+        kept_by_vid.setdefault(vid, []).append(t)
+    return kept
+
+
+def main() -> int:
+    env = load_env()
+    token = (env.get("TG_BOT_TOKEN") or os.environ.get("TG_BOT_TOKEN") or "").strip()
+    chat = (env.get("TG_CHAT_ID") or os.environ.get("TG_CHAT_ID") or "").strip()
+    if not chat:
+        chats = (env.get("PUBG_CHAT_IDS") or "").split(",")
+        chat = chats[0].strip() if chats else ""
+    if not token or not chat:
+        print("missing TG_BOT_TOKEN / TG_CHAT_ID", file=sys.stderr)
+        return 2
+
+    from pubg_owner_rated_send import send_owner_rated_clip
+
+    labels = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
+    parents = select_long_parents(labels.get("good") or [], PARENTS)
 
     prev: dict = {}
     if LOG_PATH.exists():
@@ -215,14 +280,25 @@ def main() -> int:
     sent_ids = set(prev.get("sent_ids") or [])
     results = list(prev.get("results") or [])
 
+    raw_probes = candidate_probes(parents)
+    probes = dedupe_probes(raw_probes, sent_ids)
+    dropped = len(raw_probes) - len(probes)
+
     remaining_before = sum(1 for p in probes if p["sid"] not in sent_ids)
     print(
-        f"parents_ok={len(parents)} probes_planned={len(probes)} "
+        f"parents_ok={len(parents)} probes_raw={len(raw_probes)} "
+        f"probes_deduped={len(probes)} near_dups_dropped={dropped} "
         f"already_sent={len(sent_ids)} remaining_unsent={remaining_before} "
-        f"send_cap={MAX_SEND}"
+        f"send_cap={MAX_SEND} min_dedup={MIN_DEDUP_SEC}"
     )
     for row in parents:
         print(" parent", row.get("segment_id"), "start", row.get("start"))
+
+    dry = os.environ.get("PROBE8_DRY", "").strip() in {"1", "true", "yes"}
+    if dry:
+        print("DRY RUN — no cuts / no Telegram send")
+        return 0
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     tg_api(
@@ -231,7 +307,8 @@ def main() -> int:
         {
             "chat_id": chat,
             "text": (
-                "Следующая партия 8с-проб из длинных OK-кусков.\n"
+                "Следующая партия 8с-проб из длинных OK-кусков "
+                "(без почти-дублей с соседних OK-окон).\n"
                 f"В очереди ещё ~{remaining_before}, шлю до {MAX_SEND}.\n"
                 "👍 только где нужный момент (бой), 👎 беготня/пусто."
             ),
@@ -298,6 +375,9 @@ def main() -> int:
             {
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "planned": len(probes),
+                "raw_planned": len(raw_probes),
+                "near_dups_dropped": dropped,
+                "min_dedup_sec": MIN_DEDUP_SEC,
                 "sent_count": len(sent_ids),
                 "sent_ids": sorted(sent_ids),
                 "batch_sent": n_sent,
