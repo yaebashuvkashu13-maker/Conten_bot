@@ -1248,7 +1248,9 @@ def _owner_ops_markup() -> dict | None:
 
 
 def notify_owner_ops(text: str) -> bool:
-    """Telegram notify without inline ops keyboard (commands-only)."""
+    """Optional TG notify without keyboards. Off by default — owner uses /agent etc."""
+    if os.environ.get("VOD_HANG_NOTIFY_TG", "0") != "1":
+        return False
     markup = _owner_ops_markup()
     try:
         from vod_telegram_env import send_message
@@ -1259,6 +1261,9 @@ def notify_owner_ops(text: str) -> bool:
 
 
 def maybe_silence_alert(report: HangReport, *, heal: dict | None = None) -> bool:
+    # Quiet by default: auto-heal still runs; owner is not spammed with silence banners.
+    if os.environ.get("VOD_SILENCE_ALERT_TG", "0") != "1":
+        return False
     alert_sec = max(3600, int(os.environ.get("VOD_SILENCE_ALERT_SEC", "7200")))
     if report.last_send_age_sec is None or report.last_send_age_sec < alert_sec:
         return False
@@ -1284,9 +1289,8 @@ def maybe_silence_alert(report: HangReport, *, heal: dict | None = None) -> bool
         f"Причины: {reasons}\n"
         f"zero_send_streak={report.zero_send_streak}"
         f"{heal_bit}\n"
-        f"Автоагент чинит сейчас. Видео появится только после успешной отправки "
-        f"(не путать с heartbeat «scanning»).\n"
-        f"Кнопки ниже — только если хочешь форснуть сам."
+        f"Автоагент чинит в фоне. Видео — только после успешной отправки. "
+        f"Вручную: /agent · /process · /recover · /send · /reset"
     )
     if notify_owner_ops(text):
         DEFAULT_ALERT_STAMP.write_text(json.dumps({"last_alert_ts": now}), encoding="utf-8")
