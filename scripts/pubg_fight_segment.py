@@ -99,14 +99,26 @@ def _gunfire_active_flags(
     timeline: list[dict[str, Any]],
     active_min: float,
 ) -> list[bool]:
-    """Gunfire bins only — motion/ambient must not extend pre-fight lead.
+    """Audible gunfire bins only — silent false-gun must not bridge run pads.
 
     Composite score is ranking-only; never invent shooting_start from loud loot/run.
     ``active_min`` kept for call-site compatibility.
     """
     del active_min
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
-    return [float(row.get("gun", 0.0)) >= gun_min for row in timeline]
+    rms_min = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_RMS", "0.020"))
+    flags: list[bool] = []
+    for row in timeline:
+        gun = float(row.get("gun", 0.0) or 0.0)
+        if gun < gun_min:
+            flags.append(False)
+            continue
+        rms_raw = row.get("rms", row.get("audio_rms"))
+        if rms_raw is None:
+            flags.append(True)
+            continue
+        flags.append(float(rms_raw or 0.0) >= rms_min)
+    return flags
 
 
 def _sustained_onset_index(flags: list[bool], *, streak: int = 2) -> int | None:

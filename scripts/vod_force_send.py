@@ -357,13 +357,13 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "1"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "35"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "18"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "32"
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "14"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "2.5"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "8"

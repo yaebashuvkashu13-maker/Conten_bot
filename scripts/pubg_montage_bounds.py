@@ -195,6 +195,129 @@ def extend_end_past_active_gunfire(
 
 
 
+
+def _bin_is_real_gunfight(row: dict[str, Any]) -> bool:
+    """True only for audible gunfire — silent high-gun bins are footsteps/false positives."""
+    try:
+        gun = float(row.get("gun", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return False
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
+    if gun < gun_min:
+        return False
+    rms_raw = row.get("rms", row.get("audio_rms"))
+    if rms_raw is None:
+        # Legacy timelines without rms — fall back to gun-only.
+        return True
+    try:
+        rms = float(rms_raw or 0.0)
+    except (TypeError, ValueError):
+        return True
+    rms_min = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_RMS", "0.020"))
+    return rms >= rms_min
+
+
+def snap_to_best_fight_cluster(
+    start: float,
+    dur: float,
+    report: dict[str, Any],
+    *,
+    peak: float | None = None,
+    max_cluster_sec: float | None = None,
+) -> tuple[float, float]:
+    """Keep one dense gunfight; drop bridged run between separate fights.
+
+    #3hDKNrY4sGU_580 shipped 50s with two real bursts (~1–9s and ~28–35s) glued
+    by quiet run. Owner wants only the hot burst (~5–8s). Pick the densest
+    contiguous real-gun cluster (gun × rms) and pad slightly.
+    """
+    timeline = report.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return float(start), float(dur)
+    max_cluster = float(
+        max_cluster_sec
+        if max_cluster_sec is not None
+        else os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "12")
+    )
+    max_gap = float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_GAP_SEC", "2.5"))
+    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", "1.0"))
+    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "2.0"))
+    min_keep = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_SEC", "5.0"))
+
+    start_f = float(start)
+    end_f = start_f + float(dur)
+    rows: list[tuple[float, float, float]] = []
+    for row in timeline:
+        try:
+            t = float(row["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t < start_f - 1.0 or t > end_f + 1.0:
+            continue
+        if not _bin_is_real_gunfight(row):
+            continue
+        gun = float(row.get("gun", 0.0) or 0.0)
+        try:
+            rms = float(row.get("rms", row.get("audio_rms", 0.05)) or 0.05)
+        except (TypeError, ValueError):
+            rms = 0.05
+        rows.append((t, gun, rms))
+    if not rows:
+        return start_f, float(dur)
+
+    rows.sort(key=lambda x: x[0])
+    clusters: list[list[tuple[float, float, float]]] = [[rows[0]]]
+    for item in rows[1:]:
+        prev = clusters[-1][-1][0]
+        if item[0] - prev <= max_gap:
+            clusters[-1].append(item)
+        else:
+            clusters.append([item])
+
+    def _peak_energy(cluster: list[tuple[float, float, float]]) -> float:
+        return max(g * max(r, 0.01) for _, g, r in cluster)
+
+    def _avg_energy(cluster: list[tuple[float, float, float]]) -> float:
+        return sum(g * max(r, 0.01) for _, g, r in cluster) / max(1, len(cluster))
+
+    peak_f = float(peak) if peak is not None else None
+    best = None
+    best_key = None
+    for cluster in clusters:
+        c_start = cluster[0][0]
+        c_end = cluster[-1][0]
+        peak_e = _peak_energy(cluster)
+        avg_e = _avg_energy(cluster)
+        # Peak proximity is only a weak tie-break — densest audible burst wins
+        # (#3hDKNrY4sGU_580: early fight at peak lost to hotter 28–35s burst).
+        near = 1 if (peak_f is not None and c_start - 1.0 <= peak_f <= c_end + 3.0) else 0
+        key = (peak_e, avg_e, near, -(c_end - c_start))
+        if best_key is None or key > best_key:
+            best_key = key
+            best = cluster
+    assert best is not None
+    c_start = best[0][0]
+    c_end = best[-1][0]
+    bin_sec = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+    new_start = max(start_f, c_start - keep_pre)
+    new_end = min(end_f, c_end + bin_sec + keep_post)
+    new_dur = max(min_keep, new_end - new_start)
+    # Hard-cap only when multiple bursts were glued by run. A single continuous
+    # fight may run long — leave length to extend/quiet-end + caller max_dur.
+    if len(clusters) >= 2 and new_dur > max_cluster:
+        hot_t = max(best, key=lambda x: x[1] * x[2])[0]
+        if peak_f is not None and c_start - 1 <= peak_f <= c_end + 3:
+            hot_t = peak_f
+        new_start = max(start_f, hot_t - max_cluster * 0.35)
+        new_end = min(end_f, new_start + max_cluster)
+        new_start = max(start_f, new_end - max_cluster)
+        new_dur = max(min_keep, new_end - new_start)
+    # Only snap when we meaningfully shorten a bridged multi-fight window.
+    if float(dur) - new_dur < 4.0 and new_start <= start_f + 1.0:
+        return start_f, float(dur)
+    return float(new_start), float(new_dur)
+
+
 def trim_quiet_run_edges(
     start: float,
     dur: float,
@@ -227,7 +350,17 @@ def trim_quiet_run_edges(
             rows.append((t, g))
     if not rows:
         return start_f, float(dur)
-    hot = [t for t, g in rows if g >= gun_min]
+    # Prefer audible gun rows when rms is present (drop silent false-gun run).
+    hot = []
+    for row in timeline:
+        try:
+            t = float(row["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start_f - 1.0 <= t <= end_f + 1.0 and _bin_is_real_gunfight(row):
+            hot.append(t)
+    if not hot:
+        hot = [t for t, g in rows if g >= gun_min]
     if not hot:
         return start_f, float(dur)
     first_hot = min(hot)
@@ -239,8 +372,14 @@ def trim_quiet_run_edges(
     if new_start > start_f + 0.4:
         start_f = new_start
     if end_f - new_end > edge * 0.5:
-        end_f = max(start_f + 6.0, new_end)
-    new_dur = max(6.0, end_f - start_f)
+        end_f = max(start_f + 5.0, new_end)
+    new_dur = max(5.0, end_f - start_f)
+    if max_dur is not None:
+        new_dur = min(new_dur, float(max_dur))
+    # Multi-fight windows: keep densest burst only (owner #3hDKNrY4sGU_580).
+    start_f, new_dur = snap_to_best_fight_cluster(
+        start_f, new_dur, report, max_cluster_sec=max_dur
+    )
     if max_dur is not None:
         new_dur = min(new_dur, float(max_dur))
     return float(start_f), float(new_dur)
@@ -267,9 +406,9 @@ def tighten_pubg_clip_bounds(
     pre_pad = clip_pre_shoot_sec()
     post_kill = clip_post_kill_sec()
     max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2"))
-    min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "18"))
+    min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "8"))
     if single:
-        min_dur = max(min_dur, float(os.environ.get("PUBG_SINGLE_MIN_SEC", "20")))
+        min_dur = max(min_dur, float(os.environ.get("PUBG_SINGLE_MIN_SEC", "8")))
     max_dur = float(
         os.environ.get("PUBG_SINGLE_MAX_SEC", "90")
         if single
@@ -374,6 +513,10 @@ def tighten_pubg_clip_bounds(
         start, dur, report, max_dur=max_dur, single=single
     )
     start, dur = trim_quiet_run_edges(start, dur, report, max_dur=max_dur)
+    start, dur = snap_to_best_fight_cluster(
+        start, dur, report, peak=peak, max_cluster_sec=min(float(max_dur), 14.0)
+    )
+    # Short real fights stay short — do not re-inflate to legacy 18–20s.
     dur = min(float(dur), float(max_dur))
     return float(start), float(dur)
 
@@ -757,4 +900,5 @@ __all__ = [
     "peak_shape_ok",
     "select_distinct_kill_peaks",
     "tighten_pubg_clip_bounds",
+    "snap_to_best_fight_cluster",
 ]

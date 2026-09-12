@@ -1275,6 +1275,30 @@ def _prepare_montage_clip(
         dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 0)
         if dur <= 0:
             return clip
+        # Even locked owner windows must drop bridged multi-fight run pads.
+        try:
+            from pubg_montage_bounds import snap_to_best_fight_cluster
+
+            report = dict(row.get("segment_report") or clip.get("segment_report") or {})
+            if report.get("timeline"):
+                start, dur = snap_to_best_fight_cluster(
+                    start,
+                    dur,
+                    report,
+                    peak=peak,
+                    max_cluster_sec=min(float(part_max), 12.0),
+                )
+                clip = {
+                    **clip,
+                    "start": round(float(start), 2),
+                    "peak_start": peak,
+                    "fight_end": round(float(start) + float(dur), 2),
+                    "input_duration": round(float(dur), 2),
+                    "output_duration": round(float(dur), 2),
+                    "bounds_locked_cluster_snap": True,
+                }
+        except Exception:
+            pass
         if dur > float(part_max) + 0.25:
             end = start + dur
             # Keep the peak inside the capped window; bias toward the end (payoff).

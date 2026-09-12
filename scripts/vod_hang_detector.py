@@ -845,13 +845,13 @@ def apply_agent_recover_env(
         "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "1"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "35"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "18"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "32"
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "14"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
+        "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "2.5"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_MAX", "8"

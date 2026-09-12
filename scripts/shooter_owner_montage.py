@@ -514,15 +514,15 @@ def resolve_owner_neighborhood_bounds(
     cont_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_CONT_GUN", "0.04"))
     quiet_gun = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GUN", "0.035"))
     # Reload / peek gaps are often 3–5s; require a longer quiet before ending.
-    quiet_need = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "6.0"))
-    look_ahead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "10.0"))
+    quiet_need = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "2.5"))
+    look_ahead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "3.0"))
     # Defaults trimmed so near-👍 windows ship fight, not long run/loot pads.
-    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"))
-    min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "28"))
+    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "18"))
+    min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "6"))
     # Extra room past max_dur only to land on quiet instead of mid-burst.
     quiet_grace = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"))
     pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "1.5"))
-    pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "3.0"))
+    pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "1.5"))
     step = 3.0
     peak_v = float(peak)
     probe_cache: dict[int, dict] = {}
@@ -554,15 +554,26 @@ def resolve_owner_neighborhood_bounds(
         # High locomotion + weak gun = run-in junk (3960 lead).
         if motion >= 0.13 and gun < min_gun:
             return False
-        return gun >= min_gun and burst >= min_burst
+        rms = float(row.get("audio_rms") or 0.0)
+        rms_min = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_ONSET_RMS", "0.020"))
+        return gun >= min_gun and burst >= min_burst and rms >= rms_min
+
+    def _rms_at(t: float) -> float:
+        if t < 0:
+            return 0.0
+        return float(_probe(t).get("audio_rms") or 0.0)
 
     def _still_hot(t: float) -> bool:
-        """Offset / tail: any clear gun means the act is not over."""
+        """Offset / tail: audible gun means the act is not over (ignore silent false-gun)."""
         if t < 0:
             return False
         if _is_owner_rejected_peak("pubg", vod, t):
             return False
-        return _gun_at(t) >= cont_gun
+        gun = _gun_at(t)
+        if gun < cont_gun:
+            return False
+        rms_min = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_CONT_RMS", "0.018"))
+        return _rms_at(t) >= rms_min or gun >= cont_gun * 1.8
 
     def _quiet_enough(t: float) -> bool:
         return _gun_at(t) < quiet_gun and not _is_owner_rejected_peak("pubg", vod, t)
@@ -737,6 +748,32 @@ def resolve_owner_neighborhood_bounds(
     if _is_owner_rejected_peak("pubg", vod, end - 1.0):
         end = max(start + min_dur, end - 12.0)
         dur = end - start
+    # Collapse multi-burst windows glued by run (owner #3hDKNrY4sGU_580 = 50s → ~7s).
+    try:
+        from pubg_montage_bounds import snap_to_best_fight_cluster
+
+        synth = {
+            "timeline": [
+                {
+                    "start": float(tt),
+                    "gun": float(row.get("gunfire_density") or 0.0),
+                    "rms": float(row.get("audio_rms") or 0.0),
+                }
+                for tt_key, row in sorted(probe_cache.items())
+                for tt in (tt_key / 2.0,)
+            ]
+        }
+        if synth["timeline"]:
+            start, dur = snap_to_best_fight_cluster(
+                float(start),
+                float(dur),
+                synth,
+                peak=peak_v,
+                max_cluster_sec=min(float(max_dur), 12.0),
+            )
+            end = start + dur
+    except Exception:
+        pass
     log.info(
         "owner-neighborhood bounds peak=%.1f start=%.1f end=%.1f dur=%.1f",
         peak_v,
@@ -775,7 +812,7 @@ def build_owner_neighborhood_send_rows(
     used = list(used_peaks or [])
     lead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_LEAD_SEC", "8"))
     # Fallback only — real bounds snap to gun onset/offset at prepare time.
-    dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"))
+    dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "14"))
     # Snapping every candidate at build time is too slow; prepare does the snap.
     snap = os.environ.get("PUBG_OWNER_NEIGHBORHOOD_SNAP_AT_BUILD", "0") == "1"
     # Skip offset 0 — that is the already-rated 👍 peak itself.
@@ -885,7 +922,7 @@ def prescore_owner_neighborhood_rows(
         start = float(row.get("start") or (row.get("clip") or {}).get("start") or 0)
         dur = float(
             (row.get("clip") or {}).get("input_duration")
-            or os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45")
+            or os.environ.get("PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "14")
         )
         scored += 1
         try:
