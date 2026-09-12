@@ -155,6 +155,25 @@ def is_send_now_command(text: str) -> bool:
     }
 
 
+def is_more_clips_command(text: str) -> bool:
+    """Owner «Ещё» after rating — request the next firefight clip."""
+    raw = (text or "").strip()
+    token = raw.split()[0].split("@")[0].lower() if raw else ""
+    if token in ("/more", "/ещё", "/еще", "/next"):
+        return True
+    return _norm_text(raw) in {
+        "ещё",
+        "еще",
+        "еше",
+        "more",
+        "next",
+        "ещё клип",
+        "еще клип",
+        "ещё видео",
+        "еще видео",
+    }
+
+
 def is_hang_agent_command(text: str) -> bool:
     raw = (text or "").strip()
     token = raw.split()[0].split("@")[0].lower() if raw else ""

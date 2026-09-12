@@ -19,6 +19,16 @@ log = logging.getLogger("shooter_vod_fast_scan")
 AUDIO_GENERATOR_VERSION = 5
 
 
+def _pulse_dense_heartbeat(video_path: Path, **extra: object) -> None:
+    """Keep hang detector from treating a live dense scan as a stuck feed."""
+    try:
+        from vod_hang_detector import write_heartbeat
+
+        write_heartbeat("pubg", "dense_probe", vod=video_path.name, **extra)
+    except Exception:
+        pass
+
+
 def full_peak_scan_enabled() -> bool:
     """PUBG_FULL_PEAK_SCAN=1 → contiguous full-VOD discovery (no probe skips)."""
     return os.environ.get("PUBG_FULL_PEAK_SCAN", "1") == "1"
@@ -532,6 +542,7 @@ def discover_montage_gun_peaks(
         skip,
         probe_pass,
     )
+    _pulse_dense_heartbeat(video_path, offsets=len(offsets), probe_pass=probe_pass)
 
     try:
         deadline_sec = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC", "0") or 0)
@@ -581,10 +592,16 @@ def discover_montage_gun_peaks(
             panns_cap = len(scored)
         if panns_cap > 0 and scored:
             enriched: list[tuple[float, float]] = []
-            for rank, center in scored[:panns_cap]:
+            for index, (rank, center) in enumerate(scored[:panns_cap]):
                 if _deadline_hit():
                     log.warning("dense probe deadline during PANNs enrich vod=%s", video_path.name)
                     break
+                if index == 0 or index % 15 == 0:
+                    _pulse_dense_heartbeat(
+                        video_path,
+                        panns_i=index,
+                        panns_cap=panns_cap,
+                    )
                 pmax = 0.0
                 try:
                     panns = score_panns_audio(video_path, max(0.0, center - 7.0), WINDOW_SEC)
@@ -654,7 +671,7 @@ def discover_montage_gun_peaks(
                 prewarm_grid(video_path, targets, WINDOW_SEC)
             except Exception:
                 pass
-            for t in targets:
+            for i, t in enumerate(targets):
                 if _deadline_hit():
                     log.warning(
                         "dense probe deadline hit vod=%s scored=%s/%s",
@@ -663,6 +680,8 @@ def discover_montage_gun_peaks(
                         len(targets),
                     )
                     break
+                if i == 0 or i % 15 == 0:
+                    _pulse_dense_heartbeat(video_path, seq_i=i, seq_n=len(targets))
                 panns = score_panns_audio(video_path, t, WINDOW_SEC)
                 gmax = float(panns.get("panns_gun_max", 0))
                 if gmax >= gun_min:

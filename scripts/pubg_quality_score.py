@@ -68,7 +68,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
     try:
-        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
+        from pubg_owner_calibration import segment_overlaps_owner_label
 
         return bool(
             segment_overlaps_owner_label(
@@ -76,11 +76,32 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
                 start_sec,
                 duration_sec,
                 label="bad",
-                pad_sec=owner_bad_pad_sec(),
+                pad_sec=None,  # per-note pad: loot_run / беготня / меню → ~30s
             )
         )
     except Exception:
         return False
+
+
+def _menu_frame_hits(visual: dict[str, Any], visual_reason: str) -> tuple[bool, bool, bool]:
+    """Return (start_menu, mid_menu, end_menu) from per-frame visual reasons."""
+    start_menu = mid_menu = end_menu = False
+    for fr in visual.get("frames") or []:
+        if not isinstance(fr, dict):
+            continue
+        if "menu_overlay" not in str(fr.get("reason") or ""):
+            continue
+        lab = str(fr.get("label") or "")
+        if lab == "start":
+            start_menu = True
+        elif lab == "end":
+            end_menu = True
+        else:
+            mid_menu = True
+    if "menu_overlay" in str(visual_reason or "") and not (start_menu or mid_menu or end_menu):
+        # Unknown which frame — treat as edge so we never ship a lobby clip.
+        start_menu = True
+    return start_menu, mid_menu, end_menu
 
 
 def _primary_has_kill(
@@ -617,15 +638,23 @@ def score_pubg_window(
     menu_hit = "menu_overlay" in str(visual_reason or "") or any(
         "menu_overlay" in r for r in frame_reasons
     )
+    start_menu, mid_menu, end_menu = _menu_frame_hits(visual, visual_reason)
+    report["menu_frames"] = {"start": start_menu, "mid": mid_menu, "end": end_menu}
+    best_flash = float(visual.get("best_hit_flash", 0.0))
+    best_weapon = float(visual.get("best_weapon_edge", 0.0))
     if (
         os.environ.get("PUBG_HARD_REJECT_MENU_OVERLAY", "1") == "1"
         and menu_hit
         and not _owner_redo_trusted(video_path, start_sec, duration_sec)
     ):
-        # ADS scope / handcam PiP / combat HUD often trip menu_overlay while
-        # gun audio is clearly a fight (Wg9qrAzWTLU ~471.5). Real lobbies stay
-        # low on PANNs+DSP gun — keep those blocked.
-        # Do not rescue menu/loot overlays on hud_fp-only "kills" (Wg9@670 fog shop).
+        # Standing in inventory / extract / lobby at clip edges is never a shootout.
+        # ADS/HUD false menu_overlay only happens in the MID frame during a spray.
+        if start_menu or end_menu:
+            report["hard_reject"] = "menu_overlay"
+            return _finish(
+                False,
+                f"hard_menu_overlay_edge=start{int(start_menu)}:end{int(end_menu)}",
+            )
         combat_act_menu = False
         try:
             from pubg_fight_act_profile import is_combat_act
@@ -633,9 +662,12 @@ def score_pubg_window(
             combat_act_menu = is_combat_act(gun, burst)
         except Exception:
             combat_act_menu = False
+        flash_min = float(os.environ.get("PUBG_MENU_RESCUE_MIN_FLASH", "0.004"))
         menu_gun_rescue = (
             single
+            and mid_menu
             and not loot_walk
+            and best_flash >= flash_min
             and not (
                 report.get("kill_notification_hud_fp_kept")
                 and not keyword_hit
@@ -657,8 +689,28 @@ def score_pubg_window(
                 False,
                 f"hard_menu_overlay={visual_reason or ','.join(frame_reasons) or 'menu_overlay'}",
             )
-    best_flash = float(visual.get("best_hit_flash", 0.0))
-    best_weapon = float(visual.get("best_weapon_edge", 0.0))
+
+    # PANNs can override loot_walk for a real spray, but running with distant
+    # / false gun and no muzzle flash is the owner's "беготня" 👎.
+    if (
+        report.get("panns_loot_override")
+        and os.environ.get("PUBG_LOOT_OVERRIDE_NEED_FLASH", "1") == "1"
+    ):
+        flash_need = float(os.environ.get("PUBG_LOOT_OVERRIDE_MIN_FLASH", "0.004"))
+        run_motion = float(os.environ.get("PUBG_LOOT_OVERRIDE_RUN_MOTION", "0.055"))
+        visual_run = "run_no_shots" in str(visual_reason or "") or any(
+            "run_no_shots" in str(fr.get("reason") or "")
+            for fr in (visual.get("frames") or [])
+            if isinstance(fr, dict)
+        )
+        if visual_run or (best_flash < flash_need and motion >= run_motion):
+            report["loot_walk"] = True
+            report["panns_loot_override"] = False
+            report["hard_reject"] = "loot_walk"
+            return _finish(
+                False,
+                f"hard_loot_run_no_flash=motion{motion:.3f}:flash{best_flash:.4f}",
+            )
 
     has_kill = _primary_has_kill(
         notification_hit=notification_hit,

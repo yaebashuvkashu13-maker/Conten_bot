@@ -263,7 +263,34 @@ def test_menu_overlay_on_any_frame_hard_rejects(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_menu_overlay_rescued_by_strong_gun_audio(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ADS/HUD false menu_overlay must not block a strong-gun singles fight."""
+    """ADS/HUD false menu_overlay on the MID frame must not block a muzzle-flash fight."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(author_kill=True))
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            True,
+            "combat_visual_strict",
+            {
+                "best_hit_flash": 0.01,
+                "best_weapon_edge": 0.05,
+                "frames": [
+                    {"label": "start", "pass": True, "reason": "combat_visible"},
+                    {"label": "mid", "pass": False, "reason": "menu_overlay"},
+                    {"label": "end", "pass": True, "reason": "combat_visible"},
+                ],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 471.5, 23, single=True, use_cache=False)
+    assert report.get("singles_menu_gun_rescue") is True
+    assert report.get("hard_reject") != "menu_overlay"
+
+
+def test_start_menu_overlay_not_rescued_by_gun_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inventory / lobby at clip start is never a shootout, even with loud audio."""
     monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "1")
     monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
     patches = list(_base_patches(author_kill=True))
@@ -277,16 +304,18 @@ def test_menu_overlay_rescued_by_strong_gun_audio(monkeypatch: pytest.MonkeyPatc
                 "best_weapon_edge": 0.05,
                 "frames": [
                     {"label": "start", "pass": False, "reason": "menu_overlay"},
-                    {"label": "mid", "pass": False, "reason": "menu_overlay"},
+                    {"label": "mid", "pass": True, "reason": "combat_visible"},
                     {"label": "end", "pass": True, "reason": "combat_visible"},
                 ],
             },
         ),
     )
     with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
-        ok, reason, report = score_pubg_window(Path("vod.mp4"), 471.5, 23, single=True, use_cache=False)
-    assert report.get("singles_menu_gun_rescue") is True
-    assert report.get("hard_reject") != "menu_overlay"
+        ok, reason, report = score_pubg_window(Path("vod.mp4"), 2538, 24, single=True, use_cache=False)
+    assert ok is False
+    assert report.get("hard_reject") == "menu_overlay"
+    assert "menu_overlay_edge" in reason
+    assert report.get("singles_menu_gun_rescue") is not True
 
 
 def test_confident_hud_fp_notification_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -760,6 +789,50 @@ def test_panns_loot_override_blocks_false_hard_loot_walk(
     assert report.get("hard_reject") != "loot_walk"
     assert "hard_loot_walk" not in reason
     assert ok is True or "loot" not in reason
+
+
+def test_panns_loot_override_rejects_run_without_muzzle_flash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loud DSP gun + running scenery without hit-flash is беготня, not a fight."""
+    monkeypatch.setenv("PUBG_REJECT_LOOT_WALK", "1")
+    monkeypatch.setenv("PUBG_LOOT_OVERRIDE_NEED_FLASH", "1")
+    monkeypatch.setenv("PUBG_OWNER_GOOD_TRUST_LOOT", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    patches = list(_base_patches(loot=False, author_kill=False, gun=0.061, panns_gun=0.52, rms=0.04))
+    patches[4] = patch(
+        "pubg_combat_gate.pubg_combat_visual_strict",
+        return_value=(
+            True,
+            "run_no_shots",
+            {
+                "best_hit_flash": 0.0005,
+                "best_weapon_edge": 0.01,
+                "frames": [
+                    {"label": "start", "pass": False, "reason": "run_no_shots"},
+                    {"label": "mid", "pass": False, "reason": "run_no_shots"},
+                    {"label": "end", "pass": True, "reason": "combat_visible"},
+                ],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch(
+        "gameplay_gate.segment_looks_like_pubg_loot_or_walk",
+        return_value=True,
+    ), patch(
+        "pubg_shooting_gate.pubg_passes_shooting_gate",
+        return_value=(
+            True,
+            "ok",
+            {"panns_loot_override": True, "combat_act_override": True, "gate_reason": "ok"},
+        ),
+    ):
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 660, 12, single=True, use_cache=False
+        )
+    assert ok is False
+    assert report.get("hard_reject") == "loot_walk"
+    assert "loot_run_no_flash" in reason
 
 
 

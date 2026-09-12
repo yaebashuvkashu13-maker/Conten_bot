@@ -136,6 +136,36 @@ def _f(metrics: dict[str, Any], *keys: str, default: float = 0.0) -> float:
     return float(default)
 
 
+def _combat_act_loot_rescue_ok(
+    metrics: dict[str, Any],
+    combat_ok: bool,
+    report: dict[str, Any],
+) -> bool:
+    """Drought loot-run rescue: audible combat-act, plus muzzle flash when scored."""
+    rms = _f(metrics, "audio_rms", "rms")
+    rms_min = float(os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE_MIN_RMS", "0.025"))
+    if not (
+        combat_ok
+        and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1"
+        and rms >= rms_min
+    ):
+        return False
+    flash = None
+    for key in ("hit_flash", "best_hit_flash"):
+        if key in metrics and isinstance(metrics.get(key), (int, float)):
+            flash = float(metrics[key])
+            break
+    flash_min = float(os.environ.get("PUBG_DISLIKE_LOOT_RESCUE_MIN_FLASH", "0.003"))
+    if flash is not None and flash < flash_min:
+        report["combat_act_loot_run_rescue_blocked_flash"] = flash
+        return False
+    report["combat_act_loot_run_rescue"] = True
+    report["combat_act_loot_run_rescue_rms"] = rms
+    if flash is not None:
+        report["combat_act_loot_run_rescue_flash"] = flash
+    return True
+
+
 def evaluate_reason_gates(
     metrics: dict[str, Any] | None,
     *,
@@ -277,27 +307,13 @@ def evaluate_reason_gates(
         # Drought soften + combat-act: short fight snaps often have motion>gun while
         # audio is a real Metro spray (OCR-blind). Allow rescue so force-send can
         # ship fight-cluster clips instead of dying on reason_loot_run after render.
-        rms = _f(metrics, "audio_rms", "rms")
-        rms_min = float(os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE_MIN_RMS", "0.025"))
-        if (
-            combat_ok
-            and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1"
-            and rms >= rms_min
-        ):
-            report["combat_act_loot_run_rescue"] = True
-            report["combat_act_loot_run_rescue_rms"] = rms
+        if _combat_act_loot_rescue_ok(metrics, combat_ok, report):
+            pass
         else:
             return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if motion > 0 and gun < gun_min * 0.85 and motion > motion_max:
-        rms = _f(metrics, "audio_rms", "rms")
-        rms_min = float(os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE_MIN_RMS", "0.025"))
-        if (
-            combat_ok
-            and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1"
-            and rms >= rms_min
-        ):
-            report["combat_act_loot_run_rescue"] = True
-            report["combat_act_loot_run_rescue_rms"] = rms
+        if _combat_act_loot_rescue_ok(metrics, combat_ok, report):
+            pass
         else:
             return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if visual < visual_min:

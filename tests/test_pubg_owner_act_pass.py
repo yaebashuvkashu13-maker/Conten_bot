@@ -83,3 +83,12 @@ def test_owner_good_fight_peaks_keep_early_acts(monkeypatch: pytest.MonkeyPatch,
     peaks = owner_good_fight_peaks("pubg", vod)
     assert 6.0 in peaks
     assert 147.0 in peaks
+
+
+def test_owner_bad_pad_widens_for_loot_run_and_menu() -> None:
+    from pubg_owner_calibration import owner_bad_pad_sec
+
+    assert owner_bad_pad_sec("loot_run") >= 30
+    assert owner_bad_pad_sec("беготня") >= 30
+    assert owner_bad_pad_sec("меню") >= 30
+    assert owner_bad_pad_sec("clean fight") < 30

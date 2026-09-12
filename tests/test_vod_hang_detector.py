@@ -329,3 +329,58 @@ def test_heal_cooldown_retries_when_previous_sent_zero(
     monkeypatch.setenv("VOD_HEAL_RETRY_SEC", "600")
     monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
     assert _heal_cooldown_ok(2700) is True
+
+
+def test_fresh_heartbeat_ignores_live_ffmpeg_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dense PANNs/ffmpeg of a live scan must not trip stuck_child heal."""
+    log = tmp_path / "feed.log"
+    log.write_text("pipeline done sent=1 vods=1 game=pubg\n", encoding="utf-8")
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
+    monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
+    monkeypatch.setenv("VOD_ENCODE_STUCK_SEC", "1800")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 400.0)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr(
+        "vod_hang_detector.find_stuck_children",
+        lambda *a, **k: [{"pid": 1, "age_sec": 732, "cmd": "ffmpeg -i yt_TJFY.mp4"}],
+    )
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 40, "phase": "dense_probe"},
+    )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
+    report = detect_hang()
+    assert report.ok
+    assert not any(r.startswith("stuck_child_") for r in report.reasons)
+
+
+def test_ancient_ffmpeg_still_counts_as_hang(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "feed.log"
+    log.write_text("pipeline done sent=1 vods=1 game=pubg\n", encoding="utf-8")
+    monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
+    monkeypatch.setenv("VOD_PROGRESS_STUCK_SEC", "900")
+    monkeypatch.setenv("VOD_ENCODE_STUCK_SEC", "1800")
+    monkeypatch.setattr("vod_hang_detector.feed_log_path", lambda: log)
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 400.0)
+    monkeypatch.setattr("vod_hang_detector.feed_process_alive", lambda: True)
+    monkeypatch.setattr(
+        "vod_hang_detector.find_stuck_children",
+        lambda *a, **k: [{"pid": 1, "age_sec": 2400, "cmd": "ffmpeg -i stuck.mp4"}],
+    )
+    monkeypatch.setattr("vod_hang_detector.find_stuck_part_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vod_hang_detector.read_heartbeat",
+        lambda: {"ts": time.time() - 20, "phase": "dense_probe"},
+    )
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *a, **k: False)
+    report = detect_hang()
+    assert not report.ok
+    assert any(r.startswith("stuck_child_") for r in report.reasons)

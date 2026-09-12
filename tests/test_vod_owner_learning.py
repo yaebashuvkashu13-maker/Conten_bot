@@ -91,3 +91,12 @@ def test_backfill_owner_labels_from_vod_segments(pubg_learning) -> None:
         "good",
         source="vod_segment_backfill",
     )
+
+
+def test_parse_probe8_segment_ids() -> None:
+    from vod_owner_learning import parse_pubg_segment_sid, peak_time_sec, vod_id_from_row
+
+    assert parse_pubg_segment_sid("JmEagIrXFvM_562_p8") == ("JmEagIrXFvM", 562.0)
+    assert parse_pubg_segment_sid("seg_TJFY9oBSx7c_447_p8new") == ("TJFY9oBSx7c", 447.0)
+    assert peak_time_sec({}, "abc12345678_120_p8") == 120.0
+    assert vod_id_from_row({}, "abc12345678_120_p8") == "abc12345678"

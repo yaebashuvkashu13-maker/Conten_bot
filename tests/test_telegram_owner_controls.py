@@ -88,6 +88,17 @@ def test_text_hang_agent_command() -> None:
     assert not is_send_now_command("/agent")
 
 
+def test_more_clips_command() -> None:
+    from telegram_owner_controls import is_more_clips_command, is_send_now_command
+
+    assert is_more_clips_command("Ещё")
+    assert is_more_clips_command("ещё")
+    assert is_more_clips_command("еще")
+    assert is_more_clips_command("/more")
+    assert not is_more_clips_command("https://youtu.be/abc")
+    assert not is_send_now_command("Ещё")
+
+
 def test_text_process_command() -> None:
     assert is_process_command("/process")
     assert is_process_command("/процесс")
