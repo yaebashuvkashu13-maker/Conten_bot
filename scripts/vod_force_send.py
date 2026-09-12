@@ -485,6 +485,12 @@ def force_send_game(
 
     env = _load_runtime_env()
     env["VOD_SEGMENT_GAME"] = game
+    if game == "pubg":
+        # Steady .env may pin MLBB_ONLY_MODE=1 / DEFAULT_GAME_PROFILE=mlbb which
+        # blocks sendVideo for pubg force-send after encode.
+        env["MLBB_ONLY_MODE"] = "0"
+        env["QUEUE_GAME_PROFILE"] = "pubg"
+        env["DEFAULT_GAME_PROFILE"] = "pubg"
     scripts_path = str(SCRIPTS)
     local_bin = "/usr/local/bin"
     py_path = env.get("PYTHONPATH", "")
