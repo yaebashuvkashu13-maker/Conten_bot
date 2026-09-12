@@ -352,15 +352,15 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1"
     )
-    # Short fixed near-👍 windows — not 110s+ gun-snap encodes.
+    # Keep gun-snap ON under drought — fixed lead/dur without snap pads loot/run.
     env["PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "0"
+        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "1"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "45"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "35"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "32"
     )
     env["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
@@ -371,13 +371,13 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "3"
     )
-    # Keep hard loot_walk reject ON, but allow drought DISLIKE_GUN soften to apply.
-    # With loot_floor_lock=1, active loot_run reasons froze gun at 0.09 and killed
-    # borderline fights (0.064) while silence was already multi-hour.
+    # Unlock dislike gun soften at every drought esc (lock froze gun at 0.09 while
+    # shoot floors were 0.03 → reason_low_gun after encode). Loot/menu hard rejects
+    # stay ON via PUBG_REJECT_LOOT_WALK / HARD_REJECT_MENU.
+    env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
+        "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+    )
     if escalation >= 2:
-        env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
-            "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
-        )
         env["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
             "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
@@ -405,15 +405,36 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     )
     env["SHOOTER_VOD_MAX_VODS_PER_RUN"] = os.environ.get("VOD_FORCE_SEND_MAX_VODS", "4")
     env["PUBG_SINGLES_MAX_VODS_PER_RUN"] = env["SHOOTER_VOD_MAX_VODS_PER_RUN"]
-    # 0 = never abandon VOD on reject streak alone under full peak scan.
-    env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "0")
+    # Positive exhaust so dead VODs unpin after reject streak (0 stuck forever).
+    env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get("VOD_FORCE_SEND_ZERO_EXHAUST", "20")
     # 0 = ship every gate-pass in one cycle (quality flood OK).
     env["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
         "VOD_FORCE_MAX_SENDS_PER_CYCLE", "0"
     )
-    # Always keep discovery on — SKIP_DISCOVERY is a hard config conflict.
-    env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
-    env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+    # Honor ops-pinned SKIP_DISCOVERY while silence < absolute; otherwise force open.
+    try:
+        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "10800"))
+    except ValueError:
+        abs_silence = 10800.0
+    try:
+        from vod_hang_detector import last_send_age_sec
+
+        silence_age = float(last_send_age_sec() or 0.0)
+    except Exception:
+        silence_age = 0.0
+    incoming_skip = (
+        env.get("SHOOTER_VOD_SKIP_DISCOVERY") == "1"
+        or env.get("VOD_FORCE_SKIP_DISCOVERY") == "1"
+        or os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1"
+        or os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "0") == "1"
+        or os.environ.get("VOD_FORCE_OPS_SKIP_DISCOVERY", "0") == "1"
+    )
+    if incoming_skip and silence_age < abs_silence:
+        env["SHOOTER_VOD_SKIP_DISCOVERY"] = "1"
+        env["VOD_FORCE_SKIP_DISCOVERY"] = "1"
+    else:
+        env["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+        env["VOD_FORCE_SKIP_DISCOVERY"] = "0"
     if escalation >= 2:
         env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
         env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get("VOD_FORCE_RELAX_OWNER", "1")

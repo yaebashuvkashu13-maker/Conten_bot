@@ -99,13 +99,14 @@ def _gunfire_active_flags(
     timeline: list[dict[str, Any]],
     active_min: float,
 ) -> list[bool]:
-    """Gunfire bins only — motion/ambient must not extend pre-fight lead."""
+    """Gunfire bins only — motion/ambient must not extend pre-fight lead.
+
+    Composite score is ranking-only; never invent shooting_start from loud loot/run.
+    ``active_min`` kept for call-site compatibility.
+    """
+    del active_min
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
-    score_floor = max(active_min, float(os.environ.get("PUBG_SEGMENT_GUN_SCORE_MIN", "0.40")))
-    return [
-        float(row.get("gun", 0.0)) >= gun_min or float(row.get("score", 0.0)) >= score_floor
-        for row in timeline
-    ]
+    return [float(row.get("gun", 0.0)) >= gun_min for row in timeline]
 
 
 def _sustained_onset_index(flags: list[bool], *, streak: int = 2) -> int | None:
@@ -251,6 +252,8 @@ def _fight_onset_index(
     lookback: float = 18.0,
 ) -> int | None:
     """First gunfire bin at or before peak — avoids loot-walk left expansion."""
+    del active_min  # onset is gun-only
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
     onset: int | None = None
     for index, row in enumerate(timeline):
         t = float(row["start"])
@@ -258,7 +261,7 @@ def _fight_onset_index(
             continue
         if t > peak_sec + 4.0:
             break
-        if float(row["score"]) >= active_min:
+        if float(row.get("gun", 0.0)) >= gun_min:
             onset = index if onset is None else min(onset, index)
     return onset
 
@@ -273,8 +276,9 @@ def _extend_right_through_payoff(
     active_min: float,
 ) -> int:
     """Kill notifications often fire before sustained gunfire — extend past quiet gaps."""
-    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "16"))
-    forward_quiet = max(3, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "8")))
+    del active_min  # extend on gun, not score
+    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "10"))
+    forward_quiet = max(2, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "3")))
     anchor = max(float(peak_sec), float(kill_sec) if kill_sec is not None else float(peak_sec))
     target_end = anchor + min_post
     extended = right
@@ -284,7 +288,7 @@ def _extend_right_through_payoff(
         t = float(row["start"])
         if t < anchor - 2.0:
             continue
-        hot = float(row["score"]) >= active_min or float(row.get("gun", 0.0)) >= gun_min
+        hot = float(row.get("gun", 0.0)) >= gun_min
         if hot:
             extended = max(extended, index)
         if t + sample >= target_end:
@@ -295,14 +299,15 @@ def _extend_right_through_payoff(
         t = float(row["start"]) if (row := timeline[index]) else 0.0
         if t > target_end + sample:
             break
-        hot = float(row["score"]) >= active_min or float(row.get("gun", 0.0)) >= gun_min
+        hot = float(row.get("gun", 0.0)) >= gun_min
         if hot:
             extended, quiet = index, 0
         else:
             quiet += 1
             if quiet > forward_quiet:
                 break
-            extended = index
+            if t <= target_end:
+                extended = index
     return extended
 
 
@@ -369,12 +374,16 @@ def resolve_pubg_fight_bounds(
     active = [float(row["score"]) >= active_min for row in timeline]
     active[seed] = True
     gun_active = _gunfire_active_flags(timeline, active_min)
-    if any(gun_active[i] for i in (near or [seed])):
-        expand_active = gun_active
-    elif any(gun_active):
+    # Never fall back to score-only activity — that pads loot/run as "fight".
+    if any(gun_active):
         expand_active = gun_active
     else:
-        expand_active = active
+        expand_active = [False] * len(timeline)
+        expand_active[seed] = True
+        if seed > 0:
+            expand_active[seed - 1] = True
+        if seed + 1 < len(expand_active):
+            expand_active[seed + 1] = True
 
     left = seed
     quiet = 0

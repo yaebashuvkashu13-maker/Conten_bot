@@ -82,7 +82,7 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
         assert env["PUBG_FULL_PEAK_SCAN"] == "1"
         assert env["VOD_CASCADE_KILL_MAX"] == "0"
         assert env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] == "0"
-        assert env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] == "0"
+        assert env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] == "20"
         assert env["SHOOTER_VOD_DENSE_PROBE_MAX"] == "480"
         assert env["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] == "480"
         assert float(env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"]) <= 1.5
@@ -94,7 +94,7 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
         assert env["SHOOTER_VOD_DENSE_POOL_BUST"] == "0"
         assert env["SHOOTER_VOD_OWNER_NEIGHBORHOOD_PROBE"] == "0"
         assert env["PUBG_OWNER_NEIGHBORHOOD_DIRECT"] == "1"
-        assert env.get("PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP") == "0"
+        assert env.get("PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP") == "1"
         assert env.get("PUBG_DISLIKE_LOOT_FLOOR_LOCK") == "0"
         assert env.get("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE") == "0"
         assert env.get("PUBG_REQUIRE_AUTHOR_KILL_SINGLES") == "0"

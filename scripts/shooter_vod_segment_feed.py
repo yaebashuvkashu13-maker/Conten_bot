@@ -1574,6 +1574,45 @@ def _send_montage(
                     continue
                 part = temp_dir / f"part_{idx:02d}.mp4"
                 work_row = {**row, "clip": clip, "start": clip["start"], "peak_start": clip["peak_start"]}
+                # Pre-render quality: reject weak montage parts before expensive encode.
+                if (
+                    not owner_assemble
+                    and game == "pubg"
+                    and os.environ.get("PUBG_PRESEND_SOURCE_QUALITY_CHECK", "1") == "1"
+                ):
+                    try:
+                        clip_start = float(clip.get("start") or 0.0)
+                        clip_dur = float(
+                            clip.get("input_duration")
+                            or clip.get("duration")
+                            or 0.0
+                        )
+                        if clip_dur >= 6.0:
+                            from pubg_quality_score import score_pubg_window
+
+                            q_ok, q_reason, q_report = score_pubg_window(
+                                vod, clip_start, clip_dur, single=False, use_cache=True
+                            )
+                            if not q_ok:
+                                log.warning(
+                                    "montage pre-render quality REJECT %s: %s",
+                                    sid,
+                                    q_reason,
+                                )
+                                if report is not None:
+                                    report.setdefault("rejected_sids", []).append(sid)
+                                _ledger_record_decision(
+                                    game,
+                                    vod=vod,
+                                    row=work_row,
+                                    decision="reject",
+                                    reason=f"pre_render:{q_reason}",
+                                    metrics=q_report if isinstance(q_report, dict) else {},
+                                )
+                                rejected_sids.add(sid)
+                                continue
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("montage pre-render quality error sid=%s: %s", sid, exc)
                 if not render_single_segment(vod, clip, part):
                     log.warning("montage part render fail idx=%s sid=%s", idx, sid)
                     rejected_sids.add(sid)
@@ -4125,14 +4164,24 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 if entry_now and entry_now.get("exhausted"):
                     clear_active_vod(state, reason="zero_send_exhausted")
                 elif full_peak_scan_enabled():
-                    log.info(
-                        "zero-send stick to active vod game=%s vod=%s — skip inbox jump",
-                        game,
-                        mp4.name,
-                    )
-                    _save_state(game, state)
-                    print(f"pipeline done sent=0 vods=1 game={game} stick_active=1")
-                    return 0
+                    # exhaust<=0 = inspect-all forever (legacy stick). Positive
+                    # exhaust means dead VODs should unpin after a zero-send cycle.
+                    try:
+                        from pubg_vod_singles_first import singles_zero_send_exhaust_limit
+
+                        exhaust_lim = int(singles_zero_send_exhaust_limit())
+                    except Exception:
+                        exhaust_lim = 20
+                    if exhaust_lim <= 0:
+                        log.info(
+                            "zero-send stick to active vod game=%s vod=%s — skip inbox jump",
+                            game,
+                            mp4.name,
+                        )
+                        _save_state(game, state)
+                        print(f"pipeline done sent=0 vods=1 game={game} stick_active=1")
+                        return 0
+                    clear_active_vod(state, reason="zero_send_exhaust_try_next")
                 else:
                     clear_active_vod(state, reason="zero_send_try_next_vod")
         log.info("zero-send continue next inbox vod game=%s tried=%s", game, tried)
@@ -4345,11 +4394,19 @@ def main() -> int:
     if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1" or int(
         os.environ.get("VOD_FORCE_ESCALATION", "0") or 0
     ) > 0:
-        keep_prefixes = ("VOD_FORCE_", "PUBG_", "SMART_PUBG_", "SHOOTER_VOD_")
+        keep_prefixes = (
+            "VOD_FORCE_",
+            "PUBG_",
+            "SMART_PUBG_",
+            "SHOOTER_VOD_",
+            "DISLIKE_",
+            "CLIP_HOOK_",
+        )
         keep_exact = {
             "VOD_PUBG_QUALITY_STRICT",
             "VOD_RECOVER_HOLD_SYSTEMD",
             "PYTHONPATH",
+            "CLIP_HOOK_GATE",
         }
         for key, val in list(os.environ.items()):
             if key.startswith(keep_prefixes) or key in keep_exact:

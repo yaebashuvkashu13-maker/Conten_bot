@@ -672,11 +672,25 @@ def apply_agent_recover_env(
     # Hard-assign under soften — setdefault is a no-op when deploy pinned 0.
     target["PUBG_SINGLES_GUN_PAYOFF_BYPASS"] = "1"
     target["PUBG_SINGLES_GUN_QUALITY_BYPASS"] = "1"
-    # Never auto-skip discovery or bypass presend — that shipped menu/loot as "keepalive".
-    # Soften thresholds only; quality gates stay on.
-    # Feed reads SHOOTER_VOD_SKIP_DISCOVERY; also pin the VOD_FORCE_* alias.
-    target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
-    target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+    # Soften thresholds only; quality gates stay on. Honor ops-pinned skip until
+    # absolute silence so mined inbox gets a fair try before discovery reopens.
+    try:
+        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "10800"))
+    except ValueError:
+        abs_silence = 10800.0
+    incoming_skip = (
+        target.get("SHOOTER_VOD_SKIP_DISCOVERY") == "1"
+        or target.get("VOD_FORCE_SKIP_DISCOVERY") == "1"
+        or os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1"
+        or os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "0") == "1"
+        or os.environ.get("VOD_FORCE_OPS_SKIP_DISCOVERY", "0") == "1"
+    )
+    if incoming_skip and silence < abs_silence:
+        target["VOD_FORCE_SKIP_DISCOVERY"] = "1"
+        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "1"
+    else:
+        target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
     target["VOD_FORCE_PRESEND_BYPASS"] = "0"
     target["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
         "VOD_FORCE_PRESEND_GATE",
@@ -819,13 +833,13 @@ def apply_agent_recover_env(
         "PUBG_OWNER_NEIGHBORHOOD_DIRECT", "1"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "0"
+        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP", "1"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "45"
+        "PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "35"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_DUR_SEC"] = os.environ.get(
-        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "45"
+        "PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "32"
     )
     target["PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "5"
@@ -836,10 +850,10 @@ def apply_agent_recover_env(
     target["PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP"] = os.environ.get(
         "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "3"
     )
+    target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
+        "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+    )
     if esc >= 2:
-        target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
-            "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
-        )
         target["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
             "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
@@ -864,7 +878,7 @@ def apply_agent_recover_env(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
     )
     target["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
-        "VOD_FORCE_SEND_ZERO_EXHAUST", "0"
+        "VOD_FORCE_SEND_ZERO_EXHAUST", "20"
     )
     # 0 = ship every gate-pass in one cycle (quality flood OK; junk still gated).
     target["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
@@ -884,8 +898,13 @@ def apply_agent_recover_env(
             "PUBG_PRESEND_SHOOTING_GATE", "1"
         )
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
-        target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
-        target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
+        # Re-assert skip policy after esc2 knobs (same absolute-silence rule).
+        if incoming_skip and silence < abs_silence:
+            target["VOD_FORCE_SKIP_DISCOVERY"] = "1"
+            target["SHOOTER_VOD_SKIP_DISCOVERY"] = "1"
+        else:
+            target["VOD_FORCE_SKIP_DISCOVERY"] = "0"
+            target["SHOOTER_VOD_SKIP_DISCOVERY"] = "0"
         target["VOD_PUBG_QUALITY_STRICT"] = "0"
     return target
 

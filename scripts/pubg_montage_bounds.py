@@ -87,9 +87,8 @@ def _ensure_payoff_in_clip(
 
 def _gun_bin_active(row: dict[str, Any]) -> bool:
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
-    active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
     try:
-        return float(row.get("gun", 0.0) or 0.0) >= gun_min or float(row.get("score", 0.0) or 0.0) >= active_min
+        return float(row.get("gun", 0.0) or 0.0) >= gun_min
     except (TypeError, ValueError):
         return False
 

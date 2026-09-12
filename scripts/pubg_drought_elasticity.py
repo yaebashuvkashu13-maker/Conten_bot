@@ -154,7 +154,10 @@ def elasticity_scale(*, hours_idle: float | None = None) -> float:
         ceil = 1.10
     hours = idle_hours() if hours_idle is None else max(0.0, float(hours_idle))
     if hours < 1.0:
-        # Harden right after a successful send.
+        # During active drought soften, do not harden after a send — that
+        # re-raises quality above VOD_FORCE floors and recreates silence.
+        if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
+            return 1.0
         return min(ceil, float(os.environ.get("PUBG_DROUGHT_ELASTICITY_POST_SEND", "1.10")))
     scale = 1.0 - rate * hours
     return max(floor, min(ceil, scale))
@@ -187,12 +190,27 @@ def apply_elasticity_to_environ(*, hours_idle: float | None = None) -> dict[str,
     state["baseline"] = baseline
     hours = idle_hours(last_sent_ts=float(state.get("last_sent_ts") or 0.0)) if hours_idle is None else float(hours_idle)
     scale = elasticity_scale(hours_idle=hours)
+    soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+    # Capture drought-pinned floors before overwrite so we never harden past them.
+    soft_caps: dict[str, float] = {}
+    if soften:
+        for key in ELASTIC_KEYS:
+            raw = os.environ.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                soft_caps[key] = float(raw)
+            except ValueError:
+                continue
     applied: dict[str, float] = {}
     for key in ELASTIC_KEYS:
         base = float(baseline.get(key, DEFAULT_BASELINE.get(key, 0.0)))
         if base <= 0:
             continue
         value = base * scale
+        if key in soft_caps:
+            # Under drought soften: only ease further, never raise above pinned floor.
+            value = min(value, soft_caps[key])
         os.environ[key] = f"{value:.4f}"
         applied[key] = value
     # Hard locks — never softened by elasticity.
