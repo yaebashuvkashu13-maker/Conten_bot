@@ -114,7 +114,8 @@ wanted = {
     "PUBG_COMBAT_ACT_ALLOW_NO_KILL": "0",
     "PUBG_OWNER_GOOD_TRUST_NO_KILL": "0",
     "PUBG_OWNER_GOOD_TRUST_LOOT": "0",
-    "PUBG_DISLIKE_LOOT_FLOOR_LOCK": "1",
+    # Default lock lives in code/calibration; drought soften must be able to unlock.
+    # "PUBG_DISLIKE_LOOT_FLOOR_LOCK": "1",
     "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE": "1",
     "PUBG_SINGLES_GUN_PAYOFF_BYPASS": "0",
     "PUBG_SINGLES_GUN_QUALITY_BYPASS": "0",

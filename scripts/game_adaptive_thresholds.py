@@ -101,19 +101,24 @@ def thresholds_for(game: str) -> dict[str, float]:
 
 
 def _drought_floor_cap(current: float, *env_keys: str) -> float:
-    """Under drought soften, never raise floors above VOD_FORCE_* recovery knobs.
+    """Never raise floors above softer env knobs already written by drought/elasticity.
 
     Take the *lowest* valid knob among all keys. Returning on the first hit made a
     stale VOD_FORCE_BURST_RATIO=5.5 block the softer PUBG_CLIP_MIN_BURST_RATIO=3.5
     from .env and kept send-gun rejecting real kill peaks (need>=5.5).
+
+    Also honor PUBG_DROUGHT_ELASTICITY_ACTIVE: adaptive_env runs elasticity then
+    apply_to_environ — without this cap, BASE gun (0.07) wiped elastic 0.03 floors.
     """
     soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+    elastic = os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1"
     try:
         esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
     except ValueError:
         esc = 0
-    if not soften and esc <= 0:
-        return current
+    # Always collect softer env floors; apply when drought/elasticity is engaged.
+    # Outside drought, still never *raise* past an already-lower live env value
+    # (elasticity may have just written it in the same adaptive_env tick).
     floor = float(current)
     saw = False
     for key in env_keys:
@@ -121,11 +126,17 @@ def _drought_floor_cap(current: float, *env_keys: str) -> float:
         if raw is None or raw == "":
             continue
         try:
-            floor = min(floor, float(raw)) if saw else min(float(current), float(raw))
-            saw = True
+            cand = float(raw)
         except ValueError:
             continue
-    return floor if saw else current
+        floor = min(floor, cand) if saw else min(float(current), cand)
+        saw = True
+    if not saw:
+        return current
+    # Steady-state: BASE may overwrite stale soft env. Drought/elasticity: never raise.
+    if soften or elastic or esc > 0:
+        return floor
+    return current
 
 
 def apply_to_environ(game: str) -> dict[str, float]:
@@ -142,6 +153,9 @@ def apply_to_environ(game: str) -> dict[str, float]:
         "VOD_FORCE_GUN_DENSITY",
         "PUBG_SINGLE_MIN_GUN_DENSITY",
         "PUBG_CLIP_MIN_GUN_DENSITY",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY",
+        "SHOOTER_VOD_DENSE_GUN_MIN",
     )
     burst = _drought_floor_cap(
         float(t["burst_ratio_min"]),

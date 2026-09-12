@@ -761,10 +761,17 @@ def _validate_shooter_presend(
     profile = _profile(game)
     # Gate the same window that was rendered (peak-centered clip start), not peak_start.
     start = _row_window_start(row)
-    dur = _ffprobe_duration(rendered)
-    if dur <= 0:
-        clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
-        dur = float(clip.get("input_duration") or clip.get("output_duration") or row.get("duration") or 15)
+    clip = row.get("clip") if isinstance(row.get("clip"), dict) else {}
+    planned = float(clip.get("input_duration") or clip.get("output_duration") or 0.0)
+    probed = _ffprobe_duration(rendered)
+    # PUBG quality must score the planned fight window — keyframe seek often
+    # lengthens the file and dilutes gun/payoff into quality_low after encode.
+    if game == "pubg" and planned >= 6.0:
+        dur = planned
+    elif probed > 0:
+        dur = probed
+    else:
+        dur = float(planned or row.get("duration") or 15)
     # Drought recovery softens score floors only (vod_force_send / hang recover).
     # Do not reintroduce a presend-bypass shortcut for menu/loot under escalation.
     if game == "pubg" and os.environ.get("PUBG_METRO_GATE", "0") == "1" and not montage_part:
@@ -3369,6 +3376,7 @@ def _scan_vod_with_adaptive(
                                     window_end - window_start,
                                     report,
                                     peak=float(peak),
+                                    single=True,
                                 )
                                 from pubg_clip_shape_gate import validate_clip_fight_shape
 

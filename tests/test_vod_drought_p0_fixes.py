@@ -83,3 +83,55 @@ def test_dense_deadline_env_is_consulted(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "_deadline_hit" in src
     batch = (SCRIPTS / "vod_audio_batch.py").read_text(encoding="utf-8")
     assert "SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC" in batch
+
+
+def test_adaptive_floors_respect_elasticity(monkeypatch: pytest.MonkeyPatch) -> None:
+    from game_adaptive_thresholds import apply_to_environ
+
+    monkeypatch.setenv("PUBG_DROUGHT_ELASTICITY_ACTIVE", "1")
+    monkeypatch.setenv("PUBG_SINGLE_MIN_GUN_DENSITY", "0.030")
+    monkeypatch.setenv("PUBG_CLIP_MIN_GUN_DENSITY", "0.030")
+    monkeypatch.setenv("SMART_PUBG_MIN_GUNFIRE_DENSITY", "0.030")
+    monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
+    monkeypatch.delenv("VOD_FORCE_ESCALATION", raising=False)
+    out = apply_to_environ("pubg")
+    assert float(out["gun_density_min"]) <= 0.030 + 1e-6
+    assert float(__import__("os").environ["PUBG_SINGLE_MIN_GUN_DENSITY"]) <= 0.030 + 1e-6
+
+
+def test_tighten_short_kill_single_not_padded() -> None:
+    from pubg_montage_bounds import tighten_pubg_clip_bounds
+
+    report = {
+        "shooting_start": 100.0,
+        "kill_sec": 108.0,
+        "fight_end": 130.0,
+        "timeline": [
+            {"start": t, "gun": 0.08 if 100 <= t <= 108 else 0.0, "score": 0.2}
+            for t in range(90, 140, 2)
+        ],
+    }
+    start, dur = tighten_pubg_clip_bounds(95.0, 40.0, report, peak=105.0, single=True)
+    assert dur < 18.0, dur
+    assert start + dur <= 108.0 + 5.0
+
+
+def test_gunfire_end_ignores_score_only_bins() -> None:
+    from pubg_montage_bounds import _gunfire_end_from_report
+
+    report = {
+        "timeline": [
+            {"start": 10.0, "gun": 0.0, "score": 0.9},
+            {"start": 12.0, "gun": 0.05, "score": 0.1},
+            {"start": 20.0, "gun": 0.0, "score": 0.95},
+        ]
+    }
+    end = _gunfire_end_from_report(report, fallback=99.0)
+    assert 12.0 <= end <= 16.0
+
+
+def test_force_send_exhaust_fallback_is_positive() -> None:
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text(encoding="utf-8")
+    assert 'env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "20")' in src

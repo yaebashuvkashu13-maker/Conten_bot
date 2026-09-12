@@ -263,6 +263,15 @@ def tighten_pubg_clip_bounds(
     )
     if long_loot_tail and kill_end is not None:
         dur = min(raw_dur, max(0.0, kill_end - float(start)))
+    elif (
+        single
+        and kill is not None
+        and not gun_continues_after_kill
+        and kill_end is not None
+        and 0.0 < (kill_end - float(start)) < min_dur
+    ):
+        # Short real kill exchange — do not invent loot/run pad to hit 18–20s.
+        dur = max(0.0, kill_end - float(start))
     else:
         dur = max(min_dur, raw_dur)
 
@@ -299,7 +308,15 @@ def tighten_pubg_clip_bounds(
         if ok:
             start, dur = _ensure_payoff_in_clip(start, dur, float(peak), report)
             if not long_loot_tail:
-                dur = max(min_dur, dur)
+                # Keep short single kill spans tight after payoff rebalance.
+                if not (
+                    single
+                    and kill is not None
+                    and not gun_continues_after_kill
+                    and kill_end is not None
+                    and dur < min_dur
+                ):
+                    dur = max(min_dur, dur)
 
     start, dur = extend_end_past_active_gunfire(
         start, dur, report, max_dur=max_dur, single=single
@@ -311,9 +328,11 @@ def tighten_pubg_clip_bounds(
 def _gunfire_end_from_report(report: dict[str, Any], *, fallback: float) -> float:
     timeline = report.get("timeline") or []
     gun_times: list[float] = []
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
     for row in timeline:
         try:
-            if float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= 0.020:
+            # Gun-only — loud loot/run score must not invent fight_end.
+            if float(row.get("gun", 0.0)) >= gun_min:
                 gun_times.append(float(row["start"]))
         except (TypeError, ValueError, KeyError):
             continue
@@ -335,8 +354,8 @@ def _assemble_gun_bins(
     for row in report.get("timeline") or []:
         try:
             gun = float(row.get("gun", 0.0) or 0.0)
-            score = float(row.get("score", 0.0) or 0.0)
-            if gun >= min_gun or score >= max(0.35, min_gun * 10.0):
+            # Gun-only assemble core — score-as-gun padded loot/run into 👍 parts.
+            if gun >= min_gun:
                 times.append(float(row["start"]))
         except (TypeError, ValueError, KeyError):
             continue

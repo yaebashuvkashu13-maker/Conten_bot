@@ -484,10 +484,10 @@ def force_send_game(
     bump_scan_cooldowns(game)
     if game == "pubg":
         env.setdefault("PUBG_VOD_SINGLES_FIRST", "1")
-        # Prefer inspect-all (0) — do not re-tighten to legacy 6 after drought env.
+        # Default 20 — exhaust=0 pins dead VODs forever when drought gate misses.
         env["PUBG_SINGLES_ZERO_SEND_EXHAUST"] = os.environ.get(
             "VOD_FORCE_SEND_ZERO_EXHAUST",
-            env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "0"),
+            env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "20"),
         )
         env["PUBG_SINGLES_MAX_SENDS_PER_CYCLE"] = os.environ.get(
             "VOD_FORCE_MAX_SENDS_PER_CYCLE",
