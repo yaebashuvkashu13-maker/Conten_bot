@@ -400,6 +400,11 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         env["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
             "VOD_FORCE_COMBAT_ACT_ALLOW_NO_KILL", "1"
         )
+        # Fight-cluster snaps often fail reason_loot_run (motion>gun) after encode
+        # even when audio is a real Metro spray. Opt-in rescue for drought force.
+        env["PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE"] = os.environ.get(
+            "VOD_FORCE_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "1"
+        )
         # Already-sent 👍 zones are style-avoided; under drought we still need
         # near-👍 neighbors, not only leftover loot peaks.
         env["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("VOD_FORCE_STYLE_AVOID_ENABLE", "0")

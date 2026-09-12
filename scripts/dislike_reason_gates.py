@@ -274,9 +274,18 @@ def evaluate_reason_gates(
         and motion > motion_max
         and gun < max(gun_min, float(os.environ.get("PUBG_DISLIKE_LOOT_STRONG_GUN", "0.085")))
     ):
-        return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
+        # Drought soften + combat-act: short fight snaps often have motion>gun while
+        # audio is a real Metro spray (OCR-blind). Allow rescue so force-send can
+        # ship fight-cluster clips instead of dying on reason_loot_run after render.
+        if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1":
+            report["combat_act_loot_run_rescue"] = True
+        else:
+            return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if motion > 0 and gun < gun_min * 0.85 and motion > motion_max:
-        return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
+        if combat_ok and os.environ.get("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "0") == "1":
+            report["combat_act_loot_run_rescue"] = True
+        else:
+            return False, f"reason_loot_run=motion{motion:.3f}>gun{gun:.3f}", report
     if visual < visual_min:
         return False, f"reason_low_visual={visual:.3f}<{visual_min:.3f}", report
     if "no_kill" in reasons and os.environ.get("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1") == "1":

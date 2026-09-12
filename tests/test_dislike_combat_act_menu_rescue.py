@@ -74,6 +74,30 @@ def test_combat_act_does_not_rescue_loot_run_floors(monkeypatch: pytest.MonkeyPa
     assert report["floors"]["gun_density_min"] >= 0.090
 
 
+def test_combat_act_loot_rescue_ships_drought_fight_snaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt-in drought flag: combat-act audio may clear reason_loot_run for force-send."""
+    monkeypatch.setenv("PUBG_GLOBAL_FIGHT_ACT", "1")
+    monkeypatch.setenv("PUBG_FIGHT_ACT_MIN_BURST", "3.5")
+    monkeypatch.setenv("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "1")
+    monkeypatch.setenv("PUBG_DISLIKE_COMBAT_ACT_LOOT_RESCUE", "1")
+    monkeypatch.setenv("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0")
+    monkeypatch.setenv("DISLIKE_GUN_DENSITY_MIN", "0.015")
+    monkeypatch.setenv("DISLIKE_BURST_RATIO_MIN", "3.0")
+    from dislike_reason_gates import evaluate_reason_gates
+
+    ok, reason, report = evaluate_reason_gates(
+        {
+            "gun_density": 0.055,
+            "burst_ratio": 4.2,
+            "center_motion": 0.128,
+            "menu_overlay": 0.05,
+        },
+        active_reasons=["loot_run"],
+    )
+    assert ok, reason
+    assert report.get("combat_act_loot_run_rescue") is True
+
+
 def test_no_kill_reason_requires_kill_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1")
     monkeypatch.setenv("PUBG_DISLIKE_COMBAT_ACT_RESCUE", "0")
