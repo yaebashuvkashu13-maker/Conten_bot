@@ -8,7 +8,7 @@ Type=oneshot
 Nice=10
 EnvironmentFile=-/root/.video_bot.env
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
-Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+Environment=PYTHONPATH=/root/content_bot_ml/scripts:/usr/local/bin
 Environment=VOD_FEED_ALLOW_NOHUP=0
 ExecStart=/usr/bin/python3 -u /usr/local/bin/vod_hang_detector.py --tick --game pubg
 WorkingDirectory=/root/content_bot_ml

@@ -1209,10 +1209,27 @@ def auto_unload_and_recover(
         try:
             # Same knobs as the human/agent playbook: soften, keep discovery on, escalate.
             apply_agent_recover_env(os.environ, escalation=esc)  # type: ignore[arg-type]
+            try:
+                from vod_drought_overlay import clear_drought_overlay, write_drought_overlay
+
+                write_drought_overlay(os.environ)
+            except Exception:
+                clear_drought_overlay = None  # type: ignore[assignment]
+                write_drought_overlay = None  # type: ignore[assignment]
             stop_feed_processes(game)
             msg = run_recover(game, force_send=True)
             sent = _parse_recover_sent(msg)
             next_esc = 0 if sent > 0 else min(2, esc + 1)
+            if sent > 0 and clear_drought_overlay is not None:
+                try:
+                    clear_drought_overlay()
+                except Exception:
+                    pass
+            elif write_drought_overlay is not None:
+                try:
+                    write_drought_overlay(os.environ)
+                except Exception:
+                    pass
             _start_systemd_feed()
             restarted = True
             if _ensure_telegram_bot():

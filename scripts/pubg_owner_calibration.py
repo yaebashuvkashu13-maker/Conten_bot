@@ -145,14 +145,28 @@ def apply_owner_send_policy() -> None:
     os.environ.setdefault("PUBG_QUALITY_BOT_FARM_GATE", "1")
     os.environ.setdefault("PUBG_PRESEND_SCORE_MODE", "1")
     os.environ.setdefault("PUBG_REJECT_LOOT_WALK", "1")
-    os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
+    if os.environ.get("VOD_FORCE_SOFTEN", "0") != "1":
+        os.environ.setdefault("PUBG_FAST_RANK_DROP_LOOT_WALK", "1")
     # Singles: keep early OCR payoff soft, but require author-kill evidence —
     # owner 👎 no_kill / loot_run were shipping via combat-act bypass.
     os.environ.setdefault("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
     os.environ.setdefault("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1")
     os.environ.setdefault("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0")
     os.environ.setdefault("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0")
-    os.environ.setdefault("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1")
+    # Under drought soften, do NOT re-lock dislike gun floors — that undoes
+    # apply_drought_pubg_env and recreates reason_low_gun silence.
+    drought_soft = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+    try:
+        drought_soft = drought_soft or int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0) > 0
+    except ValueError:
+        pass
+    if drought_soft:
+        os.environ["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = "0"
+        os.environ["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
+            "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
+        )
+    else:
+        os.environ.setdefault("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1")
     os.environ.setdefault("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1")
     os.environ.setdefault("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.10")
     os.environ.setdefault("PUBG_QUALITY_SCORE_MIN_SINGLES", "0.28")

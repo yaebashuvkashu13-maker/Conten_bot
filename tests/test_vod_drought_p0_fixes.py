@@ -135,3 +135,39 @@ def test_force_send_exhaust_fallback_is_positive() -> None:
 
     src = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text(encoding="utf-8")
     assert 'env.get("PUBG_SINGLES_ZERO_SEND_EXHAUST", "20")' in src
+
+def test_drought_overlay_roundtrip(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_drought_overlay import clear_drought_overlay, drought_overlay_active, write_drought_overlay
+
+    path = tmp_path / "drought.env"
+    monkeypatch.setenv("VOD_DROUGHT_ENV_FILE", str(path))
+    write_drought_overlay(
+        {
+            "VOD_FORCE_SOFTEN": "1",
+            "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.20",
+            "PUBG_DISLIKE_LOOT_FLOOR_LOCK": "0",
+        }
+    )
+    assert path.is_file()
+    assert drought_overlay_active()
+    text = path.read_text(encoding="utf-8")
+    assert "VOD_FORCE_SOFTEN=1" in text
+    assert "PUBG_QUALITY_SCORE_MIN_SINGLES" in text
+    clear_drought_overlay()
+    assert not path.is_file()
+
+
+def test_owner_policy_unlocks_loot_floor_under_soften(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pubg_owner_calibration import apply_owner_send_policy
+
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    monkeypatch.setenv("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1")
+    apply_owner_send_policy()
+    assert __import__("os").environ["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] == "0"
+
+
+def test_force_send_pythonpath_repo_first() -> None:
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text()
+    assert '[scripts_path, local_bin, *parts]' in src or 'scripts_path, local_bin' in src

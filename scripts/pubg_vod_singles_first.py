@@ -1003,9 +1003,11 @@ def spawn_assemble_subprocess(game: str, vod_id: str, chat_id: str, token: str =
     if assemble_already_running(vod_id):
         _assemble_log(f"assemble already running vod={vod_id} — skip spawn")
         return
-    script = Path("/usr/local/bin/pubg_vod_singles_first.py")
-    if not script.is_file():
-        script = Path(__file__).resolve()
+    # Prefer this checkout — /usr/local/bin mirrors go stale between deploys.
+    script = Path(__file__).resolve()
+    mirror = Path("/usr/local/bin/pubg_vod_singles_first.py")
+    if not script.is_file() and mirror.is_file():
+        script = mirror
     ASSEMBLE_LOG.parent.mkdir(parents=True, exist_ok=True)
     log_fh = ASSEMBLE_LOG.open("a", encoding="utf-8")
     env = os.environ.copy()

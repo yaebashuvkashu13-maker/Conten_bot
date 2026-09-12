@@ -7,15 +7,19 @@
 set -euo pipefail
 
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
-BRANCH="${UNIFIED_BRANCH:-cursor/vod-unified-production-a016}"
+# Default: stay on whatever is checked out. Pin UNIFIED_BRANCH only when intentional.
+BRANCH="${UNIFIED_BRANCH:-}"
 UNIT="${VOD_FEED_SYSTEMD_UNIT:-content-bot-vod-feed.service}"
 ENV_FILE="${VOD_BOT_ENV_FILE:-/root/.video_bot.env}"
 FEED_SCRIPT="scripts/shooter_vod_segment_feed.py"
 
 cd "$REPO"
-git fetch origin "$BRANCH"
-# Stay on unified branch; never checkout slim feed branches.
-git checkout -B "$BRANCH" "origin/$BRANCH"
+if [[ -n "$BRANCH" ]]; then
+  git fetch origin "$BRANCH"
+  git checkout -B "$BRANCH" "origin/$BRANCH"
+else
+  echo "UNIFIED_BRANCH unset — deploying current HEAD $(git rev-parse --short HEAD)"
+fi
 
 # --- Preflight: refuse slim/wrong feed overwrite ---
 python3 - <<'PY'
@@ -50,7 +54,11 @@ for f in \
   vod_inbox_recover.py vod_owner_feedback_bridge.py vod_send_drought_watch.py \
   game_adaptive_thresholds.py vod_hang_detector.py vod_force_send.py \
   smart_video_editor.py shooter_vod_segment_feed.py daily_cycle_runner.py \
-  vod_feed_owner_health.py vod_telegram_env.py; do
+  vod_feed_owner_health.py vod_telegram_env.py \
+  pubg_vod_singles_first.py pubg_fight_segment.py pubg_montage_bounds.py \
+  pubg_drought_elasticity.py pubg_owner_calibration.py pubg_quality_score.py \
+  shooter_vod_adaptive_gate.py shooter_vod_fast_scan.py vod_audio_batch.py \
+  vod_drought_overlay.py game_adaptive_thresholds.py pubg_dislike_reason_gates.py; do
   [[ -f "scripts/$f" ]] && cp -f "scripts/$f" "/usr/local/bin/$f"
 done
 # Compat wrappers that must stay unified-only on the box.

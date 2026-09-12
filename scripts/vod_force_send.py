@@ -468,11 +468,9 @@ def force_send_game(
     scripts_path = str(SCRIPTS)
     local_bin = "/usr/local/bin"
     py_path = env.get("PYTHONPATH", "")
-    parts = [p for p in py_path.split(":") if p]
-    for path in (scripts_path, local_bin):
-        if path not in parts:
-            parts.insert(0, path)
-    env["PYTHONPATH"] = ":".join(parts)
+    # Repo scripts MUST win over stale /usr/local/bin mirrors.
+    parts = [p for p in py_path.split(":") if p and p not in (scripts_path, local_bin)]
+    env["PYTHONPATH"] = ":".join([scripts_path, local_bin, *parts])
     env.setdefault("SHOOTER_VOD_MAX_VODS_PER_RUN", os.environ.get("VOD_FORCE_SEND_MAX_VODS", "1"))
     env["VOD_ZERO_SEND_COOLDOWN_SEC"] = "0"
     # Recover/force-send must re-scan inbox immediately.
@@ -540,6 +538,15 @@ def force_send_game(
             escalation = 0
         if drought or escalation > 0 or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1":
             apply_drought_pubg_env(env, escalation=escalation)
+            try:
+                from vod_drought_overlay import write_drought_overlay
+
+                write_drought_overlay(env)
+                # Also pin soften on this process so finally-hold sees it.
+                os.environ["VOD_FORCE_SOFTEN"] = "1"
+                os.environ["VOD_FORCE_ESCALATION"] = env.get("VOD_FORCE_ESCALATION", str(escalation))
+            except Exception:
+                pass
 
 
     log_path = Path(os.environ.get("VOD_FORCE_SEND_LOG", "/root/data/mlbb/force_send_now.log"))
@@ -569,12 +576,20 @@ def force_send_game(
         # (avoids dual-owner: orphan feed + unit Start).
         _stop_game_feed(game)
         clear_feed_locks()
-        # Drought recover owns the systemd hand-off. Resuming the unit here
-        # reloads EnvironmentFile without soften and wipes VOD_FORCE_* mid-heal.
-        hold = (
-            os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
-            and os.environ.get("VOD_RECOVER_HOLD_SYSTEMD", "1") == "1"
+        # Drought recover owns the systemd hand-off. Prefer hold while soften is
+        # active; if we must resume, drought overlay EnvironmentFile keeps floors.
+        soften_on = (
+            env.get("VOD_FORCE_SOFTEN", "0") == "1"
+            or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
         )
+        hold = soften_on and os.environ.get("VOD_RECOVER_HOLD_SYSTEMD", "1") == "1"
+        if soften_on:
+            try:
+                from vod_drought_overlay import write_drought_overlay
+
+                write_drought_overlay(env)
+            except Exception:
+                pass
         if not hold:
             for unit in ("content-bot-vod-feed.service", "mlbb-vod-feed.service"):
                 _systemctl("start", unit)

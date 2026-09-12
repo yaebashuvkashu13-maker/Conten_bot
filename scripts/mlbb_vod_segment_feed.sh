@@ -20,7 +20,8 @@ if ! acquire; then
 fi
 REPO="${CONTENT_BOT_REPO:-/root/content_bot_ml}"
 export CONTENT_BOT_REPO="$REPO"
-export PYTHONPATH="/usr/local/bin:${REPO}/scripts${PYTHONPATH:+:$PYTHONPATH}"
+# Repo scripts first — /usr/local/bin mirrors lag behind deploys.
+export PYTHONPATH="${REPO}/scripts:/usr/local/bin${PYTHONPATH:+:$PYTHONPATH}"
 export VOD_PUBG_ONLY="${VOD_PUBG_ONLY:-1}"
 export HIGHLIGHT_HEATMAP="${HIGHLIGHT_HEATMAP:-0}"
 IDLE_SEC="${MLBB_VOD_IDLE_SEC:-25}"

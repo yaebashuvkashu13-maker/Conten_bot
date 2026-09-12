@@ -16,6 +16,8 @@ KillMode=control-group
 TimeoutStopSec=45
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 EnvironmentFile=-/root/.video_bot.env
+# Drought soften overlay (written by vod_drought_overlay) — must load AFTER steady pins.
+EnvironmentFile=-/root/.video_bot.drought.env
 
 [Install]
 WantedBy=multi-user.target

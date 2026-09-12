@@ -2197,7 +2197,15 @@ def _send_batch(
                                 out = shift_out
                                 deliver = shift_deliver
                                 clip = shift_clip
-                                row = {**row, "clip": shift_clip, "start": cand}
+                                new_sid = segment_id(vod_youtube_id(vod), float(cand))
+                                row = {
+                                    **row,
+                                    "clip": shift_clip,
+                                    "start": cand,
+                                    "segment_id": new_sid,
+                                }
+                                sid = new_sid
+                                # Keyboard rebuild happens below when old_cb != sid.
                                 presend_ok, presend_reason, presend_report = True, p_reason, p_report
                                 hook_ok, hook_reason, hook_report = True, h_reason, h_report
                                 recovered = True

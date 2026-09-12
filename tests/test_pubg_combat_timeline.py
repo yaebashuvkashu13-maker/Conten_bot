@@ -74,6 +74,22 @@ def test_drought_sets_timeline_and_dislike_menu(monkeypatch: pytest.MonkeyPatch)
     from vod_hang_detector import apply_agent_recover_env
 
     monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    for key in (
+        "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE",
+        "PUBG_REQUIRE_AUTHOR_KILL_SINGLES",
+        "PUBG_DISLIKE_LOOT_FLOOR_LOCK",
+        "PUBG_OWNER_NEIGHBORHOOD_GUN_SNAP",
+        "PUBG_REJECT_LOOT_WALK",
+        "PUBG_PRESEND_SHOOTING_GATE",
+        "PUBG_COMBAT_ACT_ALLOW_NO_KILL",
+        "VOD_FORCE_SEND_ZERO_EXHAUST",
+        "VOD_FORCE_SOFTEN",
+        "VOD_FORCE_ESCALATION",
+        "VOD_FORCE_SKIP_DISCOVERY",
+        "SHOOTER_VOD_SKIP_DISCOVERY",
+        "VOD_FORCE_OPS_SKIP_DISCOVERY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     force = apply_drought_pubg_env({}, escalation=2)
     hang = apply_agent_recover_env({}, escalation=2)
     for env in (force, hang):
