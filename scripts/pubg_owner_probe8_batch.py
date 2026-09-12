@@ -3,6 +3,8 @@
 
 Owner asked for fact labels instead of bot guesswork: take recent OK chunks,
 slice to 8s, rate each. Better ground truth than synthetic fight search.
+
+Parents must be long original OK segments — never re-slice already-rated _p8 probes.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ if str(SCRIPTS) not in sys.path:
 SLICE_SEC = float(os.environ.get("PROBE8_SLICE_SEC", "8"))
 MAX_SEND = int(os.environ.get("PROBE8_MAX", "48"))
 PARENTS = int(os.environ.get("PROBE8_PARENTS", "20"))
+MIN_PARENT_SEC = float(os.environ.get("PROBE8_MIN_PARENT_SEC", "20"))
 LABELS_PATH = Path(
     os.environ.get(
         "PUBG_VOD_SEGMENT_LABELS",
@@ -115,15 +118,45 @@ def tg_api(token: str, method: str, payload: dict) -> dict:
         return json.loads(resp.read().decode())
 
 
-def video_id_from_vod(vod: Path | None, parent_sid: str) -> str:
-    if vod is not None and vod.name:
-        stem = vod.stem
+def video_id_from_row(vod_path: Path, parent_sid: str) -> str:
+    if vod_path.name:
+        stem = vod_path.stem
         if stem.startswith("yt_") and len(stem) > 3:
             return stem[3:]
         return stem
     if "_" in parent_sid:
         return parent_sid.rsplit("_", 1)[0]
     return parent_sid
+
+
+def is_probe_parent(row: dict) -> bool:
+    sid = str(row.get("segment_id") or "")
+    path = str(row.get("path") or "")
+    if sid.endswith("_p8") or "_p8" in sid or sid.endswith("_ext"):
+        return True
+    if "/probe8/" in path or path.endswith("_p8.mp4") or "_p8." in path:
+        return True
+    return False
+
+
+def select_long_parents(goods: list[dict], limit: int) -> list[dict]:
+    """Most recent long OK segments; skip already-sliced probe clips."""
+    out: list[dict] = []
+    for row in sorted(goods, key=lambda r: str(r.get("at") or ""), reverse=True):
+        if is_probe_parent(row):
+            continue
+        src = Path(str(row.get("path") or ""))
+        if not src.is_file():
+            continue
+        qm = row.get("quality_metrics") or {}
+        labeled_dur = float(qm.get("duration") or 0.0)
+        duration = labeled_dur if labeled_dur >= MIN_PARENT_SEC else ffprobe_duration(src)
+        if duration < MIN_PARENT_SEC:
+            continue
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def main() -> int:
@@ -140,28 +173,19 @@ def main() -> int:
     from pubg_owner_rated_send import send_owner_rated_clip
 
     labels = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
-    goods = sorted(
-        labels.get("good") or [],
-        key=lambda row: str(row.get("at") or ""),
-        reverse=True,
-    )[:PARENTS]
+    parents = select_long_parents(labels.get("good") or [], PARENTS)
 
     probes: list[dict] = []
-    parents_ok = 0
-    for row in goods:
+    for row in parents:
         src = Path(str(row.get("path") or ""))
-        if not src.is_file():
-            print("SKIP missing parent", row.get("segment_id"), src)
-            continue
-        parents_ok += 1
         parent_start = float(row.get("start") or 0.0)
         vod_path = Path(str(row.get("vod") or ""))
         duration = ffprobe_duration(src)
-        if duration < 3.0:
-            print("SKIP short", src, duration)
+        if duration < MIN_PARENT_SEC:
+            print("SKIP short parent", row.get("segment_id"), duration)
             continue
         parent_sid = str(row.get("segment_id") or src.stem)
-        vid = video_id_from_vod(vod_path if vod_path.name else None, parent_sid)
+        vid = video_id_from_row(vod_path, parent_sid)
         t = 0.0
         while t + 3.0 <= duration + 1e-6:
             length = min(SLICE_SEC, duration - t)
@@ -191,10 +215,14 @@ def main() -> int:
     sent_ids = set(prev.get("sent_ids") or [])
     results = list(prev.get("results") or [])
 
+    remaining_before = sum(1 for p in probes if p["sid"] not in sent_ids)
     print(
-        f"parents_ok={parents_ok} probes_planned={len(probes)} "
-        f"already_sent={len(sent_ids)} send_cap={MAX_SEND}"
+        f"parents_ok={len(parents)} probes_planned={len(probes)} "
+        f"already_sent={len(sent_ids)} remaining_unsent={remaining_before} "
+        f"send_cap={MAX_SEND}"
     )
+    for row in parents:
+        print(" parent", row.get("segment_id"), "start", row.get("start"))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     tg_api(
@@ -203,10 +231,9 @@ def main() -> int:
         {
             "chat_id": chat,
             "text": (
-                "8с-пробы из последних 20 OK-кусков.\n"
-                f"План: {len(probes)} кусков → партия до {MAX_SEND}.\n"
-                "👍 только где нужный момент (бой), 👎 если беготня/пусто.\n"
-                "Так лучше, чем угадывать за тебя — размечаешь факты."
+                "Следующая партия 8с-проб из длинных OK-кусков.\n"
+                f"В очереди ещё ~{remaining_before}, шлю до {MAX_SEND}.\n"
+                "👍 только где нужный момент (бой), 👎 беготня/пусто."
             ),
         },
     )
@@ -264,7 +291,7 @@ def main() -> int:
             print("SEND FAIL", probe["sid"], exc)
             time.sleep(1.2)
 
-    remaining = max(0, len(probes) - len(sent_ids))
+    remaining = sum(1 for p in probes if p["sid"] not in sent_ids)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.write_text(
         json.dumps(
@@ -275,6 +302,7 @@ def main() -> int:
                 "sent_ids": sorted(sent_ids),
                 "batch_sent": n_sent,
                 "remaining": remaining,
+                "parents": [str(r.get("segment_id")) for r in parents],
                 "results": results[-120:],
             },
             indent=2,
@@ -294,8 +322,17 @@ def main() -> int:
                 "chat_id": chat,
                 "text": (
                     f"Партия отправлена: {n_sent}. Осталось {remaining} "
-                    "восьмисекундок — напиши «ещё» после оценки, пришлю следующую."
+                    "восьмисекундок — напиши «ещё» после оценки."
                 ),
+            },
+        )
+    else:
+        tg_api(
+            token,
+            "sendMessage",
+            {
+                "chat_id": chat,
+                "text": f"Партия отправлена: {n_sent}. Очередь 8с-проб по текущим OK пуста.",
             },
         )
     return 0
