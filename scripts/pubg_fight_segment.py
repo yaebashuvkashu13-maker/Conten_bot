@@ -293,7 +293,7 @@ def _extend_right_through_payoff(
     """Kill notifications often fire before sustained gunfire — extend past quiet gaps."""
     del active_min  # extend on gun, not score
     # Was 10s of forced quiet after peak → shipped loot/run. Keep a short settle only.
-    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "3.5"))
+    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "2.5"))
     forward_quiet = max(2, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "3")))
     anchor = max(float(peak_sec), float(kill_sec) if kill_sec is not None else float(peak_sec))
     target_end = anchor + min_post
@@ -361,8 +361,8 @@ def resolve_pubg_fight_bounds(
 
     step = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
     sample = float(os.environ.get("PUBG_SEGMENT_SAMPLE_SEC", "3"))
-    before = float(os.environ.get("PUBG_SEGMENT_SCAN_BEFORE", "14"))
-    after = float(os.environ.get("PUBG_SEGMENT_SCAN_AFTER", "40"))
+    before = float(os.environ.get("PUBG_SEGMENT_SCAN_BEFORE", "8"))
+    after = float(os.environ.get("PUBG_SEGMENT_SCAN_AFTER", "16"))
     active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
     max_quiet = max(0, int(os.environ.get("PUBG_SEGMENT_MAX_QUIET_BINS", "2")))
     scan_start = max(0.0, float(peak_sec) - before)
@@ -422,9 +422,9 @@ def resolve_pubg_fight_bounds(
                 break
             right = index
 
-    contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "2.0"))
-    finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "3.5"))
-    max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "3"))
+    contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "0.8"))
+    finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "2.0"))
+    max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "1.5"))
     gun_onset = _sustained_gunfire_onset_near_peak(
         timeline,
         gun_active,
@@ -486,9 +486,9 @@ def resolve_pubg_fight_bounds(
     )
     end = min(file_duration, max(end, float(timeline[right]["start"]) + sample + finale_tail))
 
-    min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "10"))
-    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "55"))
-    loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "4.0"))
+    min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "6"))
+    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "18"))
+    loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "2.5"))
     if kill_sec is not None and timeline:
         post_kill = [
             row

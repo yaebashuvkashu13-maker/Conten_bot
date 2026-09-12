@@ -11,12 +11,14 @@ from shooter_vod_segment_feed import _pubg_duration_cap  # noqa: E402
 
 
 def test_long_fight_montage_part_cap() -> None:
-    assert _pubg_duration_cap(38.0, single=False) == 38.0
-    assert _pubg_duration_cap(15.0, single=False) <= 28.0
+    # Hard max single part ~18s; long-fight path no longer ships 33–55s pads.
+    assert _pubg_duration_cap(38.0, single=False) == 18.0
+    assert _pubg_duration_cap(15.0, single=False) <= 16.0
 
 
-def test_single_fight_allows_longer() -> None:
-    assert _pubg_duration_cap(72.0, single=True) == 72.0
+def test_single_fight_allows_cap() -> None:
+    assert _pubg_duration_cap(72.0, single=True) == 18.0
+    assert _pubg_duration_cap(12.0, single=True) == 12.0
 
 
 def test_shape_gate_rejects_running_padding() -> None:

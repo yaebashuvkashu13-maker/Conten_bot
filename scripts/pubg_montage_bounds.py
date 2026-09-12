@@ -25,7 +25,7 @@ def clip_pre_shoot_sec() -> float:
         os.environ.get(
             "PUBG_CLIP_PRE_SHOOT_SEC",
             # Short lead-in: less sprint-to-fight padding before first gunfire.
-            os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "1.0"),
+            os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "0.8"),
         )
     )
 
@@ -35,14 +35,14 @@ def clip_post_kill_sec() -> float:
         os.environ.get(
             "PUBG_CLIP_POST_KILL_SEC",
             # Cut loot/run tails sooner after the kill.
-            os.environ.get("PUBG_OWNER_POST_KILL_SEC", "3.0"),
+            os.environ.get("PUBG_OWNER_POST_KILL_SEC", "2.0"),
         )
     )
 
 
 def assemble_gun_pad_sec() -> float:
     """Padding before/after sustained gunfire when owner assembles 👍 singles."""
-    return float(os.environ.get("PUBG_ASSEMBLE_GUN_PAD_SEC", "2.0"))
+    return float(os.environ.get("PUBG_ASSEMBLE_GUN_PAD_SEC", "1.0"))
 
 
 def fight_bounds(
@@ -114,7 +114,17 @@ def clip_ends_on_gunfire(
             continue
         if t < tail_start - 0.5 or t > end + 1.0:
             continue
-        if _gun_bin_active(row):
+        # Prefer audible gun — silent DSP false-gun must not force extension,
+        # but real loud tails (DGso@447) must not be truncated.
+        if _bin_is_real_gunfight(row) or _gun_bin_active(row):
+            # If rms is present and very low, treat as false-gun even if gun high.
+            rms_raw = row.get("rms", row.get("audio_rms"))
+            if rms_raw is not None:
+                try:
+                    if float(rms_raw) < float(os.environ.get("PUBG_CLIP_END_MIN_RMS", "0.015")):
+                        continue
+                except (TypeError, ValueError):
+                    pass
             return True
     return False
 
@@ -155,7 +165,20 @@ def extend_end_past_active_gunfire(
             continue
         if t > hard_cap:
             break
-        if _gun_bin_active(row):
+        if _bin_is_real_gunfight(row) or _gun_bin_active(row):
+            # Skip silent false-gun when rms is known-low.
+            rms_raw = row.get("rms", row.get("audio_rms"))
+            if rms_raw is not None:
+                try:
+                    if float(rms_raw) < float(os.environ.get("PUBG_CLIP_END_MIN_RMS", "0.015")):
+                        if t >= end - bin_sec:
+                            quiet += bin_sec
+                            new_end = max(new_end, min(hard_cap, t + 0.5))
+                            if quiet >= quiet_need:
+                                break
+                        continue
+                except (TypeError, ValueError):
+                    pass
             quiet = 0.0
             new_end = max(new_end, min(hard_cap, t + bin_sec))
             continue
@@ -238,10 +261,12 @@ def snap_to_best_fight_cluster(
     max_cluster = float(
         max_cluster_sec
         if max_cluster_sec is not None
-        else os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "12")
+        # Owner: DGso@447 10s cut ended mid-burst (~448–460). 12s was too tight
+        # for a single continuous exchange — allow ~18s before hard-cap.
+        else os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "18")
     )
     max_gap = float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_GAP_SEC", "2.5"))
-    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", "1.0"))
+    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", "0.8"))
     keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "2.0"))
     min_keep = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_SEC", "5.0"))
 
@@ -336,7 +361,7 @@ def trim_quiet_run_edges(
         return float(start), float(dur)
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
     edge = float(os.environ.get("PUBG_CLIP_TRIM_EDGE_SEC", "2.0"))
-    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", os.environ.get("PUBG_OWNER_PRE_SHOOT_SEC", "1.0")))
+    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", os.environ.get("PUBG_OWNER_PRE_SHOOT_SEC", "0.8")))
     keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", os.environ.get("PUBG_OWNER_POST_KILL_SEC", "2.0")))
     start_f = float(start)
     end_f = start_f + float(dur)
@@ -413,21 +438,35 @@ def tighten_pubg_clip_bounds(
             report,
             peak=peak,
             max_cluster_sec=min(
-                float(os.environ.get("PUBG_SINGLE_MAX_SEC", "90") if single else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")),
-                float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "12")),
+                float(os.environ.get("PUBG_SINGLE_MAX_SEC", "18") if single else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")),
+                float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "18")),
             ),
         )
+        # If snap moved to a hotter burst, drop stale early shoot_start and keep peak inside
+        # the new window so shape/aggressive tighten cannot reopen the run pad.
+        shoot0 = report.get("shooting_start")
+        if shoot0 is not None:
+            try:
+                sf = float(shoot0)
+                if sf < float(start) - 1.0 or sf > float(start) + float(dur) + 1.0:
+                    report = {**report, "shooting_start": float(start)}
+            except (TypeError, ValueError):
+                pass
+        if peak is not None and (
+            float(peak) < float(start) or float(peak) > float(start) + float(dur)
+        ):
+            peak = float(start) + min(float(dur) * 0.45, 4.0)
 
     pre_pad = clip_pre_shoot_sec()
     post_kill = clip_post_kill_sec()
-    max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2"))
-    min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "8"))
+    max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "0.8"))
+    min_dur = float(os.environ.get("PUBG_CLIP_MIN_TIGHTEN_SEC", "6"))
     if single:
         min_dur = max(min_dur, float(os.environ.get("PUBG_SINGLE_MIN_SEC", "8")))
     max_dur = float(
-        os.environ.get("PUBG_SINGLE_MAX_SEC", "90")
+        os.environ.get("PUBG_SINGLE_MAX_SEC", "18")
         if single
-        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")
     )
 
     shoot = report.get("shooting_start")
@@ -579,7 +618,7 @@ def _assemble_gun_bins(
 
 def assemble_max_part_sec() -> float:
     """Hard cap for one 👍 part in owner montage — long windows = loot/run padding."""
-    return max(14.0, float(os.environ.get("PUBG_ASSEMBLE_MAX_SEC", "28")))
+    return max(8.0, float(os.environ.get("PUBG_ASSEMBLE_MAX_SEC", "16")))
 
 
 def tighten_pubg_assemble_bounds(
@@ -622,8 +661,22 @@ def tighten_pubg_assemble_bounds(
         end = min(file_d, core_end + pad)
     elif owner_start is not None and owner_dur is not None and float(owner_dur) >= min_dur:
         # Segmenter lied (all-zero timeline) — keep the window the owner actually 👍'd.
-        start = max(0.0, float(owner_start))
-        end = min(file_d, start + min(float(owner_dur), max_dur))
+        # Hard-cap length but slide so the peak stays inside (avoid truncating contact).
+        own_s = max(0.0, float(owner_start))
+        own_e = min(file_d, own_s + float(owner_dur))
+        span = min(max_dur, max(min_dur, own_e - own_s))
+        if own_s <= peak_f <= own_e:
+            end = min(own_e, max(peak_f + pad, own_s + span))
+            start = max(own_s, end - span)
+            if peak_f < start:
+                start = max(own_s, peak_f - pad)
+                end = min(own_e, start + span)
+            if peak_f > end:
+                end = min(own_e, peak_f + pad)
+                start = max(own_s, end - span)
+        else:
+            start = own_s
+            end = min(file_d, start + span)
         dur = max(min_dur, end - start)
         log.info(
             "assemble tighten peak=%.1f: no gun bins — use owner window %.1f+%.1f",

@@ -1038,7 +1038,7 @@ def _montage_limits() -> tuple[int, int, float, float, float]:
     min_clips = max(1, int(os.environ.get("SHOOTER_VOD_MONTAGE_MIN_CLIPS", "2")))
     max_clips = max(min_clips, int(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_CLIPS", "3")))
     gap = float(os.environ.get("SHOOTER_VOD_MONTAGE_GAP_SEC", "55"))
-    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
+    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "16"))
     final_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_MAX_SEC", "55"))
     return min_clips, max_clips, gap, part_max, final_max
 
@@ -1122,10 +1122,10 @@ def _pick_montage_rows(
 def _pubg_duration_cap(raw_dur: float, *, single: bool) -> float:
     """Long sustained fights may ship longer; short scraps stay capped."""
     if single:
-        return min(float(os.environ.get("PUBG_SINGLE_MAX_SEC", "90")), max(8.0, raw_dur))
-    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "28"))
-    long_max = float(os.environ.get("PUBG_MONTAGE_PART_LONG_MAX_SEC", "45"))
-    long_min = float(os.environ.get("PUBG_LONG_FIGHT_MIN_SEC", "20"))
+        return min(float(os.environ.get("PUBG_SINGLE_MAX_SEC", "18")), max(8.0, raw_dur))
+    part_max = float(os.environ.get("SHOOTER_VOD_MONTAGE_PART_MAX_SEC", "16"))
+    long_max = float(os.environ.get("PUBG_MONTAGE_PART_LONG_MAX_SEC", "18"))
+    long_min = float(os.environ.get("PUBG_LONG_FIGHT_MIN_SEC", "14"))
     if raw_dur >= long_min:
         return min(long_max, raw_dur)
     return min(part_max, raw_dur)
@@ -1281,12 +1281,22 @@ def _prepare_montage_clip(
 
             report = dict(row.get("segment_report") or clip.get("segment_report") or {})
             if report.get("timeline"):
+                cluster_cap = min(float(part_max), 12.0)
+                if str(game).lower() == "pubg":
+                    try:
+                        from shooter_owner_montage import short_fight_cluster_cap
+
+                        p8_cap = short_fight_cluster_cap("pubg", vod, peak)
+                        if p8_cap is not None:
+                            cluster_cap = min(cluster_cap, float(p8_cap))
+                    except Exception:
+                        pass
                 start, dur = snap_to_best_fight_cluster(
                     start,
                     dur,
                     report,
                     peak=peak,
-                    max_cluster_sec=min(float(part_max), 12.0),
+                    max_cluster_sec=cluster_cap,
                 )
                 clip = {
                     **clip,

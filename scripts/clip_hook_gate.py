@@ -170,7 +170,7 @@ def hook_gate_clip(
     if not p.exists() or p.stat().st_size < 5_000:
         return False, "hook_missing", {}
 
-    window = float(window_sec if window_sec is not None else _env_float("CLIP_HOOK_WINDOW_SEC", 1.8))
+    window = float(window_sec if window_sec is not None else _env_float("CLIP_HOOK_WINDOW_SEC", 1.5))
     min_rms = _env_float("CLIP_HOOK_MIN_AUDIO_RMS", 0.10)
     min_y_delta = _env_float("CLIP_HOOK_MIN_YAVG_DELTA", 2.0)
     max_menu = _env_float("CLIP_HOOK_MAX_MENU", 0.55)

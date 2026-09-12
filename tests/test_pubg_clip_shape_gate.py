@@ -59,6 +59,39 @@ def test_tighten_trims_running_lead():
         {"shooting_start": 388.0, "kill_sec": 392.0, "fight_end": 395.0},
         peak=389.5,
     )
+    # pre-shoot ~0.8s — cut run-up, keep contact near open.
     assert start >= 386.8
-    assert dur >= 8.0
-    assert start <= 387.0
+    assert dur >= 6.0
+    assert start <= 387.3
+
+
+def test_reject_loot_tail():
+    ok, reason = validate_clip_fight_shape(
+        100.0,
+        16.0,
+        104.0,
+        {"shooting_start": 100.5, "fight_end": 108.0},
+    )
+    assert not ok
+    assert "loot_tail" in reason
+
+
+def test_reject_head_run_edge():
+    ok, reason = validate_clip_fight_shape(
+        200.0,
+        14.0,
+        208.0,
+        {
+            "shooting_start": 206.0,
+            "fight_end": 213.0,
+            "timeline": [
+                {"start": 200.0, "gun": 0.005, "score": 0.1},
+                {"start": 202.0, "gun": 0.008, "score": 0.1},
+                {"start": 206.0, "gun": 0.09, "score": 0.8},
+                {"start": 208.0, "gun": 0.08, "score": 0.7},
+                {"start": 210.0, "gun": 0.06, "score": 0.6},
+            ],
+        },
+    )
+    assert not ok
+    assert "head_run" in reason or "prefight" in reason

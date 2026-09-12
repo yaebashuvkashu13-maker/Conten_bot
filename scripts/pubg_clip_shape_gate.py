@@ -9,15 +9,15 @@ from typing import Any
 
 
 def max_prefight_lead_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MAX_LEAD_FRAC", "0.12"))
+    return float(os.environ.get("PUBG_CLIP_MAX_LEAD_FRAC", "0.10"))
 
 
 def max_peak_position_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MAX_PEAK_FRAC", "0.65"))
+    return float(os.environ.get("PUBG_CLIP_MAX_PEAK_FRAC", "0.60"))
 
 
 def min_gunfire_coverage_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MIN_GUN_COVERAGE", "0.42"))
+    return float(os.environ.get("PUBG_CLIP_MIN_GUN_COVERAGE", "0.45"))
 
 
 def validate_clip_fight_shape(
@@ -49,7 +49,7 @@ def validate_clip_fight_shape(
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     if fight_end is not None:
         tail = start_f + dur_f - float(fight_end)
-        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "3.5")):
+        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "2.5")):
             return False, f"loot_tail tail={tail:.1f}s"
 
     # Head/tail run: even if the fight core is hot, lead/tail sprint looks like loot_run.
@@ -83,7 +83,7 @@ def _head_tail_run_reason(
     timeline = report.get("timeline")
     if not isinstance(timeline, list) or not timeline:
         return None
-    edge = float(os.environ.get("PUBG_CLIP_EDGE_RUN_SEC", "3.5"))
+    edge = float(os.environ.get("PUBG_CLIP_EDGE_RUN_SEC", "2.5"))
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
     max_edge_gun = float(os.environ.get("PUBG_CLIP_EDGE_MAX_GUN", "0.018"))
     if dur < edge * 2.5:
@@ -113,6 +113,27 @@ def _head_tail_run_reason(
     if head is not None and head <= max_edge_gun and mid >= gun_min * 1.5:
         return f"head_run gun={head:.3f}"
     if tail is not None and tail <= max_edge_gun and mid >= gun_min * 1.5:
+        # Intentional post-kill / post-gun pad is quiet by design — not loot walk.
+        kill = report.get("kill_sec")
+        if kill is None:
+            kill = report.get("kill_time")
+        post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "2.0"))
+        if kill is not None:
+            try:
+                if float(kill) <= end <= float(kill) + post + edge + 0.5:
+                    return None
+            except (TypeError, ValueError):
+                pass
+        # Also allow quiet only after last audible gun bin (finale pad).
+        last_gun = None
+        for row in timeline:
+            try:
+                if float(row.get("gun", 0.0) or 0.0) >= gun_min:
+                    last_gun = float(row.get("start", 0.0))
+            except (TypeError, ValueError):
+                continue
+        if last_gun is not None and last_gun <= end <= last_gun + post + edge + 1.0:
+            return None
         return f"tail_run gun={tail:.3f}"
     return None
 
@@ -162,7 +183,7 @@ def aggressive_tighten_for_shape(
     shoot = report.get("shooting_start")
     if shoot is None:
         return start, dur
-    pre = min(clip_pre_shoot_sec(), float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2")))
+    pre = min(clip_pre_shoot_sec(), float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "0.8")))
     post = clip_post_kill_sec()
     start = float(shoot) - pre
     kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
@@ -191,7 +212,7 @@ def aggressive_tighten_for_shape(
     dur = max(8.0, end - start)
     ok, _reason = validate_clip_fight_shape(start, dur, peak, report)
     if not ok and not single and not gun_continues:
-        want = min(float(dur), float(os.environ.get("PUBG_CLIP_TARGET_FIGHT_SEC", "16")))
+        want = min(float(dur), float(os.environ.get("PUBG_CLIP_TARGET_FIGHT_SEC", "12")))
         start = max(0.0, float(shoot) - want * 0.35)
         end = start + want
         if kill is not None:
@@ -202,9 +223,9 @@ def aggressive_tighten_for_shape(
             start = max(0.0, float(peak) - dur * 0.42)
             dur = max(8.0, end - start)
     max_dur = float(
-        os.environ.get("PUBG_SINGLE_MAX_SEC", "90")
+        os.environ.get("PUBG_SINGLE_MAX_SEC", "18")
         if single
-        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")
     )
     start, dur = extend_end_past_active_gunfire(
         start, dur, report, max_dur=max_dur, single=single

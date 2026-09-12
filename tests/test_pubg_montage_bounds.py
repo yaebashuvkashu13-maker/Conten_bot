@@ -30,8 +30,8 @@ def test_tighten_pubg_clip_trims_loot_tail():
     assert start + dur <= 1167.0 + 0.01
 
 
-def test_single_tighten_keeps_full_fight_not_kill_tail():
-    """ACCvn55IvVw: single mode must not crush 52s fight into ~10s running tail."""
+def test_single_tighten_caps_long_fight_window():
+    """Single mode hard-caps ~18s — no 52s loot/run pad; peak stays inside."""
     report = {
         "shooting_start": 118.0,
         "kill_sec": 125.0,
@@ -44,9 +44,9 @@ def test_single_tighten_keeps_full_fight_not_kill_tail():
         peak=128.9,
         single=True,
     )
-    assert dur >= 20.0
+    assert 6.0 <= dur <= 18.0 + 0.01
     assert start <= 119.0
-    assert start + dur >= 128.9
+    assert start <= 128.9 <= start + dur
 
 
 def test_extend_past_gunfire_does_not_end_mid_burst():
@@ -86,7 +86,8 @@ def test_extend_past_gunfire_does_not_end_mid_burst():
     assert clip_ends_on_gunfire(start, dur, report) is False
 
 
-def test_tighten_single_extends_mid_burst_cut():
+def test_tighten_single_caps_long_mid_burst():
+    """Hard max ~18s: long continuous spray is capped (montage stitches parts)."""
     timeline = []
     for t in range(1064, 1122, 2):
         gun = 0.06 if t < 1114 else 0.0
@@ -104,8 +105,8 @@ def test_tighten_single_extends_mid_burst_cut():
         peak=1078.0,
         single=True,
     )
-    assert start + dur >= 1112.0
-    assert dur >= 40.0
+    assert 6.0 <= dur <= 18.0 + 0.01
+    assert start <= 1078.0 <= start + dur
 
 
 def test_dedupe_peaks_by_fight_window_drops_same_fight(monkeypatch):
@@ -172,8 +173,11 @@ def test_assemble_tighten_zero_gun_uses_owner_window():
         owner_start=5245.5,
         owner_dur=27.64,
     )
-    assert abs(start - 5245.5) < 0.05
-    assert abs(dur - 27.64) < 0.05
+    # Owner window may be longer; assemble hard-caps and slides to keep peak.
+    assert 5245.5 - 0.05 <= start <= 5266.0
+    assert dur <= 16.0 + 0.01
+    assert start <= 5266.0 <= start + dur
+    assert start + dur <= 5245.5 + 27.64 + 0.05
 
 
 def test_assemble_tighten_zero_gun_without_owner_uses_peak_pocket():
