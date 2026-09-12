@@ -417,6 +417,8 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     )
     # Honor ops-pinned SKIP_DISCOVERY while silence < absolute; otherwise force open.
     # Default matches deploy / hang detector (5400), not a separate 3h window.
+    # Ops override (VOD_FORCE_OPS_SKIP_DISCOVERY=1) keeps skip even past absolute
+    # silence when the goal is shipping inbox VODs under new cut settings.
     try:
         abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400"))
     except ValueError:
@@ -427,14 +429,15 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         silence_age = float(last_send_age_sec() or 0.0)
     except Exception:
         silence_age = 0.0
+    ops_skip = os.environ.get("VOD_FORCE_OPS_SKIP_DISCOVERY", "0") == "1"
     incoming_skip = (
         env.get("SHOOTER_VOD_SKIP_DISCOVERY") == "1"
         or env.get("VOD_FORCE_SKIP_DISCOVERY") == "1"
         or os.environ.get("SHOOTER_VOD_SKIP_DISCOVERY", "0") == "1"
         or os.environ.get("VOD_FORCE_SKIP_DISCOVERY", "0") == "1"
-        or os.environ.get("VOD_FORCE_OPS_SKIP_DISCOVERY", "0") == "1"
+        or ops_skip
     )
-    if incoming_skip and silence_age < abs_silence:
+    if incoming_skip and (ops_skip or silence_age < abs_silence):
         env["SHOOTER_VOD_SKIP_DISCOVERY"] = "1"
         env["VOD_FORCE_SKIP_DISCOVERY"] = "1"
     else:
@@ -462,7 +465,14 @@ def force_send_game(
         return {"game": game, "sent": 0, "error": f"unknown game {game!r}"}
 
     if timeout_sec is None:
-        timeout_sec = max(120, int(os.environ.get("VOD_FORCE_SEND_TIMEOUT_SEC", "900")))
+        # Soften / multi-VOD inbox sends often need owner-neighborhood + render;
+        # 15m was cutting the only KEEP candidate mid-inspect.
+        default_timeout = (
+            "3600"
+            if os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
+            else "900"
+        )
+        timeout_sec = max(120, int(os.environ.get("VOD_FORCE_SEND_TIMEOUT_SEC", default_timeout)))
 
     if stop_running:
         _stop_game_feed(game)
