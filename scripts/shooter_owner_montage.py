@@ -196,16 +196,28 @@ def _owner_bad_peaks(game: str, vod: Path) -> list[tuple[float, str]]:
             if vod_field:
                 vp = Path(vod_field)
                 row_vid = vp.stem[3:] if vp.stem.startswith("yt_") else vp.stem
-            elif sid.startswith(f"{vid}_"):
+            elif sid.startswith(f"{vid}_") or sid.startswith(f"seg_{vid}_"):
                 row_vid = vid
+            else:
+                try:
+                    from vod_owner_learning import parse_pubg_segment_sid
+
+                    parsed = parse_pubg_segment_sid(sid)
+                    if parsed and parsed[0] == vid:
+                        row_vid = vid
+                except Exception:
+                    pass
             if row_vid != vid:
                 continue
             peak = row.get("peak_start", row.get("start"))
-            if peak is None and "_" in sid:
+            if peak is None:
                 try:
-                    peak = float(sid.rsplit("_", 1)[-1])
-                except ValueError:
-                    continue
+                    from vod_owner_learning import parse_pubg_segment_sid
+
+                    parsed = parse_pubg_segment_sid(sid)
+                    peak = parsed[1] if parsed else None
+                except Exception:
+                    peak = None
             try:
                 out.append((float(peak), str(row.get("reason") or "")))
             except (TypeError, ValueError):
@@ -226,6 +238,67 @@ def _reject_radius_for_reason(reason: str, *, default: float = 20.0) -> float:
     if r in ("promo", "boring", "blurry", "not_gameplay"):
         return max(default, 22.0)
     return default
+
+
+def owner_probe8_good_times(game: str, vod: Path) -> list[float]:
+    """Owner 👍 on 8s probe slices — short firefight anchors."""
+    if game != "pubg":
+        return []
+    out: list[float] = []
+    try:
+        from shooter_vod_segment_store import _paths
+        from vod_owner_learning import is_probe8_segment_id, parse_pubg_segment_sid
+
+        path = _paths(game)["labels"]
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        vid = _video_id(vod)
+        for row in data.get("good", []):
+            sid = str(row.get("segment_id") or "")
+            if not is_probe8_segment_id(sid):
+                continue
+            vod_field = str(row.get("vod") or "")
+            row_vid = ""
+            if vod_field:
+                vp = Path(vod_field)
+                row_vid = vp.stem[3:] if vp.stem.startswith("yt_") else vp.stem
+            else:
+                parsed = parse_pubg_segment_sid(sid)
+                row_vid = parsed[0] if parsed else ""
+            if row_vid != vid:
+                continue
+            peak = row.get("peak_start", row.get("start"))
+            if peak is None:
+                parsed = parse_pubg_segment_sid(sid)
+                peak = parsed[1] if parsed else None
+            try:
+                out.append(float(peak))
+            except (TypeError, ValueError):
+                continue
+    except Exception as exc:  # noqa: BLE001
+        log.debug("probe8 good load failed: %s", exc)
+    deduped: list[float] = []
+    for t in sorted(out):
+        if any(abs(t - p) <= 3.0 for p in deduped):
+            continue
+        deduped.append(float(t))
+    return deduped
+
+
+def short_fight_cluster_cap(game: str, vod: Path, peak_sec: float) -> float | None:
+    """Near probe8 👍 → keep cuts short (~8s) like the owner labeled."""
+    if game != "pubg":
+        return None
+    if os.environ.get("PUBG_P8_SHORT_FIGHT", "1") != "1":
+        return None
+    goods = owner_probe8_good_times(game, vod)
+    if not goods:
+        return None
+    radius = float(os.environ.get("PUBG_P8_SHORT_FIGHT_RADIUS_SEC", "12"))
+    if not any(abs(float(peak_sec) - g) <= radius for g in goods):
+        return None
+    return float(os.environ.get("PUBG_P8_SHORT_FIGHT_MAX_SEC", "8"))
 
 
 def _is_owner_rejected_peak(game: str, vod: Path, peak_sec: float, *, radius: float = 20.0) -> bool:
@@ -294,11 +367,14 @@ def owner_labeled_good_times(game: str, vod: Path) -> list[float]:
                 if row_vid != vid:
                     continue
                 peak = row.get("peak_start", row.get("start"))
-                if peak is None and "_" in sid:
+                if peak is None:
                     try:
-                        peak = float(sid.rsplit("_", 1)[-1])
-                    except ValueError:
-                        continue
+                        from vod_owner_learning import parse_pubg_segment_sid
+
+                        parsed = parse_pubg_segment_sid(sid)
+                        peak = parsed[1] if parsed else None
+                    except Exception:
+                        peak = None
                 try:
                     out.append(float(peak))
                 except (TypeError, ValueError):
@@ -766,12 +842,19 @@ def resolve_owner_neighborhood_bounds(
             ]
         }
         if synth["timeline"]:
+            cluster_cap = min(float(max_dur), 12.0)
+            try:
+                p8_cap = short_fight_cluster_cap("pubg", vod, peak_v)
+                if p8_cap is not None:
+                    cluster_cap = min(cluster_cap, float(p8_cap))
+            except Exception:
+                pass
             start, dur = snap_to_best_fight_cluster(
                 float(start),
                 float(dur),
                 synth,
                 peak=peak_v,
-                max_cluster_sec=min(float(max_dur), 12.0),
+                max_cluster_sec=cluster_cap,
             )
             end = start + dur
     except Exception:
@@ -972,11 +1055,15 @@ def boost_pool_near_owner_labels(
 ) -> list[dict]:
     """Raise scores of candidates near owner 👍 without injecting label-only sends."""
     goods = owner_labeled_good_times(game, vod)
+    p8_goods = owner_probe8_good_times(game, vod) if game == "pubg" else []
     if not pool:
         return pool
     # Wider than old 18s — Metro fights drift; 👍 must still pull neighbors up.
     boost = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_SCORE_BOOST", "0.22"))
     radius = float(os.environ.get("SHOOTER_VOD_OWNER_ANCHOR_RADIUS_SEC", "45"))
+    # Probe8 👍 = short firefight fact labels → tighter, stronger pull.
+    p8_boost = float(os.environ.get("SHOOTER_VOD_P8_ANCHOR_SCORE_BOOST", "0.38"))
+    p8_radius = float(os.environ.get("SHOOTER_VOD_P8_ANCHOR_RADIUS_SEC", "14"))
     demote = float(os.environ.get("SHOOTER_VOD_OWNER_BAD_SCORE_DEMOTE", "0.35"))
     merged: list[dict] = [dict(c) for c in pool]
     boosted = 0
@@ -991,7 +1078,18 @@ def boost_pool_near_owner_labels(
             clip["owner_bad"] = True
             demoted += 1
             continue
-        if goods and any(abs(peak - g) <= radius for g in goods):
+        near_p8 = p8_goods and any(abs(peak - g) <= p8_radius for g in p8_goods)
+        near_good = goods and any(abs(peak - g) <= radius for g in goods)
+        if near_p8:
+            clip["score"] = float(clip.get("score", 0) or 0) + p8_boost
+            hm = dict(clip.get("highlight_metrics") or {})
+            hm["owner_label_boost"] = True
+            hm["owner_p8_fight_boost"] = True
+            clip["highlight_metrics"] = hm
+            clip["owner_anchor"] = True
+            clip["owner_p8_fight"] = True
+            boosted += 1
+        elif near_good:
             clip["score"] = float(clip.get("score", 0) or 0) + boost
             hm = dict(clip.get("highlight_metrics") or {})
             hm["owner_label_boost"] = True
@@ -1000,17 +1098,18 @@ def boost_pool_near_owner_labels(
             boosted += 1
     if boosted or demoted:
         log.info(
-            "owner-label boost game=%s vod=%s boosted=%s demoted=%s goods=%s",
+            "owner-label boost game=%s vod=%s boosted=%s demoted=%s goods=%s p8=%s",
             game,
             vod.name,
             boosted,
             demoted,
             [int(g) for g in goods[:8]],
+            [int(g) for g in p8_goods[:8]],
         )
         merged.sort(
             key=lambda c: (
                 0 if c.get("owner_bad") else 1,
-                1 if c.get("owner_anchor") else 0,
+                2 if c.get("owner_p8_fight") else (1 if c.get("owner_anchor") else 0),
                 float(c.get("score", 0) or 0),
             ),
             reverse=True,

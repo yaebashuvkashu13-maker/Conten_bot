@@ -154,7 +154,21 @@ def owner_bad_pad_sec(note: str = "") -> float:
     """Block radius around owner 👎 — wider for run/empty/loot notes from label bank."""
     base = float(os.environ.get("PUBG_OWNER_BAD_PAD_SEC", "12"))
     text = note.strip().lower()
-    if any(token in text for token in ("run", "empty", "loot", "walk", "fly", "no fight", "no_combat")):
+    if any(
+        token in text
+        for token in (
+            "run",
+            "empty",
+            "loot",
+            "walk",
+            "fly",
+            "no fight",
+            "no_combat",
+            "loot_run",
+            "no_kill",
+            "no_combat",
+        )
+    ):
         return max(base, float(os.environ.get("PUBG_OWNER_BAD_RUN_PAD_SEC", "30")))
     return base
 

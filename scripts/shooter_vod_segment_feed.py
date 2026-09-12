@@ -1281,12 +1281,22 @@ def _prepare_montage_clip(
 
             report = dict(row.get("segment_report") or clip.get("segment_report") or {})
             if report.get("timeline"):
+                cluster_cap = min(float(part_max), 12.0)
+                if str(game).lower() == "pubg":
+                    try:
+                        from shooter_owner_montage import short_fight_cluster_cap
+
+                        p8_cap = short_fight_cluster_cap("pubg", vod, peak)
+                        if p8_cap is not None:
+                            cluster_cap = min(cluster_cap, float(p8_cap))
+                    except Exception:
+                        pass
                 start, dur = snap_to_best_fight_cluster(
                     start,
                     dur,
                     report,
                     peak=peak,
-                    max_cluster_sec=min(float(part_max), 12.0),
+                    max_cluster_sec=cluster_cap,
                 )
                 clip = {
                     **clip,

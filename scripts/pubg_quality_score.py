@@ -68,7 +68,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
     try:
-        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
+        from pubg_owner_calibration import segment_overlaps_owner_label
 
         return bool(
             segment_overlaps_owner_label(
@@ -76,7 +76,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
                 start_sec,
                 duration_sec,
                 label="bad",
-                pad_sec=owner_bad_pad_sec(),
+                pad_sec=None,  # per-note pad: loot_run/no_combat → ~30s
             )
         )
     except Exception:
