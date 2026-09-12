@@ -333,11 +333,15 @@ def run_hang_agent(game: str = "pubg") -> str:
         report = detect_hang()
         age = int(report.last_send_age_sec or 0)
         hb = int(report.heartbeat_age_sec or 0) if report.heartbeat_age_sec else -1
+        sclass = getattr(report, "silence_class", "") or "unknown"
+        cause = getattr(report, "owner_cause", "") or ""
         lines.append(
-            f"• диагноз: {'OK' if report.ok else 'HANG'} | "
+            f"• диагноз: {'OK' if report.ok else 'HANG'} | class={sclass} | "
             f"тишина {age // 60}м | hb={hb}s | "
             f"{', '.join(report.reasons[:3]) or '—'}"
         )
+        if cause:
+            lines.append(f"• причина: {cause}")
         # Extreme drought: stop thrashing junk inbox — keep preferred Metro VOD only.
         if age >= max(7200, int(os.environ.get("VOD_DROUGHT_ISOLATE_SEC", "10800"))):
             try:
@@ -348,12 +352,42 @@ def run_hang_agent(game: str = "pubg") -> str:
                     lines.append(f"• drought isolate: park {len(moved)} junk VOD")
             except Exception as exc:  # noqa: BLE001
                 lines.append(f"• drought isolate: {exc}")
-        heal = auto_unload_and_recover(report, game=target, force=True, background=False)
+        # Manual /agent may force heal, but drought/mined still use branched path
+        # (force=True only for true hang / unknown).
+        force_heal = sclass in (
+            "process_dead",
+            "stuck_child",
+            "telegram_upload_stuck",
+            "true_hang",
+            "unknown",
+            "ok",
+        )
+        heal = auto_unload_and_recover(
+            report, game=target, force=force_heal, background=False
+        )
         lines.append(
-            f"• heal: {heal.get('action')} "
+            f"• heal: {heal.get('action')} class={heal.get('silence_class', sclass)} "
             f"({' '.join(str(a) for a in (heal.get('actions') or [])[:4]) or '—'})"
         )
-        apply_agent_recover_env(os.environ, escalation=int(heal.get("escalation") or 0))
+        # Cap soften at esc<=1 for drought; true hang keeps heal escalation.
+        esc_apply = int(heal.get("escalation") or 0)
+        if sclass == "presend_reject_drought":
+            esc_apply = min(1, esc_apply)
+        apply_agent_recover_env(os.environ, escalation=esc_apply)
+        # Drought/mined: skip repeated force_send thrash after one-shot heal.
+        if sclass in ("presend_reject_drought", "inbox_mined", "heartbeat_stuck_scanning"):
+            tops = getattr(report, "top_rejects", None) or heal.get("top_rejects") or []
+            if tops:
+                lines.append(f"• top_rejects: {', '.join(str(t) for t in tops[:4])}")
+            lines.append(
+                "• skip force-send loop (class="
+                + sclass
+                + ") — backoff instead of escalate thrash"
+            )
+            lines.append(
+                "Готово. Таймер крутится каждые 5 мин; видео — только когда stamp отправки обновится."
+            )
+            return "\n".join(lines)
     except Exception as exc:  # noqa: BLE001
         lines.append(f"• heal error: {exc}")
 
@@ -394,13 +428,13 @@ def run_hang_agent(game: str = "pubg") -> str:
                 lines.append(f"• unpark: {n}")
             except Exception as exc:  # noqa: BLE001
                 lines.append(f"• unpark: {exc}")
-            # Escalate soften one step for the retry pass.
+            # Soften one step for retry, but never climb past esc=1 on mined/reject thrash.
             try:
                 from vod_hang_detector import apply_agent_recover_env, _heal_escalation
 
                 apply_agent_recover_env(
                     os.environ,
-                    escalation=min(2, int(_heal_escalation()) + 1),
+                    escalation=min(1, int(_heal_escalation()) + 1),
                 )
             except Exception:
                 pass

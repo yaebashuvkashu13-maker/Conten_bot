@@ -329,3 +329,127 @@ def test_heal_cooldown_retries_when_previous_sent_zero(
     monkeypatch.setenv("VOD_HEAL_RETRY_SEC", "600")
     monkeypatch.setenv("VOD_SILENCE_WARN_SEC", "3600")
     assert _heal_cooldown_ok(2700) is True
+
+
+def test_classify_silence_presend_drought(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_hang_detector import HangReport, classify_silence_reason
+
+    report = HangReport(
+        ok=False,
+        reasons=["absolute_silence_9000s"],
+        last_send_age_sec=9000.0,
+        heartbeat_age_sec=100.0,
+        zero_send_streak=3,
+        feed_alive=True,
+        stuck_children=[],
+    )
+    monkeypatch.setattr("vod_hang_detector._log_shows_presend_drought", lambda *_a, **_k: True)
+    monkeypatch.setattr("vod_hang_detector.diagnose_top_reject_reasons", lambda *_a, **_k: ["pubg_singles_presend_exhaustedx3"])
+    monkeypatch.setattr("vod_hang_detector.inbox_mined_out", lambda *_a, **_k: False)
+    monkeypatch.setattr("vod_hang_detector._telegram_upload_appears_stuck", lambda: False)
+    sclass, cause = classify_silence_reason(report)
+    assert sclass == "presend_reject_drought"
+    assert "presend" in cause or "reject" in cause
+
+
+def test_classify_silence_heartbeat_scanning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_hang_detector import HangReport, classify_silence_reason
+
+    report = HangReport(
+        ok=False,
+        reasons=["heartbeat_stuck_2000s", "absolute_silence_6000s"],
+        last_send_age_sec=6000.0,
+        heartbeat_age_sec=2000.0,
+        log_age_sec=30.0,
+        zero_send_streak=1,
+        feed_alive=True,
+        stuck_children=[],
+    )
+    monkeypatch.setattr("vod_hang_detector._scan_progress_advancing", lambda *_a, **_k: True)
+    monkeypatch.setattr("vod_hang_detector._telegram_upload_appears_stuck", lambda: False)
+    sclass, cause = classify_silence_reason(report)
+    assert sclass == "heartbeat_stuck_scanning"
+
+
+def test_classify_silence_process_dead() -> None:
+    from vod_hang_detector import HangReport, classify_silence_reason
+
+    report = HangReport(ok=False, reasons=["silence_4000s"], feed_alive=False, last_send_age_sec=4000)
+    sclass, _ = classify_silence_reason(report)
+    assert sclass == "process_dead"
+
+
+def test_autonomous_agent_drought_no_spawn(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import vod_hang_detector as hang
+
+    class _R:
+        ok = False
+        last_send_age_sec = 9000.0
+        heartbeat_age_sec = 50.0
+        reasons = ["absolute_silence_9000s"]
+        zero_send_streak = 3
+        feed_alive = True
+        stuck_children: list = []
+        stuck_parts: list = []
+        silence_class = "presend_reject_drought"
+        owner_cause = "presend/gate reject drought"
+        top_rejects = ["pubg_singles_presend_exhaustedx3"]
+
+    monkeypatch.setattr(hang, "detect_hang", lambda: _R())
+    monkeypatch.setattr(hang, "_clear_stale_recover_lock", lambda: False)
+    monkeypatch.setattr(hang, "_drought_backoff_ok", lambda: True)
+    monkeypatch.setattr(hang, "_recover_already_running", lambda: False)
+
+    called = {"n": 0}
+
+    def fake_unload(report, game="pubg", force=False, background=False):
+        called["n"] += 1
+        return {
+            "action": "drought_backoff",
+            "silence_class": "presend_reject_drought",
+            "owner_cause": report.owner_cause,
+            "escalation": 2,
+        }
+
+    spawned: list[str] = []
+    monkeypatch.setattr(hang, "auto_unload_and_recover", fake_unload)
+    monkeypatch.setattr(hang, "_spawn_background_agent", lambda g: spawned.append(g) or True)
+
+    out = hang.run_autonomous_hang_agent(game="pubg", force=False)
+    assert out["action"] == "drought_backoff"
+    assert called["n"] == 1
+    assert spawned == []
+
+
+def test_autonomous_agent_true_hang_still_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vod_hang_detector as hang
+
+    class _R:
+        ok = False
+        last_send_age_sec = 9000.0
+        heartbeat_age_sec = 50.0
+        reasons = ["process_dead"]
+        zero_send_streak = 0
+        feed_alive = False
+        stuck_children: list = []
+        stuck_parts: list = []
+        silence_class = "process_dead"
+        owner_cause = "feed process dead"
+        top_rejects: list = []
+
+    monkeypatch.setattr(hang, "detect_hang", lambda: _R())
+    monkeypatch.setattr(hang, "_heal_cooldown_ok", lambda *_a, **_k: True)
+    monkeypatch.setattr(hang, "_recover_already_running", lambda: False)
+    monkeypatch.setattr(hang, "_clear_stale_recover_lock", lambda: True)
+    monkeypatch.setenv("VOD_AUTO_HANG_AGENT", "1")
+    monkeypatch.setenv("VOD_AUTO_AGENT_BG", "1")
+    monkeypatch.setenv("VOD_HEAL_BACKGROUND", "1")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "3600")
+    spawned: list[str] = []
+    monkeypatch.setattr(hang, "_spawn_background_agent", lambda g: spawned.append(g) or True)
+    monkeypatch.setattr(hang, "_mark_heal", lambda *a, **k: None)
+    monkeypatch.setattr(hang, "maybe_silence_alert", lambda *a, **k: True)
+    monkeypatch.setattr(hang, "_heal_escalation", lambda: 0)
+    out = hang.run_autonomous_hang_agent(game="pubg", force=False)
+    assert out["action"] == "auto_agent_bg"
+    assert spawned == ["pubg"]

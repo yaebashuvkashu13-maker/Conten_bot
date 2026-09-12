@@ -35,6 +35,12 @@ DEFAULT_HEAL_STAMP = Path("/root/data/mlbb/vod_auto_heal.json")
 DEFAULT_ALERT_STAMP = Path("/root/data/mlbb/vod_silence_alert.json")
 DEFAULT_DETECT_STAMP = Path("/root/data/mlbb/vod_hang_detect_last.json")
 DEFAULT_AUTO_RECOVER_LOG = Path("/root/data/mlbb/hang_recover_auto.log")
+DEFAULT_DROUGHT_BACKOFF_STAMP = Path("/root/data/mlbb/vod_hang_drought_backoff.json")
+
+TRUE_HANG_CLASSES = frozenset(
+    {"process_dead", "stuck_child", "telegram_upload_stuck", "true_hang", "unknown"}
+)
+DROUGHT_CLASSES = frozenset({"presend_reject_drought", "inbox_mined"})
 SEND_LINE_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*?"
     r"(?:pipeline done sent=([1-9]\d*)|PUBG sent=([1-9]\d*)|sent=([1-9]\d*) vods=1)",
@@ -59,6 +65,9 @@ class HangReport:
     stuck_children: list[dict] = field(default_factory=list)
     stuck_parts: list[str] = field(default_factory=list)
     feed_alive: bool = False
+    silence_class: str = "ok"
+    owner_cause: str = ""
+    top_rejects: list[str] = field(default_factory=list)
 
     def add(self, reason: str) -> None:
         self.ok = False
@@ -408,6 +417,248 @@ def remove_stuck_parts(paths: list[str]) -> int:
     return removed
 
 
+
+def _feed_log_tail(max_bytes: int = 400_000) -> str:
+    path = feed_log_path()
+    if not path.is_file():
+        return ""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            raw = fh.read()
+        return raw.decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def diagnose_top_reject_reasons(game: str = "pubg", *, limit: int = 4) -> list[str]:
+    """Best-effort top reject reasons for owner-facing drought diagnosis."""
+    out: list[str] = []
+    try:
+        from vod_game_registry import exhausted_summary
+
+        reasons = (exhausted_summary(game).get("top_reject_reasons") or {})
+        for reason, cnt in sorted(reasons.items(), key=lambda kv: -int(kv[1]))[:limit]:
+            out.append(f"{reason}x{cnt}")
+    except Exception:
+        pass
+    if out:
+        return out
+    # Fall back to recent feed log tokens.
+    tail = _feed_log_tail()
+    counts: dict[str, int] = {}
+    for line in tail.splitlines()[-2000:]:
+        low = line.lower()
+        token = ""
+        if "presend_exhausted" in low or "presend reject" in low or "presend REJECT" in line:
+            if "pubg_singles_presend_exhausted" in low:
+                token = "pubg_singles_presend_exhausted"
+            elif "presend" in low:
+                token = "presend_reject"
+        elif "metro_reject" in low:
+            token = "metro_reject"
+        elif "loot" in low and "reject" in low:
+            token = "loot_reject"
+        elif "shooting" in low and "reject" in low:
+            token = "shooting_reject"
+        if token:
+            counts[token] = counts.get(token, 0) + 1
+    for reason, cnt in sorted(counts.items(), key=lambda kv: -kv[1])[:limit]:
+        out.append(f"{reason}x{cnt}")
+    return out
+
+
+def _log_shows_presend_drought(tail: str | None = None) -> bool:
+    text = tail if tail is not None else _feed_log_tail()
+    if not text:
+        return False
+    lines = text.splitlines()[-800:]
+    hits = 0
+    sent0 = 0
+    for line in lines:
+        low = line.lower()
+        if (
+            "presend_exhausted" in low
+            or "presend reject" in low
+            or "presend REJECT" in line
+            or "pubg_singles_presend_exhausted" in low
+        ):
+            hits += 1
+        if "pipeline done sent=0" in low:
+            sent0 += 1
+    return hits >= 1 or sent0 >= 3
+
+
+def _scan_progress_advancing(report: HangReport) -> bool:
+    """Heartbeat may be stale while ffmpeg/scan still writes the feed log."""
+    if report.log_age_sec is not None and report.log_age_sec < 180:
+        return True
+    try:
+        path = feed_log_path()
+        if path.is_file() and (_now() - path.stat().st_mtime) < 180:
+            return True
+    except OSError:
+        pass
+    tail = _feed_log_tail(max_bytes=80_000)
+    if not tail:
+        return False
+    markers = (
+        "pipeline done",
+        "scanning",
+        "presend",
+        "ffmpeg",
+        "frame=",
+        "yt-dlp",
+        "download",
+        "scan_",
+        "peak",
+    )
+    recent = tail.splitlines()[-40:]
+    return any(any(m in ln.lower() for m in markers) for ln in recent)
+
+
+def _telegram_upload_appears_stuck() -> bool:
+    """Light check: only when telegram-upload-bot unit is not active.
+
+    Quiet log while the unit is healthy is normal (bot waits for clips) and must
+    not outrank heartbeat_stuck_scanning / presend_reject_drought.
+    """
+    try:
+        import subprocess as sp
+
+        r = sp.run(
+            ["systemctl", "is-active", "telegram-upload-bot.service"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        state = (r.stdout or "").strip()
+        if r.returncode != 0 or state not in ("active",):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def classify_silence_reason(report: HangReport, *, game: str = "pubg") -> tuple[str, str]:
+    """Classify silence into actionable hang classes.
+
+    Priority: process_dead → stuck_child → heartbeat_stuck_scanning →
+    telegram_upload_stuck → presend_reject_drought → inbox_mined → true_hang.
+    """
+    if report.ok and not report.reasons:
+        return "ok", ""
+
+    reasons = list(report.reasons)
+    if not report.feed_alive:
+        return "process_dead", "feed process dead — aggressive recover"
+
+    if report.stuck_children or any(r.startswith("stuck_child_") for r in reasons):
+        child = report.stuck_children[0] if report.stuck_children else {}
+        name = str(child.get("cmd") or child.get("name") or "child")
+        return "stuck_child", f"stuck child process ({name}) — kill + recover"
+
+    hb_stuck = any(r.startswith("heartbeat_stuck_") for r in reasons)
+    if hb_stuck and _scan_progress_advancing(report):
+        return (
+            "heartbeat_stuck_scanning",
+            "heartbeat stale but scan/log still advancing — light restart only",
+        )
+
+    # Telegram stuck only when unit is actually down (never via quiet log alone).
+    try:
+        tg_stuck = _telegram_upload_appears_stuck()
+    except Exception:
+        tg_stuck = False
+    if tg_stuck and report.feed_alive and not report.stuck_children:
+        return "telegram_upload_stuck", "telegram upload bot stuck/dead"
+
+    mined_reason = any(r.startswith("mined_inbox") for r in reasons)
+    try:
+        mined_now = mined_reason or inbox_mined_out(game)
+    except Exception:
+        mined_now = mined_reason
+
+    tail = _feed_log_tail()
+    drought_log = _log_shows_presend_drought(tail)
+    # Feed alive, no stuck children, silence from gate rejects / sent=0 streak.
+    if drought_log or (
+        report.feed_alive
+        and not report.stuck_children
+        and report.zero_send_streak >= 2
+        and (report.last_send_age_sec or 0) >= 1800
+        and not mined_now
+    ):
+        tops = diagnose_top_reject_reasons(game)
+        cause = "presend/gate reject drought"
+        if tops:
+            cause = f"presend/gate reject drought: {', '.join(tops[:3])}"
+        return "presend_reject_drought", cause
+
+    if mined_now:
+        return "inbox_mined", "inbox mined / no workable VOD — harvest/unpark needed"
+
+    if reasons:
+        return "true_hang", f"true hang: {', '.join(reasons[:3])}"
+    return "unknown", "unknown silence — treat as hang"
+
+
+def _drought_backoff_sec() -> int:
+    return max(1800, int(os.environ.get("VOD_DROUGHT_BACKOFF_SEC", "2700")))
+
+
+def _read_drought_backoff() -> dict:
+    stamp = DEFAULT_DROUGHT_BACKOFF_STAMP
+    if not stamp.is_file():
+        return {}
+    try:
+        data = json.loads(stamp.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def _drought_backoff_ok() -> bool:
+    data = _read_drought_backoff()
+    if not data:
+        return True
+    try:
+        last = float(data.get("until_ts") or data.get("last_ts") or 0)
+    except (TypeError, ValueError):
+        return True
+    # Support either until_ts (absolute) or last_ts + duration.
+    if data.get("until_ts") is not None:
+        return _now() >= last
+    return (_now() - last) >= _drought_backoff_sec()
+
+
+def _mark_drought_backoff(
+    silence_class: str,
+    *,
+    owner_cause: str = "",
+    soften_once: bool = False,
+) -> None:
+    DEFAULT_DROUGHT_BACKOFF_STAMP.parent.mkdir(parents=True, exist_ok=True)
+    sec = _drought_backoff_sec()
+    now = _now()
+    prev = _read_drought_backoff()
+    payload = {
+        "last_ts": now,
+        "until_ts": now + sec,
+        "backoff_sec": sec,
+        "silence_class": silence_class,
+        "owner_cause": owner_cause,
+        "soften_once": bool(soften_once or prev.get("soften_once")),
+    }
+    DEFAULT_DROUGHT_BACKOFF_STAMP.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _drought_soften_already_used() -> bool:
+    return bool(_read_drought_backoff().get("soften_once"))
+
+
 def detect_hang() -> HangReport:
     report = HangReport(feed_alive=feed_process_alive())
     now = _now()
@@ -514,6 +765,26 @@ def detect_hang() -> HangReport:
                 report.add(f"discovery_drought_{int(report.last_send_age_sec)}s")
         except Exception:
             pass
+
+    # Classify silence so auto-heal can branch (drought vs true hang).
+    try:
+        sclass, cause = classify_silence_reason(report, game="pubg")
+        report.silence_class = sclass
+        report.owner_cause = cause
+        if sclass == "presend_reject_drought":
+            report.top_rejects = diagnose_top_reject_reasons("pubg")
+        # Heartbeat stuck while scanning is not a true hang: drop silence alarms,
+        # keep a soft marker so auto-heal can light_restart once (no drought thrash).
+        if sclass == "heartbeat_stuck_scanning":
+            report.reasons = ["heartbeat_stuck_scanning"]
+            report.ok = False
+            report.owner_cause = (
+                "heartbeat stale but scan progress advancing — light restart only"
+            )
+    except Exception:
+        if not report.ok:
+            report.silence_class = "unknown"
+            report.owner_cause = "classification failed"
 
     return report
 
@@ -1146,16 +1417,197 @@ def auto_unload_and_recover(
     Critical: always respect heal cooldown. Spamming recover every 5 minutes
     kills in-progress downloads and guarantees silence forever.
     """
-    if report.ok and not force:
+    if report.silence_class == "ok" and report.ok and not force:
         return {"action": "none", "ok": True}
+    if report.ok and not force and report.silence_class in ("ok", "heartbeat_stuck_scanning"):
+        return {
+            "action": "none",
+            "ok": True,
+            "silence_class": report.silence_class,
+            "owner_cause": report.owner_cause,
+        }
 
-    # NEVER bypass cooldown for silence — that caused the heal storm.
+    sclass = report.silence_class or "unknown"
+    if sclass == "ok" and not report.ok:
+        try:
+            sclass, cause = classify_silence_reason(report, game=game)
+            report.silence_class = sclass
+            report.owner_cause = cause
+        except Exception:
+            sclass = "unknown"
+
+    # Drought / mined: respect dedicated backoff (30–60m) instead of esc ladder.
+    if not force and sclass in DROUGHT_CLASSES and not _drought_backoff_ok():
+        left = 0
+        data = _read_drought_backoff()
+        try:
+            left = max(0, int(float(data.get("until_ts") or 0) - _now()))
+        except (TypeError, ValueError):
+            left = _drought_backoff_sec()
+        return {
+            "action": "drought_backoff",
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+            "backoff_left_sec": left,
+            "reasons": report.reasons,
+        }
+
+    # NEVER bypass cooldown for true-hang silence — that caused the heal storm.
     cooldown_sec = max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
-    if not force and not _heal_cooldown_ok(cooldown_sec):
-        return {"action": "cooldown", "reasons": report.reasons, "cooldown_sec": cooldown_sec}
+    if not force and sclass in TRUE_HANG_CLASSES and not _heal_cooldown_ok(cooldown_sec):
+        return {
+            "action": "cooldown",
+            "reasons": report.reasons,
+            "cooldown_sec": cooldown_sec,
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+        }
 
     if not force and _recover_already_running():
-        return {"action": "recover_in_progress", "reasons": report.reasons}
+        return {
+            "action": "recover_in_progress",
+            "reasons": report.reasons,
+            "silence_class": sclass,
+        }
+
+    # heartbeat_stuck_scanning: never drought-thrash. If log is fresh, stand down
+    # (do not kill in-progress ffmpeg). Only light_restart when log looks stale too.
+    if sclass == "heartbeat_stuck_scanning" and not force:
+        log_fresh = report.log_age_sec is not None and report.log_age_sec < 180
+        if log_fresh:
+            return {
+                "action": "stand_down",
+                "actions": ["hb_scan_log_fresh"],
+                "reasons": report.reasons,
+                "silence_class": sclass,
+                "owner_cause": report.owner_cause,
+            }
+        cooldown_sec = max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
+        if not _heal_cooldown_ok(cooldown_sec):
+            return {
+                "action": "cooldown",
+                "reasons": report.reasons,
+                "silence_class": sclass,
+                "owner_cause": report.owner_cause,
+                "cooldown_sec": cooldown_sec,
+            }
+        actions = ["light_restart:hb_scan"]
+        _mark_heal(
+            "light_restart_hb_scan",
+            sent=0,
+            escalation=_heal_escalation(),
+            silence_class=sclass,
+            owner_cause=report.owner_cause,
+        )
+        clear_feed_locks()
+        stop_feed_processes(game)
+        _start_systemd_feed()
+        _ensure_telegram_bot()
+        return {
+            "action": "light_restart",
+            "actions": actions,
+            "reasons": report.reasons,
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+        }
+
+    # Presend/gate reject drought: one-shot soft heal, then backoff. No esc→2 thrash.
+    if sclass == "presend_reject_drought" and not force:
+        actions: list[str] = []
+        tops = list(report.top_rejects) or diagnose_top_reject_reasons(game)
+        report.top_rejects = tops
+        unloaded = unload_stuck_inbox_vod(game, min_rejects=2)
+        if unloaded:
+            actions.append(f"unloaded_inbox={unloaded}")
+        for g in ([game] if game != "all" else list(VOD_GAMES)):
+            park_exhausted_inbox(g)
+            unparked = unpark_ready_vods(
+                g, limit=max(2, int(os.environ.get("VOD_RECOVER_UNPARK", "4")))
+            )
+            if unparked:
+                actions.append(f"unpark_{g}={unparked}")
+        soften_once = False
+        esc = min(1, _heal_escalation())
+        if not _drought_soften_already_used():
+            apply_agent_recover_env(os.environ, escalation=esc)  # type: ignore[arg-type]
+            try:
+                from vod_drought_overlay import write_drought_overlay
+
+                write_drought_overlay(os.environ)
+            except Exception:
+                pass
+            soften_once = True
+            actions.append(f"one_shot_soften_esc={esc}")
+        else:
+            actions.append("soften_already_used")
+        _mark_drought_backoff(
+            sclass, owner_cause=report.owner_cause or "", soften_once=True
+        )
+        # Do NOT bump escalation for drought.
+        _mark_heal(
+            "drought_backoff",
+            sent=0,
+            escalation=_heal_escalation(),
+            silence_class=sclass,
+            owner_cause=report.owner_cause,
+            top_rejects=tops,
+        )
+        notify_owner_ops(
+            "⚠️ VOD silence: gate/presend reject drought (не escalate thrash)\n"
+            f"Причина: {report.owner_cause or 'presend reject drought'}\n"
+            f"top_rejects: {', '.join(tops[:4]) or '—'}\n"
+            f"actions: {', '.join(actions) or '—'}\n"
+            f"Backoff {_drought_backoff_sec() // 60}м. /agent · /process · /reset"
+        )
+        return {
+            "action": "drought_backoff",
+            "actions": actions,
+            "reasons": report.reasons,
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+            "top_rejects": tops,
+            "soften_once": soften_once,
+            "escalation": _heal_escalation(),
+        }
+
+    # Inbox mined: park/unpark/alert/backoff — no escalation ladder.
+    if sclass == "inbox_mined" and not force:
+        actions = []
+        mined_marked = mark_mined_inbox_exhausted(game)
+        if mined_marked:
+            actions.append(f"mined_exhausted={','.join(mined_marked)}")
+        unloaded = unload_stuck_inbox_vod(game, min_rejects=2)
+        if unloaded:
+            actions.append(f"unloaded_inbox={unloaded}")
+        for g in ([game] if game != "all" else list(VOD_GAMES)):
+            park_exhausted_inbox(g)
+            unparked = unpark_ready_vods(
+                g, limit=max(3, int(os.environ.get("VOD_RECOVER_UNPARK", "5")))
+            )
+            if unparked:
+                actions.append(f"unpark_{g}={unparked}")
+        _mark_drought_backoff(sclass, owner_cause=report.owner_cause or "")
+        _mark_heal(
+            "inbox_mined_backoff",
+            sent=0,
+            escalation=_heal_escalation(),
+            silence_class=sclass,
+            owner_cause=report.owner_cause,
+        )
+        notify_owner_ops(
+            "⚠️ VOD inbox mined / нет рабочих VOD\n"
+            f"Причина: {report.owner_cause or 'inbox mined'}\n"
+            f"actions: {', '.join(actions) or '—'}\n"
+            f"Нужен harvest/unpark. Backoff {_drought_backoff_sec() // 60}м."
+        )
+        return {
+            "action": "inbox_mined_backoff",
+            "actions": actions,
+            "reasons": report.reasons,
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+            "escalation": _heal_escalation(),
+        }
 
     actions: list[str] = []
 
@@ -1232,7 +1684,13 @@ def auto_unload_and_recover(
             stop_feed_processes(game)
             msg = run_recover(game, force_send=True)
             sent = _parse_recover_sent(msg)
-            next_esc = 0 if sent > 0 else min(2, esc + 1)
+            # Only escalate on true-hang classes — drought/mined must not climb to esc=2.
+            if sent > 0:
+                next_esc = 0
+            elif (report.silence_class or sclass) in TRUE_HANG_CLASSES:
+                next_esc = min(2, esc + 1)
+            else:
+                next_esc = esc
             if sent > 0 and clear_drought_overlay is not None:
                 try:
                     clear_drought_overlay()
@@ -1358,18 +1816,49 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
     """Watchdog playbook: clear stale locks → heal → force-send → notify owner.
 
     Runs without owner button presses. Buttons remain as a manual override.
+    Branches on silence_class so reject drought does not thrash escalate=2.
     """
     cleared = _clear_stale_recover_lock()
     report = detect_hang()
+    sclass = getattr(report, "silence_class", None) or "ok"
     out: dict = {
         "ok": report.ok,
         "reasons": list(report.reasons),
         "last_send_age_sec": int(report.last_send_age_sec or 0),
+        "silence_class": sclass,
+        "owner_cause": getattr(report, "owner_cause", "") or "",
+        "top_rejects": list(getattr(report, "top_rejects", None) or []),
         "cleared_stale_lock": cleared,
         "ts": _now(),
     }
-    if report.ok and not force:
+    if report.ok and not force and sclass in ("ok", "heartbeat_stuck_scanning"):
         out["action"] = "healthy"
+        return out
+
+    # Drought / mined backoff gate (before true-hang cooldown).
+    if not force and sclass in DROUGHT_CLASSES and not _drought_backoff_ok():
+        data = _read_drought_backoff()
+        try:
+            left = max(0, int(float(data.get("until_ts") or 0) - _now()))
+        except (TypeError, ValueError):
+            left = _drought_backoff_sec()
+        out["action"] = "drought_backoff"
+        out["heal"] = {
+            "action": "drought_backoff",
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
+            "backoff_left_sec": left,
+            "reasons": report.reasons,
+        }
+        return out
+
+    # Non-true-hang classes: delegated branched recover (no BG agent thrash).
+    if not force and sclass not in TRUE_HANG_CLASSES:
+        heal = auto_unload_and_recover(report, game=game, force=False, background=False)
+        out["action"] = heal.get("action")
+        out["heal"] = heal
+        out["silence_class"] = heal.get("silence_class", sclass)
+        out["owner_cause"] = heal.get("owner_cause", report.owner_cause)
         return out
 
     cooldown_sec = max(900, int(os.environ.get("VOD_HEAL_COOLDOWN_SEC", "2700")))
@@ -1379,18 +1868,20 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
             "action": "cooldown",
             "reasons": report.reasons,
             "cooldown_sec": cooldown_sec,
+            "silence_class": sclass,
+            "owner_cause": report.owner_cause,
         }
         return out
 
     if not force and _recover_already_running():
-        # Live force-send / recover is the ship path — do not spawn another
-        # auto_agent_bg header every 10m (that is spectator spam, not healing).
         out["action"] = "recover_in_progress"
-        out["heal"] = {"action": "recover_in_progress", "reasons": report.reasons}
+        out["heal"] = {
+            "action": "recover_in_progress",
+            "reasons": report.reasons,
+            "silence_class": sclass,
+        }
         return out
 
-    # Prefer full agent playbook on absolute silence / force — not a silent bg recover
-    # that can die and leave a ghost lock.
     absolute = max(
         600,
         int(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400")),
@@ -1402,20 +1893,25 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
         or os.environ.get("VOD_AUTO_HANG_AGENT", "1") == "1"
     )
 
-    if use_full_agent:
+    if use_full_agent and sclass in TRUE_HANG_CLASSES:
         try:
             from telegram_owner_controls import run_hang_agent
 
-            # Background spawn so the 5-min systemd oneshot does not time out.
             if (
                 not force
                 and os.environ.get("VOD_HEAL_BACKGROUND", "1") == "1"
                 and os.environ.get("VOD_AUTO_AGENT_BG", "1") == "1"
             ):
                 if _spawn_background_agent(game):
-                    _mark_heal("auto_agent_bg", sent=0, escalation=_heal_escalation())
+                    _mark_heal(
+                        "auto_agent_bg",
+                        sent=0,
+                        escalation=_heal_escalation(),
+                        silence_class=sclass,
+                        owner_cause=report.owner_cause,
+                    )
                     out["action"] = "auto_agent_bg"
-                    out["heal"] = {"action": "auto_agent_bg"}
+                    out["heal"] = {"action": "auto_agent_bg", "silence_class": sclass}
                     maybe_silence_alert(report, heal=out["heal"])
                     return out
             msg = run_hang_agent(game)
@@ -1425,8 +1921,17 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
             m = _re.search(r"sent[=:\s]+(\d+)", msg, _re.IGNORECASE)
             if m:
                 sent = int(m.group(1))
-            esc = 0 if sent > 0 else min(2, _heal_escalation() + 1)
-            _mark_heal("auto_agent", sent=sent, escalation=esc)
+            if sent > 0:
+                esc = 0
+            else:
+                esc = min(2, _heal_escalation() + 1)
+            _mark_heal(
+                "auto_agent",
+                sent=sent,
+                escalation=esc,
+                silence_class=sclass,
+                owner_cause=report.owner_cause,
+            )
             out["action"] = "auto_agent"
             out["sent"] = sent
             out["report_tail"] = msg.splitlines()[-12:]
@@ -1444,7 +1949,13 @@ def run_autonomous_hang_agent(*, game: str = "pubg", force: bool = False) -> dic
     )
     out["action"] = heal.get("action")
     out["heal"] = heal
-    if heal.get("action") not in ("none", "cooldown", "recover_in_progress"):
+    if heal.get("action") not in (
+        "none",
+        "cooldown",
+        "recover_in_progress",
+        "drought_backoff",
+        "inbox_mined_backoff",
+    ):
         maybe_silence_alert(report, heal=heal)
     return out
 
@@ -1486,6 +1997,8 @@ def _spawn_background_agent(game: str) -> bool:
         _recover_lock_path().write_text(str(proc.pid), encoding="utf-8")
     except OSError:
         pass
+    if log_fh is not subprocess.DEVNULL:
+        proc._hang_log_fh = log_fh  # keep FD open for BG agent logs
     return True
 
 
@@ -1500,6 +2013,9 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
         "feed_alive": report.feed_alive,
         "stuck_children": len(report.stuck_children),
         "stuck_parts": len(report.stuck_parts),
+        "silence_class": getattr(report, "silence_class", "ok"),
+        "owner_cause": getattr(report, "owner_cause", "") or "",
+        "top_rejects": list(getattr(report, "top_rejects", None) or []),
         "ts": _now(),
     }
     try:
@@ -1522,6 +2038,17 @@ def run_tick(*, game: str = "pubg", force: bool = False) -> dict:
             "sent": agent.get("sent"),
             "cleared_stale_lock": agent.get("cleared_stale_lock"),
         }
+        if agent.get("silence_class"):
+            out["silence_class"] = agent.get("silence_class")
+        if agent.get("owner_cause"):
+            out["owner_cause"] = agent.get("owner_cause")
+        if agent.get("top_rejects"):
+            out["top_rejects"] = agent.get("top_rejects")
+        # Rewrite stamp with final classification / heal outcome.
+        try:
+            DEFAULT_DETECT_STAMP.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
     return out
 
 
@@ -1593,6 +2120,9 @@ def main() -> int:
                     "stuck_children": report.stuck_children,
                     "stuck_parts": report.stuck_parts,
                     "feed_alive": report.feed_alive,
+                    "silence_class": report.silence_class,
+                    "owner_cause": report.owner_cause,
+                    "top_rejects": list(report.top_rejects),
                 },
                 ensure_ascii=False,
                 indent=2,

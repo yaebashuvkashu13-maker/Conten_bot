@@ -113,6 +113,9 @@ def test_autonomous_hang_agent_spawns_on_silence(monkeypatch: pytest.MonkeyPatch
         feed_alive = True
         stuck_children: list = []
         stuck_parts: list = []
+        silence_class = "true_hang"
+        owner_cause = "true hang: absolute_silence_9000s"
+        top_rejects: list = []
 
     monkeypatch.setattr(hang, "detect_hang", lambda: _R())
     monkeypatch.setattr(hang, "_heal_cooldown_ok", lambda *_a, **_k: True)
@@ -154,6 +157,9 @@ def test_autonomous_hang_agent_stands_down_for_live_force(
         feed_alive = False
         stuck_children: list = []
         stuck_parts: list = []
+        silence_class = "true_hang"
+        owner_cause = "true hang"
+        top_rejects: list = []
 
     monkeypatch.setattr(hang, "detect_hang", lambda: _R())
     monkeypatch.setattr(hang, "_heal_cooldown_ok", lambda *_a, **_k: True)
@@ -177,6 +183,9 @@ def test_run_tick_clears_stale_lock_when_healthy(monkeypatch: pytest.MonkeyPatch
         feed_alive = True
         stuck_children: list = []
         stuck_parts: list = []
+        silence_class = "ok"
+        owner_cause = ""
+        top_rejects: list = []
 
     cleared = {"n": 0}
 
