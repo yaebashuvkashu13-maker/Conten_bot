@@ -24,6 +24,8 @@ PUBG_BRAWL_ANCHORS_BY_VOD: dict[str, list[float]] = {}
 PUBG_OWNER_REJECTED_PEAKS: dict[str, list[float]] = {
     "n97cHIR9Qow": [1845.0, 2150.0, 2470.0, 2005.0],
     "FpMs48XOnq0": [230.0, 300.0, 475.0, 790.0, 930.0, 1070.0, 1175.0, 1420.0],
+    # Owner TG 2026-09-12: беготня / ничего не происходит (fight-cluster false gun).
+    "DGsoEt9znls": [262.0, 663.0, 1030.0],
 }
 # Sniper / hold windows labeled good but unsuitable for combat склейка.
 PUBG_SNIPER_SKIP: frozenset[float] = frozenset({2005.0})

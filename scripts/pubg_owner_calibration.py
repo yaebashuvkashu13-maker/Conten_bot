@@ -30,6 +30,7 @@ DEFAULT_LABELS: dict[str, list[dict]] = {
 
 
 def _read_labels_file(path: Path) -> dict:
+    """Load per-video rows. Also fold top-level `labels` (TG feedback appends)."""
     from path_safe import exists as path_exists
 
     if not path_exists(path):
@@ -38,9 +39,45 @@ def _read_labels_file(path: Path) -> dict:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
-    if isinstance(payload.get("videos"), dict):
-        return payload["videos"]
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    videos: dict[str, list[dict]] = {}
+    raw_videos = payload.get("videos")
+    if isinstance(raw_videos, dict):
+        for vid, rows in raw_videos.items():
+            if isinstance(rows, list):
+                videos[str(vid)] = [r for r in rows if isinstance(r, dict)]
+    # Flat feedback rows (owner_tg_feedback) must feed the same map gates read.
+    flat = payload.get("labels")
+    if isinstance(flat, list):
+        for row in flat:
+            if not isinstance(row, dict):
+                continue
+            vid = str(row.get("video_id") or row.get("vid") or "").strip()
+            if not vid:
+                vod = str(row.get("vod") or "")
+                stem = Path(vod).stem
+                if stem.startswith("yt_") and len(stem) > 3:
+                    vid = stem[3:]
+            if not vid:
+                continue
+            entry = dict(row)
+            if "time_sec" not in entry and entry.get("t") is not None:
+                try:
+                    entry["time_sec"] = float(entry["t"])
+                except (TypeError, ValueError):
+                    continue
+            videos.setdefault(vid, []).append(entry)
+    if videos:
+        return videos
+    # Legacy: whole file is {video_id: [rows]}
+    if "videos" not in payload and "labels" not in payload:
+        return {
+            str(k): [r for r in v if isinstance(r, dict)]
+            for k, v in payload.items()
+            if isinstance(v, list)
+        }
+    return {}
 
 
 def load_owner_labels() -> dict[str, list[dict]]:
