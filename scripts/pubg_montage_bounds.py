@@ -24,7 +24,8 @@ def clip_pre_shoot_sec() -> float:
     return float(
         os.environ.get(
             "PUBG_CLIP_PRE_SHOOT_SEC",
-            os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "1.5"),
+            # Short lead-in: less sprint-to-fight padding before first gunfire.
+            os.environ.get("PUBG_OWNER_CLIP_PRE_SHOOT_SEC", "1.0"),
         )
     )
 
@@ -33,7 +34,8 @@ def clip_post_kill_sec() -> float:
     return float(
         os.environ.get(
             "PUBG_CLIP_POST_KILL_SEC",
-            os.environ.get("PUBG_OWNER_POST_KILL_SEC", "5.0"),
+            # Cut loot/run tails sooner after the kill.
+            os.environ.get("PUBG_OWNER_POST_KILL_SEC", "3.0"),
         )
     )
 

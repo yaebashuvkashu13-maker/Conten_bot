@@ -62,7 +62,8 @@ REASON_THRESHOLDS: dict[str, ReasonThresholds] = {
     "loot_run": ReasonThresholds(
         gun_density_min=0.090,
         burst_ratio_min=7.5,
-        motion_max=0.10,
+        # Stricter locomotion ceiling so kill windows with long run-ups get cut/rejected.
+        motion_max=0.08,
         menu_overlay_max=0.30,
         visual_min=0.32,
         hook_gun_min=0.05,

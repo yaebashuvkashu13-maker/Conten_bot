@@ -1243,16 +1243,12 @@ def _clear_stale_recover_lock() -> bool:
 
 
 def _owner_ops_markup() -> dict | None:
-    try:
-        from telegram_owner_controls import owner_controls_keyboard
-
-        return owner_controls_keyboard()
-    except Exception:
-        return None
+    # Ops pad disabled — owner calls /agent /process /recover /send /reset when needed.
+    return None
 
 
 def notify_owner_ops(text: str) -> bool:
-    """Telegram notify with inline ops keyboard (agent / recover / send)."""
+    """Telegram notify without inline ops keyboard (commands-only)."""
     markup = _owner_ops_markup()
     try:
         from vod_telegram_env import send_message

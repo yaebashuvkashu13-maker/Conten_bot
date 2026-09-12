@@ -459,10 +459,10 @@ def send_owner_controls(
     chat_id: str | int,
     text: str,
     *,
-    with_inline: bool = True,
+    with_inline: bool = False,
     with_reply_keyboard: bool = False,
 ):
-    """Owner ops reply with actionable inline keyboard (and optional persistent pad)."""
+    """Owner ops reply. Keyboards off by default — invoke via /agent /process /recover /send /reset."""
     markup = None
     if with_inline:
         try:
@@ -3219,10 +3219,10 @@ def handle_message(message: dict):
                     'YouTube / Shorts: ссылка или /yt <url> → /make.\n'
                     'Реклама: /ad → фото → /ad_done. Водяной знак: /wm → фото → /wm_done.'
                 )
-            send_owner_controls(
+            # No persistent ops pad — commands only (/agent /process /recover /send /reset).
+            remove_owner_reply_keyboard(
                 chat_id,
-                start_text,
-                with_reply_keyboard=True,
+                start_text + '\n\nКоманды: /agent · /process · /recover · /send · /reset',
             )
             return
         if is_pubg_chat(chat_id):
@@ -3462,7 +3462,7 @@ def handle_message(message: dict):
             ping_text += (
                 '\n\nАвтоагент следит сам. Ручной форс: /agent · /process · /recover · /send · /reset'
             )
-            send_owner_controls(chat_id, ping_text, with_reply_keyboard=True)
+            remove_owner_reply_keyboard(chat_id, ping_text)
         else:
             send_message(chat_id, ping_text)
         return
