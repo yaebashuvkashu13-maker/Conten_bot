@@ -194,9 +194,12 @@ def _fit_window_to_gunfire_span(
         float(timeline[last_gun]["start"]) + sample + finale_tail,
     )
     if fight_end - fight_start < min_duration:
+        # Prefer padding INTO pre-fight, not post-gun loot/run (owner 👎 loot_run).
         pad = min_duration - (fight_end - fight_start)
-        fight_start = max(0.0, fight_start - pad * 0.12)
-        fight_end = min(file_duration, fight_end + pad * 0.88)
+        back = float(os.environ.get("PUBG_SEGMENT_MIN_PAD_BACK_FRAC", "0.75"))
+        back = min(0.95, max(0.50, back))
+        fight_start = max(0.0, fight_start - pad * back)
+        fight_end = min(file_duration, fight_end + pad * (1.0 - back))
 
     start = fight_start
     end = fight_end
@@ -277,7 +280,8 @@ def _extend_right_through_payoff(
 ) -> int:
     """Kill notifications often fire before sustained gunfire — extend past quiet gaps."""
     del active_min  # extend on gun, not score
-    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "10"))
+    # Was 10s of forced quiet after peak → shipped loot/run. Keep a short settle only.
+    min_post = float(os.environ.get("PUBG_SEGMENT_MIN_POST_PEAK_SEC", "3.5"))
     forward_quiet = max(2, int(os.environ.get("PUBG_SEGMENT_FORWARD_QUIET_BINS", "3")))
     anchor = max(float(peak_sec), float(kill_sec) if kill_sec is not None else float(peak_sec))
     target_end = anchor + min_post
@@ -306,8 +310,8 @@ def _extend_right_through_payoff(
             quiet += 1
             if quiet > forward_quiet:
                 break
-            if t <= target_end:
-                extended = index
+            # Do NOT fill quiet bins out to target_end — that forced loot/run pad.
+            # Only bridge short gaps between gun bursts (handled by forward_quiet).
     return extended
 
 
@@ -501,8 +505,10 @@ def resolve_pubg_fight_bounds(
             end = max(start + min_duration, trim_end)
     if end - start < min_duration:
         need = min_duration - (end - start)
-        start = max(0.0, start - need * 0.15)
-        end = min(file_duration, end + need * 0.85)
+        back = float(os.environ.get("PUBG_SEGMENT_MIN_PAD_BACK_FRAC", "0.75"))
+        back = min(0.95, max(0.50, back))
+        start = max(0.0, start - need * back)
+        end = min(file_duration, end + need * (1.0 - back))
     start, end = _rebalance_backloaded_window(
         start,
         end,

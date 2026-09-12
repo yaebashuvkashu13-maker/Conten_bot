@@ -40,7 +40,7 @@ def test_accept_tight_gunfight():
         {
             "shooting_start": 386.0,
             "kill_sec": 392.0,
-            "fight_end": 394.0,
+            "fight_end": 398.0,
             "timeline": [
                 {"start": 384.0, "gun": 0.04, "score": 0.5},
                 {"start": 386.0, "gun": 0.08, "score": 0.7},

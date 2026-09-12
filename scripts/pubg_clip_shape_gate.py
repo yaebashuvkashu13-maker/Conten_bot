@@ -17,7 +17,7 @@ def max_peak_position_frac() -> float:
 
 
 def min_gunfire_coverage_frac() -> float:
-    return float(os.environ.get("PUBG_CLIP_MIN_GUN_COVERAGE", "0.28"))
+    return float(os.environ.get("PUBG_CLIP_MIN_GUN_COVERAGE", "0.42"))
 
 
 def validate_clip_fight_shape(
@@ -49,8 +49,13 @@ def validate_clip_fight_shape(
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     if fight_end is not None:
         tail = start_f + dur_f - float(fight_end)
-        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "6.0")):
+        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "3.5")):
             return False, f"loot_tail tail={tail:.1f}s"
+
+    # Head/tail run: even if the fight core is hot, lead/tail sprint looks like loot_run.
+    ht_reason = _head_tail_run_reason(report, start_f, dur_f)
+    if ht_reason:
+        return False, ht_reason
 
     coverage = _gunfire_coverage(report, start_f, dur_f)
     if coverage is not None and 0.0 < coverage < min_gunfire_coverage_frac():
@@ -68,6 +73,50 @@ def validate_clip_fight_shape(
     return True, "fight_shape_ok"
 
 
+
+def _head_tail_run_reason(
+    report: dict[str, Any],
+    start: float,
+    dur: float,
+) -> str | None:
+    """Reject clips whose first/last seconds are quiet run while the middle is the fight."""
+    timeline = report.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return None
+    edge = float(os.environ.get("PUBG_CLIP_EDGE_RUN_SEC", "3.5"))
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
+    max_edge_gun = float(os.environ.get("PUBG_CLIP_EDGE_MAX_GUN", "0.018"))
+    if dur < edge * 2.5:
+        return None
+    end = start + dur
+    head_end = start + edge
+    tail_start = end - edge
+
+    def _avg_gun(a: float, b: float) -> float | None:
+        vals: list[float] = []
+        for row in timeline:
+            try:
+                t = float(row.get("start", 0))
+            except (TypeError, ValueError):
+                continue
+            if a <= t < b:
+                vals.append(float(row.get("gun", 0.0) or 0.0))
+        if not vals:
+            return None
+        return sum(vals) / len(vals)
+
+    head = _avg_gun(start, head_end)
+    tail = _avg_gun(tail_start, end)
+    mid = _avg_gun(head_end, tail_start)
+    if mid is None or mid < gun_min:
+        return None
+    if head is not None and head <= max_edge_gun and mid >= gun_min * 1.5:
+        return f"head_run gun={head:.3f}"
+    if tail is not None and tail <= max_edge_gun and mid >= gun_min * 1.5:
+        return f"tail_run gun={tail:.3f}"
+    return None
+
+
 def _gunfire_coverage(
     report: dict[str, Any],
     start: float,
@@ -78,7 +127,6 @@ def _gunfire_coverage(
         return None
     step = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
-    active_min = float(os.environ.get("PUBG_SEGMENT_ACTIVITY_MIN", "0.34"))
     end = start + dur
     gun_bins = 0
     total_bins = 0
@@ -87,7 +135,8 @@ def _gunfire_coverage(
         if t + step < start or t > end:
             continue
         total_bins += 1
-        if float(row.get("gun", 0.0) or 0.0) >= gun_min or float(row.get("score", 0.0) or 0.0) >= active_min:
+        # Gun-only — loud loot/run score must not inflate coverage.
+        if float(row.get("gun", 0.0) or 0.0) >= gun_min:
             gun_bins += 1
     if total_bins <= 0:
         return None

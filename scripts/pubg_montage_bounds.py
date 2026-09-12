@@ -42,7 +42,7 @@ def clip_post_kill_sec() -> float:
 
 def assemble_gun_pad_sec() -> float:
     """Padding before/after sustained gunfire when owner assembles 👍 singles."""
-    return float(os.environ.get("PUBG_ASSEMBLE_GUN_PAD_SEC", "4.0"))
+    return float(os.environ.get("PUBG_ASSEMBLE_GUN_PAD_SEC", "2.0"))
 
 
 def fight_bounds(
@@ -194,6 +194,58 @@ def extend_end_past_active_gunfire(
     return float(start_f), float(new_dur)
 
 
+
+def trim_quiet_run_edges(
+    start: float,
+    dur: float,
+    report: dict[str, Any],
+    *,
+    max_dur: float | None = None,
+) -> tuple[float, float]:
+    """Drop quiet run lead/tail so shipped clips are gunfight-only.
+
+    Owner 👎 loot_run often came from min-duration padding and post-peak quiet,
+    not from the fight core. Trim edges when timeline gun is cold.
+    """
+    timeline = report.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return float(start), float(dur)
+    gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
+    edge = float(os.environ.get("PUBG_CLIP_TRIM_EDGE_SEC", "2.0"))
+    keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", os.environ.get("PUBG_OWNER_PRE_SHOOT_SEC", "1.0")))
+    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", os.environ.get("PUBG_OWNER_POST_KILL_SEC", "2.0")))
+    start_f = float(start)
+    end_f = start_f + float(dur)
+    rows = []
+    for row in timeline:
+        try:
+            t = float(row["start"])
+            g = float(row.get("gun", 0.0) or 0.0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start_f - 1.0 <= t <= end_f + 1.0:
+            rows.append((t, g))
+    if not rows:
+        return start_f, float(dur)
+    hot = [t for t, g in rows if g >= gun_min]
+    if not hot:
+        return start_f, float(dur)
+    first_hot = min(hot)
+    last_hot = max(hot)
+    bin_sec = float(os.environ.get("PUBG_SEGMENT_BIN_SEC", "2"))
+    new_start = max(start_f, first_hot - keep_pre)
+    new_end = min(end_f, last_hot + bin_sec + keep_post)
+    # Only trim when we actually remove cold edge (avoid no-op jitter).
+    if new_start > start_f + 0.4:
+        start_f = new_start
+    if end_f - new_end > edge * 0.5:
+        end_f = max(start_f + 6.0, new_end)
+    new_dur = max(6.0, end_f - start_f)
+    if max_dur is not None:
+        new_dur = min(new_dur, float(max_dur))
+    return float(start_f), float(new_dur)
+
+
 def tighten_pubg_clip_bounds(
     start: float,
     dur: float,
@@ -321,6 +373,7 @@ def tighten_pubg_clip_bounds(
     start, dur = extend_end_past_active_gunfire(
         start, dur, report, max_dur=max_dur, single=single
     )
+    start, dur = trim_quiet_run_edges(start, dur, report, max_dur=max_dur)
     dur = min(float(dur), float(max_dur))
     return float(start), float(dur)
 
