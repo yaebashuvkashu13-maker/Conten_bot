@@ -786,12 +786,19 @@ def apply_agent_recover_env(
     target["VOD_CASCADE_FAST_RANKER_MAX"] = "0"
     target["CHEAP_CASCADE_TOP_K"] = "0"
     target["CHEAP_CASCADE_HEAVY_TOP"] = "0"
-    # Contiguous dense grid — no 40s probe skips / hard max truncation.
+    # Contiguous dense grid with a hard offset cap — unlimited grids starve sends.
     target["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
         "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1.5"
     )
-    target["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
-    target["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"
+    target["SHOOTER_VOD_DENSE_PROBE_MAX"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_MAX", "480"
+    )
+    target["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_HARD_MAX", "480"
+    )
+    target["SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_DEADLINE_SEC", "180"
+    )
     target["SHOOTER_VOD_FAST_SKIP_INTRO"] = os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "0")
     target["SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC"] = os.environ.get(
         "SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1"

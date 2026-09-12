@@ -516,12 +516,13 @@ def resolve_owner_neighborhood_bounds(
     # Reload / peek gaps are often 3–5s; require a longer quiet before ending.
     quiet_need = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_SEC", "6.0"))
     look_ahead = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_LOOKAHEAD_SEC", "10.0"))
-    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "110"))
-    min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "35"))
+    # Defaults trimmed so near-👍 windows ship fight, not long run/loot pads.
+    max_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "55"))
+    min_dur = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "28"))
     # Extra room past max_dur only to land on quiet instead of mid-burst.
-    quiet_grace = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "25"))
-    pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "2.5"))
-    pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "4.0"))
+    quiet_grace = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_QUIET_GRACE_SEC", "8"))
+    pad_before = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_BEFORE_SEC", "1.5"))
+    pad_after = float(os.environ.get("PUBG_OWNER_NEIGHBORHOOD_PAD_AFTER_SEC", "3.0"))
     step = 3.0
     peak_v = float(peak)
     probe_cache: dict[int, dict] = {}

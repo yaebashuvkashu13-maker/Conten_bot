@@ -1970,6 +1970,50 @@ def _send_batch(
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("genshin full-fight expand failed: %s — keep peak window", exc)
+        # Pre-render quality gate: reject weak windows before expensive encode.
+        # Owner-neighborhood locks previously burned minutes then failed quality_low.
+        if (
+            game == "pubg"
+            and os.environ.get("PUBG_PRESEND_SOURCE_QUALITY_CHECK", "1") == "1"
+        ):
+            clip_start = float(clip.get("start") or row.get("start") or 0.0)
+            clip_dur = float(
+                clip.get("input_duration")
+                or clip.get("duration")
+                or row.get("duration")
+                or 0.0
+            )
+            if clip_dur >= 8.0:
+                try:
+                    from pubg_quality_score import score_pubg_window
+
+                    q_ok, q_reason, q_report = score_pubg_window(
+                        vod, clip_start, clip_dur, single=True, use_cache=True
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "pre-render quality check error sid=%s: %s — continue to encode",
+                        sid,
+                        exc,
+                    )
+                    q_ok, q_reason, q_report = True, "", {}
+                if not q_ok:
+                    log.warning(
+                        "pre-render quality REJECT %s start=%.1f dur=%.1f: %s",
+                        sid,
+                        clip_start,
+                        clip_dur,
+                        q_reason,
+                    )
+                    _ledger_record_decision(
+                        game,
+                        vod=vod,
+                        row=row,
+                        decision="reject",
+                        reason=f"pre_render:{q_reason}",
+                        metrics=q_report if isinstance(q_report, dict) else {},
+                    )
+                    continue
         out = seg_root / f"seg_{sid}.mp4"
         if not render_single_segment(vod, clip, out):
             continue

@@ -315,12 +315,20 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     env["VOD_CASCADE_FAST_RANKER_MAX"] = "0"
     env["CHEAP_CASCADE_TOP_K"] = "0"
     env["CHEAP_CASCADE_HEAVY_TOP"] = "0"
-    # Contiguous dense grid — no 40s probe skips / hard max truncation.
+    # Contiguous dense grid — keep step tight, but CAP offsets under drought.
+    # Unlimited (0) burned 2700+ probes on long VODs and timed out with 0 sends.
     env["SHOOTER_VOD_DENSE_PROBE_STEP_SEC"] = os.environ.get(
         "SHOOTER_VOD_DENSE_PROBE_STEP_SEC", "1.5"
     )
-    env["SHOOTER_VOD_DENSE_PROBE_MAX"] = "0"
-    env["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = "0"
+    env["SHOOTER_VOD_DENSE_PROBE_MAX"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_MAX", "480"
+    )
+    env["SHOOTER_VOD_DENSE_PROBE_HARD_MAX"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_HARD_MAX", "480"
+    )
+    env["SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC"] = os.environ.get(
+        "VOD_FORCE_DENSE_PROBE_DEADLINE_SEC", "180"
+    )
     env["SHOOTER_VOD_FAST_SKIP_INTRO"] = os.environ.get("SHOOTER_VOD_FAST_SKIP_INTRO", "0")
     env["SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC"] = os.environ.get(
         "SHOOTER_VOD_AUDIO_CANDIDATE_GAP_SEC", "1"

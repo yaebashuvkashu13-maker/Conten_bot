@@ -312,6 +312,10 @@ def _dense_offsets(duration: float, *, skip_intro: float, probe_pass: int = 0) -
             cap = min(cap, raw_max)
         if raw_hard > 0:
             cap = min(cap, raw_hard)
+        # When capped below full coverage, widen step so probes span the whole VOD
+        # instead of only scanning the first N*step seconds (silence + timeout trap).
+        if cap > 1 and need > cap:
+            step = max(step, (end - skip_intro) / float(max(cap - 1, 1)))
         # Optional micro-phase still stays within one step (no large holes).
         phase = 0.0
         if probe_pass > 0:
