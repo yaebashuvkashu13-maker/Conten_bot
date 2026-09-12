@@ -473,7 +473,20 @@ def detect_hang() -> HangReport:
             report.add(f"log_stuck_{int(report.log_age_sec)}s")
 
     if report.stuck_children:
-        report.add(f"stuck_child_{report.stuck_children[0]['age_sec']}s")
+        hb_age = report.heartbeat_age_sec
+        encode_stuck = max(1800, int(os.environ.get("VOD_ENCODE_STUCK_SEC", "1800")))
+        working_scan = (
+            report.feed_alive
+            and hb_age is not None
+            and hb_age < progress_stuck
+        )
+        oldest = int(report.stuck_children[0]["age_sec"])
+        # Live dense probe / ffmpeg cut with a fresh heartbeat is work, not a hang.
+        # Only heal when encode/download is extremely old or the feed is silent.
+        if working_scan and oldest < encode_stuck:
+            pass
+        else:
+            report.add(f"stuck_child_{oldest}s")
 
     if report.stuck_parts:
         report.add(f"stuck_part_{len(report.stuck_parts)}")

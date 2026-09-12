@@ -3142,6 +3142,7 @@ def handle_message(message: dict):
         from telegram_owner_controls import (
             format_process_report,
             is_hang_agent_command,
+            is_more_clips_command,
             is_process_command,
             is_recover_command,
             is_reset_command,
@@ -3164,6 +3165,10 @@ def handle_message(message: dict):
         if is_send_now_command(text) or cmd in ('/send', '/отправить', '/sendnow'):
             send_owner_controls(chat_id, '📤 Отправка запущена — один цикл feed…')
             _schedule_owner_send_now(chat_id, 'all')
+            return
+        if is_more_clips_command(text):
+            send_owner_controls(chat_id, '📤 Ещё клип — ищу перестрелку, не беготню и не меню…')
+            _schedule_owner_send_now(chat_id, 'pubg')
             return
         if is_recover_command(text) or cmd == '/recover':
             try:
@@ -3188,8 +3193,11 @@ def handle_message(message: dict):
 
     # YouTube / Shorts — сразу, до остальных команд (кроме явных /команд)
     if not (text.startswith('/') or caption.startswith('/')):
-        if try_youtube_ingest(chat_id, message):
-            return
+        try:
+            if try_youtube_ingest(chat_id, message):
+                return
+        except Exception:
+            logging.exception('youtube ingest failed chat=%s', chat_id)
 
     if cmd == '/start' or text.startswith('/start'):
         if is_owner(chat_id):
@@ -3479,7 +3487,11 @@ def handle_message(message: dict):
             )
             return
         fake_msg = {'text': yt_urls[0]}
-        try_youtube_ingest(chat_id, fake_msg)
+        try:
+            try_youtube_ingest(chat_id, fake_msg)
+        except Exception:
+            logging.exception('youtube ingest /yt failed chat=%s', chat_id)
+            send_message(chat_id, '❌ YouTube ingest упал — пришлите ссылку ещё раз.')
         return
     if cmd in ('/ig_cookies', '/ig_cookie', '/instagram_cookies'):
         if not is_owner(chat_id):
