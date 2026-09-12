@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=oneshot
 Nice=10
 EnvironmentFile=-/root/.video_bot.env
+# Drought soften overlay — load AFTER steady pins (same as feed unit).
+EnvironmentFile=-/root/.video_bot.drought.env
 Environment=CONTENT_BOT_REPO=/root/content_bot_ml
 Environment=PYTHONPATH=/root/content_bot_ml/scripts:/usr/local/bin
 Environment=VOD_FEED_ALLOW_NOHUP=0

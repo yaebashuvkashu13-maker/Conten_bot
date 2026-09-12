@@ -110,15 +110,6 @@ def _drought_floor_cap(current: float, *env_keys: str) -> float:
     Also honor PUBG_DROUGHT_ELASTICITY_ACTIVE: adaptive_env runs elasticity then
     apply_to_environ — without this cap, BASE gun (0.07) wiped elastic 0.03 floors.
     """
-    soften = os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
-    elastic = os.environ.get("PUBG_DROUGHT_ELASTICITY_ACTIVE", "0") == "1"
-    try:
-        esc = int(os.environ.get("VOD_FORCE_ESCALATION", "0") or 0)
-    except ValueError:
-        esc = 0
-    # Always collect softer env floors; apply when drought/elasticity is engaged.
-    # Outside drought, still never *raise* past an already-lower live env value
-    # (elasticity may have just written it in the same adaptive_env tick).
     floor = float(current)
     saw = False
     for key in env_keys:
@@ -133,10 +124,9 @@ def _drought_floor_cap(current: float, *env_keys: str) -> float:
         saw = True
     if not saw:
         return current
-    # Steady-state: BASE may overwrite stale soft env. Drought/elasticity: never raise.
-    if soften or elastic or esc > 0:
-        return floor
-    return current
+    # Never raise above live env floors (owner calib / drought / elasticity).
+    # Returning BASE here wiped Metro owner gun 0.032 back to 0.07 → zero-send.
+    return floor
 
 
 def apply_to_environ(game: str) -> dict[str, float]:

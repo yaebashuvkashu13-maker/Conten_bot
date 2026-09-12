@@ -38,7 +38,30 @@ def _notify_switch(token: str, chat_id: str, game: str) -> None:
 
 
 def _load_runtime_env() -> dict[str, str]:
-    env = {**os.environ, **load_env(ENV_PATH)}
+    """Merge steady env with drought overlay without clobbering soften.
+
+    systemd loads ``.video_bot.drought.env`` *after* ``.video_bot.env``, but this
+    runner used to ``os.environ.update(load_env(steady))`` and wipe SOFTEN=1
+    before spawning the feed — every normal tick undid drought resume.
+    """
+    from vod_drought_overlay import OVERLAY_KEYS, drought_overlay_active, overlay_path
+
+    file_env = load_env(ENV_PATH)
+    env = {**os.environ, **file_env}
+    # Overlay file is authoritative for drought keys (same order as systemd:
+    # steady EnvironmentFile, then drought EnvironmentFile). Do not prefer
+    # stale process values over the overlay file — that re-raised quality/gun
+    # floors and wiped kill unlocks after heal.
+    overlay = load_env(overlay_path()) if overlay_path().is_file() else {}
+    if overlay:
+        env.update(overlay)
+    if drought_overlay_active() or env.get("VOD_FORCE_SOFTEN") == "1" or overlay.get(
+        "VOD_FORCE_SOFTEN"
+    ) == "1":
+        for key in OVERLAY_KEYS:
+            if key in overlay and str(overlay.get(key, "")).strip() != "":
+                env[key] = overlay[key]
+        env["VOD_FORCE_SOFTEN"] = "1"
     os.environ.update(env)
     return env
 

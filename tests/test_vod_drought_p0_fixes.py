@@ -32,7 +32,7 @@ def test_drought_honors_ops_skip_before_absolute_silence(monkeypatch: pytest.Mon
     from vod_force_send import apply_drought_pubg_env
 
     monkeypatch.setenv("SHOOTER_VOD_SKIP_DISCOVERY", "1")
-    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "5400")
     with patch("vod_hang_detector.last_send_age_sec", return_value=3600.0):
         env = apply_drought_pubg_env({}, escalation=2)
     assert env["SHOOTER_VOD_SKIP_DISCOVERY"] == "1"
@@ -43,7 +43,7 @@ def test_drought_clears_ops_skip_after_absolute_silence(monkeypatch: pytest.Monk
     from vod_force_send import apply_drought_pubg_env
 
     monkeypatch.setenv("SHOOTER_VOD_SKIP_DISCOVERY", "1")
-    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "10800")
+    monkeypatch.setenv("VOD_ABSOLUTE_SILENCE_SEC", "5400")
     with patch("vod_hang_detector.last_send_age_sec", return_value=12000.0):
         env = apply_drought_pubg_env({}, escalation=2)
     assert env["SHOOTER_VOD_SKIP_DISCOVERY"] == "0"
@@ -171,3 +171,97 @@ def test_force_send_pythonpath_repo_first() -> None:
 
     src = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text()
     assert '[scripts_path, local_bin, *parts]' in src or 'scripts_path, local_bin' in src
+
+
+def test_esc2_hard_unlocks_kill_gates_despite_deploy_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deploy pins REQUIRE_*=1; esc2 must hard-assign unlock (not get(pin))."""
+    from vod_force_send import apply_drought_pubg_env
+    from vod_hang_detector import apply_agent_recover_env
+
+    monkeypatch.setattr("vod_hang_detector.last_send_age_sec", lambda: 9000.0)
+    for key, val in (
+        ("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "1"),
+        ("PUBG_REQUIRE_AUTHOR_KILL", "1"),
+        ("PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "1"),
+        ("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0"),
+        ("PUBG_OWNER_GOOD_TRUST_NO_KILL", "0"),
+        ("PUBG_DISLIKE_LOOT_FLOOR_LOCK", "1"),
+    ):
+        monkeypatch.setenv(key, val)
+    force = apply_drought_pubg_env({}, escalation=2)
+    hang = apply_agent_recover_env({}, escalation=2)
+    for env in (force, hang):
+        assert env["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] == "0"
+        assert env["PUBG_REQUIRE_AUTHOR_KILL"] == "0"
+        assert env["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] == "0"
+        assert env["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] == "1"
+        assert env["PUBG_OWNER_GOOD_TRUST_NO_KILL"] == "1"
+        assert env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] == "0"
+
+
+def test_daily_cycle_runner_preserves_drought_overlay(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_drought_overlay import write_drought_overlay
+    import daily_cycle_runner as dcr
+
+    steady = tmp_path / "steady.env"
+    drought = tmp_path / "drought.env"
+    steady.write_text("VOD_FORCE_SOFTEN=0\nPUBG_QUALITY_SCORE_MIN_SINGLES=0.40\n", encoding="utf-8")
+    monkeypatch.setenv("VOD_DROUGHT_ENV_FILE", str(drought))
+    monkeypatch.setattr(dcr, "ENV_PATH", steady)
+    write_drought_overlay(
+        {
+            "VOD_FORCE_SOFTEN": "1",
+            "PUBG_QUALITY_SCORE_MIN_SINGLES": "0.20",
+            "PUBG_REQUIRE_AUTHOR_KILL_SINGLES": "0",
+        }
+    )
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    env = dcr._load_runtime_env()
+    assert env["VOD_FORCE_SOFTEN"] == "1"
+    assert float(env["PUBG_QUALITY_SCORE_MIN_SINGLES"]) == 0.20
+
+
+def test_isolate_drought_inbox_noop_when_prefer_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vod_hang_detector import isolate_drought_inbox
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "yt_AAAAAAAAAAA.mp4").write_bytes(b"x")
+    monkeypatch.setenv("VOD_DROUGHT_PREFER_IDS", "zRQC8jkxbXQ")
+
+    class _Spec:
+        def inbox(self):
+            return inbox
+
+    monkeypatch.setattr("vod_hang_detector.spec", lambda game: _Spec())
+    moved = isolate_drought_inbox("pubg")
+    assert moved == []
+    assert (inbox / "yt_AAAAAAAAAAA.mp4").is_file()
+    assert not (inbox / "parked").exists() or not any((inbox / "parked").iterdir())
+
+
+def test_force_send_hold_defaults_off() -> None:
+    src = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text()
+    assert 'VOD_RECOVER_HOLD_SYSTEMD", "0"' in src or "VOD_RECOVER_HOLD_SYSTEMD', '0'" in src
+
+
+def test_absolute_silence_default_is_5400() -> None:
+    force = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_force_send.py").read_text()
+    hang = Path(__file__).resolve().parents[1].joinpath("scripts", "vod_hang_detector.py").read_text()
+    assert 'VOD_ABSOLUTE_SILENCE_SEC", "5400"' in force
+    assert 'VOD_ABSOLUTE_SILENCE_SEC", "5400"' in hang
+    assert 'VOD_ABSOLUTE_SILENCE_SEC", "10800"' not in force
+    assert 'VOD_ABSOLUTE_SILENCE_SEC", "10800"' not in hang
+
+
+def test_overlay_includes_kill_unlock_keys() -> None:
+    from vod_drought_overlay import OVERLAY_KEYS
+
+    for key in (
+        "PUBG_REQUIRE_AUTHOR_KILL_SINGLES",
+        "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE",
+        "PUBG_COMBAT_ACT_ALLOW_NO_KILL",
+        "PUBG_RELAX_OWNER_HEURISTICS",
+        "VOD_PUBG_QUALITY_STRICT",
+    ):
+        assert key in OVERLAY_KEYS

@@ -480,7 +480,7 @@ def resolve_pubg_fight_bounds(
             if float(row["start"]) >= float(kill_sec) - 1.0
         ]
         saw_gunfire_after_kill = any(
-            float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= active_min
+            float(row.get("gun", 0.0)) >= 0.020
             for row in post_kill
         )
         if saw_gunfire_after_kill:
@@ -488,7 +488,7 @@ def resolve_pubg_fight_bounds(
             trim_end = end
             seen_gun = False
             for row in post_kill:
-                if float(row.get("gun", 0.0)) >= 0.020 or float(row.get("score", 0.0)) >= active_min:
+                if float(row.get("gun", 0.0)) >= 0.020:
                     seen_gun = True
                     quiet_after = 0
                     continue

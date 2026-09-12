@@ -374,31 +374,35 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     # Unlock dislike gun soften at every drought esc (lock froze gun at 0.09 while
     # shoot floors were 0.03 → reason_low_gun after encode). Loot/menu hard rejects
     # stay ON via PUBG_REJECT_LOOT_WALK / HARD_REJECT_MENU.
+    # Hard-assign — deploy may pin LOOT_FLOOR_LOCK=1; get(pin,"0") would keep lock.
     env["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
-        "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        "VOD_FORCE_DISLIKE_LOOT_FLOOR_LOCK", "0"
     )
     if escalation >= 2:
+        # Hard-assign drought unlocks. Deploy pins REQUIRE_AUTHOR_KILL_SINGLES=1 etc.;
+        # os.environ.get(key, "0") returned the pin and left OCR-blind fights dead.
+        # Ops can re-strict via VOD_FORCE_* overrides only.
         env["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
-            "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
+            "VOD_FORCE_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
-        # File env / owner calibration pin SINGLES kill require=1; under multi-hour
-        # silence that rejects every OCR-blind fight (hard_no_author_kill).
         env["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] = os.environ.get(
-            "PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0"
+            "VOD_FORCE_REQUIRE_AUTHOR_KILL_SINGLES", "0"
         )
-        env["PUBG_REQUIRE_AUTHOR_KILL"] = os.environ.get("PUBG_REQUIRE_AUTHOR_KILL", "0")
+        env["PUBG_REQUIRE_AUTHOR_KILL"] = os.environ.get(
+            "VOD_FORCE_REQUIRE_AUTHOR_KILL", "0"
+        )
         env["SHOOTER_REQUIRE_AUTHOR_KILL"] = os.environ.get(
-            "SHOOTER_REQUIRE_AUTHOR_KILL", "0"
+            "VOD_FORCE_SHOOTER_REQUIRE_AUTHOR_KILL", "0"
         )
         env["PUBG_OWNER_GOOD_TRUST_NO_KILL"] = os.environ.get(
-            "PUBG_OWNER_GOOD_TRUST_NO_KILL", "1"
+            "VOD_FORCE_OWNER_GOOD_TRUST_NO_KILL", "1"
         )
         env["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
-            "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
+            "VOD_FORCE_COMBAT_ACT_ALLOW_NO_KILL", "1"
         )
         # Already-sent 👍 zones are style-avoided; under drought we still need
         # near-👍 neighbors, not only leftover loot peaks.
-        env["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("PUBG_STYLE_AVOID_ENABLE", "0")
+        env["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("VOD_FORCE_STYLE_AVOID_ENABLE", "0")
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     env["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
@@ -412,10 +416,11 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
         "VOD_FORCE_MAX_SENDS_PER_CYCLE", "0"
     )
     # Honor ops-pinned SKIP_DISCOVERY while silence < absolute; otherwise force open.
+    # Default matches deploy / hang detector (5400), not a separate 3h window.
     try:
-        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "10800"))
+        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400"))
     except ValueError:
-        abs_silence = 10800.0
+        abs_silence = 5400.0
     try:
         from vod_hang_detector import last_send_age_sec
 
@@ -438,7 +443,7 @@ def apply_drought_pubg_env(env: dict[str, str], *, escalation: int = 0) -> dict[
     if escalation >= 2:
         env["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
         env["PUBG_RELAX_OWNER_HEURISTICS"] = os.environ.get("VOD_FORCE_RELAX_OWNER", "1")
-        env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("PUBG_PRESEND_SHOOTING_GATE", "1")
+        env["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get("VOD_FORCE_PRESEND_GATE", "1")
         env["VOD_FORCE_PRESEND_BYPASS"] = "0"
         # Model strictness was blocking softened singles; keep shooting/loot gates.
         env["VOD_PUBG_QUALITY_STRICT"] = "0"
@@ -576,13 +581,14 @@ def force_send_game(
         # (avoids dual-owner: orphan feed + unit Start).
         _stop_game_feed(game)
         clear_feed_locks()
-        # Drought recover owns the systemd hand-off. Prefer hold while soften is
-        # active; if we must resume, drought overlay EnvironmentFile keeps floors.
+        # Drought overlay keeps soften floors across systemctl start. Default HOLD
+        # off — leaving the unit stopped after force-send caused multi-hour silence
+        # until the next owner-health cron. Ops can still pin HOLD=1.
         soften_on = (
             env.get("VOD_FORCE_SOFTEN", "0") == "1"
             or os.environ.get("VOD_FORCE_SOFTEN", "0") == "1"
         )
-        hold = soften_on and os.environ.get("VOD_RECOVER_HOLD_SYSTEMD", "1") == "1"
+        hold = soften_on and os.environ.get("VOD_RECOVER_HOLD_SYSTEMD", "0") == "1"
         if soften_on:
             try:
                 from vod_drought_overlay import write_drought_overlay

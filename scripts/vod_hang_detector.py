@@ -270,6 +270,9 @@ def isolate_drought_inbox(game: str = "pubg", *, prefer_ids: list[str] | None = 
 
     Prevents the hang agent from burning hours on junk/new downloads while a
     known-good Metro VOD still has unused peaks.
+
+    No-op when none of the preferred files exist — parking everything would empty
+    the inbox and create a discovery thrash / silence loop.
     """
     prefer = [p for p in (prefer_ids or []) if p]
     if not prefer:
@@ -283,11 +286,17 @@ def isolate_drought_inbox(game: str = "pubg", *, prefer_ids: list[str] | None = 
     inbox = spec(game).inbox()
     if not inbox.is_dir():
         return []
+    prefer_set = set(prefer)
+    preferred_present = any(
+        (inbox / f"yt_{pref}.mp4").is_file() for pref in prefer
+    )
+    if not preferred_present:
+        # Prefer-id missing (stale default) — do not park the whole inbox.
+        return []
     parked = inbox / "parked"
     parked.mkdir(parents=True, exist_ok=True)
     kept: list[str] = []
     moved: list[str] = []
-    prefer_set = set(prefer)
     for mp4 in list(inbox.glob("yt_*.mp4")):
         vid = mp4.stem[3:][:11] if mp4.stem.startswith("yt_") else mp4.stem[:11]
         if vid in prefer_set:
@@ -675,9 +684,9 @@ def apply_agent_recover_env(
     # Soften thresholds only; quality gates stay on. Honor ops-pinned skip until
     # absolute silence so mined inbox gets a fair try before discovery reopens.
     try:
-        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "10800"))
+        abs_silence = float(os.environ.get("VOD_ABSOLUTE_SILENCE_SEC", "5400"))
     except ValueError:
-        abs_silence = 10800.0
+        abs_silence = 5400.0
     incoming_skip = (
         target.get("SHOOTER_VOD_SKIP_DISCOVERY") == "1"
         or target.get("VOD_FORCE_SKIP_DISCOVERY") == "1"
@@ -851,28 +860,31 @@ def apply_agent_recover_env(
         "PUBG_OWNER_NEIGHBORHOOD_PRESCORE_KEEP", "3"
     )
     target["PUBG_DISLIKE_LOOT_FLOOR_LOCK"] = os.environ.get(
-        "PUBG_DISLIKE_LOOT_FLOOR_LOCK", "0"
+        "VOD_FORCE_DISLIKE_LOOT_FLOOR_LOCK", "0"
     )
     if esc >= 2:
+        # Hard-assign — deploy pins kill gates to 1; get(pin,"0") was a no-op unlock.
         target["PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE"] = os.environ.get(
-            "PUBG_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
+            "VOD_FORCE_DISLIKE_REQUIRE_KILL_EVIDENCE", "0"
         )
         target["PUBG_REQUIRE_AUTHOR_KILL_SINGLES"] = os.environ.get(
-            "PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0"
+            "VOD_FORCE_REQUIRE_AUTHOR_KILL_SINGLES", "0"
         )
         target["PUBG_REQUIRE_AUTHOR_KILL"] = os.environ.get(
-            "PUBG_REQUIRE_AUTHOR_KILL", "0"
+            "VOD_FORCE_REQUIRE_AUTHOR_KILL", "0"
         )
         target["SHOOTER_REQUIRE_AUTHOR_KILL"] = os.environ.get(
-            "SHOOTER_REQUIRE_AUTHOR_KILL", "0"
+            "VOD_FORCE_SHOOTER_REQUIRE_AUTHOR_KILL", "0"
         )
         target["PUBG_OWNER_GOOD_TRUST_NO_KILL"] = os.environ.get(
-            "PUBG_OWNER_GOOD_TRUST_NO_KILL", "1"
+            "VOD_FORCE_OWNER_GOOD_TRUST_NO_KILL", "1"
         )
         target["PUBG_COMBAT_ACT_ALLOW_NO_KILL"] = os.environ.get(
-            "PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1"
+            "VOD_FORCE_COMBAT_ACT_ALLOW_NO_KILL", "1"
         )
-        target["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get("PUBG_STYLE_AVOID_ENABLE", "0")
+        target["PUBG_STYLE_AVOID_ENABLE"] = os.environ.get(
+            "VOD_FORCE_STYLE_AVOID_ENABLE", "0"
+        )
     # 0 = inspect every ranked peak this run (not a silent top-6/8 budget).
     target["PUBG_SINGLES_PEAK_TRIES_PER_RUN"] = os.environ.get(
         "VOD_FORCE_SINGLES_PEAK_TRIES", "0"
@@ -886,7 +898,7 @@ def apply_agent_recover_env(
     )
     if esc >= 2:
         target["PUBG_FAST_RANK_DROP_LOOT_WALK"] = os.environ.get(
-            "PUBG_FAST_RANK_DROP_LOOT_WALK", "0"
+            "VOD_FORCE_FAST_RANK_DROP_LOOT_WALK", "0"
         )
         # Keep score-mode ON; never disable shooting gate via recover escalation.
         target["PUBG_PRESEND_SCORE_MODE"] = os.environ.get("VOD_FORCE_PRESEND_SCORE_MODE", "1")
@@ -895,7 +907,8 @@ def apply_agent_recover_env(
             "VOD_FORCE_RELAX_OWNER", "1"
         )
         target["PUBG_PRESEND_SHOOTING_GATE"] = os.environ.get(
-            "PUBG_PRESEND_SHOOTING_GATE", "1"
+            "VOD_FORCE_PRESEND_GATE",
+            "1",
         )
         target["VOD_FORCE_PRESEND_BYPASS"] = "0"
         # Re-assert skip policy after esc2 knobs (same absolute-silence rule).

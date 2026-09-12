@@ -8,7 +8,8 @@ ENV_FILE="${VOD_BOT_ENV_FILE:-/root/.video_bot.env}"
 install -m 0755 "$REPO/scripts/vod_hang_detector.py" /usr/local/bin/vod_hang_detector.py
 for f in vod_telegram_env.py vod_feed_recover.py vod_force_send.py vod_game_registry.py \
   vod_inbox_recover.py vod_clip_quality_ledger.py telegram_owner_controls.py \
-  reset_vod_inbox_exhausted.py vod_pipeline_health.py; do
+  reset_vod_inbox_exhausted.py vod_pipeline_health.py vod_drought_overlay.py \
+  vod_env.py daily_cycle_runner.py; do
   [[ -f "$REPO/scripts/$f" ]] && cp -f "$REPO/scripts/$f" "/usr/local/bin/$f"
 done
 

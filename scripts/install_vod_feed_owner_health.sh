@@ -13,7 +13,7 @@ cp -f "$REPO/scripts/vod_clip_quality_ledger.py" /usr/local/bin/ 2>/dev/null || 
 cat >"$WRAPPER" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-export PYTHONPATH="/usr/local/bin:/root/content_bot_ml/scripts:${PYTHONPATH:-}"
+export PYTHONPATH="/root/content_bot_ml/scripts:/usr/local/bin:${PYTHONPATH:-}"
 OUT_DIR="${VOD_FEED_HEALTH_LOG_DIR:-/root/data/vod_feed_health}"
 mkdir -p "$OUT_DIR"
 python3 -u /usr/local/bin/vod_feed_owner_health.py \

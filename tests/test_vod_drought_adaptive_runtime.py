@@ -48,14 +48,49 @@ def test_adaptive_apply_full_floors_without_drought(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("VOD_ADAPTIVE_THRESH_DIR", str(tmp_path / "adaptive"))
-    monkeypatch.delenv("VOD_FORCE_SOFTEN", raising=False)
-    monkeypatch.delenv("VOD_FORCE_ESCALATION", raising=False)
-    monkeypatch.delenv("VOD_FORCE_GUN_DENSITY", raising=False)
+    for key in (
+        "VOD_FORCE_SOFTEN",
+        "VOD_FORCE_ESCALATION",
+        "VOD_FORCE_GUN_DENSITY",
+        "VOD_FORCE_BURST_RATIO",
+        "PUBG_SINGLE_MIN_GUN_DENSITY",
+        "PUBG_CLIP_MIN_GUN_DENSITY",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY",
+        "SHOOTER_VOD_DENSE_GUN_MIN",
+        "PUBG_CLIP_MIN_BURST_RATIO",
+        "PUBG_DROUGHT_ELASTICITY_ACTIVE",
+    ):
+        monkeypatch.delenv(key, raising=False)
     from game_adaptive_thresholds import apply_to_environ, thresholds_for
 
     base = thresholds_for("pubg")
     applied = apply_to_environ("pubg")
     assert applied["gun_density_min"] == pytest.approx(base["gun_density_min"])
+
+
+def test_adaptive_never_raises_above_owner_gun_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Steady adaptive must not wipe Metro owner calib gun 0.032 back to BASE 0.07."""
+    monkeypatch.setenv("VOD_ADAPTIVE_THRESH_DIR", str(tmp_path / "adaptive"))
+    for key in (
+        "VOD_FORCE_SOFTEN",
+        "VOD_FORCE_ESCALATION",
+        "VOD_FORCE_GUN_DENSITY",
+        "VOD_FORCE_BURST_RATIO",
+        "PUBG_DROUGHT_ELASTICITY_ACTIVE",
+        "PUBG_PRESEND_MIN_GUN_DENSITY",
+        "SMART_PUBG_MIN_GUNFIRE_DENSITY",
+        "SHOOTER_VOD_DENSE_GUN_MIN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("PUBG_SINGLE_MIN_GUN_DENSITY", "0.032")
+    monkeypatch.setenv("PUBG_CLIP_MIN_GUN_DENSITY", "0.032")
+    from game_adaptive_thresholds import apply_to_environ
+
+    applied = apply_to_environ("pubg")
+    assert applied["gun_density_min"] == pytest.approx(0.032)
 
 
 def test_force_send_drought_esc0_keeps_loot_reject() -> None:
