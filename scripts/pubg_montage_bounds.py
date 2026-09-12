@@ -430,8 +430,12 @@ def tighten_pubg_clip_bounds(
     )
 
     shoot = report.get("shooting_start")
+    # Do not jump back to an earlier shoot_start outside the snapped fight cluster
+    # (#3hDKNrY4sGU_580: snap kept 29–36s, then shoot_start=1s reopened the run pad).
     if shoot is not None:
-        start = float(shoot) - min(pre_pad, max_lead)
+        shoot_f = float(shoot)
+        if float(start) - 2.0 <= shoot_f <= float(start) + float(dur) + 2.0:
+            start = shoot_f - min(pre_pad, max_lead)
     kill = report.get("kill_sec") if report.get("kill_sec") is not None else report.get("kill_time")
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     end = float(start) + float(dur)
