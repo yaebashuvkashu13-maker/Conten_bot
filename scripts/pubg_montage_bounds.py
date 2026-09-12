@@ -403,6 +403,20 @@ def tighten_pubg_clip_bounds(
         validate_clip_fight_shape,
     )
 
+    # Collapse multi-burst windows BEFORE shoot/kill anchors lock onto the wrong burst
+    # (#3hDKNrY4sGU_580: shoot_start≈early fight hid the hotter 28–35s cluster).
+    if float(dur) >= 16.0 and isinstance(report.get("timeline"), list):
+        start, dur = snap_to_best_fight_cluster(
+            float(start),
+            float(dur),
+            report,
+            peak=peak,
+            max_cluster_sec=min(
+                float(os.environ.get("PUBG_SINGLE_MAX_SEC", "90") if single else os.environ.get("PUBG_SEGMENT_MAX_SEC", "55")),
+                float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "12")),
+            ),
+        )
+
     pre_pad = clip_pre_shoot_sec()
     post_kill = clip_post_kill_sec()
     max_lead = float(os.environ.get("PUBG_CLIP_MAX_PRE_SHOOT_SEC", "1.2"))

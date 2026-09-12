@@ -64,3 +64,18 @@ def test_owner_neighborhood_defaults_are_short() -> None:
     assert 'PUBG_OWNER_NEIGHBORHOOD_MIN_DUR_SEC", "6"' in src
     assert 'PUBG_OWNER_NEIGHBORHOOD_MAX_DUR_SEC", "18"' in src
     assert 'PUBG_OWNER_NEIGHBORHOOD_DUR_SEC", "14"' in src
+
+
+def test_tighten_prefers_hot_burst_over_early_shoot_start() -> None:
+    from pubg_montage_bounds import tighten_pubg_clip_bounds
+
+    report = {
+        "timeline": _timeline_580_style(),
+        "shooting_start": 1.0,
+        "kill_sec": 33.0,
+        "fight_end": 35.0,
+    }
+    start, dur = tighten_pubg_clip_bounds(0.0, 50.0, report, peak=7.5, single=True)
+    assert start >= 26.0
+    assert start + dur <= 40.0
+    assert dur <= 14.0
