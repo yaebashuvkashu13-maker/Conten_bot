@@ -870,8 +870,9 @@ def score_pubg_window(
         if strong_gun and has_kill:
             bypass_floor = float(os.environ.get("PUBG_SINGLES_PAYOFF_BYPASS_FLOOR_GUN", "0.0"))
             has_payoff_signal = True
-        # Combat-act audio may rescue OCR-blind payoff ONLY when kill evidence
-        # already exists. Bare sprays (owner 👎 no_kill) must not bypass.
+        # Combat-act audio rescues OCR-blind payoff when kill evidence exists, or
+        # when drought soften pins PUBG_COMBAT_ACT_ALLOW_NO_KILL=1 (owner review).
+        # Bare non-act sprays still must not bypass.
         combat_act = False
         try:
             from pubg_fight_act_profile import is_combat_act
@@ -891,6 +892,9 @@ def score_pubg_window(
             has_payoff_signal = True
             bypass_floor = float(os.environ.get("PUBG_COMBAT_ACT_PAYOFF_FLOOR", "0.0"))
             report["combat_act_payoff_bypass"] = True
+        allow_combat_no_kill = (
+            os.environ.get("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0") == "1"
+        )
         if (
             single
             and _singles_gun_bypass_enabled("PUBG_SINGLES_GUN_PAYOFF_BYPASS")
@@ -904,9 +908,19 @@ def score_pubg_window(
             report["singles_gun_payoff_bypass"] = True
             if strong_gun:
                 report["singles_strong_gun_payoff_bypass"] = True
-        elif combat_act and single and has_kill and payoff_score >= bypass_floor:
+        elif (
+            combat_act
+            and single
+            and payoff_score >= bypass_floor
+            and (has_kill or allow_combat_no_kill)
+        ):
+            # Drought soften sets ALLOW_NO_KILL so OCR-blind Metro fights can ship
+            # for owner 👍/👎. Without this branch, combat_act only set
+            # has_payoff_signal then still died on has_kill (payoff_low=0.000).
             report["singles_gun_payoff_bypass"] = True
             report["combat_act_payoff_bypass"] = True
+            if allow_combat_no_kill and not has_kill:
+                report["combat_act_no_kill_payoff_bypass"] = True
         elif (
             _owner_redo_trusted(video_path, start_sec, duration_sec)
             and (

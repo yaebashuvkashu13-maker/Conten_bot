@@ -546,6 +546,67 @@ def test_strong_gun_without_kill_still_payoff_rejects(monkeypatch: pytest.Monkey
     assert not report.get("has_author_kill")
 
 
+def test_drought_combat_act_allow_no_kill_bypasses_ocr_blind_payoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Softened drought: combat-act audio may ship OCR-blind fights for owner review."""
+    monkeypatch.setenv("PUBG_HARD_REJECT_MENU_OVERLAY", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT", "0")
+    monkeypatch.setenv("PUBG_EARLY_PAYOFF_REJECT_SINGLES", "0")
+    monkeypatch.setenv("PUBG_REQUIRE_AUTHOR_KILL_SINGLES", "0")
+    monkeypatch.setenv("PUBG_REQUIRE_AUTHOR_KILL", "0")
+    monkeypatch.setenv("VOD_FORCE_SOFTEN", "1")
+    monkeypatch.setenv("VOD_FORCE_ESCALATION", "2")
+    monkeypatch.setenv("PUBG_SINGLES_GUN_PAYOFF_BYPASS", "1")
+    monkeypatch.setenv("PUBG_COMBAT_ACT_PAYOFF_BYPASS", "1")
+    monkeypatch.setenv("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "1")
+    monkeypatch.setenv("PUBG_PAYOFF_SCORE_MIN_SINGLES", "0.03")
+    monkeypatch.setenv("PUBG_FIGHT_CANDIDATE_OWNER_REVIEW", "0")
+    patches = list(_base_patches(author_kill=False))
+    patches[2] = patch(
+        "pubg_shooting_gate.pubg_probe_segment",
+        return_value={
+            "gunfire_density": 0.068,
+            "burst_ratio": 4.5,
+            "audio_rms": 0.04,
+            "center_motion": 0.05,
+            "center_text": 0.0,
+            "crop_box": None,
+        },
+    )
+    patches[3] = patch(
+        "highlight_scorer.score_panns_audio",
+        return_value={
+            "panns_gunshot": 0.55,
+            "panns_machine_gun": 0.69,
+            "panns_explosion": 0.01,
+            "panns_speech": 0.2,
+            "panns_music": 0.1,
+            "panns_gun_max": 0.69,
+        },
+    )
+    patches[5] = patch(
+        "pubg_killfeed_ocr.score_killfeed_segment",
+        return_value=(
+            0.0,
+            {
+                "notification_score": 0.0,
+                "notification_hit": False,
+                "notification_class": "",
+                "killfeed_hits": [],
+            },
+        ),
+    )
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+        ok, reason, report = score_pubg_window(
+            Path("vod.mp4"), 461.5, 22, single=True, use_cache=False
+        )
+    assert ok is True, (ok, reason, report)
+    assert report.get("combat_act_no_kill_payoff_bypass") is True
+    assert report.get("singles_gun_payoff_bypass") is True
+    assert not report.get("has_author_kill")
+
+
 def test_fight_candidate_owner_review_passes_ocr_blind_combat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
