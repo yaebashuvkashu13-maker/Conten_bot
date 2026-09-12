@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from daily_game_cycle import active_game, enabled, reset_if_new_day, status_summary
+from daily_game_cycle import active_game, enabled, pubg_only_mode, reset_if_new_day, status_summary
 from youtube_download import load_env
 
 log = logging.getLogger("daily_cycle_runner")
@@ -38,7 +38,30 @@ def _notify_switch(token: str, chat_id: str, game: str) -> None:
 
 
 def _load_runtime_env() -> dict[str, str]:
-    env = {**os.environ, **load_env(ENV_PATH)}
+    """Merge steady env with drought overlay without clobbering soften.
+
+    systemd loads ``.video_bot.drought.env`` *after* ``.video_bot.env``, but this
+    runner used to ``os.environ.update(load_env(steady))`` and wipe SOFTEN=1
+    before spawning the feed — every normal tick undid drought resume.
+    """
+    from vod_drought_overlay import OVERLAY_KEYS, drought_overlay_active, overlay_path
+
+    file_env = load_env(ENV_PATH)
+    env = {**os.environ, **file_env}
+    # Overlay file is authoritative for drought keys (same order as systemd:
+    # steady EnvironmentFile, then drought EnvironmentFile). Do not prefer
+    # stale process values over the overlay file — that re-raised quality/gun
+    # floors and wiped kill unlocks after heal.
+    overlay = load_env(overlay_path()) if overlay_path().is_file() else {}
+    if overlay:
+        env.update(overlay)
+    if drought_overlay_active() or env.get("VOD_FORCE_SOFTEN") == "1" or overlay.get(
+        "VOD_FORCE_SOFTEN"
+    ) == "1":
+        for key in OVERLAY_KEYS:
+            if key in overlay and str(overlay.get(key, "")).strip() != "":
+                env[key] = overlay[key]
+        env["VOD_FORCE_SOFTEN"] = "1"
     os.environ.update(env)
     return env
 
@@ -47,11 +70,19 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     env = _load_runtime_env()
     if not enabled():
+        if pubg_only_mode():
+            env["VOD_SEGMENT_GAME"] = "pubg"
+            proc = subprocess.run(
+                [sys.executable, "-u", str(SCRIPTS / "shooter_vod_segment_feed.py"), "pubg"],
+                env=env,
+                check=False,
+            )
+            return proc.returncode
         proc = subprocess.run([sys.executable, "-u", str(SCRIPTS / "mlbb_vod_segment_feed.py")], check=False)
         return proc.returncode
 
     reset_if_new_day()
-    game = active_game()
+    game = "pubg" if pubg_only_mode() else active_game()
     token = env.get("TG_BOT_TOKEN", "").strip()
     chat_id = env.get("TG_CHAT_ID", "").strip()
 
@@ -60,15 +91,31 @@ def main() -> int:
         if token and chat_id:
             from mlbb_vod_segment_feed import send_message
 
-            send_message(token, chat_id, "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00.")
+            msg = (
+                "✅ Дневная квота PUBG выполнена. Жду 00:00."
+                if pubg_only_mode()
+                else "✅ Дневные квоты MLBB/PUBG/Standoff/Genshin/WoT выполнены. Жду 00:00."
+            )
+            send_message(token, chat_id, msg)
         return 0
 
-    notify_key = f"active_{game}_{status_summary()['day']}"
     from daily_game_cycle import load_state, save_state
 
     state = load_state()
     if state.get("notified", {}).get("active_game") != game:
         if token and chat_id:
+            if pubg_only_mode() and state.get("notified", {}).get("pubg_only") != "1":
+                from mlbb_vod_segment_feed import send_message
+
+                send_message(
+                    token,
+                    chat_id,
+                    "🎯 Режим PUBG-only: безлимитные клипы Metro Royale.\n"
+                    "Приоритет — русскоязычные VOD, быстрый fast-probe + качественные гейты.",
+                )
+                notified = state.setdefault("notified", {})
+                notified["pubg_only"] = "1"
+                save_state(state)
             _notify_switch(token, chat_id, game)
         notified = state.setdefault("notified", {})
         notified["active_game"] = game

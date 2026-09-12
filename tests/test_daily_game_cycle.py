@@ -89,3 +89,30 @@ def test_disabled_cycle_allows_all(isolated_state: Path, monkeypatch: pytest.Mon
     ok, reason = cycle.can_send_for_game("standoff", 1)
     assert ok is True
     assert reason == "cycle_disabled"
+
+
+def test_unlimited_pubg_quota(isolated_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DAILY_MLBB_QUOTA", "0")
+    monkeypatch.setenv("DAILY_PUBG_QUOTA", "-1")
+    assert cycle.quota_unlimited("pubg")
+    assert cycle.quota_remaining("pubg") > 1000
+    for _ in range(50):
+        cycle.record_send("pubg", 1)
+    assert cycle.active_game() == "pubg"
+    assert cycle.can_send_for_game("pubg", 1) == (True, "ok")
+
+
+def test_pubg_only_mode(isolated_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOD_PUBG_ONLY", "1")
+    monkeypatch.setenv("DAILY_MLBB_QUOTA", "10")
+    monkeypatch.setenv("DAILY_PUBG_QUOTA", "-1")
+    monkeypatch.setenv("DAILY_STANDOFF_QUOTA", "0")
+    assert cycle.active_game() == "pubg"
+    ok, reason = cycle.can_send_for_game("mlbb", 1)
+    assert ok is False
+    assert reason == "pubg_only_mode"
+    ok, reason = cycle.can_send_for_game("pubg", 1)
+    assert ok is True
+    st = cycle.status_summary()
+    assert st["pubg_only"] is True
+    assert st["remaining"]["pubg"] == "∞"

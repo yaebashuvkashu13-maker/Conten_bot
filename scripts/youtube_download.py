@@ -33,6 +33,31 @@ def ytdlp_bin(env: dict[str, str] | None = None) -> str:
     return "yt-dlp"
 
 
+def is_twitch_vod_url(url: str) -> bool:
+    host = urlparse(url.strip()).netloc.lower().split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host in ("twitch.tv", "m.twitch.tv", "www.twitch.tv")
+
+
+def normalize_twitch_url(url: str) -> str:
+    raw = url.strip().rstrip(".,);")
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    elif not raw.startswith("http"):
+        raw = "https://" + raw.lstrip("/")
+    parsed = urlparse(raw)
+    path = parsed.path.strip("/")
+    parts = path.split("/")
+    if len(parts) >= 2 and parts[0] == "videos" and parts[1].isdigit():
+        return f"https://www.twitch.tv/videos/{parts[1]}"
+    return raw
+
+
+def media_url_prefix(url: str) -> str:
+    return "tw" if is_twitch_vod_url(url) else "yt"
+
+
 def normalize_youtube_url(url: str) -> str:
     raw = url.strip().rstrip(".,);")
     if not raw:
@@ -72,9 +97,22 @@ def youtube_format_for_url(url: str, env: dict[str, str]) -> str:
         return env.get("YOUTUBE_SHORTS_FORMAT", "bv*[height<=1080]+ba/b[height<=720]/b")
     return env.get(
         "YOUTUBE_FORMAT",
-        "bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/"
-        "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "b[height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b",
     )
+
+
+def youtube_format_fallbacks(url: str, env: dict[str, str]) -> list[str]:
+    primary = youtube_format_for_url(url, env)
+    fallbacks = [
+        env.get("YOUTUBE_FORMAT_FALLBACK", "18/b[height<=720]/bv*+ba/b"),
+        "best[ext=mp4]/best",
+        "b/bv*+ba/b",
+    ]
+    out = [primary]
+    for fmt in fallbacks:
+        if fmt and fmt not in out:
+            out.append(fmt)
+    return out
 
 
 def ytdlp_match_filter(env: dict[str, str]) -> str:
@@ -183,13 +221,22 @@ def _ytdlp_is_403(proc: subprocess.CompletedProcess[str]) -> bool:
     return "403" in err or "Forbidden" in err
 
 
+def _ytdlp_should_retry_clients(proc: subprocess.CompletedProcess[str]) -> bool:
+    if proc.returncode == 0:
+        return False
+    err = f"{proc.stderr or ''}{proc.stdout or ''}".lower()
+    if "403" in err or "forbidden" in err:
+        return True
+    return "format is not available" in err or "only images are available" in err
+
+
 def ytdlp_player_client_fallbacks(env: dict[str, str]) -> list[str]:
     cookies = (env.get("YOUTUBE_COOKIES_FILE") or env.get("YTDLP_COOKIES") or "").strip()
     if cookies and Path(cookies).exists():
         # android/ios skip when cookies are set — web+mweb first.
         raw = env.get("YTDLP_PLAYER_CLIENTS", "web,mweb,tv,android,ios")
     else:
-        raw = env.get("YTDLP_PLAYER_CLIENTS", "web,android,ios,mweb")
+        raw = env.get("YTDLP_PLAYER_CLIENTS", "android,web,ios,mweb")
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
@@ -219,7 +266,9 @@ def run_ytdlp(
         timeout=timeout,
         env=base_env,
     )
-    if proc.returncode == 0 or not _ytdlp_is_403(proc):
+    if proc.returncode == 0:
+        return proc
+    if not _ytdlp_should_retry_clients(proc):
         return proc
     retry_delay = float(env.get("YTDLP_403_RETRY_DELAY", "4"))
     for client in ytdlp_player_client_fallbacks(env):
@@ -235,35 +284,74 @@ def run_ytdlp(
         )
         if proc.returncode == 0:
             return proc
-        if not _ytdlp_is_403(proc):
+        if not _ytdlp_should_retry_clients(proc):
             break
     return proc
 
 
 def download_one(url: str, dest_dir: Path, env: dict[str, str] | None = None) -> Path:
     env = {**os.environ, **(env or load_env())}
-    url = normalize_youtube_url(url)
+    try:
+        from youtube_source_health import classify_download_error, is_blocked, record_download_result
+    except ImportError:
+        classify_download_error = None
+        is_blocked = None
+        record_download_result = None
+    if is_blocked is not None:
+        blocked, reason = is_blocked(url=url)
+        if blocked:
+            raise RuntimeError(f"youtube_source_blocked: {reason}")
+    if is_twitch_vod_url(url):
+        url = normalize_twitch_url(url)
+        prefix = "tw"
+        formats = [
+            env.get("TWITCH_FORMAT", "bv*[height<=1080]+ba/b[height<=1080]/b"),
+        ]
+    else:
+        url = normalize_youtube_url(url)
+        prefix = "yt"
+        formats = youtube_format_fallbacks(url, env)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    template = dest_dir / "yt_%(id)s.%(ext)s"
-    cmd = ytdlp_cmd(env) + [
-        "--no-playlist",
-        "--restrict-filenames",
-        "--merge-output-format",
-        "mp4",
-        "-f",
-        youtube_format_for_url(url, env),
-        *ytdlp_extra_args(env),
-        "-o",
-        str(template),
-        url,
-    ]
-    subprocess.run(
-        cmd,
-        check=True,
-        timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "14400")),
-        env=subprocess_env_no_proxy(env),
-    )
-    files = sorted(dest_dir.glob("yt_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    template = dest_dir / f"{prefix}_%(id)s.%(ext)s"
+    last_err = ""
+    for fmt in formats:
+        cmd = ytdlp_cmd(env) + [
+            "--no-playlist",
+            "--restrict-filenames",
+            "--merge-output-format",
+            "mp4",
+            "-f",
+            fmt,
+            *ytdlp_extra_args(env),
+            "-o",
+            str(template),
+            url,
+        ]
+        proc = run_ytdlp(
+            cmd,
+            env,
+            timeout=int(env.get("YOUTUBE_DOWNLOAD_TIMEOUT", "2400")),
+            label=f"download-{prefix}",
+        )
+        if proc.returncode == 0:
+            break
+        last_err = (proc.stderr or proc.stdout or "")[:800]
+        if "format is not available" in last_err.lower():
+            continue
+        if _ytdlp_should_retry_clients(proc):
+            continue
+        if record_download_result is not None and classify_download_error is not None:
+            record_download_result(url=url, ok=False, error_kind=classify_download_error(last_err))
+        raise RuntimeError(f"yt-dlp download failed rc={proc.returncode}: {last_err}")
+    else:
+        if record_download_result is not None and classify_download_error is not None:
+            record_download_result(url=url, ok=False, error_kind=classify_download_error(last_err))
+        raise RuntimeError(f"yt-dlp download failed: {last_err}")
+    files = sorted(dest_dir.glob(f"{prefix}_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
+        if record_download_result is not None:
+            record_download_result(url=url, ok=False, error_kind="quality")
         raise RuntimeError(f"yt-dlp produced no mp4 for {url}")
+    if record_download_result is not None:
+        record_download_result(url=url, ok=True)
     return files[0]

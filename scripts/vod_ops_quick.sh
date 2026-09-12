@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Quick VOD pipeline ops — health, reset exhausted, audit sample.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,7 +16,10 @@ case "${1:-health}" in
     "$PY" audit_vod_inbox.py --limit 4 "${@:2}"
     ;;
   deploy)
-    VPS_BRANCH="${VPS_BRANCH:-cursor/vod-pipeline-base-6cbd}" bash "$ROOT/scripts/vps_apply_vod_only.sh"
+    # Sole supported production deploy.
+    UNIFIED_BRANCH="${UNIFIED_BRANCH:-${VPS_BRANCH:-cursor/vod-unified-production-a016}}" \
+      CONTENT_BOT_REPO="${CONTENT_BOT_REPO:-$ROOT}" \
+      bash "$ROOT/scripts/deploy_unified_production.sh"
     ;;
   requeue)
     "$PY" requeue_inbox_vods.py "${@:2}"

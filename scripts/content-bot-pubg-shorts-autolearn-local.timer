@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer: PUBG Shorts autolearn LOCAL pool (fast, no YouTube)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=8min
+RandomizedDelaySec=1min
+Persistent=true
+Unit=content-bot-pubg-shorts-autolearn-local.service
+
+[Install]
+WantedBy=timers.target
