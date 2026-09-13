@@ -1,0 +1,12 @@
+{
+  "games": {
+    "pubg": {
+      "gun_density_min": 0.12,
+      "burst_ratio_min": 10.0,
+      "motion_max_run": 0.08,
+      "menu_overlay_max": 0.15,
+      "neg_run_menu": 90.0
+    }
+  },
+  "updated_at": "2026-09-13T09:30:59Z"
+}
