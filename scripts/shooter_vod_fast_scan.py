@@ -533,14 +533,26 @@ def discover_montage_gun_peaks(
         probe_pass,
     )
 
+    # Default 12m so mega-VOD dense scans fail-forward instead of freezing the feed.
     try:
-        deadline_sec = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC", "0") or 0)
+        deadline_sec = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC", "720") or 720)
     except ValueError:
-        deadline_sec = 0.0
+        deadline_sec = 720.0
     deadline_mono = (time.monotonic() + deadline_sec) if deadline_sec > 0 else 0.0
+    game_name = str(profile or "pubg")
 
     def _deadline_hit() -> bool:
         return deadline_mono > 0 and time.monotonic() >= deadline_mono
+
+    def _hb(phase: str) -> None:
+        try:
+            from vod_hang_detector import touch_heartbeat
+
+            touch_heartbeat(game_name, phase, vod=video_path.name)
+        except Exception:
+            pass
+
+    _hb("dense_scan")
 
     pcm_cache = None
     batch_stats: dict[str, float | int] = {}
@@ -558,12 +570,14 @@ def discover_montage_gun_peaks(
         for index, t in enumerate(offsets):
             if _deadline_hit():
                 log.warning(
-                    "dense probe deadline during DSP vod=%s scored=%s/%s",
+                    "WATCHDOG timeout dense_scan DSP vod=%s scored=%s/%s — advancing",
                     video_path.name,
                     len(scored),
                     len(offsets),
                 )
                 break
+            if index % 25 == 0:
+                _hb("dense_scan")
             center = float(t) + WINDOW_SEC * 0.5
             gun_d = dens_min
             if pcm_cache is not None:
@@ -583,7 +597,7 @@ def discover_montage_gun_peaks(
             enriched: list[tuple[float, float]] = []
             for rank, center in scored[:panns_cap]:
                 if _deadline_hit():
-                    log.warning("dense probe deadline during PANNs enrich vod=%s", video_path.name)
+                    log.warning("WATCHDOG timeout dense_scan PANNs enrich vod=%s — advancing", video_path.name)
                     break
                 pmax = 0.0
                 try:
@@ -657,12 +671,13 @@ def discover_montage_gun_peaks(
             for t in targets:
                 if _deadline_hit():
                     log.warning(
-                        "dense probe deadline hit vod=%s scored=%s/%s",
+                        "WATCHDOG timeout dense_scan vod=%s scored=%s/%s — advancing",
                         video_path.name,
                         len(scored),
                         len(targets),
                     )
                     break
+                _hb("dense_scan")
                 panns = score_panns_audio(video_path, t, WINDOW_SEC)
                 gmax = float(panns.get("panns_gun_max", 0))
                 if gmax >= gun_min:

@@ -217,7 +217,7 @@ def discover_scored_windows(
         return [], stats
 
     try:
-        deadline_sec = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC", "0") or 0)
+        deadline_sec = float(os.environ.get("SHOOTER_VOD_DENSE_PROBE_DEADLINE_SEC", "720") or 720)
     except ValueError:
         deadline_sec = 0.0
     deadline_mono = (time.monotonic() + deadline_sec) if deadline_sec > 0 else 0.0
@@ -253,14 +253,14 @@ def discover_scored_windows(
         stats["dsp_pass"] = len(offsets)
 
     if deadline_mono > 0 and time.monotonic() >= deadline_mono:
-        stats["deadline_hit"] = 1
+        stats["deadline_hit"] = 1  # WATCHDOG dense batch deadline
         panns_targets = panns_targets[: max(8, top_n // 4)]
     stats["panns_windows"] = len(panns_targets)
     t0 = time.perf_counter()
     scored = panns_score_windows(video_path, panns_targets, window_sec, gun_min=gun_min)
     stats["panns_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
     if deadline_mono > 0 and time.monotonic() >= deadline_mono:
-        stats["deadline_hit"] = 1
+        stats["deadline_hit"] = 1  # WATCHDOG dense batch deadline
     return scored, stats
 
 

@@ -93,11 +93,75 @@ def heartbeat_path() -> Path:
     return Path(os.environ.get("VOD_FEED_HEARTBEAT_PATH", str(DEFAULT_HEARTBEAT)))
 
 
+_LAST_TOUCH: dict[str, object] = {"ts": 0.0, "phase": "", "game": ""}
+
+
 def write_heartbeat(game: str, phase: str, **extra: object) -> None:
     path = heartbeat_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"game": game, "phase": phase, "ts": _now(), **extra}
+    now = _now()
+    payload = {"game": game, "phase": phase, "ts": now, **extra}
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    # Keep touch() throttle in sync so phase transitions still rate-limit.
+    _LAST_TOUCH["ts"] = now
+    _LAST_TOUCH["phase"] = phase
+    _LAST_TOUCH["game"] = game
+
+
+def touch_heartbeat(game: str, phase: str, **extra: object) -> None:
+    """Throttled heartbeat during long scan/rank/encode — keeps freshness without spam.
+
+    Env: VOD_HEARTBEAT_INTERVAL_SEC (default 30). Pass force=True to bypass throttle.
+    """
+    force = bool(extra.pop("force", False))
+    try:
+        interval = max(5.0, float(os.environ.get("VOD_HEARTBEAT_INTERVAL_SEC", "30")))
+    except (TypeError, ValueError):
+        interval = 30.0
+    now = _now()
+    last_ts = float(_LAST_TOUCH.get("ts") or 0.0)
+    same = (
+        str(_LAST_TOUCH.get("game") or "") == str(game)
+        and str(_LAST_TOUCH.get("phase") or "") == str(phase)
+    )
+    if not force and same and (now - last_ts) < interval:
+        return
+    write_heartbeat(game, phase, **extra)
+    _LAST_TOUCH["ts"] = now
+    _LAST_TOUCH["phase"] = phase
+    _LAST_TOUCH["game"] = game
+
+
+def in_drought_backoff() -> bool:
+    """True while hang-agent drought backoff window is active (do not thrash)."""
+    if not _read_drought_backoff():
+        return False
+    return not _drought_backoff_ok()
+
+
+def watchdog_no_send_advance_sec() -> float:
+    try:
+        return float(os.environ.get("VOD_WATCHDOG_NO_SEND_ADVANCE_SEC", "2700") or 0)
+    except (TypeError, ValueError):
+        return 2700.0
+
+
+def watchdog_should_advance(*, require_feed_alive: bool = True) -> bool:
+    """Light cycle advance: long silence, feed alive, NOT in drought_backoff.
+
+    Does not escalate/heal — caller only unpins / tries next VOD.
+    """
+    limit = watchdog_no_send_advance_sec()
+    if limit <= 0:
+        return False
+    if in_drought_backoff():
+        return False
+    if require_feed_alive and not feed_process_alive():
+        return False
+    try:
+        return float(last_send_age_sec()) >= limit
+    except Exception:
+        return False
 
 
 def read_heartbeat() -> dict:

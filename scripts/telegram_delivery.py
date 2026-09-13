@@ -81,7 +81,7 @@ def encode_telegram_mp4(
                 "+faststart",
                 str(out),
             ]
-            subprocess.run(cmd, check=False, timeout=120)
+            subprocess.run(cmd, check=False, timeout=float(os.environ.get("TELEGRAM_REMUX_TIMEOUT_SEC", "120") or 120))
             if out.exists() and out.stat().st_size > 0:
                 return out
         return src
@@ -117,8 +117,15 @@ def encode_telegram_mp4(
             str(out),
         ]
         try:
-            subprocess.run(cmd, check=True, timeout=600)
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            enc_timeout = float(os.environ.get("TELEGRAM_ENCODE_TIMEOUT_SEC", "180") or 180)
+        except (TypeError, ValueError):
+            enc_timeout = 180.0
+        try:
+            subprocess.run(cmd, check=True, timeout=max(30.0, enc_timeout))
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            if isinstance(exc, subprocess.TimeoutExpired):
+                # Fail-forward to next CRF / caller — do not stall the feed.
+                pass
             continue
         if out.exists() and 0 < out.stat().st_size <= max_bytes:
             return out

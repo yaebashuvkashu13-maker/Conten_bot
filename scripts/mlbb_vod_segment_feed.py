@@ -1096,7 +1096,11 @@ def _render_from_chunk(
         cmd.extend(["-an"])
     cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
-    run_command(cmd)
+    try:
+        run_command(cmd)
+    except Exception as exc:  # noqa: BLE001 — TimeoutExpired / CalledProcessError
+        log.warning("WATCHDOG timeout render_from_chunk fail-forward: %s", exc)
+        return False
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 
@@ -1175,7 +1179,16 @@ def render_single_segment(vod: Path, clip: dict, out_path: Path) -> bool:
         cmd.extend(["-an"])
     cmd.extend(_vod_encode_args())
     cmd.append(str(out_path))
-    run_command(cmd)
+    try:
+        run_command(cmd)
+    except Exception as exc:  # noqa: BLE001 — TimeoutExpired / CalledProcessError
+        log.warning(
+            "WATCHDOG timeout ffmpeg encode fail-forward vod=%s start=%.1f: %s",
+            vod.name,
+            start,
+            exc,
+        )
+        return False
     return out_path.exists() and out_path.stat().st_size > 100_000
 
 

@@ -132,16 +132,45 @@ def run_command(
     text: bool = True,
     input_data=None,
     env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ):
     logging.debug('running command: %s', ' '.join(shlex.quote(arg) for arg in args))
-    return subprocess.run(
-        args,
-        capture_output=capture_output,
-        check=check,
-        text=text,
-        input=input_data,
-        env=env,
-    )
+    # Bound ffmpeg/ffprobe so encode never stalls the PUBG feed forever.
+    if timeout is None and args:
+        tool = str(Path(str(args[0])).name).lower()
+        if tool.startswith("ffmpeg"):
+            try:
+                timeout = float(
+                    os.environ.get(
+                        "VOD_FFMPEG_ENCODE_TIMEOUT_SEC",
+                        os.environ.get("MLBB_VOD_FFMPEG_TIMEOUT_SEC", "180"),
+                    )
+                    or 180
+                )
+            except (TypeError, ValueError):
+                timeout = 180.0
+        elif tool.startswith("ffprobe"):
+            try:
+                timeout = float(os.environ.get("VOD_FFPROBE_TIMEOUT_SEC", "30") or 30)
+            except (TypeError, ValueError):
+                timeout = 30.0
+    try:
+        return subprocess.run(
+            args,
+            capture_output=capture_output,
+            check=check,
+            text=text,
+            input=input_data,
+            env=env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logging.warning(
+            "WATCHDOG timeout ffmpeg/ffprobe cmd=%s timeout=%s",
+            " ".join(shlex.quote(str(a)) for a in args[:6]),
+            timeout,
+        )
+        raise
 
 
 def ffprobe_json(path: Path) -> dict:

@@ -134,7 +134,39 @@ def rank_peaks_fast(
     scored: list[tuple[float, float, float]] = []
     min_payoff = float(os.environ.get("PUBG_FAST_RANK_MIN_PAYOFF", "0.12"))
     drop_loot = os.environ.get("PUBG_FAST_RANK_DROP_LOOT_WALK", "1") == "1"
+    try:
+        rank_deadline = float(os.environ.get("PUBG_FAST_RANK_DEADLINE_SEC", "600") or 600)
+    except (TypeError, ValueError):
+        rank_deadline = 600.0
+    import time as _time
+
+    rank_deadline_mono = (_time.monotonic() + rank_deadline) if rank_deadline > 0 else 0.0
+
+    def _rank_hb() -> None:
+        try:
+            from vod_hang_detector import touch_heartbeat
+
+            touch_heartbeat(str(profile or "pubg"), "ranking", vod=video_path.name)
+        except Exception:
+            pass
+
     for i, peak in enumerate(probe):
+        if rank_deadline_mono and _time.monotonic() >= rank_deadline_mono:
+            # Fail-forward with whatever we scored so far.
+            try:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "WATCHDOG timeout montage_rank vod=%s probed=%s/%s — advancing",
+                    video_path.name,
+                    i,
+                    len(probe),
+                )
+            except Exception:
+                pass
+            break
+        if i % 3 == 0:
+            _rank_hb()
         if profile == "pubg":
             try:
                 from shooter_owner_montage import _is_owner_rejected_peak

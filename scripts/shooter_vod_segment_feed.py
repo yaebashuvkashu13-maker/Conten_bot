@@ -77,6 +77,65 @@ from youtube_download import load_env
 log = logging.getLogger("shooter_vod_feed")
 
 
+def _touch_hb(game: str, phase: str, **extra: object) -> None:
+    try:
+        from vod_hang_detector import touch_heartbeat
+
+        touch_heartbeat(game, phase, **extra)
+    except Exception:
+        pass
+
+
+def _watchdog_light_advance(
+    game: str,
+    state: dict | None,
+    mp4: Path | None,
+    *,
+    why: str,
+) -> bool:
+    """Unpin current VOD when silence is long and hang-agent is not in drought_backoff.
+
+    No escalate / no process kill — just free the pin so the next inbox VOD can run.
+    """
+    if game != "pubg" or not _pubg_singles_first_enabled():
+        return False
+    try:
+        from vod_hang_detector import watchdog_should_advance, last_send_age_sec
+    except Exception:
+        return False
+    # require_feed_alive=False: we ARE the feed process.
+    if not watchdog_should_advance(require_feed_alive=False):
+        return False
+    try:
+        from pubg_vod_singles_first import clear_active_vod, get_active_vod_id
+    except Exception:
+        return False
+    st = state if isinstance(state, dict) else _load_state(game)
+    active = get_active_vod_id(st)
+    if not active:
+        return False
+    if mp4 is not None and vod_youtube_id(mp4) != active:
+        return False
+    age = 0.0
+    try:
+        age = float(last_send_age_sec())
+    except Exception:
+        pass
+    clear_active_vod(st, reason=f"watchdog_no_send:{why}")
+    try:
+        _save_state(game, st)
+    except Exception:
+        pass
+    log.warning(
+        "WATCHDOG timeout no_send advancing unpin vod=%s age=%.0fs why=%s",
+        active,
+        age,
+        why,
+    )
+    return True
+
+
+
 def _vod_min_sec() -> float:
     """Shooter VODs: prefer long streams, but allow ~4min combat VODs.
 
@@ -2094,8 +2153,13 @@ def _send_batch(
                         metrics=q_report if isinstance(q_report, dict) else {},
                     )
                     continue
+        _touch_hb(game, "encoding", vod=vod.name, sid=sid)
+        if game == "pubg" and _watchdog_light_advance(game, None, vod, why="pre_encode"):
+            log.warning("WATCHDOG timeout encoding aborted — advancing to next VOD")
+            break
         out = seg_root / f"seg_{sid}.mp4"
         if not render_single_segment(vod, clip, out):
+            log.warning("WATCHDOG timeout encode skip sid=%s — continue next peak", sid)
             continue
         # Soft reject: if CLIP scored this window and it is trash vs exemplars, skip.
         clip_s = float(row.get("clip_score") or (row.get("highlight_metrics") or {}).get("clip_score") or 0)
@@ -3128,6 +3192,13 @@ def _scan_vod_with_adaptive(
                 else:
                     probe_pass = _dense_probe_pass_index(entry)
                     scan_funnel = ScanFunnel()
+                    _touch_hb(game, "dense_scan", vod=vod.name)
+                    if _watchdog_light_advance(game, state, vod, why="pre_dense_scan"):
+                        log.warning(
+                            "WATCHDOG timeout pre_dense_scan — skip remaining work on %s",
+                            vod.name,
+                        )
+                        return 0
                     dense_peaks, dense_reason = discover_montage_gun_peaks(
                         vod,
                         _profile(game),
@@ -3213,6 +3284,7 @@ def _scan_vod_with_adaptive(
                         vod.name,
                         len(dense_peaks),
                     )
+                    _touch_hb(game, "ranking", vod=vod.name, peaks=len(dense_peaks))
                     try:
                         from pubg_fast_peak_rank import rank_peaks_fast
 
@@ -4142,6 +4214,7 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
             write_heartbeat(game, "scanning", vod=mp4.name)
         except Exception:
             pass
+        _touch_hb(game, "scanning", vod=mp4.name, force=True)
         try:
             from vod_clip_quality_ledger import record_heartbeat
 
@@ -4213,6 +4286,9 @@ def _run(game: str, env: dict[str, str], token: str, chat_id: str) -> int:
                 entry_now = _vod_registry_entry(state, mp4) or entry
                 if entry_now and entry_now.get("exhausted"):
                     clear_active_vod(state, reason="zero_send_exhausted")
+                elif _watchdog_light_advance(game, state, mp4, why="zero_send_cycle"):
+                    # Silence long + not drought_backoff → unpin without esc thrash.
+                    pass
                 elif full_peak_scan_enabled():
                     # exhaust<=0 = inspect-all forever (legacy stick). Positive
                     # exhaust means dead VODs should unpin after a zero-send cycle.
