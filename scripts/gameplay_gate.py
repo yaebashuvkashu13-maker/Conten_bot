@@ -987,9 +987,13 @@ def segment_looks_like_pubg_loot_or_walk(
     min_burst = float(os.environ.get("SMART_PUBG_MIN_BURST_RATIO", "4.8"))
     strong_gun = float(os.environ.get("SMART_PUBG_LOOT_STRONG_GUN", "0.070"))
     motion_clear = float(os.environ.get("SMART_PUBG_LOOT_MOTION_CLEAR", "0.14"))
+    # Do not let drought SMART floor (0.038) bless loot escapes — need real gun.
+    escape_gun = float(os.environ.get("SMART_PUBG_LOOT_ESCAPE_GUN", "0.055"))
+    soft_motion = float(os.environ.get("SMART_PUBG_LOOT_SOFT_MOTION", "0.055"))
+    soft_gun = float(os.environ.get("SMART_PUBG_LOOT_SOFT_GUN", "0.050"))
     # Escape loot only with real gun AND locomotion not dominating (UkXwq/Tovruh).
     if (
-        gunfire_density >= min_gun
+        gunfire_density >= max(min_gun, escape_gun)
         and burst_ratio >= min_burst * 0.85
         and center_motion <= motion_clear
     ):
@@ -997,11 +1001,14 @@ def segment_looks_like_pubg_loot_or_walk(
     # High run motion with only mid gun (0.045–0.069) is still loot/run.
     if center_motion >= 0.10 and gunfire_density < strong_gun:
         return True
+    # Loot without hard sprint (DGso_775 «Лут без бега»): mid motion + weak gun.
+    if center_motion >= soft_motion and gunfire_density < soft_gun:
+        return True
     if center_motion >= 0.028 and gunfire_density < min_gun * 0.75:
         return True
     if center_motion < 0.014 and gunfire_density < min_gun * 0.55:
         return True
-    if center_text > 0.12 and gunfire_density < min_gun * 0.8:
+    if center_text > 0.12 and gunfire_density < max(min_gun, escape_gun) * 0.8:
         return True
     return False
 

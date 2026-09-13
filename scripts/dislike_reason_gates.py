@@ -217,6 +217,12 @@ def evaluate_reason_gates(
         from pubg_fight_act_profile import is_combat_act
 
         combat_ok = is_combat_act(gun, burst)
+        # Silent DSP false-gun must not unlock combat-act rescues (DGso_775).
+        rms_now = _f(metrics, "audio_rms", "rms")
+        audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+        if combat_ok and rms_now < audible_min:
+            combat_ok = False
+            report["silent_combat_act_blocked"] = True
     except Exception:
         combat_ok = False
     # Combat-act rescue may soften menu-only floors. Never lower loot_run /
@@ -256,6 +262,31 @@ def evaluate_reason_gates(
                 report["floors"]["burst_ratio_min"] = burst_min
             except Exception:
                 pass
+
+    # Loot without running: weak gun + tiny PANNs/RMS, no kill (DGso_775).
+    if "loot_run" in reasons and os.environ.get("PUBG_DISLIKE_LOOT_LOW_GUN_GATE", "1") == "1":
+        panns = _f(metrics, "panns_gun_max", "panns_gun")
+        rms_loot = _f(metrics, "audio_rms", "rms")
+        low_gun = float(os.environ.get("PUBG_DISLIKE_LOOT_LOW_GUN", "0.050"))
+        low_panns = float(os.environ.get("PUBG_DISLIKE_LOOT_LOW_PANNS", "0.12"))
+        audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+        has_kill = bool(
+            metrics.get("has_author_kill")
+            or metrics.get("kill_notification_hit")
+            or metrics.get("killfeed_hits")
+            or metrics.get("keyword_hit")
+        )
+        if (
+            gun > 0
+            and gun <= low_gun
+            and (panns <= low_panns or rms_loot < audible_min)
+            and not has_kill
+        ):
+            return (
+                False,
+                f"reason_loot_low_gun=gun{gun:.3f}:panns{panns:.3f}:rms{rms_loot:.4f}",
+                report,
+            )
 
     if menu >= menu_max and menu > 0:
         # ADS/HUD/PiP often inflate center-text into "menu" while audio is a real

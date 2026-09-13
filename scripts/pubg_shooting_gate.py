@@ -26,6 +26,7 @@ FORBIDDEN_REASONS = frozenset(
         "run_no_fight",
         "run_no_shots",
         "run_fake_gun",
+        "silent_fake_gun",
         "loot_walk",
         "run_loot",
         "talk_menu",
@@ -35,6 +36,7 @@ FORBIDDEN_REASONS = frozenset(
         "low_gunfire",
         "silent_segment",
         "owner_bad_window",
+        "low_gun_loot",
     }
 )
 
@@ -178,11 +180,34 @@ def pubg_passes_shooting_gate(
         combat_act = is_combat_act(gun, burst)
     except ImportError:
         combat_act = False
-    if combat_act and not ok_owner:
+    # Bare is_combat_act ignores RMS/PANNs. Owner heuristics already reject
+    # silent DSP false-gun (DGso_775 loot: gun0.043 burst10 rms0.0035 panns0.026).
+    # Do not re-bless those windows here.
+    audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+    require_rms = os.environ.get("PUBG_SHOOTING_REQUIRE_COMBAT_ACT_RMS", "1") == "1"
+    combat_panns_min = float(os.environ.get("PUBG_COMBAT_ACT_MIN_PANNS", "0.10"))
+    combat_act_ok = bool(combat_act)
+    if combat_act_ok and require_rms and rms < audible_min:
+        metrics["silent_combat_act_blocked"] = True
+        combat_act_ok = False
+        if not ok_owner and "silent_fake_gun" not in str(owner_reason):
+            owner_reason = f"silent_fake_gun=rms{rms:.4f}:gun{gun:.3f}"
+            metrics["owner_reason"] = owner_reason
+    if (
+        combat_act_ok
+        and float(panns_gun_max) > 0.0
+        and float(panns_gun_max) < combat_panns_min
+        and os.environ.get("PUBG_SHOOTING_REQUIRE_COMBAT_ACT_PANNS", "1") == "1"
+    ):
+        # Tiny PANNs + mid DSP gun is loot UI / false burst, not a fight.
+        metrics["low_panns_combat_act_blocked"] = True
+        combat_act_ok = False
+    if combat_act_ok and not ok_owner:
         ok_owner = True
         owner_reason = f"combat_act=gun{gun:.3f}:burst{burst:.2f}"
         metrics["combat_act_override"] = True
         metrics["owner_reason"] = owner_reason
+    combat_act = combat_act_ok
 
     if (
         reason_is_forbidden(owner_reason)
@@ -190,6 +215,23 @@ def pubg_passes_shooting_gate(
         and not combat_act
     ):
         return False, owner_reason, metrics
+
+    # Short low-gun loot without PANNs (owner «Лут без бега» DGso_775).
+    if os.environ.get("PUBG_REJECT_LOW_GUN_LOOT", "1") == "1":
+        short_max = float(os.environ.get("PUBG_LOW_GUN_LOOT_SHORT_SEC", "10"))
+        gun_ceil = float(os.environ.get("PUBG_LOW_GUN_LOOT_MAX_GUN", "0.050"))
+        panns_ceil = float(os.environ.get("PUBG_LOW_GUN_LOOT_MAX_PANNS", "0.12"))
+        if (
+            duration_sec <= short_max
+            and gun <= gun_ceil
+            and float(panns_gun_max) <= panns_ceil
+            and rms < audible_min
+        ):
+            return (
+                False,
+                f"low_gun_loot=gun{gun:.3f}:panns{float(panns_gun_max):.3f}:rms{rms:.4f}",
+                metrics,
+            )
 
     strict_audio = gun >= min_gun and burst >= min_burst
     # ok_owner already means heuristics passed; do not drop panns_trust just because
@@ -284,8 +326,22 @@ def pubg_passes_shooting_gate(
 
             if owner_good and gun >= hard_gun and burst >= min_burst:
                 metrics["visual_override"] = gate_reason
-            elif is_combat_act is not None and is_combat_act(gun, burst):
+            elif (
+                is_combat_act is not None
+                and is_combat_act(gun, burst)
+                and (
+                    os.environ.get("PUBG_SHOOTING_REQUIRE_COMBAT_ACT_RMS", "1") != "1"
+                    or rms >= float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+                )
+                and (
+                    os.environ.get("PUBG_SHOOTING_REQUIRE_COMBAT_ACT_PANNS", "1") != "1"
+                    or float(panns_gun_max) <= 0.0
+                    or float(panns_gun_max)
+                    >= float(os.environ.get("PUBG_COMBAT_ACT_MIN_PANNS", "0.10"))
+                )
+            ):
                 # Global fight-act profile (owner 6mWLqNBX1pE) — every VOD, no labels.
+                # Still require audible RMS/PANNs so silent loot UI cannot override.
                 metrics["visual_override"] = gate_reason
                 metrics["combat_act_override"] = True
             elif (

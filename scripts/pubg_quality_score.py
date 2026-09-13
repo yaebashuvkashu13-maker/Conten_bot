@@ -68,7 +68,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
     if os.environ.get("PUBG_OWNER_BAD_HARD_REJECT", "1") != "1":
         return False
     try:
-        from pubg_owner_calibration import owner_bad_pad_sec, segment_overlaps_owner_label
+        from pubg_owner_calibration import segment_overlaps_owner_label
 
         return bool(
             segment_overlaps_owner_label(
@@ -76,7 +76,7 @@ def _owner_bad(video_path: Path, start_sec: float, duration_sec: float) -> bool:
                 start_sec,
                 duration_sec,
                 label="bad",
-                pad_sec=owner_bad_pad_sec(),
+                pad_sec=None,  # per-note pad: loot_run/no_combat → ~30s
             )
         )
     except Exception:
@@ -421,6 +421,25 @@ def score_pubg_window(
     if gun < 0.010 and panns_gun < 0.08 and rms < 0.012:
         report["hard_reject"] = "no_action"
         return _finish(False, "hard_no_action")
+
+    # Low-gun / low-PANNs short loot without kill evidence (DGso_775).
+    # Combat-act + high burst previously shipped these before Telegram.
+    if os.environ.get("PUBG_REJECT_LOW_GUN_LOOT", "1") == "1":
+        short_max = float(os.environ.get("PUBG_LOW_GUN_LOOT_SHORT_SEC", "10"))
+        gun_ceil = float(os.environ.get("PUBG_LOW_GUN_LOOT_MAX_GUN", "0.050"))
+        panns_ceil = float(os.environ.get("PUBG_LOW_GUN_LOOT_MAX_PANNS", "0.12"))
+        audible_min = float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+        if (
+            duration_sec <= short_max
+            and gun <= gun_ceil
+            and panns_gun <= panns_ceil
+            and rms < audible_min
+        ):
+            report["hard_reject"] = "low_gun_loot"
+            return _finish(
+                False,
+                f"hard_low_gun_loot=gun{gun:.3f}:panns{panns_gun:.3f}:rms{rms:.4f}",
+            )
 
     if loot_walk and os.environ.get("PUBG_REJECT_LOOT_WALK", "1") == "1":
         # Mirror shooting_gate PANNs loot override. Otherwise gate can pass a real
@@ -881,6 +900,9 @@ def score_pubg_window(
                 os.environ.get("PUBG_COMBAT_ACT_PAYOFF_BYPASS", "1") == "1"
                 and is_combat_act(gun, burst)
                 and not loot_walk
+                and rms >= float(os.environ.get("PUBG_OWNER_FIGHT_MIN_RMS", "0.020"))
+                and panns_gun
+                >= float(os.environ.get("PUBG_COMBAT_ACT_MIN_PANNS", "0.10"))
                 and (
                     has_kill
                     or os.environ.get("PUBG_COMBAT_ACT_ALLOW_NO_KILL", "0") == "1"
