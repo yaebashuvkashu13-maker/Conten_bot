@@ -139,16 +139,21 @@ def run_command(
     if timeout is None and args:
         tool = str(Path(str(args[0])).name).lower()
         if tool.startswith("ffmpeg"):
+            # Prefer explicit short-clip env; otherwise a safer 900s default so
+            # multi-part montages are not killed by the singles encode budget.
             try:
                 timeout = float(
                     os.environ.get(
                         "VOD_FFMPEG_ENCODE_TIMEOUT_SEC",
-                        os.environ.get("MLBB_VOD_FFMPEG_TIMEOUT_SEC", "180"),
+                        os.environ.get(
+                            "MLBB_VOD_FFMPEG_TIMEOUT_SEC",
+                            os.environ.get("SMART_MAKE_TIMEOUT_SEC", "900"),
+                        ),
                     )
-                    or 180
+                    or 900
                 )
             except (TypeError, ValueError):
-                timeout = 180.0
+                timeout = 900.0
         elif tool.startswith("ffprobe"):
             try:
                 timeout = float(os.environ.get("VOD_FFPROBE_TIMEOUT_SEC", "30") or 30)
