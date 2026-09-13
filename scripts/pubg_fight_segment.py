@@ -423,7 +423,7 @@ def resolve_pubg_fight_bounds(
             right = index
 
     contact_lead = float(os.environ.get("PUBG_SEGMENT_CONTACT_LEAD_SEC", "0.8"))
-    finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "2.0"))
+    finale_tail = float(os.environ.get("PUBG_SEGMENT_FINALE_SEC", "3.0"))
     max_preflight = float(os.environ.get("PUBG_SEGMENT_MAX_PREFLIGHT_SEC", "1.5"))
     gun_onset = _sustained_gunfire_onset_near_peak(
         timeline,
@@ -487,8 +487,8 @@ def resolve_pubg_fight_bounds(
     end = min(file_duration, max(end, float(timeline[right]["start"]) + sample + finale_tail))
 
     min_duration = float(os.environ.get("PUBG_SEGMENT_MIN_SEC", "6"))
-    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "18"))
-    loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "2.5"))
+    max_duration = float(os.environ.get("PUBG_SEGMENT_MAX_SEC", "20"))
+    loot_tail_max = float(os.environ.get("PUBG_SEGMENT_LOOT_TAIL_MAX_SEC", "3.5"))
     if kill_sec is not None and timeline:
         post_kill = [
             row

@@ -49,7 +49,7 @@ def validate_clip_fight_shape(
     fight_end = report.get("fight_end") or report.get("fight_end_sec")
     if fight_end is not None:
         tail = start_f + dur_f - float(fight_end)
-        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "2.5")):
+        if tail > float(os.environ.get("PUBG_CLIP_MAX_POST_FIGHT_SEC", "3.5")):
             return False, f"loot_tail tail={tail:.1f}s"
 
     # Head/tail run: even if the fight core is hot, lead/tail sprint looks like loot_run.
@@ -117,7 +117,7 @@ def _head_tail_run_reason(
         kill = report.get("kill_sec")
         if kill is None:
             kill = report.get("kill_time")
-        post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "2.0"))
+        post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "3.0"))
         if kill is not None:
             try:
                 if float(kill) <= end <= float(kill) + post + edge + 0.5:
@@ -225,7 +225,7 @@ def aggressive_tighten_for_shape(
     max_dur = float(
         os.environ.get("PUBG_SINGLE_MAX_SEC", "18")
         if single
-        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "20")
     )
     start, dur = extend_end_past_active_gunfire(
         start, dur, report, max_dur=max_dur, single=single

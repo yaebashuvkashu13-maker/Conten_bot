@@ -88,6 +88,14 @@ def normalize_youtube_url(url: str) -> str:
     return raw
 
 
+def is_youtube_live_url(url: str) -> bool:
+    """True for /live/ paths or live streaming watch URLs (heuristic)."""
+    raw = (url or "").lower()
+    if "/live/" in raw:
+        return True
+    return "live_stream" in raw or "feature=live" in raw
+
+
 def is_youtube_shorts_url(url: str) -> bool:
     return "/shorts/" in urlparse(url).path.lower()
 

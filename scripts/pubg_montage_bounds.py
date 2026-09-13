@@ -267,7 +267,7 @@ def snap_to_best_fight_cluster(
     )
     max_gap = float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_GAP_SEC", "2.5"))
     keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", "0.8"))
-    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "2.0"))
+    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", "3.0"))
     min_keep = float(os.environ.get("PUBG_FIGHT_CLUSTER_MIN_SEC", "5.0"))
 
     start_f = float(start)
@@ -362,7 +362,7 @@ def trim_quiet_run_edges(
     gun_min = float(os.environ.get("PUBG_SEGMENT_GUN_ONSET_MIN", "0.025"))
     edge = float(os.environ.get("PUBG_CLIP_TRIM_EDGE_SEC", "2.0"))
     keep_pre = float(os.environ.get("PUBG_CLIP_PRE_SHOOT_SEC", os.environ.get("PUBG_OWNER_PRE_SHOOT_SEC", "0.8")))
-    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", os.environ.get("PUBG_OWNER_POST_KILL_SEC", "2.0")))
+    keep_post = float(os.environ.get("PUBG_CLIP_POST_KILL_SEC", os.environ.get("PUBG_OWNER_POST_KILL_SEC", "3.0")))
     start_f = float(start)
     end_f = start_f + float(dur)
     rows = []
@@ -438,7 +438,7 @@ def tighten_pubg_clip_bounds(
             report,
             peak=peak,
             max_cluster_sec=min(
-                float(os.environ.get("PUBG_SINGLE_MAX_SEC", "18") if single else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")),
+                float(os.environ.get("PUBG_SINGLE_MAX_SEC", "18") if single else os.environ.get("PUBG_SEGMENT_MAX_SEC", "20")),
                 float(os.environ.get("PUBG_FIGHT_CLUSTER_MAX_SEC", "18")),
             ),
         )
@@ -466,7 +466,7 @@ def tighten_pubg_clip_bounds(
     max_dur = float(
         os.environ.get("PUBG_SINGLE_MAX_SEC", "18")
         if single
-        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "18")
+        else os.environ.get("PUBG_SEGMENT_MAX_SEC", "20")
     )
 
     shoot = report.get("shooting_start")

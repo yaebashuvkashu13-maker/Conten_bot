@@ -261,8 +261,16 @@ def load_training_samples() -> list[TrainingSample]:
                 continue
             sid = str(row.get("segment_id") or "")
             video_id = str(row.get("vod_id") or "")
-            if not video_id and "_" in sid:
-                video_id = sid.rsplit("_", 1)[0]
+            if not video_id and sid:
+                try:
+                    from vod_owner_learning import parse_pubg_segment_sid
+
+                    parsed = parse_pubg_segment_sid(sid)
+                    if parsed:
+                        video_id = parsed[0]
+                except Exception:
+                    if "_" in sid:
+                        video_id = sid.rsplit("_", 1)[0]
             hinted = str(row.get("vod") or "")
             vod = resolve_vod(video_id, hinted_path=hinted)
             if not video_id or not vod:
