@@ -1,0 +1,220 @@
+{
+  "benchmark": "panns_workers_v1",
+  "metric": "accepted_clips / wall_clock_minute",
+  "winner": 4,
+  "results": [
+    {
+      "workers": 1,
+      "vod": "/root/data/pubg/youtube_nightly/park_timeout/yt_n97cHIR9Qow.mp4",
+      "duration_sec": 5400.0,
+      "source_duration_sec": 10445.0,
+      "probe_step_sec": 60.0,
+      "probe_windows": 88,
+      "panns_candidates": 18,
+      "quality_checked": 8,
+      "accepted_clips": 2,
+      "wall_sec": 647.97,
+      "accepted_per_wall_min": 0.1852,
+      "quality_rows": [
+        {
+          "start": 3417.0,
+          "panns": 0.7293,
+          "accepted": false,
+          "reason": "quality_low=0.280:min0.48",
+          "quality_score": 0.28
+        },
+        {
+          "start": 2277.0,
+          "panns": 0.7182,
+          "accepted": false,
+          "reason": "hard_owner_bad_window",
+          "quality_score": null
+        },
+        {
+          "start": 2877.0,
+          "panns": 0.6934,
+          "accepted": false,
+          "reason": "quality_low=0.000:min0.48",
+          "quality_score": 0.0
+        },
+        {
+          "start": 2757.0,
+          "panns": 0.6144,
+          "accepted": true,
+          "reason": "quality_ok=0.770",
+          "quality_score": 0.77
+        },
+        {
+          "start": 2697.0,
+          "panns": 0.5819,
+          "accepted": false,
+          "reason": "quality_low=0.453:min0.48",
+          "quality_score": 0.4527
+        },
+        {
+          "start": 3717.0,
+          "panns": 0.5797,
+          "accepted": false,
+          "reason": "quality_low=0.045:min0.48",
+          "quality_score": 0.0454
+        },
+        {
+          "start": 4077.0,
+          "panns": 0.556,
+          "accepted": true,
+          "reason": "quality_ok=0.506",
+          "quality_score": 0.5063
+        },
+        {
+          "start": 4977.0,
+          "panns": 0.5333,
+          "accepted": false,
+          "reason": "quality_low=0.026:min0.48",
+          "quality_score": 0.0261
+        }
+      ]
+    },
+    {
+      "workers": 2,
+      "vod": "/root/data/pubg/youtube_nightly/park_timeout/yt_n97cHIR9Qow.mp4",
+      "duration_sec": 5400.0,
+      "source_duration_sec": 10445.0,
+      "probe_step_sec": 60.0,
+      "probe_windows": 88,
+      "panns_candidates": 18,
+      "quality_checked": 8,
+      "accepted_clips": 2,
+      "wall_sec": 638.57,
+      "accepted_per_wall_min": 0.1879,
+      "quality_rows": [
+        {
+          "start": 3417.0,
+          "panns": 0.7293,
+          "accepted": false,
+          "reason": "quality_low=0.280:min0.48",
+          "quality_score": 0.28
+        },
+        {
+          "start": 2277.0,
+          "panns": 0.7182,
+          "accepted": false,
+          "reason": "hard_owner_bad_window",
+          "quality_score": null
+        },
+        {
+          "start": 2877.0,
+          "panns": 0.6934,
+          "accepted": false,
+          "reason": "quality_low=0.000:min0.48",
+          "quality_score": 0.0
+        },
+        {
+          "start": 2757.0,
+          "panns": 0.6144,
+          "accepted": true,
+          "reason": "quality_ok=0.770",
+          "quality_score": 0.77
+        },
+        {
+          "start": 2697.0,
+          "panns": 0.5819,
+          "accepted": false,
+          "reason": "quality_low=0.453:min0.48",
+          "quality_score": 0.4527
+        },
+        {
+          "start": 3717.0,
+          "panns": 0.5797,
+          "accepted": false,
+          "reason": "quality_low=0.045:min0.48",
+          "quality_score": 0.0454
+        },
+        {
+          "start": 4077.0,
+          "panns": 0.556,
+          "accepted": true,
+          "reason": "quality_ok=0.506",
+          "quality_score": 0.5063
+        },
+        {
+          "start": 4977.0,
+          "panns": 0.5333,
+          "accepted": false,
+          "reason": "quality_low=0.026:min0.48",
+          "quality_score": 0.0261
+        }
+      ]
+    },
+    {
+      "workers": 4,
+      "vod": "/root/data/pubg/youtube_nightly/park_timeout/yt_n97cHIR9Qow.mp4",
+      "duration_sec": 5400.0,
+      "source_duration_sec": 10445.0,
+      "probe_step_sec": 60.0,
+      "probe_windows": 88,
+      "panns_candidates": 18,
+      "quality_checked": 8,
+      "accepted_clips": 2,
+      "wall_sec": 528.69,
+      "accepted_per_wall_min": 0.227,
+      "quality_rows": [
+        {
+          "start": 3417.0,
+          "panns": 0.7293,
+          "accepted": false,
+          "reason": "quality_low=0.280:min0.48",
+          "quality_score": 0.28
+        },
+        {
+          "start": 2277.0,
+          "panns": 0.7182,
+          "accepted": false,
+          "reason": "hard_owner_bad_window",
+          "quality_score": null
+        },
+        {
+          "start": 2877.0,
+          "panns": 0.6934,
+          "accepted": false,
+          "reason": "quality_low=0.000:min0.48",
+          "quality_score": 0.0
+        },
+        {
+          "start": 2757.0,
+          "panns": 0.6144,
+          "accepted": true,
+          "reason": "quality_ok=0.770",
+          "quality_score": 0.77
+        },
+        {
+          "start": 2697.0,
+          "panns": 0.5819,
+          "accepted": false,
+          "reason": "quality_low=0.453:min0.48",
+          "quality_score": 0.4527
+        },
+        {
+          "start": 3717.0,
+          "panns": 0.5797,
+          "accepted": false,
+          "reason": "quality_low=0.045:min0.48",
+          "quality_score": 0.0454
+        },
+        {
+          "start": 4077.0,
+          "panns": 0.556,
+          "accepted": true,
+          "reason": "quality_ok=0.506",
+          "quality_score": 0.5063
+        },
+        {
+          "start": 4977.0,
+          "panns": 0.5333,
+          "accepted": false,
+          "reason": "quality_low=0.026:min0.48",
+          "quality_score": 0.0261
+        }
+      ]
+    }
+  ]
+}

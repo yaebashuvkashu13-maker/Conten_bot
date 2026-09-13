@@ -1,0 +1,13 @@
+[Unit]
+Description=Run VOD hang detector every 5 minutes
+Requires=content-bot-vod-hang.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=content-bot-vod-hang.service
+
+[Install]
+WantedBy=timers.target

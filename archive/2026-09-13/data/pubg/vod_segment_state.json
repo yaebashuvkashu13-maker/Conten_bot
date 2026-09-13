@@ -1,0 +1,156 @@
+{
+  "vods": [
+    {
+      "id": "Tovruh33adY",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_Tovruh33adY.f299.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789325128.9416926
+    },
+    {
+      "id": "_-HbZ0zNDOs",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt__-HbZ0zNDOs.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789325128.9425235
+    },
+    {
+      "id": "zRQC8jkxbXQ",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_zRQC8jkxbXQ.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789325128.942733
+    },
+    {
+      "id": "MrBAE3ns8I4",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_MrBAE3ns8I4.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789330835.7689183
+    },
+    {
+      "id": "DGsoEt9znls",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_DGsoEt9znls.mp4",
+      "exhausted": true,
+      "recycle_count": 0,
+      "last_recycle_at": 1789328104.1130984,
+      "dense_pool_version": 5,
+      "dense_rejected_peaks": [
+        80.0,
+        508.0
+      ],
+      "singles_zero_send_streak": 2,
+      "reject_reason": "pubg_singles_presend_exhausted",
+      "last_scan_at": 1789328923.911749,
+      "last_scan_sent": 0,
+      "last_scan_blocked": true,
+      "last_pool_peaks": [
+        {
+          "peak_sec": 80.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        },
+        {
+          "peak_sec": 508.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        }
+      ],
+      "last_pool_at": 1789328923.9115968
+    },
+    {
+      "id": "3hDKNrY4sGU",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_3hDKNrY4sGU.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789330835.7690501
+    },
+    {
+      "id": "ZwNC8IcFn9s",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_ZwNC8IcFn9s.mp4",
+      "exhausted": true,
+      "recycle_count": 0,
+      "last_recycle_at": 1789328104.1133053,
+      "dense_pool_version": 5,
+      "dense_rejected_peaks": [
+        1204.5,
+        1067.0,
+        440.0,
+        97.5
+      ],
+      "singles_zero_send_streak": 4,
+      "reject_reason": "pubg_singles_presend_exhausted",
+      "last_scan_at": 1789329904.9574492,
+      "last_scan_sent": 0,
+      "last_scan_blocked": true,
+      "last_pool_peaks": [
+        {
+          "peak_sec": 1204.5,
+          "score": 0.0,
+          "blocked_reason": ""
+        },
+        {
+          "peak_sec": 1067.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        },
+        {
+          "peak_sec": 440.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        },
+        {
+          "peak_sec": 97.5,
+          "score": 0.0,
+          "blocked_reason": ""
+        }
+      ],
+      "last_pool_at": 1789329904.9568667
+    },
+    {
+      "id": "7GdBHb7Umkk",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_7GdBHb7Umkk.mp4",
+      "title": "",
+      "exhausted": true,
+      "dense_pool_version": 5,
+      "dense_rejected_peaks": [
+        244.0,
+        90.0
+      ],
+      "singles_zero_send_streak": 2,
+      "reject_reason": "pubg_singles_presend_exhausted",
+      "last_scan_at": 1789330792.6936996,
+      "last_scan_sent": 0,
+      "last_scan_blocked": true,
+      "last_pool_peaks": [
+        {
+          "peak_sec": 244.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        },
+        {
+          "peak_sec": 90.0,
+          "score": 0.0,
+          "blocked_reason": ""
+        }
+      ],
+      "last_pool_at": 1789330792.6933389
+    },
+    {
+      "id": "TJFY9oBSx7c",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_TJFY9oBSx7c.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789330835.7691667
+    },
+    {
+      "id": "kVDFiFfMP9c",
+      "path": "/root/data/pubg/youtube_nightly/inbox/yt_kVDFiFfMP9c.mp4",
+      "exhausted": false,
+      "recycle_count": 0,
+      "last_recycle_at": 1789330835.7746696
+    }
+  ],
+  "used_youtube_ids": [],
+  "discovery_cycle": 3
+}

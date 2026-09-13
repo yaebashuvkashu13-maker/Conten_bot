@@ -1,0 +1,70 @@
+{
+  "version": 6,
+  "counts": {
+    "vod_segment:bad": 1,
+    "vod_segment:good": 5
+  },
+  "events": [
+    {
+      "version": 1,
+      "game": "pubg",
+      "video_id": "bevtU6A8x38",
+      "time_sec": 110.0,
+      "label": "bad",
+      "reason": "promo",
+      "item_id": "bevtU6A8x38_106",
+      "at": "2026-07-15 14:36:34"
+    },
+    {
+      "version": 2,
+      "game": "pubg",
+      "video_id": "iVqDFU1DXEQ",
+      "time_sec": 110.0,
+      "label": "good",
+      "reason": "",
+      "item_id": "iVqDFU1DXEQ_106",
+      "at": "2026-07-15 15:18:57"
+    },
+    {
+      "version": 3,
+      "game": "pubg",
+      "video_id": "2jOv28cQ6Ws",
+      "time_sec": 270.0,
+      "label": "good",
+      "reason": "",
+      "item_id": "2jOv28cQ6Ws_266",
+      "at": "2026-07-15 16:31:57"
+    },
+    {
+      "version": 4,
+      "game": "pubg",
+      "video_id": "zvLYNkQMLFI",
+      "time_sec": 96.0,
+      "label": "good",
+      "reason": "",
+      "item_id": "zvLYNkQMLFI_92",
+      "at": "2026-07-15 17:20:58"
+    },
+    {
+      "version": 5,
+      "game": "pubg",
+      "video_id": "2jOv28cQ6Ws",
+      "time_sec": 360.0,
+      "label": "good",
+      "reason": "",
+      "item_id": "2jOv28cQ6Ws_356",
+      "at": "2026-07-15 17:54:31"
+    },
+    {
+      "version": 6,
+      "game": "pubg",
+      "video_id": "2jOv28cQ6Ws",
+      "time_sec": 660.0,
+      "label": "good",
+      "reason": "",
+      "item_id": "2jOv28cQ6Ws_656",
+      "at": "2026-07-16 17:03:09"
+    }
+  ],
+  "updated_at": "2026-07-16 17:03:09"
+}

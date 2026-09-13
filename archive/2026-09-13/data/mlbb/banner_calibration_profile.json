@@ -1,0 +1,30 @@
+{
+  "updated_at": "2026-07-16 23:17:45",
+  "labeled": 278,
+  "target": 200,
+  "by_reason": {
+    "no_banner": 139,
+    "enemy_kill": 8,
+    "not_kill": 21,
+    "wrong_hero": 7,
+    "not_gameplay": 1,
+    "double_triple": 16,
+    "own_kill_good": 88,
+    "not_enemy_kill": 1
+  },
+  "positive_labels": 105,
+  "negative_labels": 176,
+  "positive_crops": 25,
+  "negative_crops": 179,
+  "gate_active": true,
+  "thresholds": {
+    "MLBB_BANNER_NEG_REF_MIN_SIM": 0.36,
+    "MLBB_BANNER_POS_REF_MIN_SIM": 0.45,
+    "MLBB_BANNER_OWNER_GATE": "1",
+    "MLBB_BANNER_NEG_REF_MATCH": "1",
+    "MLBB_BANNER_REF_MATCH": "1",
+    "MLBB_BANNER_REF_VOD_CROP": "0",
+    "MLBB_BANNER_POS_OWN_KILL_MIN_SIM": 0.5,
+    "MLBB_BANNER_POS_SAVAGE_MIN_SIM": 0.48
+  }
+}

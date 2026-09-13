@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: PUBG Shorts autolearn (polite, anti-ban)
+
+[Timer]
+# Every 12 minutes — batch=3 × ~5 runs/hour ≈ 15–17/hour → ~385/day over 24h.
+OnBootSec=8min
+OnUnitActiveSec=12min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=content-bot-pubg-shorts-autolearn.service
+
+[Install]
+WantedBy=timers.target

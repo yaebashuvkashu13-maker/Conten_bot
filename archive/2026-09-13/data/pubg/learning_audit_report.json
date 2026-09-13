@@ -1,0 +1,378 @@
+{
+  "report": [
+    {
+      "video_id": "3LW8KXB5tJU",
+      "good_anchors": 1,
+      "explained_misses": 0,
+      "unexplained_misses": 1,
+      "missed": [
+        {
+          "time_sec": 154.0,
+          "vod": "3LW8KXB5tJU"
+        }
+      ],
+      "explained": []
+    },
+    {
+      "video_id": "n97cHIR9Qow",
+      "good_anchors": 4,
+      "explained_misses": 0,
+      "unexplained_misses": 4,
+      "missed": [
+        {
+          "time_sec": 1845.0,
+          "vod": "n97cHIR9Qow"
+        },
+        {
+          "time_sec": 2005.0,
+          "vod": "n97cHIR9Qow"
+        },
+        {
+          "time_sec": 2150.0,
+          "vod": "n97cHIR9Qow"
+        },
+        {
+          "time_sec": 2470.0,
+          "vod": "n97cHIR9Qow"
+        }
+      ],
+      "explained": []
+    },
+    {
+      "video_id": "pJ-X6NdSU9k",
+      "good_anchors": 6,
+      "explained_misses": 0,
+      "unexplained_misses": 6,
+      "missed": [
+        {
+          "time_sec": 515.0,
+          "vod": "pJ-X6NdSU9k"
+        },
+        {
+          "time_sec": 550.0,
+          "vod": "pJ-X6NdSU9k"
+        },
+        {
+          "time_sec": 615.0,
+          "vod": "pJ-X6NdSU9k"
+        },
+        {
+          "time_sec": 2842.0,
+          "vod": "pJ-X6NdSU9k"
+        },
+        {
+          "time_sec": 2940.0,
+          "vod": "pJ-X6NdSU9k"
+        },
+        {
+          "time_sec": 3285.0,
+          "vod": "pJ-X6NdSU9k"
+        }
+      ],
+      "explained": []
+    }
+  ],
+  "total_missed": 11,
+  "unsent_combat_passes": [
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "ICE7afoNgUA_110"
+    },
+    {
+      "vod": "ICE7afoNgUA",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "ICE7afoNgUA_120"
+    },
+    {
+      "vod": "hRsbT8iCAnM",
+      "time_sec": 114.0,
+      "reason": "combat_ok=gun0.596:burst9.297",
+      "expected_segment_id": "hRsbT8iCAnM_110"
+    },
+    {
+      "vod": "hRsbT8iCAnM",
+      "time_sec": 116.0,
+      "reason": "combat_ok=gun0.607:burst8.784",
+      "expected_segment_id": "hRsbT8iCAnM_112"
+    },
+    {
+      "vod": "hRsbT8iCAnM",
+      "time_sec": 124.0,
+      "reason": "combat_ok=gun0.738:burst11.514",
+      "expected_segment_id": "hRsbT8iCAnM_120"
+    }
+  ]
+}

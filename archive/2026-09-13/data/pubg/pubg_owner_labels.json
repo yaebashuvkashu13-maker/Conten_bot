@@ -1,0 +1,6755 @@
+{
+  "videos": {
+    "pJ-X6NdSU9k": [
+      {
+        "tc": "8:35",
+        "time_sec": 515,
+        "label": "good"
+      },
+      {
+        "tc": "9:10",
+        "time_sec": 550,
+        "label": "good"
+      },
+      {
+        "tc": "10:15",
+        "time_sec": 615,
+        "label": "good"
+      },
+      {
+        "tc": "47:22",
+        "time_sec": 2842,
+        "label": "good"
+      },
+      {
+        "tc": "49:00",
+        "time_sec": 2940,
+        "label": "good"
+      },
+      {
+        "tc": "54:45",
+        "time_sec": 3285,
+        "label": "good"
+      }
+    ],
+    "zv3JymSZOb0": [
+      {
+        "tc": "29:54",
+        "time_sec": 1794,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "35:40",
+        "time_sec": 2140,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "1:22:56",
+        "time_sec": 4976,
+        "label": "bad",
+        "note": "run no starter shots"
+      },
+      {
+        "tc": "1:45:08",
+        "time_sec": 6308,
+        "label": "bad",
+        "note": "run no starter shots"
+      }
+    ],
+    "n97cHIR9Qow": [
+      {
+        "tc": "30:45",
+        "time_sec": 1845,
+        "label": "good"
+      },
+      {
+        "tc": "33:25",
+        "time_sec": 2005,
+        "label": "good"
+      },
+      {
+        "tc": "35:05",
+        "time_sec": 2105,
+        "label": "bad"
+      },
+      {
+        "tc": "35:50",
+        "time_sec": 2150,
+        "label": "good"
+      },
+      {
+        "tc": "36:55",
+        "time_sec": 2215,
+        "label": "bad"
+      },
+      {
+        "tc": "38:07",
+        "time_sec": 2287,
+        "label": "bad"
+      },
+      {
+        "tc": "41:10",
+        "time_sec": 2470,
+        "label": "good"
+      },
+      {
+        "tc": "42:01",
+        "time_sec": 2521,
+        "label": "bad"
+      },
+      {
+        "time_sec": 6066.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2146.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_reject_trash_2026-08-05"
+      },
+      {
+        "time_sec": 2466.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_reject_trash_2026-08-05"
+      },
+      {
+        "time_sec": 2144.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_reject_trash_2026-08-05"
+      },
+      {
+        "time_sec": 2464.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_reject_trash_2026-08-05"
+      },
+      {
+        "time_sec": 1845.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "Tovruh33adY": [
+      {
+        "tc": "25:33",
+        "time_sec": 1533,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "long intro / cut before fight"
+      },
+      {
+        "tc": "1:27:46",
+        "time_sec": 5266,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style — part 2 reference"
+      },
+      {
+        "time_sec": 6604.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3757.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 6067.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 9005.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6552.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 9267.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 7951.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 8459.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2779.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2943.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6160.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 7234.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1707.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1841.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 3484.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 5928.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3220.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 9410.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 516.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "menu_lobby"
+      },
+      {
+        "time_sec": 1533.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 5266.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 6382.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 9534.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6382.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 9534.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1331.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1331.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6351.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 7516.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 8764.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 3052.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "boring"
+      },
+      {
+        "time_sec": 1183.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1462.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 9661.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4553.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 8764.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 6351.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 7516.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3052.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "boring"
+      },
+      {
+        "time_sec": 1183.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1462.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 9661.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4553.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "bMn-6uTsDBg": [
+      {
+        "tc": "2:21",
+        "time_sec": 141,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "long intro / fight at end of clip"
+      },
+      {
+        "tc": "4:03",
+        "time_sec": 243,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style — part 2 reference"
+      },
+      {
+        "time_sec": 605.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 95.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 386.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 982.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 181.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 814.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1216.2,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 215.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 697.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 308.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 332.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 64.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 912.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 557.2,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1116.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 333.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 141.9,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 243.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 243.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 414.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 669.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 414.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 669.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "Z7wR4vZkn5E": [
+      {
+        "tc": "14:18",
+        "time_sec": 858,
+        "label": "good",
+        "note": "owner peak"
+      },
+      {
+        "tc": "19:24",
+        "time_sec": 1164,
+        "label": "good",
+        "role": "style_ref",
+        "note": "target fight style"
+      },
+      {
+        "time_sec": 1047.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 858.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 858.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1164.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1164.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1019.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 830.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 803.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1019.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 830.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 803.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "3hDKNrY4sGU": [
+      {
+        "tc": "20:04",
+        "time_sec": 1204,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "fight at end / cut before payoff"
+      },
+      {
+        "tc": "33:51",
+        "time_sec": 2031,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "empty part / no fight content"
+      },
+      {
+        "time_sec": 687.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 978.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 965.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 671.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 451.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 2377.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2764.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 616.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 616.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 715.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1006.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1006.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 715.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 937.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 588.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 937.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 588.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 584.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 600.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 608.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 616.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 624.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 948.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 956.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 964.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 972.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 980.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 988.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1002.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1010.6,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1018.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1026.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1034.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1041.1,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 584.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 608.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 616.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 956.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 964.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 972.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 988.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1010.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 600.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 624.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 948.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 980.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1002.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1018.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1026.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1034.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1041.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 592.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 592.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 882.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 882.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "oVKSI-HFr2E": [
+      {
+        "tc": "6:29",
+        "time_sec": 389,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "80% running / no fight"
+      },
+      {
+        "tc": "20:21",
+        "time_sec": 1221,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "gunfire only at end of clip"
+      },
+      {
+        "time_sec": 659.1,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 61.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 389.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1221.2,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 631.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 604.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 749.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 631.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 604.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 749.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "ACCvn55IvVw": [
+      {
+        "tc": "2:03",
+        "time_sec": 123,
+        "label": "bad",
+        "role": "anti_style",
+        "note": "tightened kill-tail only / no gunfire"
+      },
+      {
+        "tc": "2:09",
+        "time_sec": 129,
+        "label": "good",
+        "note": "owner peak — full gunfight"
+      },
+      {
+        "time_sec": 157.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 157.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "Wg9qrAzWTLU": [
+      {
+        "tc": "12:00",
+        "time_sec": 720,
+        "label": "bad",
+        "note": "bot kill not real player; force-send missed rating buttons"
+      },
+      {
+        "tc": "22:00",
+        "time_sec": 1320,
+        "label": "bad",
+        "note": "inventory/LEVEL UP empty — false kill UI on loot purple"
+      },
+      {
+        "time_sec": 1320.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "YErkHdD25u4": [
+      {
+        "time_sec": 84.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 134.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 118.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 86.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "not_metro_royale"
+      },
+      {
+        "time_sec": 84.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "not_metro_royale"
+      }
+    ],
+    "3LW8KXB5tJU": [
+      {
+        "time_sec": 154.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 205.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "6b07LK4AZco": [
+      {
+        "time_sec": 129.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 104.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 20.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 96.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "quVo_r-wTgQ": [
+      {
+        "time_sec": 116.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 108.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 60.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "_bmnfbWwOyg": [
+      {
+        "time_sec": 120.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 167.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 94.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "YT6I7rkKLW4": [
+      {
+        "time_sec": 94.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "AdEDtky705s": [
+      {
+        "time_sec": 76.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "kFZA1C3Ze4s": [
+      {
+        "time_sec": 81.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "cYmo3hwaRVI": [
+      {
+        "time_sec": 20.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 77.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 145.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "D7rnejTW3Ro": [
+      {
+        "time_sec": 76.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 175.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "Z3fcFslj6eQ": [
+      {
+        "time_sec": 106.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "zvLYNkQMLFI": [
+      {
+        "time_sec": 24.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 96.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "m7N6YmBGbJA": [
+      {
+        "time_sec": 102.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "Lt4tEJC1EHs": [
+      {
+        "time_sec": 112.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "iVqDFU1DXEQ": [
+      {
+        "time_sec": 110.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "2jOv28cQ6Ws": [
+      {
+        "time_sec": 270.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 360.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 660.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "IgJ3MyyK1sY": [
+      {
+        "time_sec": 112.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 210.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "LQMVJ_gdWt8": [
+      {
+        "time_sec": 112.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "QDda58YJxUY": [
+      {
+        "time_sec": 286.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "Ryr1W7O7WZ4": [
+      {
+        "time_sec": 90.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "IGsghkjicaQ": [
+      {
+        "time_sec": 160.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 97.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 288.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "LDaYqSY976g": [
+      {
+        "time_sec": 676.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 463.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 562.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "KYr2ozbyOdA": [
+      {
+        "time_sec": 204.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "eQj6ZkEo0ds": [
+      {
+        "time_sec": 153.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "WzrLagUCgn8": [
+      {
+        "time_sec": 135.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "ae7nwZty6DU": [
+      {
+        "time_sec": 165.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "hFC6RhqbFvA": [
+      {
+        "time_sec": 345.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "MExMt1I1Frw": [
+      {
+        "time_sec": 495.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "YABDTh-eIZk": [
+      {
+        "time_sec": 210.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "WuoFtewT8Ns": [
+      {
+        "time_sec": 257.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "m0G5QzlxTfY": [
+      {
+        "time_sec": 135.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "nB86NXwlc7E": [
+      {
+        "time_sec": 345.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "0X5Nu7JepjU": [
+      {
+        "time_sec": 198.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "kaX_v2yNtyA": [
+      {
+        "time_sec": 105.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "6iOnKrBEoSw": [
+      {
+        "time_sec": 60.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "l5Y37N588Ig": [
+      {
+        "time_sec": 0.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "5XMoDWiXksA": [
+      {
+        "time_sec": 134.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 40.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "3VQUrnc9wCc": [
+      {
+        "time_sec": 42.2,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "CNi2Cjruo5c": [
+      {
+        "time_sec": 26.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 141.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "NB2SH87Glq0": [
+      {
+        "time_sec": 135.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 101.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 23.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "gklPM2gWKmA": [
+      {
+        "time_sec": 81.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 40.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "Y-nrBFJxQDs": [
+      {
+        "time_sec": 185.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 63.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "_RB9KUig3G4": [
+      {
+        "time_sec": 223.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 134.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "kQqcVkgWhPE": [
+      {
+        "time_sec": 333.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1128.2,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1425.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 143.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1321.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1103.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "G4J7IRXBMUE": [
+      {
+        "time_sec": 1232.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 323.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "He9p6A7pfsM": [
+      {
+        "time_sec": 1162.1,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4177.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4219.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 7416.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2556.1,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 5722.2,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2956.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 5408.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1105.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1271.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2242.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2740.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4347.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 3309.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 629.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2853.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6136.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 369.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "boring"
+      },
+      {
+        "time_sec": 3736.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "promo"
+      },
+      {
+        "time_sec": 231.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2592.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 275.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 4008.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "rhWiQDta70k": [
+      {
+        "time_sec": 99.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 519.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 44.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 44.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "Uf24FKmSUVc": [
+      {
+        "time_sec": 456.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 173.8,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 75.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 137.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 576.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 576.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "tZnWMCGOlF0": [
+      {
+        "time_sec": 446.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 725.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "OEUU0N6oMRI": [
+      {
+        "time_sec": 103.7,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 716.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 877.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1054.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "boring"
+      },
+      {
+        "time_sec": 1228.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 69.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 510.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 470.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 793.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "5h9EGyeB2kY": [
+      {
+        "time_sec": 217.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1515.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 964.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "author_death"
+      },
+      {
+        "time_sec": 1234.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1249.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "2M4mYAUq3js": [
+      {
+        "time_sec": 708.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 899.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 618.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 618.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "7uRnygfC-F4": [
+      {
+        "time_sec": 306.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 410.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 125.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "88r7cP4WPzY": [
+      {
+        "time_sec": 371.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 800.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 343.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 772.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 855.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 745.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 343.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 772.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 855.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 745.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "fMTEuYoFYWM": [
+      {
+        "time_sec": 1486.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1347.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "OA0791bu5TY": [
+      {
+        "time_sec": 188.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "OY7PUahSujE": [
+      {
+        "time_sec": 72.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "QXbIO5FigTw": [
+      {
+        "time_sec": 89.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 61.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 61.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "g-FvX5wpINM": [
+      {
+        "time_sec": 603.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "dcuFhV5-MmA": [
+      {
+        "time_sec": 250.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 65.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "MrBAE3ns8I4": [
+      {
+        "time_sec": 288.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 487.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2428.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "author_death"
+      },
+      {
+        "time_sec": 1171.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4255.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 548.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2149.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1872.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 2379.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1220.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4255.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 548.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2149.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1872.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 2379.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1220.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2260.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2260.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 478.1,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 289.4,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 530.1,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 811.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 811.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 478.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 289.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 530.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "4XW2NsmAM5c": [
+      {
+        "time_sec": 5023.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "YN3B0PJt9UM": [
+      {
+        "time_sec": 478.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "qdU3S54wObQ": [
+      {
+        "time_sec": 194.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 166.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 166.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "-tqUqX3_LOo": [
+      {
+        "time_sec": 418.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "zdtDZd-FQ68": [
+      {
+        "time_sec": 78.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "XM_B3Irw_Fg": [
+      {
+        "time_sec": 292.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 105.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 490.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "6tBEG4XXXP8": [
+      {
+        "time_sec": 1078.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3403.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 7349.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 7235.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 210.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 6650.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 5605.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "2UfuReVPtNA": [
+      {
+        "time_sec": 2840.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4372.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 448.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "DrUj74J_gcU": [
+      {
+        "time_sec": 330.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 241.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1951.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1366.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 205.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 463.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 205.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1366.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 463.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "cHeZwWqhiGc": [
+      {
+        "time_sec": 1063.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 346.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1494.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "_-HbZ0zNDOs": [
+      {
+        "time_sec": 286.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4582.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 666.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 88.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 3743.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "zRQC8jkxbXQ": [
+      {
+        "time_sec": 1243.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 867.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1737.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 672.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1112.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 3396.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4295.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4970.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4447.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1213.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1512.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2796.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4025.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1112.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3396.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4295.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4447.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1213.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1512.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2796.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4025.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4970.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2141.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2141.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4136.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 4136.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2051.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2051.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1540.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1540.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4053.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4053.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3424.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3424.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3991.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 3991.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3991.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3991.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 0.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 0.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 4267.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4267.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 3368.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2768.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4240.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2741.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1057.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4212.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4322.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1271.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 2824.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1084.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4177.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2079.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4475.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1185.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2196.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2851.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 3368.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4240.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2741.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1057.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4212.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4322.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1084.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2079.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1185.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2768.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1271.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 2824.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4177.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4475.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2196.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2851.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "3cr6-IsNoTQ": [
+      {
+        "time_sec": 132.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 341.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 535.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "JTCjmdUM5GY": [
+      {
+        "time_sec": 94.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "not_gameplay"
+      }
+    ],
+    "ICE7afoNgUA": [
+      {
+        "time_sec": 112.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "blurry"
+      }
+    ],
+    "Xf_25UUWjuI": [
+      {
+        "time_sec": 104.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "f6S2gZVGTpw": [
+      {
+        "time_sec": 120.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "_Rz4bwf6jtY": [
+      {
+        "time_sec": 120.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "4ccQzmHpwo0": [
+      {
+        "time_sec": 22.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 141.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "b1SsO8L6YlI": [
+      {
+        "time_sec": 122.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "promo"
+      }
+    ],
+    "bevtU6A8x38": [
+      {
+        "time_sec": 110.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "promo"
+      }
+    ],
+    "equCi6IUrRM": [
+      {
+        "time_sec": 112.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "xcbbiK7fqkk": [
+      {
+        "time_sec": 112.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "hwQg-IvxyP0": [
+      {
+        "time_sec": 102.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "AM80jP49oak": [
+      {
+        "time_sec": 454.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "awEX0e0PlR4": [
+      {
+        "time_sec": 414.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 90.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 165.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 568.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "GMd1aGuIvSM": [
+      {
+        "time_sec": 64.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "SI-HNSKtzj8": [
+      {
+        "time_sec": 405.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "w4jOC-LrZx8": [
+      {
+        "time_sec": 285.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "GKMQ5cms8hk": [
+      {
+        "time_sec": 195.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "yoT_fZ3CkPc": [
+      {
+        "time_sec": 557.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "boring"
+      }
+    ],
+    "m6hPnAYJ1aM": [
+      {
+        "time_sec": 405.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "boring"
+      }
+    ],
+    "fLFB1WOh9Mo": [
+      {
+        "time_sec": 75.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "pN_qv-tQAMo": [
+      {
+        "time_sec": 272.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "xmJdSWbvYz4": [
+      {
+        "time_sec": 300.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "SnUqO9NTKEY": [
+      {
+        "time_sec": 120.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "XcTT8nfpkQM": [
+      {
+        "time_sec": 390.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "2fXR4d6pHfc": [
+      {
+        "time_sec": 600.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "6JSw2HEIfOA": [
+      {
+        "time_sec": 675.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "Ib1BiJcnVr8": [
+      {
+        "time_sec": 345.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "LJpn0Rh9Gq4": [
+      {
+        "time_sec": 135.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "HOQ7TNI3PME": [
+      {
+        "time_sec": 180.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "EUP9pcBqPtk": [
+      {
+        "time_sec": 90.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 666.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 407.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 260.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 163.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "wEmX7yEyKQg": [
+      {
+        "time_sec": 152.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "FpMs48XOnq0": [
+      {
+        "time_sec": 2117.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_trash_part"
+      },
+      {
+        "time_sec": 3499.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "owner_trash_part"
+      }
+    ],
+    "ISdJMzfBJQs": [
+      {
+        "time_sec": 22.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "pxZOzhDW_aQ": [
+      {
+        "time_sec": 22.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "1tGY_WQoj9c": [
+      {
+        "time_sec": 303.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 700.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 494.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 734.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 386.7,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 469.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 593.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 7.5,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 0-15 event=loot"
+      },
+      {
+        "time_sec": 52.5,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 45-60 event=other"
+      },
+      {
+        "time_sec": 97.5,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 90-105 event=menu"
+      },
+      {
+        "time_sec": 142.5,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 135-150 event=loot"
+      },
+      {
+        "time_sec": 187.5,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 180-195 event=loot"
+      },
+      {
+        "time_sec": 4.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 0-8 event=loot"
+      },
+      {
+        "time_sec": 28.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 24-32 event=boring"
+      },
+      {
+        "time_sec": 52.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 48-56 event=menu"
+      },
+      {
+        "time_sec": 76.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 72-80 event=other"
+      },
+      {
+        "time_sec": 100.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 96-104 event=boring"
+      },
+      {
+        "time_sec": 124.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 120-128 event=no_combat"
+      },
+      {
+        "time_sec": 148.0,
+        "label": "bad",
+        "source": "window_tg",
+        "note": "window 144-152 event=no_combat"
+      },
+      {
+        "time_sec": 593.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 565.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 538.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 565.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 538.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "ZwNC8IcFn9s": [
+      {
+        "time_sec": 213.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 135.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1785.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 294.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 294.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "ozHZ3-GpHcA": [
+      {
+        "time_sec": 315.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 810.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "TJFY9oBSx7c": [
+      {
+        "time_sec": 684.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 741.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 680.2,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 562.8,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 854.1,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 854.0,
+        "label": "good",
+        "source": "owner_tg_feedback",
+        "note": "ended_early",
+        "at": "2026-09-12 20:20:29"
+      },
+      {
+        "time_sec": 680.0,
+        "label": "good",
+        "source": "owner_tg_feedback",
+        "note": "ended_early",
+        "at": "2026-09-12 20:20:29"
+      },
+      {
+        "time_sec": 680.2,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "ended_early"
+      },
+      {
+        "time_sec": 562.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 854.1,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "ended_early"
+      },
+      {
+        "time_sec": 680.2,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 680.2,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 909.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 944.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 944.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 909.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 909.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 909.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "UkXwqv5RSj4": [
+      {
+        "time_sec": 375.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 616.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1380.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 733.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 733.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1380.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "kVDFiFfMP9c": [
+      {
+        "time_sec": 996.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1056.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 66.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "4Dh3XRWDcbM": [
+      {
+        "time_sec": 267.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 513.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "_KDd2Cl33bs": [
+      {
+        "time_sec": 71.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "FDBFoBSf0V0": [
+      {
+        "time_sec": 319.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "onKCpHL80ak": [
+      {
+        "time_sec": 685.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "mjsADT2lg68": [
+      {
+        "time_sec": 1061.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "4IRbOmia_pI": [
+      {
+        "time_sec": 471.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 386.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "X-PwY_lqBlY": [
+      {
+        "time_sec": 103.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "lv8Tx_drN34": [
+      {
+        "time_sec": 94.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "author_death"
+      }
+    ],
+    "_467DF6XKjs": [
+      {
+        "time_sec": 1045.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "JmEagIrXFvM": [
+      {
+        "time_sec": 4093.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "author_death"
+      },
+      {
+        "time_sec": 3687.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 919.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 1837.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "author_death"
+      },
+      {
+        "time_sec": 3844.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1115.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 3369.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 599.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1071.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 3716.3,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1246.4,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 1071.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 3716.3,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1246.4,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "1FdKnu4lmFU": [
+      {
+        "time_sec": 1017.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "6sGMjPpZN3M": [
+      {
+        "time_sec": 346.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "n-2Ouktkc8M": [
+      {
+        "time_sec": 821.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "FxTv16VoLZk": [
+      {
+        "tc": "0:30",
+        "label": "good",
+        "role": "style_ref",
+        "note": "owner-approved Metro kill fight — target style for similar clips",
+        "time_sec": 30.0
+      },
+      {
+        "time_sec": 30.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "6mWLqNBX1pE": [
+      {
+        "tc": "0:06",
+        "time_sec": 6,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "2:27",
+        "time_sec": 147,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "3:31",
+        "time_sec": 211,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "3:54",
+        "time_sec": 234,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "4:25",
+        "time_sec": 265,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "4:47",
+        "time_sec": 287,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "6:11",
+        "time_sec": 371,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "6:46",
+        "time_sec": 406,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:10",
+        "time_sec": 430,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:26",
+        "time_sec": 446,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE",
+        "role": "style_ref"
+      },
+      {
+        "tc": "7:50",
+        "time_sec": 470,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "8:38",
+        "time_sec": 518,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "9:21",
+        "time_sec": 561,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "10:06",
+        "time_sec": 606,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "tc": "11:58",
+        "time_sec": 718,
+        "label": "good",
+        "note": "owner 2026-09-06: normal fight act — do not skip",
+        "source": "owner_chat_6mWLqNBX1pE"
+      },
+      {
+        "time_sec": 52.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1907.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 901.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 287.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 6.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 52.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 901.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1907.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 133.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1440.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 337.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 570.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 133.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 337.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 570.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1440.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "vhTD_6ka4Eo": [
+      {
+        "time_sec": 1293.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 5156.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 192.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1293.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 5156.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 192.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 5495.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 4385.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1935.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1183.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4259.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4311.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 248.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 313.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 427.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 552.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 974.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2463.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1585.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 5495.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4385.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1585.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1935.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1183.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4259.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 4311.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 248.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 313.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 427.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 552.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 974.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2463.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 4353.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1853.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1325.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1853.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 4353.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1325.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "_eCk8JH-CH8": [
+      {
+        "time_sec": 284.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1139.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 233.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 284.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1139.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 233.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 563.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 563.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "fRv-TIZBZ98": [
+      {
+        "time_sec": 94.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 177.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 94.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 177.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "71ctZg0f9SA": [
+      {
+        "time_sec": 1218.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 10.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 1218.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 10.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "drhFw4wVLlo": [
+      {
+        "time_sec": 23.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 562.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 92.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 562.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 92.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 23.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      }
+    ],
+    "Olr9BhwiIMg": [
+      {
+        "time_sec": 6.4,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 6.4,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "tt_70590258": [
+      {
+        "time_sec": 10.3,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 10.3,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      }
+    ],
+    "tt_74913259": [
+      {
+        "time_sec": 27.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "not_metro"
+      },
+      {
+        "time_sec": 27.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "not_metro"
+      }
+    ],
+    "DGsoEt9znls": [
+      {
+        "time_sec": 476.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 606.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 606.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 476.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 634.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 578.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 634.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 578.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 663.0,
+        "label": "bad",
+        "source": "owner_tg_feedback",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 262.0,
+        "label": "bad",
+        "source": "owner_tg_feedback",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1030.0,
+        "label": "bad",
+        "source": "owner_tg_feedback",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 579.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 587.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 595.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 603.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 595.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 579.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 587.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 603.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 611.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 619.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 635.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 643.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 651.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 659.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 667.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 447.0,
+        "label": "good",
+        "source": "owner_tg_feedback",
+        "note": "owner_tg: good fight but ended_early — need longer tail"
+      },
+      {
+        "time_sec": 460.0,
+        "label": "good",
+        "source": "owner_tg_feedback",
+        "note": "owner_tg: extend_tail target after 447 fight"
+      },
+      {
+        "time_sec": 453.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 450.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 458.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 619.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 643.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 659.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 453.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 458.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 611.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 635.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 651.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 667.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 450.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 749.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 749.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 777.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 777.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot"
+      }
+    ],
+    "wdVl_ltAby0": [
+      {
+        "time_sec": 1007.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1007.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      }
+    ],
+    "seg_88r7cP4": [
+      {
+        "time_sec": 746.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 754.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 762.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 770.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 778.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 786.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 794.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 802.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 810.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 818.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 826.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 834.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 842.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 850.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 856.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 864.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 872.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 880.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 856.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 888.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 896.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 902.8,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 787.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 795.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 803.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 811.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 819.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 827.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 835.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 843.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 851.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 859.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 867.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 875.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 883.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 890.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 338.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 346.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 354.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 362.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 370.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 376.8,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 778.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 786.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 802.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 888.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 787.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 803.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 835.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 883.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 890.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 354.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 370.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 746.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 754.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 762.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 770.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 794.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 810.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 818.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 826.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 834.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 842.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 850.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 856.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 864.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 872.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 880.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 856.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 896.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 902.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 795.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 811.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 819.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 827.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 843.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 851.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 859.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 867.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 875.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 338.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 346.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 362.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 376.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "seg_Z7wR4vZ": [
+      {
+        "time_sec": 812.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 820.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 828.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 836.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 844.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 852.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 860.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 868.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 876.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 884.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 892.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 900.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 908.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 916.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 922.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 831.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 839.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 847.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 855.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 863.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 871.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 879.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 887.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 895.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 903.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 911.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 919.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 927.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 935.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 941.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1020.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1028.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1036.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1044.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1052.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1060.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1068.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1076.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 812.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 868.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 922.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 863.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 871.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 919.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1052.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1068.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 820.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 828.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 836.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 844.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 852.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 860.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 876.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 884.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 892.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 900.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 908.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 916.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 831.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 839.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 847.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 855.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 879.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 887.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 895.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 903.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 911.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 927.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 935.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 941.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1020.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1028.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1036.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1044.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1060.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1076.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "seg_oVKSI-H": [
+      {
+        "time_sec": 744.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 752.6,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 760.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 768.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 776.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 784.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 791.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 752.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 744.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 760.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 768.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 776.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 784.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 791.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 578.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 586.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 594.6,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 602.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 610.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 618.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 626.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 634.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 642.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 650.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 658.6,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 666.6,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 674.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 682.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 690.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 698.6,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 705.9,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 594.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 658.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 666.6,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 578.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 586.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 602.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 610.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 618.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 626.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 634.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 642.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 650.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 674.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 682.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 690.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 698.6,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 705.9,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "seg_1tGY_WQ": [
+      {
+        "time_sec": 536.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 544.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 552.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 560.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 568.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 576.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 584.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 592.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 600.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 608.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 616.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 624.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 552.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 608.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 616.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 536.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 544.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 560.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 568.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 576.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 584.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 592.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 600.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 624.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 632.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 640.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 646.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 566.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 574.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 582.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 590.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 598.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 606.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 614.5,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 622.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 630.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 638.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 646.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 654.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 660.8,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 606.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 614.5,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 632.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 640.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 646.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 566.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 574.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 582.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 590.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 598.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 622.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 630.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 638.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 646.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 654.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 660.8,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "seg_Uf24FKm": [
+      {
+        "time_sec": 578.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 586.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 602.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 610.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 602.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 578.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 586.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 610.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      }
+    ],
+    "seg_rhWiQDt": [
+      {
+        "time_sec": 46.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 54.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 62.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 70.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 77.2,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 70.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 46.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 54.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 62.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 77.2,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ],
+    "seg_zRQC8jk": [
+      {
+        "time_sec": 1199.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1207.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1215.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1223.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1231.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1239.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1247.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1255.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 1263.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1271.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1279.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1287.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1295.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 1303.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 1308.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "other"
+      },
+      {
+        "time_sec": 2084.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2092.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2100.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2108.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2116.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2124.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2132.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2140.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2148.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2156.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2164.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2172.0,
+        "label": "good",
+        "source": "vod_segment"
+      },
+      {
+        "time_sec": 2180.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2188.0,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2193.5,
+        "label": "bad",
+        "source": "vod_segment",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1207.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1231.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1255.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2124.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2132.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2140.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2148.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 2172.0,
+        "label": "good",
+        "source": "vod_segment_backfill"
+      },
+      {
+        "time_sec": 1199.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1215.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1223.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1239.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1247.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 1263.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1271.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1279.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 1287.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 1295.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 1303.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 1308.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "other"
+      },
+      {
+        "time_sec": 2084.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2092.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2100.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2108.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2116.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "loot_run"
+      },
+      {
+        "time_sec": 2156.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2164.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2180.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_kill"
+      },
+      {
+        "time_sec": 2188.0,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      },
+      {
+        "time_sec": 2193.5,
+        "label": "bad",
+        "source": "vod_segment_backfill",
+        "note": "no_combat"
+      }
+    ]
+  },
+  "label_history": [
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:04:40",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:14:39",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:14:48",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:15:00",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:25:26",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:25:36",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 19:27:54",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:17:36",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:17:46",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:17:57",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:19:10",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:19",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:28:21",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 20:39:27",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-12 21:36:53",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:15:54",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:16:05",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:16:17",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:20:53",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:20:53",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 07:20:55",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 08:54:29",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 08:55:45",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 09:30:59",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 09:39:45",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 13:07:26",
+      "video_count": 156
+    },
+    {
+      "at": "2026-09-13 13:09:09",
+      "video_count": 156
+    }
+  ],
+  "updated_at": "2026-09-13 13:09:09",
+  "labels": [
+    {
+      "vod": "yt_DGsoEt9znls.mp4",
+      "video_id": "DGsoEt9znls",
+      "t": 663.0,
+      "time_sec": 663.0,
+      "label": "bad",
+      "note": "loot_run",
+      "source": "owner_tg_feedback",
+      "clip": "seg_DGsoEt9znls_660"
+    },
+    {
+      "vod": "yt_DGsoEt9znls.mp4",
+      "video_id": "DGsoEt9znls",
+      "t": 262.0,
+      "time_sec": 262.0,
+      "label": "bad",
+      "note": "no_combat",
+      "source": "owner_tg_feedback",
+      "clip": "seg_DGsoEt9znls_257"
+    },
+    {
+      "vod": "yt_DGsoEt9znls.mp4",
+      "video_id": "DGsoEt9znls",
+      "t": 1030.0,
+      "time_sec": 1030.0,
+      "label": "bad",
+      "note": "loot_run",
+      "source": "owner_tg_feedback",
+      "clip": "seg_DGsoEt9znls_1026"
+    }
+  ]
+}

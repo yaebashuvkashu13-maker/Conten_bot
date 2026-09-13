@@ -1,0 +1,9 @@
+[Unit]
+Description=Content Bot VOD disk watermark cleanup
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/root/.video_bot.env
+ExecStart=/usr/local/bin/vps_disk_cleanup.sh
+Nice=10
+IOSchedulingClass=idle

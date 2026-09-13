@@ -1,0 +1,19 @@
+PUBG Shorts autolearn — отчёт #2
+Просмотрено 205 Shorts (+102 с прошлого отчёта).
+Сформирован диапазон параметров для нарезки VOD:
+stage=tightening q=0.15-0.85 n=577/577 ready=True
+• duration: [13.63 .. 55.81] p50=33.98 (n=577)
+• gunfire_density: [0.008146 .. 0.2242] p50=0.1588 (n=577)
+• burst_ratio: [3.597 .. 8.678] p50=5.272 (n=577)
+• audio_rms: [0.03308 .. 0.2473] p50=0.114 (n=577)
+• center_motion: [0.1416 .. 0.2938] p50=0.21 (n=577)
+• center_text: [0.2436 .. 0.4744] p50=0.36 (n=577)
+• panns_gunshot: [-0.00543 .. 0.4069] p50=0.082 (n=577)
+• panns_machine_gun: [-0.008696 .. 0.4955] p50=0.0636 (n=577)
+• panns_gun_max: [-0.006754 .. 0.5161] p50=0.0925 (n=577)
+• panns_speech: [0.02517 .. 0.7099] p50=0.3166 (n=577)
+• panns_music: [0.01944 .. 0.8338] p50=0.6618 (n=577)
+• killfeed_density: [-0.01183 .. 0.6034] p50=0 (n=270)
+… +3 keys
+Продолжаю просмотр аккуратно (rate-limit).
+Таблица: /root/data/pubg/shorts_autolearn/features.csv

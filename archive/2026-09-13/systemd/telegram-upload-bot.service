@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram upload bot (Conten_bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+ExecStart=/usr/bin/python3 -u /usr/local/bin/telegram_upload_bot.py
+Restart=always
+RestartSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

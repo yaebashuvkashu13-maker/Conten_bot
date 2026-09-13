@@ -1,0 +1,16 @@
+[Unit]
+Description=Send PUBG 8s window clips for owner labeling
+After=network-online.target telegram-upload-bot.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/root/.video_bot.env
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+# Small batch — must not compete with VOD feed encodes.
+Environment=PUBG_WINDOW_LABEL_BATCH=4
+ExecStart=/usr/bin/python3 /root/content_bot_ml/scripts/pubg_window_label_tg.py --limit 4 --pause 1.2
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+TimeoutStartSec=20min

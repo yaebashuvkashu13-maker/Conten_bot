@@ -1,0 +1,18 @@
+{
+  "peaks": [
+    {
+      "vod_id": "Tovruh33adY",
+      "peak_sec": 516.3,
+      "segment_id": "Tovruh33adY_501",
+      "reason": "menu_lobby",
+      "at": "2026-09-05 10:36:22"
+    },
+    {
+      "vod_id": "zRQC8jkxbXQ",
+      "peak_sec": 672.1,
+      "segment_id": "zRQC8jkxbXQ_658",
+      "reason": "loot_run",
+      "at": "2026-09-05 10:43:38"
+    }
+  ]
+}

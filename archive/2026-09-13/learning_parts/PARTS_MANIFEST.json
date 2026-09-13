@@ -1,0 +1,182 @@
+[
+  {
+    "rel": "data/pubg/pubg_owner_labels.json",
+    "binary": false,
+    "parts": [
+      "data_pubg_pubg_owner_labels.json.b64.part00",
+      "data_pubg_pubg_owner_labels.json.b64.part01",
+      "data_pubg_pubg_owner_labels.json.b64.part02",
+      "data_pubg_pubg_owner_labels.json.b64.part03",
+      "data_pubg_pubg_owner_labels.json.b64.part04",
+      "data_pubg_pubg_owner_labels.json.b64.part05"
+    ],
+    "sha256": "a0c186012fb24c9884a203ce84223948bb9c9aaad598d026e80418654091dd8b",
+    "raw_size": 146426
+  },
+  {
+    "rel": "data/pubg/calibration_labels.json",
+    "binary": false,
+    "parts": [
+      "data_pubg_calibration_labels.json.b64.part00",
+      "data_pubg_calibration_labels.json.b64.part01",
+      "data_pubg_calibration_labels.json.b64.part02",
+      "data_pubg_calibration_labels.json.b64.part03"
+    ],
+    "sha256": "bf8fe1bf328a5ca8982f18c5f6f1a1dac16abdc70613d901ae3f16921cf58fa2",
+    "raw_size": 96402
+  },
+  {
+    "rel": "data/mlbb/mobile_legends_owner_labels.json",
+    "binary": false,
+    "parts": [
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part00",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part01",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part02",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part03",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part04",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part05",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part06",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part07",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part08",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part09",
+      "data_mlbb_mobile_legends_owner_labels.json.b64.part10"
+    ],
+    "sha256": "5c3ccfba3b29c5e8da3304d95d272ddb7b1570dc3ac13dc2d011696739207e39",
+    "raw_size": 283705
+  },
+  {
+    "rel": "data/mlbb/calibration_labels.json",
+    "binary": false,
+    "parts": [
+      "data_mlbb_calibration_labels.json.b64.part00",
+      "data_mlbb_calibration_labels.json.b64.part01",
+      "data_mlbb_calibration_labels.json.b64.part02",
+      "data_mlbb_calibration_labels.json.b64.part03",
+      "data_mlbb_calibration_labels.json.b64.part04",
+      "data_mlbb_calibration_labels.json.b64.part05",
+      "data_mlbb_calibration_labels.json.b64.part06",
+      "data_mlbb_calibration_labels.json.b64.part07",
+      "data_mlbb_calibration_labels.json.b64.part08",
+      "data_mlbb_calibration_labels.json.b64.part09",
+      "data_mlbb_calibration_labels.json.b64.part10",
+      "data_mlbb_calibration_labels.json.b64.part11",
+      "data_mlbb_calibration_labels.json.b64.part12",
+      "data_mlbb_calibration_labels.json.b64.part13",
+      "data_mlbb_calibration_labels.json.b64.part14",
+      "data_mlbb_calibration_labels.json.b64.part15",
+      "data_mlbb_calibration_labels.json.b64.part16",
+      "data_mlbb_calibration_labels.json.b64.part17",
+      "data_mlbb_calibration_labels.json.b64.part18",
+      "data_mlbb_calibration_labels.json.b64.part19",
+      "data_mlbb_calibration_labels.json.b64.part20",
+      "data_mlbb_calibration_labels.json.b64.part21",
+      "data_mlbb_calibration_labels.json.b64.part22",
+      "data_mlbb_calibration_labels.json.b64.part23",
+      "data_mlbb_calibration_labels.json.b64.part24"
+    ],
+    "sha256": "7e8be73a6ccb5855a42eb8665421561c2bb5f60e4de6ad8d4fcb35c124a2da26",
+    "raw_size": 647978
+  },
+  {
+    "rel": "learning_compressed/pubg_moment_ranker.joblib.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part00",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part01",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part02",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part03",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part04",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part05",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part06",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part07",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part08",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part09",
+      "learning_compressed_pubg_moment_ranker.joblib.gz.b64.part10"
+    ],
+    "sha256": "d7d63cb5b69ec06cebe0efb7239a77ab530f2cec8e63a9b3de576cdbd954890c",
+    "raw_size": 282321
+  },
+  {
+    "rel": "learning_compressed/pubg_vod_segment_labels.json.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part00",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part01",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part02",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part03",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part04",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part05",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part06",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part07",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part08",
+      "learning_compressed_pubg_vod_segment_labels.json.gz.b64.part09"
+    ],
+    "sha256": "c08ea0d41adc6afbd5cab37270960f22c8d9b01f059a3106c9b50ed73265bb26",
+    "raw_size": 255137
+  },
+  {
+    "rel": "learning_compressed/pubg_clip_ledger.jsonl.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part00",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part01",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part02",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part03",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part04",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part05",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part06",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part07",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part08",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part09",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part10",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part11",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part12",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part13",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part14",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part15",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part16",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part17",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part18",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part19",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part20",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part21",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part22",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part23",
+      "learning_compressed_pubg_clip_ledger.jsonl.gz.b64.part24"
+    ],
+    "sha256": "32cb11ebacab95a2646f04fb39a71f2818ab93035be603bce026cf891b02a1a9",
+    "raw_size": 641103
+  },
+  {
+    "rel": "learning_compressed/shorts_features.jsonl.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_shorts_features.jsonl.gz.b64.part00",
+      "learning_compressed_shorts_features.jsonl.gz.b64.part01",
+      "learning_compressed_shorts_features.jsonl.gz.b64.part02"
+    ],
+    "sha256": "6ec1e408206fd03008211ebb9d11470a11885400c0ad1d32d4e06b902ea172a9",
+    "raw_size": 72591
+  },
+  {
+    "rel": "learning_compressed/mlbb_calibration_labels.json.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_mlbb_calibration_labels.json.gz.b64.part00",
+      "learning_compressed_mlbb_calibration_labels.json.gz.b64.part01",
+      "learning_compressed_mlbb_calibration_labels.json.gz.b64.part02"
+    ],
+    "sha256": "48e4801f234a3992c0843eea4dff496bd70824dc27fb8bd35e5334a7bd1cde91",
+    "raw_size": 67306
+  },
+  {
+    "rel": "learning_compressed/mlbb_vod_segment_labels.json.gz",
+    "binary": true,
+    "parts": [
+      "learning_compressed_mlbb_vod_segment_labels.json.gz.b64.part00",
+      "learning_compressed_mlbb_vod_segment_labels.json.gz.b64.part01"
+    ],
+    "sha256": "1e9039e525adf006acdde5976ba9eae3832b664fb12231e86f896259cd6b7dff",
+    "raw_size": 34191
+  }
+]

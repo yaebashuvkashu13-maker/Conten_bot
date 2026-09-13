@@ -1,0 +1,13 @@
+[Unit]
+Description=Train PUBG moment ranker from owner feedback
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/root/.video_bot.env
+Environment=CONTENT_BOT_REPO=/root/content_bot_ml
+Environment=PYTHONPATH=/usr/local/bin:/root/content_bot_ml/scripts
+ExecStart=/usr/bin/python3 /usr/local/bin/pubg_moment_ranker.py --train-if-changed
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=4h

@@ -1,0 +1,43 @@
+{
+  "artifact_version": 1,
+  "feature_version": 2,
+  "feature_names": [
+    "panns_gunshot",
+    "panns_machine_gun",
+    "panns_explosion",
+    "panns_speech",
+    "panns_music",
+    "panns_gun_max",
+    "gunfire_density",
+    "burst_ratio",
+    "audio_rms"
+  ],
+  "model_name": "logistic_regression",
+  "threshold": 0.45,
+  "training_signature": "707518a646ead6207a39ece8aedcffd8c89db4651eda81d7f7c40fe251fde360",
+  "trained_at": "2026-09-01 04:43:19",
+  "samples": 295,
+  "positive": 122,
+  "negative": 173,
+  "groups": 26,
+  "oof_balanced_accuracy": 0.6375912062920497,
+  "oof_f1": 0.5931558935361216,
+  "candidate_models": {
+    "logistic_regression": {
+      "threshold": 0.45,
+      "balanced_accuracy": 0.6375912062920497,
+      "f1": 0.5931558935361216,
+      "samples": 295,
+      "objective": 0.6242606124652712
+    },
+    "random_forest": {
+      "threshold": 0.3,
+      "balanced_accuracy": 0.5100445370984554,
+      "f1": 0.5621621621621622,
+      "samples": 295,
+      "objective": 0.5256798246175673
+    }
+  },
+  "status": "trained",
+  "path": "/root/data/pubg/pubg_moment_ranker.candidate.joblib"
+}
